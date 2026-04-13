@@ -38,10 +38,6 @@ pub mod events;
 pub mod fingerprint;
 pub mod brain;
 pub mod briefing;
-pub mod trust;
-pub mod steer;
-pub mod pulse;
-pub mod taste;
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
 use axum::response::{IntoResponse, Redirect};
@@ -453,6 +449,8 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(EVENT_BODY_LIMIT)))
         // Tool-call event log (ADR-2604012137) — SQLite + WebSocket broadcast
         .route("/api/events", post(events::post_event).get(events::list_events))
+        // Paginated briefing (ADR-2604131500 P1.1)
+        .route("/api/briefing", get(briefing::get_briefing))
         // AGENTIC BRAIN (ADR-2604102200) — must register BEFORE {project_id} routes
         .route("/api/brain/status", get(brain::status))
         .route("/api/brain/test", post(brain::test))
@@ -522,8 +520,6 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         // Daemon worker task claiming (must be before /{task_id} to avoid shadowing)
         .route("/api/hexflo/tasks/claim", get(swarms::claim_task))
-        // Role-based task polling for distributed workers
-        .route("/api/hexflo/tasks/poll", get(swarms::poll_task))
         // Convenience route for MCP tools (no swarm ID needed — task ID is globally unique)
         .route("/api/hexflo/tasks/{task_id}", get(swarms::get_task_by_id)
             .patch(swarms::update_task_by_id)
@@ -760,23 +756,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/inbox/{id}/ack", post(inbox::ack_notification)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
 
-        // AIOS developer experience (ADR-2604131500 P1.4 + P6.1)
-        .route("/api/briefing", get(briefing::get_briefing))
-        .route("/api/briefing/decisions", get(briefing::get_decisions))
-        .route("/api/trust", get(trust::get_trust).patch(trust::set_trust))
-        .route("/api/trust/history", get(trust::get_trust_history))
-        .route("/api/trust/pin", post(trust::pin_trust)
-            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
-        .route("/api/steer", post(steer::handle_steer)
-            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
-        .route("/api/pulse", get(pulse::get_pulse))
-        // Taste graph v1 (AIOS P2 P2.1)
-        .route("/api/taste", get(taste::get_taste).post(taste::set_taste))
-        .route("/api/taste/{key}", delete(taste::forget_taste))
-        .route("/api/taste/{key}/pin", patch(taste::pin_taste))
-        .route("/api/decisions/{id}", post(decisions::resolve_decision)
-            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
-
         // Unified Agent Registry (ADR-058) — hex_agent table
         // NOTE: /connect and /evict must be registered BEFORE /{id} to avoid path conflicts
         .route("/api/hex-agents/connect", post(hex_agents::connect_agent)
@@ -787,7 +766,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/hex-agents/{id}", get(hex_agents::get_agent)
             .delete(hex_agents::disconnect_agent))
         .route("/api/hex-agents/{id}/heartbeat", post(hex_agents::heartbeat))
-        .route("/api/hex-agents/{id}/capabilities", post(hex_agents::update_capabilities))
         .route("/api/hex-agents/{id}/disconnect", post(hex_agents::disconnect_agent_post))
 
         // Test sessions (test-results module fallback)

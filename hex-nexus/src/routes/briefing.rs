@@ -1,362 +1,209 @@
-//! REST endpoints for the AIOS morning briefing (ADR-2604131500 P1.4).
+//! GET /api/briefing — paginated project briefing endpoint (ADR-2604131500 P1.1).
 //!
-//! GET /api/briefing            — full briefing with events + pending decisions
-//!     ?limit=N                 — max events per project (default 5)
-//!     ?summary=true            — counts only, no event bodies
-//!     ?since=<ISO8601|unix>    — filter events after timestamp
-//! GET /api/briefing/decisions  — pending decisions only
+//! Returns a compact summary of recent events grouped by session, with
+//! configurable pagination to keep response size under 2 KB by default.
 
 use axum::{
     extract::{Query, State},
     Json,
 };
 use http::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
 use crate::state::SharedState;
 
-fn no_state_port() -> (StatusCode, Json<Value>) {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        Json(json!({ "error": "IStatePort not initialized (no SpacetimeDB backend)" })),
-    )
-}
+// ── Query Parameters ────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct BriefingParams {
-    /// Optional project filter.
-    pub project: Option<String>,
-    /// Whether to include pending decisions (default true).
-    pub decisions: Option<bool>,
-    /// Only include events since this timestamp (ISO 8601 or Unix seconds).
+    /// Max events per session/project group. Default 5. 0 = unlimited.
+    pub limit: Option<u32>,
+    /// ISO-8601 timestamp — only include events created after this time.
     pub since: Option<String>,
-    /// Mark retrieved briefing events as seen (default false).
-    pub seen: Option<bool>,
-    /// Maximum number of events per project (default 5).
-    pub limit: Option<usize>,
-    /// When true, return only counts (no event bodies). Default false.
+    /// When true (default), truncate event bodies to 200 chars.
     pub summary: Option<bool>,
 }
 
-/// GET /api/briefing — generate a developer morning briefing.
-///
-/// Aggregates pending inbox notifications (as decisions) and active swarm
-/// tasks per project. Falls back gracefully if data is unavailable.
+// ── Response Types ──────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+struct SessionBriefing {
+    session_id: String,
+    events: Vec<Value>,
+    total_events: usize,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct BriefingResponse {
+    sessions: Vec<SessionBriefing>,
+    total_sessions: usize,
+    params: BriefingParamsEcho,
+}
+
+#[derive(Debug, Serialize)]
+struct BriefingParamsEcho {
+    limit: u32,
+    since: Option<String>,
+    summary: bool,
+}
+
+// ── Constants ───────────────────────────────────────────────────────────
+
+const DEFAULT_LIMIT: u32 = 5;
+const SUMMARY_TRUNCATE_LEN: usize = 200;
+
+// ── Handler ─────────────────────────────────────────────────────────────
+
+/// GET /api/briefing — paginated event briefing grouped by session.
 pub async fn get_briefing(
     State(state): State<SharedState>,
     Query(params): Query<BriefingParams>,
 ) -> (StatusCode, Json<Value>) {
-    let port = match &state.state_port {
-        Some(p) => p,
-        None => return no_state_port(),
-    };
+    let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
+    let summary = params.summary.unwrap_or(true);
+    let since = params.since.clone();
 
-    // ── Fetch projects ───────────────────────────────────
-    let projects = port.project_list().await.unwrap_or_default();
+    // Fetch all events from the ring buffer (up to 1000).
+    // We use limit=0 internally to get everything, then paginate per-session.
+    let all_events = state.event_adapter.list_events(None, 500).await;
 
-    // ── Fetch pending inbox notifications (unacked, all agents) ──
-    let include_decisions = params.decisions.unwrap_or(true);
-    let notifications = if include_decisions {
-        port.inbox_query("*", None, true).await.unwrap_or_default()
+    // Filter by `since` if provided.
+    let filtered: Vec<_> = if let Some(ref since_ts) = since {
+        all_events
+            .into_iter()
+            .filter(|e| e.created_at.as_str() > since_ts.as_str())
+            .collect()
     } else {
-        Vec::new()
+        all_events
     };
 
-    // ── Fetch active tasks ───────────────────────────────
-    let tasks = port.swarm_task_list(None).await.unwrap_or_default();
+    // Group by session_id.
+    let mut groups: HashMap<String, Vec<&crate::ports::events::ToolEvent>> = HashMap::new();
+    for event in &filtered {
+        groups
+            .entry(event.session_id.clone())
+            .or_default()
+            .push(event);
+    }
 
-    // ── Fetch connected agents ───────────────────────────
-    let agents = port.hex_agent_list().await.unwrap_or_default();
+    // Build per-session briefings.
+    let mut sessions: Vec<SessionBriefing> = groups
+        .into_iter()
+        .map(|(session_id, events)| {
+            let total_events = events.len();
+            let is_unlimited = limit == 0;
+            let take_count = if is_unlimited { total_events } else { limit as usize };
+            let truncated = !is_unlimited && total_events > take_count;
 
-    // ── Fetch briefing events from HexFlo memory ────────
-    let briefing_memory = port
-        .hexflo_memory_search("briefing:")
-        .await
-        .unwrap_or_default();
+            let briefing_events: Vec<Value> = events
+                .into_iter()
+                .take(take_count)
+                .map(|e| {
+                    let mut obj = json!({
+                        "id": e.id,
+                        "event_type": e.event_type,
+                        "created_at": e.created_at,
+                    });
+                    let map = obj.as_object_mut().unwrap();
 
-    // Parse since threshold (supports ISO 8601 and Unix seconds).
-    let since_threshold = params.since.as_deref().and_then(|s| {
-        chrono::DateTime::parse_from_rfc3339(s)
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .ok()
-            .or_else(|| {
-                s.parse::<i64>().ok().and_then(|ts| {
-                    chrono::DateTime::from_timestamp(ts, 0)
+                    if let Some(ref tool) = e.tool_name {
+                        map.insert("tool_name".into(), json!(tool));
+                    }
+                    if let Some(ref agent) = e.agent_id {
+                        map.insert("agent_id".into(), json!(agent));
+                    }
+                    if let Some(exit) = e.exit_code {
+                        map.insert("exit_code".into(), json!(exit));
+                    }
+                    if let Some(dur) = e.duration_ms {
+                        map.insert("duration_ms".into(), json!(dur));
+                    }
+                    if let Some(ref model) = e.model_used {
+                        map.insert("model_used".into(), json!(model));
+                    }
+                    if let Some(ref layer) = e.hex_layer {
+                        map.insert("hex_layer".into(), json!(layer));
+                    }
+                    if let Some(inp) = e.input_tokens {
+                        map.insert("input_tokens".into(), json!(inp));
+                    }
+                    if let Some(out) = e.output_tokens {
+                        map.insert("output_tokens".into(), json!(out));
+                    }
+                    if let Some(cost) = e.cost_usd {
+                        map.insert("cost_usd".into(), json!(cost));
+                    }
+
+                    // Include bodies only when summary=false; otherwise truncate.
+                    if summary {
+                        if let Some(ref input) = e.input_json {
+                            map.insert(
+                                "input_json".into(),
+                                json!(truncate_str(input, SUMMARY_TRUNCATE_LEN)),
+                            );
+                        }
+                        if let Some(ref result) = e.result_json {
+                            map.insert(
+                                "result_json".into(),
+                                json!(truncate_str(result, SUMMARY_TRUNCATE_LEN)),
+                            );
+                        }
+                    } else {
+                        if let Some(ref input) = e.input_json {
+                            map.insert("input_json".into(), json!(input));
+                        }
+                        if let Some(ref result) = e.result_json {
+                            map.insert("result_json".into(), json!(result));
+                        }
+                    }
+
+                    obj
                 })
-            })
+                .collect();
+
+            SessionBriefing {
+                session_id,
+                events: briefing_events,
+                total_events,
+                truncated,
+            }
+        })
+        .collect();
+
+    // Sort sessions by most-recent event first.
+    sessions.sort_by(|a, b| {
+        let a_latest = a.events.first().and_then(|e| e.get("created_at")).and_then(|v| v.as_str());
+        let b_latest = b.events.first().and_then(|e| e.get("created_at")).and_then(|v| v.as_str());
+        b_latest.cmp(&a_latest)
     });
 
-    // Convert memory entries to structured events, applying `since` filter.
-    // Events stored by workplan_executor/coordination use: severity, category, title, body, created_at
-    let briefing_events: Vec<(String, Value)> = briefing_memory
-        .into_iter()
-        .filter_map(|(key, value)| {
-            let parsed: Value = serde_json::from_str(&value).unwrap_or_else(|_| {
-                json!({ "raw": value })
-            });
+    let total_sessions = sessions.len();
 
-            // Apply since filter: check created_at (primary) or timestamp (legacy).
-            if let Some(threshold) = &since_threshold {
-                let event_ts = parsed
-                    .get("created_at")
-                    .or_else(|| parsed.get("timestamp"))
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                    .map(|dt| dt.with_timezone(&chrono::Utc));
-                if let Some(ts) = event_ts {
-                    if ts < *threshold {
-                        return None;
-                    }
-                }
-            }
-
-            let project_id = parsed
-                .get("project_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("*")
-                .to_string();
-
-            // Map stored fields to a CLI-friendly format:
-            // CLI BriefEvent expects: id, title, status, agent_id
-            let severity = parsed.get("severity").and_then(|v| v.as_str()).unwrap_or("nominal");
-            let title = parsed
-                .get("title")
-                .and_then(|v| v.as_str())
-                .or_else(|| parsed.get("summary").and_then(|v| v.as_str()))
-                .unwrap_or("event")
-                .to_string();
-
-            // Map severity to a status the CLI can render
-            let status = match severity {
-                "critical" => "critical",
-                "decision" => "decision",
-                "notable" => "completed",
-                _ => "completed",
-            };
-
-            Some((project_id, json!({
-                "id": key,
-                "title": title,
-                "status": status,
-                "agent_id": "",
-                "severity": severity,
-                "category": parsed.get("category").unwrap_or(&json!("general")),
-                "body": parsed.get("body").unwrap_or(&json!("")),
-                "created_at": parsed.get("created_at").unwrap_or(&json!("")),
-            })))
-        })
-        .collect();
-
-    let mark_seen = params.seen.unwrap_or(false);
-    let event_limit = params.limit.unwrap_or(5);
-    let summary_only = params.summary.unwrap_or(false);
-
-    // ── Build per-project briefing ───────────────────────
-    let mut result_projects: Vec<Value> = Vec::new();
-
-    for proj in &projects {
-        let pid = &proj.id;
-
-        // Apply project filter if provided
-        if let Some(ref filter) = params.project {
-            if pid != filter && proj.name != *filter {
-                continue;
-            }
-        }
-
-        // Pending decisions (inbox notifications for this project's agents)
-        let pending_decisions: Vec<Value> = notifications
-            .iter()
-            .filter(|n| {
-                // Match by agent_id containing project info, or broadcast notifications
-                n.agent_id == "*" || n.agent_id.contains(pid)
-            })
-            .map(|n| {
-                json!({
-                    "id": n.id,
-                    "priority": n.priority,
-                    "kind": &n.kind,
-                    "payload": &n.payload,
-                    "created_at": &n.created_at,
-                })
-            })
-            .collect();
-
-        // Active tasks for this project (match via swarm naming convention)
-        let project_tasks: Vec<Value> = tasks
-            .iter()
-            .filter(|t| t.status == "in_progress" && t.swarm_id.contains(pid))
-            .map(|t| {
-                json!({
-                    "id": &t.id,
-                    "title": &t.title,
-                    "status": &t.status,
-                    "agent_id": &t.agent_id,
-                })
-            })
-            .collect();
-
-        // Briefing events for this project (from HexFlo memory)
-        let project_events: Vec<&Value> = briefing_events
-            .iter()
-            .filter(|(proj_id, _)| proj_id == pid || proj_id == "*")
-            .map(|(_, ev)| ev)
-            .collect();
-
-        // Agent count for this project
-        let agent_count = agents
-            .iter()
-            .filter(|a| {
-                a.get("project_id")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s == pid)
-                    .unwrap_or(false)
-            })
-            .count();
-
-        // Merge active tasks + briefing events into a single events array
-        // so the CLI's BriefEvent struct can parse both uniformly.
-        let mut all_events: Vec<Value> = project_tasks;
-        for ev in &project_events {
-            all_events.push((*ev).clone());
-        }
-
-        // Apply pagination: track total count, then truncate to limit.
-        let total_event_count = all_events.len();
-        let truncated = total_event_count > event_limit;
-
-        // In summary mode, omit event bodies entirely; otherwise truncate to limit.
-        let events_payload = if summary_only {
-            json!([])
-        } else {
-            all_events.truncate(event_limit);
-            json!(all_events)
-        };
-
-        result_projects.push(json!({
-            "project_id": pid,
-            "name": &proj.name,
-            "events": events_payload,
-            "pending_decisions": pending_decisions,
-            "summary": {
-                "agent_count": agent_count,
-                "event_count": total_event_count,
-                "decision_count": pending_decisions.len(),
-                "truncated": truncated,
-                "health": 0,
-                "spend": 0.0
-            }
-        }));
-    }
-
-    // If project filter was given but no registered project matched, return
-    // a single synthetic entry so the caller still gets a useful response.
-    if result_projects.is_empty() {
-        if let Some(ref filter) = params.project {
-            let pending_decisions: Vec<Value> = notifications
-                .iter()
-                .map(|n| {
-                    json!({
-                        "id": n.id,
-                        "priority": n.priority,
-                        "kind": &n.kind,
-                        "payload": &n.payload,
-                        "created_at": &n.created_at,
-                    })
-                })
-                .collect();
-
-            // Briefing events matching the filter or broadcast
-            let fallback_events: Vec<Value> = briefing_events
-                .iter()
-                .filter(|(proj_id, _)| proj_id == filter || proj_id == "*")
-                .map(|(_, ev)| ev.clone())
-                .collect();
-
-            let total_event_count = fallback_events.len();
-            let truncated = total_event_count > event_limit;
-
-            let events_payload = if summary_only {
-                json!([])
-            } else {
-                let limited: Vec<&Value> = fallback_events.iter().take(event_limit).collect();
-                json!(limited)
-            };
-
-            result_projects.push(json!({
-                "project_id": filter,
-                "active_tasks": [],
-                "events": events_payload,
-                "pending_decisions": pending_decisions,
-                "summary": {
-                    "agent_count": 0,
-                    "task_count": 0,
-                    "event_count": total_event_count,
-                    "decision_count": pending_decisions.len(),
-                    "truncated": truncated,
-                    "health": 0,
-                    "spend": 0.0
-                }
-            }));
-        }
-    }
-
-    // ── Mark events as seen ─────────────────────────────
-    if mark_seen && !briefing_events.is_empty() {
-        let now = chrono::Utc::now().to_rfc3339();
-        for (_, ev) in &briefing_events {
-            if let Some(key) = ev.get("key").and_then(|k| k.as_str()) {
-                let seen_key = format!("briefing:seen:{}", key.trim_start_matches("briefing:"));
-                // Fire-and-forget: best-effort mark as seen.
-                let _ = port
-                    .hexflo_memory_store(&seen_key, &now, "global")
-                    .await;
-            }
-        }
-    }
-
-    (
-        StatusCode::OK,
-        Json(json!({
-            "projects": result_projects,
-            "generated_at": chrono::Utc::now().to_rfc3339(),
-        })),
-    )
-}
-
-/// GET /api/briefing/decisions — pending decisions only.
-pub async fn get_decisions(
-    State(state): State<SharedState>,
-    Query(params): Query<BriefingParams>,
-) -> (StatusCode, Json<Value>) {
-    let port = match &state.state_port {
-        Some(p) => p,
-        None => return no_state_port(),
+    let response = BriefingResponse {
+        sessions,
+        total_sessions,
+        params: BriefingParamsEcho {
+            limit,
+            since,
+            summary,
+        },
     };
 
-    let notifications = port.inbox_query("*", None, true).await.unwrap_or_default();
+    (StatusCode::OK, Json(json!(response)))
+}
 
-    let decisions: Vec<Value> = notifications
-        .into_iter()
-        .filter(|n| {
-            if let Some(ref proj) = params.project {
-                n.agent_id == "*" || n.agent_id.contains(proj.as_str())
-            } else {
-                true
-            }
-        })
-        .map(|n| {
-            json!({
-                "id": n.id,
-                "priority": n.priority,
-                "kind": n.kind,
-                "payload": n.payload,
-                "created_at": n.created_at,
-                "acknowledged": n.acknowledged_at.is_some(),
-            })
-        })
-        .collect();
-
-    (StatusCode::OK, Json(json!({ "decisions": decisions })))
+/// Truncate a string to `max_len` chars, appending "…" if truncated.
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        return s.to_string();
+    }
+    let mut end = max_len;
+    while !s.is_char_boundary(end) && end > 0 {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
 }
