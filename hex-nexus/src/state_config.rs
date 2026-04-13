@@ -151,6 +151,61 @@ pub fn create_default_state_backend() -> Result<Arc<dyn IStatePort>, StateError>
     create_state_backend(&config)
 }
 
+// ── Decision Deadline Configuration (ADR-2604131500 P1.2) ───
+
+/// Default decision deadline in seconds (2 hours per ADR).
+const DEFAULT_DECISION_DEADLINE_SECS: u64 = 7200;
+
+/// Resolve the decision auto-resolution deadline in seconds.
+///
+/// Priority:
+/// 1. `HEX_DECISION_DEADLINE_SECS` env var
+/// 2. `.hex/project.json` → `decision.deadline_secs`
+/// 3. Default: 7200 (2 hours per ADR-2604131500)
+pub fn resolve_decision_deadline_secs() -> u64 {
+    // 1. Environment variable (highest precedence)
+    if let Ok(val) = std::env::var("HEX_DECISION_DEADLINE_SECS") {
+        if let Ok(secs) = val.parse::<u64>() {
+            if secs > 0 {
+                tracing::info!(deadline_secs = secs, "Decision deadline from env var");
+                return secs;
+            }
+            tracing::warn!("HEX_DECISION_DEADLINE_SECS must be > 0, ignoring");
+        } else {
+            tracing::warn!(
+                value = %val,
+                "HEX_DECISION_DEADLINE_SECS is not a valid integer, ignoring"
+            );
+        }
+    }
+
+    // 2. .hex/project.json → decision.deadline_secs
+    let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
+        .or_else(|_| std::env::var("HEX_PROJECT_DIR"))
+        .unwrap_or_else(|_| ".".to_string());
+    let project_json = std::path::Path::new(&project_dir).join(".hex/project.json");
+    if let Ok(content) = std::fs::read_to_string(&project_json) {
+        if let Ok(project) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(secs) = project["decision"]["deadline_secs"].as_u64() {
+                if secs > 0 {
+                    tracing::info!(
+                        deadline_secs = secs,
+                        "Decision deadline from .hex/project.json"
+                    );
+                    return secs;
+                }
+            }
+        }
+    }
+
+    // 3. Default
+    tracing::debug!(
+        deadline_secs = DEFAULT_DECISION_DEADLINE_SECS,
+        "Decision deadline: using default"
+    );
+    DEFAULT_DECISION_DEADLINE_SECS
+}
+
 /// Like `create_default_state_backend` but wires an `InferenceTxBus` so that
 /// `inference_task_create` broadcasts to /ws/inference subscribers immediately
 /// on insert (ADR-2604011200 P2.T3).

@@ -92,14 +92,14 @@ impl CleanupService {
                 }
             }
 
-            // ── Decision auto-resolution (ADR-2604131500 P3.3) ──
-            // Auto-acknowledge unresolved decision notifications older than 4 hours.
-            // This ensures hex never blocks indefinitely on developer decisions.
+            // ── Decision auto-resolution (ADR-2604131500 P3.3, P1.2) ──
+            // Auto-acknowledge unresolved decision notifications past the
+            // configurable deadline. Reads from env / .hex/project.json / default 2h.
             if let Some(sp) = &self.state.state_port {
                 match sp.inbox_query("*", None, true).await {
                     Ok(notifications) => {
                         let now = chrono::Utc::now();
-                        let deadline_secs = 4 * 3600; // 4 hours
+                        let deadline_secs = crate::state_config::resolve_decision_deadline_secs() as i64;
                         let mut auto_resolved = 0u32;
                         for notif in &notifications {
                             if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&notif.created_at) {
@@ -114,9 +114,10 @@ impl CleanupService {
                             }
                         }
                         if auto_resolved > 0 {
+                            let hours = deadline_secs as f64 / 3600.0;
                             info!(
-                                "Decision auto-resolution: {} decision(s) past 4h deadline auto-resolved",
-                                auto_resolved
+                                "Decision auto-resolution: {} decision(s) past {:.1}h deadline auto-resolved",
+                                auto_resolved, hours
                             );
                         }
                     }
