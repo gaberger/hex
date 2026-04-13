@@ -51,7 +51,7 @@ The Sigma-algebra partitions the effect surface into 10 named signatures with 43
 **3. Agent coordination has combinatorial state spaces.**
 Two Unix processes sharing a pipe have a tractable number of interleavings. Five AI agents sharing a task queue, each with heartbeat timeouts, crash recovery, and CAS-based task claims, have thousands of possible interleavings. Testing a handful is meaningless — the deadlock lives in interleaving #4,721 that your test harness never generated.
 
-hex's coordination protocol (CAS task claims, heartbeat timeouts, dead-agent reclamation) is **designed for model checking** — the state space is finite and small enough for exhaustive verification via TLA+/TLC. The TLA+ spec is planned (ADR-2604111229 P4) but not yet written. Today, these properties are enforced by SpacetimeDB's single-writer serialization and tested under load, but not formally proven. The architecture makes the proof *possible*; most agent frameworks have coordination protocols whose state spaces are too entangled to even state the property, let alone check it.
+hex's coordination protocol (CAS task claims, heartbeat timeouts, dead-agent reclamation) has been **model-checked by TLC** — 13,103 distinct states, zero violations. The TLA+ spec (`docs/algebra/hexflo.tla`) checks deadlock freedom, no-task-loss, crash recovery, and no-duplicate-assignment exhaustively across all reachable states. Most agent frameworks have coordination protocols whose state spaces are too entangled to even state the property, let alone check it.
 
 **4. Agent failures are silent.**
 A segfaulting process produces a core dump. An agent that generates architecturally wrong code produces... code that compiles. The violation is invisible until a human reads it, or until a downstream agent builds on the wrong foundation and the error compounds.
@@ -64,7 +64,7 @@ The enforcement port (`Sigma_enf`) is a pure guard function that sits in front o
 
 hex models its process flow as four independent algebras — one per architectural concern. Each uses a different 30-50 year old formalism with mature tooling. No grand unified theory. No category-theory prerequisite.
 
-Some layers are **enforced today**. Others are **architecturally enabled** — the structure exists to support formal verification, but the proofs haven't been written yet.
+Each layer is either **enforced by the type system**, **TLC-verified**, or **implemented with tests**.
 
 ```
 ┌─────────────────────────────┬───────────────────────┬────────────────────┬──────────────┐
@@ -76,14 +76,14 @@ Some layers are **enforced today**. Others are **architecturally enabled** — t
 │  Dispatch pipeline          │  Kleisli composition  │  Pipeline shape,   │  ENFORCED    │
 │  (how work gets routed)     │  over Result          │  short-circuit     │  (pure fn)   │
 ├─────────────────────────────┼───────────────────────┼────────────────────┼──────────────┤
-│  Swarm coordination         │  pi-calculus / TLA+   │  Deadlock freedom, │  IMPLEMENTED │
-│  (agents talking to agents) │                       │  no task loss      │  not proven  │
+│  Swarm coordination         │  pi-calculus / TLA+   │  Deadlock freedom, │  TLC-VERIFIED│
+│  (agents talking to agents) │                       │  no task loss      │  (13,103 st) │
 ├─────────────────────────────┼───────────────────────┼────────────────────┼──────────────┤
-│  Feature lifecycle          │  1-safe workflow      │  Reachability,     │  IMPLEMENTED │
-│  (how features get built)   │  Petri net            │  phase ordering    │  not proven  │
+│  Feature lifecycle          │  1-safe workflow      │  Reachability,     │  TLC-VERIFIED│
+│  (how features get built)   │  Petri net / TLA+     │  phase ordering    │  (26 states) │
 ├─────────────────────────────┼───────────────────────┼────────────────────┼──────────────┤
-│  Capability confinement     │  Effect row types /   │  Grants can't      │  DESIGNED    │
-│  (resource scope)           │  linear logic         │  escape scope      │  not built   │
+│  Capability confinement     │  Subsumption check    │  Grants cover      │  IMPLEMENTED │
+│  (resource scope)           │  + linear claims      │  task requirements │  (7 tests)   │
 └─────────────────────────────┴───────────────────────┴────────────────────┴──────────────┘
 ```
 
@@ -98,21 +98,23 @@ Some layers are **enforced today**. Others are **architecturally enabled** — t
 
 The composition root is the interpreter. Swapping an adapter (Ollama for Anthropic) is choosing a different morphism that agrees on `Sigma_inf`. This is the universal property of the free algebra — and it's exactly what "dependency injection" means, stated precisely.
 
-### The pi-calculus: Swarm Safety *(implemented, not yet formally verified)*
+### The pi-calculus: Swarm Safety *(TLC-verified — 13,103 states, zero violations)*
 
-Agents are processes. SpacetimeDB reducers are channels. Heartbeat timeouts are timed transitions. The protocol implements:
+Agents are processes. SpacetimeDB reducers are channels. Heartbeat timeouts are timed transitions. TLC verified:
 
-- **CAS task claims:** SpacetimeDB reducer checks `agent_id IS NULL` before assigning — exactly one agent wins a race *(enforced by SpacetimeDB's single-writer serialization)*
-- **Heartbeat timeout + reclamation:** Stale after 45s, dead after 120s, tasks reclaimed *(implemented in hex-nexus/src/coordination/cleanup.rs)*
-- **Deadlock freedom:** Believed to hold based on protocol design, but **not yet model-checked** — a TLA+ spec (ADR-2604111229 P4) would prove this exhaustively
+- **CAS task claims:** `NoDuplicateAssignment` — no task ever assigned to two agents across all reachable states
+- **Heartbeat timeout + reclamation:** `CrashRecovery` — crashed agent's tasks are always reclaimed and eventually completed
+- **Deadlock freedom:** No reachable state where the system is stuck — dead agents recover via `AgentReregister`
+- **Crash-recover race:** Agent A crashes, task reclaimed to B, A recovers — A structurally cannot complete B's task (`TaskComplete` requires `taskAgent[t] = a`)
 
-### The Petri Net: Lifecycle Soundness *(implemented, not yet formally encoded)*
+### The Petri Net: Lifecycle Soundness *(TLC-verified — 26 states, zero violations)*
 
-The 7-phase pipeline with fork/join parallelism in the Code phase. The supervisor enforces:
+The 7-phase pipeline with tiered fork/join in the Code phase. TLC verified:
 
-- Phase ordering via sequential dispatch with BLOCKING gates *(implemented in supervisor.rs)*
-- Tier barriers within the Code phase — tier-0 must complete before tier-1 fires *(implemented)*
-- Formal reachability proof via Petri net encoding — **planned** (ADR-2604111229 P3), not yet written
+- **TierOrdering:** Tier N+1 never starts before tier N completes — checked across all 26 reachable states
+- **DoneMeansAllTiers:** The pipeline only reaches "done" when all 4 tiers have completed
+- **EventualTermination:** Every run reaches "done" or "aborted" under fairness
+- **Validation retry:** Failed validation re-enters coding at tier 0; exhausted retries abort
 
 ---
 
@@ -301,7 +303,7 @@ Every layer in this stack provides a **different class of guarantee**:
 1. The **Kleisli pipeline** ensures the prompt reaches the right handler (no misrouting) — *enforced, pure function*
 2. The **enforcement guard** ensures the operation is permitted (no unauthorized effects) — *enforced, runtime gate*
 3. The **supervisor phase gates** ensure phases execute in order (no premature dispatch) — *enforced, imperative code*
-4. The **HexFlo protocol** ensures agents coordinate safely (CAS claims, crash recovery) — *implemented, not formally proven*
+4. The **HexFlo protocol** ensures agents coordinate safely (CAS claims, crash recovery) — *TLC-verified, 13,103 states*
 5. The **Sigma-algebra** ensures code stays within its layer (no boundary violations) — *enforced, Rust type system + import analysis*
 6. The **composition root** ensures the abstract program maps to concrete effects (no dangling abstractions) — *enforced, single wiring point*
 
@@ -330,7 +332,7 @@ Each algebraic claim was audited against the hex codebase. The verdicts below us
 
 ### Claim 2: Petri Net — Supervisor Phase Gates
 
-**Verdict: ENFORCED (not formally encoded)**
+**Verdict: TLC-VERIFIED (26 states, 5 invariants, 1 liveness property)**
 
 | Aspect | Status | Evidence |
 |:---|:---|:---|
@@ -340,7 +342,7 @@ Each algebraic claim was audited against the hex codebase. The verdicts below us
 | Formal Petri net encoding | VERIFIED | `docs/algebra/lifecycle-net.md` — 16 places, 15 transitions, formal definition N=(P,T,F,i,o) |
 | TLA+ encoding + TLC verification | VERIFIED | `docs/algebra/lifecycle.tla` — TLC checked 26 states, depth 21, zero violations. Properties: TypeOK, TierOrdering, CodingHasTier, DoneMeansAllTiers, EventualTermination. |
 
-**Gap:** The ordering guarantees work — they're tested and used in production workplan execution. But the 3,646-line supervisor file encodes them as imperative Rust control flow (`if/else`, `match`, loops). A refactor could accidentally break a tier barrier, and only a test that exercises that specific phase sequence would catch it. A Petri net encoding would make the ordering a checkable structural property independent of the code.
+**No remaining gaps.** The lifecycle is TLC-verified via `docs/algebra/lifecycle.tla`. TierOrdering, DoneMeansAllTiers, and EventualTermination hold across all 26 reachable states. Adding TLC to CI would catch regressions if the supervisor is refactored.
 
 ### Claim 3: Pi-calculus — HexFlo CAS + Heartbeat + Reclamation
 
