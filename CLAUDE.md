@@ -220,6 +220,11 @@ src/
 #      mcp/               MCP config + claude settings template (ADR-049)
 #      schemas/           JSON schemas (workplan, mcp-tools)
 #      templates/         Init templates (CLAUDE.md, settings)
+#
+#    GENERIC-ONLY RULE: Embedded assets are installed into arbitrary target
+#    projects, so they must NOT reference hex-intf internals (hex-nexus,
+#    hex-core, hex-parser, hex-desktop, spacetime-modules, /Volumes/, etc.).
+#    `hex doctor` and `hex ci` enforce this via the embedded-assets-generic check.
 
 # ── Supporting ─────────────────────────────────────────────────────────────
 tests/
