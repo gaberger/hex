@@ -1,0 +1,159 @@
+{
+  "id": "wp-aios-experience-p3",
+  "feature": "AIOS Developer Experience — Phase 3 (ADR gap closure)",
+  "description": "Close remaining gaps against ADR-2604131500: hex new command, decision defaults+reasoning, configurable deadlines, trust floor enforcement, hex override/pause commands.",
+  "adr": "ADR-2604131500",
+  "specs": "docs/specs/aios-experience-acceptance.md",
+  "status": "planned",
+  "priority": "high",
+  "created_at": "2026-04-13T15:50:00Z",
+  "created_by": "agent",
+  "relates_to": "wp-aios-experience-p2",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Decision quality — defaults, reasoning, configurable deadlines",
+      "tier": 0,
+      "description": "Make decisions self-documenting with defaults, reasoning, and configurable auto-resolution deadlines.",
+      "gate": {
+        "type": "test",
+        "command": "cargo check --workspace",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Add default_action and reasoning fields to decision surfacing",
+          "layer": "secondary",
+          "description": "When the workplan executor surfaces a decision (P3.2 trust check in workplan_executor.rs), include default_action (what hex will do if no response), reasoning (why hex chose this default — reference trust level, architectural rules, or taste preferences), and deadline_at (when auto-resolution fires). Store these in the inbox notification payload as structured JSON. Update the briefing renderer to display them: 'Default: approve in 2h. Reason: trust level is suggest for adapters/secondary.'",
+          "deps": [],
+          "files": ["hex-nexus/src/orchestration/workplan_executor.rs", "hex-cli/src/commands/brief.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Configurable decision deadline",
+          "layer": "secondary",
+          "description": "Read decision deadline from: (1) HEX_DECISION_DEADLINE_SECS env var, (2) .hex/project.json → decision.deadline_secs, (3) default 7200 (2h per ADR). Update cleanup.rs decision auto-resolution to use this instead of hardcoded 4h. Also expose as hex trust config --deadline <seconds>.",
+          "deps": [],
+          "files": ["hex-nexus/src/cleanup.rs", "hex-nexus/src/state_config.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Trust floor enforcement",
+      "tier": 0,
+      "description": "Destructive operations never auto-elevate past act.",
+      "gate": {
+        "type": "test",
+        "command": "cargo check --workspace",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Enforce trust ceiling for destructive scopes",
+          "layer": "secondary",
+          "description": "In hex-nexus/src/routes/trust.rs set_trust(), when the scope is 'deployment' or 'dependencies', reject elevation to 'silent'. Return 400 with message: 'Trust floor: destructive scopes (deployment, dependencies) cannot be elevated to silent. Maximum: act.' Also prevent self-elevation in the decay reducer — only humans can elevate, never the system.",
+          "deps": [],
+          "files": ["hex-nexus/src/routes/trust.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "hex new — structured project intake",
+      "tier": 1,
+      "description": "Interactive command for onboarding a new project into hex.",
+      "gate": {
+        "type": "test",
+        "command": "cargo check -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Add hex new command",
+          "layer": "primary",
+          "description": "Add NewAction to hex-cli with subcommand 'hex new <path>'. Implementation: (1) validate path exists or create it, (2) run hex init in that directory (reuse existing init logic), (3) register project via POST /api/projects/register, (4) seed trust at suggest level (auto via P4.2), (5) prompt for initial taste preferences interactively or accept --taste-from <project> to copy from existing, (6) print summary: 'Project <name> registered. Trust: all suggest. Run hex brief to check status.' Non-interactive mode with --name, --description flags for CI/scripted use.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/new.rs", "hex-cli/src/main.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "hex override + hex pause — Layer 4 emergency controls",
+      "tier": 1,
+      "description": "Direct intervention commands for the 1% emergency case.",
+      "gate": {
+        "type": "test",
+        "command": "cargo check -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Add hex pause command",
+          "layer": "primary",
+          "description": "Add PauseAction to hex-cli: 'hex pause [project]' calls POST /api/workplan/pause for the active workplan execution. If no active execution, prints 'Nothing running.' Prints confirmation: 'Paused: <feature>. Resume with hex resume.' Also add 'hex resume [project]' that calls POST /api/workplan/resume.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/pause.rs", "hex-cli/src/main.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.2",
+          "name": "Add hex override command",
+          "layer": "primary",
+          "description": "Add OverrideAction to hex-cli: 'hex override <project> <instruction>' sends a priority-2 notification to all agents working on that project via POST /api/inbox/notify with kind='override'. The workplan executor checks for override notifications at each phase boundary (already has steering check — extend it). On override: pause current work, execute the override instruction, then resume. Example: 'hex override hex-intf \"Revert the last commit on adapters/secondary and re-run tests\"'.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/override_cmd.rs", "hex-cli/src/main.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "MCP tools + ADR compliance verification",
+      "tier": 2,
+      "description": "Wire remaining MCP tools and verify full ADR compliance.",
+      "gate": {
+        "type": "test",
+        "command": "cargo check --workspace",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Wire MCP tools for new, pause, override",
+          "layer": "primary",
+          "description": "Add hex_new, hex_pause, hex_resume, hex_override MCP tools to mcp.rs. Update all 3 JSON definition files.",
+          "deps": ["P3.1", "P4.1", "P4.2"],
+          "files": ["hex-cli/src/commands/mcp.rs", "hex-cli/assets/mcp/mcp-tools.json", "hex-cli/assets/schemas/mcp-tools.json", "config/mcp-tools.json"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.2",
+          "name": "ADR compliance smoke test",
+          "layer": "integration",
+          "description": "Verify all 7 ADR sections are covered: (1) hex brief shows narrative, (2) hex decide resolves with auto-expiry, (3) hex steer classifies directives, (4) hex trust show/elevate/reduce/pin/history works, (5) hex taste list/set/forget/pin + prompt injection, (6) hex new creates project with trust seeding, (7) hex pause/resume/override work. Print pass/fail per section.",
+          "deps": ["P5.1"],
+          "files": ["hex-cli/tests/aios_compliance.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ]
+}

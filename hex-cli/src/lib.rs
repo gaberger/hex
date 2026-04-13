@@ -7,6 +7,6 @@ pub mod pipeline;
 pub mod fmt;
 pub mod prompts;
 pub mod session;
-pub(crate) mod nexus_client;
+pub mod nexus_client;
 pub mod tui;
 pub mod commands;

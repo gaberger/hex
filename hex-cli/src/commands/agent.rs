@@ -131,6 +131,10 @@ pub enum AgentAction {
         /// Poll interval in seconds (default 5)
         #[arg(long, default_value_t = 5)]
         poll_interval: u64,
+
+        /// Exit after completing one task (useful for testing)
+        #[arg(long)]
+        once: bool,
     },
 }
 
@@ -206,6 +210,7 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
             swarm_id,
             agent_id,
             poll_interval,
+            ..
         } => worker(&role, swarm_id, agent_id, poll_interval).await,
     }
 }

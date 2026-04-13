@@ -1968,24 +1968,104 @@ fn compute_tier(results: &[&BenchResult]) -> (f32, u8, &'static str) {
     (overall, tier, label)
 }
 
+/// Color a quality ratio like "8/10" based on percentage.
+fn quality_colored(score: f32, achieved: u32, max: u32) -> String {
+    let text = format!("{}/{}", achieved, max);
+    if score >= 0.8 { text.green().bold().to_string() }
+    else if score >= 0.6 { text.green().to_string() }
+    else if score >= 0.3 { text.yellow().to_string() }
+    else { text.red().to_string() }
+}
+
+/// Color tok/s based on throughput tier.
+fn tps_colored(tps: f64) -> String {
+    let text = format!("{:.0}", tps);
+    if tps >= 100.0 { text.green().bold().to_string() }
+    else if tps >= 50.0 { text.green().to_string() }
+    else if tps >= 20.0 { text.yellow().to_string() }
+    else if tps >= 5.0 { text.dimmed().to_string() }
+    else { text.red().to_string() }
+}
+
+/// Build a compact quality-check grid: `✓ async_fn  ✓ tests  ✗ timeout`
+fn quality_grid(details: &[(&str, bool)]) -> String {
+    details.iter().map(|(name, passed)| {
+        let mark = if *passed { "✓".green() } else { "✗".red() };
+        format!("{} {}", mark, name.dimmed())
+    }).collect::<Vec<_>>().join("  ")
+}
+
+/// Colored overall score with letter grade.
+fn overall_badge(score: f32) -> String {
+    let pct = (score * 100.0) as u32;
+    let grade = match pct {
+        90..=100 => "A",
+        80..=89 => "B",
+        70..=79 => "C",
+        60..=69 => "D",
+        _ => "F",
+    };
+    let text = format!("{:.0}% ({})", score * 100.0, grade);
+    match pct {
+        80..=100 => text.green().bold().to_string(),
+        60..=79 => text.yellow().bold().to_string(),
+        40..=59 => text.yellow().to_string(),
+        _ => text.red().to_string(),
+    }
+}
+
+/// Determine best-for task types from individual prompt scores.
+fn best_for_tasks(results: &[&BenchResult]) -> Vec<&'static str> {
+    let codegen = results.iter().find(|r| r.name == "Code-gen");
+    let reasoning = results.iter().find(|r| r.name == "Reasoning");
+
+    let mut tasks = Vec::new();
+
+    if let Some(cg) = codegen {
+        if cg.quality_score >= 0.8 { tasks.extend_from_slice(&["code_generation", "code_edit", "refactor"]); }
+        else if cg.quality_score >= 0.5 { tasks.extend_from_slice(&["code_generation", "code_edit"]); }
+        else if cg.quality_score >= 0.3 { tasks.push("structured_output"); }
+    }
+    if let Some(rs) = reasoning {
+        if rs.quality_score >= 0.8 { tasks.extend_from_slice(&["planning", "specs", "validation"]); }
+        else if rs.quality_score >= 0.6 { tasks.extend_from_slice(&["review", "analysis"]); }
+    }
+    // All models that respond get at least one task type
+    if tasks.is_empty() { tasks.push("general"); }
+    tasks
+}
+
 /// Print benchmark results for one model.
 fn print_bench_results(model: &str, results: &[BenchResult], label: Option<&str>) {
-    if let Some(lbl) = label {
-        println!("  {}", format!("── {} ──", lbl).cyan());
-    }
+    let header = if let Some(lbl) = label {
+        format!("── {}: {} ", lbl, model)
+    } else {
+        format!("── {} ", model)
+    };
+    let pad = 56usize.saturating_sub(header.len());
+    println!("  {}{}", header.cyan().bold(), "─".repeat(pad).dimmed());
     println!();
+
+    // ── Per-prompt result lines ──
     for r in results {
-        let status = if r.quality_score >= 0.6 { "✓".green() } else if r.quality_score >= 0.3 { "~".yellow() } else { "✗".red() };
+        let status = if r.quality_score >= 0.8 { "✓".green().bold() }
+            else if r.quality_score >= 0.5 { "✓".green() }
+            else if r.quality_score >= 0.3 { "~".yellow() }
+            else { "✗".red() };
         let q = (r.quality_score * r.quality_max as f32) as u32;
-        println!("  {}  {:<12} {:>5.1}s  ({}/{} quality, {:.0} tok/s)",
-            status, r.name, r.wall_secs, q, r.quality_max, r.tok_per_sec());
-        for (name, passed) in &r.quality_details {
-            let mark = if *passed { "✓".green() } else { "✗".red() };
-            print!("     {} {}", mark, name);
+        println!("  {}  {:<12} {:>5.1}s   {}   {} tok/s",
+            status,
+            r.name.bold(),
+            r.wall_secs,
+            quality_colored(r.quality_score, q, r.quality_max),
+            tps_colored(r.tok_per_sec()),
+        );
+        if !r.quality_details.is_empty() {
+            println!("     {}", quality_grid(&r.quality_details));
         }
-        println!();
     }
 
+    // ── Summary block ──
     let refs: Vec<&BenchResult> = results.iter().collect();
     let (overall, tier, tier_label) = compute_tier(&refs);
 
@@ -1994,20 +2074,23 @@ fn print_bench_results(model: &str, results: &[BenchResult], label: Option<&str>
         heavy.iter().map(|r| r.tok_per_sec()).sum::<f64>() / heavy.len() as f64
     };
 
-    println!();
-    println!("  {}", "── Summary ──────────────────────────────────".dimmed());
-    println!("  Model:            {}", model);
-    println!("  Overall score:    {:.2}", overall);
-    println!("  Avg tok/s:        {:.0}", avg_tps);
-    println!("  Recommended:      {}", tier_label);
-    if tier >= 2 {
-        println!("  Best for:         code_generation, code_edit");
-    } else if tier == 1 {
-        println!("  Best for:         general, structured_output");
-    }
-    println!();
+    let tasks = best_for_tasks(&refs);
 
-    // score is computed inline
+    println!();
+    println!("  {}", "── Summary ─────────────────────────────────────".dimmed());
+    println!("  {}  {}", "Model:".dimmed(), model.bold());
+    println!("  {}  {}", "Score:".dimmed(), overall_badge(overall));
+    println!("  {}  {} tok/s", "Speed:".dimmed(), tps_colored(avg_tps));
+
+    let tier_text = match tier {
+        3 => tier_label.green().bold().to_string(),
+        2 => tier_label.cyan().bold().to_string(),
+        1 => tier_label.yellow().to_string(),
+        _ => tier_label.red().to_string(),
+    };
+    println!("  {}   {}", "Tier:".dimmed(), tier_text);
+    println!("  {}  {}", "Best for:".dimmed(), tasks.join(", ").cyan());
+    println!();
 }
 
 /// `hex inference bench` — benchmark a model with hex-specific prompts (ADR-2604131238).

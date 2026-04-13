@@ -522,6 +522,8 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         // Daemon worker task claiming (must be before /{task_id} to avoid shadowing)
         .route("/api/hexflo/tasks/claim", get(swarms::claim_task))
+        // Role-based task polling for distributed workers
+        .route("/api/hexflo/tasks/poll", get(swarms::poll_task))
         // Convenience route for MCP tools (no swarm ID needed — task ID is globally unique)
         .route("/api/hexflo/tasks/{task_id}", get(swarms::get_task_by_id)
             .patch(swarms::update_task_by_id)

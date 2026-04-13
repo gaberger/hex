@@ -507,6 +507,73 @@ pub async fn claim_task(
     })).into_response())
 }
 
+/// GET /api/hexflo/tasks/poll — poll for the next unassigned task matching an agent's role.
+///
+/// Query params: `agent_id` (required), `role` (optional — filters tasks whose title
+/// contains `[role]` prefix or the role as a substring).
+/// Returns the claimed task JSON (200) or 204 No Content when nothing is available.
+/// On CAS conflict (another agent grabbed it first), retries once then returns 204.
+#[derive(Deserialize)]
+pub struct PollQuery {
+    agent_id: String,
+    role: Option<String>,
+}
+
+pub async fn poll_task(
+    State(state): State<SharedState>,
+    Query(q): Query<PollQuery>,
+) -> Result<axum::response::Response, (StatusCode, Json<Value>)> {
+    use axum::response::IntoResponse;
+    let port = state_port(&state)?;
+
+    // Fetch all tasks across all swarms
+    let tasks = port.swarm_task_list(None).await.map_err(state_err)?;
+
+    // Filter to pending + unassigned, optionally matching role
+    let candidates: Vec<_> = tasks
+        .into_iter()
+        .filter(|t| {
+            let is_pending = t.status.is_empty() || t.status == "pending";
+            let is_unassigned = t.agent_id.is_empty();
+            if !is_pending || !is_unassigned {
+                return false;
+            }
+            // Role filter: match "[role]" bracket prefix or role as substring in title
+            match &q.role {
+                Some(role) if !role.is_empty() => {
+                    let bracket_tag = format!("[{}]", role);
+                    t.title.contains(&bracket_tag)
+                        || t.title.to_lowercase().contains(&role.to_lowercase())
+                }
+                _ => true,
+            }
+        })
+        .collect();
+
+    // Try to claim the first matching candidate; on CAS conflict try the next
+    for task in candidates {
+        match port.swarm_task_assign(&task.id, &q.agent_id, None).await {
+            Ok(()) => {
+                return Ok(Json(json!({
+                    "id": task.id,
+                    "title": task.title,
+                    "swarmId": task.swarm_id,
+                    "dependsOn": task.depends_on,
+                }))
+                .into_response());
+            }
+            Err(StateError::Conflict(_)) => {
+                // Another agent grabbed it — try next candidate
+                continue;
+            }
+            Err(e) => return Err(state_err(e)),
+        }
+    }
+
+    // Nothing available (or all candidates were grabbed by other agents)
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
 /// GET /api/agents/:id/swarm — get the swarm owned by this agent (if any)
 pub async fn get_agent_swarm(
     State(state): State<SharedState>,
