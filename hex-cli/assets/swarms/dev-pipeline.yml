@@ -21,7 +21,7 @@ topology: hex-pipeline
 
 # ── Inference Defaults ─────────────────────────────────────────────────
 # Applied to all agents unless overridden per-agent.
-# Maps to hex-nexus POST /api/inference/complete
+# Maps to hex nexus POST /api/inference/complete
 
 inference_defaults:
   provider: openrouter

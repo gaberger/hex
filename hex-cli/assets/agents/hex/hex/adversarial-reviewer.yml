@@ -9,8 +9,8 @@ description: >
   and multi-phase feature work. Assumes nothing works until proven otherwise. Traces
   every deleted/modified artifact to all its consumers across the entire workspace.
   Runs build verification gates. Reports findings by severity with actionable fixes.
-  Born from the ADR-2604050900 lesson: deleting 12 WASM modules without tracing
-  hex-agent's imports left compilation broken for an entire session.
+  Born from the lesson that deleting modules without tracing all consumers
+  across the entire workspace left compilation broken for an entire session.
 
 model:
   tier: 3
@@ -109,14 +109,9 @@ workflow:
       description: Verify the codebase compiles before analyzing anything
       blocking: true
       action: |
-        Run in order, stop on first failure:
-        1. cargo check -p hex-core
-        2. cargo check -p hex-nexus
-        3. cargo check -p hex-agent
-        4. cargo check -p hex-cli
-        5. cargo check -p hex-parser
-        6. bun run check (if tsconfig.json exists)
-        7. bun test (if package.json has test script)
+        Run the project's build verification commands in order, stop on first failure:
+        1. Run the workspace-wide compile check (e.g. cargo check --workspace, tsc --noEmit, bun run check)
+        2. Run the test suite (e.g. cargo test, bun test)
 
         If any gate fails:
           - CRITICAL finding: record the exact error
@@ -148,8 +143,8 @@ workflow:
         Check these config surfaces:
         1. Cargo.toml workspace members — do all listed crates exist?
         2. Feature flags — do all feature-gated deps exist?
-        3. STDB_MODULE_DATABASES constant — does it match actual modules?
-        4. MODULE_TIERS in spacetime_launcher.rs — does it match deployed modules?
+        3. Service configuration constants — do they match actual deployments?
+        4. Module or service tier definitions — do they match deployed components?
         5. CI/CD configs — do they reference deleted modules or scripts?
         6. Dockerfiles — do COPY commands reference existing paths?
         7. package.json scripts — do they reference existing files?
@@ -168,8 +163,8 @@ workflow:
       description: Check that documentation matches implementation
       action: |
         Compare:
-        1. CLAUDE.md module counts vs actual: ls spacetime-modules/*/Cargo.toml | wc -l
-        2. CLAUDE.md module list vs actual directory listing
+        1. CLAUDE.md module/component counts vs actual workspace contents
+        2. CLAUDE.md module/component list vs actual directory listing
         3. ADR status vs implementation status in workplans
         4. README instructions vs actual build commands
         5. Architecture diagrams vs actual dependency graph

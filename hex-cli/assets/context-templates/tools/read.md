@@ -26,12 +26,11 @@ For files over 2000 lines, use `offset` and `limit` to read only the relevant se
 Common files you'll read during hex development:
 
 ```
-hex-cli/assets/context-templates/   # Prompt templates (this system)
-hex-cli/assets/agents/hex/hex/      # Agent YAML definitions
-hex-cli/assets/skills/              # Skill definitions
-hex-agent/src/ports/                # Port traits
-hex-agent/src/adapters/secondary/   # Secondary adapters (prompt, tools)
-hex-nexus/src/orchestration/        # Workplan executor, agent manager
+.claude/agents/                     # Agent YAML definitions
+.claude/skills/                     # Skill definitions
+src/core/ports/                     # Port interfaces / traits
+src/core/domain/                    # Domain types
+src/adapters/                       # Adapter implementations
 docs/adrs/                          # Architecture Decision Records
 docs/workplans/                     # Feature workplans
 ```

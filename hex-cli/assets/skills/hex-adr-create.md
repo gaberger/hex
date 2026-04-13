@@ -135,8 +135,8 @@ Before marking complete:
 
 | Anti-Pattern | Problem | Fix |
 |-------------|---------|-----|
-| Module-scoped impact analysis | Only checked spacetime-modules/ and hex-nexus/, missed hex-agent | Always grep the ENTIRE workspace |
-| Missing validation gates | Workplan had "delete X" but no "verify compile" between phases | Every phase must end with cargo check --workspace |
+| Module-scoped impact analysis | Only checked a subset of workspace crates, missed consumers in other crates | Always grep the ENTIRE workspace |
+| Missing validation gates | Workplan had "delete X" but no "verify compile" between phases | Every phase must end with a workspace-wide build check |
 | Documentation-only analysis | Listed docs mentioning a module but not code importing it | Code consumers are CRITICAL; docs are MEDIUM |
 
 ## Multi-Agent Safety

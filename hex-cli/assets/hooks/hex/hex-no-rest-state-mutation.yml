@@ -6,7 +6,7 @@ description: >
 trigger: PostToolUse
 matcher: "Write|Edit|MultiEdit"
 condition: >
-  File is under hex-nexus/assets/src/ AND contains fetch() calls to
+  File is a dashboard frontend source file AND contains fetch() calls to
   /api/projects/register, /api/projects/unregister, or any POST/DELETE
   to /api/projects that isn't /init, /archive, or /delete (filesystem ops).
 action: warn

@@ -19,13 +19,13 @@ If this is an existing file, you MUST use the Read tool first to read the file's
 
 | Content | Directory |
 |---|---|
-| Domain types, value objects | `hex-core/src/types/` or `domain/` |
-| Port traits (interfaces) | `hex-agent/src/ports/` |
-| Secondary adapters | `hex-agent/src/adapters/secondary/` |
-| Primary adapters | `hex-agent/src/adapters/primary/` |
-| Agent YAML definitions | `hex-cli/assets/agents/hex/hex/` |
-| Skill definitions | `hex-cli/assets/skills/` |
-| Context templates | `hex-cli/assets/context-templates/` |
+| Domain types, value objects | `src/core/domain/` |
+| Port interfaces | `src/core/ports/` |
+| Secondary adapters | `src/adapters/secondary/` |
+| Primary adapters | `src/adapters/primary/` |
+| Agent YAML definitions | `.claude/agents/` |
+| Skill definitions | `.claude/skills/` |
+| Context templates | `.claude/context-templates/` |
 | ADRs | `docs/adrs/` |
 | Workplans | `docs/workplans/` |
 | Specs | `docs/specs/` |

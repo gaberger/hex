@@ -22,7 +22,7 @@ Files & Functions:
 
 Workflow:
   Ordered commands to reproduce the current state:
-  1. cargo build -p hex-cli
+  1. <project build command>
   2. hex analyze .
 
 Errors & Corrections:

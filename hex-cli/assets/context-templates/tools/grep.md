@@ -9,21 +9,18 @@ For open-ended searches requiring multiple rounds, use the Agent tool.
 ### Finding architectural elements
 
 ```
-# Find a port trait definition
-pattern: "pub trait PromptPort"
-type: "rust"
-
-# Find all impl blocks for a port
-pattern: "impl.*PromptPort"
-type: "rust"
+# Find a port interface definition
+pattern: "pub trait|export interface"
+glob: "src/core/ports/*"
+output_mode: "content"
 
 # Find cross-adapter imports (architecture violation check)
-pattern: "use.*adapters::(primary|secondary)"
-type: "rust"
+pattern: "import.*adapters/(primary|secondary)"
+output_mode: "content"
 
-# Find all pub fn in a port file
-pattern: "pub (async )?fn "
-glob: "hex-agent/src/ports/*.rs"
+# Find all public functions in port files
+pattern: "pub (async )?fn |export (async )?function"
+glob: "src/core/ports/*"
 output_mode: "content"
 ```
 
@@ -32,25 +29,19 @@ output_mode: "content"
 ```
 # Find template variable usages
 pattern: "\\{\\{[a-z_]+\\}\\}"
-glob: "hex-cli/assets/context-templates/**/*.md"
+glob: "**/*.md"
 output_mode: "content"
 
 # Find a specific ADR reference in code
 pattern: "ADR-[0-9]+"
-type: "rust"
 output_mode: "content"
 ```
 
-### SpacetimeDB and HexFlo
+### HexFlo coordination
 
 ```
-# Find all reducer calls
-pattern: "ctx\\.db\\."
-glob: "spacetime-modules/**/*.rs"
-
 # Find task state references
 pattern: "HexFloTask|hexflo_task"
-type: "rust"
 output_mode: "files_with_matches"
 ```
 

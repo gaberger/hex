@@ -197,7 +197,7 @@ The analyzer excludes these by default:
 - `node_modules`, `dist`, `examples`
 - `*.test.ts`, `*.spec.ts`, `*_test.go`, `*.test.rs`
 - `/tests/`
-- `**/target/**` (Rust/Cargo build artifacts)
+- `**/target/**` (build artifacts)
 
 ## Output
 

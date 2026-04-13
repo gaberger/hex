@@ -346,7 +346,7 @@
       "name": "hex_agent_connect",
       "category": "agent",
       "cli": "hex agent connect",
-      "description": "Register this Claude Code session (or any AI agent) with hex-nexus. Returns an agentId used for heartbeats, task assignment, and fleet tracking.",
+      "description": "Register this Claude Code session (or any AI agent) with the hex nexus daemon. Returns an agentId used for heartbeats, task assignment, and fleet tracking.",
       "route": { "method": "POST", "path": "/api/agents/connect" },
       "inputSchema": {
         "type": "object",
@@ -364,7 +364,7 @@
       "name": "hex_agent_disconnect",
       "category": "agent",
       "cli": "hex agent disconnect <agent-id>",
-      "description": "Deregister an agent from hex-nexus. Releases any assigned tasks back to the pool.",
+      "description": "Deregister an agent from the hex nexus daemon. Releases any assigned tasks back to the pool.",
       "route": { "method": "POST", "path": "/api/agents/disconnect" },
       "inputSchema": {
         "type": "object",
@@ -378,7 +378,7 @@
       "name": "hex_agent_list",
       "category": "agent",
       "cli": "hex agent list",
-      "description": "List all agents currently registered with hex-nexus (local + remote) with heartbeat status and assigned tasks.",
+      "description": "List all agents currently registered with the hex nexus daemon (local + remote) with heartbeat status and assigned tasks.",
       "route": { "method": "GET", "path": "/api/agents" },
       "inputSchema": {
         "type": "object",
@@ -390,7 +390,7 @@
       "name": "hex_nexus_status",
       "category": "nexus",
       "cli": "hex nexus status",
-      "description": "Check hex-nexus daemon health: uptime, SpacetimeDB connection, active subscriptions, registered projects.",
+      "description": "Check hex nexus daemon health: uptime, SpacetimeDB connection, active subscriptions, registered projects.",
       "route": { "method": "GET", "path": "/api/version" },
       "inputSchema": {
         "type": "object",
@@ -402,7 +402,7 @@
       "name": "hex_nexus_start",
       "category": "nexus",
       "cli": "hex nexus start",
-      "description": "Start the hex-nexus daemon. Must be run from terminal, not from within MCP. Dashboard available at http://localhost:5555.",
+      "description": "Start the hex nexus daemon. Must be run from terminal, not from within MCP. Dashboard available at http://localhost:5555.",
       "route": null,
       "inputSchema": {
         "type": "object",

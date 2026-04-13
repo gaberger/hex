@@ -101,7 +101,7 @@ checks:
         - New adapter directory created in src/adapters/
         - Changes to composition-root.ts wiring
         - New external dependency added to package.json or Cargo.toml
-        - New SpacetimeDB module created in spacetime-modules/
+        - New service module or WASM module created
         - Changes to the build system (scripts/, Makefile, CI config)
 
       For each trigger:

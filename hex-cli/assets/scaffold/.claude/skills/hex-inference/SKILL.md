@@ -187,13 +187,13 @@ When using a local model with a smaller context window:
 
 ## Inference Routing
 
-hex-nexus routes inference requests based on provider priority:
+The hex nexus daemon routes inference requests based on provider priority:
 
 1. **Registered providers** (via `hex inference add`) — checked first
 2. **Environment variables** (`HEX_OLLAMA_HOST`, etc.) — fallback
 3. **Anthropic API** (`ANTHROPIC_API_KEY`) — final fallback
 
-When SpacetimeDB is running, the `inference-gateway` WASM module handles routing. The module stores request/response state; hex-nexus performs the actual HTTP calls (WASM can't make network requests).
+When SpacetimeDB is running, the `inference-gateway` WASM module handles routing. The module stores request/response state; the hex nexus daemon performs the actual HTTP calls (WASM can't make network requests).
 
 ## Troubleshooting
 

@@ -3,7 +3,7 @@
  * hex-agent session registration hook
  *
  * Registers the Claude Code session as a hex-agent with SpacetimeDB
- * via the hex-nexus REST API on SessionStart, and deregisters on SessionEnd.
+ * via the hex nexus REST API on SessionStart, and deregisters on SessionEnd.
  *
  * Usage (from Claude Code hooks):
  *   node agent-register.cjs register    — SessionStart

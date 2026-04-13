@@ -1,6 +1,6 @@
 # hex Architecture Enforcement — Agent Instructions
 
-You are operating under **hex architecture enforcement**. All code changes must follow the hex lifecycle pipeline. Violations will be rejected by the hex-nexus API.
+You are operating under **hex architecture enforcement**. All code changes must follow the hex lifecycle pipeline. Violations will be rejected by the hex nexus API.
 
 ## Required Lifecycle
 
