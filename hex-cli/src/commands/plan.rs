@@ -357,10 +357,21 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
     if in_claude {
         println!("  {} Claude Code session — executing with ADR-005 gates", "\u{2713}".green());
         println!();
-        // Fix OLLAMA_HOST if needed for any local model fallback
+        // Resolve Ollama host: prefer inference-servers.json, then env, then bazzite default
         let host = std::env::var("OLLAMA_HOST").unwrap_or_default();
-        if host == "0.0.0.0" || host.starts_with("0.0.0.0:") {
-            std::env::set_var("OLLAMA_HOST", "http://localhost:11434");
+        if host.is_empty() || host == "0.0.0.0" || host.starts_with("0.0.0.0:") {
+            // Read from inference config
+            let cfg_host = dirs::home_dir()
+                .map(|h| h.join(".hex/inference-servers.json"))
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| v["endpoints"].as_array().cloned())
+                .and_then(|eps| eps.iter()
+                    .find(|e| e["provider"].as_str() == Some("ollama"))
+                    .and_then(|e| e["url"].as_str().map(String::from)));
+            let resolved = cfg_host.unwrap_or_else(|| "http://bazzite:11434".to_string());
+            std::env::set_var("OLLAMA_HOST", &resolved);
+            println!("  Ollama: {}", resolved);
         }
         return execute_plan_local(&path, &wp).await;
     }
