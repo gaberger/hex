@@ -65,7 +65,7 @@ struct Cli {
     verbose: bool,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -355,7 +355,15 @@ async fn main() -> anyhow::Result<()> {
         .with_target(false)
         .init();
 
-    match cli.command {
+    let command = match cli.command {
+        Some(cmd) => cmd,
+        None => {
+            // hex with no args → pulse (Layer 1: one-glance status)
+            return commands::status::run().await;
+        }
+    };
+
+    match command {
         Commands::Nexus { action } => commands::nexus::run(action).await,
         Commands::Agent { action } => commands::agent::run(action).await,
         Commands::Secrets { action } => commands::secrets::run(action).await,
