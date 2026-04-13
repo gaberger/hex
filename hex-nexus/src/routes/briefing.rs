@@ -81,6 +81,7 @@ pub async fn get_briefing(
     });
 
     // Convert memory entries to structured events, applying `since` filter.
+    // Events stored by workplan_executor/coordination use: severity, category, title, body, created_at
     let briefing_events: Vec<(String, Value)> = briefing_memory
         .into_iter()
         .filter_map(|(key, value)| {
@@ -88,10 +89,11 @@ pub async fn get_briefing(
                 json!({ "raw": value })
             });
 
-            // Apply since filter: check for a timestamp field in the event.
+            // Apply since filter: check created_at (primary) or timestamp (legacy).
             if let Some(threshold) = &since_threshold {
                 let event_ts = parsed
-                    .get("timestamp")
+                    .get("created_at")
+                    .or_else(|| parsed.get("timestamp"))
                     .and_then(|v| v.as_str())
                     .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                     .map(|dt| dt.with_timezone(&chrono::Utc));
@@ -108,12 +110,33 @@ pub async fn get_briefing(
                 .unwrap_or("*")
                 .to_string();
 
+            // Map stored fields to a CLI-friendly format:
+            // CLI BriefEvent expects: id, title, status, agent_id
+            let severity = parsed.get("severity").and_then(|v| v.as_str()).unwrap_or("nominal");
+            let title = parsed
+                .get("title")
+                .and_then(|v| v.as_str())
+                .or_else(|| parsed.get("summary").and_then(|v| v.as_str()))
+                .unwrap_or("event")
+                .to_string();
+
+            // Map severity to a status the CLI can render
+            let status = match severity {
+                "critical" => "critical",
+                "decision" => "decision",
+                "notable" => "completed",
+                _ => "completed",
+            };
+
             Some((project_id, json!({
-                "key": key,
-                "type": parsed.get("type").unwrap_or(&json!("unknown")),
-                "summary": parsed.get("summary").unwrap_or(&json!(null)),
-                "timestamp": parsed.get("timestamp").unwrap_or(&json!(null)),
-                "data": parsed,
+                "id": key,
+                "title": title,
+                "status": status,
+                "agent_id": "",
+                "severity": severity,
+                "category": parsed.get("category").unwrap_or(&json!("general")),
+                "body": parsed.get("body").unwrap_or(&json!("")),
+                "created_at": parsed.get("created_at").unwrap_or(&json!("")),
             })))
         })
         .collect();
