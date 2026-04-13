@@ -726,6 +726,35 @@ impl WorkplanExecutor {
                                     gate = %gate.command,
                                     "Phase gate FAILED"
                                 );
+
+                                // ADR-2604131500 P2 P1.2: Detect regressions and decay trust
+                                let project_dir = std::env::current_dir()
+                                    .map(|p| p.to_string_lossy().to_string())
+                                    .unwrap_or_else(|_| ".".to_string());
+                                let reports = crate::orchestration::regression::detect_regression(
+                                    &project_dir,
+                                    &gate.command,
+                                    3600,
+                                )
+                                .await;
+                                let wp_project_id = if !workplan.id.is_empty() {
+                                    workplan.id.clone()
+                                } else {
+                                    execution_id.clone()
+                                };
+                                for report in &reports {
+                                    match crate::orchestration::regression::apply_trust_decay(
+                                        state_port.as_ref(),
+                                        &wp_project_id,
+                                        report,
+                                    )
+                                    .await
+                                    {
+                                        Ok(msg) => tracing::info!(msg = %msg, "Trust decay applied"),
+                                        Err(e) => tracing::warn!(error = %e, "Trust decay failed"),
+                                    }
+                                }
+
                                 if gate.blocking {
                                 Self::mark_status(
                                     state_port.as_ref(),

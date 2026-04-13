@@ -135,6 +135,157 @@ pub async fn detect_regression(
     reports
 }
 
+/// Trust level ordering for decay logic.
+const TRUST_LEVELS: &[&str] = &["observe", "suggest", "act", "silent"];
+
+/// Drop a trust level by one step. Returns None if already at lowest.
+fn decay_level(current: &str) -> Option<&'static str> {
+    let idx = TRUST_LEVELS.iter().position(|&l| l == current)?;
+    if idx == 0 {
+        None // already at "observe", can't decay further
+    } else {
+        Some(TRUST_LEVELS[idx - 1])
+    }
+}
+
+/// ADR-2604131500 P2 P1.2: Apply trust decay for a regression report.
+///
+/// Reads the current trust level for the report's scope, drops it one level,
+/// stores the updated trust + history entry, and logs a briefing event.
+/// Respects pinned=true — pinned scopes never auto-decay.
+pub async fn apply_trust_decay(
+    state_port: &dyn crate::ports::state::IStatePort,
+    project_id: &str,
+    report: &RegressionReport,
+) -> Result<String, String> {
+    let trust_key = format!("trust:{}:{}", project_id, report.scope);
+
+    // Read current trust entry
+    let current_entry = state_port
+        .hexflo_memory_retrieve(&trust_key)
+        .await
+        .map_err(|e| format!("Failed to read trust: {}", e))?;
+
+    let (old_level, is_pinned) = match &current_entry {
+        Some(val) => {
+            let parsed: serde_json::Value =
+                serde_json::from_str(val).unwrap_or(serde_json::json!({}));
+            let level = parsed["level"].as_str().unwrap_or("suggest").to_string();
+            let pinned = parsed["pinned"].as_bool().unwrap_or(false);
+            (level, pinned)
+        }
+        None => ("suggest".to_string(), false),
+    };
+
+    // Respect pinned scopes
+    if is_pinned {
+        tracing::info!(
+            scope = %report.scope,
+            "Trust decay skipped — scope is pinned"
+        );
+        return Ok(format!(
+            "Skipped: scope '{}' is pinned (current: {})",
+            report.scope, old_level
+        ));
+    }
+
+    // Decay one level
+    let new_level = match decay_level(&old_level) {
+        Some(l) => l,
+        None => {
+            return Ok(format!(
+                "Already at lowest trust for '{}' (observe)",
+                report.scope
+            ));
+        }
+    };
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Store updated trust
+    let trust_value = serde_json::json!({
+        "project_id": project_id,
+        "scope": report.scope,
+        "level": new_level,
+        "pinned": false,
+        "updated_at": now,
+        "last_decayed_at": now,
+        "decay_reason": format!(
+            "Regression: {} failed after agent commit {}",
+            report.failing_command,
+            &report.commit_hash[..8.min(report.commit_hash.len())]
+        ),
+    })
+    .to_string();
+
+    state_port
+        .hexflo_memory_store(&trust_key, &trust_value, "global")
+        .await
+        .map_err(|e| format!("Failed to store decayed trust: {}", e))?;
+
+    // Store history entry
+    let history_key = format!("trust-history:{}:{}", project_id, now);
+    let history_value = serde_json::json!({
+        "project_id": project_id,
+        "scope": report.scope,
+        "old_level": old_level,
+        "new_level": new_level,
+        "reason": format!("decay (regression in {})", report.commit_hash),
+        "agent_id": report.agent_id,
+        "changed_at": now,
+    })
+    .to_string();
+
+    let _ = state_port
+        .hexflo_memory_store(&history_key, &history_value, "global")
+        .await;
+
+    // Log briefing event
+    let briefing_key = format!("briefing:{}", now);
+    let briefing_value = serde_json::json!({
+        "severity": "decision",
+        "category": "architecture",
+        "title": format!("Trust decayed: {} → {}", report.scope, new_level),
+        "body": format!(
+            "Agent {} commit {} caused {} to fail. Trust for '{}' dropped from {} to {}. \
+             Use `hex trust elevate {} {} {}` to restore.",
+            report.agent_id,
+            &report.commit_hash[..8.min(report.commit_hash.len())],
+            report.failing_command,
+            report.scope,
+            old_level,
+            new_level,
+            project_id,
+            report.scope,
+            old_level,
+        ),
+        "created_at": now,
+    })
+    .to_string();
+
+    let _ = state_port
+        .hexflo_memory_store(&briefing_key, &briefing_value, "global")
+        .await;
+
+    tracing::warn!(
+        scope = %report.scope,
+        old = %old_level,
+        new = %new_level,
+        agent = %report.agent_id,
+        commit = %report.commit_hash,
+        "Trust decayed due to regression"
+    );
+
+    Ok(format!(
+        "Trust for '{}' decayed: {} → {} (agent: {}, commit: {})",
+        report.scope,
+        old_level,
+        new_level,
+        report.agent_id,
+        &report.commit_hash[..8.min(report.commit_hash.len())]
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,6 +321,15 @@ mod tests {
         // fallback
         assert_eq!(map_file_to_scope("src/main.rs"), "adapters/secondary");
         assert_eq!(map_file_to_scope("README.md"), "adapters/secondary");
+    }
+
+    #[test]
+    fn test_decay_level() {
+        assert_eq!(decay_level("silent"), Some("act"));
+        assert_eq!(decay_level("act"), Some("suggest"));
+        assert_eq!(decay_level("suggest"), Some("observe"));
+        assert_eq!(decay_level("observe"), None);
+        assert_eq!(decay_level("unknown"), None);
     }
 
     #[test]
