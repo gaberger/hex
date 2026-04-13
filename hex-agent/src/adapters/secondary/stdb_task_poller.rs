@@ -176,8 +176,8 @@ impl StdbTaskPoller {
             let completion = TaskCompletionBody {
                 task_id: claimed.task_id.clone(),
                 status: if success { TaskStatus::Completed } else { TaskStatus::Failed },
-                result: Some(result.to_string()),
-                error: None,
+                result: if success { Some(result.to_string()) } else { None },
+                error: if success { None } else { Some(result.to_string()) },
                 agent_id: None,
             };
             let result_json = serde_json::to_string(&completion).unwrap_or_default();

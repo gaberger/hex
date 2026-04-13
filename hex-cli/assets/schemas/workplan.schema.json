@@ -150,6 +150,11 @@
                   "type": "string",
                   "enum": ["hex-coder", "planner", "integrator", "reviewer"],
                   "description": "Agent role to execute this task"
+                },
+                "strategy_hint": {
+                  "type": "string",
+                  "enum": ["scaffold", "transform", "script", "codegen", "inference"],
+                  "description": "Execution strategy hint (ADR-2604131630). scaffold=template codegen, transform=AST transform, script=run command, codegen=code gen (template first, inference fallback), inference=requires LLM reasoning. Absent=auto-classify from task title."
                 }
               }
             }

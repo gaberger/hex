@@ -79,6 +79,16 @@ pub struct WorkplanTask {
     /// Absent = documentation-only (backward compatible).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub done_command: Option<String>,
+    /// Execution strategy hint (ADR-2604131630: code-first execution).
+    /// Guides the executor to prefer code-first strategies before inference:
+    ///   scaffold  — template codegen (ports, adapters, modules)
+    ///   transform — AST transform (rename, move, extract via tree-sitter)
+    ///   script    — run a command (test, build, lint, format)
+    ///   codegen   — code generation (try template first, fall back to inference)
+    ///   inference — explicitly requires LLM reasoning
+    /// When absent, the executor classifies based on task title heuristics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_hint: Option<String>,
 }
 
 /// Current status of a workplan task.

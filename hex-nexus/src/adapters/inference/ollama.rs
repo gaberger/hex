@@ -52,6 +52,12 @@ const DEFAULT_TIMEOUT_SECS: u64 = 120;
 /// from letting the HTTP reader buffer the whole response in memory.
 const STREAM_CHANNEL_CAPACITY: usize = 64;
 
+/// Maximum retry attempts for transient failures (transport errors, 5xx).
+const MAX_RETRIES: u32 = 3;
+
+/// Base delay for exponential backoff (1s, 4s, 16s).
+const RETRY_BASE_DELAY_MS: u64 = 1000;
+
 /// Adapter implementing [`IInferencePort`] against an Ollama HTTP server.
 pub struct OllamaInferenceAdapter {
     base_url: String,
@@ -212,71 +218,121 @@ impl IInferencePort for OllamaInferenceAdapter {
     ) -> Result<InferenceResponse, InferenceError> {
         let start = std::time::Instant::now();
         let url = self.endpoint("/api/generate");
-        let body = GenerateRequest {
-            model: &request.model,
-            prompt: collapse_prompt(&request),
-            system: if request.system_prompt.is_empty() {
-                None
-            } else {
-                Some(request.system_prompt.as_str())
-            },
-            stream: false,
-            grammar: request.grammar.as_deref(),
+        let prompt = collapse_prompt(&request);
+        let system: Option<String> = if request.system_prompt.is_empty() {
+            None
+        } else {
+            Some(request.system_prompt.clone())
         };
+        let grammar_owned = request.grammar.clone();
 
-        let resp = self
-            .client
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(map_transport_error)?;
+        // Retry loop: transport errors and 5xx are transient; 404/4xx are permanent.
+        let mut last_err: Option<InferenceError> = None;
+        for attempt in 0..MAX_RETRIES {
+            if attempt > 0 {
+                let delay = RETRY_BASE_DELAY_MS * 4u64.pow(attempt - 1); // 1s, 4s, 16s
+                tracing::warn!(
+                    attempt = attempt + 1,
+                    delay_ms = delay,
+                    model = %request.model,
+                    "ollama: retrying after transient failure"
+                );
+                tokio::time::sleep(Duration::from_millis(delay)).await;
+            }
 
-        let status = resp.status();
-        if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(InferenceError::UnknownProvider(format!(
-                "ollama 404 for model {}",
-                request.model
-            )));
-        }
-        if status.is_server_error() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(InferenceError::ApiError {
-                status: status.as_u16(),
-                body,
+            let body = GenerateRequest {
+                model: &request.model,
+                prompt: prompt.clone(),
+                system: system.as_deref(),
+                stream: false,
+                grammar: grammar_owned.as_deref(),
+            };
+
+            let resp = match self.client.post(&url).json(&body).send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    let err = map_transport_error(e);
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        error = %err,
+                        "ollama: transport error"
+                    );
+                    last_err = Some(err);
+                    continue; // retry
+                }
+            };
+
+            let status = resp.status();
+
+            // 404 = model not found — permanent, no retry
+            if status == reqwest::StatusCode::NOT_FOUND {
+                return Err(InferenceError::UnknownProvider(format!(
+                    "ollama 404 for model {}",
+                    request.model
+                )));
+            }
+
+            // 5xx = server error — transient, retry
+            if status.is_server_error() {
+                let body_text = resp.text().await.unwrap_or_default();
+                let err = InferenceError::ApiError {
+                    status: status.as_u16(),
+                    body: format!(
+                        "ollama {} (attempt {}/{}): {}",
+                        status.as_u16(),
+                        attempt + 1,
+                        MAX_RETRIES,
+                        body_text,
+                    ),
+                };
+                tracing::warn!(attempt = attempt + 1, "ollama: server error {}", status.as_u16());
+                last_err = Some(err);
+                continue; // retry
+            }
+
+            // 4xx (non-404) = client error — permanent, no retry
+            if !status.is_success() {
+                let body_text = resp.text().await.unwrap_or_default();
+                return Err(InferenceError::ApiError {
+                    status: status.as_u16(),
+                    body: body_text,
+                });
+            }
+
+            // Success — parse response (no retry on parse failure; server already processed it)
+            let parsed: GenerateResponse =
+                resp.json().await.map_err(|e| InferenceError::ApiError {
+                    status: 0,
+                    body: format!("ollama response decode failed: {e}"),
+                })?;
+
+            let stop_reason = match parsed.done_reason.as_deref() {
+                Some("stop") | None => StopReason::EndTurn,
+                Some("length") => StopReason::MaxTokens,
+                Some(_) => StopReason::EndTurn,
+            };
+
+            return Ok(InferenceResponse {
+                content: vec![ContentBlock::Text {
+                    text: parsed.response,
+                }],
+                model_used: request.model.clone(),
+                stop_reason,
+                input_tokens: parsed.prompt_eval_count.unwrap_or(0),
+                output_tokens: parsed.eval_count.unwrap_or(0),
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                latency_ms: start.elapsed().as_millis() as u64,
             });
         }
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(InferenceError::ApiError {
-                status: status.as_u16(),
-                body,
-            });
-        }
 
-        let parsed: GenerateResponse = resp.json().await.map_err(|e| InferenceError::ApiError {
-            status: 0,
-            body: format!("ollama response decode failed: {e}"),
-        })?;
-
-        let stop_reason = match parsed.done_reason.as_deref() {
-            Some("stop") | None => StopReason::EndTurn,
-            Some("length") => StopReason::MaxTokens,
-            Some(_) => StopReason::EndTurn,
-        };
-
-        Ok(InferenceResponse {
-            content: vec![ContentBlock::Text {
-                text: parsed.response,
-            }],
-            model_used: request.model.clone(),
-            stop_reason,
-            input_tokens: parsed.prompt_eval_count.unwrap_or(0),
-            output_tokens: parsed.eval_count.unwrap_or(0),
-            cache_read_tokens: 0,
-            cache_write_tokens: 0,
-            latency_ms: start.elapsed().as_millis() as u64,
-        })
+        // All retries exhausted
+        Err(last_err.unwrap_or_else(|| {
+            InferenceError::ProviderUnavailable(format!(
+                "ollama: all {} attempts failed for model {}",
+                MAX_RETRIES, request.model,
+            ))
+        }))
     }
 
     async fn stream(

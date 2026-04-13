@@ -1211,7 +1211,16 @@ impl WorkplanExecutor {
                                     role: None,
                                 }),
                                 "Failed" => {
-                                    break Err(format!("inference task {} failed: {}", queue_id, task.error));
+                                    let reason = if task.error.is_empty() {
+                                        if task.result.is_empty() {
+                                            "(no error detail captured — check inference provider logs)".to_string()
+                                        } else {
+                                            task.result.clone()
+                                        }
+                                    } else {
+                                        task.error.clone()
+                                    };
+                                    break Err(format!("inference task {} failed: {}", queue_id, reason));
                                 }
                                 _ => {} // Pending or InProgress — keep waiting
                             },
