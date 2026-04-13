@@ -199,8 +199,11 @@ enum Commands {
         #[command(subcommand)]
         action: commands::enforce::EnforceAction,
     },
-    /// Inspect embedded assets baked into the binary (ADR-2603221522)
-    Assets,
+    /// Inspect and sync embedded assets baked into the binary (ADR-2603221522)
+    Assets {
+        #[command(subcommand)]
+        action: commands::assets_cmd::AssetsAction,
+    },
     /// Git integration (status, log, diff, branches)
     Git {
         #[command(subcommand)]
@@ -326,7 +329,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Skill { action } => commands::skill::run(action).await,
         Commands::Enforce { action } => commands::enforce::run(action).await,
         Commands::Git { action } => commands::git_cmd::run(action).await,
-        Commands::Assets => commands::assets_cmd::list().await,
+        Commands::Assets { action } => commands::assets_cmd::run(action).await,
         Commands::Status => status::run().await,
         Commands::Opencode { action } => commands::opencode::run(action),
         Commands::Dev { action } => commands::dev::run(action).await,
