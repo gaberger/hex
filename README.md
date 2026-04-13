@@ -423,7 +423,9 @@ src/
 
 Every import boundary is validated by `hex analyze .`. An agent working on `adapters/` physically cannot import from another adapter — the architecture enforcement blocks it at commit time, not in code review.
 
-See also: [`examples/hex-weather/`](examples/hex-weather/) for a workplan-driven build with compile gates and [`examples/standalone-pipeline-test/`](examples/standalone-pipeline-test/) for the inference routing smoke test.
+**Distributed execution proven.** The same task-tracker was also built on a remote GPU box (bazzite) via `hex plan execute` → HexFlo swarm → bazzite worker with local Ollama (qwen2.5-coder:32b). The worker received hex architecture rules + GBNF grammar in every inference call, ran ADR-005 compile gates with error-feedback retry, and reported results back to the Mac coordinator via SSH tunnel. Zero cloud APIs, $0 cost.
+
+See also: [`examples/hex-weather/`](examples/hex-weather/) for a workplan-driven build with compile gates, [`examples/standalone-pipeline-test/`](examples/standalone-pipeline-test/) for the inference routing smoke test, and [`docs/remote-agent-walkthrough.md`](docs/remote-agent-walkthrough.md) for the full distributed agent guide.
 
 ---
 

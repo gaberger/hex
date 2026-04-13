@@ -1,72 +1,147 @@
-//! Composition root — the ONLY file that imports adapters.
-//!
-//! hex architecture: domain → ports → adapters → composition root.
-//! This file wires adapters to ports. Nothing else may import adapters.
+use std::cmp::Ordering;
 
-mod domain;
-mod ports;
-mod adapters;
+#[derive(Debug, PartialEq, Eq)]
+pub struct TaskId(pub String);
 
-use domain::{Status, Task, TaskId};
-use ports::{Command, TaskStore, parse_args};
-use adapters::InMemoryTaskStore;
+#[derive(Debug, PartialEq, Eq)]
+pub enum Status {
+    Todo,
+    InProgress,
+    Done,
+    Cancelled,
+}
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    let cmd = match parse_args(&args) {
-        Ok(c) => c,
-        Err(e) => { eprintln!("{}", e); std::process::exit(1); }
-    };
+impl Status {
+    pub fn can_transition_to(&self, new_status: &Status) -> bool {
+        match (self, new_status) {
+            (Status::Todo, Status::InProgress) => true,
+            (Status::Todo, Status::Cancelled) => true,
+            (Status::InProgress, Status::Done) => true,
+            (Status::InProgress, Status::Cancelled) => true,
+            (Status::Done, _) => false,
+            (Status::Cancelled, _) => false,
+            _ => false,
+        }
+    }
+}
 
-    let mut store = InMemoryTaskStore::new();
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Priority {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
 
-    match cmd {
-        Command::Add { title, priority } => {
-            let id = store.next_id();
-            let task = Task::new(&id, &title, priority);
-            store.save(task).unwrap();
-            println!("Created task {} — {} [{}]", id, title, priority);
+#[derive(Debug, PartialEq, Eq)]
+pub struct Task {
+    pub id: TaskId,
+    pub title: String,
+    pub status: Status,
+    pub priority: Priority,
+}
+
+impl Task {
+    pub fn transition(&mut self, new_status: Status) -> Result<(), DomainError> {
+        if self.status.can_transition_to(&new_status) {
+            self.status = new_status;
+            Ok(())
+        } else {
+            Err(DomainError::InvalidTransition)
         }
-        Command::List => {
-            let tasks = store.list();
-            if tasks.is_empty() {
-                println!("No tasks.");
-            } else {
-                for t in tasks { println!("  {}", t); }
-            }
-        }
-        Command::Start { id } => {
-            match store.find_mut(&TaskId(id.clone())) {
-                Ok(t) => match t.transition(Status::InProgress) {
-                    Ok(()) => println!("Started: {}", t),
-                    Err(e) => eprintln!("Error: {}", e),
-                },
-                Err(e) => eprintln!("Error: {}", e),
-            }
-        }
-        Command::Done { id } => {
-            match store.find_mut(&TaskId(id.clone())) {
-                Ok(t) => match t.transition(Status::Done) {
-                    Ok(()) => println!("Done: {}", t),
-                    Err(e) => eprintln!("Error: {}", e),
-                },
-                Err(e) => eprintln!("Error: {}", e),
-            }
-        }
-        Command::Cancel { id } => {
-            match store.find_mut(&TaskId(id.clone())) {
-                Ok(t) => match t.transition(Status::Cancelled) {
-                    Ok(()) => println!("Cancelled: {}", t),
-                    Err(e) => eprintln!("Error: {}", e),
-                },
-                Err(e) => eprintln!("Error: {}", e),
-            }
-        }
-        Command::Remove { id } => {
-            match store.remove(&TaskId(id)) {
-                Ok(t) => println!("Removed: {}", t),
-                Err(e) => eprintln!("Error: {}", e),
-            }
-        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum DomainError {
+    InvalidTransition,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_todo_to_in_progress() {
+        let mut task = Task {
+            id: TaskId("1".to_string()),
+            title: "Test Task".to_string(),
+            status: Status::Todo,
+            priority: Priority::Medium,
+        };
+        assert!(task.transition(Status::InProgress).is_ok());
+    }
+
+    #[test]
+    fn test_todo_to_cancelled() {
+        let mut task = Task {
+            id: TaskId("1".to_string()),
+            title: "Test Task".to_string(),
+            status: Status::Todo,
+            priority: Priority::Medium,
+        };
+        assert!(task.transition(Status::Cancelled).is_ok());
+    }
+
+    #[test]
+    fn test_in_progress_to_done() {
+        let mut task = Task {
+            id: TaskId("1".to_string()),
+            title: "Test Task".to_string(),
+            status: Status::InProgress,
+            priority: Priority::Medium,
+        };
+        assert!(task.transition(Status::Done).is_ok());
+    }
+
+    #[test]
+    fn test_in_progress_to_cancelled() {
+        let mut task = Task {
+            id: TaskId("1".to_string()),
+            title: "Test Task".to_string(),
+            status: Status::InProgress,
+            priority: Priority::Medium,
+        };
+        assert!(task.transition(Status::Cancelled).is_ok());
+    }
+
+    #[test]
+    fn test_done_no_transition() {
+        let mut task = Task {
+            id: TaskId("1".to_string()),
+            title: "Test Task".to_string(),
+            status: Status::Done,
+            priority: Priority::Medium,
+        };
+        assert_eq!(task.transition(Status::Todo), Err(DomainError::InvalidTransition));
+    }
+
+    #[test]
+    fn test_cancelled_no_transition() {
+        let mut task = Task {
+            id: TaskId("1".to_string()),
+            title: "Test Task".to_string(),
+            status: Status::Cancelled,
+            priority: Priority::Medium,
+        };
+        assert_eq!(task.transition(Status::Todo), Err(DomainError::InvalidTransition));
+    }
+
+    #[test]
+    fn test_invalid_transition() {
+        let mut task = Task {
+            id: TaskId("1".to_string()),
+            title: "Test Task".to_string(),
+            status: Status::Todo,
+            priority: Priority::Medium,
+        };
+        assert_eq!(task.transition(Status::Done), Err(DomainError::InvalidTransition));
+    }
+
+    #[test]
+    fn test_priority_ordering() {
+        assert!(Priority::Low < Priority::Medium);
+        assert!(Priority::Medium < Priority::High);
+        assert!(Priority::High < Priority::Critical);
     }
 }
