@@ -41,3 +41,6 @@ pub mod test;
 pub mod taste;
 pub mod trust;
 pub mod update;
+pub mod new;
+pub mod pause;
+pub mod override_cmd;
