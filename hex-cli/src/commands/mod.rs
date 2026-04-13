@@ -36,3 +36,6 @@ pub mod swarm;
 pub mod task;
 pub mod test;
 pub mod update;
+pub mod new;
+pub mod pause;
+pub mod override_cmd;

@@ -265,6 +265,31 @@ enum Commands {
         #[arg(long)]
         standalone_gate: bool,
     },
+    /// Register a new project (ADR-2604131500 §2)
+    New {
+        /// Path to the project directory (created if missing)
+        path: String,
+
+        /// Optional project name (defaults to directory name)
+        #[arg(short, long)]
+        name: Option<String>,
+
+        /// Optional project description
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+    /// Pause the active workplan (emergency brake, ADR-2604131500 §1 Layer 4)
+    Pause,
+    /// Resume a paused workplan (ADR-2604131500 §1 Layer 4)
+    Resume,
+    /// Send an emergency override to all agents in a project (ADR-2604131500 §1 Layer 4)
+    Override {
+        /// Target project ID or name
+        project: String,
+
+        /// Override instruction sent to all agents
+        instruction: String,
+    },
     /// Update hex to the latest release (ADR-2604080929)
     #[command(name = "self-update")]
     SelfUpdate {
@@ -347,6 +372,14 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 commands::ci::run().await
             }
+        }
+        Commands::New { path, name, description } => {
+            commands::new::run(&path, name, description).await
+        }
+        Commands::Pause => commands::pause::run_pause().await,
+        Commands::Resume => commands::pause::run_resume().await,
+        Commands::Override { project, instruction } => {
+            commands::override_cmd::run(&project, &instruction).await
         }
         Commands::SelfUpdate { check, version, yes } => {
             commands::update::run(check, version, yes).await
