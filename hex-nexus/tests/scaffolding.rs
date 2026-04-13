@@ -16,7 +16,8 @@ use hex_core::ports::inference::{
     ModelInfo, ModelTier, Priority, StreamChunk,
 };
 use hex_nexus::orchestration::scaffolding::{
-    CompileChecker, CompileError, ScaffoldConfig, ScaffoldResult, ScaffoldedDispatch,
+    CompileChecker, CompileError, EscalationStats, EscalationTracker, ScaffoldConfig,
+    ScaffoldResult, ScaffoldedDispatch,
 };
 use hex_nexus::remote::transport::TaskTier;
 
@@ -268,6 +269,7 @@ async fn all_fail_all_retries_returns_compile_gate_failed_with_count() {
         ScaffoldResult::CompileGateFailed {
             total_attempts,
             best_error,
+            ..
         } => {
             assert_eq!(
                 total_attempts, 4,
@@ -422,4 +424,326 @@ async fn t1_failure_still_retries_with_error_feedback() {
             panic!("expected Success after retry");
         }
     }
+}
+
+// ══════════════════════════════════════════════════════════════
+// P4.3: Escalation tests
+// ══════════════════════════════════════════════════════════════
+
+// ── Mock escalation tracker ──────────────────────────────────
+
+use std::sync::Mutex;
+
+/// In-memory tracker that records escalation/success events for assertions.
+struct MockEscalationTracker {
+    events: Mutex<Vec<TrackerEvent>>,
+}
+
+#[derive(Debug, Clone)]
+enum TrackerEvent {
+    LocalSuccess {
+        task_type: String,
+        model: String,
+    },
+    Escalation {
+        task_type: String,
+        model: String,
+        sample_error: String,
+    },
+}
+
+impl MockEscalationTracker {
+    fn new() -> Self {
+        Self {
+            events: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn events(&self) -> Vec<TrackerEvent> {
+        self.events.lock().unwrap().clone()
+    }
+
+    /// Build EscalationStats from recorded events for a given task_type+model.
+    fn stats_for(&self, task_type: &str, model: &str) -> EscalationStats {
+        let events = self.events();
+        let mut stats = EscalationStats {
+            task_type: task_type.to_string(),
+            model: model.to_string(),
+            local_successes: 0,
+            escalations: 0,
+            last_sample_error: None,
+        };
+        for ev in &events {
+            match ev {
+                TrackerEvent::LocalSuccess { task_type: tt, model: m }
+                    if tt == task_type && m == model =>
+                {
+                    stats.local_successes += 1;
+                }
+                TrackerEvent::Escalation {
+                    task_type: tt,
+                    model: m,
+                    sample_error,
+                } if tt == task_type && m == model => {
+                    stats.escalations += 1;
+                    stats.last_sample_error = Some(sample_error.clone());
+                }
+                _ => {}
+            }
+        }
+        stats
+    }
+}
+
+#[async_trait]
+impl EscalationTracker for MockEscalationTracker {
+    async fn record_local_success(&self, task_type: &str, model: &str) {
+        self.events.lock().unwrap().push(TrackerEvent::LocalSuccess {
+            task_type: task_type.to_string(),
+            model: model.to_string(),
+        });
+    }
+
+    async fn record_escalation(&self, task_type: &str, model: &str, sample_error: &str) {
+        self.events.lock().unwrap().push(TrackerEvent::Escalation {
+            task_type: task_type.to_string(),
+            model: model.to_string(),
+            sample_error: sample_error.to_string(),
+        });
+    }
+}
+
+// ── (a) Local fails all attempts → escalation to frontier succeeds ──
+
+#[tokio::test]
+async fn escalation_local_fails_frontier_succeeds() {
+    // Local mock always returns bad code; frontier returns good code.
+    let local = SequencedMockInference::new(vec!["BAD: local fail"]);
+    let frontier = SequencedMockInference::new(vec!["GOOD: frontier result"]);
+
+    let checker = MockCompileChecker {
+        accept_fn: Box::new(|_| false), // always reject (forces exhaustion of local)
+    };
+
+    let dispatch = ScaffoldedDispatch::new(Arc::new(local), Box::new(checker))
+        .with_config(ScaffoldConfig {
+            n_for_tier: n_always_1,
+            max_retries: 0,
+        })
+        .with_frontier(Arc::new(frontier));
+
+    let result = dispatch
+        .dispatch(&make_request(), TaskTier::T2)
+        .await
+        .expect("dispatch should not error");
+
+    match result {
+        ScaffoldResult::Success { response, .. } => {
+            let text = match response.content.first() {
+                Some(ContentBlock::Text { text }) => text.as_str(),
+                _ => panic!("expected Text content block"),
+            };
+            assert_eq!(
+                text, "GOOD: frontier result",
+                "should return the frontier model's response"
+            );
+        }
+        ScaffoldResult::CompileGateFailed { .. } => {
+            panic!("expected Success via frontier escalation, got CompileGateFailed");
+        }
+    }
+}
+
+// ── (b) No frontier available → CompileGateFailed with remediation hint ──
+
+#[tokio::test]
+async fn escalation_no_frontier_returns_remediation_hint() {
+    let local = SequencedMockInference::new(vec!["BAD: always fails"]);
+
+    let checker = MockCompileChecker {
+        accept_fn: Box::new(|_| false),
+    };
+
+    // No .with_frontier() — frontier is None.
+    let dispatch = ScaffoldedDispatch::new(Arc::new(local), Box::new(checker))
+        .with_config(ScaffoldConfig {
+            n_for_tier: n_always_1,
+            max_retries: 0,
+        });
+
+    let result = dispatch
+        .dispatch(&make_request(), TaskTier::T2)
+        .await
+        .expect("dispatch should not error");
+
+    match result {
+        ScaffoldResult::CompileGateFailed {
+            remediation,
+            best_error,
+            ..
+        } => {
+            let hint = remediation.expect("should include remediation hint when no frontier");
+            assert!(
+                hint.contains("frontier"),
+                "remediation should mention frontier: {hint}"
+            );
+            assert!(
+                hint.contains("hex inference add"),
+                "remediation should suggest `hex inference add`: {hint}"
+            );
+            assert!(
+                !best_error.is_empty(),
+                "best_error should still be populated"
+            );
+        }
+        ScaffoldResult::Success { .. } => {
+            panic!("expected CompileGateFailed, got Success");
+        }
+    }
+}
+
+// ── (c) Escalation tracking writes to memory on escalation ──
+
+#[tokio::test]
+async fn escalation_tracking_records_escalation_event() {
+    let local = SequencedMockInference::new(vec!["BAD: local"]);
+    let frontier = SequencedMockInference::new(vec!["GOOD: frontier"]);
+    let tracker = Arc::new(MockEscalationTracker::new());
+
+    let checker = MockCompileChecker {
+        accept_fn: Box::new(|_| false),
+    };
+
+    let dispatch = ScaffoldedDispatch::new(Arc::new(local), Box::new(checker))
+        .with_config(ScaffoldConfig {
+            n_for_tier: n_always_1,
+            max_retries: 0,
+        })
+        .with_frontier(Arc::new(frontier))
+        .with_tracker(tracker.clone());
+
+    let result = dispatch
+        .dispatch(&make_request(), TaskTier::T2)
+        .await
+        .expect("dispatch should not error");
+
+    assert!(
+        matches!(result, ScaffoldResult::Success { .. }),
+        "should succeed via frontier"
+    );
+
+    let events = tracker.events();
+    assert_eq!(events.len(), 1, "should record exactly one event");
+    match &events[0] {
+        TrackerEvent::Escalation {
+            task_type,
+            model,
+            sample_error,
+        } => {
+            assert_eq!(task_type, "T2", "task_type should match tier");
+            assert_eq!(model, "test-model", "model should match request");
+            assert!(
+                !sample_error.is_empty(),
+                "sample_error should contain the compile error"
+            );
+        }
+        other => panic!("expected Escalation event, got {:?}", other),
+    }
+}
+
+// ── (d) Escalation tracking writes success on local pass ──
+
+#[tokio::test]
+async fn escalation_tracking_records_local_success() {
+    let local = SequencedMockInference::new(vec!["GOOD: local pass"]);
+    let tracker = Arc::new(MockEscalationTracker::new());
+
+    let checker = MockCompileChecker {
+        accept_fn: Box::new(|code| code.starts_with("GOOD")),
+    };
+
+    let dispatch = ScaffoldedDispatch::new(Arc::new(local), Box::new(checker))
+        .with_config(ScaffoldConfig {
+            n_for_tier: n_always_1,
+            max_retries: 0,
+        })
+        .with_tracker(tracker.clone());
+
+    let result = dispatch
+        .dispatch(&make_request(), TaskTier::T1)
+        .await
+        .expect("dispatch should not error");
+
+    assert!(
+        matches!(result, ScaffoldResult::Success { .. }),
+        "should succeed locally"
+    );
+
+    let events = tracker.events();
+    assert_eq!(events.len(), 1, "should record exactly one event");
+    match &events[0] {
+        TrackerEvent::LocalSuccess { task_type, model } => {
+            assert_eq!(task_type, "T1", "task_type should match tier");
+            assert_eq!(model, "test-model", "model should match request");
+        }
+        other => panic!("expected LocalSuccess event, got {:?}", other),
+    }
+}
+
+// ── (e) EscalationStats computes escalation rate from tracking data ──
+
+#[tokio::test]
+async fn escalation_report_reads_tracking_data() {
+    let tracker = Arc::new(MockEscalationTracker::new());
+
+    let config = ScaffoldConfig {
+        n_for_tier: n_always_1,
+        max_retries: 0,
+    };
+
+    // Simulate 2 local successes
+    for _ in 0..2 {
+        let local = SequencedMockInference::new(vec!["GOOD: pass"]);
+        let checker = MockCompileChecker {
+            accept_fn: Box::new(|code| code.starts_with("GOOD")),
+        };
+        let dispatch = ScaffoldedDispatch::new(Arc::new(local), Box::new(checker))
+            .with_config(config.clone())
+            .with_tracker(tracker.clone());
+        let _ = dispatch.dispatch(&make_request(), TaskTier::T2).await.unwrap();
+    }
+
+    // Simulate 1 escalation
+    {
+        let local = SequencedMockInference::new(vec!["BAD: fail"]);
+        let frontier = SequencedMockInference::new(vec!["GOOD: frontier"]);
+        let checker = MockCompileChecker {
+            accept_fn: Box::new(|_| false),
+        };
+        let dispatch = ScaffoldedDispatch::new(Arc::new(local), Box::new(checker))
+            .with_config(config.clone())
+            .with_frontier(Arc::new(frontier))
+            .with_tracker(tracker.clone());
+        let _ = dispatch.dispatch(&make_request(), TaskTier::T2).await.unwrap();
+    }
+
+    // Read tracking data and verify escalation stats
+    let stats = tracker.stats_for("T2", "test-model");
+    assert_eq!(stats.local_successes, 2, "should have 2 local successes");
+    assert_eq!(stats.escalations, 1, "should have 1 escalation");
+    assert!(
+        stats.last_sample_error.is_some(),
+        "should have a sample error from the escalation"
+    );
+
+    // Escalation rate: 1 / (2 + 1) = 0.333...
+    let rate = stats.escalation_rate();
+    assert!(
+        (rate - 1.0 / 3.0).abs() < 0.01,
+        "escalation rate should be ~33%, got {rate}"
+    );
+    assert!(
+        rate < 0.50,
+        "rate below 50% — no reclassification needed"
+    );
 }

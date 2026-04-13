@@ -14,6 +14,37 @@ use hex_core::ports::inference::{InferenceError, InferenceRequest, InferenceResp
 
 use crate::remote::transport::TaskTier;
 
+/// Tracks escalation events for observability and tier-reclassification hints.
+/// Writes are fire-and-forget — a failed write must never block dispatch.
+#[async_trait]
+pub trait EscalationTracker: Send + Sync {
+    /// Record that a local dispatch succeeded without escalation.
+    async fn record_local_success(&self, task_type: &str, model: &str);
+    /// Record that a dispatch escalated from local to frontier.
+    async fn record_escalation(&self, task_type: &str, model: &str, sample_error: &str);
+}
+
+/// Escalation statistics for a single task-type + model combination.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EscalationStats {
+    pub task_type: String,
+    pub model: String,
+    pub local_successes: u64,
+    pub escalations: u64,
+    pub last_sample_error: Option<String>,
+}
+
+impl EscalationStats {
+    /// Escalation rate as a fraction in [0.0, 1.0].
+    pub fn escalation_rate(&self) -> f64 {
+        let total = self.local_successes + self.escalations;
+        if total == 0 {
+            return 0.0;
+        }
+        self.escalations as f64 / total as f64
+    }
+}
+
 /// Result of a scaffolded dispatch attempt.
 #[derive(Debug)]
 pub enum ScaffoldResult {
@@ -27,6 +58,8 @@ pub enum ScaffoldResult {
     CompileGateFailed {
         total_attempts: usize,
         best_error: String,
+        /// Remediation hint when no frontier is available.
+        remediation: Option<String>,
     },
 }
 
@@ -114,6 +147,72 @@ impl Default for ScaffoldConfig {
     }
 }
 
+/// No-op tracker for tests and environments without HexFlo memory.
+pub struct NoopEscalationTracker;
+
+#[async_trait]
+impl EscalationTracker for NoopEscalationTracker {
+    async fn record_local_success(&self, _task_type: &str, _model: &str) {}
+    async fn record_escalation(&self, _task_type: &str, _model: &str, _sample_error: &str) {}
+}
+
+/// Tracker that writes escalation/success counts to HexFlo memory via the
+/// state adapter. Each event does a read-increment-write cycle. Writes are
+/// fire-and-forget — a failed write logs a warning but never blocks dispatch.
+pub struct HexFloEscalationTracker {
+    state: Arc<dyn crate::ports::state::IHexFloMemoryStatePort>,
+}
+
+impl HexFloEscalationTracker {
+    pub fn new(state: Arc<dyn crate::ports::state::IHexFloMemoryStatePort>) -> Self {
+        Self { state }
+    }
+}
+
+#[async_trait]
+impl EscalationTracker for HexFloEscalationTracker {
+    async fn record_local_success(&self, task_type: &str, model: &str) {
+        let key = format!("success:{}:{}", task_type, model);
+        let count = match self.state.hexflo_memory_retrieve(&key).await {
+            Ok(Some(val)) => parse_count(&val).saturating_add(1),
+            _ => 1,
+        };
+        let value = serde_json::json!({
+            "count": count,
+            "last_seen": chrono::Utc::now().to_rfc3339(),
+        })
+        .to_string();
+        if let Err(e) = self.state.hexflo_memory_store(&key, &value, "global").await {
+            tracing::warn!(key, %e, "failed to write success tracking to HexFlo memory");
+        }
+    }
+
+    async fn record_escalation(&self, task_type: &str, model: &str, sample_error: &str) {
+        let key = format!("escalation:{}:{}", task_type, model);
+        let count = match self.state.hexflo_memory_retrieve(&key).await {
+            Ok(Some(val)) => parse_count(&val).saturating_add(1),
+            _ => 1,
+        };
+        let value = serde_json::json!({
+            "count": count,
+            "last_escalated": chrono::Utc::now().to_rfc3339(),
+            "sample_error": sample_error.chars().take(200).collect::<String>(),
+        })
+        .to_string();
+        if let Err(e) = self.state.hexflo_memory_store(&key, &value, "global").await {
+            tracing::warn!(key, %e, "failed to write escalation tracking to HexFlo memory");
+        }
+    }
+}
+
+/// Parse the "count" field from a JSON value string, defaulting to 0.
+fn parse_count(val: &str) -> u64 {
+    serde_json::from_str::<serde_json::Value>(val)
+        .ok()
+        .and_then(|v| v.get("count")?.as_u64())
+        .unwrap_or(0)
+}
+
 /// Scaffolded inference dispatcher. Wraps an inference port with Best-of-N
 /// generation, compile-gate validation, and error-feedback retries.
 pub struct ScaffoldedDispatch {
@@ -122,6 +221,8 @@ pub struct ScaffoldedDispatch {
     config: ScaffoldConfig,
     /// Optional frontier adapter for cascading escalation (P4).
     frontier: Option<Arc<dyn hex_core::ports::inference::IInferencePort>>,
+    /// Optional escalation tracker for observability (P4.2).
+    tracker: Option<Arc<dyn EscalationTracker>>,
 }
 
 impl ScaffoldedDispatch {
@@ -134,6 +235,7 @@ impl ScaffoldedDispatch {
             compile_checker,
             config: ScaffoldConfig::default(),
             frontier: None,
+            tracker: None,
         }
     }
 
@@ -147,6 +249,11 @@ impl ScaffoldedDispatch {
         frontier: Arc<dyn hex_core::ports::inference::IInferencePort>,
     ) -> Self {
         self.frontier = Some(frontier);
+        self
+    }
+
+    pub fn with_tracker(mut self, tracker: Arc<dyn EscalationTracker>) -> Self {
+        self.tracker = Some(tracker);
         self
     }
 
@@ -178,6 +285,12 @@ impl ScaffoldedDispatch {
                             tier = tier.as_str(),
                             "Scaffolded dispatch: compile gate passed"
                         );
+                        // P4.2: track local success
+                        if let Some(ref tracker) = self.tracker {
+                            tracker
+                                .record_local_success(tier.as_str(), &request.model)
+                                .await;
+                        }
                         return Ok(ScaffoldResult::Success {
                             response,
                             attempt: total_attempts,
@@ -226,6 +339,12 @@ impl ScaffoldedDispatch {
                 best_error_len = best_error.len(),
                 "Escalating to frontier adapter after local compile-gate exhaustion"
             );
+            // P4.2: track escalation event
+            if let Some(ref tracker) = self.tracker {
+                tracker
+                    .record_escalation(tier.as_str(), &request.model, &best_error)
+                    .await;
+            }
             // Use the original prompt — not the retry-augmented one — so the
             // frontier model gets a clean context without prior error feedback.
             let response = frontier.complete(request.clone()).await?;
@@ -239,6 +358,12 @@ impl ScaffoldedDispatch {
         Ok(ScaffoldResult::CompileGateFailed {
             total_attempts,
             best_error,
+            remediation: Some(
+                "No frontier adapter configured. Add a frontier provider with \
+                 `hex inference add --tier frontier` or set inference.frontier \
+                 in .hex/project.json to enable automatic escalation."
+                    .into(),
+            ),
         })
     }
 }
@@ -709,5 +834,144 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("")
+    }
+
+    // ── P4.2: Escalation tracking tests ───────────────────────────────
+
+    /// In-memory tracker for testing that records all events.
+    struct RecordingTracker {
+        successes: std::sync::Mutex<Vec<(String, String)>>,
+        escalations: std::sync::Mutex<Vec<(String, String, String)>>,
+    }
+
+    impl RecordingTracker {
+        fn new() -> Self {
+            Self {
+                successes: std::sync::Mutex::new(Vec::new()),
+                escalations: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl EscalationTracker for RecordingTracker {
+        async fn record_local_success(&self, task_type: &str, model: &str) {
+            self.successes
+                .lock()
+                .unwrap()
+                .push((task_type.to_string(), model.to_string()));
+        }
+        async fn record_escalation(&self, task_type: &str, model: &str, sample_error: &str) {
+            self.escalations.lock().unwrap().push((
+                task_type.to_string(),
+                model.to_string(),
+                sample_error.to_string(),
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn tracker_records_local_success() {
+        let mock = MockInferencePort::with_response("good code");
+        let checker = MockCompileChecker {
+            accept_fn: Box::new(|_| true),
+        };
+        let tracker = Arc::new(RecordingTracker::new());
+        let dispatch = ScaffoldedDispatch::new(Arc::new(mock), Box::new(checker))
+            .with_tracker(tracker.clone());
+
+        let result = dispatch.dispatch(&make_request(), TaskTier::T2).await.unwrap();
+        assert!(matches!(result, ScaffoldResult::Success { .. }));
+
+        let successes = tracker.successes.lock().unwrap();
+        assert_eq!(successes.len(), 1);
+        assert_eq!(successes[0].0, "T2");
+        assert_eq!(successes[0].1, "test");
+        assert!(tracker.escalations.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn tracker_records_escalation_on_frontier_fallback() {
+        let local = Arc::new(CapturingInferencePort::new("bad code"));
+        let frontier = Arc::new(CapturingInferencePort::new("frontier code"));
+        let checker = MockCompileChecker {
+            accept_fn: Box::new(|_| false),
+        };
+        let tracker = Arc::new(RecordingTracker::new());
+        let config = ScaffoldConfig {
+            n_for_tier: |_| 1,
+            max_retries: 0,
+        };
+        let dispatch = ScaffoldedDispatch::new(local, Box::new(checker))
+            .with_config(config)
+            .with_frontier(frontier)
+            .with_tracker(tracker.clone());
+
+        let result = dispatch.dispatch(&make_request(), TaskTier::T2).await.unwrap();
+        assert!(matches!(result, ScaffoldResult::Success { .. }));
+
+        let escalations = tracker.escalations.lock().unwrap();
+        assert_eq!(escalations.len(), 1);
+        assert_eq!(escalations[0].0, "T2");
+        assert_eq!(escalations[0].1, "test");
+        assert!(
+            escalations[0].2.contains("mock compile error"),
+            "sample_error should contain the compile stderr"
+        );
+        assert!(tracker.successes.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn tracker_not_called_without_frontier_on_failure() {
+        // No frontier, all fail → no tracker calls at all (neither success nor escalation).
+        let mock = MockInferencePort::with_response("bad code");
+        let checker = MockCompileChecker {
+            accept_fn: Box::new(|_| false),
+        };
+        let tracker = Arc::new(RecordingTracker::new());
+        let config = ScaffoldConfig {
+            n_for_tier: |_| 1,
+            max_retries: 0,
+        };
+        let dispatch = ScaffoldedDispatch::new(Arc::new(mock), Box::new(checker))
+            .with_config(config)
+            .with_tracker(tracker.clone());
+
+        let result = dispatch.dispatch(&make_request(), TaskTier::T1).await.unwrap();
+        assert!(matches!(result, ScaffoldResult::CompileGateFailed { .. }));
+
+        assert!(tracker.successes.lock().unwrap().is_empty());
+        assert!(tracker.escalations.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_count_extracts_count_field() {
+        assert_eq!(parse_count(r#"{"count": 5}"#), 5);
+        assert_eq!(parse_count(r#"{"count": 0}"#), 0);
+        assert_eq!(parse_count(r#"{"other": 3}"#), 0);
+        assert_eq!(parse_count("not json"), 0);
+        assert_eq!(parse_count(""), 0);
+    }
+
+    #[test]
+    fn escalation_stats_rate_calculation() {
+        let stats = EscalationStats {
+            task_type: "T2".into(),
+            model: "qwen3:32b".into(),
+            local_successes: 7,
+            escalations: 3,
+            last_sample_error: None,
+        };
+        let rate = stats.escalation_rate();
+        assert!((rate - 0.3).abs() < 0.001);
+
+        let zero = EscalationStats {
+            task_type: "T1".into(),
+            model: "test".into(),
+            local_successes: 0,
+            escalations: 0,
+            last_sample_error: None,
+        };
+        assert_eq!(zero.escalation_rate(), 0.0);
     }
 }
