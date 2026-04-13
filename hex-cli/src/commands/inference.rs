@@ -166,6 +166,9 @@ pub enum InferenceAction {
         #[arg(long)]
         save: bool,
     },
+    /// Show escalation rates per task-type and model (P4.2)
+    #[clap(name = "escalation-report")]
+    EscalationReport,
 }
 
 /// Write the full inference endpoint list to ~/.hex/inference-servers.json.
@@ -230,6 +233,7 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
         InferenceAction::Bench { target, model, quick, compare, save } => {
             bench_provider(&target, model.as_deref(), quick, compare.as_deref(), save).await
         }
+        InferenceAction::EscalationReport => escalation_report().await,
     }
 }
 
@@ -567,6 +571,136 @@ async fn discover_free_tier() -> anyhow::Result<()> {
 }
 
 /// Show inference cost attribution and provider statistics (ADR-2604052125).
+/// `hex inference escalation-report` — reads escalation/success keys from
+/// HexFlo memory and prints a table with escalation rates per task-type+model.
+async fn escalation_report() -> anyhow::Result<()> {
+    let client = NexusClient::from_env();
+    println!("{}", "── Escalation Report (P4.2) ──".cyan());
+    println!();
+
+    // Search HexFlo memory for escalation: and success: keys
+    let esc_results = client
+        .get("/api/hexflo/memory/search?q=escalation:")
+        .await
+        .unwrap_or_default();
+    let suc_results = client
+        .get("/api/hexflo/memory/search?q=success:")
+        .await
+        .unwrap_or_default();
+
+    // Parse into a map of (task_type, model) → (escalations, successes, sample_error)
+    let mut stats: std::collections::HashMap<(String, String), (u64, u64, Option<String>)> =
+        std::collections::HashMap::new();
+
+    if let Some(entries) = esc_results.get("entries").and_then(|v| v.as_array()) {
+        for entry in entries {
+            let key = entry.get("key").and_then(|v| v.as_str()).unwrap_or("");
+            let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("{}");
+            // key format: escalation:{task_type}:{model}
+            let parts: Vec<&str> = key.splitn(3, ':').collect();
+            if parts.len() == 3 {
+                let parsed: serde_json::Value =
+                    serde_json::from_str(value).unwrap_or_default();
+                let count = parsed.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+                let sample = parsed
+                    .get("sample_error")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let entry = stats
+                    .entry((parts[1].to_string(), parts[2].to_string()))
+                    .or_insert((0, 0, None));
+                entry.0 = count;
+                if sample.is_some() {
+                    entry.2 = sample;
+                }
+            }
+        }
+    }
+
+    if let Some(entries) = suc_results.get("entries").and_then(|v| v.as_array()) {
+        for entry in entries {
+            let key = entry.get("key").and_then(|v| v.as_str()).unwrap_or("");
+            let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("{}");
+            // key format: success:{task_type}:{model}
+            let parts: Vec<&str> = key.splitn(3, ':').collect();
+            if parts.len() == 3 {
+                let parsed: serde_json::Value =
+                    serde_json::from_str(value).unwrap_or_default();
+                let count = parsed.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+                let entry = stats
+                    .entry((parts[1].to_string(), parts[2].to_string()))
+                    .or_insert((0, 0, None));
+                entry.1 = count;
+            }
+        }
+    }
+
+    if stats.is_empty() {
+        println!(
+            "  {} No escalation data recorded yet. Run scaffolded dispatches to generate data.",
+            "ℹ".blue()
+        );
+        return Ok(());
+    }
+
+    // Print table header
+    println!(
+        "  {:<8} {:<30} {:>8} {:>8} {:>10}",
+        "Tier", "Model", "Success", "Escalate", "Rate"
+    );
+    println!("  {}", "─".repeat(70));
+
+    let mut sorted: Vec<_> = stats.into_iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut recommendations = Vec::new();
+
+    for ((task_type, model), (escalations, successes, sample_error)) in &sorted {
+        let total = successes + escalations;
+        let rate = if total > 0 {
+            *escalations as f64 / total as f64
+        } else {
+            0.0
+        };
+        let rate_str = format!("{:.0}%", rate * 100.0);
+        let rate_colored = if rate > 0.5 {
+            rate_str.red().to_string()
+        } else if rate > 0.25 {
+            rate_str.yellow().to_string()
+        } else {
+            rate_str.green().to_string()
+        };
+
+        println!(
+            "  {:<8} {:<30} {:>8} {:>8} {:>10}",
+            task_type, model, successes, escalations, rate_colored,
+        );
+
+        if rate > 0.5 {
+            recommendations.push((task_type.clone(), model.clone(), rate, sample_error.clone()));
+        }
+    }
+
+    if !recommendations.is_empty() {
+        println!();
+        println!("  {}", "⚠ Recommendations".yellow().bold());
+        for (task_type, model, rate, sample_error) in &recommendations {
+            println!(
+                "    {} {task_type} on {model} has {:.0}% escalation rate — consider reclassifying to a higher tier",
+                "→".yellow(),
+                rate * 100.0,
+            );
+            if let Some(err) = sample_error {
+                let preview: String = err.chars().take(80).collect();
+                println!("      Last error: {}", preview.dimmed());
+            }
+        }
+    }
+
+    println!();
+    Ok(())
+}
+
 async fn inference_stats() -> anyhow::Result<()> {
     let client = NexusClient::from_env();
     println!("{}", "── Inference Cost Attribution (ADR-2604052125) ──".cyan());

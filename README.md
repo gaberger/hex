@@ -395,6 +395,24 @@ The pipeline test exercises all tiers end-to-end with real compile gates and RL 
 
 Use `hex doctor composition` to diagnose which composition variant is active. Use `--tier T1` for a 10-second smoke test, or `--no-grammar` to compare with/without GBNF constraints.
 
+### Tiered Inference Routing
+
+hex classifies every workplan task into a tier (T1–T3) and routes it to the cheapest model that can handle it. Classification uses `strategy_hint`, agent role, and layer/dependency heuristics — you never pick a model manually.
+
+| Tier | Default Model | When Used |
+|:-----|:--------------|:----------|
+| T1 | qwen3:4b | Scaffolding, renames, trivial edits |
+| T2 | qwen2.5-coder:32b | Single-adapter codegen, planning, review |
+| T2.5 | devstral-small-2:24b | Cross-adapter integration, complex reasoning |
+| T3 | *(cloud required)* | Frontier tasks — set `inference.tier_models.T3` in `.hex/project.json` |
+
+Override the mapping per-project in `.hex/project.json`:
+```json
+{ "inference": { "tier_models": { "T1": "qwen3:4b", "T2": "qwen2.5-coder:32b", "T2.5": "devstral-small-2:24b" } } }
+```
+
+Override tier for a single workplan task by adding `"tier": "T2"` to the task JSON. Check escalation rates with `hex inference escalation-report` — if a task-type+model pair escalates above 30%, reclassify it to a higher tier.
+
 ### Example: HexFlo-Coordinated Task Tracker (16 tests, 4 layers)
 
 The [`examples/hex-task-tracker/`](examples/hex-task-tracker/) shows hex's architecture enforcement on a real app — built using HexFlo swarm coordination with Claude as the inference engine.

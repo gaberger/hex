@@ -65,6 +65,24 @@ hex interfaces with external inference through SpacetimeDB procedures and reduce
 - hex-nexus performs actual HTTP calls (WASM can't make network requests)
 - Model-agnostic — works with any LLM provider (Anthropic, OpenAI, Ollama, etc.)
 
+### Tiered Inference Routing (ADR-2604120202)
+
+hex classifies every workplan task into a tier (T1–T3) and routes it to the cheapest model that can handle it. The tier classifier uses `strategy_hint`, agent role, and layer/dependency heuristics (see `workplan_executor.rs::classify_task_tier`). Default tier→model mapping:
+
+| Tier | Default Model | Use Case |
+|------|---------------|----------|
+| T1 | qwen3:4b | Scaffolding, renames, trivial edits |
+| T2 | qwen2.5-coder:32b | Single-adapter codegen, planning |
+| T2.5 | devstral-small-2:24b | Cross-adapter integration, complex reasoning |
+| T3 | *(none — requires cloud)* | Frontier tasks needing Opus/Sonnet |
+
+**Configure** per-project in `.hex/project.json` under `inference.tier_models`:
+```json
+{ "inference": { "tier_models": { "T1": "qwen3:4b", "T2": "qwen2.5-coder:32b", "T2.5": "devstral-small-2:24b", "T3": "claude-sonnet-4-6" } } }
+```
+
+**Override** tier for a specific workplan task by setting `"tier": "T2"` in the task JSON. **Check escalation rates** with `hex inference escalation-report` — tasks that escalate above 30% should be reclassified to a higher tier.
+
 ### Standalone Mode (ADR-2604112000)
 
 hex supports a standalone composition path that does not require Claude Code. When `CLAUDE_SESSION_ID` is unset, hex-nexus wires an `AgentManager` backed by HexFlo dispatch + the `OllamaInferenceAdapter` (default inference for standalone mode). This enables `hex nexus start && hex plan execute wp-foo.json` on any host with Ollama installed -- no Claude CLI needed.
