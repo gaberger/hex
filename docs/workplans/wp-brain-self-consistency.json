@@ -1,0 +1,137 @@
+{
+  "id": "wp-brain-self-consistency",
+  "feature": "Brain Self-Consistency Daemon",
+  "description": "Brain gains deterministic validation checks that run automatically: CLI wiring, binary freshness, workplan reconciliation, MCP-CLI parity, worktree integrity. Auto-fixes safe issues.",
+  "adr": "ADR-2604131945",
+  "status": "planned",
+  "priority": "critical",
+  "created_at": "2026-04-13T19:45:00Z",
+  "created_by": "human+agent",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "CLI wiring check",
+      "tier": 1,
+      "description": "Scan commands/*.rs files, verify each has pub mod in mod.rs and a Commands enum variant in main.rs. Report unwired modules.",
+      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Implement check_cli_wiring() in brain module",
+          "layer": "secondary",
+          "description": "New function in hex-cli that: (1) globs hex-cli/src/commands/*.rs, (2) reads mod.rs for pub mod entries, (3) reads main.rs for Commands enum variants, (4) returns Vec of unwired modules. Pure function, no side effects.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/brain.rs"],
+          "agent": "hex-coder",
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P1.2",
+          "name": "Add hex brain validate subcommand",
+          "layer": "primary",
+          "description": "New BrainAction::Validate variant. Calls check_cli_wiring() and prints results. This is the entry point for all future checks.",
+          "deps": ["P1.1"],
+          "files": ["hex-cli/src/commands/brain.rs", "hex-cli/src/main.rs"],
+          "agent": "hex-coder",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Binary freshness check with auto-rebuild",
+      "tier": 1,
+      "description": "Compare target/release/hex mtime with HEAD commit timestamp. If stale, trigger cargo build --release in background.",
+      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Implement check_binary_freshness() with auto-rebuild",
+          "layer": "secondary",
+          "description": "Function that stats target/release/hex mtime, compares with git log -1 --format=%ct HEAD. If binary is older, spawn cargo build --release in background and return Stale status. Add to brain validate output.",
+          "deps": ["P1.2"],
+          "files": ["hex-cli/src/commands/brain.rs"],
+          "agent": "hex-coder",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Workplan auto-reconciliation",
+      "tier": 2,
+      "description": "On session start and post-merge, reconcile all active workplans with git evidence.",
+      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Implement check_workplan_status() for all active workplans",
+          "layer": "secondary",
+          "description": "Function that lists docs/workplans/*.json with status != 'completed', runs reconcile logic on each, returns summary of stale tasks. Add to brain validate output.",
+          "deps": ["P1.2"],
+          "files": ["hex-cli/src/commands/brain.rs"],
+          "agent": "hex-coder",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "MCP-CLI parity check",
+      "tier": 2,
+      "description": "Compare MCP tool definitions with CLI Commands enum to detect missing CLI equivalents.",
+      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Implement check_mcp_cli_parity()",
+          "layer": "secondary",
+          "description": "Function that: (1) reads hex-cli/assets/mcp/mcp-tools.json for tool list, (2) reads Commands enum variants from main.rs, (3) maps tool names to expected CLI commands, (4) returns Vec of MCP tools without CLI equivalents. Add to brain validate output.",
+          "deps": ["P1.2"],
+          "files": ["hex-cli/src/commands/brain.rs"],
+          "agent": "hex-coder",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "Hook integration + unified validate command",
+      "tier": 3,
+      "description": "Wire brain validate into post-commit hook and session-start. Unified output with auto-fix for safe operations.",
+      "gate": { "type": "test", "command": "cargo test --workspace", "blocking": true },
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Wire brain validate into post-commit hook",
+          "layer": "primary",
+          "description": "In hex-cli/src/commands/hook.rs, add brain validate call to observe-post (or post-commit). Run subset: CLI wiring + binary freshness (fast checks only, <2s).",
+          "deps": ["P2.1", "P3.1", "P4.1"],
+          "files": ["hex-cli/src/commands/hook.rs"],
+          "agent": "hex-coder",
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P5.2",
+          "name": "Wire brain validate into session-start",
+          "layer": "primary",
+          "description": "In hex-cli/src/commands/hook.rs session-start handler, add workplan reconciliation + worktree status check. Print summary in session banner.",
+          "deps": ["P3.1"],
+          "files": ["hex-cli/src/commands/hook.rs"],
+          "agent": "hex-coder",
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P5.3",
+          "name": "Auto-fix for safe operations",
+          "layer": "secondary",
+          "description": "When brain validate finds: stale binary → auto-rebuild, stale workplans → auto-reconcile, stale worktrees → auto-cleanup. Print '[auto-fixed]' next to each. Only fix deterministic, safe operations.",
+          "deps": ["P5.1"],
+          "files": ["hex-cli/src/commands/brain.rs"],
+          "agent": "hex-coder",
+          "strategy_hint": "codegen"
+        }
+      ]
+    }
+  ]
+}
