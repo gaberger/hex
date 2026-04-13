@@ -1154,19 +1154,38 @@ impl WorkplanExecutor {
                         "Path C: headless inference dispatch"
                     );
 
-                    match inference.complete(req).await {
-                        Ok(response) => {
-                            let _code: String = response.content.iter().filter_map(|b| {
-                                if let hex_core::domain::messages::ContentBlock::Text { text } = b {
-                                    Some(text.as_str())
-                                } else { None }
-                            }).collect::<Vec<_>>().join("");
+                    // ADR-2604120202 P5.1: Wrap inference in ScaffoldedDispatch.
+                    // T1/T2/T2.5 get Best-of-N + compile gate + error-feedback
+                    // retries. The scaffolding is transparent — the executor sees
+                    // the same InferenceResponse on success.
+                    let compile_cmd = "rustc --edition 2021 --crate-type lib";
+                    let checker = crate::orchestration::scaffolding::ShellCompileChecker {
+                        command: compile_cmd.to_string(),
+                    };
+                    let scaffold = crate::orchestration::scaffolding::ScaffoldedDispatch::new(
+                        Arc::clone(&inference),
+                        Box::new(checker),
+                    );
 
+                    tracing::info!(
+                        task_id = %task_id,
+                        tier = %task_tier,
+                        "Path C: dispatching via ScaffoldedDispatch"
+                    );
+
+                    match scaffold.dispatch(&req, task_tier).await {
+                        Ok(crate::orchestration::scaffolding::ScaffoldResult::Success {
+                            response,
+                            attempt,
+                            total_attempts,
+                        }) => {
                             tracing::info!(
                                 task_id = %task_id,
                                 tokens = response.output_tokens,
                                 latency_ms = response.latency_ms,
-                                "Path C: inference complete"
+                                attempt,
+                                total_attempts,
+                                "Path C: scaffolded dispatch succeeded"
                             );
 
                             Ok(crate::orchestration::agent_manager::AgentInstance {
@@ -1182,12 +1201,27 @@ impl WorkplanExecutor {
                                     input_tokens: response.input_tokens,
                                     output_tokens: response.output_tokens,
                                     tool_calls: 0,
-                                    turns: 1,
+                                    turns: total_attempts as u32,
                                 }),
                                 role: Some("hex-coder".to_string()),
                             })
                         }
-                        Err(e) => Err(format!("Path C inference failed: {}", e)),
+                        Ok(crate::orchestration::scaffolding::ScaffoldResult::CompileGateFailed {
+                            total_attempts,
+                            best_error,
+                            remediation,
+                        }) => {
+                            let msg = format!(
+                                "Path C: scaffolded dispatch exhausted {} attempts, \
+                                 compile gate never passed. Best error: {}{}",
+                                total_attempts,
+                                &best_error[..best_error.len().min(200)],
+                                remediation.map(|r| format!(" — {}", r)).unwrap_or_default(),
+                            );
+                            tracing::warn!(task_id = %task_id, "{}", msg);
+                            Err(msg)
+                        }
+                        Err(e) => Err(format!("Path C scaffolded inference failed: {}", e)),
                     }
                 } else if use_path_b {
                     // Path B: store queue entry in HexFlo memory, broadcast inbox
