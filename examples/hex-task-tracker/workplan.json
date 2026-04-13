@@ -1,0 +1,80 @@
+{
+  "id": "wp-hex-task-tracker",
+  "feature": "Hex Task Tracker — Architecture Demo",
+  "adr": "ADR-001",
+  "specs": "Task tracker CLI demonstrating hex architecture: domain (pure types + status transitions), ports (TaskStore trait), adapters (InMemoryTaskStore), composition root. Every layer has tests.",
+  "phases": [
+    {
+      "name": "domain",
+      "tier": 0,
+      "description": "Pure domain types with tests",
+      "gate": { "type": "test", "command": "rustc --edition 2021 --test src/domain/mod.rs -o /tmp/tt_domain && /tmp/tt_domain", "blocking": true },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Domain types + tests",
+          "tier": "T2",
+          "description": "Write src/domain/mod.rs: TaskId(String), Status enum {Todo,InProgress,Done,Cancelled} with can_transition_to(), Priority enum {Low,Medium,High,Critical} with Ord, Task struct {id,title,status,priority} with transition() that validates, DomainError enum. Include 8+ #[cfg(test)] tests for transitions. ZERO external deps.",
+          "layer": "domain",
+          "agent": "hex-coder",
+          "deps": [],
+          "files": ["src/domain/mod.rs"]
+        }
+      ]
+    },
+    {
+      "name": "ports",
+      "tier": 0,
+      "description": "Trait contracts",
+      "gate": { "type": "typecheck", "command": "echo ports-ok", "blocking": true },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Port traits",
+          "tier": "T2",
+          "description": "Write src/ports/mod.rs: trait TaskStore {save,find,find_mut,list,remove}, enum Command {Add,List,Start,Done,Cancel,Remove}, fn parse_args. Import only from crate::domain.",
+          "layer": "ports",
+          "agent": "hex-coder",
+          "deps": ["P1.1"],
+          "files": ["src/ports/mod.rs"]
+        }
+      ]
+    },
+    {
+      "name": "adapters",
+      "tier": 1,
+      "description": "Implementations with tests",
+      "gate": { "type": "test", "command": "echo adapters-ok", "blocking": true },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "InMemoryTaskStore + tests",
+          "tier": "T2",
+          "description": "Write src/adapters/mod.rs: InMemoryTaskStore implementing TaskStore with HashMap. Include 5+ tests. Import only from crate::domain and crate::ports.",
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "deps": ["P1.1", "P2.1"],
+          "files": ["src/adapters/mod.rs"]
+        }
+      ]
+    },
+    {
+      "name": "composition",
+      "tier": 2,
+      "description": "Composition root — wires adapters to ports",
+      "gate": { "type": "compile", "command": "rustc --edition 2021 src/main.rs -o task-tracker && ./task-tracker list", "blocking": true },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Composition root + main",
+          "tier": "T2",
+          "description": "Write src/main.rs: mod domain; mod ports; mod adapters; use ports::{TaskStore,Command,parse_args}; use adapters::InMemoryTaskStore; fn main() parses args, creates store, executes command, prints result.",
+          "layer": "primary",
+          "agent": "hex-coder",
+          "deps": ["P1.1", "P2.1", "P3.1"],
+          "files": ["src/main.rs"]
+        }
+      ]
+    }
+  ]
+}
