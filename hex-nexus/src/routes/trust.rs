@@ -24,6 +24,9 @@ fn no_state_port() -> (StatusCode, Json<Value>) {
 const TRUST_KEY_PREFIX: &str = "trust:";
 const VALID_LEVELS: &[&str] = &["observe", "suggest", "act", "silent"];
 
+/// Scopes where autonomous ("silent") trust is too dangerous — cap at "act".
+const DESTRUCTIVE_SCOPES: &[&str] = &["deployment", "dependencies"];
+
 #[derive(Debug, Deserialize)]
 pub struct TrustQueryParams {
     pub project: Option<String>,
@@ -83,6 +86,16 @@ pub async fn set_trust(
             StatusCode::BAD_REQUEST,
             Json(json!({
                 "error": format!("Invalid trust level '{}'. Must be one of: {}", body.level, VALID_LEVELS.join(", "))
+            })),
+        );
+    }
+
+    // Trust ceiling: destructive scopes cannot be elevated to "silent".
+    if body.level == "silent" && DESTRUCTIVE_SCOPES.contains(&body.scope.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Trust floor: destructive scopes (deployment, dependencies) cannot be elevated to silent. Maximum: act."
             })),
         );
     }
