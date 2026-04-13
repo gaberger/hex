@@ -97,12 +97,12 @@ checks:
       Scan the staged diff for changes that warrant an ADR:
 
       Triggers for "new ADR recommended":
-        - New port interface added to src/core/ports/
-        - New adapter directory created in src/adapters/
-        - Changes to composition-root.ts wiring
-        - New external dependency added to package.json or Cargo.toml
-        - New SpacetimeDB module created in spacetime-modules/
-        - Changes to the build system (scripts/, Makefile, CI config)
+        - New port interface added to the ports layer
+        - New adapter directory created in the adapters layer
+        - Changes to composition-root / dependency-injection wiring
+        - New external dependency added to the project manifest
+        - New infrastructure module or service boundary introduced
+        - Changes to the build system or CI configuration
 
       For each trigger:
         WARN (non-blocking):

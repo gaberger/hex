@@ -6,9 +6,10 @@ description: >
 trigger: PostToolUse
 matcher: "Write|Edit|MultiEdit"
 condition: >
-  File is under hex-nexus/assets/src/ AND contains fetch() calls to
-  /api/projects/register, /api/projects/unregister, or any POST/DELETE
-  to /api/projects that isn't /init, /archive, or /delete (filesystem ops).
+  File is under the dashboard or frontend adapter layer AND contains
+  fetch() calls to /api/projects/register, /api/projects/unregister,
+  or any POST/DELETE to /api/projects that isn't /init, /archive, or
+  /delete (filesystem ops).
 action: warn
 message: |
   ADR-046 violation: Dashboard code must not mutate project state via REST.

@@ -7,6 +7,22 @@
 //! Two modes:
 //! - **Config-only** (default): `.hex/`, `.claude/`, `.mcp.json`, `CLAUDE.md`
 //! - **Scaffold** (`--scaffold`): Also creates `src/` hex layer directories
+//!
+//! ## Template sourcing
+//!
+//! Skills, agents, and hooks deployed to target projects come from two places:
+//!
+//! 1. **`hex-cli/assets/{skills,agents,hooks}/`** — the canonical embedded
+//!    templates. hex-nexus re-embeds these same directories via `rust-embed`
+//!    in `hex-nexus/src/templates.rs` and serves them through
+//!    `POST /api/projects/init`.
+//!
+//! 2. **`create_scaffold()`** (below) — only creates the `src/` hexagonal
+//!    layer directories programmatically. It does NOT read from any embedded
+//!    asset prefix.
+//!
+//! There is no separate `scaffold/` asset subtree — it was removed as a
+//! duplicate of the top-level `skills/`, `agents/`, `hooks/` directories.
 
 use anyhow::{Context, Result};
 use clap::Args;

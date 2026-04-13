@@ -1,9 +1,12 @@
 //! Embedded asset bundle for hex-cli (ADR-2603221522).
 //!
-//! All templates, schemas, and scaffold files live as real files under
-//! `hex-cli/assets/` and are baked into the binary at compile time via
-//! `rust-embed`. This replaces scattered `include_str!` and hardcoded
-//! template strings.
+//! All templates and schemas live as real files under `hex-cli/assets/`
+//! and are baked into the binary at compile time via `rust-embed`. This
+//! replaces scattered `include_str!` and hardcoded template strings.
+//!
+//! Canonical template directories (`skills/`, `agents/`, `hooks/`) are
+//! the single source of truth — hex-nexus re-embeds them for deployment
+//! to target projects via `POST /api/projects/init`.
 
 use rust_embed::Embed;
 
