@@ -1,166 +1,226 @@
 {
-  "id": "wp-last-mile-self-hosting",
-  "feature": "Last-Mile Self-Hosting Gaps",
-  "description": "Fix 7 friction points exposed during dog-fooding: stale task scope, missing session identity, workplan drift, file-overlap conflicts, brief bloat, worktree cleanup, worktree merge.",
   "adr": "ADR-2604131800",
-  "status": "planned",
-  "priority": "high",
   "created_at": "2026-04-13T18:00:00Z",
   "created_by": "human+agent",
+  "description": "Fix 7 friction points exposed during dog-fooding: stale task scope, missing session identity, workplan drift, file-overlap conflicts, brief bloat, worktree cleanup, worktree merge.",
+  "feature": "Last-Mile Self-Hosting Gaps",
+  "id": "wp-last-mile-self-hosting",
   "phases": [
     {
+      "description": "Default brief output under 2KB. Last 5 events per project, full pending decisions. --full flag for complete history.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P1",
       "name": "Brief pagination + summary mode",
-      "tier": 1,
-      "description": "Default brief output under 2KB. Last 5 events per project, full pending decisions. --full flag for complete history.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P1.1",
-          "name": "Add pagination to briefing endpoint",
-          "layer": "secondary",
-          "description": "Update hex-nexus/src/routes/briefing.rs: add limit param (default 5), since param, summary mode. Return event_count + truncated flag when events exceed limit.",
-          "deps": [],
-          "files": ["hex-nexus/src/routes/briefing.rs"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "Update hex-nexus/src/routes/briefing.rs: add limit param (default 5), since param, summary mode. Return event_count + truncated flag when events exceed limit.",
+          "files": [
+            "hex-nexus/src/routes/briefing.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Add pagination to briefing endpoint",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
-          "id": "P1.2",
-          "name": "Add --full flag to hex brief CLI",
-          "layer": "primary",
-          "description": "Update hex-cli/src/commands/brief.rs: default to summary mode (limit=5), add --full flag that passes limit=0. Display truncation notice when events are truncated.",
-          "deps": ["P1.1"],
-          "files": ["hex-cli/src/commands/brief.rs"],
           "agent": "hex-coder",
+          "deps": [
+            "P1.1"
+          ],
+          "description": "Update hex-cli/src/commands/brief.rs: default to summary mode (limit=5), add --full flag that passes limit=0. Display truncation notice when events are truncated.",
+          "files": [
+            "hex-cli/src/commands/brief.rs"
+          ],
+          "id": "P1.2",
+          "layer": "primary",
+          "name": "Add --full flag to hex brief CLI",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 1
     },
     {
+      "description": "Pre-commit hook allows all files when .hex/task.json is absent. Hook route auto-archives stale task.json when on main with new task intent.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P2",
       "name": "Task scope auto-reset on main",
-      "tier": 1,
-      "description": "Pre-commit hook allows all files when .hex/task.json is absent. Hook route auto-archives stale task.json when on main with new task intent.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P2.1",
-          "name": "Pre-commit hook: allow-all when task.json absent",
-          "layer": "secondary",
-          "description": "Update .git/hooks/pre-commit: if .hex/task.json does not exist, exit 0 (allow all). Currently it exits 1 with 'missing task.json'.",
-          "deps": [],
-          "files": [".git/hooks/pre-commit"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "Update .git/hooks/pre-commit: if .hex/task.json does not exist, exit 0 (allow all). Currently it exits 1 with 'missing task.json'.",
+          "files": [
+            ".git/hooks/pre-commit"
+          ],
+          "id": "P2.1",
+          "layer": "secondary",
+          "name": "Pre-commit hook: allow-all when task.json absent",
+          "status": "done",
           "strategy_hint": "script"
         },
         {
-          "id": "P2.2",
-          "name": "Hook route: archive stale task.json on main",
-          "layer": "primary",
-          "description": "In hex-cli/src/commands/hook.rs route handler: when on main branch and prompt classifies as T2/T3, move .hex/task.json to .hex/task-history/{timestamp}.json. Create .hex/task-history/ if needed.",
-          "deps": [],
-          "files": ["hex-cli/src/commands/hook.rs"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "In hex-cli/src/commands/hook.rs route handler: when on main branch and prompt classifies as T2/T3, move .hex/task.json to .hex/task-history/{timestamp}.json. Create .hex/task-history/ if needed.",
+          "files": [
+            "hex-cli/src/commands/hook.rs"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Hook route: archive stale task.json on main",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 1
     },
     {
+      "description": "When CLAUDE_SESSION_ID is unset but hex mcp is serving, auto-generate session ID and register agent. Fixes Path B dispatch.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P3",
       "name": "MCP session identity auto-registration",
-      "tier": 2,
-      "description": "When CLAUDE_SESSION_ID is unset but hex mcp is serving, auto-generate session ID and register agent. Fixes Path B dispatch.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P3.1",
-          "name": "Auto-generate session ID in MCP server",
-          "layer": "primary",
-          "description": "In hex-cli/src/commands/mcp.rs initialization: if CLAUDE_SESSION_ID is unset, generate deterministic ID from hostname+PID+timestamp, set it as env var, call session-start hook.",
-          "deps": [],
-          "files": ["hex-cli/src/commands/mcp.rs"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "In hex-cli/src/commands/mcp.rs initialization: if CLAUDE_SESSION_ID is unset, generate deterministic ID from hostname+PID+timestamp, set it as env var, call session-start hook.",
+          "files": [
+            "hex-cli/src/commands/mcp.rs"
+          ],
+          "id": "P3.1",
+          "layer": "primary",
+          "name": "Auto-generate session ID in MCP server",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 2
     },
     {
+      "description": "hex plan status cross-references tasks against git log. hex plan reconcile updates stale statuses.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P4",
       "name": "Workplan reconciliation with git",
-      "tier": 2,
-      "description": "hex plan status cross-references tasks against git log. hex plan reconcile updates stale statuses.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P4.1",
-          "name": "Add git-evidence check to hex plan status",
-          "layer": "primary",
-          "description": "In hex-cli/src/commands/plan.rs status handler: for each task, check if files[] were modified in git log since workplan created_at. If done_command is set and exits 0, mark as 'likely_done'. Display evidence column in status output.",
-          "deps": [],
-          "files": ["hex-cli/src/commands/plan.rs"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "In hex-cli/src/commands/plan.rs status handler: for each task, check if files[] were modified in git log since workplan created_at. If done_command is set and exits 0, mark as 'likely_done'. Display evidence column in status output.",
+          "files": [
+            "hex-cli/src/commands/plan.rs"
+          ],
+          "id": "P4.1",
+          "layer": "primary",
+          "name": "Add git-evidence check to hex plan status",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
-          "id": "P4.2",
-          "name": "Add hex plan reconcile command",
-          "layer": "primary",
-          "description": "New subcommand that reads plan status with git evidence, updates task statuses in the workplan JSON file for tasks with strong evidence (done_command passes OR all files modified with matching commit messages). Write updated JSON back to disk.",
-          "deps": ["P4.1"],
-          "files": ["hex-cli/src/commands/plan.rs"],
           "agent": "hex-coder",
+          "deps": [
+            "P4.1"
+          ],
+          "description": "New subcommand that reads plan status with git evidence, updates task statuses in the workplan JSON file for tasks with strong evidence (done_command passes OR all files modified with matching commit messages). Write updated JSON back to disk.",
+          "files": [
+            "hex-cli/src/commands/plan.rs"
+          ],
+          "id": "P4.2",
+          "layer": "primary",
+          "name": "Add hex plan reconcile command",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 2
     },
     {
+      "description": "Before spawning a worktree agent, check for file overlap with running agents. Serialize if conflict detected.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P5",
       "name": "File-overlap detection at dispatch",
-      "tier": 3,
-      "description": "Before spawning a worktree agent, check for file overlap with running agents. Serialize if conflict detected.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P5.1",
-          "name": "Track active agent file scopes in executor",
-          "layer": "secondary",
-          "description": "In workplan_executor.rs: maintain a HashMap<String, HashSet<String>> mapping agent_id to files[]. Before spawning, check intersection. If non-empty, queue the task and log warning. Dispatch when conflicting agent completes.",
-          "deps": [],
-          "files": ["hex-nexus/src/orchestration/workplan_executor.rs"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "In workplan_executor.rs: maintain a HashMap<String, HashSet<String>> mapping agent_id to files[]. Before spawning, check intersection. If non-empty, queue the task and log warning. Dispatch when conflicting agent completes.",
+          "files": [
+            "hex-nexus/src/orchestration/workplan_executor.rs"
+          ],
+          "id": "P5.1",
+          "layer": "secondary",
+          "name": "Track active agent file scopes in executor",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 3
     },
     {
+      "description": "Auto-remove merged worktrees on task completion. New hex worktree merge command for dependency-ordered merging.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P6",
       "name": "Worktree auto-cleanup + merge command",
-      "tier": 3,
-      "description": "Auto-remove merged worktrees on task completion. New hex worktree merge command for dependency-ordered merging.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P6.1",
-          "name": "Auto-cleanup worktrees on task completion",
-          "layer": "secondary",
-          "description": "In hex-nexus task completion handler: if task was in a worktree AND branch is merged to base, run git worktree remove + git branch -d. If not merged, store in HexFlo memory as pending-merge.",
-          "deps": [],
-          "files": ["hex-nexus/src/coordination/cleanup.rs"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "In hex-nexus task completion handler: if task was in a worktree AND branch is merged to base, run git worktree remove + git branch -d. If not merged, store in HexFlo memory as pending-merge.",
+          "files": [
+            "hex-nexus/src/coordination/cleanup.rs"
+          ],
+          "id": "P6.1",
+          "layer": "secondary",
+          "name": "Auto-cleanup worktrees on task completion",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
-          "id": "P6.2",
-          "name": "hex worktree merge command",
-          "layer": "primary",
-          "description": "New CLI command that lists worktrees for a feature, detects file overlaps, merges non-overlapping in tier order, cherry-picks overlapping from most recent, runs cargo check gate, cleans up.",
-          "deps": ["P6.1"],
-          "files": ["hex-cli/src/commands/worktree.rs"],
           "agent": "hex-coder",
+          "deps": [
+            "P6.1"
+          ],
+          "description": "New CLI command that lists worktrees for a feature, detects file overlaps, merges non-overlapping in tier order, cherry-picks overlapping from most recent, runs cargo check gate, cleans up.",
+          "files": [
+            "hex-cli/src/commands/worktree.rs"
+          ],
+          "id": "P6.2",
+          "layer": "primary",
+          "name": "hex worktree merge command",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 3
     }
-  ]
+  ],
+  "priority": "high",
+  "status": "done"
 }
