@@ -38,6 +38,10 @@ pub mod events;
 pub mod fingerprint;
 pub mod brain;
 pub mod briefing;
+pub mod pulse;
+pub mod steer;
+pub mod taste;
+pub mod trust;
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
 use axum::response::{IntoResponse, Redirect};
@@ -454,6 +458,15 @@ pub fn build_router(state: SharedState) -> Router {
         // AGENTIC BRAIN (ADR-2604102200) — must register BEFORE {project_id} routes
         .route("/api/brain/status", get(brain::status))
         .route("/api/brain/test", post(brain::test))
+        // AIOS Experience (ADR-2604131500) — pulse, steer, taste, trust
+        .route("/api/pulse", get(pulse::get_pulse))
+        .route("/api/steer", post(steer::handle_steer))
+        .route("/api/taste", get(taste::get_taste).post(taste::set_taste))
+        .route("/api/taste/:key", delete(taste::forget_taste))
+        .route("/api/taste/:key/pin", patch(taste::pin_taste))
+        .route("/api/trust", get(trust::get_trust).post(trust::set_trust))
+        .route("/api/trust/history", get(trust::get_trust_history))
+        .route("/api/trust/:scope/pin", patch(trust::pin_trust))
         // Per-project queries (browser reads)
         .route("/api/{project_id}/health", get(query::get_health))
         .route("/api/{project_id}/tokens/overview", get(query::get_tokens_overview))
