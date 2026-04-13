@@ -149,6 +149,23 @@ pub enum InferenceAction {
     Queue,
     /// Show inference cost attribution and provider statistics (ADR-2604052125)
     Stats,
+    /// Benchmark a model: code-gen, reasoning, and identity prompts — quality + speed + tier recommendation (ADR-2604131238)
+    Bench {
+        /// Provider ID, model name, or URL (e.g. "bazzite-ollama", "minimax-m2.7:cloud", "http://bazzite:11434")
+        target: String,
+        /// Specific model to benchmark (overrides the provider's registered model)
+        #[arg(long)]
+        model: Option<String>,
+        /// Skip the long code-generation prompt (identity + reasoning only)
+        #[arg(long)]
+        quick: bool,
+        /// Run same prompts against a baseline model for side-by-side comparison
+        #[arg(long)]
+        compare: Option<String>,
+        /// Persist quality score and tier recommendation to nexus
+        #[arg(long)]
+        save: bool,
+    },
 }
 
 /// Write the full inference endpoint list to ~/.hex/inference-servers.json.
@@ -210,6 +227,9 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
         InferenceAction::Watch { agent_id, daemon } => watch(agent_id, daemon).await,
         InferenceAction::Queue => queue_list().await,
         InferenceAction::Stats => inference_stats().await,
+        InferenceAction::Bench { target, model, quick, compare, save } => {
+            bench_provider(&target, model.as_deref(), quick, compare.as_deref(), save).await
+        }
     }
 }
 
@@ -1729,5 +1749,433 @@ async fn queue_list() -> anyhow::Result<()> {
         let role = t["role"].as_str().unwrap_or("-");
         println!("  {} — {}/{} [{}] role={}", id, wid, tid, status, role);
     }
+    Ok(())
+}
+
+// ── Bench command (ADR-2604131238) ──────────────────────────────────────────
+
+/// Result of a single benchmark prompt.
+#[allow(dead_code)]
+struct BenchResult {
+    name: &'static str,
+    response: String,
+    tokens: u64,
+    wall_secs: f64,
+    quality_score: f32,
+    quality_max: u32,
+    quality_details: Vec<(&'static str, bool)>,
+}
+
+impl BenchResult {
+    fn tok_per_sec(&self) -> f64 {
+        if self.wall_secs > 0.0 { self.tokens as f64 / self.wall_secs } else { 0.0 }
+    }
+}
+
+/// Send a chat completion to either Ollama or OpenAI-compatible endpoint.
+async fn bench_chat(
+    http: &reqwest::Client,
+    url: &str,
+    provider_type: &str,
+    model: &str,
+    prompt: &str,
+) -> anyhow::Result<(String, u64, f64)> {
+    let start = std::time::Instant::now();
+
+    if provider_type == "openrouter" || url.contains("openrouter.ai") || url.contains("/v1") {
+        let api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
+        let chat_url = format!("{}/chat/completions", url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.2,
+        });
+        let resp = http.post(&chat_url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&body)
+            .send().await?;
+        let d: serde_json::Value = resp.json().await?;
+        let content = d["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
+        let tokens = d["usage"]["completion_tokens"].as_u64().unwrap_or(content.len() as u64 / 4);
+        let wall = start.elapsed().as_secs_f64();
+        Ok((content, tokens, wall))
+    } else {
+        // Ollama /api/chat
+        let chat_url = format!("{}/api/chat", url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": false,
+            "options": {"temperature": 0.2},
+        });
+        let resp = http.post(&chat_url).json(&body).send().await?;
+        let d: serde_json::Value = resp.json().await?;
+        let content = d["message"]["content"].as_str().unwrap_or("").to_string();
+        let tokens = d["eval_count"].as_u64().unwrap_or(content.len() as u64 / 4);
+        let wall = start.elapsed().as_secs_f64();
+        Ok((content, tokens, wall))
+    }
+}
+
+/// Run the identity prompt — measures latency floor and basic responsiveness.
+async fn bench_identity(
+    http: &reqwest::Client, url: &str, ptype: &str, model: &str,
+) -> anyhow::Result<BenchResult> {
+    let (response, tokens, wall) = bench_chat(
+        http, url, ptype, model,
+        "What model are you? Respond in one sentence.",
+    ).await?;
+    let non_empty = !response.trim().is_empty();
+    Ok(BenchResult {
+        name: "Identity",
+        quality_score: if non_empty { 1.0 } else { 0.0 },
+        quality_max: 1,
+        quality_details: vec![("responsive", non_empty)],
+        response, tokens, wall_secs: wall,
+    })
+}
+
+/// Run the code generation prompt — measures Rust code quality for hex adapter work.
+async fn bench_codegen(
+    http: &reqwest::Client, url: &str, ptype: &str, model: &str,
+) -> anyhow::Result<BenchResult> {
+    let prompt = r#"You are a Rust developer. Generate a complete secondary adapter implementing a WeatherPort trait.
+Requirements:
+1. Define the port trait: WeatherPort with async fn get_forecast(city: &str) -> Result<Forecast, WeatherError>
+2. Define domain types: Forecast (city, temp_celsius, humidity, description) and WeatherError enum
+3. Implement HttpWeatherAdapter that calls an HTTP API using reqwest
+4. Handle timeouts, parse errors, and API errors as distinct WeatherError variants (use thiserror)
+5. Include unit tests with a mock (trait object, not mock library)
+6. All code must compile. Use proper error handling.
+Output complete Rust code."#;
+
+    let (response, tokens, wall) = bench_chat(http, url, ptype, model, prompt).await?;
+
+    let checks: Vec<(&str, bool)> = vec![
+        ("async fn", response.contains("async fn")),
+        ("thiserror", response.contains("thiserror")),
+        ("tests", response.contains("#[cfg(test)]") || response.contains("#[test]")),
+        ("reqwest", response.contains("reqwest")),
+        ("error variants", response.matches("Error").count() >= 3),
+        ("Result<>", response.contains("Result<")),
+        ("trait def", response.contains("trait Weather") || response.contains("trait weather")),
+        ("mock test", response.to_lowercase().contains("mock")),
+        ("derives", response.contains("#[derive")),
+        ("timeout", response.to_lowercase().contains("timeout")),
+    ];
+    let passed = checks.iter().filter(|(_, v)| *v).count() as f32;
+
+    Ok(BenchResult {
+        name: "Code-gen",
+        quality_score: passed / 10.0,
+        quality_max: 10,
+        quality_details: checks,
+        response, tokens, wall_secs: wall,
+    })
+}
+
+/// Run the reasoning prompt — measures architectural analysis capability.
+async fn bench_reasoning(
+    http: &reqwest::Client, url: &str, ptype: &str, model: &str,
+) -> anyhow::Result<BenchResult> {
+    let prompt = r#"In a hexagonal architecture (ports and adapters) Rust project, a developer wrote this in adapters/http/handler.rs:
+```rust
+use crate::adapters::database::PostgresRepo;
+```
+Identify the architectural violation, explain which rule it breaks, and describe how to fix it. Be specific about dependency inversion."#;
+
+    let (response, tokens, wall) = bench_chat(http, url, ptype, model, prompt).await?;
+    let lower = response.to_lowercase();
+
+    let checks: Vec<(&str, bool)> = vec![
+        ("cross-adapter", lower.contains("adapter") && (lower.contains("import") || lower.contains("depend") || lower.contains("coupl"))),
+        ("names rule", lower.contains("port") || lower.contains("boundary") || lower.contains("hexagonal")),
+        ("port extraction", lower.contains("trait") || lower.contains("interface") || lower.contains("port")),
+        ("dep inversion", lower.contains("inversion") || lower.contains("abstraction") || lower.contains("inject")),
+        ("code example", response.contains("trait ") || response.contains("fn ") || response.contains("impl ")),
+    ];
+    let passed = checks.iter().filter(|(_, v)| *v).count() as f32;
+
+    Ok(BenchResult {
+        name: "Reasoning",
+        quality_score: passed / 5.0,
+        quality_max: 5,
+        quality_details: checks,
+        response, tokens, wall_secs: wall,
+    })
+}
+
+/// Compute overall score and recommend tier.
+fn compute_tier(results: &[&BenchResult]) -> (f32, u8, &'static str) {
+    let codegen = results.iter().find(|r| r.name == "Code-gen");
+    let reasoning = results.iter().find(|r| r.name == "Reasoning");
+
+    let code_score = codegen.map(|r| r.quality_score).unwrap_or(0.0);
+    let reason_score = reasoning.map(|r| r.quality_score).unwrap_or(0.0);
+
+    // Average tok/s across all prompts (excluding identity for fairness)
+    let heavy: Vec<_> = results.iter().filter(|r| r.name != "Identity").collect();
+    let avg_tps = if heavy.is_empty() { 0.0 } else {
+        heavy.iter().map(|r| r.tok_per_sec()).sum::<f64>() / heavy.len() as f64
+    };
+    let latency_score: f32 = if avg_tps > 100.0 { 1.0 }
+        else if avg_tps > 50.0 { 0.8 }
+        else if avg_tps > 20.0 { 0.6 }
+        else if avg_tps > 5.0 { 0.3 }
+        else { 0.1 };
+
+    let overall = code_score * 0.5 + reason_score * 0.3 + latency_score * 0.2;
+
+    let code_raw = codegen.map(|r| (r.quality_score * r.quality_max as f32) as u32).unwrap_or(0);
+    let reason_raw = reasoning.map(|r| (r.quality_score * r.quality_max as f32) as u32).unwrap_or(0);
+
+    let (tier, label) = if overall >= 0.85 && reason_raw >= 4 {
+        (3, "Tier 3 (Opus-equivalent: planning, specs, validation)")
+    } else if overall >= 0.65 && code_raw >= 7 {
+        (2, "Tier 2 (Sonnet-equivalent: code generation, review)")
+    } else if overall >= 0.40 {
+        (1, "Tier 1 (Haiku-equivalent: simple edits, summarization)")
+    } else {
+        (0, "Not recommended for hex agent work")
+    };
+
+    (overall, tier, label)
+}
+
+/// Print benchmark results for one model.
+fn print_bench_results(model: &str, results: &[BenchResult], label: Option<&str>) {
+    if let Some(lbl) = label {
+        println!("  {}", format!("── {} ──", lbl).cyan());
+    }
+    println!();
+    for r in results {
+        let status = if r.quality_score >= 0.6 { "✓".green() } else if r.quality_score >= 0.3 { "~".yellow() } else { "✗".red() };
+        let q = (r.quality_score * r.quality_max as f32) as u32;
+        println!("  {}  {:<12} {:>5.1}s  ({}/{} quality, {:.0} tok/s)",
+            status, r.name, r.wall_secs, q, r.quality_max, r.tok_per_sec());
+        for (name, passed) in &r.quality_details {
+            let mark = if *passed { "✓".green() } else { "✗".red() };
+            print!("     {} {}", mark, name);
+        }
+        println!();
+    }
+
+    let refs: Vec<&BenchResult> = results.iter().collect();
+    let (overall, tier, tier_label) = compute_tier(&refs);
+
+    let heavy: Vec<_> = results.iter().filter(|r| r.name != "Identity").collect();
+    let avg_tps = if heavy.is_empty() { 0.0 } else {
+        heavy.iter().map(|r| r.tok_per_sec()).sum::<f64>() / heavy.len() as f64
+    };
+
+    println!();
+    println!("  {}", "── Summary ──────────────────────────────────".dimmed());
+    println!("  Model:            {}", model);
+    println!("  Overall score:    {:.2}", overall);
+    println!("  Avg tok/s:        {:.0}", avg_tps);
+    println!("  Recommended:      {}", tier_label);
+    if tier >= 2 {
+        println!("  Best for:         code_generation, code_edit");
+    } else if tier == 1 {
+        println!("  Best for:         general, structured_output");
+    }
+    println!();
+
+    // score is computed inline
+}
+
+/// `hex inference bench` — benchmark a model with hex-specific prompts (ADR-2604131238).
+async fn bench_provider(
+    target: &str,
+    model_override: Option<&str>,
+    quick: bool,
+    compare: Option<&str>,
+    save: bool,
+) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()?;
+
+    // ── Resolve target ──────────────────────────────────────────────────────
+    struct Resolved { id: String, url: String, ptype: String, model: String }
+
+    let resolve = |target_str: &str, model_ov: Option<&str>| -> Option<Resolved> {
+        if target_str.starts_with("http") {
+            let ptype = if target_str.contains("openrouter.ai") { "openrouter" }
+                else if target_str.contains(":11434") { "ollama" }
+                else { "openai-compat" };
+            return Some(Resolved {
+                id: target_str.to_string(), url: target_str.to_string(),
+                ptype: ptype.to_string(),
+                model: model_ov.unwrap_or("").to_string(),
+            });
+        }
+        // Check if target looks like a model name (contains : or /)
+        if target_str.contains(':') || target_str.contains('/') {
+            // It's a model name — need to find a provider that has it
+            return Some(Resolved {
+                id: target_str.to_string(), url: String::new(),
+                ptype: String::new(),
+                model: target_str.to_string(),
+            });
+        }
+        None
+    };
+
+    let mut resolved = resolve(target, model_override);
+
+    // Try nexus lookup if not a direct URL/model
+    if (resolved.is_none() || resolved.as_ref().map(|r| r.url.is_empty()).unwrap_or(false))
+        && nexus.ensure_running().await.is_ok()
+    {
+            if let Ok(resp) = nexus.get("/api/inference/endpoints").await {
+                if let Some(endpoints) = resp.get("endpoints").and_then(|e| e.as_array()) {
+                    // Exact ID match or prefix match
+                    let found = endpoints.iter().find(|p| {
+                        let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                        id == target || id.starts_with(&format!("{}-", target))
+                    });
+                    if let Some(p) = found {
+                        let model = model_override
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| extract_primary_model(p.get("model")));
+                        resolved = Some(Resolved {
+                            id: p["id"].as_str().unwrap_or(target).to_string(),
+                            url: p["url"].as_str().unwrap_or("").to_string(),
+                            ptype: p["provider"].as_str().unwrap_or("ollama").to_string(),
+                            model,
+                        });
+                    }
+                    // If target looks like a model name, find provider that serves it
+                    if resolved.is_none() || resolved.as_ref().map(|r| r.url.is_empty()).unwrap_or(false) {
+                        let model_target = model_override.unwrap_or(target);
+                        let host = endpoints.iter().find(|p| {
+                            let models = p.get("models").and_then(|v| v.as_str()).unwrap_or("");
+                            models.contains(model_target)
+                        });
+                        if let Some(p) = host {
+                            resolved = Some(Resolved {
+                                id: p["id"].as_str().unwrap_or(target).to_string(),
+                                url: p["url"].as_str().unwrap_or("").to_string(),
+                                ptype: p["provider"].as_str().unwrap_or("ollama").to_string(),
+                                model: model_target.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+    }
+
+    let Some(r) = resolved.filter(|r| !r.url.is_empty()) else {
+        println!("{} Could not resolve target '{}' — register it first with `hex inference add`", "✗".red(), target);
+        return Ok(());
+    };
+
+    println!("{}", format!("── hex inference bench: {} via {} ──", r.model, r.id).cyan());
+    println!();
+
+    // ── Run benchmarks ──────────────────────────────────────────────────────
+    let run_suite = |http: &reqwest::Client, url: &str, ptype: &str, model: &str, quick: bool| {
+        let http = http.clone();
+        let url = url.to_string();
+        let ptype = ptype.to_string();
+        let model = model.to_string();
+        async move {
+            let mut results: Vec<BenchResult> = Vec::new();
+
+            // Identity
+            print!("  {} Running identity probe...", "→".cyan());
+            match bench_identity(&http, &url, &ptype, &model).await {
+                Ok(br) => { println!(" {:.1}s", br.wall_secs); results.push(br); }
+                Err(e) => { println!(" {} {}", "✗".red(), e); }
+            }
+
+            // Code generation (skip in --quick mode)
+            if !quick {
+                print!("  {} Running code generation benchmark...", "→".cyan());
+                match bench_codegen(&http, &url, &ptype, &model).await {
+                    Ok(br) => { println!(" {:.1}s", br.wall_secs); results.push(br); }
+                    Err(e) => { println!(" {} {}", "✗".red(), e); }
+                }
+            }
+
+            // Reasoning
+            print!("  {} Running reasoning benchmark...", "→".cyan());
+            match bench_reasoning(&http, &url, &ptype, &model).await {
+                Ok(br) => { println!(" {:.1}s", br.wall_secs); results.push(br); }
+                Err(e) => { println!(" {} {}", "✗".red(), e); }
+            }
+
+            results
+        }
+    };
+
+    let results = run_suite(&http, &r.url, &r.ptype, &r.model, quick).await;
+
+    if results.is_empty() {
+        println!("{} All prompts failed — model may be unreachable", "✗".red());
+        return Ok(());
+    }
+
+    println!();
+    print_bench_results(&r.model, &results, None);
+
+    // ── Compare mode ────────────────────────────────────────────────────────
+    if let Some(baseline_target) = compare {
+        // Resolve baseline the same way
+        let mut baseline_resolved: Option<Resolved> = None;
+        if nexus.ensure_running().await.is_ok() {
+            if let Ok(resp) = nexus.get("/api/inference/endpoints").await {
+                if let Some(endpoints) = resp.get("endpoints").and_then(|e| e.as_array()) {
+                    let found = endpoints.iter().find(|p| {
+                        let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                        id == baseline_target || id.starts_with(&format!("{}-", baseline_target))
+                    });
+                    if let Some(p) = found {
+                        baseline_resolved = Some(Resolved {
+                            id: p["id"].as_str().unwrap_or("").to_string(),
+                            url: p["url"].as_str().unwrap_or("").to_string(),
+                            ptype: p["provider"].as_str().unwrap_or("ollama").to_string(),
+                            model: extract_primary_model(p.get("model")),
+                        });
+                    }
+                }
+            }
+        }
+
+        if let Some(bl) = baseline_resolved.filter(|b| !b.url.is_empty()) {
+            println!("{}", format!("── Baseline: {} via {} ──", bl.model, bl.id).cyan());
+            println!();
+            let bl_results = run_suite(&http, &bl.url, &bl.ptype, &bl.model, quick).await;
+            if !bl_results.is_empty() {
+                print_bench_results(&bl.model, &bl_results, Some("Baseline"));
+            }
+        } else {
+            println!("{} Could not resolve baseline '{}'", "!".yellow(), baseline_target);
+        }
+    }
+
+    // ── Save calibration ────────────────────────────────────────────────────
+    if save {
+        let refs: Vec<&BenchResult> = results.iter().collect();
+        let (overall, tier, _) = compute_tier(&refs);
+        if nexus.ensure_running().await.is_ok() {
+            let patch = serde_json::json!({
+                "quality_score": overall,
+                "tier": tier,
+            });
+            match nexus.patch(&format!("/api/inference/endpoints/{}", r.id), &patch).await {
+                Ok(_) => {
+                    println!("{} Calibration saved (score={:.2}, tier={})", "✓".green(), overall, tier);
+                    write_inference_cache().await;
+                }
+                Err(e) => println!("{} Could not save calibration: {}", "!".yellow(), e),
+            }
+        } else {
+            println!("{} hex-nexus not running — calibration not saved", "!".yellow());
+        }
+    }
+
     Ok(())
 }

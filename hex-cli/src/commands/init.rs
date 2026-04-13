@@ -68,7 +68,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
 
     // ── 0. Interview (empty directory only, ADR-055) ────────────
     let interview = if super::interview::is_empty_project(&target) && !args.skip_interview {
-        match super::interview::run_interview(&project_name) {
+        match super::interview::run_interview() {
             Ok(iv) => Some(iv),
             Err(e) => {
                 tracing::debug!("Interview skipped: {e}");
