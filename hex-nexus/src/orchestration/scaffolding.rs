@@ -220,7 +220,14 @@ impl ScaffoldedDispatch {
 
         // Cascading escalation (P4.1): try frontier if available
         if let Some(ref frontier) = self.frontier {
-            tracing::info!("Escalating to frontier model after local failure");
+            tracing::warn!(
+                tier = tier.as_str(),
+                total_attempts,
+                best_error_len = best_error.len(),
+                "Escalating to frontier adapter after local compile-gate exhaustion"
+            );
+            // Use the original prompt — not the retry-augmented one — so the
+            // frontier model gets a clean context without prior error feedback.
             let response = frontier.complete(request.clone()).await?;
             return Ok(ScaffoldResult::Success {
                 response,
@@ -617,6 +624,75 @@ mod tests {
             }
             other => panic!("expected CompileGateFailed, got {:?}", other),
         }
+    }
+
+    // ── P4.1: Frontier escalation tests ────────────────────────────────
+
+    #[tokio::test]
+    async fn escalates_to_frontier_on_compile_gate_exhaustion() {
+        // Local adapter always produces bad code; frontier produces good code.
+        let local = Arc::new(CapturingInferencePort::new("bad code"));
+        let frontier = Arc::new(CapturingInferencePort::new("good frontier code"));
+        let checker = MockCompileChecker {
+            accept_fn: Box::new(|_| false), // always reject (frontier skips gate)
+        };
+        let config = ScaffoldConfig {
+            n_for_tier: |_| 1,
+            max_retries: 0,
+        };
+        let dispatch = ScaffoldedDispatch::new(local.clone(), Box::new(checker))
+            .with_config(config)
+            .with_frontier(frontier.clone());
+
+        let result = dispatch.dispatch(&make_request(), TaskTier::T2).await.unwrap();
+        match result {
+            ScaffoldResult::Success { response, .. } => {
+                // Should contain frontier's response, not local's
+                let text: String = response
+                    .content
+                    .iter()
+                    .filter_map(|b| {
+                        if let ContentBlock::Text { text } = b {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                assert_eq!(text, "good frontier code");
+            }
+            other => panic!("expected Success from frontier escalation, got {:?}", other),
+        }
+
+        // Frontier should receive the original prompt (no error augmentation)
+        let frontier_reqs = frontier.captured_requests();
+        assert_eq!(frontier_reqs.len(), 1);
+        let frontier_text = extract_user_text(&frontier_reqs[0]);
+        assert!(
+            !frontier_text.contains("compiler error"),
+            "frontier must receive original prompt, not error-augmented"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_frontier_returns_compile_gate_failed() {
+        // Same setup but WITHOUT a frontier — should fall through to error.
+        let local = Arc::new(CapturingInferencePort::new("bad code"));
+        let checker = MockCompileChecker {
+            accept_fn: Box::new(|_| false),
+        };
+        let config = ScaffoldConfig {
+            n_for_tier: |_| 1,
+            max_retries: 0,
+        };
+        let dispatch =
+            ScaffoldedDispatch::new(local, Box::new(checker)).with_config(config);
+
+        let result = dispatch.dispatch(&make_request(), TaskTier::T2).await.unwrap();
+        assert!(
+            matches!(result, ScaffoldResult::CompileGateFailed { .. }),
+            "without frontier, should return CompileGateFailed"
+        );
     }
 
     /// Helper: extract concatenated user-message text from an InferenceRequest.
