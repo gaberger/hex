@@ -17,6 +17,18 @@ use serde_json::json;
 
 use crate::fmt::{pretty_table, truncate};
 
+/// Summary of a single workplan's reconciliation status.
+#[derive(Debug)]
+struct WorkplanSummary {
+    id: String,
+    feature: String,
+    status: String,
+    total_tasks: usize,
+    done_tasks: usize,
+    /// Tasks still marked "todo" but with git evidence (commit messages mentioning the task id).
+    stale_tasks: Vec<String>,
+}
+
 #[derive(Subcommand)]
 pub enum BrainAction {
     /// Show brain service status and configuration
@@ -314,6 +326,102 @@ fn check_binary_freshness() -> FreshnessStatus {
     }
 }
 
+/// Scan `docs/workplans/*.json` for active (non-completed) workplans, reconcile
+/// each task against git history, and return per-workplan summaries.
+///
+/// A task is "stale" when it is still marked `"todo"` in the JSON but a commit
+/// message references its id (e.g. `P3.1`).
+fn check_workplan_status() -> anyhow::Result<Vec<WorkplanSummary>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let workplans_dir = workspace_root.join("docs/workplans");
+
+    if !workplans_dir.is_dir() {
+        return Ok(vec![]);
+    }
+
+    // Grab recent git log once — search it for task ids later.
+    let git_log = std::process::Command::new("git")
+        .args(["log", "--oneline", "-200"])
+        .current_dir(&workspace_root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    let mut summaries = Vec::new();
+
+    for entry in std::fs::read_dir(&workplans_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+
+        let contents = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let wp: serde_json::Value = match serde_json::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let wp_status = wp.get("status").and_then(|s| s.as_str()).unwrap_or("unknown");
+        if wp_status == "completed" {
+            continue;
+        }
+
+        let id = wp.get("id").and_then(|s| s.as_str()).unwrap_or("unknown").to_string();
+        let feature = wp.get("feature").and_then(|s| s.as_str()).unwrap_or("").to_string();
+
+        let mut total_tasks = 0usize;
+        let mut done_tasks = 0usize;
+        let mut stale_tasks = Vec::new();
+
+        // Walk phases → tasks
+        if let Some(phases) = wp.get("phases").and_then(|p| p.as_array()) {
+            for phase in phases {
+                if let Some(tasks) = phase.get("tasks").and_then(|t| t.as_array()) {
+                    for task in tasks {
+                        total_tasks += 1;
+                        let task_status = task.get("status").and_then(|s| s.as_str()).unwrap_or("todo");
+                        let task_id = task.get("id").and_then(|s| s.as_str()).unwrap_or("");
+
+                        match task_status {
+                            "done" => done_tasks += 1,
+                            _ => {
+                                    // Check if git log mentions this task id (case-insensitive)
+                                let needle_lower = task_id.to_lowercase();
+                                if !task_id.is_empty()
+                                    && git_log.to_lowercase().contains(&needle_lower)
+                                {
+                                    stale_tasks.push(task_id.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        summaries.push(WorkplanSummary {
+            id,
+            feature,
+            status: wp_status.to_string(),
+            total_tasks,
+            done_tasks,
+            stale_tasks,
+        });
+    }
+
+    summaries.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(summaries)
+}
+
 async fn validate() -> anyhow::Result<()> {
     println!("{}", "⬡ hex brain validate".bold());
 
@@ -373,6 +481,57 @@ async fn validate() -> anyhow::Result<()> {
         }
         FreshnessStatus::Unknown(reason) => {
             println!("  Binary:      {} unknown: {}", "?".yellow(), reason);
+        }
+    }
+
+    // Workplan status check
+    match check_workplan_status() {
+        Ok(summaries) if summaries.is_empty() => {
+            println!("  Workplans:   {} no active workplans", "✓".green());
+        }
+        Ok(summaries) => {
+            let total_stale: usize = summaries.iter().map(|s| s.stale_tasks.len()).sum();
+            if total_stale == 0 {
+                println!(
+                    "  Workplans:   {} {} active, all tasks consistent",
+                    "✓".green(),
+                    summaries.len()
+                );
+            } else {
+                println!(
+                    "  Workplans:   {} {} active, {} stale tasks need reconciliation",
+                    "✗".red(),
+                    summaries.len(),
+                    total_stale
+                );
+            }
+            for wp in &summaries {
+                let progress = if wp.total_tasks > 0 {
+                    format!("{}/{}", wp.done_tasks, wp.total_tasks)
+                } else {
+                    "0/0".to_string()
+                };
+                let stale_note = if wp.stale_tasks.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — stale: {}", wp.stale_tasks.join(", "))
+                };
+                let label = if wp.feature.is_empty() {
+                    wp.id.clone()
+                } else {
+                    format!("{} ({})", wp.id, truncate(&wp.feature, 30))
+                };
+                println!(
+                    "    {} [{}] {} tasks{}",
+                    label,
+                    progress,
+                    wp.status,
+                    stale_note
+                );
+            }
+        }
+        Err(e) => {
+            println!("  Workplans:   {} error: {}", "✗".red(), e);
         }
     }
 
