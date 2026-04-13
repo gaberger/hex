@@ -108,16 +108,6 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // ── 5. docs/adrs/ ─────────────────────────────────────────────
     create_dir_if_missing(&target.join("docs/adrs"))?;
 
-    // ── 5b. README.md (ADR-055) ─────────────────────────────────
-    if let Some(ref iv) = interview {
-        let readme_path = target.join("README.md");
-        if !readme_path.exists() || args.force {
-            let content = super::readme::generate_readme(iv);
-            fs::write(&readme_path, content)
-                .context("Failed to write README.md")?;
-        }
-    }
-
     // ── 6. Scaffold (optional) ────────────────────────────────────
     if args.scaffold {
         create_scaffold(&target)?;
@@ -140,9 +130,6 @@ pub async fn run(args: InitArgs) -> Result<()> {
         println!("  {} CLAUDE.md", "\u{2713}".green());
     }
     println!("  {} docs/adrs/", "\u{2713}".green());
-    if interview.is_some() {
-        println!("  {} README.md (project specification)", "\u{2713}".green());
-    }
     if args.scaffold {
         println!("  {} src/ (hexagonal layers)", "\u{2713}".green());
     }

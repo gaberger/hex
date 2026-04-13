@@ -27,7 +27,6 @@ pub mod opencode;
 pub mod plan;
 pub mod report;
 pub mod project;
-pub mod readme;
 pub mod secrets;
 pub mod skill;
 pub mod stdb;
