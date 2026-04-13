@@ -42,40 +42,22 @@ pub enum TrustAction {
     },
 }
 
+/// A single trust entry as returned by GET /api/trust from hex-nexus.
+///
+/// Trust data is stored in HexFlo memory with keys like `trust:<project>:<scope>`.
+/// The nexus endpoint returns a flat JSON array of these entries.
 #[derive(Deserialize, Debug)]
-struct TrustTree {
+struct TrustEntry {
     #[serde(default)]
-    project: String,
-    #[serde(default)]
-    scopes: Vec<TrustScope>,
-}
-
-#[derive(Deserialize, Debug)]
-struct TrustScope {
-    #[serde(default)]
-    path: String,
-    #[serde(default)]
-    level: String,
-    #[serde(default)]
-    note: String,
-    #[serde(default)]
-    pinned: bool,
-    #[serde(default)]
-    children: Vec<TrustScope>,
-}
-
-#[derive(Deserialize, Debug)]
-struct TrustEvent {
-    #[serde(default)]
-    timestamp: String,
+    project_id: String,
     #[serde(default)]
     scope: String,
     #[serde(default)]
-    from_level: String,
+    level: String,
     #[serde(default)]
-    to_level: String,
+    pinned: bool,
     #[serde(default)]
-    reason: String,
+    updated_at: String,
 }
 
 pub async fn run(action: TrustAction) -> anyhow::Result<()> {
@@ -92,21 +74,56 @@ async fn show(project: Option<&str>) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
 
     let path = match project {
-        Some(p) => format!("/api/trust/{}", p),
+        Some(p) => format!("/api/trust?project={}", p),
         None => "/api/trust".to_string(),
     };
 
     match nexus.get(&path).await {
         Ok(value) => {
-            let trees: Vec<TrustTree> = if value.is_array() {
+            // The nexus returns a flat array of TrustEntry objects.
+            let entries: Vec<TrustEntry> = if value.is_array() {
                 serde_json::from_value(value)?
             } else {
+                // Single object — wrap in vec
                 vec![serde_json::from_value(value)?]
             };
 
-            for tree in &trees {
-                println!("{}", tree.project.bold());
-                render_scopes(&tree.scopes, "", true);
+            if entries.is_empty() {
+                println!(
+                    "{} No trust entries found{}.",
+                    "\u{2b21}".dimmed(),
+                    project.map(|p| format!(" for {}", p)).unwrap_or_default()
+                );
+                return Ok(());
+            }
+
+            // Group entries by project_id for display
+            let mut by_project: std::collections::BTreeMap<String, Vec<&TrustEntry>> =
+                std::collections::BTreeMap::new();
+            for entry in &entries {
+                by_project
+                    .entry(entry.project_id.clone())
+                    .or_default()
+                    .push(entry);
+            }
+
+            for (proj, scopes) in &by_project {
+                println!("{}", proj.bold());
+                let len = scopes.len();
+                for (i, entry) in scopes.iter().enumerate() {
+                    let is_last = i == len - 1;
+                    let connector = if is_last { "\u{2514}\u{2500}\u{2500} " } else { "\u{251c}\u{2500}\u{2500} " };
+                    let level_colored = colorize_level(&entry.level);
+                    let pin_marker = if entry.pinned {
+                        " [pinned]".dimmed().to_string()
+                    } else {
+                        String::new()
+                    };
+                    println!(
+                        "  {}{:<24} {}{}",
+                        connector, entry.scope, level_colored, pin_marker
+                    );
+                }
                 println!();
             }
         }
@@ -126,33 +143,6 @@ async fn show(project: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn render_scopes(scopes: &[TrustScope], prefix: &str, _is_root: bool) {
-    let len = scopes.len();
-    for (i, scope) in scopes.iter().enumerate() {
-        let is_last = i == len - 1;
-        let connector = if is_last { "\u{2514}\u{2500}\u{2500} " } else { "\u{251c}\u{2500}\u{2500} " };
-        let child_prefix = if is_last { "    " } else { "\u{2502}   " };
-
-        let level_colored = colorize_level(&scope.level);
-        let pin_marker = if scope.pinned { " [pinned]".dimmed().to_string() } else { String::new() };
-        let note = if scope.note.is_empty() {
-            String::new()
-        } else {
-            format!("  ({})", scope.note).dimmed().to_string()
-        };
-
-        println!(
-            "{}{}{:<20} {}{}{}",
-            prefix, connector, scope.path, level_colored, note, pin_marker
-        );
-
-        if !scope.children.is_empty() {
-            let new_prefix = format!("{}{}", prefix, child_prefix);
-            render_scopes(&scope.children, &new_prefix, false);
-        }
-    }
-}
-
 fn colorize_level(level: &str) -> String {
     match level {
         "act" | "silent" => level.green().to_string(),
@@ -165,13 +155,19 @@ fn colorize_level(level: &str) -> String {
 async fn change_trust(scope_path: &str, level: &str, direction: &str) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
 
+    // scope_path is "project/scope" — split into project_id and scope
+    let (project_id, scope) = match scope_path.split_once('/') {
+        Some((p, s)) => (p.to_string(), s.to_string()),
+        None => (scope_path.to_string(), String::new()),
+    };
+
     let body = json!({
-        "path": scope_path,
+        "project_id": project_id,
+        "scope": scope,
         "level": level,
-        "direction": direction,
     });
 
-    match nexus.post("/api/trust/change", &body).await {
+    match nexus.patch("/api/trust", &body).await {
         Ok(resp) => {
             let prev = resp["previous_level"].as_str().unwrap_or("unknown");
             let arrow = if direction == "elevate" {
@@ -207,9 +203,15 @@ async fn change_trust(scope_path: &str, level: &str, direction: &str) -> anyhow:
 async fn pin(scope_path: &str) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
 
+    // scope_path is "project/scope" — split into project_id and scope
+    let (project_id, scope) = match scope_path.split_once('/') {
+        Some((p, s)) => (p.to_string(), s.to_string()),
+        None => (scope_path.to_string(), String::new()),
+    };
+
     let body = json!({
-        "path": scope_path,
-        "pin": true,
+        "project_id": project_id,
+        "scope": scope,
     });
 
     match nexus.post("/api/trust/pin", &body).await {
@@ -239,42 +241,46 @@ async fn pin(scope_path: &str) -> anyhow::Result<()> {
 async fn history(project: Option<&str>) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
 
+    // No dedicated history endpoint yet — reuse GET /api/trust and show
+    // the `updated_at` timestamps. When a /api/trust/history route is added,
+    // switch to it.
     let path = match project {
-        Some(p) => format!("/api/trust/{}/history", p),
-        None => "/api/trust/history".to_string(),
+        Some(p) => format!("/api/trust?project={}", p),
+        None => "/api/trust".to_string(),
     };
 
     match nexus.get(&path).await {
         Ok(value) => {
-            let events: Vec<TrustEvent> = serde_json::from_value(
-                value.get("events").cloned().unwrap_or(value.clone()),
-            )?;
+            let mut entries: Vec<TrustEntry> = if value.is_array() {
+                serde_json::from_value(value)?
+            } else {
+                vec![serde_json::from_value(value)?]
+            };
 
-            if events.is_empty() {
+            if entries.is_empty() {
                 println!("{} No trust changes recorded.", "\u{2b21}".dimmed());
                 return Ok(());
             }
 
+            // Sort by updated_at descending (most recent first)
+            entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
             println!("{} Trust change history:", "\u{2b21}".cyan());
             println!();
 
-            for event in &events {
-                let arrow = if event.to_level == "act" || event.to_level == "silent" {
-                    "\u{2191}".green()
+            for entry in &entries {
+                let ts = if entry.updated_at.is_empty() {
+                    "unknown".to_string()
                 } else {
-                    "\u{2193}".red()
+                    entry.updated_at.clone()
                 };
                 println!(
-                    "  {} {} {} {} \u{2192} {}",
-                    event.timestamp.dimmed(),
-                    event.scope.bold(),
-                    arrow,
-                    colorize_level(&event.from_level),
-                    colorize_level(&event.to_level),
+                    "  {} {}/{} \u{2192} {}",
+                    ts.dimmed(),
+                    entry.project_id.bold(),
+                    entry.scope,
+                    colorize_level(&entry.level),
                 );
-                if !event.reason.is_empty() {
-                    println!("    {}", event.reason.dimmed());
-                }
             }
         }
         Err(e) => {

@@ -28,6 +28,8 @@ pub struct BriefingParams {
     pub decisions: Option<bool>,
     /// Only include events since this timestamp (ISO 8601 or Unix seconds).
     pub since: Option<String>,
+    /// Mark retrieved briefing events as seen (default false).
+    pub seen: Option<bool>,
 }
 
 /// GET /api/briefing — generate a developer morning briefing.
@@ -59,6 +61,64 @@ pub async fn get_briefing(
 
     // ── Fetch connected agents ───────────────────────────
     let agents = port.hex_agent_list().await.unwrap_or_default();
+
+    // ── Fetch briefing events from HexFlo memory ────────
+    let briefing_memory = port
+        .hexflo_memory_search("briefing:")
+        .await
+        .unwrap_or_default();
+
+    // Parse since threshold (supports ISO 8601 and Unix seconds).
+    let since_threshold = params.since.as_deref().and_then(|s| {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+            .ok()
+            .or_else(|| {
+                s.parse::<i64>().ok().and_then(|ts| {
+                    chrono::DateTime::from_timestamp(ts, 0)
+                })
+            })
+    });
+
+    // Convert memory entries to structured events, applying `since` filter.
+    let briefing_events: Vec<(String, Value)> = briefing_memory
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let parsed: Value = serde_json::from_str(&value).unwrap_or_else(|_| {
+                json!({ "raw": value })
+            });
+
+            // Apply since filter: check for a timestamp field in the event.
+            if let Some(threshold) = &since_threshold {
+                let event_ts = parsed
+                    .get("timestamp")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&chrono::Utc));
+                if let Some(ts) = event_ts {
+                    if ts < *threshold {
+                        return None;
+                    }
+                }
+            }
+
+            let project_id = parsed
+                .get("project_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("*")
+                .to_string();
+
+            Some((project_id, json!({
+                "key": key,
+                "type": parsed.get("type").unwrap_or(&json!("unknown")),
+                "summary": parsed.get("summary").unwrap_or(&json!(null)),
+                "timestamp": parsed.get("timestamp").unwrap_or(&json!(null)),
+                "data": parsed,
+            })))
+        })
+        .collect();
+
+    let mark_seen = params.seen.unwrap_or(false);
 
     // ── Build per-project briefing ───────────────────────
     let mut result_projects: Vec<Value> = Vec::new();
@@ -105,6 +165,13 @@ pub async fn get_briefing(
             })
             .collect();
 
+        // Briefing events for this project (from HexFlo memory)
+        let project_events: Vec<&Value> = briefing_events
+            .iter()
+            .filter(|(proj_id, _)| proj_id == pid || proj_id == "*")
+            .map(|(_, ev)| ev)
+            .collect();
+
         // Agent count for this project
         let agent_count = agents
             .iter()
@@ -119,11 +186,13 @@ pub async fn get_briefing(
         result_projects.push(json!({
             "project_id": pid,
             "name": &proj.name,
-            "events": project_tasks,
+            "active_tasks": project_tasks,
+            "events": project_events,
             "pending_decisions": pending_decisions,
             "summary": {
                 "agent_count": agent_count,
-                "event_count": project_tasks.len(),
+                "task_count": project_tasks.len(),
+                "event_count": project_events.len(),
                 "decision_count": pending_decisions.len(),
                 "health": 0,
                 "spend": 0.0
@@ -148,18 +217,41 @@ pub async fn get_briefing(
                 })
                 .collect();
 
+            // Briefing events matching the filter or broadcast
+            let fallback_events: Vec<&Value> = briefing_events
+                .iter()
+                .filter(|(proj_id, _)| proj_id == filter || proj_id == "*")
+                .map(|(_, ev)| ev)
+                .collect();
+
             result_projects.push(json!({
                 "project_id": filter,
-                "events": [],
+                "active_tasks": [],
+                "events": fallback_events,
                 "pending_decisions": pending_decisions,
                 "summary": {
                     "agent_count": 0,
-                    "event_count": 0,
+                    "task_count": 0,
+                    "event_count": fallback_events.len(),
                     "decision_count": pending_decisions.len(),
                     "health": 0,
                     "spend": 0.0
                 }
             }));
+        }
+    }
+
+    // ── Mark events as seen ─────────────────────────────
+    if mark_seen && !briefing_events.is_empty() {
+        let now = chrono::Utc::now().to_rfc3339();
+        for (_, ev) in &briefing_events {
+            if let Some(key) = ev.get("key").and_then(|k| k.as_str()) {
+                let seen_key = format!("briefing:seen:{}", key.trim_start_matches("briefing:"));
+                // Fire-and-forget: best-effort mark as seen.
+                let _ = port
+                    .hexflo_memory_store(&seen_key, &now, "global")
+                    .await;
+            }
         }
     }
 
