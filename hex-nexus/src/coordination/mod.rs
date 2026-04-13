@@ -195,6 +195,15 @@ impl HexFlo {
             data: serde_json::json!({ "swarmId": swarm_id }),
         });
 
+        // ADR-2604131500 P0.2: briefing event for swarm completion
+        self.log_briefing_event(
+            "notable",
+            "swarm",
+            &format!("Swarm completed: {}", swarm_id),
+            "Swarm teardown finished successfully.",
+        )
+        .await;
+
         Ok(())
     }
 
@@ -342,6 +351,15 @@ impl HexFlo {
             }),
         });
 
+        // ADR-2604131500 P0.2: briefing event for task completion
+        self.log_briefing_event(
+            "nominal",
+            "swarm",
+            &format!("Task completed: {}", task_id),
+            &format!("Result: {}", combined_result),
+        )
+        .await;
+
         Ok(())
     }
 
@@ -481,6 +499,32 @@ impl HexFlo {
             return Err(format!("Agent '{}' not found", id));
         }
         Ok(())
+    }
+
+    // ── Briefing events (ADR-2604131500 P0.2) ───────────
+
+    /// Log a briefing event to HexFlo memory for the developer's morning briefing.
+    /// Uses the same key format as workplan_executor: `briefing:{timestamp}`.
+    async fn log_briefing_event(
+        &self,
+        severity: &str,
+        category: &str,
+        title: &str,
+        body: &str,
+    ) {
+        let ts = chrono::Utc::now().to_rfc3339();
+        let key = format!("briefing:{}", ts);
+        let value = serde_json::json!({
+            "severity": severity,
+            "category": category,
+            "title": title,
+            "body": body,
+            "created_at": ts,
+        })
+        .to_string();
+        if let Err(e) = self.state.hexflo_memory_store(&key, &value, "global").await {
+            tracing::debug!("Failed to log briefing event: {}", e);
+        }
     }
 
     // ── Helpers ────────────────────────────────────────

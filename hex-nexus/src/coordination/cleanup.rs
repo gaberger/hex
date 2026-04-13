@@ -36,7 +36,34 @@ impl HexFlo {
             .await
             .map_err(|e| e.to_string())?;
 
-        CleanupReport::from_state_report(report)
+        let result = CleanupReport::from_state_report(report)?;
+
+        // ADR-2604131500 P0.2: briefing events for agent death/stale detection
+        if result.dead_count > 0 {
+            self.log_briefing_event(
+                "critical",
+                "swarm",
+                &format!("{} agent(s) declared dead", result.dead_count),
+                &format!(
+                    "{} dead, {} stale, {} tasks reclaimed",
+                    result.dead_count, result.stale_count, result.reclaimed_tasks
+                ),
+            )
+            .await;
+        } else if result.stale_count > 0 {
+            self.log_briefing_event(
+                "notable",
+                "swarm",
+                &format!("{} agent(s) went stale", result.stale_count),
+                &format!(
+                    "{} stale agents detected (no heartbeat for {}s)",
+                    result.stale_count, STALE_THRESHOLD_SECS
+                ),
+            )
+            .await;
+        }
+
+        Ok(result)
     }
 }
 
