@@ -1570,6 +1570,36 @@ fn file_has_git_evidence(file: &str, since: &str) -> bool {
     }
 }
 
+/// Check if a task ID appears in recent git commit messages (case-insensitive).
+/// Matches patterns like "p1.1", "P1.1", "(p1.1)", "p1.1:" in commit subjects.
+/// This catches tasks completed via worktree merges where files[] may not match.
+/// Uses --fixed-strings to avoid regex interpretation of dots in task IDs.
+/// Uses a 24h buffer before created_at to account for timezone differences.
+fn task_id_in_git_log(task_id: &str, since: &str) -> bool {
+    if task_id.is_empty() {
+        return false;
+    }
+    // Use 24h before created_at to account for UTC vs local timezone drift.
+    // If no created_at, search last 7 days.
+    let since_arg = if since.is_empty() {
+        "--since=7.days".to_string()
+    } else {
+        // Parse and subtract 1 day for buffer
+        let buffered = since
+            .parse::<chrono::DateTime<chrono::Utc>>()
+            .map(|dt| (dt - chrono::Duration::hours(24)).to_rfc3339())
+            .unwrap_or_else(|_| since.to_string());
+        format!("--since={}", buffered)
+    };
+    let output = std::process::Command::new("git")
+        .args(["log", "--oneline", &since_arg, "--fixed-strings", "--grep", task_id, "-i"])
+        .output();
+    match output {
+        Ok(out) => !out.stdout.is_empty(),
+        Err(_) => false,
+    }
+}
+
 /// Check git evidence for a list of files. Returns a summary string.
 /// - All files modified: "[git: modified]" (green)
 /// - Some files modified: "[git: partial N/M]" (yellow)
@@ -1709,11 +1739,14 @@ async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
             false
         };
 
-        // 3. Identifier grep (existing logic)
+        // 3. Commit message match: task ID in recent git log (catches worktree merges)
+        let commit_match = task_id_in_git_log(&task.id, &workplan.created_at);
+
+        // 4. Identifier grep (existing logic)
         let identifiers = extract_identifiers(&task.condition);
         let grep_found = check_identifiers(&identifiers);
 
-        // 4. Cargo check if mentioned in condition
+        // 5. Cargo check if mentioned in condition
         let cargo_ok = if task.condition.contains("cargo check") || task.condition.contains("cargo build") || task.condition.contains("cargo test") {
             check_cargo(&task.condition)
         } else {
@@ -1723,8 +1756,9 @@ async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
         // A task is done if:
         // - ALL files have git evidence (strong signal), OR
         // - done_command exits 0 (verified), OR
+        // - task ID found in git commit messages (worktree merge evidence), OR
         // - identifier grep + cargo both pass (existing heuristic)
-        let is_done = all_files_modified || cmd_verified || (grep_found && cargo_ok);
+        let is_done = all_files_modified || cmd_verified || commit_match || (grep_found && cargo_ok);
         all_done = all_done && is_done;
         step_results.push((task.id.clone(), is_done));
 
@@ -1732,6 +1766,8 @@ async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
             ("\u{2705}".to_string(), "verified".green().to_string())
         } else if all_files_modified {
             ("\u{2705}".to_string(), "git-confirmed".green().to_string())
+        } else if commit_match {
+            ("\u{2705}".to_string(), "commit-matched".green().to_string())
         } else if grep_found && cargo_ok {
             ("\u{2705}".to_string(), "done".green().to_string())
         } else {
