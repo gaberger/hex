@@ -23,27 +23,26 @@ When editing an adapter, keep the edit within that adapter's boundary:
 - Do NOT import other adapter modules while editing an adapter
 - If your edit requires touching 2+ architectural layers, treat each as a separate Edit call
 
-### Common edit targets in hex
+### Common edit targets in hex projects
 
 ```
-# Port trait: add a new method signature
-hex-agent/src/ports/prompt.rs
+# Port trait/interface: add a new method signature
+src/ports/<port_name>.rs          # Rust
+src/core/ports/<port_name>.ts     # TypeScript
 
 # Secondary adapter: implement a new method
-hex-agent/src/adapters/secondary/prompt.rs
-hex-agent/src/adapters/secondary/tools.rs
+src/adapters/secondary/<name>.rs  # Rust
+src/adapters/secondary/<name>.ts  # TypeScript
 
-# Workplan executor: add phase handling
-hex-nexus/src/orchestration/workplan_executor.rs
+# Primary adapter: update entry points
+src/adapters/primary/<name>.rs    # Rust
+src/adapters/primary/<name>.ts    # TypeScript
 
-# Agent manager: update agent coordination
-hex-nexus/src/orchestration/agent_manager.rs
-
-# TUI: modify chat interface
-hex-cli/src/tui/mod.rs
-hex-cli/src/tui/session.rs
+# Use cases: update application logic
+src/usecases/<name>.rs            # Rust
+src/core/usecases/<name>.ts       # TypeScript
 ```
 
-### After editing Rust files
+### After editing source files
 
-Run `cargo check -p <crate>` to verify the edit compiles before moving on.
+Verify the edit compiles before moving on: `cargo check -p <crate>` (Rust), `tsc --noEmit` (TypeScript), or equivalent for your language.
