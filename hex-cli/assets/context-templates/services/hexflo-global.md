@@ -22,9 +22,9 @@ mcp__hex__hex_hexflo_memory_search   — fuzzy search across all global keys
 Use `<project>/<category>/<descriptor>` for discoverability:
 
 ```
-hex-intf/arch/hexagonal-rules-summary
-hex-intf/infra/nexus-port
-hex-intf/decision/stdb-database-name
+{{project_name}}/arch/core-rules-summary
+{{project_name}}/infra/service-port
+{{project_name}}/decision/database-name
 ```
 
 ## What NOT to Store Here

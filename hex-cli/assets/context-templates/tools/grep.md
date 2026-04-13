@@ -9,21 +9,25 @@ For open-ended searches requiring multiple rounds, use the Agent tool.
 ### Finding architectural elements
 
 ```
-# Find a port trait definition
-pattern: "pub trait PromptPort"
-type: "rust"
+# Find a port trait/interface definition
+pattern: "pub trait .*Port"        # Rust
+pattern: "interface .*Port"        # TypeScript
+glob: "src/ports/*"
+output_mode: "content"
 
-# Find all impl blocks for a port
-pattern: "impl.*PromptPort"
-type: "rust"
+# Find all implementations of a port
+pattern: "impl.*MyPort"            # Rust
+pattern: "implements MyPort"       # TypeScript
+output_mode: "files_with_matches"
 
 # Find cross-adapter imports (architecture violation check)
-pattern: "use.*adapters::(primary|secondary)"
-type: "rust"
+pattern: "use.*adapters::(primary|secondary)"   # Rust
+pattern: "from.*adapters/(primary|secondary)"   # TypeScript
+output_mode: "content"
 
-# Find all pub fn in a port file
-pattern: "pub (async )?fn "
-glob: "hex-agent/src/ports/*.rs"
+# Find all public functions in port files
+pattern: "pub (async )?fn |export (async )?function "
+glob: "src/ports/*"
 output_mode: "content"
 ```
 
@@ -32,26 +36,12 @@ output_mode: "content"
 ```
 # Find template variable usages
 pattern: "\\{\\{[a-z_]+\\}\\}"
-glob: "hex-cli/assets/context-templates/**/*.md"
+glob: "**/*.md"
 output_mode: "content"
 
 # Find a specific ADR reference in code
 pattern: "ADR-[0-9]+"
-type: "rust"
 output_mode: "content"
-```
-
-### SpacetimeDB and HexFlo
-
-```
-# Find all reducer calls
-pattern: "ctx\\.db\\."
-glob: "spacetime-modules/**/*.rs"
-
-# Find task state references
-pattern: "HexFloTask|hexflo_task"
-type: "rust"
-output_mode: "files_with_matches"
 ```
 
 ### Output mode guide

@@ -21,17 +21,16 @@ Can read images, PDFs, and Jupyter notebooks.
 
 For files over 2000 lines, use `offset` and `limit` to read only the relevant section. Example: reading a specific impl block without loading the whole file.
 
-### hex architecture file paths
-
-Common files you'll read during hex development:
+### Common file paths in hex projects
 
 ```
-hex-cli/assets/context-templates/   # Prompt templates (this system)
-hex-cli/assets/agents/hex/hex/      # Agent YAML definitions
-hex-cli/assets/skills/              # Skill definitions
-hex-agent/src/ports/                # Port traits
-hex-agent/src/adapters/secondary/   # Secondary adapters (prompt, tools)
-hex-nexus/src/orchestration/        # Workplan executor, agent manager
-docs/adrs/                          # Architecture Decision Records
-docs/workplans/                     # Feature workplans
+src/ports/                   # Port traits / interfaces
+src/adapters/primary/        # Primary (driving) adapters
+src/adapters/secondary/      # Secondary (driven) adapters
+src/domain/                  # Domain entities and value objects
+src/usecases/                # Application use cases
+docs/adrs/                   # Architecture Decision Records
+docs/workplans/              # Feature workplans
+.claude/agents/              # Agent YAML definitions
+.claude/skills/              # Skill definitions
 ```

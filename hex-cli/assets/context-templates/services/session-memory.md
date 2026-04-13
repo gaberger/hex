@@ -22,8 +22,8 @@ Files & Functions:
 
 Workflow:
   Ordered commands to reproduce the current state:
-  1. cargo build -p hex-cli
-  2. hex analyze .
+  1. <build command for your project>
+  2. <validation or analysis command>
 
 Errors & Corrections:
   - What failed → how it was fixed. Include error messages verbatim.

@@ -17,7 +17,7 @@ model:
   preferred: opus
   fallback: sonnet
   reasoning: >
-    Adversarial review requires deep cross-crate reasoning, understanding of build
+    Adversarial review requires deep cross-module reasoning, understanding of build
     systems, and the ability to trace transitive dependencies. Opus-level reasoning
     catches subtle issues that pattern-matching misses (e.g., feature-gated code that
     only breaks under specific compilation flags).
@@ -34,12 +34,12 @@ context:
       level: L1
       purpose: Index all ADRs to check for drift between decisions and implementation
   load_on_demand:
-    - path: "{{crate}}/Cargo.toml"
+    - path: "{{module}}/Cargo.toml"
       level: L2
-      trigger: "When checking a specific crate's dependencies and features"
-    - path: "{{crate}}/src/"
+      trigger: "When checking a specific module's dependencies and features"
+    - path: "{{module}}/src/"
       level: L1
-      trigger: "When tracing imports in a specific crate"
+      trigger: "When tracing imports in a specific module"
     - path: "docs/workplans/"
       level: L1
       trigger: "When checking workplan completion claims against actual state"
@@ -109,14 +109,16 @@ workflow:
       description: Verify the codebase compiles before analyzing anything
       blocking: true
       action: |
-        Run in order, stop on first failure:
-        1. cargo check -p hex-core
-        2. cargo check -p hex-nexus
-        3. cargo check -p hex-agent
-        4. cargo check -p hex-cli
-        5. cargo check -p hex-parser
-        6. bun run check (if tsconfig.json exists)
-        7. bun test (if package.json has test script)
+        Detect the project build system from config files, then run the
+        appropriate workspace-wide check. Stop on first failure.
+
+        1. If Cargo.toml exists at workspace root:
+             cargo check --workspace
+        2. If tsconfig.json exists:
+             the project's TypeScript check command (e.g. tsc --noEmit, bun run check)
+        3. If package.json has a "test" script:
+             the project's test runner (e.g. bun test, npm test)
+        4. For any other build system, run the project's documented build command
 
         If any gate fails:
           - CRITICAL finding: record the exact error
