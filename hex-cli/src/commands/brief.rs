@@ -87,6 +87,15 @@ struct BriefDecision {
     payload: String,
     #[serde(default)]
     created_at: String,
+    /// ADR-2604131500 P1.1: What hex will do if no response (e.g. "approve", "pause").
+    #[serde(default)]
+    default_action: String,
+    /// ADR-2604131500 P1.1: Why hex chose this default (trust level, scope, rules).
+    #[serde(default)]
+    reasoning: String,
+    /// ADR-2604131500 P1.1: When auto-resolution fires (RFC 3339 timestamp, empty = never).
+    #[serde(default)]
+    deadline_at: String,
 }
 
 pub async fn run(action: BriefAction) -> anyhow::Result<()> {
@@ -234,11 +243,47 @@ fn render_briefing(briefing: &BriefingResponse, decisions_only: bool) {
                     1 => " important".yellow().to_string(),
                     _ => String::new(),
                 };
-                let payload_preview = if dec.payload.len() > 60 {
+
+                // Try to extract structured fields from top-level or parsed payload JSON
+                let parsed: Option<serde_json::Value> =
+                    serde_json::from_str(&dec.payload).ok();
+                let default_action = if !dec.default_action.is_empty() {
+                    dec.default_action.clone()
+                } else {
+                    parsed.as_ref()
+                        .and_then(|v| v["default_action"].as_str())
+                        .unwrap_or("")
+                        .to_string()
+                };
+                let reasoning = if !dec.reasoning.is_empty() {
+                    dec.reasoning.clone()
+                } else {
+                    parsed.as_ref()
+                        .and_then(|v| v["reasoning"].as_str())
+                        .unwrap_or("")
+                        .to_string()
+                };
+                let deadline_at = if !dec.deadline_at.is_empty() {
+                    dec.deadline_at.clone()
+                } else {
+                    parsed.as_ref()
+                        .and_then(|v| v["deadline_at"].as_str())
+                        .unwrap_or("")
+                        .to_string()
+                };
+
+                // Display phase name from payload if available, else raw payload preview
+                let summary = parsed.as_ref()
+                    .and_then(|v| v["phase"].as_str())
+                    .map(|p| format!("Phase: {}", p));
+                let payload_preview = if let Some(ref s) = summary {
+                    s.clone()
+                } else if dec.payload.len() > 60 {
                     format!("{}...", &dec.payload[..57])
                 } else {
                     dec.payload.clone()
                 };
+
                 println!(
                     "    {}. {}{} {}",
                     i + 1,
@@ -246,6 +291,33 @@ fn render_briefing(briefing: &BriefingResponse, decisions_only: bool) {
                     priority_tag,
                     format!("[{}]", dec.kind).dimmed()
                 );
+
+                // Show default action + deadline
+                if !default_action.is_empty() {
+                    let deadline_display = if deadline_at.is_empty() {
+                        "no auto-resolution".to_string()
+                    } else {
+                        // Show relative time if possible, else raw timestamp
+                        let trimmed = deadline_at.chars().take(16).collect::<String>();
+                        format!("auto at {}", trimmed)
+                    };
+                    println!(
+                        "       {} Default: {} {}",
+                        "\u{2192}".dimmed(),
+                        default_action.bold(),
+                        format!("({})", deadline_display).dimmed()
+                    );
+                }
+
+                // Show reasoning
+                if !reasoning.is_empty() {
+                    println!(
+                        "       {} Reason: {}",
+                        "\u{2192}".dimmed(),
+                        reasoning.dimmed()
+                    );
+                }
+
                 println!(
                     "       {} hex decide {} {} approve",
                     "\u{2192}".dimmed(),

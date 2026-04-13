@@ -607,28 +607,77 @@ impl WorkplanExecutor {
                 phase_scope,
             )
             .await;
-            if trust_level == "observe" {
-                // Block: surface decision and wait — for P1, log and continue
-                // (full blocking deferred to P2 when we have async decision polling)
+            if trust_level == "observe" || trust_level == "suggest" {
+                // Surface decision with structured payload (ADR-2604131500 P1.1).
+                // "observe" → default is to pause (developer must explicitly approve).
+                // "suggest" → default is to approve after deadline (autonomous proceed).
+                let default_action = if trust_level == "observe" {
+                    "pause"
+                } else {
+                    "approve"
+                };
+                let deadline_minutes: u64 = if trust_level == "observe" { 0 } else { 120 };
+                let deadline_at = if deadline_minutes > 0 {
+                    let deadline = chrono::Utc::now()
+                        + chrono::Duration::minutes(deadline_minutes as i64);
+                    deadline.to_rfc3339()
+                } else {
+                    String::new() // observe has no auto-resolution
+                };
+                let reasoning = format!(
+                    "Trust level is '{}' for scope '{}'. {}",
+                    trust_level,
+                    phase_scope,
+                    if trust_level == "observe" {
+                        "Manual approval required — hex will not proceed until you decide."
+                    } else {
+                        "hex will auto-approve in 2h unless you override."
+                    }
+                );
+
                 tracing::info!(
                     execution_id = %execution_id,
                     phase = %phase.name,
                     scope = %phase_scope,
-                    trust = "observe",
-                    "Trust level is 'observe' — surfacing decision (non-blocking in P1)"
+                    trust = %trust_level,
+                    default_action = %default_action,
+                    "Trust check — surfacing decision (non-blocking in P1)"
                 );
+
+                let decision_payload = serde_json::json!({
+                    "phase": phase.name,
+                    "phase_id": phase.id,
+                    "scope": phase_scope,
+                    "trust_level": trust_level,
+                    "default_action": default_action,
+                    "reasoning": reasoning,
+                    "deadline_at": deadline_at,
+                    "workplan_id": workplan.id,
+                    "execution_id": execution_id,
+                    "task_count": phase.tasks.len(),
+                });
+                let payload_str = decision_payload.to_string();
+
+                // Log briefing event with structured detail
                 Self::log_briefing_event(
                     state_port.as_ref(),
                     "decision",
                     "architecture",
                     &format!("Awaiting approval: phase {}", phase.name),
-                    &format!(
-                        "Trust level for '{}' is 'observe'. Phase will proceed with default action. \
-                         Use `hex trust elevate {} {} act` to allow autonomous execution.",
-                        phase_scope, workplan.id, phase_scope
-                    ),
+                    &payload_str,
                 )
                 .await;
+
+                // Send inbox notification so `hex brief --decisions` picks it up
+                if let Some(cc_agent_id) = find_active_cc_agent_id() {
+                    let _ = state_port
+                        .inbox_notify(&cc_agent_id, 1, "trust-decision", &payload_str)
+                        .await;
+                } else {
+                    let _ = state_port
+                        .inbox_notify_all("", 1, "trust-decision", &payload_str)
+                        .await;
+                }
             }
 
             // Update current phase
