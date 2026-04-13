@@ -1,6 +1,6 @@
-use super::domain::*;
+use crate::domain::{Weather, Forecast};
 
-pub trait WeatherService: Send + Sync {
+pub trait WeatherService {
     fn current(&self, city: &str) -> Result<Weather, String>;
     fn forecast(&self, city: &str, days: usize) -> Result<Forecast, String>;
 }

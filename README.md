@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.75+-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
   <a href="https://spacetimedb.com/"><img src="https://img.shields.io/badge/SpacetimeDB-WASM-58a6ff?style=flat-square" alt="SpacetimeDB"></a>
   <a href="https://github.com/gaberger/hex/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
-  <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-151_Accepted-bc8cff?style=flat-square" alt="ADRs"></a>
+  <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-152_Accepted-bc8cff?style=flat-square" alt="ADRs"></a>
 </p>
 
 <p align="center">
@@ -150,7 +150,31 @@ Local models get a `LOCAL_SUCCESS_BONUS` (+0.1) per successful dispatch, and Q-v
 hex inference list                              # Available providers + tiers
 hex inference discover                          # Scan for local/remote models
 hex inference add ollama http://host:11434 --model qwen2.5-coder:32b
+hex inference bench bazzite-ollama --model qwen3.5:27b  # Benchmark quality + speed → tier
+hex inference bench bazzite-ollama --compare bazzite-m27 # Side-by-side comparison
 ```
+
+#### Model Benchmarking ([ADR-2604131238](docs/adrs/ADR-2604131238-inference-bench-command.md))
+
+`hex inference bench` evaluates any model against hex-specific prompts — Rust code generation (async adapters with thiserror/reqwest/tests), architectural reasoning (cross-adapter violation detection), and identity probes. Each prompt produces a quality checklist score, and the combined result maps to a hex agent tier recommendation.
+
+```
+── hex inference bench: minimax-m2.7:cloud via bazzite-ollama ──
+
+  ✓  Identity       3.5s  (1/1 quality, 60 tok/s)
+  ✓  Code-gen     147s    (10/10 quality, 43 tok/s)
+  ✓  Reasoning    132s    (5/5 quality, 34 tok/s)
+
+  Overall score:    0.92
+  Recommended:      Tier 3 (Opus-equivalent)
+```
+
+| Flag | Effect |
+|:-----|:-------|
+| `--quick` | Skip code-gen prompt (fast triage) |
+| `--compare <id>` | Run same suite against a baseline model |
+| `--save` | Persist score + tier to nexus for the model router |
+| `--model <name>` | Override the provider's registered model |
 
 #### Phase 2: Scaffolding Layer
 
@@ -326,6 +350,8 @@ hex task list                   # Track all tasks in real-time
 hex inference discover          # Scan for local/remote models
 hex inference list              # Available providers + tiers
 hex inference add ollama http://localhost:11434 llama3.2:3b-q4_k_m
+hex inference bench <target>    # Benchmark model → quality score + tier
+hex inference bench <target> --save  # Persist calibration to nexus
 
 # Memory & coordination
 hex memory store <key> <value>  # Persistent scoped key-value
