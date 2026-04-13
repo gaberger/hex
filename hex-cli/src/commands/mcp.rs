@@ -125,13 +125,8 @@ use hex_core::ports::enforcement::{EnforcementContext, EnforcementMode, Enforcem
 
 /// Tools that are read-only — no enforcement needed.
 const READ_ONLY_TOOLS: &[&str] = &[
-    "hex_analyze", "hex_analyze_json", "hex_status",
-    // Swarm coordination tools are infrastructure — they set up tracking, not write code.
-    // Blocking them creates a circular dependency: can't create tasks without a workplan,
-    // can't execute a workplan without creating tasks.
-    "hex_hexflo_swarm_init", "hex_hexflo_swarm_status", "hex_hexflo_swarm_complete", "hex_hexflo_swarm_fail",
-    "hex_hexflo_task_create", "hex_hexflo_task_list", "hex_hexflo_task_assign", "hex_hexflo_task_complete",
-    "hex_hexflo_memory_store", "hex_hexflo_memory_retrieve", "hex_hexflo_memory_search",
+    "hex_analyze", "hex_analyze_json", "hex_status", "hex_hexflo_swarm_status", "hex_hexflo_task_list",
+    "hex_hexflo_memory_retrieve", "hex_hexflo_memory_search",
     "hex_adr_list", "hex_adr_search", "hex_adr_status", "hex_adr_abandoned",
     "hex_plan_list", "hex_plan_status", "hex_plan_history", "hex_plan_report",
     "hex_agent_list", "hex_nexus_status", "hex_secrets_status", "hex_secrets_has",
@@ -186,8 +181,6 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "hex_validate",
     // OpenCode (read-only queries)
     "hex_opencode_status", "hex_opencode_config",
-    // AIOS Experience (read-only queries)
-    "hex_brief", "hex_pulse", "hex_trust_show", "hex_taste_list",
 ];
 
 /// Returns true when running inside Claude Code as an MCP tool call (ADR-2604081320).
@@ -398,7 +391,8 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
         match enforcer.check(&ctx) {
             EnforcementResult::Block(reason) => {
                 return serde_json::json!({
-                    "content": [{ "type": "text", "text": format!("[BLOCKED] {}", reason) }],
+                    "type": "text",
+                    "text": format!("[BLOCKED] {}", reason),
                     "isError": true,
                 });
             }
@@ -535,7 +529,6 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             let result_text = args.get("result").and_then(|v| v.as_str());
             let path = format!("/api/hexflo/tasks/{}", task_id);
             nexus.patch(&path, &serde_json::json!({
-                "task_id": task_id,
                 "status": "completed",
                 "result": result_text,
             })).await.map_err(|e| e.to_string())
@@ -801,26 +794,6 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             Ok(serde_json::json!({
                 "message": "Run 'hex inference discover' from the terminal for LAN scanning"
             }))
-        }
-
-        "hex_inference_bench" => {
-            let target = args.get("target").and_then(|v| v.as_str()).unwrap_or("");
-            let model = args.get("model").and_then(|v| v.as_str());
-            let quick = args.get("quick").and_then(|v| v.as_bool()).unwrap_or(false);
-            match crate::commands::inference::run(
-                crate::commands::inference::InferenceAction::Bench {
-                    target: target.to_string(),
-                    model: model.map(|s| s.to_string()),
-                    quick,
-                    compare: None,
-                    save: false,
-                },
-            ).await {
-                Ok(()) => Ok(serde_json::json!({
-                    "message": format!("Benchmark complete for '{}'", target)
-                })),
-                Err(e) => Err(e.to_string()),
-            }
         }
 
         "hex_inference_remove" => {
@@ -1606,111 +1579,6 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                 .map_err(|e| e.to_string())
         }
 
-        // ── AIOS Experience (ADR-2604131500) ──
-        "hex_brief" => {
-            let mut qs = Vec::new();
-            if let Some(p) = args.get("project").and_then(|v| v.as_str()) {
-                qs.push(format!("project={}", p));
-            }
-            if args.get("decisions_only").and_then(|v| v.as_bool()).unwrap_or(false) {
-                qs.push("decisions=true".to_string());
-            }
-            if let Some(s) = args.get("since").and_then(|v| v.as_str()) {
-                qs.push(format!("since={}", s));
-            }
-            let path = if qs.is_empty() { "/api/briefing".to_string() } else { format!("/api/briefing?{}", qs.join("&")) };
-            nexus.get(&path).await.map_err(|e| e.to_string())
-        }
-
-        "hex_decide" => {
-            let id = args.get("decision_id").and_then(|v| v.as_u64()).unwrap_or(0);
-            let body = serde_json::json!({
-                "action": args.get("action").and_then(|v| v.as_str()).unwrap_or("approve"),
-                "value": args.get("value").and_then(|v| v.as_str()),
-            });
-            nexus.post(&format!("/api/decisions/{}", id), &body).await.map_err(|e| e.to_string())
-        }
-
-        "hex_trust_show" => {
-            let qs = match args.get("project").and_then(|v| v.as_str()) {
-                Some(p) => format!("?project={}", p),
-                None => String::new(),
-            };
-            nexus.get(&format!("/api/trust{}", qs)).await.map_err(|e| e.to_string())
-        }
-
-        "hex_trust_set" => {
-            let body = serde_json::json!({
-                "project_id": args.get("project").and_then(|v| v.as_str()).unwrap_or(""),
-                "scope": args.get("scope").and_then(|v| v.as_str()).unwrap_or(""),
-                "level": args.get("level").and_then(|v| v.as_str()).unwrap_or("suggest"),
-            });
-            nexus.patch("/api/trust", &body).await.map_err(|e| e.to_string())
-        }
-
-        "hex_steer" => {
-            let body = serde_json::json!({
-                "project_id": args.get("project").and_then(|v| v.as_str()).unwrap_or(""),
-                "directive": args.get("directive").and_then(|v| v.as_str()).unwrap_or(""),
-            });
-            nexus.post("/api/steer", &body).await.map_err(|e| e.to_string())
-        }
-
-        "hex_pulse" => {
-            nexus.get("/api/pulse").await.map_err(|e| e.to_string())
-        }
-
-        "hex_taste_list" => {
-            let mut qs = Vec::new();
-            if let Some(s) = args.get("scope").and_then(|v| v.as_str()) {
-                qs.push(format!("scope={}", s));
-            }
-            if let Some(c) = args.get("category").and_then(|v| v.as_str()) {
-                qs.push(format!("category={}", c));
-            }
-            let path = if qs.is_empty() { "/api/taste".to_string() } else { format!("/api/taste?{}", qs.join("&")) };
-            nexus.get(&path).await.map_err(|e| e.to_string())
-        }
-
-        "hex_taste_set" => {
-            let body = serde_json::json!({
-                "scope": args.get("scope").and_then(|v| v.as_str()).unwrap_or("universal"),
-                "category": args.get("category").and_then(|v| v.as_str()).unwrap_or(""),
-                "name": args.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-                "value": args.get("value").and_then(|v| v.as_str()).unwrap_or(""),
-            });
-            nexus.post("/api/taste", &body).await.map_err(|e| e.to_string())
-        }
-
-        // ── AIOS Lifecycle: new, pause, resume, override (ADR-2604131500) ──
-        "hex_new" => {
-            let body = serde_json::json!({
-                "rootPath": args.get("path").and_then(|v| v.as_str()).unwrap_or("."),
-                "name": args.get("name").and_then(|v| v.as_str()),
-                "description": args.get("description").and_then(|v| v.as_str()),
-                "taste_from": args.get("taste_from").and_then(|v| v.as_str()),
-            });
-            nexus.post("/api/projects/register", &body).await.map_err(|e| e.to_string())
-        }
-
-        "hex_pause" => {
-            nexus.post("/api/workplan/pause", &serde_json::json!({})).await.map_err(|e| e.to_string())
-        }
-
-        "hex_resume" => {
-            nexus.post("/api/workplan/resume", &serde_json::json!({})).await.map_err(|e| e.to_string())
-        }
-
-        "hex_override" => {
-            let body = serde_json::json!({
-                "project_id": args.get("project").and_then(|v| v.as_str()).unwrap_or(""),
-                "priority": 2,
-                "kind": "override",
-                "payload": args.get("instruction").and_then(|v| v.as_str()).unwrap_or(""),
-            });
-            nexus.post("/api/hexflo/inbox/notify", &body).await.map_err(|e| e.to_string())
-        }
-
         _ => Err(format!("Unknown tool: {}", name)),
     };
 
@@ -1751,49 +1619,28 @@ fn update_status_json(adr_id: &str, adr_title: &str) {
 /// Reads JSON-RPC messages from stdin (one per line), dispatches them, and
 /// writes responses to stdout. Tools delegate to hex-nexus via NexusClient.
 pub async fn run_mcp_server() -> anyhow::Result<()> {
-    // ── Auto-generate session ID when CLAUDE_SESSION_ID is unset (standalone mode) ──
-    // Deterministic: hostname + PID + epoch seconds → hex-mcp-<hash-prefix>
+    // ── Auto-generate session identity for MCP-hosted sessions (P3.1) ──
+    // When CLAUDE_SESSION_ID is unset (e.g. MCP-hosted, not Claude Code),
+    // generate a deterministic session ID so inbox notifications can target
+    // this agent and Path B dispatch works.
     if std::env::var("CLAUDE_SESSION_ID").is_err() {
-        let hostname = gethostname::gethostname().to_string_lossy().to_string();
-        let pid = std::process::id();
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let seed = format!("{}-{}-{}", hostname, pid, ts);
-        // Simple hash: take first 12 hex chars of a basic hash for brevity
-        let hash = {
-            use std::hash::{Hash, Hasher};
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            seed.hash(&mut hasher);
-            format!("{:016x}", hasher.finish())
-        };
-        let session_id = format!("hex-mcp-{}", &hash[..12]);
-        std::env::set_var("CLAUDE_SESSION_ID", &session_id);
-        eprintln!("[hex] Auto-generated session ID: {}", session_id);
+        let host = gethostname::gethostname()
+            .to_string_lossy()
+            .to_string();
+        let session_id = format!("mcp-{}-{}", host, std::process::id());
+        // SAFETY: single-threaded at this point (before stdin loop)
+        unsafe { std::env::set_var("CLAUDE_SESSION_ID", &session_id); }
+        eprintln!("[hex] MCP server auto-registered session: {}", session_id);
 
-        // Fire session-start hook so downstream state (agent registration, heartbeats) initialises
-        let project_dir = std::env::current_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let hook_result = std::process::Command::new("hex")
-            .args(["hook", "session-start"])
-            .env("CLAUDE_SESSION_ID", &session_id)
-            .env("HEX_PROJECT_ROOT", &project_dir)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .output();
-        match hook_result {
-            Ok(output) if output.status.success() => {
-                eprintln!("[hex] session-start hook completed");
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                eprintln!("[hex] session-start hook failed (non-fatal): {}", stderr.trim());
-            }
-            Err(e) => {
-                eprintln!("[hex] session-start hook skipped (non-fatal): {}", e);
-            }
+        // Best-effort registration with nexus — don't block startup on failure
+        let reg_nexus = NexusClient::from_env();
+        let body = serde_json::json!({
+            "session_id": session_id,
+            "agent_name": "mcp-server"
+        });
+        match reg_nexus.post("/api/sessions", &body).await {
+            Ok(_) => eprintln!("[hex] Session registered with nexus"),
+            Err(e) => eprintln!("[hex] Session registration failed (non-fatal): {}", e),
         }
     }
 
