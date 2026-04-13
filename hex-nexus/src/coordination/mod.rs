@@ -504,7 +504,9 @@ impl HexFlo {
     // ── Briefing events (ADR-2604131500 P0.2) ───────────
 
     /// Log a briefing event to HexFlo memory for the developer's morning briefing.
-    /// Uses the same key format as workplan_executor: `briefing:{timestamp}`.
+    /// Key format: `briefing:{project_id}:{timestamp}` — scoped per project so
+    /// the brief endpoint only shows events for the queried project.
+    /// When project_id is not available, falls back to "global".
     async fn log_briefing_event(
         &self,
         severity: &str,
@@ -513,13 +515,19 @@ impl HexFlo {
         body: &str,
     ) {
         let ts = chrono::Utc::now().to_rfc3339();
-        let key = format!("briefing:{}", ts);
+        // Resolve project_id from active swarms or fall back to "global".
+        let project_id = match self.state.hexflo_memory_retrieve("active_project_id").await {
+            Ok(Some(pid)) => pid,
+            _ => "global".to_string(),
+        };
+        let key = format!("briefing:{}:{}", project_id, ts);
         let value = serde_json::json!({
             "severity": severity,
             "category": category,
             "title": title,
             "body": body,
             "created_at": ts,
+            "project_id": &project_id,
         })
         .to_string();
         if let Err(e) = self.state.hexflo_memory_store(&key, &value, "global").await {
