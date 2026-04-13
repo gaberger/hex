@@ -429,12 +429,12 @@ Where hex stands today, and what comes next:
 | Level | Description | Status |
 |:---|:---|:---|
 | **L0: Ad-hoc** | Agent coordination via imperative code, no formal structure | *(every other framework)* |
-| **L1: Structured** | Layered architecture with typed interfaces, composition root, phase gates | **hex is here** |
-| **L2: Specified** | Algebraic signatures documented, invariants stated, known gaps flagged | **P1 delivered** (ports-signature.md) |
-| **L3: Checkable** | TLA+ specs for coordination + lifecycle, CI drift detection, capability subsumption | **hex is here** — P1-P5 all delivered |
+| **L1: Structured** | Layered architecture with typed interfaces, composition root, phase gates | Complete |
+| **L2: Specified** | Algebraic signatures documented, invariants stated, known gaps flagged | Complete (ports-signature.md) |
+| **L3: Checkable** | TLA+ specs for coordination + lifecycle, CI drift detection, capability subsumption | **hex is here** — P1-P5 delivered, TLC verified |
 | **L4: Verified** | TLC in CI, subsumption wired into supervisor dispatch | Next: wire `subsumes()` into `run_tier()`, add TLC to CI pipeline |
 
-The differentiator is not that hex is at L4. **The differentiator is that hex is the only system at L1+ with a credible path to L4.** No other agent framework has the layered structure required to even state the properties, let alone check them.
+The differentiator is not that hex is at L4. **The differentiator is that hex is the only system at L3.** No other agent framework has the layered structure required to even state the properties, let alone check them.
 
 ---
 
