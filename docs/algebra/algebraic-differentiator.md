@@ -10,7 +10,9 @@
 
 An AI Operating System (AIOS) manages agent processes the way Unix manages user processes. Unix needed **process isolation** — without it, one runaway process could corrupt every other. An AIOS needs **algebraic structure** — without it, one rogue agent can violate architecture, deadlock the swarm, leak capabilities, or silently corrupt shared state, and no amount of testing can prove otherwise.
 
-hex is built on this thesis. Its hexagonal architecture isn't a code style — it's a **stratified algebra** where each layer has a formal signature, each agent operates within a provably bounded effect set, and coordination protocols are model-checked for liveness. This is what makes hex an operating system rather than an orchestration script.
+hex is built on this thesis. Its hexagonal architecture isn't a code style — it's a **stratified algebra** where each layer has a formal signature, each agent operates within a bounded effect set enforced by the Rust type system, and coordination protocols are designed for formal verification. This is what makes hex an operating system rather than an orchestration script.
+
+> **Honesty note:** This document distinguishes between what hex **enforces today** (compile-time trait boundaries, runtime CAS, phase gates) and what hex's architecture **enables proving** but hasn't yet formally verified (TLA+ deadlock freedom, Petri net reachability, effect row subsumption). The architecture has algebraic structure. The formal proofs are in progress. Both claims are real; conflating them would not be.
 
 ---
 
@@ -21,10 +23,10 @@ Every real operating system is built on formal invariants. The question is wheth
 | OS concept | Unix | AIOS (hex) |
 |:---|:---|:---|
 | **Process isolation** | Virtual memory — hardware MMU enforces address space boundaries | Hexagonal boundaries — Sigma-algebra enforces operation-space boundaries |
-| **Capability model** | File descriptors — process can only access fds it was granted | Effect rows — agent can only invoke operations in its capability grant |
-| **Scheduling** | Process state machine (ready → running → blocked → zombie) | Workflow Petri net (specs → plan → code → validate → integrate → finalize) |
-| **IPC** | Signals, pipes, sockets — formally specified POSIX semantics | SpacetimeDB reducers — pi-calculus model, TLA+ checked for deadlock freedom |
-| **Resource reclamation** | Zombie reaping, OOM killer | Heartbeat timeout → dead agent → task reclamation (liveness proof) |
+| **Capability model** | File descriptors — process can only access fds it was granted | Secret grants + enforcement port — agent can only invoke operations it was granted *(runtime enforced today; effect row types planned)* |
+| **Scheduling** | Process state machine (ready → running → blocked → zombie) | Supervisor phase gates with tier ordering *(enforced in code; Petri net formalization planned)* |
+| **IPC** | Signals, pipes, sockets — formally specified POSIX semantics | SpacetimeDB reducers with CAS task claims *(working; pi-calculus / TLA+ formalization planned)* |
+| **Resource reclamation** | Zombie reaping, OOM killer | Heartbeat timeout → dead agent → task reclamation *(working; liveness proof planned)* |
 
 The parallel is not decorative. Unix's formal invariants (virtual memory isolation, POSIX signal semantics, file descriptor capability model) are what made it possible to run untrusted user programs safely. hex's formal invariants (Sigma-algebra boundaries, effect rows, workflow nets, pi-calculus coordination) are what make it possible to run untrusted AI agents safely.
 
@@ -44,40 +46,45 @@ Algebraic structure gives you this. The Sigma-algebra says "regardless of what t
 **2. Agents have unbounded effect surfaces.**
 A Unix process can only do what its syscall interface permits. An AI agent with tool access can read files, write files, spawn processes, make network requests, modify its own prompts, and call other agents. Without a formal effect boundary, the agent's capability set is "everything the host machine can do."
 
-The Sigma-algebra partitions the effect surface into 10 named signatures with 43 total operations. Each layer sees only its permitted sub-signature. An agent running in the domain layer literally cannot express a filesystem write — it's not in the signature. This is stronger than a runtime check; it's a structural impossibility.
+The Sigma-algebra partitions the effect surface into 10 named signatures with 43 total operations. Each layer sees only its permitted sub-signature. A use case function whose parameter list includes only `&dyn IInferencePort` literally cannot call `fs.write_file()` — it's not in scope. This is enforced by `rustc` at compile time, not by a linting rule. The sub-signature boundary is a **type-system guarantee**.
 
 **3. Agent coordination has combinatorial state spaces.**
 Two Unix processes sharing a pipe have a tractable number of interleavings. Five AI agents sharing a task queue, each with heartbeat timeouts, crash recovery, and CAS-based task claims, have thousands of possible interleavings. Testing a handful is meaningless — the deadlock lives in interleaving #4,721 that your test harness never generated.
 
-The pi-calculus / TLA+ specification checks **all** interleavings. Not a sample. All of them. That's what model checking does. It's exhaustive verification over the finite state space. No agent framework in existence does this — they test the happy path and ship.
+hex's coordination protocol (CAS task claims, heartbeat timeouts, dead-agent reclamation) is **designed for model checking** — the state space is finite and small enough for exhaustive verification via TLA+/TLC. The TLA+ spec is planned (ADR-2604111229 P4) but not yet written. Today, these properties are enforced by SpacetimeDB's single-writer serialization and tested under load, but not formally proven. The architecture makes the proof *possible*; most agent frameworks have coordination protocols whose state spaces are too entangled to even state the property, let alone check it.
 
 **4. Agent failures are silent.**
 A segfaulting process produces a core dump. An agent that generates architecturally wrong code produces... code that compiles. The violation is invisible until a human reads it, or until a downstream agent builds on the wrong foundation and the error compounds.
 
-The enforcement port (`Sigma_enf`) is a pure guard function that sits in front of every effectful operation. In `Mandatory` mode, a boundary violation blocks the operation before it executes. But the deeper protection is the algebra itself: `hex analyze` can check not just "did this file import the wrong module" but "does this term reference an operation outside its layer's sub-signature." That catches violations that pass both the compiler and the import linter.
+The enforcement port (`Sigma_enf`) is a pure guard function that sits in front of every effectful operation. In `Mandatory` mode, a boundary violation blocks the operation before it executes. Today, `hex analyze` checks import edges (which files import which modules). The Sigma-algebra defines a strictly stronger check — operation-level signature verification — that would catch violations invisible to import-graph analysis. This stronger check is specified (ports-signature.md) but not yet implemented in `hex analyze`.
 
 ---
 
-## What the Algebra Stack Proves
+## What the Algebra Stack Enforces and Enables
 
 hex models its process flow as four independent algebras — one per architectural concern. Each uses a different 30-50 year old formalism with mature tooling. No grand unified theory. No category-theory prerequisite.
 
+Some layers are **enforced today**. Others are **architecturally enabled** — the structure exists to support formal verification, but the proofs haven't been written yet.
+
 ```
-┌─────────────────────────────┬────────────────────────────────────────────┐
-│  Concern                    │  Formalism            │  What it proves    │
-├─────────────────────────────┼───────────────────────┼────────────────────┤
-│  Effect boundaries          │  Free Sigma-algebra   │  Agents only use   │
-│  (who can do what)          │  + effect row types   │  permitted ops     │
-├─────────────────────────────┼───────────────────────┼────────────────────┤
-│  Dispatch pipeline          │  Kleisli composition  │  Pipeline shape,   │
-│  (how work gets routed)     │  over Result          │  short-circuit     │
-├─────────────────────────────┼───────────────────────┼────────────────────┤
-│  Swarm coordination         │  pi-calculus / TLA+   │  Deadlock freedom, │
-│  (agents talking to agents) │                       │  no task loss      │
-├─────────────────────────────┼───────────────────────┼────────────────────┤
-│  Feature lifecycle          │  1-safe workflow      │  Reachability,     │
-│  (how features get built)   │  Petri net            │  phase ordering    │
-└─────────────────────────────┴───────────────────────┴────────────────────┘
+┌─────────────────────────────┬───────────────────────┬────────────────────┬──────────────┐
+│  Concern                    │  Formalism            │  What it addresses │  Status      │
+├─────────────────────────────┼───────────────────────┼────────────────────┼──────────────┤
+│  Effect boundaries          │  Free Sigma-algebra   │  Agents only use   │  ENFORCED    │
+│  (who can do what)          │  (Rust trait system)  │  permitted ops     │  (rustc)     │
+├─────────────────────────────┼───────────────────────┼────────────────────┼──────────────┤
+│  Dispatch pipeline          │  Kleisli composition  │  Pipeline shape,   │  ENFORCED    │
+│  (how work gets routed)     │  over Result          │  short-circuit     │  (pure fn)   │
+├─────────────────────────────┼───────────────────────┼────────────────────┼──────────────┤
+│  Swarm coordination         │  pi-calculus / TLA+   │  Deadlock freedom, │  IMPLEMENTED │
+│  (agents talking to agents) │                       │  no task loss      │  not proven  │
+├─────────────────────────────┼───────────────────────┼────────────────────┼──────────────┤
+│  Feature lifecycle          │  1-safe workflow      │  Reachability,     │  IMPLEMENTED │
+│  (how features get built)   │  Petri net            │  phase ordering    │  not proven  │
+├─────────────────────────────┼───────────────────────┼────────────────────┼──────────────┤
+│  Capability confinement     │  Effect row types /   │  Grants can't      │  DESIGNED    │
+│  (resource scope)           │  linear logic         │  escape scope      │  not built   │
+└─────────────────────────────┴───────────────────────┴────────────────────┴──────────────┘
 ```
 
 ### The Sigma-algebra: Effect Boundaries
@@ -91,21 +98,21 @@ hex models its process flow as four independent algebras — one per architectur
 
 The composition root is the interpreter. Swapping an adapter (Ollama for Anthropic) is choosing a different morphism that agrees on `Sigma_inf`. This is the universal property of the free algebra — and it's exactly what "dependency injection" means, stated precisely.
 
-### The pi-calculus: Swarm Safety
+### The pi-calculus: Swarm Safety *(implemented, not yet formally verified)*
 
-Agents are processes. SpacetimeDB reducers are channels. Heartbeat timeouts are timed transitions. The TLA+ spec checks:
+Agents are processes. SpacetimeDB reducers are channels. Heartbeat timeouts are timed transitions. The protocol implements:
 
-- **Deadlock freedom:** No reachable state where all agents are blocked
-- **No task loss:** Crashed agent's task is always reclaimed
-- **CAS correctness:** Exactly one agent wins a race to claim a task
+- **CAS task claims:** SpacetimeDB reducer checks `agent_id IS NULL` before assigning — exactly one agent wins a race *(enforced by SpacetimeDB's single-writer serialization)*
+- **Heartbeat timeout + reclamation:** Stale after 45s, dead after 120s, tasks reclaimed *(implemented in hex-nexus/src/coordination/cleanup.rs)*
+- **Deadlock freedom:** Believed to hold based on protocol design, but **not yet model-checked** — a TLA+ spec (ADR-2604111229 P4) would prove this exhaustively
 
-### The Petri Net: Lifecycle Soundness
+### The Petri Net: Lifecycle Soundness *(implemented, not yet formally encoded)*
 
-The 7-phase pipeline with fork/join parallelism in the Code phase. The net proves:
+The 7-phase pipeline with fork/join parallelism in the Code phase. The supervisor enforces:
 
-- Every started workflow reaches completion (soundness)
-- No phase is unreachable (no dead transitions)
-- Tier barriers hold under parallel dispatch (ordering guarantee)
+- Phase ordering via sequential dispatch with BLOCKING gates *(implemented in supervisor.rs)*
+- Tier barriers within the Code phase — tier-0 must complete before tier-1 fires *(implemented)*
+- Formal reachability proof via Petri net encoding — **planned** (ADR-2604111229 P3), not yet written
 
 ---
 
@@ -135,12 +142,12 @@ An operating system earns that title by providing **formal guarantees about proc
 
 An AI Operating System must provide the same class of guarantees for AI agents:
 
-1. **Effect isolation** — agents can only invoke operations they're permitted (Sigma-algebra)
-2. **Coordination safety** — multi-agent protocols are deadlock-free and liveness-guaranteed (pi-calculus / TLA+)
-3. **Lifecycle soundness** — the development pipeline always reaches completion and respects ordering (Petri net)
-4. **Capability confinement** — granted resources cannot escape their scope (effect rows / linear logic)
+1. **Effect isolation** — agents can only invoke operations they're permitted *(enforced today: Rust trait injection + `hex analyze` import checks)*
+2. **Coordination safety** — multi-agent protocols handle crashes, races, and reclamation *(implemented today: CAS + heartbeat + reclamation; formal deadlock-freedom proof planned)*
+3. **Lifecycle soundness** — the development pipeline respects phase ordering and tier barriers *(enforced today: supervisor BLOCKING gates; Petri net formalization planned)*
+4. **Capability confinement** — granted resources cannot escape their scope *(partial today: secret grants + enforcement port; compile-time effect rows planned)*
 
-These are not nice-to-haves. They are the difference between an operating system and a shell script. Every agent framework today is a shell script. hex is the first one that isn't.
+These are not nice-to-haves. They are the difference between an operating system and a shell script. hex is the first agent system that **has the architectural structure to provide all four** — and is actively building the formal proofs to back them.
 
 ---
 
@@ -221,7 +228,7 @@ Agent lifecycle (state machine):
 - SpacetimeDB's `task_assign` reducer implements CAS — `UPDATE swarm_task SET agent_id = ? WHERE id = ? AND agent_id IS NULL`
 - `hex-nexus/src/coordination/mod.rs` orchestrates task reclamation from dead agents
 
-**What this catches:** Task loss. If agent A crashes while holding task T, the heartbeat timeout fires, A is marked dead, T is returned to the unassigned pool, and another agent can claim it. The CAS prevents double-assignment. These properties hold for any number of agents and any crash timing — they're protocol invariants, not test-case-specific outcomes.
+**What this catches:** Task loss. If agent A crashes while holding task T, the heartbeat timeout fires, A is marked dead, T is returned to the unassigned pool, and another agent can claim it. The CAS prevents double-assignment. These properties are enforced by SpacetimeDB's serialization guarantees and have been tested under multi-agent load. A formal TLA+ model (ADR-2604111229 P4) would prove they hold for *all* interleavings, not just the ones our tests exercised.
 
 ### Kleisli Pipeline: The Hook Router Is the Composition
 
@@ -248,7 +255,7 @@ persist_action(healed, &store)?;                // Effectful: Action -> Result<(
 
 The effect row types (P5, in design) are partially manifested today through **the secret-grant system and enforcement port**.
 
-**Mechanism:** Before an agent can access a secret, it must have a `SecretGrant` issued to it with a TTL. The grant is a **linear resource** — `claim_secrets()` can only be called once per agent (subsequent calls return `AlreadyClaimed`). The enforcement port (`IEnforcementPort.check()`) runs before every effectful operation and can `Block` operations that exceed the agent's granted capabilities.
+**Mechanism:** Before an agent can access a secret, it must have a `SecretGrant` issued to it with a TTL. The enforcement port (`IEnforcementPort.check()`) runs before every effectful operation and can `Block` operations that exceed the agent's granted capabilities. The port trait defines one-shot `claim_secrets()` semantics (subsequent calls return `AlreadyClaimed`), though the current SpacetimeDB reducer uses upsert rather than strict linear consumption — the one-shot invariant is specified in the Sigma-algebra but not yet enforced by the adapter.
 
 **Where it runs:**
 - `hex secrets grant` / `hex secrets revoke` — explicit capability management
@@ -291,15 +298,31 @@ The effect row types (P5, in design) are partially manifested today through **th
 
 Every layer in this stack provides a **different class of guarantee**:
 
-1. The **Kleisli pipeline** guarantees the prompt reaches the right handler (no misrouting)
-2. The **enforcement guard** guarantees the operation is permitted (no unauthorized effects)
-3. The **Petri net** guarantees phases execute in order (no premature dispatch)
-4. The **pi-calculus protocol** guarantees agents coordinate safely (no deadlock, no task loss)
-5. The **Sigma-algebra** guarantees code stays within its layer (no boundary violations)
-6. The **composition root** guarantees the abstract program maps to concrete effects (no dangling abstractions)
+1. The **Kleisli pipeline** ensures the prompt reaches the right handler (no misrouting) — *enforced, pure function*
+2. The **enforcement guard** ensures the operation is permitted (no unauthorized effects) — *enforced, runtime gate*
+3. The **supervisor phase gates** ensure phases execute in order (no premature dispatch) — *enforced, imperative code*
+4. The **HexFlo protocol** ensures agents coordinate safely (CAS claims, crash recovery) — *implemented, not formally proven*
+5. The **Sigma-algebra** ensures code stays within its layer (no boundary violations) — *enforced, Rust type system + import analysis*
+6. The **composition root** ensures the abstract program maps to concrete effects (no dangling abstractions) — *enforced, single wiring point*
 
-Strip any one layer and you lose a class of guarantee that the remaining layers cannot compensate for. This is why hex is an operating system — it's a stack of formal invariants, each catching failures invisible to the others.
+Strip any one layer and you lose a class of guarantee that the remaining layers cannot compensate for. This is why hex is an operating system — it's a stack of enforced invariants with a clear path to formal verification, each catching failures invisible to the others.
 
 ---
 
-> hex is the only AI agent system where "the swarm can't deadlock" is a **theorem**, not a **hope**.
+## Maturity Ladder
+
+Where hex stands today, and what comes next:
+
+| Level | Description | Status |
+|:---|:---|:---|
+| **L0: Ad-hoc** | Agent coordination via imperative code, no formal structure | *(every other framework)* |
+| **L1: Structured** | Layered architecture with typed interfaces, composition root, phase gates | **hex is here** |
+| **L2: Specified** | Algebraic signatures documented, invariants stated, known gaps flagged | **P1 delivered** (ports-signature.md) |
+| **L3: Checkable** | TLA+ specs for coordination, Petri net for lifecycle, CI drift detection | P2-P4 planned |
+| **L4: Verified** | Model checker runs in CI, effect rows enforced at compile time | Future |
+
+The differentiator is not that hex is at L4. **The differentiator is that hex is the only system at L1+ with a credible path to L4.** No other agent framework has the layered structure required to even state the properties, let alone check them.
+
+---
+
+> hex is the only AI agent system where "the swarm can't deadlock" is a **provable property** — and we're building the proof.
