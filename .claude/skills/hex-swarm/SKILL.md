@@ -226,59 +226,6 @@ Agent({ prompt: "fs-adapter task...", run_in_background: true })
 Agent({ prompt: "llm-adapter task...", run_in_background: true })
 ```
 
-## Worktree Agent Dispatch Rules (ADR-2604050900 Learnings)
-
-### Parallelize by FILE BOUNDARY, Serialize by FILE OVERLAP
-
-**RIGHT** — agents modify different files (use `isolation: "worktree"`):
-```
-Agent({ prompt: "Delete modules from spacetime-modules/", isolation: "worktree" })  # touches Cargo.toml, deletes dirs
-Agent({ prompt: "Add table to hexflo-coordination/src/lib.rs", isolation: "worktree" })  # touches one .rs file
-```
-
-**WRONG** — multiple agents editing the same file in parallel worktrees:
-```
-# BAD: all 3 agents append to hexflo-coordination/src/lib.rs
-Agent({ prompt: "Absorb fleet-state...", isolation: "worktree" })
-Agent({ prompt: "Absorb lifecycle...", isolation: "worktree" })
-Agent({ prompt: "Absorb cleanup...", isolation: "worktree" })
-# Result: 3 independent diffs that can't merge cleanly
-```
-
-**FIX** — batch same-file edits into one agent, or run sequentially:
-```
-# GOOD: one agent does all 3 absorptions
-Agent({ prompt: "Absorb fleet-state, lifecycle, and cleanup into hexflo-coordination..." })
-```
-
-### Worktree Branch Alignment
-
-Agent prompts MUST include explicit branch checkout:
-```
-Agent({
-  prompt: "FIRST: git fetch origin && git checkout claude/feature-branch\nTHEN: <actual task>",
-  isolation: "worktree"
-})
-```
-Without this, worktree agents branch from an older base commit, causing cherry-pick conflicts.
-
-### Cherry-Pick vs Direct Merge
-
-- Worktree agents commit to `worktree-agent-*` branches
-- Use `git cherry-pick <hash>` to bring changes to the feature branch
-- If cherry-pick conflicts, the agent's worktree was not aligned — do the work directly instead
-
-### When NOT to Use Worktrees
-
-| Task Type | Use Worktree? | Why |
-|-----------|---------------|-----|
-| Delete files/dirs | Yes | Independent, no conflicts |
-| Add new file | Yes | No overlap risk |
-| Modify different files | Yes | Clean parallel execution |
-| Multiple edits to same file | **No** | Merge conflicts guaranteed |
-| <3 small sequential tasks | **No** | Direct execution is faster than coordination overhead |
-| Tasks requiring prior task output | **No** | Sequential dependency — run in order |
-
 ## Heartbeat Protocol
 
 | Event | Timeout | Action |

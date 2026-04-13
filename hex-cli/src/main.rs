@@ -68,8 +68,155 @@ struct Cli {
     command: Option<Commands>,
 }
 
+// ── P2: hex config — groups trust, taste, inference, enforce, secrets ──
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Manage delegation trust levels per scope
+    Trust {
+        #[command(subcommand)]
+        action: TrustAction,
+    },
+    /// Manage developer taste preferences
+    Taste {
+        #[command(subcommand)]
+        action: TasteAction,
+    },
+    /// Manage inference providers (Ollama, vLLM, self-hosted)
+    Inference {
+        #[command(subcommand)]
+        action: commands::inference::InferenceAction,
+    },
+    /// Manage enforcement rules
+    Enforce {
+        #[command(subcommand)]
+        action: commands::enforce::EnforceAction,
+    },
+    /// Manage secrets and secret grants
+    Secrets {
+        #[command(subcommand)]
+        action: SecretsAction,
+    },
+}
+
+// ── P3: hex dev — groups analyze, validate, test, ci, worktree, init, new, report + session ──
+#[derive(Subcommand)]
+enum DevGroupAction {
+    /// Start/resume/list dev sessions (TUI pipeline)
+    Session {
+        #[command(subcommand)]
+        action: DevAction,
+    },
+    /// Architecture health check
+    Analyze {
+        /// Project root path
+        #[arg(default_value = ".")]
+        path: String,
+        #[arg(long)]
+        strict: bool,
+        #[arg(long)]
+        adr_compliance: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, value_name = "PATH")]
+        file: Option<String>,
+        #[arg(long)]
+        quiet: bool,
+        #[arg(long)]
+        violations_only: bool,
+        #[arg(long)]
+        exit_code: bool,
+    },
+    /// Run full build pipeline (build → test → analyze → validate)
+    Validate {
+        #[arg(long)]
+        skip_test: bool,
+        #[arg(long)]
+        strict: bool,
+        #[arg(long)]
+        parallel: bool,
+    },
+    /// Run integration tests (unit, arch, services, swarm)
+    Test {
+        #[command(subcommand)]
+        action: commands::test::TestAction,
+    },
+    /// Run all hex enforcement gates
+    Ci {
+        #[arg(long)]
+        standalone_gate: bool,
+    },
+    /// Git worktree management (list, merge, cleanup)
+    Worktree {
+        #[command(subcommand)]
+        action: WorktreeAction,
+    },
+    /// Initialize hex in a project directory
+    Init(InitArgs),
+    /// Structured project intake — create, init, register, seed trust
+    New {
+        /// Target directory path
+        path: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        taste_from: Option<String>,
+    },
+    /// Developer audit report for hex dev sessions
+    Report {
+        #[command(subcommand)]
+        action: commands::report::ReportAction,
+    },
+}
+
+// ── P4: hex override — groups steer, pause, decide ──
+#[derive(Subcommand)]
+enum OverrideAction {
+    /// Send natural-language directives to a project
+    Steer {
+        #[command(subcommand)]
+        action: SteerAction,
+    },
+    /// Emergency pause/resume the active workplan
+    Pause {
+        #[command(subcommand)]
+        action: PauseAction,
+    },
+    /// Resolve, approve, or explain pending project decisions
+    Decide {
+        #[command(subcommand)]
+        action: DecideAction,
+    },
+}
+
 #[derive(Subcommand)]
 enum Commands {
+    // ════════════════════════════════════════════════════════════════════
+    // Grouped parent commands (P2/P3/P4)
+    // ════════════════════════════════════════════════════════════════════
+
+    /// Project configuration (trust, taste, inference, enforce, secrets)
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+    /// Development tools (analyze, validate, test, ci, worktree, init, new, report, session)
+    Dev {
+        #[command(subcommand)]
+        action: DevGroupAction,
+    },
+    /// Emergency overrides (steer, pause, decide)
+    #[command(name = "override")]
+    OverrideCmd {
+        #[command(subcommand)]
+        action: OverrideAction,
+    },
+
+    // ════════════════════════════════════════════════════════════════════
+    // Standalone commands (not grouped)
+    // ════════════════════════════════════════════════════════════════════
+
     /// Start/stop/manage the hex-nexus daemon
     #[command(alias = "daemon")]
     Nexus {
@@ -81,13 +228,10 @@ enum Commands {
         #[command(subcommand)]
         action: AgentAction,
     },
-    /// Manage secrets and secret grants
-    Secrets {
-        #[command(subcommand)]
-        action: SecretsAction,
-    },
     /// Developer briefing — recent events, decisions, health
     Brief(BriefArgs),
+    /// Do the next right thing — check project health and suggest/execute actions
+    Go,
     /// Agentic Brain (self-improving model selection)
     Brain {
         #[command(subcommand)]
@@ -139,47 +283,13 @@ enum Commands {
         #[command(subcommand)]
         action: ProjectAction,
     },
-    /// Architecture health check
-    Analyze {
-        /// Project root path
-        #[arg(default_value = ".")]
-        path: String,
-        /// Promote warnings to errors (exit code 1 on any violation)
-        #[arg(long)]
-        strict: bool,
-        /// Run only ADR compliance checks (skip boundary analysis)
-        #[arg(long)]
-        adr_compliance: bool,
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-        /// Analyze a single file instead of the whole project
-        #[arg(long, value_name = "PATH")]
-        file: Option<String>,
-        /// Suppress output when no violations found (for hook use)
-        #[arg(long)]
-        quiet: bool,
-        /// Only print violation lines, skip summary stats
-        #[arg(long)]
-        violations_only: bool,
-        /// Exit with code 1 if any violations found (for Stop hook gate)
-        #[arg(long)]
-        exit_code: bool,
-    },
     /// Workplan management (create, list, status)
     Plan {
         #[command(subcommand)]
         action: PlanAction,
     },
-    /// Manage inference providers (Ollama, vLLM, self-hosted)
-    Inference {
-        #[command(subcommand)]
-        action: commands::inference::InferenceAction,
-    },
     /// Interactive AI chat session (TUI by default, --no-tui for plain stdout)
     Chat(ChatArgs),
-    /// Initialize hex in a project directory
-    Init(InitArgs),
     /// Claude Code hook handler (called by .claude/settings.json hooks)
     Hook {
         #[command(subcommand)]
@@ -187,20 +297,10 @@ enum Commands {
     },
     /// Start the hex MCP server (stdio transport)
     Mcp,
-    /// Run integration tests (unit, arch, services, swarm)
-    Test {
-        #[command(subcommand)]
-        action: commands::test::TestAction,
-    },
     /// Manage skills (list, sync, show)
     Skill {
         #[command(subcommand)]
         action: SkillAction,
-    },
-    /// Manage enforcement rules (ADR-2603221959)
-    Enforce {
-        #[command(subcommand)]
-        action: commands::enforce::EnforceAction,
     },
     /// Inspect and sync embedded assets baked into the binary (ADR-2603221522)
     Assets {
@@ -212,27 +312,12 @@ enum Commands {
         #[command(subcommand)]
         action: GitAction,
     },
-    /// Git worktree management (list, merge, cleanup)
-    Worktree {
-        #[command(subcommand)]
-        action: WorktreeAction,
-    },
     /// Project status
     Status,
     /// Inject hex context into opencode (ADR-2603231800)
     Opencode {
         #[command(subcommand)]
         action: commands::opencode::Commands,
-    },
-    /// Interactive TUI-driven development pipeline (ADR-2603232005)
-    Dev {
-        #[command(subcommand)]
-        action: DevAction,
-    },
-    /// Developer audit report for hex dev sessions (ADR-2603232220)
-    Report {
-        #[command(subcommand)]
-        action: commands::report::ReportAction,
     },
     /// Docker AI Sandbox management — build image, check readiness (ADR-2603282000)
     Sandbox {
@@ -261,26 +346,6 @@ enum Commands {
         #[command(subcommand)]
         action: ContextAction,
     },
-    /// Do the next right thing — check project health and suggest/execute actions
-    Go,
-    /// Run full build pipeline (build → test → analyze → validate)
-    Validate {
-        /// Skip test phase
-        #[arg(long)]
-        skip_test: bool,
-        /// Fail on warnings
-        #[arg(long)]
-        strict: bool,
-        /// Run stages in parallel where possible
-        #[arg(long)]
-        parallel: bool,
-    },
-    /// Run all hex enforcement gates (ADR-2604061100)
-    Ci {
-        /// Run the standalone composition gate (ADR-2604112000)
-        #[arg(long)]
-        standalone_gate: bool,
-    },
     /// Update hex to the latest release (ADR-2604080929)
     #[command(name = "self-update")]
     SelfUpdate {
@@ -294,51 +359,134 @@ enum Commands {
         #[arg(long, short)]
         yes: bool,
     },
-    /// Resolve, approve, or explain pending project decisions (ADR-2604131500)
-    Decide {
-        #[command(subcommand)]
-        action: DecideAction,
-    },
-    /// Structured project intake — create, init, register, seed trust (ADR-2604131500)
-    New {
-        /// Target directory path
-        path: String,
-        /// Project name (defaults to directory name)
-        #[arg(long)]
-        name: Option<String>,
-        /// Project description
-        #[arg(long)]
-        description: Option<String>,
-        /// Copy taste preferences from an existing project
-        #[arg(long)]
-        taste_from: Option<String>,
-    },
     /// Emergency override — send priority-2 directive to all agents (ADR-2604131500)
-    Override {
+    #[command(name = "send-override")]
+    OverrideDirect {
         /// Project name
         project: String,
         /// Override instruction (natural language)
         instruction: String,
     },
-    /// Emergency pause/resume the active workplan (ADR-2604131500)
-    Pause {
+
+    // ════════════════════════════════════════════════════════════════════
+    // Hidden aliases — old top-level commands still work but don't show in --help
+    // ════════════════════════════════════════════════════════════════════
+
+    /// (hidden) Manage secrets — use `hex config secrets` instead
+    #[command(hide = true)]
+    Secrets {
         #[command(subcommand)]
-        action: PauseAction,
+        action: SecretsAction,
     },
-    /// Manage developer taste preferences (ADR-2604131500)
-    Taste {
+    /// (hidden) Manage inference — use `hex config inference` instead
+    #[command(hide = true)]
+    Inference {
         #[command(subcommand)]
-        action: TasteAction,
+        action: commands::inference::InferenceAction,
     },
-    /// Manage delegation trust levels per scope (ADR-2604131500)
+    /// (hidden) Manage enforcement — use `hex config enforce` instead
+    #[command(hide = true)]
+    Enforce {
+        #[command(subcommand)]
+        action: commands::enforce::EnforceAction,
+    },
+    /// (hidden) Manage trust — use `hex config trust` instead
+    #[command(hide = true)]
     Trust {
         #[command(subcommand)]
         action: TrustAction,
     },
-    /// Send natural-language directives to a project (ADR-2604131500)
+    /// (hidden) Manage taste — use `hex config taste` instead
+    #[command(hide = true)]
+    Taste {
+        #[command(subcommand)]
+        action: TasteAction,
+    },
+    /// (hidden) Architecture health check — use `hex dev analyze` instead
+    #[command(hide = true)]
+    Analyze {
+        #[arg(default_value = ".")]
+        path: String,
+        #[arg(long)]
+        strict: bool,
+        #[arg(long)]
+        adr_compliance: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, value_name = "PATH")]
+        file: Option<String>,
+        #[arg(long)]
+        quiet: bool,
+        #[arg(long)]
+        violations_only: bool,
+        #[arg(long)]
+        exit_code: bool,
+    },
+    /// (hidden) Validate — use `hex dev validate` instead
+    #[command(hide = true)]
+    Validate {
+        #[arg(long)]
+        skip_test: bool,
+        #[arg(long)]
+        strict: bool,
+        #[arg(long)]
+        parallel: bool,
+    },
+    /// (hidden) Run tests — use `hex dev test` instead
+    #[command(hide = true)]
+    Test {
+        #[command(subcommand)]
+        action: commands::test::TestAction,
+    },
+    /// (hidden) CI gates — use `hex dev ci` instead
+    #[command(hide = true)]
+    Ci {
+        #[arg(long)]
+        standalone_gate: bool,
+    },
+    /// (hidden) Worktree management — use `hex dev worktree` instead
+    #[command(hide = true)]
+    Worktree {
+        #[command(subcommand)]
+        action: WorktreeAction,
+    },
+    /// (hidden) Initialize hex — use `hex dev init` instead
+    #[command(hide = true)]
+    Init(InitArgs),
+    /// (hidden) New project — use `hex dev new` instead
+    #[command(hide = true)]
+    New {
+        path: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        taste_from: Option<String>,
+    },
+    /// (hidden) Report — use `hex dev report` instead
+    #[command(hide = true)]
+    Report {
+        #[command(subcommand)]
+        action: commands::report::ReportAction,
+    },
+    /// (hidden) Steer — use `hex override steer` instead
+    #[command(hide = true)]
     Steer {
         #[command(subcommand)]
         action: SteerAction,
+    },
+    /// (hidden) Pause — use `hex override pause` instead
+    #[command(hide = true)]
+    Pause {
+        #[command(subcommand)]
+        action: PauseAction,
+    },
+    /// (hidden) Decide — use `hex override decide` instead
+    #[command(hide = true)]
+    Decide {
+        #[command(subcommand)]
+        action: DecideAction,
     },
 }
 
@@ -366,10 +514,50 @@ async fn main() -> anyhow::Result<()> {
     };
 
     match command {
+        // ── Grouped parent commands (P2/P3/P4) ──────────────────────
+        Commands::Config { action } => match action {
+            ConfigAction::Trust { action } => commands::trust::run(action).await,
+            ConfigAction::Taste { action } => commands::taste::run(action).await,
+            ConfigAction::Inference { action } => commands::inference::run(action).await,
+            ConfigAction::Enforce { action } => commands::enforce::run(action).await,
+            ConfigAction::Secrets { action } => commands::secrets::run(action).await,
+        },
+        Commands::Dev { action } => match action {
+            DevGroupAction::Session { action } => commands::dev::run(action).await,
+            DevGroupAction::Analyze { path, strict, adr_compliance, json, file, quiet, violations_only, exit_code } => {
+                analyze::run(&path, strict, adr_compliance, json, file.as_deref(), quiet, violations_only, exit_code).await
+            }
+            DevGroupAction::Validate { skip_test, strict, parallel } => {
+                doctor::run_validate_pipeline(skip_test, strict, parallel).await
+            }
+            DevGroupAction::Test { action } => commands::test::run(action).await,
+            DevGroupAction::Ci { standalone_gate } => {
+                if standalone_gate { commands::ci::run_standalone_gate().await }
+                else { commands::ci::run().await }
+            }
+            DevGroupAction::Worktree { action } => commands::worktree::run(action).await,
+            DevGroupAction::Init(args) => commands::init::run(args).await,
+            DevGroupAction::New { path, name, description, taste_from } => {
+                commands::new::run(&path, name, description, taste_from).await
+            }
+            DevGroupAction::Report { action } => commands::report::run(action).await,
+        },
+        Commands::OverrideCmd { action } => match action {
+            OverrideAction::Steer { action } => commands::steer::run(action).await,
+            OverrideAction::Pause { action } => {
+                match action {
+                    PauseAction::Pause => commands::pause::run_pause().await,
+                    PauseAction::Resume => commands::pause::run_resume().await,
+                }
+            }
+            OverrideAction::Decide { action } => commands::decide::run(action).await,
+        },
+
+        // ── Standalone commands ──────────────────────────────────────
         Commands::Nexus { action } => commands::nexus::run(action).await,
         Commands::Agent { action } => commands::agent::run(action).await,
-        Commands::Secrets { action } => commands::secrets::run(action).await,
         Commands::Brief(args) => commands::brief::run(args).await,
+        Commands::Go => commands::go::run().await,
         Commands::Brain { action } => commands::brain::run(action).await,
         Commands::Stdb { action } => commands::stdb::run(action).await,
         Commands::Swarm { action } => commands::swarm::run(action).await,
@@ -380,25 +568,15 @@ async fn main() -> anyhow::Result<()> {
         Commands::Adr { action } => commands::adr::run(action).await,
         Commands::Spec { action } => commands::spec::run(action).await,
         Commands::Project { action } => commands::project::run(action).await,
-        Commands::Analyze { path, strict, adr_compliance, json, file, quiet, violations_only, exit_code } => {
-            analyze::run(&path, strict, adr_compliance, json, file.as_deref(), quiet, violations_only, exit_code).await
-        }
         Commands::Plan { action } => commands::plan::run(action).await,
-        Commands::Inference { action } => commands::inference::run(action).await,
         Commands::Chat(args) => commands::chat::run(args).await,
-        Commands::Init(args) => commands::init::run(args).await,
         Commands::Hook { event } => commands::hook::run(event).await,
         Commands::Mcp => commands::mcp::run_mcp_server().await,
-        Commands::Test { action } => commands::test::run(action).await,
         Commands::Skill { action } => commands::skill::run(action).await,
-        Commands::Enforce { action } => commands::enforce::run(action).await,
-        Commands::Git { action } => commands::git_cmd::run(action).await,
-        Commands::Worktree { action } => commands::worktree::run(action).await,
         Commands::Assets { action } => commands::assets_cmd::run(action).await,
+        Commands::Git { action } => commands::git_cmd::run(action).await,
         Commands::Status => status::run().await,
         Commands::Opencode { action } => commands::opencode::run(action),
-        Commands::Dev { action } => commands::dev::run(action).await,
-        Commands::Report { action } => commands::report::run(action).await,
         Commands::Sandbox { action } => commands::sandbox::run(action).await,
         Commands::Fingerprint { action } => commands::fingerprint::run(action).await,
         Commands::Doctor { verbose, fix, check } => {
@@ -410,35 +588,43 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Context { action } => commands::context::run(action).await,
-        Commands::Go => commands::go::run().await,
-        Commands::Validate { skip_test, strict, parallel } => {
-            doctor::run_validate_pipeline(skip_test, strict, parallel).await
-        }
-        Commands::Ci { standalone_gate } => {
-            if standalone_gate {
-                commands::ci::run_standalone_gate().await
-            } else {
-                commands::ci::run().await
-            }
-        }
         Commands::SelfUpdate { check, version, yes } => {
             commands::update::run(check, version, yes).await
         }
-        Commands::Decide { action } => commands::decide::run(action).await,
+        Commands::OverrideDirect { project, instruction } => {
+            commands::override_cmd::run(&project, &instruction).await
+        }
+
+        // ── Hidden aliases (old top-level commands) ──────────────────
+        Commands::Secrets { action } => commands::secrets::run(action).await,
+        Commands::Inference { action } => commands::inference::run(action).await,
+        Commands::Enforce { action } => commands::enforce::run(action).await,
+        Commands::Trust { action } => commands::trust::run(action).await,
+        Commands::Taste { action } => commands::taste::run(action).await,
+        Commands::Analyze { path, strict, adr_compliance, json, file, quiet, violations_only, exit_code } => {
+            analyze::run(&path, strict, adr_compliance, json, file.as_deref(), quiet, violations_only, exit_code).await
+        }
+        Commands::Validate { skip_test, strict, parallel } => {
+            doctor::run_validate_pipeline(skip_test, strict, parallel).await
+        }
+        Commands::Test { action } => commands::test::run(action).await,
+        Commands::Ci { standalone_gate } => {
+            if standalone_gate { commands::ci::run_standalone_gate().await }
+            else { commands::ci::run().await }
+        }
+        Commands::Worktree { action } => commands::worktree::run(action).await,
+        Commands::Init(args) => commands::init::run(args).await,
         Commands::New { path, name, description, taste_from } => {
             commands::new::run(&path, name, description, taste_from).await
         }
-        Commands::Override { project, instruction } => {
-            commands::override_cmd::run(&project, &instruction).await
-        }
+        Commands::Report { action } => commands::report::run(action).await,
+        Commands::Steer { action } => commands::steer::run(action).await,
         Commands::Pause { action } => {
             match action {
                 PauseAction::Pause => commands::pause::run_pause().await,
                 PauseAction::Resume => commands::pause::run_resume().await,
             }
         }
-        Commands::Taste { action } => commands::taste::run(action).await,
-        Commands::Trust { action } => commands::trust::run(action).await,
-        Commands::Steer { action } => commands::steer::run(action).await,
+        Commands::Decide { action } => commands::decide::run(action).await,
     }
 }
