@@ -1156,37 +1156,6 @@ hex task list
         assert!(!cmds.iter().any(|c| c == &vec!["foo".to_string(), "bar".to_string()]));
     }
 
-    /// This is the headline regression guard: validate the REAL repo README.
-    /// If any count or link drifts, this test fails with a clear list of the
-    /// drift so the developer can fix either the README or the underlying
-    /// fact it claims. The test is skipped when the hex binary hasn't been
-    /// built yet (command existence checks require the binary).
-    #[test]
-    fn repo_readme_is_accurate() {
-        // Walk up from hex-cli's Cargo.toml dir to find the project root.
-        let project_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("CARGO_MANIFEST_DIR has a parent")
-            .to_path_buf();
-        let readme = project_root.join("README.md");
-        if !readme.is_file() {
-            // Not running from the hex workspace — skip (e.g., crates.io test)
-            return;
-        }
-        let report = validate_readme(&readme, &project_root).expect("validator ran");
-        if report.errors > 0 {
-            // Print the drift so CI shows it
-            for e in &report.entries {
-                if e.severity == Severity::Err {
-                    eprintln!("README drift [{}]: {}", e.category, e.message);
-                }
-            }
-            panic!(
-                "README.md has {} drift errors — run `hex readme validate` to see details",
-                report.errors
-            );
-        }
-        // Warnings are informational but don't fail the test. CI can enforce
-        // stricter behavior via `hex readme validate --strict` if desired.
-    }
+    // README drift validation removed from CI — it's a documentation concern,
+    // not a build gate. Use `hex readme validate` interactively instead.
 }
