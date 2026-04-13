@@ -271,24 +271,10 @@ struct StepRow {
     tier: String,
     #[tabled(rename = "Status")]
     status: String,
-    #[tabled(rename = "Evidence")]
-    evidence: String,
+    #[tabled(rename = "Git")]
+    git_evidence: String,
     #[tabled(rename = "Deps")]
     deps: String,
-}
-
-#[derive(Tabled)]
-struct PhaseTaskRow {
-    #[tabled(rename = "ID")]
-    id: String,
-    #[tabled(rename = "Name")]
-    name: String,
-    #[tabled(rename = "Layer")]
-    layer: String,
-    #[tabled(rename = "Status")]
-    status: String,
-    #[tabled(rename = "Evidence")]
-    evidence: String,
 }
 
 #[derive(Tabled)]
@@ -479,74 +465,21 @@ async fn execute_plan_distributed(wp: &serde_json::Value) -> anyhow::Result<()> 
             .and_then(|g| g.get("command"))
             .and_then(|v| v.as_str());
 
+        println!("{} Phase: {}", "\u{2501}".dimmed(), phase_name);
+
         let Some(tasks) = tasks else { continue };
-
-        // Skip phases where all tasks are already done
-        let pending_count = tasks.iter().filter(|t| {
-            let s = t.get("status").and_then(|v| v.as_str()).unwrap_or("todo");
-            s != "done" && s != "completed"
-        }).count();
-        if pending_count == 0 {
-            println!("{} Phase: {} (all {} tasks done, skipping)", "\u{2713}".green(), phase_name, tasks.len());
-            continue;
-        }
-
-        println!("{} Phase: {} ({}/{} pending)", "\u{2501}".dimmed(), phase_name, pending_count, tasks.len());
-
-        // ADR-2604130010 P2.2: Query connected agents for capability-aware routing
-        // GET /api/hex-agents returns { "agents": [...] } — each agent has a
-        // "capabilities" field that is a JSON *string* (serialised at connect time).
-        // We parse it to extract max_model_params_b for tier-based routing.
-        let available_agents = client.get("/api/hex-agents").await.ok()
-            .and_then(|v| v.get("agents").and_then(|a| a.as_array()).cloned())
-            .unwrap_or_default();
-
-        // Parse each agent's capabilities string into structured JSON
-        let agent_caps: Vec<(String, serde_json::Value)> = available_agents.iter().filter_map(|a| {
-            let id = a.get("id").or_else(|| a.get("agentId"))
-                .and_then(|v| v.as_str())?.to_string();
-            let caps_raw = a.get("capabilities").and_then(|c| c.as_str()).unwrap_or("{}");
-            let caps: serde_json::Value = serde_json::from_str(caps_raw).unwrap_or_default();
-            Some((id, caps))
-        }).collect();
-
-        let has_large_model_worker = agent_caps.iter().any(|(_, caps)| {
-            caps.get("max_model_params_b")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0) >= 27.0
-        });
 
         // Step 3: Create HexFlo tasks for this phase
         let mut task_ids: Vec<(String, String)> = Vec::new(); // (task_id, title)
 
         for task in tasks {
-            let task_status = task.get("status").and_then(|v| v.as_str()).unwrap_or("todo");
-            if task_status == "done" || task_status == "completed" {
-                let skip_name = task.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                println!("  {} {} (already done)", "\u{2713}".green(), skip_name);
-                continue;
-            }
             let task_name = task.get("name").and_then(|v| v.as_str()).unwrap_or("?");
             let description = task.get("description").and_then(|v| v.as_str()).unwrap_or("");
             let agent = task.get("agent").and_then(|v| v.as_str()).unwrap_or("hex-coder");
             let tier = task.get("tier").and_then(|v| v.as_str()).unwrap_or("T2");
 
-            // ADR-2604130010 P2.2: Route tasks by tier to capable workers
-            //   T2.5 / T3 tasks → workers advertising 27B+ parameter models
-            //   T1 / T2 tasks   → any connected worker
-            let needs_large_model = tier == "T2.5" || tier == "T3"
-                || agent == "integrator" || agent == "reviewer"
-                || agent == "validation-judge";
-            let model_hint = if needs_large_model && has_large_model_worker {
-                "[REQUIRES: 27B+] "
-            } else if needs_large_model {
-                "[PREFERS: 27B+] "
-            } else {
-                ""
-            };
-
-            // Format title so worker can parse role + model requirement + description
-            let title = format!("{}: {}{}", agent, model_hint, description);
+            // Format title so worker can parse role + description
+            let title = format!("{}: {}", agent, description);
 
             let resp = client.post(
                 &format!("/api/swarms/{}/tasks", swarm_id),
@@ -1246,66 +1179,6 @@ async fn list_plans() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Check git log for evidence that files were modified since a given date.
-/// Returns a short label: "git:modified", "likely_done", "no evidence", or "—".
-fn check_git_evidence(files: &[String], created_at: &str, done_command: &str) -> String {
-    if files.is_empty() && done_command.is_empty() {
-        return "\u{2014}".to_string(); // em dash — no files to check
-    }
-
-    let mut has_git_changes = false;
-
-    if !files.is_empty() {
-        // Check if any listed files were modified since created_at
-        let since = if created_at.is_empty() { "4 weeks ago".to_string() } else { created_at.to_string() };
-        let mut cmd = std::process::Command::new("git");
-        cmd.args(["log", "--oneline", "--since", &since, "--"]);
-        for f in files {
-            cmd.arg(f);
-        }
-        if let Ok(output) = cmd.output() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            has_git_changes = !stdout.trim().is_empty();
-        }
-
-        // Fallback: workplan created_at may post-date commits (work started before plan).
-        // Check last 20 commits as a secondary signal.
-        if !has_git_changes {
-            let mut fallback = std::process::Command::new("git");
-            fallback.args(["log", "--oneline", "-20", "--"]);
-            for f in files {
-                fallback.arg(f);
-            }
-            if let Ok(output) = fallback.output() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                has_git_changes = !stdout.trim().is_empty();
-            }
-        }
-    }
-
-    // If done_command is set, run it to see if the task is verifiably done
-    if !done_command.is_empty() {
-        let ok = std::process::Command::new("sh")
-            .args(["-c", done_command])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok {
-            return "likely_done".green().to_string();
-        }
-    }
-
-    if has_git_changes {
-        "git:modified".yellow().to_string()
-    } else if !files.is_empty() {
-        "no evidence".dimmed().to_string()
-    } else {
-        "\u{2014}".dimmed().to_string()
-    }
-}
-
 /// Show detailed status of a workplan.
 async fn show_plan_status(file: &str) -> anyhow::Result<()> {
     let path = Path::new("docs/workplans").join(file);
@@ -1340,67 +1213,64 @@ async fn show_plan_file(path: &Path) -> anyhow::Result<()> {
         println!("  Created: {}", plan.created_at);
     }
 
-    // Phase-based workplans (current format)
+    let total = plan.total_tasks();
+    let done = plan.completed_tasks();
+    println!("  Tasks: {} ({} done)", total, done);
+    println!();
+
     if !plan.phases.is_empty() {
-        let total = plan.total_tasks();
-        let done = plan.completed_tasks();
-        println!("  Phases: {}  Tasks: {} ({})", plan.phases.len(), total, progress(done as u32, total as u32));
-        println!();
-
+        // Current format: phases → tasks
         for phase in &plan.phases {
-            println!("  {} {}: {}", "\u{2501}".dimmed(), phase.id, phase.name);
-
-            let rows: Vec<PhaseTaskRow> = phase.tasks.iter().map(|task| {
-                let evidence = check_git_evidence(&task.files, &plan.created_at, &task.done_command);
-                PhaseTaskRow {
-                    id: task.id.clone(),
-                    name: truncate(&task.name, 45),
-                    layer: task.layer.clone(),
-                    status: status_badge(&task.status),
-                    evidence,
-                }
-            }).collect();
-
-            if rows.is_empty() {
-                println!("    (no tasks)");
-            } else {
-                println!("{}", HexTable::render(&rows));
+            println!("  {} {}", "\u{25b6}".cyan(), if phase.name.is_empty() { &phase.id } else { &phase.name });
+            for task in &phase.tasks {
+                let git = git_evidence_label(&task.files, &plan.created_at);
+                let verified = if !task.done_command.is_empty() && run_done_command(&task.done_command) {
+                    " [verified]".green().to_string()
+                } else {
+                    String::new()
+                };
+                println!(
+                    "    {} {:<10} {:<40} {} {}",
+                    status_badge(&task.status),
+                    task.id,
+                    truncate(&task.name, 40),
+                    git,
+                    verified,
+                );
             }
             println!();
         }
+    } else if !plan.steps.is_empty() {
+        // Legacy format: steps
+        let rows: Vec<StepRow> = plan.steps.iter().map(|step| {
+            let deps = if step.dependencies.is_empty() {
+                "\u{2014}".dimmed().to_string()
+            } else {
+                step.dependencies.join(", ")
+            };
+            let git = git_evidence_label(&step.files, &plan.created_at);
+            let verified = if !step.done_command.is_empty() && run_done_command(&step.done_command) {
+                " [verified]".green().to_string()
+            } else if !step.verify.is_empty() && run_done_command(&step.verify) {
+                " [verified]".green().to_string()
+            } else {
+                String::new()
+            };
+            StepRow {
+                id: step.id.clone(),
+                description: truncate(&step.description, 50),
+                adapter: step.adapter.clone(),
+                tier: step.tier.to_string(),
+                status: status_badge(&step.status),
+                git_evidence: format!("{}{}", git, verified),
+                deps,
+            }
+        }).collect();
 
-        return Ok(());
+        println!("{}", HexTable::render(&rows));
+    } else {
+        println!("  (no tasks defined)");
     }
-
-    // Legacy steps-based format
-    println!("  Steps: {}", plan.steps.len());
-    println!();
-
-    if plan.steps.is_empty() {
-        println!("  (no steps defined)");
-        return Ok(());
-    }
-
-    let rows: Vec<StepRow> = plan.steps.iter().map(|step| {
-        let deps = if step.dependencies.is_empty() {
-            "\u{2014}".dimmed().to_string()
-        } else {
-            step.dependencies.join(", ")
-        };
-        let done_cmd = if step.done_command.is_empty() { &step.done_condition } else { &step.done_command };
-        let evidence = check_git_evidence(&step.files, &plan.created_at, done_cmd);
-        StepRow {
-            id: step.id.clone(),
-            description: truncate(&step.description, 50),
-            adapter: step.adapter.clone(),
-            tier: step.tier.to_string(),
-            status: status_badge(&step.status),
-            evidence,
-            deps,
-        }
-    }).collect();
-
-    println!("{}", HexTable::render(&rows));
 
     Ok(())
 }
@@ -1683,119 +1553,75 @@ fn infer_adapter(req: &str) -> String {
     }
 }
 
+// ── Git Evidence ──────────────────────────────────────────────────────
+
+/// Check if a file has git commits since `since` (ISO-8601 date string).
+/// Returns true if `git log` finds at least one commit touching the file.
+fn file_has_git_evidence(file: &str, since: &str) -> bool {
+    if since.is_empty() || file.is_empty() {
+        return false;
+    }
+    let output = std::process::Command::new("git")
+        .args(["log", "--oneline", &format!("--since={}", since), "--", file])
+        .output();
+    match output {
+        Ok(out) => !out.stdout.is_empty(),
+        Err(_) => false,
+    }
+}
+
+/// Check git evidence for a list of files. Returns a summary string.
+/// - All files modified: "[git: modified]" (green)
+/// - Some files modified: "[git: partial N/M]" (yellow)
+/// - No files / no created_at: "" (empty)
+fn git_evidence_label(files: &[String], created_at: &str) -> String {
+    if files.is_empty() || created_at.is_empty() {
+        return String::new();
+    }
+    let modified_count = files.iter().filter(|f| file_has_git_evidence(f, created_at)).count();
+    if modified_count == files.len() {
+        "[git: modified]".green().to_string()
+    } else if modified_count > 0 {
+        format!("[git: {}/{}]", modified_count, files.len()).yellow().to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Run a done_command and return true if exit code is 0.
+fn run_done_command(cmd: &str) -> bool {
+    if cmd.is_empty() {
+        return false;
+    }
+    std::process::Command::new("sh")
+        .args(["-c", cmd])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 // ── Reconcile ─────────────────────────────────────────────────────────
 
 #[derive(Tabled)]
 struct ReconcileRow {
-    #[tabled(rename = "Task")]
+    #[tabled(rename = "Step")]
     id: String,
     #[tabled(rename = "")]
     icon: String,
-    #[tabled(rename = "Status")]
+    #[tabled(rename = "Result")]
     result: String,
-    #[tabled(rename = "Evidence")]
-    evidence: String,
+    #[tabled(rename = "Git Evidence")]
+    git_evidence: String,
+    #[tabled(rename = "Done condition (excerpt)")]
+    condition: String,
 }
 
-/// Evidence collected for a task's completion status.
-struct TaskEvidence {
-    done_command_passed: Option<bool>,
-    files_modified: Vec<String>,
-    matching_commits: Vec<String>,
-}
-
-impl TaskEvidence {
-    /// Strong evidence: done_command passes OR all declared files modified with matching commits.
-    fn is_strong(&self, declared_files: &[String]) -> bool {
-        if self.done_command_passed == Some(true) {
-            return true;
-        }
-        if declared_files.is_empty() {
-            return !self.matching_commits.is_empty();
-        }
-        let all_files_modified = declared_files.iter().all(|f| self.files_modified.contains(f));
-        all_files_modified && !self.matching_commits.is_empty()
-    }
-
-    fn summary(&self, declared_files: &[String]) -> String {
-        let mut parts = Vec::new();
-        match self.done_command_passed {
-            Some(true) => parts.push("cmd:pass".green().to_string()),
-            Some(false) => parts.push("cmd:fail".red().to_string()),
-            None => {}
-        }
-        if !declared_files.is_empty() {
-            let modified = declared_files.iter().filter(|f| self.files_modified.contains(f)).count();
-            let total = declared_files.len();
-            let label = format!("files:{}/{}", modified, total);
-            if modified == total {
-                parts.push(label.green().to_string());
-            } else {
-                parts.push(label.yellow().to_string());
-            }
-        }
-        if !self.matching_commits.is_empty() {
-            parts.push(format!("commits:{}", self.matching_commits.len()).green().to_string());
-        }
-        if parts.is_empty() { "none".dimmed().to_string() } else { parts.join(" ") }
-    }
-}
-
-/// Gather git evidence for a single workplan task.
-fn gather_evidence(task_id: &str, files: &[String], done_command: &str, since: &str) -> TaskEvidence {
-    let done_command_passed = if !done_command.is_empty() {
-        let result = std::process::Command::new("sh")
-            .args(["-c", done_command])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        Some(result.map(|s| s.success()).unwrap_or(false))
-    } else {
-        None
-    };
-
-    let since_arg = if since.is_empty() { "4 weeks ago".to_string() } else { since.to_string() };
-
-    let files_modified = files.iter().filter(|f| {
-        let output = std::process::Command::new("git")
-            .args(["log", "--oneline", "--since", &since_arg, "--", f.as_str()])
-            .output();
-        match output {
-            Ok(out) => !out.stdout.is_empty(),
-            Err(_) => false,
-        }
-    }).cloned().collect();
-
-    let matching_commits = {
-        let id_lower = task_id.to_lowercase();
-        let output = std::process::Command::new("git")
-            .args(["log", "--oneline", "--since", &since_arg])
-            .output();
-        match output {
-            Ok(out) => {
-                String::from_utf8_lossy(&out.stdout)
-                    .lines()
-                    .filter(|line| line.to_lowercase().contains(&id_lower))
-                    .map(|line| {
-                        let t = line.trim();
-                        if t.len() > 60 { format!("{}…", &t[..57]) } else { t.to_string() }
-                    })
-                    .collect()
-            }
-            Err(_) => Vec::new(),
-        }
-    };
-
-    TaskEvidence { done_command_passed, files_modified, matching_commits }
-}
-
-/// Reconcile workplan task statuses against git evidence and done_commands.
-///
-/// For phase-based workplans: checks `files[]` modification in git log since
-/// `created_at` and commit messages matching the task ID.
-/// For legacy step-based workplans: falls back to identifier grepping.
-///
-/// With `--update`, writes confirmed-done statuses back to the workplan JSON.
+/// Check each workplan step's done_condition against the actual codebase,
+/// cross-referencing with git evidence (file modifications since created_at).
+/// When `--update` is set, tasks whose files[] ALL have git modifications
+/// since created_at are promoted from "todo" to "done".
 async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
     let path = if file.contains('/') {
         std::path::PathBuf::from(file)
@@ -1806,97 +1632,171 @@ async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
     let content = std::fs::read_to_string(&path)
         .map_err(|e| anyhow::anyhow!("Cannot read {}: {}", path.display(), e))?;
 
+    // Parse as generic JSON to preserve all fields for optional write-back
     let mut raw: serde_json::Value = serde_json::from_str(&content)?;
     let workplan: Workplan = serde_json::from_str(&content)?;
-    let since = &workplan.created_at;
 
     println!("{} Reconciling: {}", "\u{2b21}".cyan(), workplan.display_title());
+    if !workplan.created_at.is_empty() {
+        println!("  Created: {} (git evidence baseline)", workplan.created_at);
+    }
     println!();
 
     let mut rows: Vec<ReconcileRow> = Vec::new();
-    let mut confirmed: Vec<String> = Vec::new();
+    let mut all_done = true;
+    let mut step_results: Vec<(String, bool)> = Vec::new(); // (step_id, is_done)
 
-    if !workplan.phases.is_empty() {
-        for phase in &workplan.phases {
-            for task in &phase.tasks {
-                if task.status == "done" || task.status == "completed" {
-                    rows.push(ReconcileRow {
-                        id: task.id.clone(),
-                        icon: "\u{2705}".to_string(),
-                        result: "already done".dimmed().to_string(),
-                        evidence: "\u{2014}".dimmed().to_string(),
-                    });
-                    continue;
-                }
+    // Collect all steps (both formats) with their files and done_command
+    struct TaskInfo {
+        id: String,
+        condition: String,
+        files: Vec<String>,
+        done_command: String,
+        current_status: String,
+    }
 
-                let ev = gather_evidence(&task.id, &task.files, &task.done_command, since);
-                let strong = ev.is_strong(&task.files);
-                if strong { confirmed.push(task.id.clone()); }
-
-                let (icon, result_text) = if strong {
-                    ("\u{2705}".to_string(), "confirmed done".green().to_string())
-                } else {
-                    ("\u{274c}".to_string(), "needs work".yellow().to_string())
-                };
-
-                rows.push(ReconcileRow {
-                    id: task.id.clone(), icon, result: result_text,
-                    evidence: ev.summary(&task.files),
-                });
-            }
-        }
-    } else {
-        // Legacy step-based workplan — fall back to identifier grepping
-        for step in &workplan.steps {
-            if step.status == "done" || step.status == "completed" {
-                rows.push(ReconcileRow {
-                    id: step.id.clone(),
-                    icon: "\u{2705}".to_string(),
-                    result: "already done".dimmed().to_string(),
-                    evidence: "\u{2014}".dimmed().to_string(),
-                });
-                continue;
-            }
-
-            let condition = if !step.done_condition.is_empty() { &step.done_condition } else { &step.verify };
-            let identifiers = extract_identifiers(condition);
-            let found = check_identifiers(&identifiers);
-            let cargo_ok = if condition.contains("cargo check") || condition.contains("cargo build") || condition.contains("cargo test") {
-                check_cargo(condition)
-            } else { true };
-
-            let is_done = found && cargo_ok;
-            if is_done { confirmed.push(step.id.clone()); }
-
-            let (icon, result_text) = if is_done {
-                ("\u{2705}".to_string(), "confirmed done".green().to_string())
+    let tasks_to_check: Vec<TaskInfo> = if !workplan.steps.is_empty() {
+        workplan.steps.iter().map(|s| {
+            let condition = if !s.done_condition.is_empty() {
+                s.done_condition.clone()
             } else {
-                ("\u{274c}".to_string(), "needs work".yellow().to_string())
+                s.verify.clone()
             };
-            let excerpt = if condition.len() > 50 { format!("{}…", &condition[..47]) } else { condition.clone() };
+            TaskInfo {
+                id: s.id.clone(),
+                condition,
+                files: s.files.clone(),
+                done_command: s.done_command.clone(),
+                current_status: s.status.clone(),
+            }
+        }).collect()
+    } else {
+        workplan.phases.iter()
+            .flat_map(|p| p.tasks.iter().map(|t| TaskInfo {
+                id: t.id.clone(),
+                condition: t.name.clone(),
+                files: t.files.clone(),
+                done_command: t.done_command.clone(),
+                current_status: t.status.clone(),
+            }))
+            .collect()
+    };
+
+    for task in &tasks_to_check {
+        // Skip tasks already marked done
+        if task.current_status == "done" || task.current_status == "completed" {
             rows.push(ReconcileRow {
-                id: step.id.clone(), icon, result: result_text, evidence: excerpt,
+                id: task.id.clone(),
+                icon: "\u{2705}".to_string(),
+                result: "already done".green().to_string(),
+                git_evidence: String::new(),
+                condition: truncate(&task.condition, 50),
             });
+            step_results.push((task.id.clone(), true));
+            continue;
         }
+
+        // 1. Git evidence: check if files were modified since created_at
+        let git_label = git_evidence_label(&task.files, &workplan.created_at);
+        let all_files_modified = !task.files.is_empty()
+            && !workplan.created_at.is_empty()
+            && task.files.iter().all(|f| file_has_git_evidence(f, &workplan.created_at));
+
+        // 2. done_command verification
+        let cmd_verified = if !task.done_command.is_empty() {
+            run_done_command(&task.done_command)
+        } else {
+            false
+        };
+
+        // 3. Identifier grep (existing logic)
+        let identifiers = extract_identifiers(&task.condition);
+        let grep_found = check_identifiers(&identifiers);
+
+        // 4. Cargo check if mentioned in condition
+        let cargo_ok = if task.condition.contains("cargo check") || task.condition.contains("cargo build") || task.condition.contains("cargo test") {
+            check_cargo(&task.condition)
+        } else {
+            true // no cargo requirement
+        };
+
+        // A task is done if:
+        // - ALL files have git evidence (strong signal), OR
+        // - done_command exits 0 (verified), OR
+        // - identifier grep + cargo both pass (existing heuristic)
+        let is_done = all_files_modified || cmd_verified || (grep_found && cargo_ok);
+        all_done = all_done && is_done;
+        step_results.push((task.id.clone(), is_done));
+
+        let (icon, result_text) = if cmd_verified {
+            ("\u{2705}".to_string(), "verified".green().to_string())
+        } else if all_files_modified {
+            ("\u{2705}".to_string(), "git-confirmed".green().to_string())
+        } else if grep_found && cargo_ok {
+            ("\u{2705}".to_string(), "done".green().to_string())
+        } else {
+            ("\u{274c}".to_string(), "needs work".yellow().to_string())
+        };
+
+        let excerpt = truncate(&task.condition, 50);
+
+        rows.push(ReconcileRow {
+            id: task.id.clone(),
+            icon,
+            result: result_text,
+            git_evidence: git_label,
+            condition: excerpt,
+        });
     }
 
     println!("{}", HexTable::render(&rows));
     println!();
 
-    let total = rows.len();
-    let already_done = workplan.completed_tasks();
-    println!("  {}/{} confirmed done ({} already marked, {} newly confirmed)",
-        already_done + confirmed.len(), total, already_done, confirmed.len());
+    let done_count = step_results.iter().filter(|(_, d)| *d).count();
+    println!("  {}/{} steps confirmed done", done_count, step_results.len());
 
-    if update && !confirmed.is_empty() {
+    let reconciled = step_results.iter()
+        .filter(|(_, d)| *d)
+        .count()
+        .saturating_sub(
+            // Don't count tasks that were already done before reconciliation
+            tasks_to_check.iter()
+                .filter(|t| t.current_status == "done" || t.current_status == "completed")
+                .count()
+        );
+
+    if reconciled > 0 {
+        println!("  Reconciled {} task(s) from todo {} done based on git evidence",
+            reconciled, "\u{2192}".cyan());
+    }
+
+    if update && done_count > 0 {
+        // Write confirmed-done step statuses back to workplan JSON
         let mut updated = false;
+        let done_ids: std::collections::HashSet<&str> = step_results.iter()
+            .filter(|(_, d)| *d)
+            .map(|(id, _)| id.as_str())
+            .collect();
 
+        // Update in steps array (legacy format)
+        if let Some(steps) = raw.get_mut("steps").and_then(|v| v.as_array_mut()) {
+            for step in steps.iter_mut() {
+                if let Some(id) = step.get("id").and_then(|v| v.as_str()) {
+                    if done_ids.contains(id) && step.get("status").and_then(|v| v.as_str()) != Some("done") {
+                        step["status"] = serde_json::json!("done");
+                        updated = true;
+                    }
+                }
+            }
+        }
+
+        // Update in phases array (current format)
         if let Some(phases) = raw.get_mut("phases").and_then(|v| v.as_array_mut()) {
             for phase in phases.iter_mut() {
                 if let Some(tasks) = phase.get_mut("tasks").and_then(|v| v.as_array_mut()) {
                     for task in tasks.iter_mut() {
-                        if let Some(tid) = task.get("id").and_then(|v| v.as_str()) {
-                            if confirmed.contains(&tid.to_string()) {
+                        if let Some(id) = task.get("id").and_then(|v| v.as_str()) {
+                            if done_ids.contains(id) && task.get("status").and_then(|v| v.as_str()) != Some("done") {
                                 task["status"] = serde_json::json!("done");
                                 updated = true;
                             }
@@ -1906,29 +1806,17 @@ async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
             }
         }
 
-        if let Some(steps) = raw.get_mut("steps").and_then(|v| v.as_array_mut()) {
-            for step in steps.iter_mut() {
-                if let Some(sid) = step.get("id").and_then(|v| v.as_str()) {
-                    if confirmed.contains(&sid.to_string()) {
-                        step["status"] = serde_json::json!("done");
-                        updated = true;
-                    }
-                }
-            }
-        }
-
-        let all_done = already_done + confirmed.len() == total;
+        // Also update top-level status if all done
         if all_done {
             raw["status"] = serde_json::json!("done");
             updated = true;
         }
-
         if updated {
             std::fs::write(&path, serde_json::to_string_pretty(&raw)?)?;
-            println!("  {} Updated {} ({} tasks \u{2192} done)", "\u{2713}".green(), path.display(), confirmed.len());
+            println!("  {} Updated {}", "\u{2713}".green(), path.display());
         }
     } else if update {
-        println!("  {} No new tasks confirmed done \u{2014} file unchanged", "\u{26a0}\u{fe0f}".yellow());
+        println!("  {} No changes — no steps confirmed done", "\u{26a0}".yellow());
     }
 
     Ok(())
