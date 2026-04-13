@@ -273,6 +273,12 @@ pub struct WorkplanTask {
     /// JSON, bypasses the automatic classifier. Values: "T1", "T2", "T2.5", "T3".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tier: Option<crate::remote::transport::TaskTier>,
+    /// Hint for inference routing tier classification (ADR-2604120202 P1.3).
+    /// Values: "scaffold", "transform", "script" → T1; "codegen" → T2;
+    /// "inference" → T2.5. When absent, the classifier falls back to
+    /// layer + deps heuristics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_hint: Option<String>,
 }
 
 /// Classify a workplan task into an inference routing tier (ADR-2604120202 P1.3).
@@ -286,6 +292,14 @@ pub fn classify_task_tier(task: &WorkplanTask) -> crate::remote::transport::Task
     // Explicit tier in workplan takes precedence
     if let Some(tier) = task.tier {
         return tier;
+    }
+
+    // strategy_hint mapping (ADR-2604120202 P1.3)
+    match task.strategy_hint.as_deref() {
+        Some("scaffold" | "transform" | "script") => return TaskTier::T1,
+        Some("codegen") => return TaskTier::T2,
+        Some("inference") => return TaskTier::T2_5,
+        _ => {} // fall through to agent/layer heuristics
     }
 
     // Planner/reviewer agents → T2 (structured output, not heavy codegen)

@@ -79,6 +79,12 @@ pub struct WorkplanTask {
     /// Absent = documentation-only (backward compatible).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub done_command: Option<String>,
+    /// Hint for inference routing tier classification (ADR-2604120202 P1.3).
+    /// Values: "scaffold", "transform", "script" → T1; "codegen" → T2;
+    /// "inference" → T2.5. When absent, the classifier falls back to
+    /// layer + deps heuristics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_hint: Option<String>,
 }
 
 /// Current status of a workplan task.
