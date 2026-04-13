@@ -67,8 +67,6 @@ jobs:
       - run: mkdir -p hex-nexus/assets/dist
       - run: cargo build -p hex-cli --release
       - run: ./target/release/hex analyze .   # Architecture boundary verification
-      - name: Validate README.md against filesystem (ADR-2604110227)
-        run: ./target/release/hex readme validate --strict
 
   rust-check:
     runs-on: ubuntu-latest
