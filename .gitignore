@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 
+# Local cargo config (sccache, lld, machine-specific — ADR-064)
+.cargo/config.toml
+
 # Environment
 .env
 .env.*
