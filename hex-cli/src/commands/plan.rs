@@ -348,33 +348,9 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
     let _abs_path = std::fs::canonicalize(&path)?;
 
     // Dispatch strategy:
-    // 1. Claude Code session → execute locally with ADR-005 gates (Claude IS the inference)
-    // 2. Nexus reachable → create swarm tasks for remote workers
-    // 3. Fallback → execute locally with Ollama
-    let in_claude = std::env::var("CLAUDE_SESSION_ID").is_ok()
-        || std::env::var("CLAUDE_CODE_ENTRYPOINT").is_ok();
-
-    if in_claude {
-        println!("  {} Claude Code session — executing with ADR-005 gates", "\u{2713}".green());
-        println!();
-        // Resolve Ollama host: prefer inference-servers.json, then env, then bazzite default
-        let host = std::env::var("OLLAMA_HOST").unwrap_or_default();
-        if host.is_empty() || host == "0.0.0.0" || host.starts_with("0.0.0.0:") {
-            // Read from inference config
-            let cfg_host = dirs::home_dir()
-                .map(|h| h.join(".hex/inference-servers.json"))
-                .and_then(|p| std::fs::read_to_string(p).ok())
-                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                .and_then(|v| v["endpoints"].as_array().cloned())
-                .and_then(|eps| eps.iter()
-                    .find(|e| e["provider"].as_str() == Some("ollama"))
-                    .and_then(|e| e["url"].as_str().map(String::from)));
-            let resolved = cfg_host.unwrap_or_else(|| "http://bazzite:11434".to_string());
-            std::env::set_var("OLLAMA_HOST", &resolved);
-            println!("  Ollama: {}", resolved);
-        }
-        return execute_plan_local(&path, &wp).await;
-    }
+    // 1. Nexus reachable + Claude Code → Path B (nexus executor, Claude handles inference)
+    // 2. Nexus reachable + standalone → distributed (HexFlo tasks for remote workers)
+    // 3. No nexus → local fallback with Ollama + ADR-005 gates
 
     // Build authenticated nexus client
     let client = NexusClient::from_env();
@@ -382,20 +358,63 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
     // Check if nexus is reachable
     match client.get("/api/health").await {
         Ok(_) => {
-            println!("  {} Nexus connected — dispatching to remote workers", "\u{2713}".green());
-            println!();
-            return execute_plan_distributed(&wp).await;
+            let in_claude = std::env::var("CLAUDE_SESSION_ID").is_ok()
+                || std::env::var("CLAUDE_CODE_ENTRYPOINT").is_ok();
+
+            if in_claude {
+                // Path B: nexus executor dispatches tasks, Claude Code handles inference
+                println!("  {} Nexus + Claude Code — dispatching via Path B", "\u{2713}".green());
+                println!("  Workplan sent to nexus for execution. Claude handles inference.");
+                println!("  Monitor: hex plan active / hex task list");
+                println!();
+
+                // Send workplan to nexus executor (it creates swarm + uses Path B internally)
+                let body = serde_json::json!({
+                    "workplan_path": _abs_path.to_string_lossy(),
+                });
+                match client.post_long("/api/workplan/execute", &body).await {
+                    Ok(resp) => {
+                        if let Some(id) = resp.get("execution_id").and_then(|v| v.as_str()) {
+                            println!("{} Execution started: {}", "\u{2b21}".green(), id);
+                        } else {
+                            println!("{} Execution dispatched: {:?}", "\u{2b21}".green(), resp);
+                        }
+                    }
+                    Err(e) => {
+                        println!("  {} Nexus executor unavailable ({}), falling back to distributed", "!".yellow(), e);
+                        return execute_plan_distributed(&wp).await;
+                    }
+                }
+            } else {
+                // Standalone: create HexFlo tasks for remote workers
+                println!("  {} Nexus connected — dispatching to remote workers", "\u{2713}".green());
+                println!();
+                return execute_plan_distributed(&wp).await;
+            }
         }
         Err(_) => {
+            // No nexus: local execution with Ollama
             let host = std::env::var("OLLAMA_HOST").unwrap_or_default();
-            if host == "0.0.0.0" || host.starts_with("0.0.0.0:") {
-                std::env::set_var("OLLAMA_HOST", "http://localhost:11434");
+            if host.is_empty() || host == "0.0.0.0" || host.starts_with("0.0.0.0:") {
+                // Read Ollama host from inference config
+                let cfg_host = dirs::home_dir()
+                    .map(|h| h.join(".hex/inference-servers.json"))
+                    .and_then(|p| std::fs::read_to_string(p).ok())
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .and_then(|v| v["endpoints"].as_array().cloned())
+                    .and_then(|eps| eps.iter()
+                        .find(|e| e["provider"].as_str() == Some("ollama"))
+                        .and_then(|e| e["url"].as_str().map(String::from)));
+                std::env::set_var("OLLAMA_HOST",
+                    cfg_host.as_deref().unwrap_or("http://localhost:11434"));
             }
-            println!("  {} Nexus not reachable — executing locally", "\u{2192}".dimmed());
+            println!("  {} No nexus — executing locally with Ollama", "\u{2192}".dimmed());
             println!();
             return execute_plan_local(&path, &wp).await;
         }
     }
+
+    Ok(())
 }
 
 /// Distributed workplan execution — creates HexFlo swarm tasks and waits
