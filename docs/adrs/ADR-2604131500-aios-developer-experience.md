@@ -1,6 +1,6 @@
 # ADR-2604131500: AIOS Developer Experience — Ambient Autonomy with On-Demand Depth
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-13
 **Drivers:** hex has no coherent developer-facing UX for autonomous operation. The dashboard is a passive status display. The CLI is command-driven. Neither matches hex's identity as an autonomous AI operating system that builds software while developers steer from above. Developers currently must sit at a Claude Code prompt to use hex — this ADR defines the experience that makes hex a standalone AIOS.
 **Supersedes:** ADR-066 (Dashboard Overhaul — this ADR subsumes dashboard redesign into a broader experience architecture)

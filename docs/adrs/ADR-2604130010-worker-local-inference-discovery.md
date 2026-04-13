@@ -1,6 +1,6 @@
 # ADR-2604130010: Worker Local Inference Discovery
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-13
 **Drivers:** Remote agent worker routes inference back through SSH tunnel to coordinator nexus instead of using local Ollama. This defeats the purpose of distributed execution and causes hangs when the tunnel's inference endpoint has no providers registered.
 

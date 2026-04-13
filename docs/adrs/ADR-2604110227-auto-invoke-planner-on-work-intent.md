@@ -1,6 +1,6 @@
 # ADR-2604110227: Auto-Invoke Planner on Work-Intent Prompts
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-11
 **Drivers:** User-reported friction — "Why do we have to ask for a workplan to be created when Claude and others create todos automatically?" The intent classifier already exists in `hex hook route` but only emits passive warnings; it never actually invokes the planner.
 **Supersedes:** None (extends ADR-050)

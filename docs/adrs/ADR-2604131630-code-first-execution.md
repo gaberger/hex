@@ -1,6 +1,6 @@
 # ADR-2604131630: Code-First Execution — Inference as Accelerator, Not Gate
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-13
 **Drivers:** Worker poll loop phase failed silently (all 4 tasks, empty error strings) when inference provider was unreachable. hex must work reliably outside Claude Code environments. Inference dependency is currently a single point of failure for standalone workplan execution.
 **Supersedes:** None (refines ADR-2604112000 Standalone Dispatch)
