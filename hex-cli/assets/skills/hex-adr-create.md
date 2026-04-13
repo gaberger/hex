@@ -16,7 +16,7 @@ must include a full consumer dependency map before it can be accepted.
    ```bash
    hex adr schema
    ```
-   This returns the next number (atomically reserved in SpacetimeDB), the template, valid statuses, and required sections.
+   This returns the next number (atomically reserved by the hex runtime), the template, valid statuses, and required sections.
 
 2. Ask the user for:
    - **Title** (required)
@@ -28,8 +28,8 @@ must include a full consumer dependency map before it can be accepted.
 
 ## Phase 2: Dependency Impact Analysis (REQUIRED for modify/delete/restructure/migrate)
 
-**This phase exists because ADR-2604050900 proved that deleting modules without tracing
-all consumers leaves compilation broken in downstream crates.**
+**This phase exists because experience has shown that deleting modules without tracing
+all consumers leaves compilation broken in downstream packages.**
 
 ### 2a. Identify Affected Artifacts
 
@@ -131,11 +131,11 @@ Before marking complete:
 3. **Gate completeness**: Every implementation phase has at least one validation gate
 4. **Workplan alignment**: If a workplan will be created, verify it includes all gates
 
-## Anti-Patterns (Lessons from ADR-2604050900)
+## Anti-Patterns (Lessons Learned)
 
 | Anti-Pattern | Problem | Fix |
 |-------------|---------|-----|
-| Module-scoped impact analysis | Only checked spacetime-modules/ and hex-nexus/, missed hex-agent | Always grep the ENTIRE workspace |
+| Module-scoped impact analysis | Only checked two directories, missed a third crate that also imported the deleted module | Always grep the ENTIRE workspace |
 | Missing validation gates | Workplan had "delete X" but no "verify compile" between phases | Every phase must end with cargo check --workspace |
 | Documentation-only analysis | Listed docs mentioning a module but not code importing it | Code consumers are CRITICAL; docs are MEDIUM |
 
