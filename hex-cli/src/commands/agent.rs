@@ -1516,20 +1516,36 @@ async fn execute_worker_task(
                     );
                 }
 
-                // Direct Ollama call — same pattern as execute_plan_local (proven working).
-                // Bypasses CodePhase which adds a large system prompt that slows inference.
+                // Direct Ollama call with hex architecture enforcement + GBNF grammar.
                 let ollama_host = std::env::var("OLLAMA_HOST")
                     .unwrap_or_else(|_| "http://localhost:11434".to_string());
                 let model = model_override.as_deref().unwrap_or("qwen2.5-coder:32b");
 
+                // Hex architecture rules injected into prompt (compact, not the full CodePhase template)
+                let hex_rules = "ARCHITECTURE RULES (enforced by hex):\n\
+                    - domain/ imports ONLY domain/ (zero external deps)\n\
+                    - ports/ imports ONLY domain/\n\
+                    - adapters/ imports from ports/ and domain/ ONLY\n\
+                    - adapters NEVER import other adapters\n\
+                    - Only main.rs (composition root) imports adapters\n\
+                    - Use crate:: imports for cross-module references\n\
+                    - Include #[cfg(test)] mod tests with assertions\n\
+                    - Return ONLY valid Rust code\n";
+
+                let full_prompt = format!("{}\n\n{}", hex_rules, current_step.description);
+
+                // GBNF grammar for code-only output (ADR-2604120202)
+                let grammar = "root ::= code-line+\ncode-line ::= [^\\n]* \"\\n\"";
+
                 let ollama_body = json!({
                     "model": model,
-                    "prompt": &current_step.description,
+                    "prompt": full_prompt,
                     "temperature": 0.2,
                     "stream": false,
+                    "grammar": grammar,
                 });
 
-                tracing::info!(model, host = %ollama_host, iteration, "Direct Ollama inference");
+                tracing::info!(model, host = %ollama_host, iteration, grammar = true, "Direct Ollama + hex rules + GBNF");
 
                 let http = reqwest::Client::builder()
                     .timeout(std::time::Duration::from_secs(300))
