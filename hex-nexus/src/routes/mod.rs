@@ -37,6 +37,10 @@ pub mod inference_ws;
 pub mod events;
 pub mod fingerprint;
 pub mod brain;
+pub mod briefing;
+pub mod trust;
+pub mod steer;
+pub mod pulse;
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
 use axum::response::{IntoResponse, Redirect};
@@ -752,6 +756,16 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/inbox", get(inbox::list_inbox))
         .route("/api/inbox/{id}/ack", post(inbox::ack_notification)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+
+        // AIOS developer experience (ADR-2604131500 P1.4 + P6.1)
+        .route("/api/briefing", get(briefing::get_briefing))
+        .route("/api/briefing/decisions", get(briefing::get_decisions))
+        .route("/api/trust", get(trust::get_trust).patch(trust::set_trust))
+        .route("/api/trust/pin", post(trust::pin_trust)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/steer", post(steer::handle_steer)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/pulse", get(pulse::get_pulse))
 
         // Unified Agent Registry (ADR-058) — hex_agent table
         // NOTE: /connect and /evict must be registered BEFORE /{id} to avoid path conflicts
