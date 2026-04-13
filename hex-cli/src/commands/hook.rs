@@ -18,7 +18,10 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use super::brain::{check_binary_freshness, check_mcp_cli_parity, FreshnessStatus};
+use super::brain::{
+    autofix_workplan, check_binary_freshness, check_mcp_cli_parity, check_stale_worktrees,
+    check_workplan_status, FreshnessStatus,
+};
 
 /// Extended session state file (ADR-050).
 /// Persisted to ~/.hex/sessions/agent-{sessionId}.json
@@ -325,6 +328,65 @@ async fn session_start(project_dir: &Path) -> Result<()> {
             // Nexus offline — emit minimal in-process fingerprint so context is never blank.
             println!("\n{}", minimal_fingerprint_block(project_dir, name));
         }
+    }
+
+    // ── Brain validate: workplan reconciliation ──────────────────────
+    // Reconcile workplan task statuses against git history on every
+    // session start so agents never act on stale "todo" states.
+    match check_workplan_status() {
+        Ok(summaries) if summaries.is_empty() => {}
+        Ok(summaries) => {
+            let total_stale: usize = summaries.iter().map(|s| s.stale_tasks.len()).sum();
+            let mut total_fixed = 0usize;
+
+            if total_stale > 0 {
+                for wp in &summaries {
+                    if let Ok(n) = autofix_workplan(wp) {
+                        total_fixed += n;
+                    }
+                }
+            }
+
+            if total_stale == 0 {
+                println!(
+                    "  Workplans: {} {} active, all consistent",
+                    "\u{2713}".green(),
+                    summaries.len()
+                );
+            } else if total_fixed == total_stale {
+                println!(
+                    "  Workplans: {} {} active, reconciled {} stale {}",
+                    "\u{2713}".green(),
+                    summaries.len(),
+                    total_fixed,
+                    "[auto-fixed]".cyan()
+                );
+            } else {
+                println!(
+                    "  Workplans: {} {} active, {}/{} stale reconciled",
+                    "\u{2717}".red(),
+                    summaries.len(),
+                    total_fixed,
+                    total_stale
+                );
+            }
+        }
+        Err(_) => {}
+    }
+
+    // ── Brain validate: stale worktree detection ───────────────────
+    match check_stale_worktrees() {
+        Ok(stale) if stale.is_empty() => {}
+        Ok(stale) => {
+            let branches: Vec<&str> = stale.iter().map(|w| w.branch.as_str()).collect();
+            println!(
+                "  Worktrees: {} {} stale (>24h): {}",
+                "\u{26a0}".yellow(),
+                stale.len(),
+                branches.join(", ")
+            );
+        }
+        Err(_) => {}
     }
 
     // Check for architecture violations

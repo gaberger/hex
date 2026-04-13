@@ -19,25 +19,25 @@ use crate::fmt::{pretty_table, truncate};
 
 /// Summary of a single workplan's reconciliation status.
 #[derive(Debug)]
-struct WorkplanSummary {
-    id: String,
-    feature: String,
-    status: String,
-    total_tasks: usize,
-    done_tasks: usize,
+pub(crate) struct WorkplanSummary {
+    pub(crate) id: String,
+    pub(crate) feature: String,
+    pub(crate) status: String,
+    pub(crate) total_tasks: usize,
+    pub(crate) done_tasks: usize,
     /// Tasks still marked "todo" but with git evidence (commit messages mentioning the task id).
-    stale_tasks: Vec<String>,
+    pub(crate) stale_tasks: Vec<String>,
     /// Path to the workplan JSON file (needed for auto-fix writes).
-    path: PathBuf,
+    pub(crate) path: PathBuf,
 }
 
 /// A stale git worktree detected during validation.
 #[derive(Debug)]
-struct StaleWorktree {
-    path: String,
-    branch: String,
+pub(crate) struct StaleWorktree {
+    pub(crate) path: String,
+    pub(crate) branch: String,
     /// Seconds since the last commit on this worktree's branch.
-    age_secs: u64,
+    pub(crate) age_secs: u64,
 }
 
 #[derive(Subcommand)]
@@ -342,7 +342,7 @@ pub fn check_binary_freshness() -> FreshnessStatus {
 ///
 /// A task is "stale" when it is still marked `"todo"` in the JSON but a commit
 /// message references its id (e.g. `P3.1`).
-fn check_workplan_status() -> anyhow::Result<Vec<WorkplanSummary>> {
+pub(crate) fn check_workplan_status() -> anyhow::Result<Vec<WorkplanSummary>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(|p| p.to_path_buf())
@@ -435,7 +435,7 @@ fn check_workplan_status() -> anyhow::Result<Vec<WorkplanSummary>> {
 }
 
 /// Detect git worktrees that have had no commits for over 24 hours.
-fn check_stale_worktrees() -> anyhow::Result<Vec<StaleWorktree>> {
+pub(crate) fn check_stale_worktrees() -> anyhow::Result<Vec<StaleWorktree>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(|p| p.to_path_buf())
@@ -510,7 +510,7 @@ fn check_stale_worktrees() -> anyhow::Result<Vec<StaleWorktree>> {
 
 /// Auto-fix: reconcile stale workplan tasks by marking them "done" in the JSON.
 /// Returns the number of tasks fixed.
-fn autofix_workplan(wp: &WorkplanSummary) -> anyhow::Result<usize> {
+pub(crate) fn autofix_workplan(wp: &WorkplanSummary) -> anyhow::Result<usize> {
     if wp.stale_tasks.is_empty() {
         return Ok(0);
     }
