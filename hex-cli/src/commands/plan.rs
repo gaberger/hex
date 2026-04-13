@@ -470,14 +470,26 @@ async fn execute_plan_distributed(wp: &serde_json::Value) -> anyhow::Result<()> 
         println!("{} Phase: {} ({}/{} pending)", "\u{2501}".dimmed(), phase_name, pending_count, tasks.len());
 
         // ADR-2604130010 P2.2: Query connected agents for capability-aware routing
+        // GET /api/hex-agents returns { "agents": [...] } — each agent has a
+        // "capabilities" field that is a JSON *string* (serialised at connect time).
+        // We parse it to extract max_model_params_b for tier-based routing.
         let available_agents = client.get("/api/hex-agents").await.ok()
-            .and_then(|v| v.as_array().cloned())
+            .and_then(|v| v.get("agents").and_then(|a| a.as_array()).cloned())
             .unwrap_or_default();
-        let has_large_model_worker = available_agents.iter().any(|a| {
-            a.get("capabilities")
-                .and_then(|c| c.get("max_model_size_gb"))
+
+        // Parse each agent's capabilities string into structured JSON
+        let agent_caps: Vec<(String, serde_json::Value)> = available_agents.iter().filter_map(|a| {
+            let id = a.get("id").or_else(|| a.get("agentId"))
+                .and_then(|v| v.as_str())?.to_string();
+            let caps_raw = a.get("capabilities").and_then(|c| c.as_str()).unwrap_or("{}");
+            let caps: serde_json::Value = serde_json::from_str(caps_raw).unwrap_or_default();
+            Some((id, caps))
+        }).collect();
+
+        let has_large_model_worker = agent_caps.iter().any(|(_, caps)| {
+            caps.get("max_model_params_b")
                 .and_then(|v| v.as_f64())
-                .unwrap_or(0.0) >= 15.0  // 27B models are ~15+ GB on disk
+                .unwrap_or(0.0) >= 27.0
         });
 
         // Step 3: Create HexFlo tasks for this phase
@@ -495,17 +507,21 @@ async fn execute_plan_distributed(wp: &serde_json::Value) -> anyhow::Result<()> 
             let agent = task.get("agent").and_then(|v| v.as_str()).unwrap_or("hex-coder");
             let tier = task.get("tier").and_then(|v| v.as_str()).unwrap_or("T2");
 
-            // ADR-2604130010 P2.2: Prepend model hint based on task tier/agent role
+            // ADR-2604130010 P2.2: Route tasks by tier to capable workers
+            //   T2.5 / T3 tasks → workers advertising 27B+ parameter models
+            //   T1 / T2 tasks   → any connected worker
             let needs_large_model = tier == "T2.5" || tier == "T3"
                 || agent == "integrator" || agent == "reviewer"
                 || agent == "validation-judge";
             let model_hint = if needs_large_model && has_large_model_worker {
-                "[PREFERS: 27B+ model] "
+                "[REQUIRES: 27B+] "
+            } else if needs_large_model {
+                "[PREFERS: 27B+] "
             } else {
                 ""
             };
 
-            // Format title so worker can parse role + description
+            // Format title so worker can parse role + model requirement + description
             let title = format!("{}: {}{}", agent, model_hint, description);
 
             let resp = client.post(

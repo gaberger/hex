@@ -785,6 +785,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/hex-agents/{id}", get(hex_agents::get_agent)
             .delete(hex_agents::disconnect_agent))
         .route("/api/hex-agents/{id}/heartbeat", post(hex_agents::heartbeat))
+        .route("/api/hex-agents/{id}/capabilities", post(hex_agents::update_capabilities))
         .route("/api/hex-agents/{id}/disconnect", post(hex_agents::disconnect_agent_post))
 
         // Test sessions (test-results module fallback)

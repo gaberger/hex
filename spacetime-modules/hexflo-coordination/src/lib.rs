@@ -194,6 +194,25 @@ pub fn agent_disconnect(
     Ok(())
 }
 
+/// Update agent capabilities (models, tok/s, provider) without full re-registration.
+/// Called by worker after inference discovery (ADR-2604130010 P2.1).
+#[reducer]
+pub fn agent_update_capabilities(
+    ctx: &ReducerContext,
+    id: String,
+    capabilities_json: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let agent = ctx.db.hex_agent().id().find(&id)
+        .ok_or_else(|| format!("Agent '{}' not found", id))?;
+    ctx.db.hex_agent().id().update(HexAgent {
+        capabilities_json,
+        last_heartbeat: timestamp,
+        ..agent
+    });
+    Ok(())
+}
+
 /// Update agent heartbeat — keeps status=online.
 #[reducer]
 pub fn agent_heartbeat_update(

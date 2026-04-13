@@ -182,6 +182,35 @@ pub async fn disconnect_agent_post(
     Ok((StatusCode::OK, Json(json!({ "agent": agent }))))
 }
 
+/// POST /api/hex-agents/:id/capabilities — update agent capabilities after inference discovery
+/// (ADR-2604130010 P2.1). Accepts models, estimated_tok_s, provider, max_model_size_gb.
+#[derive(Debug, Deserialize)]
+pub struct UpdateCapabilitiesRequest {
+    pub capabilities: Value,
+}
+
+pub async fn update_capabilities(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateCapabilitiesRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let port = state_port(&state)?;
+
+    // 404 if agent not found
+    match port.hex_agent_get(&id).await {
+        Ok(None) => return Err((StatusCode::NOT_FOUND, Json(json!({ "error": "Agent not found" })))),
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() })))),
+        Ok(Some(_)) => {}
+    }
+
+    let caps_json = body.capabilities.to_string();
+    port.hex_agent_update_capabilities(&id, &caps_json)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+
+    Ok(Json(json!({ "ok": true, "agentId": id })))
+}
+
 /// POST /api/hex-agents/evict — clean up dead agents
 pub async fn evict_dead(
     State(state): State<SharedState>,

@@ -804,6 +804,25 @@ async fn connect(nexus_url: &str) -> anyhow::Result<()> {
     println!("  Project:       {}", if project_name.is_empty() { "-" } else { &project_name });
     println!("  Session file:  {}", session_file.display());
 
+    // ADR-2604130010 P2.1: Discover local inference and POST capabilities
+    if let Some(ref caps) = discover_local_inference_caps().await {
+        let caps_path = format!("/api/hex-agents/{}/capabilities", agent_id);
+        let caps_body = json!({
+            "capabilities": {
+                "models": caps.models,
+                "max_model_size_gb": caps.max_model_size_gb,
+                "provider": caps.provider,
+                "estimated_tok_s": caps.estimated_tok_s,
+            },
+        });
+        if let Err(e) = nexus.post(&caps_path, &caps_body).await {
+            println!("  {}  Failed to sync capabilities: {}", "⚠".yellow(), e);
+        } else {
+            println!("  {}  Capabilities synced ({} models, ~{} tok/s)",
+                "→".cyan(), caps.models.len(), caps.estimated_tok_s);
+        }
+    }
+
     Ok(())
 }
 
@@ -1154,12 +1173,11 @@ async fn worker(
     );
     println!("  Poll:     {}s", poll_interval);
 
-    // ADR-2604130010 P2.1: Discover local inference and update capabilities on nexus
+    // ADR-2604130010 P2.1: Discover local inference and POST to dedicated capabilities endpoint
     let inference_caps = discover_local_inference_caps().await;
     if let Some(ref caps) = inference_caps {
-        // Re-register with enriched capabilities so nexus knows our models
+        let caps_path = format!("/api/hex-agents/{}/capabilities", agent_id);
         let caps_body = json!({
-            "agent_id": agent_id,
             "capabilities": {
                 "models": caps.models,
                 "max_model_size_gb": caps.max_model_size_gb,
@@ -1168,11 +1186,11 @@ async fn worker(
                 "maxConcurrent": 4,
             },
         });
-        if let Err(e) = nexus.post("/api/hex-agents/heartbeat", &caps_body).await {
+        if let Err(e) = nexus.post(&caps_path, &caps_body).await {
             println!("  {}  Failed to update capabilities: {}", "⚠".yellow(), e);
         } else {
-            println!("  {}  Capabilities synced to nexus ({} models, max {:.1} GB)",
-                "→".cyan(), caps.models.len(), caps.max_model_size_gb);
+            println!("  {}  Capabilities synced to nexus ({} models, ~{} tok/s)",
+                "→".cyan(), caps.models.len(), caps.estimated_tok_s);
         }
     }
 

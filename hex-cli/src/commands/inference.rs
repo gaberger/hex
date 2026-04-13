@@ -1773,66 +1773,94 @@ impl BenchResult {
 }
 
 /// Send a chat completion to either Ollama or OpenAI-compatible endpoint.
-async fn bench_chat(
+///
+/// Accepts pre-built `messages` (e.g. `[{"role":"user","content":"..."}]`) so callers
+/// can compose multi-turn prompts.  Dispatches to Ollama `/api/chat` or OpenAI-style
+/// `/v1/chat/completions` based on `provider_type` / URL heuristics.
+///
+/// Returns a [`BenchResult`] with quality fields zeroed — callers overlay scoring.
+async fn run_bench_prompt(
     http: &reqwest::Client,
     url: &str,
     provider_type: &str,
     model: &str,
-    prompt: &str,
-) -> anyhow::Result<(String, u64, f64)> {
+    messages: Vec<serde_json::Value>,
+) -> anyhow::Result<BenchResult> {
     let start = std::time::Instant::now();
 
-    if provider_type == "openrouter" || url.contains("openrouter.ai") || url.contains("/v1") {
+    let (content, tokens) = if provider_type == "openrouter"
+        || url.contains("openrouter.ai")
+        || url.contains("/v1")
+    {
+        // ── OpenAI-compatible /v1/chat/completions ──
         let api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
         let chat_url = format!("{}/chat/completions", url.trim_end_matches('/'));
         let body = serde_json::json!({
             "model": model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "temperature": 0.2,
         });
-        let resp = http.post(&chat_url)
+        let resp = http
+            .post(&chat_url)
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&body)
-            .send().await?;
+            .send()
+            .await?;
         let d: serde_json::Value = resp.json().await?;
-        let content = d["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
-        let tokens = d["usage"]["completion_tokens"].as_u64().unwrap_or(content.len() as u64 / 4);
-        let wall = start.elapsed().as_secs_f64();
-        Ok((content, tokens, wall))
+        let text = d["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let tok = d["usage"]["completion_tokens"]
+            .as_u64()
+            .unwrap_or(text.len() as u64 / 4);
+        (text, tok)
     } else {
-        // Ollama /api/chat
+        // ── Ollama /api/chat ──
         let chat_url = format!("{}/api/chat", url.trim_end_matches('/'));
         let body = serde_json::json!({
             "model": model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": false,
             "options": {"temperature": 0.2},
         });
         let resp = http.post(&chat_url).json(&body).send().await?;
         let d: serde_json::Value = resp.json().await?;
-        let content = d["message"]["content"].as_str().unwrap_or("").to_string();
-        let tokens = d["eval_count"].as_u64().unwrap_or(content.len() as u64 / 4);
-        let wall = start.elapsed().as_secs_f64();
-        Ok((content, tokens, wall))
-    }
+        let text = d["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let tok = d["eval_count"]
+            .as_u64()
+            .unwrap_or(text.len() as u64 / 4);
+        (text, tok)
+    };
+
+    let wall = start.elapsed().as_secs_f64();
+
+    Ok(BenchResult {
+        name: "",
+        response: content,
+        tokens,
+        wall_secs: wall,
+        quality_score: 0.0,
+        quality_max: 0,
+        quality_details: vec![],
+    })
 }
 
 /// Run the identity prompt — measures latency floor and basic responsiveness.
 async fn bench_identity(
     http: &reqwest::Client, url: &str, ptype: &str, model: &str,
 ) -> anyhow::Result<BenchResult> {
-    let (response, tokens, wall) = bench_chat(
-        http, url, ptype, model,
-        "What model are you? Respond in one sentence.",
-    ).await?;
-    let non_empty = !response.trim().is_empty();
-    Ok(BenchResult {
-        name: "Identity",
-        quality_score: if non_empty { 1.0 } else { 0.0 },
-        quality_max: 1,
-        quality_details: vec![("responsive", non_empty)],
-        response, tokens, wall_secs: wall,
-    })
+    let messages = vec![serde_json::json!({"role": "user", "content": "What model are you? Respond in one sentence."})];
+    let mut r = run_bench_prompt(http, url, ptype, model, messages).await?;
+    let non_empty = !r.response.trim().is_empty();
+    r.name = "Identity";
+    r.quality_score = if non_empty { 1.0 } else { 0.0 };
+    r.quality_max = 1;
+    r.quality_details = vec![("responsive", non_empty)];
+    Ok(r)
 }
 
 /// Run the code generation prompt — measures Rust code quality for hex adapter work.
@@ -1849,29 +1877,28 @@ Requirements:
 6. All code must compile. Use proper error handling.
 Output complete Rust code."#;
 
-    let (response, tokens, wall) = bench_chat(http, url, ptype, model, prompt).await?;
+    let messages = vec![serde_json::json!({"role": "user", "content": prompt})];
+    let mut r = run_bench_prompt(http, url, ptype, model, messages).await?;
 
     let checks: Vec<(&str, bool)> = vec![
-        ("async fn", response.contains("async fn")),
-        ("thiserror", response.contains("thiserror")),
-        ("tests", response.contains("#[cfg(test)]") || response.contains("#[test]")),
-        ("reqwest", response.contains("reqwest")),
-        ("error variants", response.matches("Error").count() >= 3),
-        ("Result<>", response.contains("Result<")),
-        ("trait def", response.contains("trait Weather") || response.contains("trait weather")),
-        ("mock test", response.to_lowercase().contains("mock")),
-        ("derives", response.contains("#[derive")),
-        ("timeout", response.to_lowercase().contains("timeout")),
+        ("async fn", r.response.contains("async fn")),
+        ("thiserror", r.response.contains("thiserror")),
+        ("tests", r.response.contains("#[cfg(test)]") || r.response.contains("#[test]")),
+        ("reqwest", r.response.contains("reqwest")),
+        ("error variants", r.response.matches("Error").count() >= 3),
+        ("Result<>", r.response.contains("Result<")),
+        ("trait def", r.response.contains("trait Weather") || r.response.contains("trait weather")),
+        ("mock test", r.response.to_lowercase().contains("mock")),
+        ("derives", r.response.contains("#[derive")),
+        ("timeout", r.response.to_lowercase().contains("timeout")),
     ];
     let passed = checks.iter().filter(|(_, v)| *v).count() as f32;
 
-    Ok(BenchResult {
-        name: "Code-gen",
-        quality_score: passed / 10.0,
-        quality_max: 10,
-        quality_details: checks,
-        response, tokens, wall_secs: wall,
-    })
+    r.name = "Code-gen";
+    r.quality_score = passed / 10.0;
+    r.quality_max = 10;
+    r.quality_details = checks;
+    Ok(r)
 }
 
 /// Run the reasoning prompt — measures architectural analysis capability.
@@ -1884,25 +1911,24 @@ use crate::adapters::database::PostgresRepo;
 ```
 Identify the architectural violation, explain which rule it breaks, and describe how to fix it. Be specific about dependency inversion."#;
 
-    let (response, tokens, wall) = bench_chat(http, url, ptype, model, prompt).await?;
-    let lower = response.to_lowercase();
+    let messages = vec![serde_json::json!({"role": "user", "content": prompt})];
+    let mut r = run_bench_prompt(http, url, ptype, model, messages).await?;
+    let lower = r.response.to_lowercase();
 
     let checks: Vec<(&str, bool)> = vec![
         ("cross-adapter", lower.contains("adapter") && (lower.contains("import") || lower.contains("depend") || lower.contains("coupl"))),
         ("names rule", lower.contains("port") || lower.contains("boundary") || lower.contains("hexagonal")),
         ("port extraction", lower.contains("trait") || lower.contains("interface") || lower.contains("port")),
         ("dep inversion", lower.contains("inversion") || lower.contains("abstraction") || lower.contains("inject")),
-        ("code example", response.contains("trait ") || response.contains("fn ") || response.contains("impl ")),
+        ("code example", r.response.contains("trait ") || r.response.contains("fn ") || r.response.contains("impl ")),
     ];
     let passed = checks.iter().filter(|(_, v)| *v).count() as f32;
 
-    Ok(BenchResult {
-        name: "Reasoning",
-        quality_score: passed / 5.0,
-        quality_max: 5,
-        quality_details: checks,
-        response, tokens, wall_secs: wall,
-    })
+    r.name = "Reasoning";
+    r.quality_score = passed / 5.0;
+    r.quality_max = 5;
+    r.quality_details = checks;
+    Ok(r)
 }
 
 /// Compute overall score and recommend tier.

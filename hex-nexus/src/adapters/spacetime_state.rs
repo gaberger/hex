@@ -1458,6 +1458,12 @@ mod real {
             Ok(())
         }
 
+        async fn hex_agent_update_capabilities(&self, id: &str, capabilities_json: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("agent_update_capabilities", serde_json::json!([id, capabilities_json, now])).await?;
+            Ok(())
+        }
+
         async fn hex_agent_disconnect(&self, id: &str) -> Result<(), StateError> {
             let now = chrono::Utc::now().to_rfc3339();
             self.call_reducer("agent_disconnect", serde_json::json!([id, now])).await?;
@@ -1811,6 +1817,7 @@ mod stub {
     #[async_trait]
     impl IHexAgentStatePort for SpacetimeStateAdapter {
         async fn hex_agent_connect(&self, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn hex_agent_update_capabilities(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn hex_agent_disconnect(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn hex_agent_heartbeat(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn hex_agent_list(&self) -> Result<Vec<serde_json::Value>, StateError> { Err(Self::err()) }

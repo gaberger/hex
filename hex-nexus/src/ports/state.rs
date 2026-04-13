@@ -735,6 +735,8 @@ pub trait ICoordinationStatePort: Send + Sync {
 #[async_trait]
 pub trait IHexAgentStatePort: Send + Sync {
     async fn hex_agent_connect(&self, id: &str, name: &str, host: &str, project_id: &str, project_dir: &str, model: &str, session_id: &str, capabilities_json: &str) -> Result<(), StateError>;
+    /// Update only the capabilities_json column for an existing agent (ADR-2604130010 P2.1).
+    async fn hex_agent_update_capabilities(&self, id: &str, capabilities_json: &str) -> Result<(), StateError>;
     async fn hex_agent_disconnect(&self, id: &str) -> Result<(), StateError>;
     async fn hex_agent_heartbeat(&self, id: &str) -> Result<(), StateError>;
     async fn hex_agent_list(&self) -> Result<Vec<serde_json::Value>, StateError>;
