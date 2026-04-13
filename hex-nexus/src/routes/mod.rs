@@ -41,6 +41,7 @@ pub mod briefing;
 pub mod trust;
 pub mod steer;
 pub mod pulse;
+pub mod taste;
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
 use axum::response::{IntoResponse, Redirect};
@@ -767,6 +768,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/steer", post(steer::handle_steer)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/pulse", get(pulse::get_pulse))
+        // Taste graph v1 (AIOS P2 P2.1)
+        .route("/api/taste", get(taste::get_taste).post(taste::set_taste))
+        .route("/api/taste/{key}", delete(taste::forget_taste))
+        .route("/api/taste/{key}/pin", patch(taste::pin_taste))
         .route("/api/decisions/{id}", post(decisions::resolve_decision)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
 
