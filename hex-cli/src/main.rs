@@ -21,6 +21,7 @@ use commands::{
     adr::AdrAction,
     agent::AgentAction,
     brain::BrainAction,
+    brief::BriefArgs,
     chat::ChatArgs,
     context::ContextAction,
     spec::SpecAction,
@@ -80,6 +81,8 @@ enum Commands {
         #[command(subcommand)]
         action: SecretsAction,
     },
+    /// Developer briefing — recent events, decisions, health
+    Brief(BriefArgs),
     /// Agentic Brain (self-improving model selection)
     Brain {
         #[command(subcommand)]
@@ -305,6 +308,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Nexus { action } => commands::nexus::run(action).await,
         Commands::Agent { action } => commands::agent::run(action).await,
         Commands::Secrets { action } => commands::secrets::run(action).await,
+        Commands::Brief(args) => commands::brief::run(args).await,
         Commands::Brain { action } => commands::brain::run(action).await,
         Commands::Stdb { action } => commands::stdb::run(action).await,
         Commands::Swarm { action } => commands::swarm::run(action).await,
