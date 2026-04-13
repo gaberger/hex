@@ -427,6 +427,21 @@
       }
     },
     {
+      "name": "hex_inference_bench",
+      "category": "inference",
+      "description": "Benchmark a model with hex-specific prompts (code-gen, reasoning, identity). Returns quality score, tok/s, and recommended hex agent tier.",
+      "route": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "target": { "type": "string", "description": "Provider ID, model name, or URL to benchmark" },
+          "model": { "type": "string", "description": "Override the provider's registered model" },
+          "quick": { "type": "boolean", "description": "Skip code-gen prompt (identity + reasoning only)" }
+        },
+        "required": ["target"]
+      }
+    },
+    {
       "name": "hex_inference_discover",
       "category": "inference",
       "description": "Discover inference endpoints on the local network (LAN scan)",

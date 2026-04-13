@@ -1994,7 +1994,7 @@ async fn bench_provider(
 ) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
+        .timeout(std::time::Duration::from_secs(600))
         .build()?;
 
     // ── Resolve target ──────────────────────────────────────────────────────

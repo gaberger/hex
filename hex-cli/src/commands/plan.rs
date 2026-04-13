@@ -455,14 +455,30 @@ async fn execute_plan_distributed(wp: &serde_json::Value) -> anyhow::Result<()> 
             .and_then(|g| g.get("command"))
             .and_then(|v| v.as_str());
 
-        println!("{} Phase: {}", "\u{2501}".dimmed(), phase_name);
-
         let Some(tasks) = tasks else { continue };
+
+        // Skip phases where all tasks are already done
+        let pending_count = tasks.iter().filter(|t| {
+            let s = t.get("status").and_then(|v| v.as_str()).unwrap_or("todo");
+            s != "done" && s != "completed"
+        }).count();
+        if pending_count == 0 {
+            println!("{} Phase: {} (all {} tasks done, skipping)", "\u{2713}".green(), phase_name, tasks.len());
+            continue;
+        }
+
+        println!("{} Phase: {} ({}/{} pending)", "\u{2501}".dimmed(), phase_name, pending_count, tasks.len());
 
         // Step 3: Create HexFlo tasks for this phase
         let mut task_ids: Vec<(String, String)> = Vec::new(); // (task_id, title)
 
         for task in tasks {
+            let task_status = task.get("status").and_then(|v| v.as_str()).unwrap_or("todo");
+            if task_status == "done" || task_status == "completed" {
+                let skip_name = task.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                println!("  {} {} (already done)", "\u{2713}".green(), skip_name);
+                continue;
+            }
             let task_name = task.get("name").and_then(|v| v.as_str()).unwrap_or("?");
             let description = task.get("description").and_then(|v| v.as_str()).unwrap_or("");
             let agent = task.get("agent").and_then(|v| v.as_str()).unwrap_or("hex-coder");
