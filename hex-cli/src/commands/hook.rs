@@ -18,6 +18,8 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+use super::brain::{check_binary_freshness, check_mcp_cli_parity, FreshnessStatus};
+
 /// Extended session state file (ADR-050).
 /// Persisted to ~/.hex/sessions/agent-{sessionId}.json
 #[derive(Serialize, Deserialize, Default)]
@@ -2728,6 +2730,51 @@ async fn observe(event_type: &str) -> Result<()> {
         client.post(&url).json(&body).send(),
     )
     .await;
+
+    // ── Post-commit brain validate (fast subset) ────────────────────
+    // After a Bash tool call that looks like a git commit, run the two
+    // fast self-consistency checks: binary freshness and MCP↔CLI parity.
+    // These complete in <2s and catch drift immediately after a commit.
+    if event_type == "PostToolUse" {
+        let is_commit = tool_name.as_deref() == Some("Bash")
+            && input_json
+                .as_deref()
+                .map(|s| s.contains("git commit") || s.contains("git merge"))
+                .unwrap_or(false);
+
+        if is_commit {
+            // Binary freshness — triggers background rebuild if stale
+            match check_binary_freshness() {
+                FreshnessStatus::Stale { .. } => {
+                    eprintln!(
+                        "{}",
+                        "⬡ brain: binary stale after commit — background rebuild spawned"
+                            .yellow()
+                    );
+                }
+                FreshnessStatus::Missing => {
+                    eprintln!(
+                        "{}",
+                        "⬡ brain: release binary missing — run cargo build --release"
+                            .yellow()
+                    );
+                }
+                _ => {}
+            }
+
+            // MCP ↔ CLI parity — warn if tools are orphaned
+            if let Ok(orphans) = check_mcp_cli_parity() {
+                if !orphans.is_empty() {
+                    eprintln!(
+                        "{} {} MCP tools without CLI commands: {}",
+                        "⬡ brain:".yellow(),
+                        orphans.len(),
+                        orphans.join(", ")
+                    );
+                }
+            }
+        }
+    }
 
     Ok(())
 }
