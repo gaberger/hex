@@ -654,14 +654,21 @@ mod tests {
 
     #[test]
     fn test_model_actions_seed_values() {
-        // Verify the seed defaults match spec
+        // Verify the seed defaults match the MODEL_ACTIONS constant
         let map: std::collections::HashMap<&str, f64> = MODEL_ACTIONS.iter().copied().collect();
+        // Cloud models
         assert_eq!(map["model:sonnet"], 0.5);
         assert_eq!(map["model:haiku"], 0.3);
         assert_eq!(map["model:opus"], 0.4);
         assert_eq!(map["model:minimax"], 0.35);
         assert_eq!(map["model:minimax_fast"], 0.3);
-        assert_eq!(map["model:local"], 0.2);
+        // Local models (tiered by capability)
+        assert_eq!(map["model:nemotron-mini"], 0.3);
+        assert_eq!(map["model:qwen3:4b"], 0.25);
+        assert_eq!(map["model:qwen3:8b"], 0.35);
+        assert_eq!(map["model:qwen3.5:9b"], 0.4);
+        assert_eq!(map["model:qwen2.5-coder:32b"], 0.5);
+        assert_eq!(map["model:devstral-small-2:24b"], 0.45);
     }
 
     #[test]
