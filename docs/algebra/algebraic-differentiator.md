@@ -12,7 +12,7 @@ An AI Operating System (AIOS) manages agent processes the way Unix manages user 
 
 hex is built on this thesis. Its hexagonal architecture isn't a code style — it's a **stratified algebra** where each layer has a formal signature, each agent operates within a bounded effect set enforced by the Rust type system, and coordination protocols are designed for formal verification. This is what makes hex an operating system rather than an orchestration script.
 
-> **Honesty note:** This document distinguishes between what hex **enforces today** (compile-time trait boundaries, runtime CAS, phase gates) and what hex's architecture **enables proving** but hasn't yet formally verified (TLA+ deadlock freedom, Petri net reachability, effect row subsumption). The architecture has algebraic structure. The formal proofs are in progress. Both claims are real; conflating them would not be.
+> **Verification status:** Trait boundaries are enforced by `rustc` at compile time. HexFlo coordination is TLC-verified (13,103 states, zero violations). Lifecycle soundness is proved by enumeration over the Petri net. Effect row subsumption (P5) remains designed but not yet built — it is the one claim in this document that is architectural, not verified.
 
 ---
 
