@@ -1,0 +1,164 @@
+{
+  "id": "wp-aios-experience-p2",
+  "feature": "AIOS Developer Experience — Phase 2",
+  "description": "Trust Decay, Taste Graph v1, P1 hardening. After this phase, hex learns developer preferences across projects and auto-adjusts trust when regressions occur.",
+  "adr": "ADR-2604131500",
+  "specs": "docs/specs/aios-experience-acceptance.md",
+  "status": "pending",
+  "priority": "high",
+  "created_at": "2026-04-13T15:00:00Z",
+  "created_by": "human+agent",
+  "relates_to": "wp-aios-experience-p1",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "P1 hardening — fix trust CLI, wire coordination events",
+      "tier": 0,
+      "description": "Fix bugs discovered dog-fooding P1 and wire missing briefing events from coordination layer.",
+      "gate": {
+        "type": "test",
+        "command": "cargo check --workspace",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P0.1",
+          "name": "Fix hex trust show CLI → nexus route wiring",
+          "layer": "primary",
+          "description": "hex trust show <project> returns 'endpoint not available'. Debug the NexusClient path — likely the CLI is building the wrong query string or the route path doesn't match. Verify by calling curl http://127.0.0.1:5555/api/trust?project=hex-intf directly and comparing with what the CLI sends. Fix the CLI or route to make them match.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/trust.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P0.2",
+          "name": "Wire briefing events from coordination layer",
+          "layer": "secondary",
+          "description": "Add log_briefing_event() calls to hex-nexus/src/coordination/mod.rs at: (1) swarm task completion, (2) agent death/stale detection, (3) swarm completion. Use the same HexFlo memory pattern as workplan_executor.rs: key 'briefing:{timestamp}', value JSON with severity/category/title/body. Severity: task complete = nominal, agent death = critical, swarm complete = notable.",
+          "deps": [],
+          "files": ["hex-nexus/src/coordination/mod.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P0.3",
+          "name": "Update briefing endpoint to query briefing events from HexFlo memory",
+          "layer": "secondary",
+          "description": "GET /api/briefing currently returns active tasks and inbox notifications but NOT the briefing events logged by P2.3. Update hex-nexus/src/routes/briefing.rs to also query hexflo_memory_search('briefing:') and include matching events in the per-project response under an 'events' array. Filter by 'since' param if provided. Mark events as 'seen' after retrieval if the client passes seen=true.",
+          "deps": ["P0.2"],
+          "files": ["hex-nexus/src/routes/briefing.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "Trust Decay — auto-reduce trust on regressions",
+      "tier": 1,
+      "description": "When a regression is attributable to an agent action, trust for that scope drops one level automatically.",
+      "gate": {
+        "type": "test",
+        "command": "cargo check --workspace",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Regression detector: correlate test failures with recent agent commits",
+          "layer": "secondary",
+          "description": "Add a regression_detector module in hex-nexus/src/orchestration/. When a phase gate fails (test command returns non-zero), run git log --since=1h --format='%H %an' to find recent commits. For each commit, check if the author matches an agent pattern (contains 'hex-coder', 'claude', or matches session agent names). If so, identify which files were changed via git diff --name-only <hash>^..<hash>, then map files to hex architecture scopes (domain/, ports/, adapters/primary/, adapters/secondary/, etc.). Return a RegressionReport { scope: String, agent_id: String, commit_hash: String, failing_test: String }.",
+          "deps": [],
+          "files": ["hex-nexus/src/orchestration/regression.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Trust decay reducer: drop trust one level on regression",
+          "layer": "secondary",
+          "description": "Add decay_trust() function that takes a RegressionReport and: (1) reads current trust level for the scope from HexFlo memory, (2) drops it one level (silent→act, act→suggest, suggest→observe), (3) stores the updated trust with decay_reason and last_decayed_at, (4) logs a briefing event with severity 'decision' explaining what happened. Respect pinned=true — pinned scopes never auto-decay. Wire this into workplan_executor.rs after gate failures.",
+          "deps": ["P1.1"],
+          "files": [
+            "hex-nexus/src/routes/trust.rs",
+            "hex-nexus/src/orchestration/workplan_executor.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.3",
+          "name": "hex trust history command",
+          "layer": "primary",
+          "description": "Add TrustAction::History variant to hex-cli that shows the trust change log for a project. Query HexFlo memory for keys matching 'trust-history:{project}:*'. Each entry records: timestamp, scope, old_level, new_level, reason (human|decay|elevate). Store these entries whenever set_trust or decay_trust is called. Render as a chronological table with colored level indicators.",
+          "deps": ["P1.2"],
+          "files": ["hex-cli/src/commands/trust.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Taste Graph v1 — developer preference learning",
+      "tier": 2,
+      "description": "Manual preference management with observation hooks. hex taste list/set/forget/pin.",
+      "gate": {
+        "type": "test",
+        "command": "cargo check --workspace",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Taste storage schema and REST endpoints",
+          "layer": "secondary",
+          "description": "Add taste entries in HexFlo memory with key 'taste:{scope}:{category}:{name}'. Scope is 'universal', 'lang:{language}', or 'domain:{domain}'. Categories: naming, structure, testing, dependencies, style, architecture. Each entry has: name, value (the preference text), confidence (0.0-1.0), source (manual|observed), created_at, last_applied_at. Add REST endpoints: GET /api/taste?scope=X — list preferences. POST /api/taste — set a preference. DELETE /api/taste/{key} — forget. PATCH /api/taste/{key}/pin — pin preference. Create hex-nexus/src/routes/taste.rs and wire into mod.rs router.",
+          "deps": [],
+          "files": [
+            "hex-nexus/src/routes/taste.rs",
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "hex taste CLI commands",
+          "layer": "primary",
+          "description": "Add TasteAction enum to hex-cli with variants: List { scope: Option<String> }, Set { scope: String, category: String, name: String, value: String }, Forget { key: String }, Pin { key: String }. Wire as 'hex taste' subcommand. 'list' renders a grouped table by category with confidence scores. 'set' calls POST /api/taste. Scope defaults to 'universal' if not specified. Examples: hex taste set universal naming 'prefer snake_case for Rust functions', hex taste list --scope lang:rust.",
+          "deps": ["P2.1"],
+          "files": ["hex-cli/src/commands/taste.rs", "hex-cli/src/main.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.3",
+          "name": "Taste injection into agent prompts",
+          "layer": "secondary",
+          "description": "Modify hex-nexus/src/orchestration/mod.rs build_role_preamble() to append relevant taste preferences to agent prompts. When spawning an agent, query GET /api/taste for universal + language-specific + domain-specific preferences. Format as a 'Developer Preferences' section appended to the system prompt. Only inject preferences with confidence >= 0.5. Cap at 10 preferences to avoid prompt bloat. Log which preferences were injected to briefing buffer.",
+          "deps": ["P2.1"],
+          "files": ["hex-nexus/src/orchestration/mod.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.4",
+          "name": "Wire MCP tools for taste commands",
+          "layer": "primary",
+          "description": "Add MCP tools hex_taste_list (params: scope) and hex_taste_set (params: scope, category, name, value) to mcp.rs. Add hex_taste_list to READ_ONLY_TOOLS. Update all 3 mcp-tools.json files with tool definitions.",
+          "deps": ["P2.1", "P2.2"],
+          "files": [
+            "hex-cli/src/commands/mcp.rs",
+            "hex-cli/assets/mcp/mcp-tools.json",
+            "hex-cli/assets/schemas/mcp-tools.json",
+            "config/mcp-tools.json"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ]
+}

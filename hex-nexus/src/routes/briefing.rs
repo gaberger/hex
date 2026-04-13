@@ -206,16 +206,21 @@ pub async fn get_briefing(
             })
             .count();
 
+        // Merge active tasks + briefing events into a single events array
+        // so the CLI's BriefEvent struct can parse both uniformly.
+        let mut all_events: Vec<Value> = project_tasks;
+        for ev in &project_events {
+            all_events.push((*ev).clone());
+        }
+
         result_projects.push(json!({
             "project_id": pid,
             "name": &proj.name,
-            "active_tasks": project_tasks,
-            "events": project_events,
+            "events": all_events,
             "pending_decisions": pending_decisions,
             "summary": {
                 "agent_count": agent_count,
-                "task_count": project_tasks.len(),
-                "event_count": project_events.len(),
+                "event_count": all_events.len(),
                 "decision_count": pending_decisions.len(),
                 "health": 0,
                 "spend": 0.0
