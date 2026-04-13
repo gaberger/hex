@@ -347,6 +347,24 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
     // Resolve absolute path for nexus
     let _abs_path = std::fs::canonicalize(&path)?;
 
+    // Dispatch strategy:
+    // 1. Claude Code session → execute locally with ADR-005 gates (Claude IS the inference)
+    // 2. Nexus reachable → create swarm tasks for remote workers
+    // 3. Fallback → execute locally with Ollama
+    let in_claude = std::env::var("CLAUDE_SESSION_ID").is_ok()
+        || std::env::var("CLAUDE_CODE_ENTRYPOINT").is_ok();
+
+    if in_claude {
+        println!("  {} Claude Code session — executing with ADR-005 gates", "\u{2713}".green());
+        println!();
+        // Fix OLLAMA_HOST if needed for any local model fallback
+        let host = std::env::var("OLLAMA_HOST").unwrap_or_default();
+        if host == "0.0.0.0" || host.starts_with("0.0.0.0:") {
+            std::env::set_var("OLLAMA_HOST", "http://localhost:11434");
+        }
+        return execute_plan_local(&path, &wp).await;
+    }
+
     // Build authenticated nexus client
     let client = NexusClient::from_env();
 
@@ -358,7 +376,6 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
             return execute_plan_distributed(&wp).await;
         }
         Err(_) => {
-            // Fix OLLAMA_HOST if it's a bind address (not connectable)
             let host = std::env::var("OLLAMA_HOST").unwrap_or_default();
             if host == "0.0.0.0" || host.starts_with("0.0.0.0:") {
                 std::env::set_var("OLLAMA_HOST", "http://localhost:11434");
