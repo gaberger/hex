@@ -1454,6 +1454,35 @@
         "properties": {},
         "required": []
       }
+    },
+    {
+      "name": "hex_taste_list",
+      "category": "aios",
+      "description": "List developer taste preferences. Returns preferences filtered by scope and category.",
+      "route": { "method": "GET", "path": "/api/taste" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": { "type": "string", "description": "Filter by scope (universal, lang:rust, domain:api)" },
+          "category": { "type": "string", "description": "Filter by category (naming, structure, testing, dependencies, style, architecture)" }
+        }
+      }
+    },
+    {
+      "name": "hex_taste_set",
+      "category": "aios",
+      "description": "Set a developer taste preference. Preferences are injected into agent prompts.",
+      "route": { "method": "POST", "path": "/api/taste" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": { "type": "string", "description": "Preference scope (universal, lang:rust, domain:api)" },
+          "category": { "type": "string", "description": "Category (naming, structure, testing, dependencies, style, architecture)" },
+          "name": { "type": "string", "description": "Short identifier for the preference" },
+          "value": { "type": "string", "description": "The preference description" }
+        },
+        "required": ["scope", "category", "name", "value"]
+      }
     }
   ]
 }

@@ -187,7 +187,7 @@ const READ_ONLY_TOOLS: &[&str] = &[
     // OpenCode (read-only queries)
     "hex_opencode_status", "hex_opencode_config",
     // AIOS Experience (read-only queries)
-    "hex_brief", "hex_pulse", "hex_trust_show",
+    "hex_brief", "hex_pulse", "hex_trust_show", "hex_taste_list",
 ];
 
 /// Returns true when running inside Claude Code as an MCP tool call (ADR-2604081320).
@@ -1658,6 +1658,28 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
 
         "hex_pulse" => {
             nexus.get("/api/pulse").await.map_err(|e| e.to_string())
+        }
+
+        "hex_taste_list" => {
+            let mut qs = Vec::new();
+            if let Some(s) = args.get("scope").and_then(|v| v.as_str()) {
+                qs.push(format!("scope={}", s));
+            }
+            if let Some(c) = args.get("category").and_then(|v| v.as_str()) {
+                qs.push(format!("category={}", c));
+            }
+            let path = if qs.is_empty() { "/api/taste".to_string() } else { format!("/api/taste?{}", qs.join("&")) };
+            nexus.get(&path).await.map_err(|e| e.to_string())
+        }
+
+        "hex_taste_set" => {
+            let body = serde_json::json!({
+                "scope": args.get("scope").and_then(|v| v.as_str()).unwrap_or("universal"),
+                "category": args.get("category").and_then(|v| v.as_str()).unwrap_or(""),
+                "name": args.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                "value": args.get("value").and_then(|v| v.as_str()).unwrap_or(""),
+            });
+            nexus.post("/api/taste", &body).await.map_err(|e| e.to_string())
         }
 
         _ => Err(format!("Unknown tool: {}", name)),
