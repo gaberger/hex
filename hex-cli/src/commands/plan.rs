@@ -469,6 +469,17 @@ async fn execute_plan_distributed(wp: &serde_json::Value) -> anyhow::Result<()> 
 
         println!("{} Phase: {} ({}/{} pending)", "\u{2501}".dimmed(), phase_name, pending_count, tasks.len());
 
+        // ADR-2604130010 P2.2: Query connected agents for capability-aware routing
+        let available_agents = client.get("/api/hex-agents").await.ok()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default();
+        let has_large_model_worker = available_agents.iter().any(|a| {
+            a.get("capabilities")
+                .and_then(|c| c.get("max_model_size_gb"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0) >= 15.0  // 27B models are ~15+ GB on disk
+        });
+
         // Step 3: Create HexFlo tasks for this phase
         let mut task_ids: Vec<(String, String)> = Vec::new(); // (task_id, title)
 
@@ -484,8 +495,18 @@ async fn execute_plan_distributed(wp: &serde_json::Value) -> anyhow::Result<()> 
             let agent = task.get("agent").and_then(|v| v.as_str()).unwrap_or("hex-coder");
             let tier = task.get("tier").and_then(|v| v.as_str()).unwrap_or("T2");
 
+            // ADR-2604130010 P2.2: Prepend model hint based on task tier/agent role
+            let needs_large_model = tier == "T2.5" || tier == "T3"
+                || agent == "integrator" || agent == "reviewer"
+                || agent == "validation-judge";
+            let model_hint = if needs_large_model && has_large_model_worker {
+                "[PREFERS: 27B+ model] "
+            } else {
+                ""
+            };
+
             // Format title so worker can parse role + description
-            let title = format!("{}: {}", agent, description);
+            let title = format!("{}: {}{}", agent, model_hint, description);
 
             let resp = client.post(
                 &format!("/api/swarms/{}/tasks", swarm_id),

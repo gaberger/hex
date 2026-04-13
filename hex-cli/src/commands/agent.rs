@@ -1115,7 +1115,11 @@ async fn worker(
         "host": hostname,
         "project_dir": project_dir,
         "session_id": session_id,
-        "capabilities": [role],
+        "capabilities": {
+            "role": role,
+            "models": [],
+            "maxConcurrent": 4,
+        },
     });
     let resp = nexus.post("/api/hex-agents/connect", &reg_body).await?;
     let registered_id = resp["agentId"]
@@ -1150,8 +1154,27 @@ async fn worker(
     );
     println!("  Poll:     {}s", poll_interval);
 
-    // ADR-2604130010: Discover local inference providers before entering poll loop
-    discover_local_inference().await;
+    // ADR-2604130010 P2.1: Discover local inference and update capabilities on nexus
+    let inference_caps = discover_local_inference_caps().await;
+    if let Some(ref caps) = inference_caps {
+        // Re-register with enriched capabilities so nexus knows our models
+        let caps_body = json!({
+            "agent_id": agent_id,
+            "capabilities": {
+                "models": caps.models,
+                "max_model_size_gb": caps.max_model_size_gb,
+                "provider": caps.provider,
+                "estimated_tok_s": caps.estimated_tok_s,
+                "maxConcurrent": 4,
+            },
+        });
+        if let Err(e) = nexus.post("/api/hex-agents/heartbeat", &caps_body).await {
+            println!("  {}  Failed to update capabilities: {}", "⚠".yellow(), e);
+        } else {
+            println!("  {}  Capabilities synced to nexus ({} models, max {:.1} GB)",
+                "→".cyan(), caps.models.len(), caps.max_model_size_gb);
+        }
+    }
 
     // Set up heartbeat interval (every 30s)
     let heartbeat_nexus = NexusClient::from_env();
@@ -1944,7 +1967,16 @@ async fn execute_worker_task(
 /// Probe OLLAMA_HOST/api/tags for available models on startup.
 /// Sets HEX_PROVIDER=ollama and HEX_MODEL to the largest available model
 /// if not already configured by the user.
-async fn discover_local_inference() {
+/// Discovery result for local inference providers (ADR-2604130010 P2.1).
+#[derive(Debug, Clone, Default)]
+struct LocalInferenceCapabilities {
+    models: Vec<String>,
+    max_model_size_gb: f64,
+    provider: String,
+    estimated_tok_s: u32,
+}
+
+async fn discover_local_inference_caps() -> Option<LocalInferenceCapabilities> {
     let ollama_host = std::env::var("OLLAMA_HOST")
         .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
     let url = format!("{}/api/tags", ollama_host.trim_end_matches('/'));
@@ -1954,7 +1986,7 @@ async fn discover_local_inference() {
         .build()
     {
         Ok(c) => c,
-        Err(_) => return,
+        Err(_) => return None,
     };
 
     let resp = match client.get(&url).send().await {
@@ -1965,7 +1997,7 @@ async fn discover_local_inference() {
                 "⚠".yellow(),
                 ollama_host
             );
-            return;
+            return None;
         }
         Err(_) => {
             println!(
@@ -1973,20 +2005,20 @@ async fn discover_local_inference() {
                 "⚠".yellow(),
                 ollama_host
             );
-            return;
+            return None;
         }
     };
 
     let body: serde_json::Value = match resp.json().await {
         Ok(v) => v,
-        Err(_) => return,
+        Err(_) => return None,
     };
 
     let models = match body.get("models").and_then(|m| m.as_array()) {
         Some(arr) if !arr.is_empty() => arr,
         _ => {
             println!("  {}  Ollama running but no models pulled", "⚠".yellow());
-            return;
+            return None;
         }
     };
 
@@ -2022,6 +2054,16 @@ async fn discover_local_inference() {
             println!("  {}  Set HEX_MODEL={}", "→".cyan(), best);
         }
     }
+
+    // ADR-2604130010 P2.1: Build capabilities struct from discovered models
+    let max_size_gb = model_list.first().map(|(_, s)| *s as f64 / 1_073_741_824.0).unwrap_or(0.0);
+    let model_names: Vec<String> = model_list.iter().map(|(n, _)| n.to_string()).collect();
+    Some(LocalInferenceCapabilities {
+        models: model_names,
+        max_model_size_gb: max_size_gb,
+        provider: "ollama".to_string(),
+        estimated_tok_s: 32, // conservative default; future: benchmark
+    })
 }
 
 // ── Worker helper functions (P1.1) ──────────────────────────────────────────
