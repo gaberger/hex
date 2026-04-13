@@ -6,7 +6,8 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.75+-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
   <a href="https://spacetimedb.com/"><img src="https://img.shields.io/badge/SpacetimeDB-WASM-58a6ff?style=flat-square" alt="SpacetimeDB"></a>
   <a href="https://github.com/gaberger/hex/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
-  <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-152_Accepted-bc8cff?style=flat-square" alt="ADRs"></a>
+  <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-154_(144_Accepted)-bc8cff?style=flat-square" alt="ADRs"></a>
+  <a href="#architecture-enforcement-that-agents-cant-bypass"><img src="https://img.shields.io/badge/Architecture-A%2B_100%2F100-3fb950?style=flat-square" alt="Architecture A+"></a>
 </p>
 
 <p align="center">
@@ -92,6 +93,9 @@ Each ADR maps to **static analysis rules** that run automatically. `adr-001-doma
 ```bash
 hex analyze .    # Boundary violations, dead code, cross-adapter coupling — blocks commits
 ```
+
+**Current grade: A+ (100/100)** — 0 boundary violations across 438 source files. Every AI-generated commit maintains this score.
+
 
 **What this means in practice**: Workplan boundaries map to adapter boundaries. An agent working on `adapters/secondary/database` physically cannot edit `adapters/primary/cli`. Every AI-generated PR maintains the same architectural integrity as hand-crafted code.
 
@@ -247,6 +251,20 @@ Tested with a two-node fleet (Mac coordinator + Linux GPU box):
 
 Running the agent directly on the GPU box is **2x faster** — no network round-trip per token. hex supports both topologies: centralized (Mac dispatches to remote Ollama) and distributed (each machine runs its own hex-nexus with local Ollama). The RL engine on each machine learns its own optimal model selection independently.
 
+### Code-First Execution
+
+hex is **code-first**: inference is an accelerator, not a gate ([ADR-2604131630](docs/adrs/ADR-2604131630-code-first-execution.md)). Before calling any model, the executor checks whether the task can be completed through deterministic means — template codegen, AST transforms, or script execution. Workplan tasks carry a `strategy_hint` field that guides the executor:
+
+| Strategy Hint | What Happens | Example |
+|:--------------|:-------------|:--------|
+| `template` | Mustache/Handlebars template expansion | Scaffold a new adapter |
+| `ast_transform` | Tree-sitter parse → transform → emit | Rename symbol across files |
+| `script` | Run a shell script | `cargo fmt`, `rustfmt`, linting |
+| `inference` | LLM call (tiered routing) | Generate new function body |
+| *(none)* | Auto-detect: try deterministic paths first, fall back to inference | Default behavior |
+
+This means a workplan with 20 tasks might only need inference for 6 of them — the rest are template expansions, renames, and formatting passes that complete in milliseconds with zero token cost.
+
 ### Capability-Based Agent Security
 
 Every agent receives an **HMAC-SHA256 signed capability token** at spawn, scoped to exactly what it needs. Secrets never enter persistent storage — the SpacetimeDB grant table stores only metadata (key names, TTLs). If the database is compromised, attackers see zero secret values.
@@ -338,7 +356,7 @@ cd your-project && hex init
 ```bash
 # Architecture enforcement
 hex analyze .                   # Boundary check, dead code, coupling violations
-hex adr list                    # 151 Architecture Decision Records
+hex adr list                    # 154 Architecture Decision Records
 hex adr search "inference"      # Find relevant decisions
 
 # Autonomous development
@@ -509,6 +527,27 @@ hex ships with **18 specialized agent definitions** in YAML. Each defines: model
 | `adversarial-reviewer` | Hunts dangling refs, stale config, build breakage |
 | `rust-refactorer` | Rust-specific refactoring with cross-crate awareness |
 
+### AIOS Developer Experience
+
+hex presents system state through **4 progressive disclosure layers** ([ADR-2604131500](docs/adrs/ADR-2604131500-aios-developer-experience.md)), so developers get the right level of detail without information overload:
+
+| Layer | Surface | What You See |
+|:------|:--------|:-------------|
+| **Pulse** | Statusline / glance | One-line health: `hex: A+ 100/100 | 3 agents | 2 tasks pending` |
+| **Brief** | `hex brief` | Structured summary — architecture score, active swarms, recent completions |
+| **Console** | `hex status` / dashboard | Full detail — every agent, task, inference call, boundary violation |
+| **Override** | `hex steer` / `hex override` | Emergency controls — pause swarms, kill agents, force-escalate tiers |
+
+**Trust delegation** lets hex make decisions autonomously within bounds you set. Configure how much latitude agents get — from "ask me everything" to "handle T1/T2 autonomously, notify me on T3." The **taste graph** learns your preferences (formatting, naming conventions, error handling style) and applies them to generated code without explicit instructions.
+
+```bash
+hex trust show                  # Current delegation level
+hex trust set autonomous        # Let hex handle routine work
+hex taste set error_style=thiserror  # Prefer thiserror over anyhow
+hex pulse                       # One-glance system health
+hex brief                       # Structured status summary
+```
+
 ---
 
 ## Who Is This For?
@@ -530,7 +569,7 @@ hex installs into your project as the operating system layer between your agents
 
 | Resource | What You'll Find |
 |:---------|:-----------------|
-| [Architecture Decision Records](docs/adrs/) | 107 decisions with rationale — the "why" behind every design choice |
+| [Architecture Decision Records](docs/adrs/) | 154 decisions (144 accepted) with rationale — the "why" behind every design choice |
 | [Development Guides](docs/guides/) | Workflow walkthrough, OpenRouter setup, feature UX integration |
 | [Behavioral Specs](docs/specs/) | Feature specifications written before code |
 | [Workplans](docs/workplans/) | Structured task decomposition driving HexFlo swarm execution |
