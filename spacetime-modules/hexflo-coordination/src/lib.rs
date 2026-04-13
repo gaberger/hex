@@ -2694,3 +2694,404 @@ pub fn lifecycle_check_unblocked(ctx: &ReducerContext, swarm_id: String) {
         }
     }
 }
+
+// ─── Developer Decision Inbox (ADR-2604131500) ──────────────────────────
+
+/// A decision that requires developer input. hex surfaces these with a
+/// recommended default action; if the developer doesn't respond before the
+/// deadline, the default auto-applies.
+#[table(name = developer_inbox, public)]
+#[derive(Clone, Debug)]
+pub struct DeveloperInbox {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub project_id: String,
+    /// Type: "taste", "dependency", "architecture", "escalation", "budget"
+    pub decision_type: String,
+    pub title: String,
+    pub description: String,
+    /// What hex will do if the developer doesn't respond
+    pub default_action: String,
+    /// Why hex chose this default
+    pub default_reason: String,
+    /// JSON array of alternative actions
+    pub alternatives: String,
+    /// ISO timestamp — after this, default_action auto-applies
+    pub deadline_at: String,
+    pub auto_resolved: bool,
+    /// What action was taken
+    pub resolved_action: String,
+    /// "human" or "auto"
+    pub resolved_by: String,
+    pub resolved_at: String,
+    pub created_at: String,
+}
+
+/// Surface a decision to the developer inbox.
+#[reducer]
+pub fn surface_decision(
+    ctx: &ReducerContext,
+    project_id: String,
+    decision_type: String,
+    title: String,
+    description: String,
+    default_action: String,
+    default_reason: String,
+    alternatives: String,
+    deadline_at: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let valid_types = ["taste", "dependency", "architecture", "escalation", "budget"];
+    if !valid_types.contains(&decision_type.as_str()) {
+        return Err(format!(
+            "Invalid decision_type '{}'. Must be one of: {}",
+            decision_type,
+            valid_types.join(", ")
+        ));
+    }
+
+    ctx.db.developer_inbox().insert(DeveloperInbox {
+        id: 0, // auto_inc
+        project_id,
+        decision_type,
+        title,
+        description,
+        default_action,
+        default_reason,
+        alternatives,
+        deadline_at,
+        auto_resolved: false,
+        resolved_action: String::new(),
+        resolved_by: String::new(),
+        resolved_at: String::new(),
+        created_at: timestamp,
+    });
+
+    Ok(())
+}
+
+/// Resolve a decision (by human or programmatically).
+#[reducer]
+pub fn resolve_decision(
+    ctx: &ReducerContext,
+    id: u64,
+    action: String,
+    resolved_by: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let entry = ctx.db.developer_inbox().id().find(id)
+        .ok_or_else(|| format!("Decision '{}' not found", id))?;
+
+    if !entry.resolved_action.is_empty() {
+        return Ok(()); // Already resolved — idempotent
+    }
+
+    ctx.db.developer_inbox().id().update(DeveloperInbox {
+        resolved_action: action,
+        resolved_by,
+        resolved_at: timestamp,
+        ..entry
+    });
+
+    Ok(())
+}
+
+/// Auto-resolve all decisions past their deadline with their default_action.
+#[reducer]
+pub fn expire_decisions(
+    ctx: &ReducerContext,
+    current_time: String,
+) -> Result<(), String> {
+    let expired: Vec<DeveloperInbox> = ctx.db.developer_inbox().iter()
+        .filter(|d| {
+            d.resolved_action.is_empty()
+                && !d.deadline_at.is_empty()
+                && d.deadline_at < current_time
+        })
+        .collect();
+
+    for entry in expired {
+        let default_action = entry.default_action.clone();
+        ctx.db.developer_inbox().id().update(DeveloperInbox {
+            auto_resolved: true,
+            resolved_action: default_action,
+            resolved_by: "auto".to_string(),
+            resolved_at: current_time.clone(),
+            ..entry
+        });
+    }
+
+    Ok(())
+}
+
+// ─── Delegation Trust Model (ADR-2604131500) ─────────────────────────────
+
+/// Per-scope trust level that controls how much autonomy hex has in a given
+/// area. Trust can be elevated by consistent good outcomes and decayed when
+/// something goes wrong.
+#[table(name = delegation_trust, public)]
+#[derive(Clone, Debug)]
+pub struct DelegationTrust {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub project_id: String,
+    /// Hierarchical scope like "domain", "adapters/secondary/stripe"
+    pub scope: String,
+    /// "observe", "suggest", "act", "silent"
+    pub trust_level: String,
+    pub last_elevated_at: String,
+    pub last_decayed_at: String,
+    pub decay_reason: String,
+    /// If true, auto-decay is disabled for this scope
+    pub pinned: bool,
+}
+
+/// Set (upsert) trust level for a project scope.
+#[reducer]
+pub fn set_trust(
+    ctx: &ReducerContext,
+    project_id: String,
+    scope: String,
+    level: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let valid_levels = ["observe", "suggest", "act", "silent"];
+    if !valid_levels.contains(&level.as_str()) {
+        return Err(format!(
+            "Invalid trust level '{}'. Must be one of: {}",
+            level,
+            valid_levels.join(", ")
+        ));
+    }
+
+    // Find existing entry for this project_id + scope
+    let existing: Option<DelegationTrust> = ctx.db.delegation_trust().iter()
+        .find(|t| t.project_id == project_id && t.scope == scope);
+
+    if let Some(old) = existing {
+        ctx.db.delegation_trust().id().delete(old.id);
+    }
+
+    ctx.db.delegation_trust().insert(DelegationTrust {
+        id: 0, // auto_inc
+        project_id,
+        scope,
+        trust_level: level,
+        last_elevated_at: timestamp,
+        last_decayed_at: String::new(),
+        decay_reason: String::new(),
+        pinned: false,
+    });
+
+    Ok(())
+}
+
+/// Decay trust one level: silent → act → suggest → observe.
+/// No-op if already at "observe" or if the scope is pinned.
+#[reducer]
+pub fn decay_trust(
+    ctx: &ReducerContext,
+    project_id: String,
+    scope: String,
+    reason: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let entry = ctx.db.delegation_trust().iter()
+        .find(|t| t.project_id == project_id && t.scope == scope)
+        .ok_or_else(|| format!("No trust entry for project '{}' scope '{}'", project_id, scope))?;
+
+    if entry.pinned {
+        return Ok(()); // Pinned — no decay
+    }
+
+    let new_level = match entry.trust_level.as_str() {
+        "silent" => "act",
+        "act" => "suggest",
+        "suggest" => "observe",
+        "observe" => return Ok(()), // Already at lowest — no-op
+        other => return Err(format!("Unknown trust level '{}'", other)),
+    };
+
+    ctx.db.delegation_trust().id().update(DelegationTrust {
+        trust_level: new_level.to_string(),
+        last_decayed_at: timestamp,
+        decay_reason: reason,
+        ..entry
+    });
+
+    Ok(())
+}
+
+/// Pin a trust scope so it cannot be auto-decayed.
+#[reducer]
+pub fn pin_trust(
+    ctx: &ReducerContext,
+    project_id: String,
+    scope: String,
+) -> Result<(), String> {
+    let entry = ctx.db.delegation_trust().iter()
+        .find(|t| t.project_id == project_id && t.scope == scope)
+        .ok_or_else(|| format!("No trust entry for project '{}' scope '{}'", project_id, scope))?;
+
+    if entry.pinned {
+        return Ok(()); // Already pinned — idempotent
+    }
+
+    ctx.db.delegation_trust().id().update(DelegationTrust {
+        pinned: true,
+        ..entry
+    });
+
+    Ok(())
+}
+
+/// Initialize default trust rows for a project (all scopes at "suggest").
+#[reducer]
+pub fn init_project_trust(
+    ctx: &ReducerContext,
+    project_id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let default_scopes = [
+        "domain",
+        "ports",
+        "adapters/primary",
+        "adapters/secondary",
+        "dependencies",
+        "deployment",
+    ];
+
+    for scope in &default_scopes {
+        // Skip if already exists
+        let exists = ctx.db.delegation_trust().iter()
+            .any(|t| t.project_id == project_id && t.scope == *scope);
+        if exists {
+            continue;
+        }
+
+        ctx.db.delegation_trust().insert(DelegationTrust {
+            id: 0, // auto_inc
+            project_id: project_id.clone(),
+            scope: scope.to_string(),
+            trust_level: "suggest".to_string(),
+            last_elevated_at: timestamp.clone(),
+            last_decayed_at: String::new(),
+            decay_reason: String::new(),
+            pinned: false,
+        });
+    }
+
+    Ok(())
+}
+
+// ─── Briefing Buffer (ADR-2604131500) ────────────────────────────────────
+
+/// Accumulated events for the developer briefing. Events are logged
+/// continuously and consumed when the developer opens a session or asks
+/// "what happened?"
+#[table(name = briefing_buffer, public)]
+#[derive(Clone, Debug)]
+pub struct BriefingBuffer {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub project_id: String,
+    /// "nominal", "notable", "decision", "critical"
+    pub severity: String,
+    /// "architecture", "swarm", "build", "inference", "anomaly"
+    pub category: String,
+    pub title: String,
+    pub body: String,
+    pub related_task_id: String,
+    pub related_agent_id: String,
+    pub seen: bool,
+    pub created_at: String,
+}
+
+/// Log a briefing event.
+#[reducer]
+pub fn log_briefing_event(
+    ctx: &ReducerContext,
+    project_id: String,
+    severity: String,
+    category: String,
+    title: String,
+    body: String,
+    related_task_id: String,
+    related_agent_id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let valid_severities = ["nominal", "notable", "decision", "critical"];
+    if !valid_severities.contains(&severity.as_str()) {
+        return Err(format!(
+            "Invalid severity '{}'. Must be one of: {}",
+            severity,
+            valid_severities.join(", ")
+        ));
+    }
+
+    let valid_categories = ["architecture", "swarm", "build", "inference", "anomaly"];
+    if !valid_categories.contains(&category.as_str()) {
+        return Err(format!(
+            "Invalid category '{}'. Must be one of: {}",
+            category,
+            valid_categories.join(", ")
+        ));
+    }
+
+    ctx.db.briefing_buffer().insert(BriefingBuffer {
+        id: 0, // auto_inc
+        project_id,
+        severity,
+        category,
+        title,
+        body,
+        related_task_id,
+        related_agent_id,
+        seen: false,
+        created_at: timestamp,
+    });
+
+    Ok(())
+}
+
+/// Mark a briefing event as seen.
+#[reducer]
+pub fn mark_briefing_seen(
+    ctx: &ReducerContext,
+    id: u64,
+) -> Result<(), String> {
+    let entry = ctx.db.briefing_buffer().id().find(id)
+        .ok_or_else(|| format!("Briefing event '{}' not found", id))?;
+
+    if entry.seen {
+        return Ok(()); // Already seen — idempotent
+    }
+
+    ctx.db.briefing_buffer().id().update(BriefingBuffer {
+        seen: true,
+        ..entry
+    });
+
+    Ok(())
+}
+
+/// Archive (delete) old briefing events that have been seen.
+#[reducer]
+pub fn archive_old_briefings(
+    ctx: &ReducerContext,
+    cutoff_time: String,
+) -> Result<(), String> {
+    let to_delete: Vec<u64> = ctx.db.briefing_buffer().iter()
+        .filter(|b| b.seen && b.created_at < cutoff_time)
+        .map(|b| b.id)
+        .collect();
+
+    for id in to_delete {
+        ctx.db.briefing_buffer().id().delete(id);
+    }
+
+    Ok(())
+}
