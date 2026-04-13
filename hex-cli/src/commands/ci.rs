@@ -23,6 +23,9 @@ pub async fn run() -> anyhow::Result<()> {
     // Gate 4: Spec coverage — every step must reference >=1 spec ID
     all_passed &= gate_spec_coverage().await;
 
+    // Gate 5: Embedded assets must be project-generic (ADR-2604111142)
+    all_passed &= gate_embedded_assets_generic();
+
     println!();
     if all_passed {
         println!("{} All gates passed", "\u{2713}".green().bold());
@@ -456,6 +459,31 @@ async fn gate_spec_coverage() -> bool {
         println!("{} ({} step{} without spec refs)", "fail".red(), missing.len(), if missing.len() == 1 { "" } else { "s" });
         for m in &missing {
             println!("      {}", m.dimmed());
+        }
+        false
+    }
+}
+
+fn gate_embedded_assets_generic() -> bool {
+    print!("  {} Embedded assets generic ... ", "\u{25cb}".dimmed());
+
+    let violations = super::doctor::check_embedded_assets_generic();
+
+    if violations.is_empty() {
+        println!("{}", "pass".green());
+        true
+    } else {
+        println!(
+            "{} ({} violation{})",
+            "fail".red(),
+            violations.len(),
+            if violations.len() == 1 { "" } else { "s" }
+        );
+        for (file, line, marker) in violations.iter().take(10) {
+            println!("      {}:{} matched `{}`", file, line, marker);
+        }
+        if violations.len() > 10 {
+            println!("      ... and {} more", violations.len() - 10);
         }
         false
     }

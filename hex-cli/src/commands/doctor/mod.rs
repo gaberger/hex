@@ -127,6 +127,26 @@ pub async fn run_doctor(_verbose: bool, _fix: bool) -> anyhow::Result<()> {
     let asset_count = Assets::iter().count();
     println!("    loaded:       {} assets baked in", asset_count);
 
+    // 4b. Check embedded assets are project-generic (no hex-intf-specific references)
+    let asset_violations = check_embedded_assets_generic();
+    if asset_violations.is_empty() {
+        println!("    generic-only: {} (no project-specific references)", "✓".green());
+    } else {
+        println!(
+            "    generic-only: {} ({} violation{})",
+            "✗".red(),
+            asset_violations.len(),
+            if asset_violations.len() == 1 { "" } else { "s" }
+        );
+        for (file, line_num, marker) in asset_violations.iter().take(10) {
+            println!("      {}:{} matched `{}`", file, line_num, marker);
+        }
+        if asset_violations.len() > 10 {
+            println!("      ... and {} more", asset_violations.len() - 10);
+        }
+        all_ok = false;
+    }
+
     println!();
 
     // 5. Composition prerequisites
@@ -154,6 +174,88 @@ fn print_check(label: &str, ok: bool) {
     } else {
         println!("    {}: {}", label, "✗".red());
     }
+}
+
+/// Markers that indicate project-specific (non-generic) content leaked into
+/// embedded assets. Embedded templates must be installable into ANY target
+/// project, so they must not reference hex-intf internal crate names, absolute
+/// paths, or SpacetimeDB module names.
+const ASSET_GENERIC_MARKERS: &[&str] = &[
+    "hex-nexus",
+    "hex-core",
+    "hex-parser",
+    "hex-desktop",
+    "spacetime-modules",
+    "hexflo-coordination",
+    "/Volumes/",
+];
+
+/// Substrings that, when present on a line, exempt it from the marker check.
+/// These are legitimate hex CLI command references (e.g. `hex analyze`,
+/// `hex plan`, `hex nexus start`) that happen to contain marker substrings.
+const ASSET_GENERIC_EXCEPTIONS: &[&str] = &[
+    "hex analyze",
+    "hex plan",
+    "hex nexus",
+    "hex doctor",
+    "hex status",
+    "hex ci",
+    "hex swarm",
+    "hex task",
+    "hex memory",
+    "hex inbox",
+    "hex adr",
+    "hex hook",
+    "hex init",
+    "hex mcp",
+    "hex secrets",
+    "hex validate",
+    "hex dev",
+    "hex new",
+    "hex pause",
+    "hex steer",
+    "hex pulse",
+    "hex brief",
+];
+
+/// Check that all embedded assets are project-generic (no hex-intf-specific
+/// references). Returns a list of (filename, line_number, matched_marker)
+/// violations.
+pub fn check_embedded_assets_generic() -> Vec<(String, usize, String)> {
+    check_content_generic_violations(
+        Assets::iter().filter_map(|path| {
+            Assets::get_str(&path).map(|content| (path.to_string(), content))
+        }),
+    )
+}
+
+/// Core violation scanner — takes an iterator of (filename, content) pairs.
+/// Extracted so unit tests can call it with synthetic content.
+fn check_content_generic_violations(
+    files: impl Iterator<Item = (String, String)>,
+) -> Vec<(String, usize, String)> {
+    let mut violations = Vec::new();
+
+    for (path, content) in files {
+        for (line_idx, line) in content.lines().enumerate() {
+            // Skip if the line contains a known CLI-command exception
+            let is_exception = ASSET_GENERIC_EXCEPTIONS
+                .iter()
+                .any(|exc| line.contains(exc));
+            if is_exception {
+                continue;
+            }
+
+            for marker in ASSET_GENERIC_MARKERS {
+                if line.contains(marker) {
+                    violations.push((path.clone(), line_idx + 1, marker.to_string()));
+                    break; // one violation per line is enough
+                }
+            }
+        }
+    }
+
+    violations
 }
 
 pub async fn run_validate_pipeline(
@@ -434,4 +536,54 @@ async fn run_validate(cwd: &std::path::Path) -> anyhow::Result<()> {
 
     println!("    validated {} spec(s)", spec_files.len());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scan(name: &str, content: &str) -> Vec<(String, usize, String)> {
+        check_content_generic_violations(
+            std::iter::once((name.to_string(), content.to_string())),
+        )
+    }
+
+    #[test]
+    fn detects_absolute_path_violation() {
+        let v = scan("test.yml", "root: /Volumes/ExtendedStorage/foo");
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].2, "/Volumes/");
+    }
+
+    #[test]
+    fn cli_command_exception_passes() {
+        let v = scan("test.md", "Run `hex analyze .` to check architecture");
+        assert!(v.is_empty(), "hex CLI command reference should be exempt");
+    }
+
+    #[test]
+    fn hex_nexus_cli_exception_passes() {
+        let v = scan("test.md", "hex nexus start");
+        assert!(v.is_empty(), "hex nexus CLI command should be exempt");
+    }
+
+    #[test]
+    fn hex_nexus_crate_reference_fails() {
+        let v = scan("test.yml", "depends on hex-nexus crate");
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].2, "hex-nexus");
+    }
+
+    #[test]
+    fn clean_content_passes() {
+        let v = scan("clean.yml", "name: hex-scaffold\ndescription: generic template\n");
+        assert!(v.is_empty());
+    }
+
+    #[test]
+    fn spacetime_modules_reference_fails() {
+        let v = scan("bad.md", "see spacetime-modules/hexflo-coordination for details");
+        // Should catch both markers on the same line but we break after first
+        assert_eq!(v.len(), 1);
+    }
 }
