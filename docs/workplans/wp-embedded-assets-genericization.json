@@ -145,7 +145,7 @@
           "id": "P2.5",
           "layer": "primary",
           "name": "Fix or remove ci/hex-ci.yml",
-          "status": "todo"
+          "status": "done"
         }
       ],
       "tier": 2
@@ -185,7 +185,7 @@
           "id": "P3.2",
           "layer": "primary",
           "name": "Decide reconciliation strategy and execute",
-          "status": "todo"
+          "status": "done"
         }
       ],
       "tier": 2
@@ -253,12 +253,12 @@
           "id": "P4.4",
           "layer": "primary",
           "name": "Document the guardrail in CLAUDE.md",
-          "status": "todo"
+          "status": "done"
         }
       ],
       "tier": 2
     }
   ],
   "priority": "normal",
-  "status": "planned"
+  "status": "done"
 }
