@@ -61,3 +61,55 @@ pub fn grammar_for_role(role: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn code_only_rust_has_root_rule() {
+        assert!(CODE_ONLY_RUST.contains("root ::="));
+        assert!(CODE_ONLY_RUST.contains("```rust"));
+    }
+
+    #[test]
+    fn code_only_has_root_rule() {
+        assert!(CODE_ONLY.contains("root ::="));
+        assert!(!CODE_ONLY.contains("rust"), "language-agnostic grammar should not mention rust");
+    }
+
+    #[test]
+    fn code_and_commit_has_json_structure() {
+        assert!(CODE_AND_COMMIT.contains("root ::="));
+        // The grammar uses literal backslash-escaped quotes inside r##""##
+        assert!(CODE_AND_COMMIT.contains(r#"\"code\""#));
+        assert!(CODE_AND_COMMIT.contains(r#"\"commit_msg\""#));
+    }
+
+    #[test]
+    fn analysis_has_required_headings() {
+        assert!(ANALYSIS.contains("root ::="));
+        assert!(ANALYSIS.contains("## Summary"));
+        assert!(ANALYSIS.contains("## Changes"));
+        assert!(ANALYSIS.contains("## Risks"));
+    }
+
+    #[test]
+    fn grammar_for_role_coder_returns_rust() {
+        assert_eq!(grammar_for_role("hex-coder"), Some(CODE_ONLY_RUST));
+        assert_eq!(grammar_for_role("coder"), Some(CODE_ONLY_RUST));
+    }
+
+    #[test]
+    fn grammar_for_role_planner_returns_analysis() {
+        assert_eq!(grammar_for_role("planner"), Some(ANALYSIS));
+        assert_eq!(grammar_for_role("analyzer"), Some(ANALYSIS));
+    }
+
+    #[test]
+    fn grammar_for_role_unknown_returns_none() {
+        assert_eq!(grammar_for_role("reviewer"), None);
+        assert_eq!(grammar_for_role("integrator"), None);
+        assert_eq!(grammar_for_role(""), None);
+    }
+}
