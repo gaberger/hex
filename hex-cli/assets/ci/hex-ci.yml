@@ -1,6 +1,12 @@
 # hex CI enforcement workflow (ADR-2604061100)
 # Deployed to target projects via: hex init
 # Runs all hex enforcement gates on every push and pull request.
+#
+# Prerequisites:
+#   - hex binary available on PATH (install step below)
+#   - Adjust the install URL to match your hex release location
+#
+# See examples/ for language-specific variants (rust-workspace, etc.)
 
 name: hex CI
 
@@ -20,23 +26,13 @@ jobs:
 
       - name: Install hex
         run: |
-          curl -fsSL https://github.com/gaberger/hex-intf/releases/latest/download/hex-linux-x86_64.tar.gz \
-            | tar -xz -C /usr/local/bin hex
+          # TODO: Replace with your hex release URL or install method.
+          # Examples:
+          #   curl -fsSL https://your-org/releases/hex-linux-x86_64.tar.gz | tar -xz -C /usr/local/bin hex
+          #   brew install hex
+          #   cargo install hex-cli
+          echo "hex install step — configure for your environment"
           hex --version
-
-      - name: Start hex-nexus
-        run: hex nexus start --detach
-        continue-on-error: true
 
       - name: Run hex ci
         run: hex ci
-
-      - name: Upload gate summary
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: hex-ci-results
-          path: |
-            docs/workplans/
-            docs/specs/
-          if-no-files-found: ignore
