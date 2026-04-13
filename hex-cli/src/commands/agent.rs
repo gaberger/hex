@@ -1150,6 +1150,9 @@ async fn worker(
     );
     println!("  Poll:     {}s", poll_interval);
 
+    // ADR-2604130010: Discover local inference providers before entering poll loop
+    discover_local_inference().await;
+
     // Set up heartbeat interval (every 30s)
     let heartbeat_nexus = NexusClient::from_env();
     let heartbeat_id = agent_id.clone();
@@ -1934,6 +1937,91 @@ async fn execute_worker_task(
     };
 
     Ok(result)
+}
+
+// ── Worker inference discovery (ADR-2604130010, P1.2) ───────────────────────
+
+/// Probe OLLAMA_HOST/api/tags for available models on startup.
+/// Sets HEX_PROVIDER=ollama and HEX_MODEL to the largest available model
+/// if not already configured by the user.
+async fn discover_local_inference() {
+    let ollama_host = std::env::var("OLLAMA_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
+    let url = format!("{}/api/tags", ollama_host.trim_end_matches('/'));
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let resp = match client.get(&url).send().await {
+        Ok(r) if r.status().is_success() => r,
+        Ok(_) => {
+            println!(
+                "  {}  No Ollama instance at {}",
+                "⚠".yellow(),
+                ollama_host
+            );
+            return;
+        }
+        Err(_) => {
+            println!(
+                "  {}  Ollama not reachable at {}",
+                "⚠".yellow(),
+                ollama_host
+            );
+            return;
+        }
+    };
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let models = match body.get("models").and_then(|m| m.as_array()) {
+        Some(arr) if !arr.is_empty() => arr,
+        _ => {
+            println!("  {}  Ollama running but no models pulled", "⚠".yellow());
+            return;
+        }
+    };
+
+    // Collect (name, size_bytes) and sort descending by size (larger = more capable)
+    let mut model_list: Vec<(&str, u64)> = models
+        .iter()
+        .filter_map(|m| {
+            let name = m.get("name")?.as_str()?;
+            let size = m.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
+            Some((name, size))
+        })
+        .collect();
+    model_list.sort_by(|a, b| b.1.cmp(&a.1));
+
+    println!(
+        "  {}  Discovered {} Ollama model(s):",
+        "⬡".green(),
+        model_list.len()
+    );
+    for (name, size) in &model_list {
+        let size_gb = *size as f64 / 1_073_741_824.0;
+        println!("       • {} ({:.1} GB)", name, size_gb);
+    }
+
+    // Set HEX_PROVIDER and HEX_MODEL if not already configured
+    if std::env::var("HEX_PROVIDER").is_err() {
+        std::env::set_var("HEX_PROVIDER", "ollama");
+        println!("  {}  Set HEX_PROVIDER=ollama", "→".cyan());
+    }
+    if std::env::var("HEX_MODEL").is_err() {
+        if let Some((best, _)) = model_list.first() {
+            std::env::set_var("HEX_MODEL", best);
+            println!("  {}  Set HEX_MODEL={}", "→".cyan(), best);
+        }
+    }
 }
 
 // ── Worker helper functions (P1.1) ──────────────────────────────────────────

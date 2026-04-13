@@ -1204,22 +1204,65 @@ impl CodePhase {
 
         // ── 6. Call inference ────────────────────────────────────────────
         let start = Instant::now();
-        let body = json!({
-            "model": selected.model_id,
-            "system": system_prompt,
-            "messages": [
-                { "role": "user", "content": user_message }
-            ],
-            "max_tokens": 8192
-        });
 
-        let resp = self
-            .client
-            .post_long("/api/inference/complete", &body)
-            .await
-            .context("POST /api/inference/complete failed")?;
+        // ADR-2604130010: Local Ollama path for remote workers.
+        // When HEX_PROVIDER=ollama, call Ollama directly — never route through nexus.
+        let use_local_ollama = std::env::var("HEX_PROVIDER").as_deref() == Ok("ollama");
 
-        let duration_ms = start.elapsed().as_millis() as u64;
+        let (resp, duration_ms) = if use_local_ollama {
+            let ollama_host = std::env::var("OLLAMA_HOST")
+                .unwrap_or_else(|_| "http://localhost:11434".to_string());
+            let ollama_body = json!({
+                "model": selected.model_id,
+                "prompt": format!("{}\n\n{}", system_prompt, user_message),
+                "temperature": 0.2,
+                "stream": false,
+            });
+            tracing::info!(
+                model = %selected.model_id,
+                host = %ollama_host,
+                phase = %phase.id,
+                "CodePhase: local Ollama inference for phase (ADR-2604130010)"
+            );
+            let http = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(600))
+                .build()
+                .unwrap();
+            let raw_resp = http
+                .post(format!("{}/api/generate", ollama_host))
+                .json(&ollama_body)
+                .send()
+                .await
+                .context("Local Ollama inference failed (phase)")?;
+            let duration_ms = start.elapsed().as_millis() as u64;
+            let ollama_json: serde_json::Value = raw_resp.json().await
+                .context("Failed to parse Ollama response (phase)")?;
+            let content = ollama_json["response"].as_str().unwrap_or("").to_string();
+            let tokens = ollama_json["eval_count"].as_u64().unwrap_or(0);
+            let resp = json!({
+                "content": content,
+                "model": selected.model_id,
+                "tokens": tokens,
+                "cost_usd": 0.0,
+            });
+            (resp, duration_ms)
+        } else {
+            let body = json!({
+                "model": selected.model_id,
+                "system": system_prompt,
+                "messages": [
+                    { "role": "user", "content": user_message }
+                ],
+                "max_tokens": 8192
+            });
+            let resp = self
+                .client
+                .post_long("/api/inference/complete", &body)
+                .await
+                .context("POST /api/inference/complete failed")?;
+            let duration_ms = start.elapsed().as_millis() as u64;
+            (resp, duration_ms)
+        };
 
         // ── 7. Parse response ────────────────────────────────────────────
         let raw_content = resp["content"]
