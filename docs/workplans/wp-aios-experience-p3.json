@@ -185,5 +185,5 @@
   "priority": "high",
   "relates_to": "wp-aios-experience-p2",
   "specs": "docs/specs/aios-experience-acceptance.md",
-  "status": "planned"
+  "status": "done"
 }
