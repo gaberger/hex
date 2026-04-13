@@ -133,6 +133,23 @@ fn changed_files(branch: &str, main: &str) -> anyhow::Result<Vec<String>> {
         .collect())
 }
 
+/// Get the Unix timestamp of the latest commit on a branch.
+fn latest_commit_epoch(branch: &str) -> anyhow::Result<i64> {
+    let output = Command::new("git")
+        .args(["log", "-1", "--format=%ct", branch])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git log failed for branch {}: {}",
+            branch,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let ts = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    ts.parse::<i64>()
+        .map_err(|e| anyhow::anyhow!("Failed to parse timestamp for {}: {}", branch, e))
+}
+
 /// Check if a branch is merged into main.
 fn is_merged(branch: &str, main: &str) -> bool {
     let output = Command::new("git")
@@ -264,20 +281,38 @@ async fn merge(
         .filter(|(_, owners)| owners.len() > 1)
         .collect();
 
+    // For overlapping files, pick the branch with the most recent commit
+    let mut overlap_winner: HashMap<String, String> = HashMap::new();
     if !overlapping.is_empty() {
-        println!("\n  {} File overlaps detected:", "\u{26a0}".yellow());
-        for (file, owners) in &overlapping {
-            println!(
-                "    {} owned by: {}",
-                file.yellow(),
-                owners.join(", ").dimmed()
-            );
+        println!("\n  {} File overlaps detected — resolving by most recent commit:", "\u{26a0}".yellow());
+
+        // Cache branch timestamps
+        let mut branch_ts: HashMap<String, i64> = HashMap::new();
+        for branch in branch_files.keys() {
+            if let Ok(ts) = latest_commit_epoch(branch) {
+                branch_ts.insert(branch.clone(), ts);
+            }
         }
-        println!("\n  Overlapping files will be skipped. Resolve manually.");
+
+        for (file, owners) in &overlapping {
+            // Find the owner with the highest (most recent) timestamp
+            let winner = owners
+                .iter()
+                .max_by_key(|b| branch_ts.get(*b).copied().unwrap_or(0))
+                .cloned()
+                .unwrap_or_else(|| owners[0].clone());
+            println!(
+                "    {} owned by [{}] → picking {}",
+                file.yellow(),
+                owners.join(", ").dimmed(),
+                winner.cyan()
+            );
+            overlap_winner.insert((*file).clone(), winner);
+        }
     }
 
-    // Build the set of files to skip
-    let skip_files: HashSet<&String> = overlapping.keys().copied().collect();
+    // Build the set of files that are overlapping (handled separately)
+    let overlap_files: HashSet<&String> = overlapping.keys().copied().collect();
 
     // Determine merge order by tier prefix (P0 < P1 < P2 ...)
     let mut ordered_branches: Vec<(u32, String)> = branch_files
@@ -307,11 +342,14 @@ async fn merge(
     ordered_branches.sort_by_key(|(tier, _)| *tier);
 
     // Show plan
-    println!("\n  Merge order:");
+    println!("\n  Merge order (non-overlapping, by tier):");
     let mut total_files = 0usize;
     for (tier, branch) in &ordered_branches {
         let files = &branch_files[branch];
-        let safe_files: Vec<&String> = files.iter().filter(|f| !skip_files.contains(f)).collect();
+        let safe_files: Vec<&String> = files.iter().filter(|f| !overlap_files.contains(f)).collect();
+        if safe_files.is_empty() {
+            continue;
+        }
         println!(
             "    {} {} — {} file(s)",
             format!("T{}", tier).cyan(),
@@ -324,6 +362,14 @@ async fn merge(
         total_files += safe_files.len();
     }
 
+    if !overlap_winner.is_empty() {
+        println!("\n  Overlap resolution (most recent branch wins):");
+        for (file, winner) in &overlap_winner {
+            println!("    {} ← {}", file, winner.cyan());
+        }
+        total_files += overlap_winner.len();
+    }
+
     if !force {
         println!(
             "\n  {} Dry run — {} file(s) would be merged. Pass {} to execute.",
@@ -334,7 +380,7 @@ async fn merge(
         return Ok(());
     }
 
-    // Execute merge
+    // Execute merge — Phase 1: non-overlapping files in tier order
     let root = repo_root()?;
     let root_path = Path::new(&root);
     let mut merged_count = 0usize;
@@ -344,7 +390,7 @@ async fn merge(
         let files = &branch_files[branch];
         let safe_files: Vec<String> = files
             .iter()
-            .filter(|f| !skip_files.contains(f))
+            .filter(|f| !overlap_files.contains(f))
             .cloned()
             .collect();
 
@@ -372,6 +418,45 @@ async fn merge(
         } else {
             let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
             println!("  {} Failed to merge from {}: {}", "\u{2717}".red(), branch, err);
+            errors.push((branch.clone(), err));
+        }
+    }
+
+    // Execute merge — Phase 2: overlapping files from winner branches
+    // Group overlap files by winner branch for batch checkout
+    let mut winner_files: HashMap<String, Vec<String>> = HashMap::new();
+    for (file, winner) in &overlap_winner {
+        winner_files
+            .entry(winner.clone())
+            .or_default()
+            .push(file.clone());
+    }
+
+    for (branch, files) in &winner_files {
+        let mut args = vec!["checkout".to_string(), branch.clone(), "--".to_string()];
+        args.extend(files.iter().cloned());
+
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(root_path)
+            .output()?;
+
+        if output.status.success() {
+            println!(
+                "  {} Cherry-picked {} overlapping file(s) from {}",
+                "\u{2713}".green(),
+                files.len(),
+                branch.cyan()
+            );
+            merged_count += files.len();
+        } else {
+            let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            println!(
+                "  {} Failed to cherry-pick from {}: {}",
+                "\u{2717}".red(),
+                branch,
+                err
+            );
             errors.push((branch.clone(), err));
         }
     }
