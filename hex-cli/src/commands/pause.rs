@@ -24,7 +24,12 @@ pub async fn run_pause() -> anyhow::Result<()> {
     if feature.is_empty() {
         println!("{} Nothing running.", "\u{23f8}".dimmed());
     } else {
-        println!("{} Paused: {}", "\u{23f8}".yellow(), feature.bold());
+        println!(
+            "{} Paused: {}. Resume with {}.",
+            "\u{23f8}".yellow(),
+            feature.bold(),
+            "hex resume".cyan()
+        );
     }
 
     Ok(())
