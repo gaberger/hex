@@ -535,7 +535,131 @@ async fn validate() -> anyhow::Result<()> {
         }
     }
 
+    // MCP ↔ CLI parity check
+    match check_mcp_cli_parity() {
+        Ok(orphans) if orphans.is_empty() => {
+            println!(
+                "  MCP parity:  {} all MCP tools have CLI equivalents",
+                "✓".green()
+            );
+        }
+        Ok(orphans) => {
+            println!(
+                "  MCP parity:  {} {} tools without CLI commands:",
+                "✗".red(),
+                orphans.len()
+            );
+            for orphan in &orphans {
+                println!("    - {}", orphan);
+            }
+        }
+        Err(e) => {
+            println!("  MCP parity:  {} error: {}", "✗".red(), e);
+        }
+    }
+
     Ok(())
+}
+
+/// Convert PascalCase to kebab-case (e.g. "NeuralLab" → "neural-lab").
+fn pascal_to_kebab(s: &str) -> String {
+    let mut result = String::new();
+    for (i, ch) in s.chars().enumerate() {
+        if ch.is_uppercase() && i > 0 {
+            result.push('-');
+        }
+        result.push(ch.to_ascii_lowercase());
+    }
+    result
+}
+
+/// Compare MCP tool definitions in `hex-cli/assets/mcp/mcp-tools.json` against
+/// the `Commands` enum in `main.rs`. Returns tool names whose expected CLI
+/// subcommand has no matching enum variant.
+fn check_mcp_cli_parity() -> anyhow::Result<Vec<String>> {
+    use std::collections::HashSet;
+
+    let cli_src = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+    let main_rs_path = format!("{}/main.rs", cli_src);
+    let mcp_tools_path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/mcp/mcp-tools.json");
+
+    // 1. Parse mcp-tools.json → extract (tool_name, top-level subcommand)
+    let mcp_json = std::fs::read_to_string(mcp_tools_path)?;
+    let mcp: serde_json::Value = serde_json::from_str(&mcp_json)?;
+
+    let tools = mcp
+        .get("tools")
+        .and_then(|t| t.as_array())
+        .ok_or_else(|| anyhow::anyhow!("mcp-tools.json missing 'tools' array"))?;
+
+    let mut mcp_tools: Vec<(String, String)> = Vec::new();
+    for tool in tools {
+        let name = tool.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        let cli = tool.get("cli").and_then(|c| c.as_str()).unwrap_or("");
+        let parts: Vec<&str> = cli.split_whitespace().collect();
+        if parts.len() >= 2 {
+            mcp_tools.push((name.to_string(), parts[1].to_string()));
+        }
+    }
+
+    // 2. Parse Commands enum from main.rs to discover all CLI subcommands.
+    let main_rs = std::fs::read_to_string(&main_rs_path)?;
+    let mut cli_subcommands = HashSet::new();
+
+    let mut in_commands_enum = false;
+    for line in main_rs.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("enum Commands") {
+            in_commands_enum = true;
+            continue;
+        }
+        if !in_commands_enum {
+            continue;
+        }
+        if trimmed == "}" {
+            break;
+        }
+
+        // Capture explicit #[command(name = "...")] or #[command(alias = "...")]
+        if let Some(rest) = trimmed.strip_prefix("#[command(") {
+            for attr in ["name = \"", "alias = \""] {
+                if let Some(start) = rest.find(attr) {
+                    let after = &rest[start + attr.len()..];
+                    if let Some(end) = after.find('"') {
+                        cli_subcommands.insert(after[..end].to_string());
+                    }
+                }
+            }
+            continue;
+        }
+
+        // Skip comments, other attributes, empty lines
+        if trimmed.starts_with("//") || trimmed.starts_with("#[") || trimmed.is_empty() {
+            continue;
+        }
+
+        // Extract variant name and convert PascalCase → kebab-case
+        let variant = trimmed
+            .split(|c: char| c == '{' || c == '(' || c == ',' || c == ' ')
+            .next()
+            .unwrap_or("")
+            .trim();
+        if !variant.is_empty() && variant.chars().next().map_or(false, |c| c.is_uppercase()) {
+            cli_subcommands.insert(pascal_to_kebab(variant));
+        }
+    }
+
+    // 3. Find MCP tools whose subcommand is absent from the Commands enum
+    let mut orphans: Vec<String> = Vec::new();
+    let mut seen_subcmds = HashSet::new();
+    for (tool_name, subcmd) in &mcp_tools {
+        if !cli_subcommands.contains(subcmd.as_str()) && seen_subcmds.insert(subcmd.clone()) {
+            orphans.push(format!("{} (expects `hex {}`)", tool_name, subcmd));
+        }
+    }
+    orphans.sort();
+    Ok(orphans)
 }
 
 async fn models() -> anyhow::Result<()> {
