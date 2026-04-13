@@ -22,8 +22,13 @@ Files & Functions:
 
 Workflow:
   Ordered commands to reproduce the current state:
+<<<<<<< HEAD
   1. <build command for your project>
   2. <validation or analysis command>
+=======
+  1. <project build command>
+  2. hex analyze .
+>>>>>>> worktree-agent-aacb2365
 
 Errors & Corrections:
   - What failed → how it was fixed. Include error messages verbatim.

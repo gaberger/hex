@@ -356,7 +356,7 @@
     {
       "name": "hex_agent_connect",
       "category": "agent",
-      "description": "Register this Claude Code session (or any agent) with hex-nexus. Returns an agentId for heartbeats and task assignment.",
+      "description": "Register this Claude Code session (or any agent) with the hex nexus daemon. Returns an agentId for heartbeats and task assignment.",
       "route": { "method": "POST", "path": "/api/agents/connect" },
       "inputSchema": {
         "type": "object",
@@ -373,7 +373,7 @@
     {
       "name": "hex_agent_disconnect",
       "category": "agent",
-      "description": "Deregister an agent from hex-nexus by its agentId",
+      "description": "Deregister an agent from the hex nexus daemon by its agentId",
       "route": { "method": "POST", "path": "/api/agents/disconnect" },
       "inputSchema": {
         "type": "object",
@@ -386,7 +386,7 @@
     {
       "name": "hex_agent_list",
       "category": "agent",
-      "description": "List all agents currently registered with hex-nexus (local + remote)",
+      "description": "List all agents currently registered with the hex nexus daemon (local + remote)",
       "route": { "method": "GET", "path": "/api/agents" },
       "inputSchema": {
         "type": "object",
@@ -397,7 +397,7 @@
     {
       "name": "hex_nexus_status",
       "category": "nexus",
-      "description": "Check hex-nexus daemon status",
+      "description": "Check hex nexus daemon status",
       "route": { "method": "GET", "path": "/api/version" },
       "inputSchema": {
         "type": "object",
@@ -408,7 +408,7 @@
     {
       "name": "hex_nexus_start",
       "category": "nexus",
-      "description": "Start the hex-nexus daemon",
+      "description": "Start the hex nexus daemon",
       "route": null,
       "inputSchema": {
         "type": "object",
@@ -443,7 +443,7 @@
     {
       "name": "hex_inference_add",
       "category": "inference",
-      "description": "Register an inference endpoint (Ollama, OpenAI, Anthropic, etc.) with hex-nexus",
+      "description": "Register an inference endpoint (Ollama, OpenAI, Anthropic, etc.) with the hex nexus daemon",
       "route": { "method": "POST", "path": "/api/inference/register" },
       "inputSchema": {
         "type": "object",
@@ -639,7 +639,7 @@
     {
       "name": "hex_project_list",
       "category": "project",
-      "description": "List all projects registered with hex-nexus",
+      "description": "List all projects registered with the hex nexus daemon",
       "route": { "method": "GET", "path": "/api/projects" },
       "inputSchema": {
         "type": "object",
@@ -650,7 +650,7 @@
     {
       "name": "hex_project_register",
       "category": "project",
-      "description": "Register a project with hex-nexus for tracking and coordination",
+      "description": "Register a project with the hex nexus daemon for tracking and coordination",
       "route": { "method": "POST", "path": "/api/projects/register" },
       "inputSchema": {
         "type": "object",

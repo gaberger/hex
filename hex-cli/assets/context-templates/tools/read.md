@@ -24,6 +24,7 @@ For files over 2000 lines, use `offset` and `limit` to read only the relevant se
 ### Common file paths in hex projects
 
 ```
+<<<<<<< HEAD
 src/ports/                   # Port traits / interfaces
 src/adapters/primary/        # Primary (driving) adapters
 src/adapters/secondary/      # Secondary (driven) adapters
@@ -33,4 +34,13 @@ docs/adrs/                   # Architecture Decision Records
 docs/workplans/              # Feature workplans
 .claude/agents/              # Agent YAML definitions
 .claude/skills/              # Skill definitions
+=======
+.claude/agents/                     # Agent YAML definitions
+.claude/skills/                     # Skill definitions
+src/core/ports/                     # Port interfaces / traits
+src/core/domain/                    # Domain types
+src/adapters/                       # Adapter implementations
+docs/adrs/                          # Architecture Decision Records
+docs/workplans/                     # Feature workplans
+>>>>>>> worktree-agent-aacb2365
 ```

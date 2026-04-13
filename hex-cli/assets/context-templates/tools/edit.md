@@ -26,6 +26,7 @@ When editing an adapter, keep the edit within that adapter's boundary:
 ### Common edit targets in hex projects
 
 ```
+<<<<<<< HEAD
 # Port trait/interface: add a new method signature
 src/ports/<port_name>.rs          # Rust
 src/core/ports/<port_name>.ts     # TypeScript
@@ -46,3 +47,21 @@ src/core/usecases/<name>.ts       # TypeScript
 ### After editing source files
 
 Verify the edit compiles before moving on: `cargo check -p <crate>` (Rust), `tsc --noEmit` (TypeScript), or equivalent for your language.
+=======
+# Port interface: add a new method signature
+src/core/ports/<port-name>.ts    (or .rs for Rust projects)
+
+# Secondary adapter: implement a new method
+src/adapters/secondary/<adapter>.ts
+
+# Primary adapter: add a new entry point
+src/adapters/primary/<adapter>.ts
+
+# Domain types: add a new value object
+src/core/domain/value-objects.ts
+```
+
+### After editing code
+
+Run your project's build check command to verify the edit compiles before moving on.
+>>>>>>> worktree-agent-aacb2365

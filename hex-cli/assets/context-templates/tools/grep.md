@@ -9,6 +9,7 @@ For open-ended searches requiring multiple rounds, use the Agent tool.
 ### Finding architectural elements
 
 ```
+<<<<<<< HEAD
 # Find a port trait/interface definition
 pattern: "pub trait .*Port"        # Rust
 pattern: "interface .*Port"        # TypeScript
@@ -28,6 +29,20 @@ output_mode: "content"
 # Find all public functions in port files
 pattern: "pub (async )?fn |export (async )?function "
 glob: "src/ports/*"
+=======
+# Find a port interface definition
+pattern: "pub trait|export interface"
+glob: "src/core/ports/*"
+output_mode: "content"
+
+# Find cross-adapter imports (architecture violation check)
+pattern: "import.*adapters/(primary|secondary)"
+output_mode: "content"
+
+# Find all public functions in port files
+pattern: "pub (async )?fn |export (async )?function"
+glob: "src/core/ports/*"
+>>>>>>> worktree-agent-aacb2365
 output_mode: "content"
 ```
 
@@ -44,6 +59,17 @@ pattern: "ADR-[0-9]+"
 output_mode: "content"
 ```
 
+<<<<<<< HEAD
+=======
+### HexFlo coordination
+
+```
+# Find task state references
+pattern: "HexFloTask|hexflo_task"
+output_mode: "files_with_matches"
+```
+
+>>>>>>> worktree-agent-aacb2365
 ### Output mode guide
 
 | Need | output_mode |

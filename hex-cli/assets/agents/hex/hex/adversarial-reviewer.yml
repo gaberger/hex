@@ -9,8 +9,8 @@ description: >
   and multi-phase feature work. Assumes nothing works until proven otherwise. Traces
   every deleted/modified artifact to all its consumers across the entire workspace.
   Runs build verification gates. Reports findings by severity with actionable fixes.
-  Born from the ADR-2604050900 lesson: deleting 12 WASM modules without tracing
-  hex-agent's imports left compilation broken for an entire session.
+  Born from the lesson that deleting modules without tracing all consumers
+  across the entire workspace left compilation broken for an entire session.
 
 model:
   tier: 3
@@ -109,6 +109,7 @@ workflow:
       description: Verify the codebase compiles before analyzing anything
       blocking: true
       action: |
+<<<<<<< HEAD
         Detect the project build system from config files, then run the
         appropriate workspace-wide check. Stop on first failure.
 
@@ -119,6 +120,11 @@ workflow:
         3. If package.json has a "test" script:
              the project's test runner (e.g. bun test, npm test)
         4. For any other build system, run the project's documented build command
+=======
+        Run the project's build verification commands in order, stop on first failure:
+        1. Run the workspace-wide compile check (e.g. cargo check --workspace, tsc --noEmit, bun run check)
+        2. Run the test suite (e.g. cargo test, bun test)
+>>>>>>> worktree-agent-aacb2365
 
         If any gate fails:
           - CRITICAL finding: record the exact error
@@ -148,6 +154,7 @@ workflow:
       description: Check configuration files for drift
       action: |
         Check these config surfaces:
+<<<<<<< HEAD
         1. Workspace manifest (Cargo.toml, package.json, etc.) — do all listed members exist?
         2. Feature flags / conditional compilation — do all gated dependencies exist?
         3. Module registry constants — do they match actually deployed modules?
@@ -155,6 +162,16 @@ workflow:
         5. Dockerfiles — do COPY commands reference existing paths?
         6. Build scripts — do they reference existing files?
         7. Sandbox/network configs — do allow-lists match actual services?
+=======
+        1. Cargo.toml workspace members — do all listed crates exist?
+        2. Feature flags — do all feature-gated deps exist?
+        3. Service configuration constants — do they match actual deployments?
+        4. Module or service tier definitions — do they match deployed components?
+        5. CI/CD configs — do they reference deleted modules or scripts?
+        6. Dockerfiles — do COPY commands reference existing paths?
+        7. package.json scripts — do they reference existing files?
+        8. sandbox.yml — do network allow-lists match actual services?
+>>>>>>> worktree-agent-aacb2365
 
     - id: cross-module-integrity
       description: Verify cross-module imports and re-exports are valid
@@ -169,8 +186,13 @@ workflow:
       description: Check that documentation matches implementation
       action: |
         Compare:
+<<<<<<< HEAD
         1. Project documentation module/package counts vs actual workspace members
         2. Documented module list vs actual directory listing
+=======
+        1. CLAUDE.md module/component counts vs actual workspace contents
+        2. CLAUDE.md module/component list vs actual directory listing
+>>>>>>> worktree-agent-aacb2365
         3. ADR status vs implementation status in workplans
         4. README instructions vs actual build commands
         5. Architecture diagrams vs actual dependency graph

@@ -74,11 +74,11 @@ const idleAgents     = statusData ? (statusData.idleAgents || 0) : 0;
 const totalTasks     = statusData ? (statusData.tasks || 0) : 0;
 const completedTasks = statusData ? (statusData.completedTasks || 0) : 0;
 
-// Check if hex-nexus daemon is running (lock file, status.json, or TCP port probe)
+// Check if hex nexus daemon is running (lock file, status.json, or TCP port probe)
 const hubLockPath = path.join(require('os').homedir(), '.hex', 'daemon', 'hub.lock');
 const hubLock = safe(() => JSON.parse(fs.readFileSync(hubLockPath, 'utf8')), null);
 const hubPidAlive = !!(hubLock && hubLock.pid && safe(() => { process.kill(hubLock.pid, 0); return true; }, false));
-// Probe hex-nexus API health endpoint (confirms it's actually hex-nexus, not another service)
+// Probe hex nexus API health endpoint (confirms it's actually hex nexus, not another service)
 const nexusAlive = safe(() => {
   const out = execFileSync('node', ['-e', `
     const http = require('http');
@@ -159,7 +159,7 @@ const agentId = agentSession ? agentSession.agentId : null;
 const agentName = agentSession ? agentSession.name : null;
 const agentIdShort = agentId ? agentId.slice(0, 8) : null;
 
-// HexFlo live status — fetch from hex-nexus REST API if daemon is running
+// HexFlo live status — fetch from hex nexus REST API if daemon is running
 let hexfloSwarms = 0, hexfloTasks = 0, hexfloTasksDone = 0, hexfloAgents = 0;
 let pulseProjects = [];
 if (hubRunning) {

@@ -26,6 +26,7 @@ jobs:
 
       - name: Install hex
         run: |
+<<<<<<< HEAD
           # TODO: Replace with your hex release URL or install method.
           # Examples:
           #   curl -fsSL https://your-org/releases/hex-linux-x86_64.tar.gz | tar -xz -C /usr/local/bin hex
@@ -34,5 +35,16 @@ jobs:
           echo "hex install step — configure for your environment"
           hex --version
 
+=======
+          # Replace with the actual hex release URL for your organization
+          curl -fsSL https://github.com/<org>/hex/releases/latest/download/hex-linux-x86_64.tar.gz \
+            | tar -xz -C /usr/local/bin hex
+          hex --version
+
+      - name: Start hex nexus daemon
+        run: hex nexus start --detach
+        continue-on-error: true
+
+>>>>>>> worktree-agent-aacb2365
       - name: Run hex ci
         run: hex ci

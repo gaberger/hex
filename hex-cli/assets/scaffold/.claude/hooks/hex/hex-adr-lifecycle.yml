@@ -28,18 +28,15 @@ checks:
         ## Consequences
 
       Validate metadata:
-        - ADR ID must use timestamp format YYMMDDHHMM (e.g. ADR-2603221500)
-        - **Status:** line must be present and use bold-label format (not ## Status heading)
-        - Status must be "Proposed" for new ADRs
-        - **Date:** must be present in YYYY-MM-DD format
-        - **Drivers:** must be present
+        - ADR number must be sequential (max existing + 1)
+        - Status must be "proposed" for new ADRs
+        - Date must be present
 
       Template for reference:
-        # ADR-{YYMMDDHHMM}: Title
+        # ADR-NNN: Title
 
-        **Status:** Proposed
-        **Date:** YYYY-MM-DD
-        **Drivers:** What triggered this decision
+        ## Status
+        Proposed — YYYY-MM-DD
 
         ## Context
         Why this decision is needed. What problem are we solving?
@@ -97,21 +94,12 @@ checks:
       Scan the staged diff for changes that warrant an ADR:
 
       Triggers for "new ADR recommended":
-<<<<<<< HEAD
-        - New port interface added to the ports layer
-        - New adapter directory created in the adapters layer
-        - Changes to composition-root / dependency-injection wiring
-        - New external dependency added to the project manifest
-        - New infrastructure module or service boundary introduced
-        - Changes to the build system or CI configuration
-=======
         - New port interface added to src/core/ports/
         - New adapter directory created in src/adapters/
         - Changes to composition-root.ts wiring
         - New external dependency added to package.json or Cargo.toml
         - New service module or WASM module created
         - Changes to the build system (scripts/, Makefile, CI config)
->>>>>>> worktree-agent-aacb2365
 
       For each trigger:
         WARN (non-blocking):

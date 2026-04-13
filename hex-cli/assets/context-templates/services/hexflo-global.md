@@ -22,9 +22,15 @@ mcp__hex__hex_hexflo_memory_search   — fuzzy search across all global keys
 Use `<project>/<category>/<descriptor>` for discoverability:
 
 ```
+<<<<<<< HEAD
 {{project_name}}/arch/core-rules-summary
 {{project_name}}/infra/service-port
 {{project_name}}/decision/database-name
+=======
+<project>/arch/hexagonal-rules-summary
+<project>/infra/service-port
+<project>/decision/database-name
+>>>>>>> worktree-agent-aacb2365
 ```
 
 ## What NOT to Store Here
