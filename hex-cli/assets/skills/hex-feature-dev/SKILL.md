@@ -144,8 +144,8 @@ Feature: {{feature_description}}
 Project root: {{cwd}}
 
 Instructions:
-1. Read src/core/ports/index.ts to understand existing contracts
-2. Read src/core/domain/ to understand existing types
+1. Read port interfaces to understand existing contracts
+2. Read domain types to understand existing value objects and entities
 3. Write behavioral specs in Given/When/Then format
 4. Include negative specs (what should NOT happen)
 5. Document any coordinate systems, sign conventions, or domain conventions
@@ -207,8 +207,8 @@ Project root: {{cwd}}
 
 Instructions:
 1. Read the behavioral specs
-2. Read src/core/ports/index.ts for existing port interfaces
-3. Read src/core/domain/ for existing domain types
+2. Read port interfaces for existing contracts
+3. Read domain types for existing value objects and entities
 4. Decompose the feature into adapter-bounded tasks
 5. Each task maps to exactly one adapter boundary
 6. Order tasks by dependency:
@@ -322,19 +322,19 @@ HexFlo task ID: {{hexflo_task_id}}
 
 Instructions:
 1. cd to the worktree directory
-2. Read the port interface from src/core/ports/index.ts
+2. Read the port interface for the contract you are implementing
 3. Read the behavioral specs relevant to your adapter
-4. TDD Red: Write failing tests in tests/unit/{{adapter}}.test.ts
-5. TDD Green: Implement adapter in src/adapters/{{layer}}/{{adapter}}.ts
+4. TDD Red: Write failing tests for the adapter
+5. TDD Green: Implement the adapter to satisfy the port contract
 6. TDD Refactor: Clean up, extract helpers if needed
-7. Run: bun run check && bun test && bun run lint
+7. Run the project's compile check, test suite, and linter
 8. Commit changes with message: feat({{adapter}}): implement {{port}} for {{feature-name}}
 9. Report the commit hash in your response
 
 Constraints:
-- NEVER import from other adapters
-- ONLY import from core/ports and core/domain
-- Use .js extensions in all relative imports
+- NEVER import from other adapters (cross-adapter coupling is forbidden)
+- ONLY depend on ports and domain types
+- Follow the project's module resolution conventions
 - Max 500 lines per file`
 })
 ```
@@ -410,9 +410,9 @@ Project root: {{cwd}}
 Instructions:
 1. Read the behavioral specs
 2. For EACH spec, verify the implementation satisfies it
-3. Run: bun run build
-4. Run: bun test
-5. Run: bunx hex analyze . (architecture boundary check)
+3. Run the project's build command
+4. Run the project's test suite
+5. Run: hex analyze . (architecture boundary check)
 6. Generate property-based tests for critical invariants
 7. Check that the app is actually runnable (not just "tests pass")
 
@@ -470,9 +470,7 @@ git merge feat/{{feature-name}}/integration --no-ff
 
 ### 6b. Run full test suite on merged result
 
-```bash
-bun run check && bun test && bun run lint && bunx hex analyze .
-```
+Run the project's compile check, test suite, linter, and `hex analyze .` to verify no boundary violations were introduced during merge.
 
 ### 6c. Clean up worktrees
 
@@ -491,8 +489,8 @@ mcp__hex__hex_hexflo_task_complete({
 
 ## Phase 7: Finalize
 
-1. Update composition-root.ts if new adapters need wiring
-2. Run final `bun run build` to verify clean build
+1. Update the composition root if new adapters need wiring
+2. Run the project's build command to verify a clean build
 3. Commit with: `feat: {{feature-name}} — {{one-line summary}}`
 
 Store final report in HexFlo memory:
