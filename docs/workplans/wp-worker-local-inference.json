@@ -46,8 +46,8 @@
           "layer": "primary",
           "description": "Create a swarm task from Mac coordinator. Bazzite worker claims it, generates code via local Ollama (not tunnel), runs compile gate, reports compile=true back to nexus. Verify with hex report swarm.",
           "deps": ["P1.1", "P1.2"],
-          "files": [],
-          "status": "todo",
+          "files": ["hex-cli/tests/worker_local_ollama_e2e.rs"],
+          "status": "done",
           "agent": "integrator"
         }
       ]
