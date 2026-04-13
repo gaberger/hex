@@ -149,16 +149,31 @@ pub fn agent_connect(
         });
     } else {
         ctx.db.hex_agent().insert(HexAgent {
-            id, name, host, project_id, project_dir, model, session_id,
+            id: id.clone(), name, host, project_id, project_dir, model, session_id,
             status: "online".to_string(),
             swarm_id: String::new(),
             role: String::new(),
             worktree_path: String::new(),
             registered_at: timestamp.clone(),
-            last_heartbeat: timestamp,
+            last_heartbeat: timestamp.clone(),
             capabilities_json,
         });
     }
+
+    // Revive any dead swarm_agent entries for this agent (TLA+ finding:
+    // after agent_evict_dead deletes the hex_agent row, a reconnecting
+    // agent re-creates hex_agent but the orphaned swarm_agent stays "dead").
+    let dead_swarm_agents: Vec<SwarmAgent> = ctx.db.swarm_agent().iter()
+        .filter(|sa| sa.id == id && sa.status == "dead")
+        .collect();
+    for sa in dead_swarm_agents {
+        ctx.db.swarm_agent().id().update(SwarmAgent {
+            status: "active".to_string(),
+            last_heartbeat: timestamp.clone(),
+            ..sa
+        });
+    }
+
     Ok(())
 }
 
