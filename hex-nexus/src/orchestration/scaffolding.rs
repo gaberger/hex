@@ -291,8 +291,9 @@ fn augment_with_error(original: &InferenceRequest, error: &str) -> InferenceRequ
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hex_core::domain::messages::Message;
+    use hex_core::domain::messages::{ContentBlock, Message};
     use hex_core::ports::inference::mock::MockInferencePort;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Mock compile checker that accepts/rejects based on content.
     struct MockCompileChecker {
@@ -308,6 +309,119 @@ mod tests {
                 Err(CompileError {
                     stderr: "mock compile error: code rejected".into(),
                 })
+            }
+        }
+    }
+
+    /// Compile checker that returns different-length errors, so we can verify
+    /// that the "best error" (shortest stderr) is selected.
+    struct VariableErrorChecker {
+        call_count: AtomicUsize,
+        errors: Vec<String>,
+    }
+
+    #[async_trait]
+    impl CompileChecker for VariableErrorChecker {
+        async fn check(&self, _code: &str) -> Result<(), CompileError> {
+            let idx = self.call_count.fetch_add(1, Ordering::SeqCst);
+            let err = self
+                .errors
+                .get(idx % self.errors.len())
+                .cloned()
+                .unwrap_or_else(|| "fallback error".into());
+            Err(CompileError { stderr: err })
+        }
+    }
+
+    /// Mock compile checker that rejects the first `reject_count` checks then
+    /// accepts all subsequent ones. Simulates error-feedback retry success.
+    struct EventuallyPassingChecker {
+        call_count: AtomicUsize,
+        reject_count: usize,
+    }
+
+    #[async_trait]
+    impl CompileChecker for EventuallyPassingChecker {
+        async fn check(&self, _code: &str) -> Result<(), CompileError> {
+            let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+            if n < self.reject_count {
+                Err(CompileError {
+                    stderr: format!("error on attempt {}", n + 1),
+                })
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    /// Mock inference port that captures all requests it receives.
+    struct CapturingInferencePort {
+        response_text: String,
+        captured: std::sync::Mutex<Vec<InferenceRequest>>,
+    }
+
+    impl CapturingInferencePort {
+        fn new(response_text: &str) -> Self {
+            Self {
+                response_text: response_text.to_string(),
+                captured: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn captured_requests(&self) -> Vec<InferenceRequest> {
+            self.captured.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl hex_core::ports::inference::IInferencePort for CapturingInferencePort {
+        async fn complete(
+            &self,
+            request: InferenceRequest,
+        ) -> Result<InferenceResponse, InferenceError> {
+            self.captured.lock().unwrap().push(request);
+            Ok(InferenceResponse {
+                content: vec![ContentBlock::Text {
+                    text: self.response_text.clone(),
+                }],
+                model_used: "mock".to_string(),
+                stop_reason: hex_core::domain::messages::StopReason::EndTurn,
+                input_tokens: 0,
+                output_tokens: self.response_text.len() as u64,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                latency_ms: 0,
+            })
+        }
+
+        async fn stream(
+            &self,
+            _request: InferenceRequest,
+        ) -> Result<
+            Box<dyn hex_core::ports::inference::futures_stream::Stream<Item = hex_core::ports::inference::StreamChunk> + Send + Unpin>,
+            InferenceError,
+        > {
+            unimplemented!("not needed for scaffolding tests")
+        }
+
+        async fn health(
+            &self,
+        ) -> Result<hex_core::ports::inference::HealthStatus, InferenceError> {
+            Ok(hex_core::ports::inference::HealthStatus::Ok {
+                models: vec![],
+            })
+        }
+
+        fn capabilities(&self) -> hex_core::ports::inference::InferenceCapabilities {
+            hex_core::ports::inference::InferenceCapabilities {
+                models: vec![],
+                supports_tool_use: false,
+                supports_thinking: false,
+                supports_caching: false,
+                supports_streaming: false,
+                max_context_tokens: 8_192,
+                cost_per_mtok_input: 0.0,
+                cost_per_mtok_output: 0.0,
             }
         }
     }
@@ -380,5 +494,144 @@ mod tests {
             }
             _ => panic!("expected Success"),
         }
+    }
+
+    // ── P3.2: Error-feedback retry loop tests ─────────────────────────
+
+    #[tokio::test]
+    async fn retry_succeeds_on_second_round() {
+        // N=2, reject first 2 attempts (round 0), accept on attempt 3 (round 1).
+        let mock = MockInferencePort::with_response("fixed code");
+        let checker = EventuallyPassingChecker {
+            call_count: AtomicUsize::new(0),
+            reject_count: 2, // fail first round (2 attempts), pass first of second round
+        };
+        let config = ScaffoldConfig {
+            n_for_tier: |_| 2,
+            max_retries: 2,
+        };
+        let dispatch =
+            ScaffoldedDispatch::new(Arc::new(mock), Box::new(checker)).with_config(config);
+
+        let result = dispatch.dispatch(&make_request(), TaskTier::T2).await.unwrap();
+        match result {
+            ScaffoldResult::Success {
+                attempt,
+                total_attempts,
+                ..
+            } => {
+                // 2 failed in round 0, then 1st attempt in round 1 passes → attempt 3
+                assert_eq!(attempt, 3);
+                assert_eq!(total_attempts, 3);
+            }
+            other => panic!("expected Success, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn error_feedback_augments_prompt_on_retry() {
+        // Use a capturing mock to inspect what the inference port receives.
+        // N=1, max_retries=1 → round 0 fails, round 1 retries with error in prompt.
+        let capturing = Arc::new(CapturingInferencePort::new("bad code"));
+        let checker = MockCompileChecker {
+            accept_fn: Box::new(|_| false), // always reject
+        };
+        let config = ScaffoldConfig {
+            n_for_tier: |_| 1,
+            max_retries: 1,
+        };
+        let dispatch = ScaffoldedDispatch::new(capturing.clone(), Box::new(checker))
+            .with_config(config);
+
+        let _ = dispatch.dispatch(&make_request(), TaskTier::T1).await.unwrap();
+
+        let reqs = capturing.captured_requests();
+        // 2 requests total: round 0 (original) + round 1 (augmented)
+        assert_eq!(reqs.len(), 2);
+
+        // First request should be the original (no error feedback)
+        let first_text = extract_user_text(&reqs[0]);
+        assert!(
+            !first_text.contains("compiler error"),
+            "first request should not contain error feedback"
+        );
+
+        // Second request should contain the error feedback suffix
+        let second_text = extract_user_text(&reqs[1]);
+        assert!(
+            second_text.contains("The previous attempt produced this compiler error"),
+            "retry request must contain error feedback, got: {second_text}"
+        );
+        assert!(
+            second_text.contains("mock compile error"),
+            "retry request must include the actual stderr"
+        );
+    }
+
+    #[tokio::test]
+    async fn best_error_is_shortest_stderr() {
+        // Two completions per round with different error lengths; best_error
+        // should be the shorter one.
+        let mock = MockInferencePort::with_response("bad code");
+        let checker = VariableErrorChecker {
+            call_count: AtomicUsize::new(0),
+            errors: vec![
+                "a]long error message that goes on and on".into(),
+                "short".into(),
+            ],
+        };
+        let config = ScaffoldConfig {
+            n_for_tier: |_| 2,
+            max_retries: 0, // no retries — just one round
+        };
+        let dispatch =
+            ScaffoldedDispatch::new(Arc::new(mock), Box::new(checker)).with_config(config);
+
+        let result = dispatch.dispatch(&make_request(), TaskTier::T2).await.unwrap();
+        match result {
+            ScaffoldResult::CompileGateFailed { best_error, .. } => {
+                assert_eq!(best_error, "short");
+            }
+            other => panic!("expected CompileGateFailed, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn total_attempts_equals_n_times_rounds() {
+        // N=3, max_retries=2 → 3 rounds × 3 per round = 9 total.
+        let mock = MockInferencePort::with_response("bad code");
+        let checker = MockCompileChecker {
+            accept_fn: Box::new(|_| false),
+        };
+        let config = ScaffoldConfig {
+            n_for_tier: |_| 3,
+            max_retries: 2,
+        };
+        let dispatch =
+            ScaffoldedDispatch::new(Arc::new(mock), Box::new(checker)).with_config(config);
+
+        let result = dispatch.dispatch(&make_request(), TaskTier::T2).await.unwrap();
+        match result {
+            ScaffoldResult::CompileGateFailed { total_attempts, .. } => {
+                assert_eq!(total_attempts, 9); // 3 * (1 + 2)
+            }
+            other => panic!("expected CompileGateFailed, got {:?}", other),
+        }
+    }
+
+    /// Helper: extract concatenated user-message text from an InferenceRequest.
+    fn extract_user_text(req: &InferenceRequest) -> String {
+        req.messages
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .filter_map(|block| {
+                if let ContentBlock::Text { text } = block {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("")
     }
 }

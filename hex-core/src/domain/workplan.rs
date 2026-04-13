@@ -86,7 +86,9 @@ pub struct WorkplanTask {
     ///   script    — run a command (test, build, lint, format)
     ///   codegen   — code generation (try template first, fall back to inference)
     ///   inference — explicitly requires LLM reasoning
-    /// When absent, the executor classifies based on task title heuristics.
+    /// Tier mapping: scaffold/transform/script → T1, codegen → T2,
+    /// inference → T2.5. When absent, the executor classifies from
+    /// layer + deps heuristics (ADR-2604120202 P1.3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strategy_hint: Option<String>,
 }

@@ -1,27 +1,42 @@
 # planner — Agent definition for the planning phase
 # Decomposes requirements into adapter-bounded tasks with dependency ordering
+# Optimized: Q4 prefix sharing + flat instructions + context-first
 
 name: planner
 type: planner
-version: "1.0.0"
+version: "1.1.0"
 description: >
   Decomposes high-level requirements into a task graph of adapter-bounded work units.
   Each task maps to exactly one adapter boundary and one git worktree. Produces a
   dependency-ordered workplan that the swarm coordinator uses for agent assignment.
 
+# ── Shared prefix (cached across all hex agents) ──────────────────────
+shared_prefix:
+  id: hex-agent-common-v1
+  constraints:
+    - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_analyze not `hex analyze` via Bash, mcp__hex__hex_adr_search not `hex adr search`."
+    - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP current work, save state, acknowledge via hex inbox ack, and inform the coordinator. This overrides all other work."
+    - "BOUNDARY RULE: Adapters must NEVER import other adapters. Only import from core/ports and core/domain."
+    - "COMMIT RULE: Every agent prompt that writes code MUST end with explicit git add <files> && git commit."
+  tools_preference: >
+    ALWAYS prefer mcp__hex__* tools over Bash equivalents when a hex MCP tool
+    covers the operation. Use Bash only for operations with no mcp__hex__ equivalent.
+
+# ── Model routing (ADR-2604120202 tier config) ────────────────────────
 model:
-  tier: 3
+  tier: T3
   preferred: opus
   fallback: sonnet
   reasoning: >
     Planning requires architectural reasoning, dependency analysis, and task decomposition.
     This is high-complexity work that benefits from Opus-level reasoning.
   quantization:
-    default: q8          # Q8 minimum — planning requires high fidelity reasoning
-    minimum: q4          # Never below Q4 for architectural decisions
-    on_complexity_high: cloud  # Critical planning always escalates to cloud
-    on_failure: cloud    # No degraded-quality planning allowed
+    default: q8
+    minimum: q4
+    on_complexity_high: cloud
+    on_failure: cloud
 
+# ── Context loading (FRONT-LOADED before instructions) ────────────────
 context:
   load_on_start:
     - path: docs/architecture/ARCHITECTURE.md
@@ -52,9 +67,8 @@ context:
       block_at_pct: 90
       relief: escalate
 
+# ── Agent-specific constraints ────────────────────────────────────────
 constraints:
-  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_analyze not `hex analyze` via Bash, mcp__hex__hex_adr_list not `hex adr list`."
-  - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP planning, save workplan state, acknowledge via hex inbox ack, and inform the user. This overrides all other work."
   - Every task must map to exactly one adapter boundary
   - Tasks must not cross adapter boundaries (no shared file edits)
   - Port interface changes require a dedicated task that runs before adapter tasks
@@ -63,10 +77,8 @@ constraints:
   - Each task must have a clear done-condition (compile + lint + test pass)
   - Task descriptions must include the specific port interface being implemented
 
+# ── Tools ─────────────────────────────────────────────────────────────
 tools:
-  preference: >
-    ALWAYS prefer mcp__hex__* tools over Bash equivalents when a hex MCP tool
-    covers the operation. Use Bash only for operations with no mcp__hex__ equivalent.
   required:
     - Read
     - Glob
@@ -78,6 +90,7 @@ tools:
     - mcp__hex__hex_hexflo_task_list
     - mcp__hex__hex_hexflo_memory_store
 
+# ── Inputs / Outputs ─────────────────────────────────────────────────
 inputs:
   requirements:
     type: string[]
@@ -119,59 +132,59 @@ outputs:
         agent_type: hex-coder | integrator
         priority: number
 
+# ── Workflow (flat numbered steps per phase) ──────────────────────────
 workflow:
   steps:
     - id: analyze-requirements
       description: Parse and categorize each requirement
       action: |
-        For each requirement:
-          1. Identify which adapter(s) it affects
-          2. Identify which port interface(s) it touches
-          3. Estimate complexity (simple/medium/complex)
-          4. Note any cross-adapter dependencies
+        1. Identify which adapter(s) each requirement affects
+        2. Identify which port interface(s) it touches
+        3. Estimate complexity (simple/medium/complex)
+        4. Note any cross-adapter dependencies
 
     - id: identify-adapter-boundaries
       description: Map requirements to adapter boundaries
       action: |
         Group requirements by adapter:
-          primary/cli-adapter     -> ICodeGenerationPort, IWorkplanPort
-          primary/http-adapter    -> ICodeGenerationPort, ISummaryPort
-          primary/agent-adapter   -> all input ports
-          secondary/ast-adapter   -> IASTPort
-          secondary/llm-adapter   -> ILLMPort
-          secondary/build-adapter -> IBuildPort
-          secondary/git-adapter   -> IGitPort, IWorktreePort
-          secondary/fs-adapter    -> IFileSystemPort
+        1. primary/cli-adapter     → ICodeGenerationPort, IWorkplanPort
+        2. primary/http-adapter    → ICodeGenerationPort, ISummaryPort
+        3. primary/agent-adapter   → all input ports
+        4. secondary/ast-adapter   → IASTPort
+        5. secondary/llm-adapter   → ILLMPort
+        6. secondary/build-adapter → IBuildPort
+        7. secondary/git-adapter   → IGitPort, IWorktreePort
+        8. secondary/fs-adapter    → IFileSystemPort
 
     - id: build-dependency-graph
       description: Order tasks by dependencies
       action: |
         Rules for dependency ordering:
-          1. Port interface changes before adapter implementations
-          2. Secondary adapters before primary adapters (primary depends on secondary)
-          3. Domain entity changes before any adapter changes
-          4. Unit tests run within adapter task (not separate)
-          5. Integration tests after all adapter tasks they cover
+        1. Port interface changes before adapter implementations
+        2. Secondary adapters before primary adapters (primary depends on secondary)
+        3. Domain entity changes before any adapter changes
+        4. Unit tests run within adapter task (not separate)
+        5. Integration tests after all adapter tasks they cover
 
     - id: assign-worktrees
       description: Map each task to a git worktree branch
       action: |
         Naming convention: feat/{{adapter-name}}
         Examples:
-          feat/cli-adapter
-          feat/git-adapter
-          feat/llm-adapter
+        1. feat/cli-adapter
+        2. feat/git-adapter
+        3. feat/llm-adapter
         Special branches:
-          feat/port-changes    (for port interface modifications)
-          feat/domain-changes  (for entity/value object changes)
-          feat/integration     (for integration test phase)
+        4. feat/port-changes    (for port interface modifications)
+        5. feat/domain-changes  (for entity/value object changes)
+        6. feat/integration     (for integration test phase)
 
     - id: emit-workplan
       description: Output the structured workplan
       action: |
-        Write workplan to docs/workplans/{{workplan_id}}.json
-        Register tasks with HexFlo via mcp__hex__hex_hexflo_task_create
-        Store workplan reference in HexFlo memory
+        1. Write workplan to docs/workplans/{{workplan_id}}.json
+        2. Register tasks with HexFlo via mcp__hex__hex_hexflo_task_create
+        3. Store workplan reference in HexFlo memory
 
 escalation:
   conditions:
@@ -181,3 +194,10 @@ escalation:
   action: >
     Flag for human review with detailed breakdown of the complexity
     and suggested simplification strategies.
+
+# ── Prompt suffix (repeated key constraints — recency bias) ───────────
+prompt_suffix:
+  - "REMEMBER: Every task must map to exactly one adapter boundary."
+  - "REMEMBER: Never create tasks that cross adapter boundaries."
+  - "REMEMBER: Include done-conditions for every task (compile + lint + test)."
+  - "REMEMBER: Use mcp__hex__* tools, not Bash equivalents."

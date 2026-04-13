@@ -1,16 +1,30 @@
 # integrator — Agent definition for the integration phase
 # Merges worktrees and runs cross-adapter integration tests
+# Optimized: Q4 prefix sharing + flat instructions + context-first
 
 name: integrator
 type: integrator
-version: "1.0.0"
+version: "1.1.0"
 description: >
   Handles the integration phase after parallel adapter coding is complete.
   Merges git worktrees back to the target branch, resolves merge conflicts,
   runs cross-adapter integration tests, and ensures the full system works together.
 
+# ── Shared prefix (cached across all hex agents) ──────────────────────
+shared_prefix:
+  id: hex-agent-common-v1
+  constraints:
+    - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_hexflo_task_complete not `hex task complete` via Bash."
+    - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP current work, save state, acknowledge via hex inbox ack, and inform the coordinator. This overrides all other work."
+    - "BOUNDARY RULE: Adapters must NEVER import other adapters. Only import from core/ports and core/domain."
+    - "COMMIT RULE: Every agent prompt that writes code MUST end with explicit git add <files> && git commit."
+  tools_preference: >
+    ALWAYS prefer mcp__hex__* tools over Bash equivalents when a hex MCP tool
+    covers the operation. Use Bash only for operations with no mcp__hex__ equivalent.
+
+# ── Model routing (ADR-2604120202 tier config) ────────────────────────
 model:
-  tier: 3
+  tier: T3
   preferred: opus
   fallback: sonnet
   reasoning: >
@@ -18,6 +32,7 @@ model:
     resolving conflicts that span architectural layers, and reasoning about
     cross-cutting concerns. Opus-level reasoning is appropriate.
 
+# ── Context loading (FRONT-LOADED before instructions) ────────────────
 context:
   load_strategy:
     - level: L2
@@ -47,9 +62,8 @@ context:
       integration_tests: 20000
       generation_space: 30000
 
+# ── Agent-specific constraints ────────────────────────────────────────
 constraints:
-  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_hexflo_task_complete not `hex task complete` via Bash."
-  - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP merge operations, save integration state, acknowledge via hex inbox ack, and inform the coordinator. This overrides all other work."
   - Never modify adapter internals during merge (only resolve conflicts)
   - If a conflict requires adapter logic changes, flag for hex-coder re-run
   - Integration tests must test port contract compliance across adapters
@@ -57,6 +71,7 @@ constraints:
   - Preserve git history — use merge commits, not squash
   - Tag the integration commit for traceability
 
+# ── Tools ─────────────────────────────────────────────────────────────
 tools:
   required:
     - Read
@@ -74,6 +89,7 @@ tools:
     - mcp__hex__hex_hexflo_memory_store
     - mcp__hex__hex_hexflo_memory_retrieve
 
+# ── Inputs / Outputs ─────────────────────────────────────────────────
 inputs:
   workplan:
     type: Workplan
@@ -107,30 +123,29 @@ outputs:
       integration_tests_failed: number
       final_commit: string
 
+# ── Workflow (flat numbered steps per phase) ──────────────────────────
 workflow:
   phases:
     - id: pre-merge-check
-      name: "Verify all worktrees are ready"
+      name: "Phase 1 — Verify All Worktrees Ready"
       steps:
-        - List all worktrees and verify each has a clean working tree
-        - Verify each worktree's tests pass independently
-        - Load L1 summaries of all adapter changes across worktrees
-        - Identify potential conflict zones (shared files, port changes)
+        - "1. List all worktrees and verify each has a clean working tree"
+        - "2. Verify each worktree's tests pass independently"
+        - "3. Load L1 summaries of all adapter changes across worktrees"
+        - "4. Identify potential conflict zones (shared files, port changes)"
 
     - id: merge-ordering
-      name: "Determine optimal merge order"
+      name: "Phase 2 — Determine Merge Order"
       steps:
-        - |
-          Merge order priority:
-            1. Port/domain changes first (foundational)
-            2. Secondary adapters next (depended upon)
-            3. Primary adapters last (depend on secondary)
-            4. Infrastructure changes at the appropriate layer
-        - Build merge sequence respecting dependency ordering
-        - If circular dependencies detected, escalate to planner
+        - "1. Port/domain changes first (foundational)"
+        - "2. Secondary adapters next (depended upon)"
+        - "3. Primary adapters last (depend on secondary)"
+        - "4. Infrastructure changes at the appropriate layer"
+        - "5. Build merge sequence respecting dependency ordering"
+        - "6. If circular dependencies detected, escalate to planner"
 
     - id: sequential-merge
-      name: "Merge worktrees one at a time"
+      name: "Phase 3 — Merge Worktrees Sequentially"
       per_worktree:
         - id: attempt-merge
           action: bash
@@ -138,11 +153,10 @@ workflow:
 
         - id: check-conflicts
           condition: merge_failed
-          action: analyze
           steps:
-            - List conflicting files
-            - Categorize conflicts
-            - For each conflict, determine resolution strategy
+            - "1. List conflicting files"
+            - "2. Categorize each conflict by type"
+            - "3. Determine resolution strategy per conflict"
 
         - id: resolve-conflicts
           condition: has_conflicts
@@ -179,13 +193,13 @@ workflow:
             - "npx tsc --noEmit"
             - "npx eslint src/ --ext .ts"
           on_fail: |
-            Merge introduced compilation errors. Analyze and fix:
+            Merge introduced compilation errors. Fix:
             1. Missing imports from merged code
             2. Type mismatches from interface evolution
             3. Duplicate declarations
 
     - id: integration-tests
-      name: "Run cross-adapter integration tests"
+      name: "Phase 4 — Run Integration Tests"
       steps:
         - id: run-existing-tests
           action: bash
@@ -197,29 +211,29 @@ workflow:
           action: generate
           template: integration-test
           test_patterns:
-            - "Use case end-to-end: Spec -> CodeGeneration -> Build -> Test"
-            - "Port contract compliance: each adapter satisfies its port interface"
-            - "Error propagation: errors flow correctly across adapter boundaries"
-            - "Concurrent access: multiple adapters used simultaneously"
+            - "1. Use case end-to-end: Spec → CodeGeneration → Build → Test"
+            - "2. Port contract compliance: each adapter satisfies its port interface"
+            - "3. Error propagation: errors flow correctly across adapter boundaries"
+            - "4. Concurrent access: multiple adapters used simultaneously"
 
         - id: run-full-suite
           action: bash
           command: "npm test"
           timeout_ms: 120000
           on_fail: |
-            Integration test failures indicate cross-adapter issues.
+            Integration test failures indicate cross-adapter issues:
             1. Identify which adapter pair is failing
             2. Check port contract compliance on both sides
             3. Fix in the integration branch (not in adapter worktrees)
             4. If fix requires adapter logic change, reassign to hex-coder
 
     - id: cleanup
-      name: "Clean up worktrees and finalize"
+      name: "Phase 5 — Clean Up and Finalize"
       steps:
-        - Remove merged worktrees
-        - Tag the integration commit
-        - Generate integration report
-        - Store report in HexFlo memory
+        - "1. Remove merged worktrees"
+        - "2. Tag the integration commit"
+        - "3. Generate integration report"
+        - "4. Store report in HexFlo memory"
 
   commit:
     when: all_integration_tests_pass
@@ -235,3 +249,10 @@ escalation:
     Halt integration. Produce detailed report of failures.
     Recommend re-planning with revised adapter boundaries.
     Notify swarm coordinator for human escalation.
+
+# ── Prompt suffix (repeated key constraints — recency bias) ───────────
+prompt_suffix:
+  - "REMEMBER: Never modify adapter internals during merge — only resolve conflicts."
+  - "REMEMBER: Merge order is domain → ports → secondary → primary."
+  - "REMEMBER: Preserve git history with merge commits, not squash."
+  - "REMEMBER: Use mcp__hex__* tools, not Bash equivalents."

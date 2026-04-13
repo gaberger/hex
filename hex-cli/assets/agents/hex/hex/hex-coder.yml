@@ -1,25 +1,40 @@
 # hex-coder — Agent definition for coding within one adapter boundary
 # Implements port interfaces with TDD feedback loops
+# Optimized: Q4 prefix sharing + flat instructions + context-first
 
 name: hex-coder
 type: coder
-version: "1.0.0"
+version: "1.1.0"
 description: >
   Generates production code within a single hexagonal adapter boundary. Uses TDD
   (London school, mock-first) with a compile-lint-test feedback loop. Never crosses
   adapter boundaries. Operates in an isolated git worktree.
 
+# ── Shared prefix (cached across all hex agents) ──────────────────────
+shared_prefix:
+  id: hex-agent-common-v1
+  constraints:
+    - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_analyze not `hex analyze` via Bash, mcp__hex__hex_adr_search not `hex adr search`."
+    - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP current work, save state, acknowledge via hex inbox ack, and inform the coordinator. This overrides all other work."
+    - "BOUNDARY RULE: Adapters must NEVER import other adapters. Only import from core/ports and core/domain."
+    - "COMMIT RULE: Every agent prompt that writes code MUST end with explicit git add <files> && git commit."
+  tools_preference: >
+    ALWAYS prefer mcp__hex__* tools over Bash equivalents when a hex MCP tool
+    covers the operation. Use Bash only for operations with no mcp__hex__ equivalent.
+
+# ── Model routing (ADR-2604120202 tier config) ────────────────────────
 model:
-  tier: 2
-  preferred: gpt-4o-mini        # → openai/gpt-4o-mini (capable, reliable, not :free)
+  tier: T2
+  preferred: gpt-4o-mini        # → openai/gpt-4o-mini (capable, reliable)
   fallback: haiku               # → anthropic/claude-haiku-4-5 (fast paid fallback)
   upgrade_to: sonnet            # → anthropic/claude-sonnet-4-6 (after 3 failed iterations)
   upgrade_condition: >
     Upgrade to Sonnet when: feedback loop exceeds 3 iterations without resolution,
     or when the adapter requires complex algorithmic logic. Upgrade to Opus when
     the task involves cross-cutting architecture changes or security-sensitive code.
-  timeout_secs: 180             # hard cap per inference request
+  timeout_secs: 180
 
+# ── Context loading (FRONT-LOADED before instructions) ────────────────
 context:
   load_strategy:
     - level: L1
@@ -54,9 +69,8 @@ context:
       block_at_pct: 90
       relief: summarize_history
 
+# ── Agent-specific constraints ────────────────────────────────────────
 constraints:
-  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_analyze not `hex analyze` via Bash, mcp__hex__hex_adr_search not `hex adr search`."
-  - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP coding, commit any in-progress work, acknowledge via hex inbox ack, and inform the coordinator. This overrides all other work."
   - Never import from other adapters (only from core/ports and core/domain)
   - Always implement the full port interface (no partial implementations)
   - Every public method must have unit tests
@@ -66,10 +80,8 @@ constraints:
   - Code must compile and lint clean before committing
   - Follow existing project naming conventions
 
+# ── Tools ─────────────────────────────────────────────────────────────
 tools:
-  preference: >
-    ALWAYS prefer mcp__hex__* tools over Bash equivalents when a hex MCP tool
-    covers the operation. Use Bash only for operations with no mcp__hex__ equivalent.
   required:
     - Read
     - Write
@@ -85,10 +97,11 @@ tools:
     - mcp__hex__hex_hexflo_task_create
     - mcp__hex__hex_hexflo_task_complete
     - mcp__hex__hex_hexflo_memory_store
-  inbox:  # ADR-060
+  inbox:
     - mcp__hex__hex_inbox_query
     - mcp__hex__hex_inbox_ack
 
+# ── Inputs / Outputs ─────────────────────────────────────────────────
 inputs:
   task:
     type: WorkplanStep
@@ -129,82 +142,76 @@ outputs:
       iterations: number
       files_changed: string[]
 
+# ── Workflow (flat numbered steps per phase) ──────────────────────────
 workflow:
   phases:
     - id: pre_validate
-      name: "Pre-Generation — Validate Boundaries"
-      description: >
-        BEFORE writing any code, validate that planned imports respect hex
-        boundary rules. Uses import-boundary-checker.ts (same rules as
-        post-build arch-analyzer, but enforced BEFORE code is written).
+      name: "Phase 1 — Validate Boundaries"
       steps:
-        - Classify target file layer using classifyLayer(filePath)
-        - Call allowedImportsFor(filePath) to get permitted import targets
-        - List all planned imports for the file being generated
-        - Call validatePlannedImports(filePath, plannedImports)
-        - "If violations found: DO NOT proceed to Red phase. Fix imports first."
-        - "If warnings found: log them but proceed with caution"
+        - "1. Classify target file layer using classifyLayer(filePath)"
+        - "2. Call allowedImportsFor(filePath) to get permitted import targets"
+        - "3. List all planned imports for the file being generated"
+        - "4. Call validatePlannedImports(filePath, plannedImports)"
+        - "5. If violations found — STOP. Fix imports before proceeding"
+        - "6. If warnings found — log them, proceed with caution"
       gate:
         name: boundary_check
         blocking: true
         on_fail: |
-          Planned imports violate hex boundary rules. Before writing code:
-            1. Check which layers this adapter may import from (allowedImportsFor)
-            2. Replace forbidden imports with port-based alternatives
-            3. If domain types are needed, import via ports/ re-exports
-            4. Re-run boundary check before proceeding
+          Planned imports violate hex boundary rules. Fix before writing code:
+          1. Check which layers this adapter may import from (allowedImportsFor)
+          2. Replace forbidden imports with port-based alternatives
+          3. If domain types are needed, import via ports/ re-exports
+          4. Re-run boundary check before proceeding
 
     - id: red
-      name: "TDD Red — Write Failing Tests"
+      name: "Phase 2 — TDD Red (Write Failing Tests)"
       steps:
-        - Read port interface at L2 for method contracts
-        - Generate comprehensive unit test file
-        - "Test patterns: happy path, error cases, edge cases, async behavior"
-        - Run tests to verify they fail
-        - If tests pass without implementation, tests are trivial — rewrite
+        - "1. Read port interface at L2 for method contracts"
+        - "2. Generate comprehensive unit test file"
+        - "3. Cover: happy path, error cases, edge cases, async behavior"
+        - "4. Run tests to verify they fail"
+        - "5. If tests pass without implementation — tests are trivial, rewrite"
 
     - id: green
-      name: "TDD Green — Minimal Implementation"
+      name: "Phase 3 — TDD Green (Minimal Implementation)"
       steps:
-        - Implement adapter class with constructor (dependency injection)
-        - Implement each port method with minimal passing logic
-        - Run tests after each method implementation
-        - Stop as soon as all tests pass
+        - "1. Implement adapter class with constructor (dependency injection)"
+        - "2. Implement each port method with minimal passing logic"
+        - "3. Run tests after each method implementation"
+        - "4. Stop as soon as all tests pass"
 
     - id: refactor
-      name: "TDD Refactor — Clean Up"
+      name: "Phase 4 — TDD Refactor"
       steps:
-        - Remove duplication
-        - Extract helper functions for complex logic
-        - Improve error messages
-        - Add JSDoc/documentation
-        - Run full quality gate to verify no regressions
+        - "1. Remove duplication"
+        - "2. Extract helper functions for complex logic"
+        - "3. Improve error messages"
+        - "4. Add JSDoc/documentation"
+        - "5. Run full quality gate to verify no regressions"
 
     - id: test_coverage_gate
-      name: "Test Type Gate — Verify Minimum Test Categories"
-      description: >
-        After TDD refactor, verify that minimum test types are present.
-        Blocks commit if required test categories are missing.
+      name: "Phase 5 — Test Type Gate"
       steps:
-        - "Check: unit tests exist for all public methods (from Red phase)"
-        - "Check: at least one integration test exists if adapter has external deps"
-        - "Check: at least one property test exists for domain functions (fast-check)"
-        - "Check: error path tests exist (not just happy path)"
+        - "1. Verify unit tests exist for all public methods"
+        - "2. Verify at least one integration test if adapter has external deps"
+        - "3. Verify at least one property test for domain functions (fast-check)"
+        - "4. Verify error path tests exist (not just happy path)"
       gate:
         name: test_types
         blocking: true
         required_categories:
-          - unit          # From TDD Red phase
-          - error_paths   # At minimum, test error handling
-          - integration   # If adapter touches external systems
+          - unit
+          - error_paths
+          - integration
         recommended_categories:
-          - property      # fast-check generative tests for domain logic
+          - property
         on_fail: |
           Missing required test categories. Before committing:
-            1. Add missing test types (see required_categories above)
-            2. For property tests, use fast-check: fc.assert(fc.property(...))
-            3. For integration tests, test with real adapter dependencies
-            4. Re-run test suite to verify all categories pass
+          1. Add missing test types (see required_categories above)
+          2. For property tests, use fast-check: fc.assert(fc.property(...))
+          3. For integration tests, test with real adapter dependencies
+          4. Re-run test suite to verify all categories pass
 
   feedback_loop:
     max_iterations: 5
@@ -217,9 +224,9 @@ workflow:
         timeout_ms: 10000
         on_fail: |
           Parse compiler errors. Focus on:
-            - Type mismatches (check port interface)
-            - Missing imports (add from core/ports)
-            - Syntax errors (fix directly)
+          1. Type mismatches (check port interface)
+          2. Missing imports (add from core/ports)
+          3. Syntax errors (fix directly)
 
       - name: lint
         command:
@@ -239,10 +246,10 @@ workflow:
         timeout_ms: 30000
         on_fail: |
           Parse test failure output. For each failing test:
-            1. Read the test assertion
-            2. Read the actual vs expected
-            3. Determine if it's a code bug or test bug
-            4. Apply targeted fix
+          1. Read the test assertion
+          2. Read the actual vs expected
+          3. Determine if it's a code bug or test bug
+          4. Apply targeted fix
 
     on_max_iterations:
       action: escalate
@@ -264,3 +271,10 @@ quality_thresholds:
   max_file_lines: 500
   max_function_lines: 50
   max_cyclomatic_complexity: 10
+
+# ── Prompt suffix (repeated key constraints — recency bias) ───────────
+prompt_suffix:
+  - "REMEMBER: Only edit files within your assigned adapter boundary."
+  - "REMEMBER: Never import from other adapters — only core/ports and core/domain."
+  - "REMEMBER: Commit your work with git add <files> && git commit when all gates pass."
+  - "REMEMBER: Use mcp__hex__* tools, not Bash equivalents."
