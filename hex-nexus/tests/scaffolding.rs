@@ -67,7 +67,7 @@ impl IInferencePort for SequencedMockInference {
         &self,
         _request: InferenceRequest,
     ) -> Result<
-        Box<dyn futures_core::Stream<Item = StreamChunk> + Send + Unpin>,
+        Box<dyn hex_core::ports::inference::futures_stream::Stream<Item = StreamChunk> + Send + Unpin>,
         InferenceError,
     > {
         Err(InferenceError::ProviderUnavailable(
@@ -146,13 +146,10 @@ fn make_request_with_grammar(grammar: &str) -> InferenceRequest {
     }
 }
 
-/// Config with explicit N-per-tier and retry count for deterministic tests.
-fn test_config(n: usize, retries: usize) -> ScaffoldConfig {
-    ScaffoldConfig {
-        n_for_tier: move |_| n,
-        max_retries: retries,
-    }
-}
+// Non-capturing tier functions (fn pointers can't capture).
+fn n_always_1(_: TaskTier) -> usize { 1 }
+fn n_always_2(_: TaskTier) -> usize { 2 }
+fn n_always_3(_: TaskTier) -> usize { 3 }
 
 // ── (a) Best-of-3: second attempt compiles → returns second ──
 
@@ -170,7 +167,7 @@ async fn best_of_3_second_attempt_compiles_returns_second() {
     };
 
     let dispatch = ScaffoldedDispatch::new(Arc::new(mock), Box::new(checker))
-        .with_config(test_config(3, 0)); // N=3, no retries
+        .with_config(ScaffoldConfig { n_for_tier: n_always_3, max_retries: 0 });
 
     let result = dispatch
         .dispatch(&make_request(), TaskTier::T2)
@@ -220,7 +217,7 @@ async fn all_fail_then_retry_with_error_succeeds_on_retry_1() {
     };
 
     let dispatch = ScaffoldedDispatch::new(Arc::new(mock), Box::new(checker))
-        .with_config(test_config(3, 1)); // N=3, 1 retry
+        .with_config(ScaffoldConfig { n_for_tier: n_always_3, max_retries: 1 });
 
     let result = dispatch
         .dispatch(&make_request(), TaskTier::T2)
@@ -260,7 +257,7 @@ async fn all_fail_all_retries_returns_compile_gate_failed_with_count() {
     };
 
     let dispatch = ScaffoldedDispatch::new(Arc::new(mock), Box::new(checker))
-        .with_config(test_config(2, 1)); // N=2, 1 retry
+        .with_config(ScaffoldConfig { n_for_tier: n_always_2, max_retries: 1 });
 
     let result = dispatch
         .dispatch(&make_request(), TaskTier::T2)
@@ -305,7 +302,7 @@ async fn grammar_is_forwarded_to_inference_adapter() {
     };
 
     let dispatch = ScaffoldedDispatch::new(mock.clone(), Box::new(checker))
-        .with_config(test_config(1, 0));
+        .with_config(ScaffoldConfig { n_for_tier: n_always_1, max_retries: 0 });
 
     let request = make_request_with_grammar(grammar_str);
 
