@@ -165,7 +165,14 @@ async fn status() -> anyhow::Result<()> {
     let base_url = format!("http://127.0.0.1:{}", port);
     let client = reqwest::Client::new();
     
-    let url = format!("{}/api/brain/status", base_url);
+    // Scope to current project so the queue counts reflect only this repo's
+    // enqueued work. Without a .hex/project.json in cwd we fall back to the
+    // unscoped endpoint (useful for operator views on hex-intf itself).
+    // project_id is a UUID → safe as a URL query value without encoding.
+    let url = match brain_project_id() {
+        Some(pid) => format!("{}/api/brain/status?project={}", base_url, pid),
+        None => format!("{}/api/brain/status", base_url),
+    };
     let resp = client.get(&url).send().await?;
     
     if resp.status() == 404 {
@@ -184,13 +191,36 @@ async fn status() -> anyhow::Result<()> {
     println!("  Test Model: {}", body.get("test_model").unwrap_or(&json!("nemotron-mini")));
     println!("  Interval: {} seconds", body.get("interval_secs").unwrap_or(&json!(600)));
     println!("  Last Test: {}", body.get("last_test").unwrap_or(&json!("never")));
-    let queue = body.get("queue_pending").and_then(|v| v.as_u64()).unwrap_or(0);
-    let queue_label = if queue == 0 {
-        "0 (idle)".dimmed().to_string()
-    } else {
-        format!("{} pending {}", queue, "⤵".cyan())
+    let pending = body.get("queue_pending").and_then(|v| v.as_u64()).unwrap_or(0);
+    let running = body.get("queue_running").and_then(|v| v.as_u64()).unwrap_or(0);
+    let queue_label = match (pending, running) {
+        (0, 0) => "0 (idle)".dimmed().to_string(),
+        (p, 0) => format!("{} pending {}", p, "⤵".cyan()),
+        (0, r) => format!("{} running {}", r, "▶".green()),
+        (p, r) => format!(
+            "{} running {} · {} pending {}",
+            r,
+            "▶".green(),
+            p,
+            "⤵".cyan()
+        ),
     };
     println!("  Queue:     {}", queue_label);
+
+    if let Some(current) = body.get("current_task") {
+        let id = current.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let kind = current.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        let payload = current.get("payload").and_then(|v| v.as_str()).unwrap_or("");
+        if !id.is_empty() {
+            println!(
+                "  Current:   {} {} {} {}",
+                "▶".green(),
+                &id[..id.len().min(8)],
+                format!("({})", kind).dimmed(),
+                truncate(payload, 60)
+            );
+        }
+    }
 
     Ok(())
 }
@@ -976,17 +1006,26 @@ async fn prime(interval: u64) -> anyhow::Result<()> {
         println!("  Workplans: {} {} active, enqueuing...", "✓".green(), discovered.len());
     }
 
-    // 3. Avoid duplicates — skip if already pending or in-progress
+    // 3. Avoid duplicates — skip if already pending or in-progress FOR THIS
+    //    PROJECT. Tasks for other projects (or legacy unscoped tasks with
+    //    empty project_id) don't count as duplicates of ours.
+    let this_project = brain_project_id().unwrap_or_default();
     let existing = list_brain_tasks(None).await.unwrap_or_default();
     let existing_paths: std::collections::HashSet<String> = existing
         .iter()
         .filter_map(|t| {
             let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("");
-            if matches!(status, "pending" | "in_progress") {
-                t.get("payload").and_then(|v| v.as_str()).map(String::from)
-            } else {
-                None
+            if !matches!(status, "pending" | "in_progress") {
+                return None;
             }
+            let task_project = t
+                .get("project_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if task_project != this_project {
+                return None;
+            }
+            t.get("payload").and_then(|v| v.as_str()).map(String::from)
         })
         .collect();
 
@@ -1463,6 +1502,10 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                     let kind = task.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let payload = task.get("payload").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     println!("  ⬡ executing brain task {id} ({kind})");
+                    // Mark in_progress so statusline + /api/brain/status can distinguish
+                    // actively-running tasks from pending ones (visibility for long
+                    // workplan tasks that would otherwise look queued).
+                    let _ = update_brain_task(&id, "in_progress", "").await;
                     let (ok, result) = execute_brain_task(&kind, &payload).await;
                     let status = if ok { "completed" } else { "failed" };
                     let _ = update_brain_task(&id, status, &result).await;
@@ -1814,11 +1857,15 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
     use crate::nexus_client::NexusClient;
     let id = uuid::Uuid::new_v4().to_string();
     let key = format!("brain-task:{}", id);
+    // Capture project scope at enqueue time — without this the brain queue is
+    // global and tasks enqueued in one repo pollute another repo's statusline.
+    let project_id = brain_project_id().unwrap_or_default();
     let task = json!({
         "id": id,
         "kind": kind,
         "payload": payload,
         "status": "pending",
+        "project_id": project_id,
         "created_at": chrono::Utc::now().to_rfc3339(),
         "completed_at": serde_json::Value::Null,
         "result": serde_json::Value::Null,
@@ -2040,6 +2087,7 @@ async fn queue_drain() -> anyhow::Result<()> {
             .unwrap_or("")
             .to_string();
         println!("  → executing {id} ({kind})");
+        let _ = update_brain_task(&id, "in_progress", "").await;
         let (ok, result) = execute_brain_task(&kind, &payload).await;
         let status = if ok { "completed" } else { "failed" };
         update_brain_task(&id, status, &result).await?;

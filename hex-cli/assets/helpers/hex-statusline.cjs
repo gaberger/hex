@@ -163,7 +163,7 @@ const agentIdShort = agentId ? agentId.slice(0, 8) : null;
 let hexfloSwarms = 0, hexfloTasks = 0, hexfloTasksDone = 0, hexfloAgents = 0;
 let pulseProjects = [];
 // Brain autonomous supervisor — queue depth + last test timestamp
-let brainQueue = 0, brainLastTest = 'never';
+let brainQueue = 0, brainRunning = 0, brainLastTest = 'never';
 if (hubRunning) {
   const fetchSync = (urlPath) => safe(() => {
     const result = execFileSync('node', ['-e', `
@@ -195,10 +195,18 @@ if (hubRunning) {
     pulseProjects = pulseData;
   }
 
-  // Brain — queue depth + last test age so operators see autonomous work
-  const brainData = fetchSync('/api/brain/status');
+  // Brain — queue depth + running + last test age so operators see autonomous work.
+  // Scope by project so one repo's queue doesn't pollute another's statusline.
+  const hexProjectJson = safe(() =>
+    JSON.parse(fs.readFileSync(path.join(cwd, '.hex', 'project.json'), 'utf8')), null);
+  const hexProjectId = hexProjectJson && hexProjectJson.id;
+  const brainUrl = hexProjectId
+    ? `/api/brain/status?project=${encodeURIComponent(hexProjectId)}`
+    : '/api/brain/status';
+  const brainData = fetchSync(brainUrl);
   if (brainData && typeof brainData === 'object') {
     brainQueue = typeof brainData.queue_pending === 'number' ? brainData.queue_pending : 0;
+    brainRunning = typeof brainData.queue_running === 'number' ? brainData.queue_running : 0;
     brainLastTest = brainData.last_test || 'never';
   }
 }
@@ -304,8 +312,9 @@ try {
 } catch { /* no pid file — daemon not running */ }
 
 const brainDot = brainDaemonAlive ? `${P.on}◉` : `${P.off}○`;
+const brainRunTag = brainRunning > 0 ? `${P.active} ${brainRunning}▶` : '';
 const brainQueueTag = brainQueue > 0 ? `${P.branch} ${brainQueue}⤵` : '';
-parts.push(`${brainDot}brain${brainQueueTag}`);
+parts.push(`${brainDot}brain${brainRunTag}${brainQueueTag}`);
 
 // Services — README format: ●db │ ◉localhost:3456 │ ◉mcp
 const svcDot = (on, label) => on ? `${P.on}◉${label}` : `${P.off}○${label}`;
