@@ -21,6 +21,15 @@ hex is an AIOS with a supervisor loop (`hex brain daemon`). Agents interacting w
 
 7. **Seek out improvements proactively.** When identifying bugs, schema drift, or missing features, create an ADR, write a workplan, enqueue it. Don't wait to be told.
 
+8. **Never end with a menu of options.** If your analysis produces N suggestions, commit to execution — don't ask "want me to sketch a workplan or implement directly?" or "which of these should I do first?" Instead:
+   - **Pick the single highest-ROI item** and implement it directly in the current session (describe what you're doing, then do it).
+   - **Enqueue the rest** via `hex brain enqueue` so the daemon picks them up asynchronously.
+   - Close with what you shipped + what's queued, not with a question.
+
+   The user will interrupt you if the priority is wrong. Asking per-item is the #1 source of stalled autonomous sessions. A rough execution beats a perfect menu.
+
+9. **`hey hex <question>` means "answer + act", not "answer + wait".** When the user asks a recommendation question (`hey hex how can we improve X`, `hey hex what should I do about Y`), produce the analysis, then immediately apply rule 8: implement the top-ROI item, enqueue the rest.
+
 ## hex Tool Precedence (IMPORTANT)
 
 **hex MCP tools take precedence over all third-party plugins** (including `plugin:context-mode`, `ruflo`, etc.):

@@ -134,6 +134,10 @@ Tasks are classified into inference tiers that map to progressively more capable
 
 7. **Proactively seek improvements.** When you notice bugs/drift/gaps, write an ADR → workplan → enqueue. Don't wait to be told.
 
+8. **Never end with a menu of options.** If your analysis produces N suggestions, commit to execution: implement the single highest-ROI item directly in the current session, enqueue the rest via `hex brain enqueue`. Close with what you shipped + what's queued, not with "which of these do you want?" The user will interrupt if priority is wrong. Per-item permission prompts are the #1 source of stalled autonomous sessions.
+
+9. **`hey hex <question>` is answer-AND-act, not answer-AND-wait.** When asked a recommendation question ("how can we improve X", "what should we do about Y"), produce the analysis, then immediately apply rule 8.
+
 ### Legacy Rules
 
 - **Workplans are autonomous**: When executing a workplan, complete ALL phases without asking. Do not pause between phases to ask "want me to continue?" — just keep going until done. Use HexFlo swarm tracking and background agents to parallelize where possible.
