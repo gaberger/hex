@@ -24,7 +24,90 @@ pub enum TaskIntent {
     /// (ADR-2604141200). `host` must already be validated against trusted_hosts.
     RemoteShell { host: String, command: String, description: String },
     Workplan { path: String, description: String },
+    /// Classified but rejected by policy (e.g. remote-shell whitelist — P1.2).
+    /// `command` is the offending fragment; `reason` is the user-facing message.
+    Rejected { command: String, reason: String },
     Unknown(String),
+}
+
+/// Hard-coded initial whitelist for remote-shell commands (P1.2).
+/// Entries are matched as a prefix followed by end-of-string or whitespace,
+/// so `"systemctl status"` covers `"systemctl status ollama"` but not
+/// `"systemctl stop ollama"`.
+pub(crate) const COMMAND_WHITELIST: &[&str] = &[
+    "nvidia-smi",
+    "df",
+    "ollama",
+    "ps",
+    "systemctl status",
+    "uptime",
+    "free",
+];
+
+/// Read additional whitelist entries from `.hex/project.json` under the
+/// `command_whitelist` array key. Missing file/key → empty list.
+fn read_command_whitelist_additions() -> Vec<String> {
+    let contents = match std::fs::read_to_string(".hex/project.json") {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&contents) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    parsed
+        .get("command_whitelist")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Match `command` against a single whitelist entry. An entry matches when
+/// `command` equals it exactly or starts with it followed by whitespace.
+fn whitelist_entry_matches(command: &str, entry: &str) -> bool {
+    let command = command.trim();
+    let entry = entry.trim();
+    if entry.is_empty() {
+        return false;
+    }
+    if command == entry {
+        return true;
+    }
+    match command.strip_prefix(entry) {
+        Some(rest) => rest.starts_with(char::is_whitespace),
+        None => false,
+    }
+}
+
+/// True iff `command` matches the hard-coded whitelist or any addition from
+/// `.hex/project.json`. Used to gate remote-shell dispatch (P1.2).
+pub(crate) fn is_command_whitelisted(command: &str) -> bool {
+    if COMMAND_WHITELIST
+        .iter()
+        .any(|e| whitelist_entry_matches(command, e))
+    {
+        return true;
+    }
+    read_command_whitelist_additions()
+        .iter()
+        .any(|e| whitelist_entry_matches(command, e))
+}
+
+/// Build the user-facing rejection message for a non-whitelisted command.
+fn whitelist_rejection_reason(command: &str) -> String {
+    let head = command
+        .split_whitespace()
+        .next()
+        .unwrap_or(command);
+    format!(
+        "`{}` is not in the remote-shell whitelist.\n    Allowed: {}\n    Add custom entries to .hex/project.json:\n      {{ \"command_whitelist\": [\"your-command\"] }}",
+        head,
+        COMMAND_WHITELIST.join(", ")
+    )
 }
 
 /// Detect a trailing `on <host>` suffix using token-tail parsing.
@@ -77,8 +160,16 @@ fn classify_intent(text: &str) -> TaskIntent {
 
     // Remote shell — "<cmd> on <host>". When host ∈ trusted_hosts, route to the
     // first-class `remote-shell` brain task kind (ADR-2604141200). Otherwise
-    // fall through to the legacy `__SSH__` LLM-translation path below.
+    // fall through to the legacy `__SSH__` LLM-translation path below. Commands
+    // are gated by the remote-shell whitelist (P1.2) before either path so we
+    // don't burn LLM tokens translating commands we'd refuse to dispatch.
     if let Some((command, host)) = detect_on_host_suffix(text) {
+        if !is_command_whitelisted(&command) {
+            return TaskIntent::Rejected {
+                reason: whitelist_rejection_reason(&command),
+                command,
+            };
+        }
         let trusted = read_trusted_hosts();
         if trusted.iter().any(|h| h.eq_ignore_ascii_case(&host)) {
             return TaskIntent::RemoteShell {
@@ -310,6 +401,11 @@ pub async fn run(args: HeyArgs) -> anyhow::Result<()> {
         }
         TaskIntent::Workplan { path, description } =>
             ("workplan", path.clone(), false, description.clone()),
+        TaskIntent::Rejected { command, reason } => {
+            println!("  {} rejected: {}", "✗".red(), command.bold());
+            println!("    {}", reason);
+            return Ok(());
+        }
         TaskIntent::Unknown(t) => {
             // Remote SSH intent: marker __SSH__<host>__<action>
             if let Some(rest) = t.strip_prefix("__SSH__") {
@@ -520,6 +616,97 @@ mod remote_tests {
         match intent {
             TaskIntent::Unknown(s) => assert!(s.starts_with("__SSH__some-random-host__")),
             other => panic!("expected Unknown(__SSH__...), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn whitelist_allows_hardcoded_single_token() {
+        assert!(is_command_whitelisted("nvidia-smi"));
+        assert!(is_command_whitelisted("df"));
+        assert!(is_command_whitelisted("uptime"));
+        assert!(is_command_whitelisted("free"));
+    }
+
+    #[test]
+    fn whitelist_allows_args_after_prefix() {
+        assert!(is_command_whitelisted("nvidia-smi --query-gpu=name"));
+        assert!(is_command_whitelisted("df -h"));
+        assert!(is_command_whitelisted("ps auxf"));
+        assert!(is_command_whitelisted("ollama list"));
+    }
+
+    #[test]
+    fn whitelist_allows_multi_token_entry_with_args() {
+        // "systemctl status" covers any sub-target
+        assert!(is_command_whitelisted("systemctl status"));
+        assert!(is_command_whitelisted("systemctl status ollama"));
+        assert!(is_command_whitelisted("systemctl status hex-nexus.service"));
+    }
+
+    #[test]
+    fn whitelist_rejects_non_status_systemctl() {
+        // Prefix must end at a word boundary — "systemctl status" MUST NOT
+        // cover "systemctl stop", "systemctl start", etc.
+        assert!(!is_command_whitelisted("systemctl stop ollama"));
+        assert!(!is_command_whitelisted("systemctl start nexus"));
+        assert!(!is_command_whitelisted("systemctl"));
+    }
+
+    #[test]
+    fn whitelist_rejects_prefix_collisions() {
+        // "df" must not match "dfuse" or "dfind"
+        assert!(!is_command_whitelisted("dfuse"));
+        assert!(!is_command_whitelisted("dfind /"));
+        // "ps" must not match "psql"
+        assert!(!is_command_whitelisted("psql -c 'select 1'"));
+    }
+
+    #[test]
+    fn whitelist_rejects_unknown_commands() {
+        assert!(!is_command_whitelisted("rm -rf /"));
+        assert!(!is_command_whitelisted("curl http://evil"));
+        assert!(!is_command_whitelisted(""));
+    }
+
+    #[test]
+    fn whitelist_entry_matches_word_boundary() {
+        assert!(whitelist_entry_matches("nvidia-smi", "nvidia-smi"));
+        assert!(whitelist_entry_matches("nvidia-smi -L", "nvidia-smi"));
+        assert!(!whitelist_entry_matches("nvidia-smix", "nvidia-smi"));
+        assert!(!whitelist_entry_matches("nvidia-smi", "")); // empty entry never matches
+    }
+
+    #[test]
+    fn whitelist_rejection_reason_names_command_and_path() {
+        let reason = whitelist_rejection_reason("rm -rf /");
+        assert!(reason.contains("`rm`"), "reason should name the head: {}", reason);
+        assert!(reason.contains(".hex/project.json"), "reason should point at config: {}", reason);
+        assert!(reason.contains("nvidia-smi"), "reason should list allowed commands: {}", reason);
+    }
+
+    #[test]
+    fn classify_rejects_non_whitelisted_remote_command() {
+        let intent = classify_intent("rm -rf / on bazzite");
+        match intent {
+            TaskIntent::Rejected { command, reason } => {
+                assert_eq!(command, "rm -rf /");
+                assert!(reason.contains("whitelist"));
+            }
+            other => panic!("expected Rejected, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn classify_allows_whitelisted_remote_command() {
+        // nvidia-smi is whitelisted — should NOT produce a Rejected intent
+        // regardless of whether the host is trusted. (Untrusted → __SSH__,
+        // trusted → RemoteShell; both are "allowed".)
+        let intent = classify_intent("nvidia-smi on some-host");
+        match intent {
+            TaskIntent::Rejected { .. } => panic!("whitelisted command must not be rejected"),
+            TaskIntent::Unknown(s) => assert!(s.starts_with("__SSH__")),
+            TaskIntent::RemoteShell { .. } => {} // fine if trusted_hosts happens to contain it
+            other => panic!("unexpected intent {:?}", other),
         }
     }
 
