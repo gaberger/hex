@@ -2894,6 +2894,70 @@ async fn observe(event_type: &str) -> Result<()> {
     // After a Bash tool call that looks like a git commit, run the two
     // fast self-consistency checks: binary freshness and MCP↔CLI parity.
     // These complete in <2s and catch drift immediately after a commit.
+    // ── Insight extraction (ADR-2604142345) ─────────────────────────
+    // Scan text-carrying fields for `★ Insight` blocks and persist each
+    // to ~/.hex/insights/<id>.yaml. Non-blocking: failures log to stderr
+    // but never halt the hook or block the turn.
+    if event_type == "PostToolUse" || event_type == "Stop" {
+        if let Err(e) = (|| -> Result<()> {
+            let mut candidate_texts: Vec<String> = Vec::new();
+            // tool_response is the primary source on PostToolUse; Stop
+            // events may carry assistant text under varied field names so
+            // also sweep the whole hook payload as a last resort.
+            if let Some(s) = result_json.as_deref() {
+                candidate_texts.push(s.to_string());
+            }
+            if event_type == "Stop" {
+                if let Some(s) = hook.get("stop_hook_active").and_then(|v| v.as_str()) {
+                    candidate_texts.push(s.to_string());
+                }
+                // Best-effort: stringify the whole envelope so assistant
+                // text carried in any field (e.g. `message`, `content`,
+                // `text`) still gets scanned.
+                candidate_texts.push(hook.to_string());
+            }
+
+            let turn: usize = hook
+                .get("turn")
+                .and_then(|v| v.as_u64())
+                .map(|u| u as usize)
+                .unwrap_or(0);
+
+            let insights_dir = dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("/tmp"))
+                .join(".hex/insights");
+
+            let mut wrote_dir = false;
+            for text in &candidate_texts {
+                let extracted = crate::commands::insight::extract_insights(
+                    text,
+                    &session_id,
+                    turn,
+                );
+                for ins in extracted {
+                    if !wrote_dir {
+                        std::fs::create_dir_all(&insights_dir).ok();
+                        wrote_dir = true;
+                    }
+                    let path = insights_dir.join(format!("{}.yaml", sanitize_id(&ins.id)));
+                    match serde_yaml::to_string(&ins) {
+                        Ok(yaml) => {
+                            if let Err(e) = std::fs::write(&path, yaml) {
+                                eprintln!("insight extractor: write {} failed: {}", path.display(), e);
+                            } else {
+                                eprintln!("insight: extracted {} -> {:?}", ins.id, ins.route_to);
+                            }
+                        }
+                        Err(e) => eprintln!("insight extractor: yaml serialize failed: {}", e),
+                    }
+                }
+            }
+            Ok(())
+        })() {
+            eprintln!("insight extractor error: {}", e);
+        }
+    }
+
     if event_type == "PostToolUse" {
         let is_commit = tool_name.as_deref() == Some("Bash")
             && input_json
@@ -2936,6 +3000,21 @@ async fn observe(event_type: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Constrain insight ids to filesystem-safe characters so writing
+/// `~/.hex/insights/<id>.yaml` can never escape the insights directory
+/// or include directory separators.
+fn sanitize_id(id: &str) -> String {
+    let trimmed: String = id
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    if trimmed.is_empty() {
+        "insight".to_string()
+    } else {
+        trimmed
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
