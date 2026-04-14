@@ -166,6 +166,21 @@ pub enum QueueAction {
     Clear,
     /// Force drain and execute pending tasks now
     Drain,
+    /// Show recent brain tasks across all statuses (wp-sched-queue-history P1.3).
+    ///
+    /// Primary use: verify the ADR-2604141400 §1 P1 evidence-guard correctly
+    /// flipped silent-drain workplans to `failed`. Filter with `--status failed`
+    /// to see only guard-flipped tasks; the result column shows the
+    /// `no git evidence` marker produced by `check_evidence`.
+    History {
+        /// Filter by exact status ("pending", "in_progress", "completed", "failed").
+        /// Omit to include all statuses.
+        #[arg(long)]
+        status: Option<String>,
+        /// Maximum rows to show (clamped server-side to [1, 200]).
+        #[arg(long, default_value = "20")]
+        limit: u32,
+    },
 }
 
 pub async fn run(action: BrainAction) -> anyhow::Result<()> {
@@ -193,6 +208,7 @@ pub async fn run(action: BrainAction) -> anyhow::Result<()> {
             QueueAction::List => queue_list().await,
             QueueAction::Clear => queue_clear().await,
             QueueAction::Drain => queue_drain().await,
+            QueueAction::History { status, limit } => queue_history(status, limit).await,
         },
         BrainAction::Prime { interval } => prime(interval).await,
         BrainAction::Watch { since } => watch(since).await,
@@ -2748,6 +2764,90 @@ async fn queue_list() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Render the recent brain-task history table (wp-sched-queue-history P1.3).
+///
+/// Hits `GET /api/brain/queue/history` and formats each row with a 60-char
+/// tail of the result string so the `no git evidence` marker (ADR-2604141400
+/// §1 P1 evidence-guard) is visible without horizontal scrolling. Using the
+/// tail rather than the head is deliberate — the guard appends the marker,
+/// so a head-truncation would hide it.
+async fn queue_history(status: Option<String>, limit: u32) -> anyhow::Result<()> {
+    use crate::nexus_client::NexusClient;
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    // Build query string; skip `status=` entirely when unset so nexus treats
+    // it as "all statuses" rather than filtering on an empty-string match.
+    let mut path = format!("/api/brain/queue/history?limit={}", limit);
+    if let Some(s) = status.as_deref() {
+        path.push_str(&format!("&status={}", s));
+    }
+    let body: serde_json::Value = nexus.get(&path).await?;
+    let rows: Vec<serde_json::Value> = body.as_array().cloned().unwrap_or_default();
+
+    if rows.is_empty() {
+        let scope = status
+            .as_deref()
+            .map(|s| format!(" (status={})", s))
+            .unwrap_or_default();
+        println!("{}", format!("No brain tasks in history{}.", scope).yellow());
+        return Ok(());
+    }
+
+    let heading = match status.as_deref() {
+        Some(s) => format!("Brain Task History — status={}", s),
+        None => "Brain Task History".to_string(),
+    };
+    println!("{}", heading.green().bold());
+
+    let table_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            let id = r.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let kind = r.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            let status = r.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            let payload = r
+                .get("payload_truncated")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let result = r
+                .get("result_truncated")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            // ID column is first 8 chars — enough to disambiguate in practice,
+            // keeps the table narrow. Operators who need the full UUID can
+            // re-query via /api/hexflo/memory/brain-task:<id>.
+            let short_id = if id.len() >= 8 { &id[..8] } else { id };
+            vec![
+                short_id.to_string(),
+                kind.to_string(),
+                status.to_string(),
+                truncate(payload, 40),
+                result_tail(result, 60),
+            ]
+        })
+        .collect();
+    println!(
+        "{}",
+        pretty_table(
+            &["ID", "Kind", "Status", "Payload", "Result-Tail"],
+            &table_rows,
+        )
+    );
+    Ok(())
+}
+
+/// Return the last `n` chars of `s`. Used by `queue_history` so the trailing
+/// evidence-guard marker (`no git evidence...`) stays visible in the table.
+/// For short strings (<= n), returns the whole string verbatim.
+fn result_tail(s: &str, n: usize) -> String {
+    let count = s.chars().count();
+    if count <= n {
+        return s.to_string();
+    }
+    s.chars().skip(count - n).collect()
+}
+
 /// Extract the user-visible target for a brain task row. For
 /// `remote-shell`, that's the destination host parsed out of the JSON
 /// payload. For any other kind, we render `-` so the Target column stays
@@ -2893,6 +2993,28 @@ mod tests {
     fn render_task_target_extracts_host_for_remote_shell() {
         let payload = r#"{"host":"bazzite","command":"nvidia-smi"}"#;
         assert_eq!(render_task_target("remote-shell", payload), "bazzite");
+    }
+
+    // ── wp-sched-queue-history P1.3: result-tail rendering ────────────────
+    // The history table displays the LAST N chars of `result_truncated` so
+    // the evidence-guard's `no git evidence` marker stays visible. A
+    // head-truncation would hide the very signal operators are looking for.
+
+    #[test]
+    fn result_tail_returns_whole_string_when_short() {
+        assert_eq!(result_tail("short", 60), "short");
+        assert_eq!(result_tail("", 60), "");
+    }
+
+    #[test]
+    fn result_tail_keeps_trailing_chars_for_long_strings() {
+        let s = format!("{}{}", "x".repeat(200), "no git evidence (HEAD unchanged)");
+        let out = result_tail(&s, 60);
+        assert_eq!(out.chars().count(), 60);
+        assert!(
+            out.contains("no git evidence"),
+            "evidence-guard marker must survive tail truncation; got: {out}"
+        );
     }
 
     #[test]
