@@ -1028,6 +1028,24 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             }
         }
 
+        // Drain brain queue — execute up to 1 pending task per tick (ADR-2604132330)
+        // Runs regardless of validate() outcome.
+        match drain_brain_tasks(1).await {
+            Ok(tasks) if !tasks.is_empty() => {
+                for task in tasks {
+                    let id = task.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let kind = task.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let payload = task.get("payload").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    println!("  ⬡ executing brain task {id} ({kind})");
+                    let (ok, result) = execute_brain_task(&kind, &payload).await;
+                    let status = if ok { "completed" } else { "failed" };
+                    let _ = update_brain_task(&id, status, &result).await;
+                    println!("    {} {}", if ok { "✓".green() } else { "✗".red() }, status);
+                }
+            }
+            _ => {}
+        }
+
         // Emit brain_tick event to nexus (fire-and-forget).
         let port = std::env::var("HEX_NEXUS_PORT")
             .unwrap_or_else(|_| "5555".to_string())
