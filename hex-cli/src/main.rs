@@ -32,6 +32,7 @@ use commands::{
     hook::HookEvent,
     inbox::InboxAction,
     init::InitArgs,
+    refresh::RefreshArgs,
     memory::MemoryAction,
     neural_lab::NeuralLabAction,
     nexus::NexusAction,
@@ -153,6 +154,8 @@ enum DevGroupAction {
     },
     /// Initialize hex in a project directory
     Init(InitArgs),
+    /// Refresh hex-managed sections of CLAUDE.md in place (no interview, no reset)
+    Refresh(RefreshArgs),
     /// Structured project intake — create, init, register, seed trust
     New {
         /// Target directory path
@@ -229,6 +232,8 @@ enum Commands {
         #[command(subcommand)]
         action: AgentAction,
     },
+    /// Refresh hex-managed sections of CLAUDE.md in place (no interview, no reset)
+    Refresh(RefreshArgs),
     /// Developer briefing — recent events, decisions, health
     Brief(BriefArgs),
     /// Do the next right thing — check project health and suggest/execute actions
@@ -546,6 +551,7 @@ async fn main() -> anyhow::Result<()> {
             }
             DevGroupAction::Worktree { action } => commands::worktree::run(action).await,
             DevGroupAction::Init(args) => commands::init::run(args).await,
+            DevGroupAction::Refresh(args) => commands::refresh::run(args).await,
             DevGroupAction::New { path, name, description, taste_from } => {
                 commands::new::run(&path, name, description, taste_from).await
             }
@@ -625,6 +631,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Worktree { action } => commands::worktree::run(action).await,
         Commands::Init(args) => commands::init::run(args).await,
+        Commands::Refresh(args) => commands::refresh::run(args).await,
         Commands::New { path, name, description, taste_from } => {
             commands::new::run(&path, name, description, taste_from).await
         }
