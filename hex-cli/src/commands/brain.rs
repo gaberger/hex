@@ -98,6 +98,15 @@ pub enum BrainAction {
         #[command(subcommand)]
         action: QueueAction,
     },
+    /// Watch brain_tick events as they arrive (wp-brain-updates P3.1).
+    /// Polls GET /api/events every 2s, filters for brain_tick, prints new events.
+    /// Exits on Ctrl-C.
+    Watch {
+        /// ISO 8601 timestamp (e.g. "2026-04-14T10:00:00Z") — only show events
+        /// newer than this. Omit to watch from the current moment forward.
+        #[arg(long)]
+        since: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -136,6 +145,7 @@ pub async fn run(action: BrainAction) -> anyhow::Result<()> {
             QueueAction::Clear => queue_clear().await,
             QueueAction::Drain => queue_drain().await,
         },
+        BrainAction::Watch { since } => watch(since).await,
     }
 }
 
@@ -1345,6 +1355,134 @@ fn daemon_status() -> anyhow::Result<()> {
     }
     Ok(())
 }
+// ─── wp-brain-updates P3.1: Watch brain_tick events ───────────────────────
+
+/// Stream new `brain_tick` events to stdout as they appear.
+///
+/// Polls `GET /api/events` every 2 seconds, filters for `event_type ==
+/// "brain_tick"`, and prints anything newer than the last-seen timestamp.
+/// Ctrl-C exits cleanly. Simpler than a WebSocket subscription — can upgrade
+/// later if polling overhead matters.
+async fn watch(since: Option<String>) -> anyhow::Result<()> {
+    let port = std::env::var("HEX_NEXUS_PORT")
+        .unwrap_or_else(|_| "5555".to_string())
+        .parse::<u16>()
+        .unwrap_or(5555);
+    let url = format!("http://127.0.0.1:{}/api/events?limit=200", port);
+    let client = reqwest::Client::new();
+
+    println!(
+        "{} (ctrl-C to exit)",
+        "⬡ watching brain_tick events".green().bold()
+    );
+    if let Some(s) = &since {
+        println!("  since: {}", s);
+    }
+    println!();
+
+    // `last_seen` is the newest `created_at` we've printed so far. When
+    // `since` is None, the first poll establishes a baseline without printing
+    // backlog — the user asked to watch, not to replay history.
+    let mut last_seen: Option<String> = since;
+    let mut first_poll = last_seen.is_none();
+
+    loop {
+        match poll_brain_events(&client, &url, last_seen.as_deref()).await {
+            Ok(events) => {
+                if first_poll {
+                    // Seed baseline: record newest without printing.
+                    if let Some(ts) = events.iter()
+                        .filter_map(|ev| ev.get("created_at").and_then(|v| v.as_str()))
+                        .max()
+                    {
+                        last_seen = Some(ts.to_string());
+                    }
+                    first_poll = false;
+                } else {
+                    for ev in &events {
+                        print_brain_event(ev);
+                        if let Some(ts) = ev.get("created_at").and_then(|v| v.as_str()) {
+                            let is_newer = last_seen
+                                .as_deref()
+                                .map(|cur| ts > cur)
+                                .unwrap_or(true);
+                            if is_newer {
+                                last_seen = Some(ts.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("{} {}", "watch error:".yellow(), e);
+            }
+        }
+
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+            _ = tokio::signal::ctrl_c() => {
+                println!("\n{}", "⬡ watch stopped".yellow());
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// Fetch recent events, filter to `brain_tick`, and keep only those strictly
+/// newer than `since`. Returned oldest-first for natural print order.
+async fn poll_brain_events(
+    client: &reqwest::Client,
+    url: &str,
+    since: Option<&str>,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let resp = client
+        .get(url)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("GET {} returned {}", url, resp.status());
+    }
+    let body: serde_json::Value = resp.json().await?;
+    let events = body
+        .get("events")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut filtered: Vec<serde_json::Value> = events
+        .into_iter()
+        .filter(|ev| ev.get("event_type").and_then(|v| v.as_str()) == Some("brain_tick"))
+        .filter(|ev| match since {
+            Some(cutoff) => ev
+                .get("created_at")
+                .and_then(|v| v.as_str())
+                .map(|ts| ts > cutoff)
+                .unwrap_or(false),
+            None => true,
+        })
+        .collect();
+
+    // Server returns newest-first; reverse so callers see oldest-first.
+    filtered.reverse();
+    Ok(filtered)
+}
+
+fn print_brain_event(ev: &serde_json::Value) {
+    let created_at = ev.get("created_at").and_then(|v| v.as_str()).unwrap_or("?");
+    let duration_ms = ev.get("duration_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+    let session_id = ev
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    println!(
+        "  {}  brain_tick  session={} duration={}ms",
+        created_at.dimmed(),
+        truncate(session_id, 12),
+        duration_ms,
+    );
+}
+
 // ─── ADR-2604132330: Brain task queue (HexFlo memory–backed) ───────────────
 
 const NEXUS_BASE: &str = "http://127.0.0.1:5555";
