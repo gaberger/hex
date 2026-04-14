@@ -1,0 +1,17 @@
+#!/bin/sh
+# hey hex <text>  — natural-language wrapper (ADR-2604140000)
+#
+# Usage:
+#   hey hex calibrate inference
+#   hey hex what is broken
+#   hey hex --queue reconcile all workplans
+#
+# Install: ln -s $(pwd)/scripts/hey /usr/local/bin/hey
+# or: cp scripts/hey /usr/local/bin/hey
+
+# Strip "hex" if it's the first argument (since we're already talking to hex)
+if [ "$1" = "hex" ]; then
+    shift
+fi
+
+exec hex hey "$@"
