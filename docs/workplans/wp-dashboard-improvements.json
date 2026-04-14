@@ -1,0 +1,195 @@
+{
+  "created_at": "2026-04-13",
+  "description": "Address the top-priority UX gaps in the hex-nexus Solid.js dashboard: add a Workplan/Plan panel, a natural-language Hey Hex input, a Brain Validate status panel, unread inbox badge, TaskDAG interactivity, and visual polish for information density.",
+  "id": "wp-dashboard-improvements",
+  "phases": [
+    {
+      "description": "Show a live unread count badge on the Inbox nav item in the left sidebar. Drive it from the agentInbox SpacetimeDB signal: count items where acknowledged_at is null. Use a red pill badge capped at '99+' for priority-2 items and a gray pill for lower-priority unread counts. No new API calls needed — data is already subscribed.",
+      "id": "p1",
+      "tasks": [
+        {
+          "description": "Derive `unreadCount` and `criticalCount` createMemo signals from `agentInbox()` reactive store. Filter acknowledged_at === null for unread, priority === 2 for critical.",
+          "files": [
+            "hex-nexus/assets/src/app/App.tsx",
+            "hex-nexus/assets/src/stores/connection.ts"
+          ],
+          "id": "p1.1",
+          "status": "done",
+          "title": "Add unreadCount memo in App.tsx"
+        },
+        {
+          "description": "Overlay a small pill badge (absolute-positioned) on the Inbox nav button. Red for criticalCount > 0, gray for generic unread. Collapsed sidebar shows badge only; expanded sidebar shows badge inline after label text.",
+          "files": [
+            "hex-nexus/assets/src/app/App.tsx"
+          ],
+          "id": "p1.2",
+          "status": "done",
+          "title": "Render badge on Inbox sidebar button"
+        }
+      ],
+      "title": "Unread Inbox Badge on Sidebar Nav Item"
+    },
+    {
+      "description": "Add a new 'Plans' route (page: 'workplans') that fetches /api/plan/list and /api/plan/status from hex-nexus. Display each workplan as a card: name, status chip (draft/active/completed/paused), phase progress bar, last-updated timestamp. Link each card to hex plan status detail. Poll every 15s; show a spinner on first load and a 'No active plans' empty state.",
+      "id": "p2",
+      "tasks": [
+        {
+          "description": "New file src/components/views/WorkplanListView.tsx. Fetch GET /api/plan/list on mount + 15s interval via setInterval. Render cards with status chip colors: active=cyan, completed=green, paused=yellow, draft=gray.",
+          "files": [
+            "hex-nexus/assets/src/components/views/WorkplanListView.tsx"
+          ],
+          "id": "p2.1",
+          "status": "done",
+          "title": "Create WorkplanListView component"
+        },
+        {
+          "description": "Add { page: 'workplans' } to the Route union type in router.ts. Add a 'Plans' entry in the sidebar (between Projects and Agent Fleet). Lazy-import WorkplanListView in App.tsx.",
+          "files": [
+            "hex-nexus/assets/src/stores/router.ts",
+            "hex-nexus/assets/src/app/App.tsx"
+          ],
+          "id": "p2.2",
+          "status": "done",
+          "title": "Wire router + sidebar nav entry"
+        }
+      ],
+      "title": "Workplan Panel — Plan Status & Reconcile View"
+    },
+    {
+      "description": "Add a persistent 'Hey Hex' input bar at the bottom of the dashboard (above the BottomBar). On submit, POST to /api/chat/send or dispatch via the existing chat store. Visually distinct from the full ChatView — this is a single-line quick-dispatch, not a conversation view. Show a subtle 'Thinking...' indicator while the request is in flight.",
+      "id": "p3",
+      "tasks": [
+        {
+          "description": "New file src/components/layout/HeyHexBar.tsx. Single-line input with Cmd+Space or '>' prefix trigger. POST payload: { message, project_id: activeProjectId() }. On success, open InboxPanel or ChatView to show the response.",
+          "files": [
+            "hex-nexus/assets/src/components/layout/HeyHexBar.tsx"
+          ],
+          "id": "p3.1",
+          "status": "done",
+          "title": "Create HeyHexBar component"
+        },
+        {
+          "description": "Insert <HeyHexBar /> in App.tsx layout, below the main content flex area, above <BottomBar />. Add keyboard shortcut Ctrl+Space to focus it from anywhere (skip if active element is input/textarea).",
+          "files": [
+            "hex-nexus/assets/src/app/App.tsx"
+          ],
+          "id": "p3.2",
+          "title": "Mount HeyHexBar between main content and BottomBar"
+        }
+      ],
+      "title": "Hey Hex — Natural Language Input Widget"
+    },
+    {
+      "description": "Add a collapsible 'System Health' panel in the ControlPlane view (or as a sidebar widget) that polls GET /api/validate or runs hex validate via nexus REST. Display result categories: CLI wiring, binary freshness, workplan consistency, MCP parity, worktree health. Each line is a pass/fail row with an icon. Poll on mount + every 60s. Show 'Last checked Xs ago' timestamp.",
+      "id": "p4",
+      "tasks": [
+        {
+          "description": "New file src/components/system/BrainValidatePanel.tsx. Poll GET /api/validate (or /api/nexus/status as fallback). Render a collapsible <details> section with pass/fail rows. Collapsed by default; auto-expand on any failure.",
+          "files": [
+            "hex-nexus/assets/src/components/system/BrainValidatePanel.tsx"
+          ],
+          "id": "p4.1",
+          "status": "done",
+          "title": "Create BrainValidatePanel component"
+        },
+        {
+          "description": "Import BrainValidatePanel into src/components/views/ControlPlane.tsx and render it in the top-right quadrant, replacing the current placeholder space.",
+          "files": [
+            "hex-nexus/assets/src/components/views/ControlPlane.tsx"
+          ],
+          "id": "p4.2",
+          "status": "done",
+          "title": "Embed panel in ControlPlane view"
+        }
+      ],
+      "title": "Brain Validate Status Panel"
+    },
+    {
+      "description": "The TaskDAG SVG nodes are clickable but the click handler fires with no visible output. Wire the existing handleNodeClick to open an inline popover (or a slide-over panel) showing: task title, status, assigned agent ID (truncated), depends_on list, timestamps. Use a Portal-rendered div positioned near the clicked node. Close on Escape or outside click.",
+      "id": "p5",
+      "tasks": [
+        {
+          "description": "New file src/components/swarm/TaskNodePopover.tsx. Receives a TaskNode and a bounding rect. Renders an absolute-positioned card with task details. Accessible: role=dialog, aria-modal=true, focus-trapped.",
+          "files": [
+            "hex-nexus/assets/src/components/swarm/TaskNodePopover.tsx"
+          ],
+          "id": "p5.1",
+          "status": "done",
+          "title": "Add TaskNodePopover component"
+        },
+        {
+          "description": "In TaskDAG.tsx, track selectedNode signal. On node click, set selectedNode + compute bounding rect from SVG coordinates. Render <TaskNodePopover /> via Portal. Clear on Escape keydown or backdrop click.",
+          "files": [
+            "hex-nexus/assets/src/components/swarm/TaskDAG.tsx"
+          ],
+          "id": "p5.2",
+          "status": "done",
+          "title": "Wire popover into TaskDAG"
+        }
+      ],
+      "title": "TaskDAG Node Detail Popover"
+    },
+    {
+      "description": "The dashboard uses inconsistent text sizing (text-[9px], text-[10px], text-[11px], text-xs all mixed). Standardize to a 3-level scale: label=text-[10px], body=text-xs (12px), heading=text-sm (14px). Replace raw gray-300 on fallback/empty text with gray-500 for proper dark-theme contrast. Add a connection-state color ring to the SpacetimeDB module cards (cyan pulse animation when connected). Add aria-live='polite' to the SwarmTimeline list so screen readers announce new events.",
+      "id": "p6",
+      "tasks": [
+        {
+          "description": "Update SwarmMonitor, SwarmTimeline, SwarmHeader, TaskDAG, InboxPanel to use consistent text sizing classes. Remove all text-[9px] instances; use text-[10px] only for badges/labels.",
+          "files": [
+            "hex-nexus/assets/src/components/swarm/SwarmMonitor.tsx",
+            "hex-nexus/assets/src/components/swarm/SwarmTimeline.tsx",
+            "hex-nexus/assets/src/components/swarm/SwarmHeader.tsx",
+            "hex-nexus/assets/src/components/inbox/InboxPanel.tsx"
+          ],
+          "id": "p6.1",
+          "status": "done",
+          "title": "Standardize type scale across swarm components"
+        },
+        {
+          "description": "Change all 'text-gray-300' used on empty/fallback strings to 'text-gray-500'. Add aria-live='polite' to SwarmTimeline's event list container. Add aria-label to priority badge spans in InboxPanel.",
+          "files": [
+            "hex-nexus/assets/src/components/swarm/SwarmTimeline.tsx",
+            "hex-nexus/assets/src/components/swarm/SwarmMonitor.tsx",
+            "hex-nexus/assets/src/components/inbox/InboxPanel.tsx"
+          ],
+          "id": "p6.2",
+          "status": "done",
+          "title": "Fix empty-state text contrast and aria-live"
+        }
+      ],
+      "title": "Visual Density & Color Consistency Pass"
+    },
+    {
+      "description": "SwarmHeader.detectPhase() infers lifecycle phase from completion ratio (0%, 20%, 70%, 100%) which produces incorrect labels when tasks are out of order or a swarm is paused. Replace with an explicit `phase` field from the swarm SpacetimeDB record if present, falling back to the ratio heuristic only when the field is absent. Also show the topology value (pipeline/mesh/hierarchical) as a small chip next to the swarm name.",
+      "id": "p7",
+      "tasks": [
+        {
+          "description": "Update SwarmHeader to accept an optional `phase` prop (string). If set, map it to the PHASES array directly. Keep detectPhase() as fallback. Show topology chip using existing border styling.",
+          "files": [
+            "hex-nexus/assets/src/components/swarm/SwarmHeader.tsx",
+            "hex-nexus/assets/src/components/swarm/SwarmMonitor.tsx"
+          ],
+          "id": "p7.1",
+          "status": "done",
+          "title": "Read swarm.phase field in SwarmHeader"
+        }
+      ],
+      "title": "Phase detect heuristic replacement in SwarmHeader"
+    },
+    {
+      "description": "Rebuild hex-nexus to bake updated assets into the binary. Run cargo check --workspace, start nexus, verify each new panel loads without console errors. Confirm SpacetimeDB subscriptions still work after the component changes.",
+      "id": "p8",
+      "tasks": [
+        {
+          "description": "Run `cd hex-nexus && cargo build` after Vite build. Hard-refresh dashboard. Check browser console for errors on each new route.",
+          "files": [],
+          "id": "p8.1",
+          "title": "Rebuild hex-nexus assets"
+        }
+      ],
+      "title": "Rebuild and smoke test"
+    }
+  ],
+  "status": "draft",
+  "title": "Dashboard UX Improvements"
+}
