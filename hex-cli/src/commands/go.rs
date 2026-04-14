@@ -87,28 +87,30 @@ async fn check_binary_staleness() -> bool {
     };
 
     if head_time > bin_mtime {
-        println!(
-            "  {} binary stale — rebuilding...",
-            "\u{2192}".yellow()
-        );
-
-        let rebuild = tokio::process::Command::new("cargo")
+        match std::process::Command::new("cargo")
             .args(["build", "-p", "hex-cli", "--release"])
             .current_dir(&cwd)
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .status()
-            .await;
-
-        match rebuild {
-            Ok(status) if status.success() => {
-                println!("  {} binary rebuilt", "\u{2713}".green());
-                false
-            }
-            _ => {
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(child) => {
                 println!(
-                    "  {} rebuild failed {}",
+                    "  {} binary stale — rebuild spawned (PID {})",
+                    "\u{2192}".yellow(),
+                    child.id()
+                );
+                // Drop child without waiting — cargo runs detached in background.
+                // On Unix the child is reparented to init when hex go exits.
+                drop(child);
+                true
+            }
+            Err(e) => {
+                println!(
+                    "  {} binary stale — rebuild spawn failed: {} {}",
                     "\u{2192}".red(),
+                    e,
                     "— run manually: cargo build -p hex-cli --release".dimmed()
                 );
                 true
