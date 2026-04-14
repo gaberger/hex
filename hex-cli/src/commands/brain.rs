@@ -1198,6 +1198,7 @@ fn daemon_status() -> anyhow::Result<()> {
 const NEXUS_BASE: &str = "http://127.0.0.1:5555";
 
 async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String> {
+    use crate::nexus_client::NexusClient;
     let id = uuid::Uuid::new_v4().to_string();
     let key = format!("brain-task:{}", id);
     let task = json!({
@@ -1209,10 +1210,13 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
         "completed_at": serde_json::Value::Null,
         "result": serde_json::Value::Null,
     });
-    reqwest::Client::new()
-        .post(format!("{}/api/hexflo/memory", NEXUS_BASE))
-        .json(&json!({"key": key, "value": task.to_string(), "scope": "global"}))
-        .send()
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+    nexus
+        .post(
+            "/api/hexflo/memory",
+            &json!({"key": key, "value": task.to_string()}),
+        )
         .await?;
     Ok(id)
 }
@@ -1220,14 +1224,12 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
 pub(crate) async fn list_brain_tasks(
     status_filter: Option<&str>,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
-    let resp = reqwest::Client::new()
-        .get(format!(
-            "{}/api/hexflo/memory/search?q=brain-task:",
-            NEXUS_BASE
-        ))
-        .send()
+    use crate::nexus_client::NexusClient;
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+    let body: serde_json::Value = nexus
+        .get("/api/hexflo/memory/search?q=brain-task:")
         .await?;
-    let body: serde_json::Value = resp.json().await?;
     let results = body
         .get("results")
         .and_then(|v| v.as_array())
@@ -1235,17 +1237,16 @@ pub(crate) async fn list_brain_tasks(
         .unwrap_or_default();
     let mut tasks = Vec::new();
     for item in results {
-        if let Some(arr) = item.as_array() {
-            if let Some(value_str) = arr.get(1).and_then(|v| v.as_str()) {
-                if let Ok(task) = serde_json::from_str::<serde_json::Value>(value_str) {
-                    let status = task.get("status").and_then(|v| v.as_str()).unwrap_or("");
-                    if let Some(filter) = status_filter {
-                        if status != filter {
-                            continue;
-                        }
+        // Response shape: [{"key": "brain-task:...", "value": "<json string>"}, ...]
+        if let Some(value_str) = item.get("value").and_then(|v| v.as_str()) {
+            if let Ok(task) = serde_json::from_str::<serde_json::Value>(value_str) {
+                let status = task.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                if let Some(filter) = status_filter {
+                    if status != filter {
+                        continue;
                     }
-                    tasks.push(task);
                 }
+                tasks.push(task);
             }
         }
     }
@@ -1265,39 +1266,35 @@ pub(crate) async fn update_brain_task(
     status: &str,
     result: &str,
 ) -> anyhow::Result<()> {
+    use crate::nexus_client::NexusClient;
     let key = format!("brain-task:{}", id);
-    let resp = reqwest::Client::new()
-        .get(format!("{}/api/hexflo/memory/{}", NEXUS_BASE, key))
-        .send()
-        .await?;
-    if let Ok(mut task) = resp.json::<serde_json::Value>().await {
-        // The memory endpoint may return either the raw value string or a wrapper.
-        // Support both by detecting a "value" field.
-        let mut inner: serde_json::Value = if let Some(v) = task.get("value").cloned() {
-            if let Some(s) = v.as_str() {
-                serde_json::from_str(s).unwrap_or(task.clone())
-            } else {
-                v
-            }
-        } else {
-            task.take()
-        };
-        if let Some(obj) = inner.as_object_mut() {
-            obj.insert("status".into(), json!(status));
-            obj.insert("result".into(), json!(result));
-            if status == "completed" || status == "failed" {
-                obj.insert(
-                    "completed_at".into(),
-                    json!(chrono::Utc::now().to_rfc3339()),
-                );
-            }
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+    // GET current task value
+    let resp: serde_json::Value = nexus.get(&format!("/api/hexflo/memory/{}", key)).await?;
+    // Response shape: {"key": ..., "value": "<json string>"} or just the value
+    let value_str = resp
+        .get("value")
+        .and_then(|v| v.as_str())
+        .unwrap_or("{}");
+    let mut inner: serde_json::Value =
+        serde_json::from_str(value_str).unwrap_or(serde_json::json!({}));
+    if let Some(obj) = inner.as_object_mut() {
+        obj.insert("status".into(), json!(status));
+        obj.insert("result".into(), json!(result));
+        if status == "completed" || status == "failed" {
+            obj.insert(
+                "completed_at".into(),
+                json!(chrono::Utc::now().to_rfc3339()),
+            );
         }
-        reqwest::Client::new()
-            .post(format!("{}/api/hexflo/memory", NEXUS_BASE))
-            .json(&json!({"key": key, "value": inner.to_string(), "scope": "global"}))
-            .send()
-            .await?;
     }
+    nexus
+        .post(
+            "/api/hexflo/memory",
+            &json!({"key": key, "value": inner.to_string()}),
+        )
+        .await?;
     Ok(())
 }
 
