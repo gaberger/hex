@@ -1,4 +1,4 @@
-use hex_agent::{domain, ports, adapters, usecases};
+use hex_agent::{domain, ports, adapters, usecases, worker};
 
 use clap::Parser;
 use std::path::PathBuf;
@@ -240,6 +240,16 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move {
             tokio::signal::ctrl_c().await.ok();
             shutdown_clone.store(true, Ordering::SeqCst);
+        });
+
+        // P3.1 (ADR-2604141200): remote-shell worker runs alongside the
+        // HexFlo task poller so a single `hex-agent daemon` can service
+        // both workplan dispatch and operator-issued `hex hey ... on <host>`
+        // shell enqueues.
+        let rs_worker = worker::RemoteShellWorker::from_env();
+        let rs_shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            worker::run_loop(rs_worker, rs_shutdown).await;
         });
 
         while !shutdown.load(Ordering::SeqCst) {

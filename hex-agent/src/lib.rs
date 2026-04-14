@@ -3,3 +3,4 @@ pub mod domain;
 pub mod ports;
 pub mod adapters;
 pub mod usecases;
+pub mod worker;
