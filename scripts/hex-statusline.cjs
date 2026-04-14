@@ -162,8 +162,6 @@ const agentIdShort = agentId ? agentId.slice(0, 8) : null;
 // HexFlo live status — fetch from hex nexus REST API if daemon is running
 let hexfloSwarms = 0, hexfloTasks = 0, hexfloTasksDone = 0, hexfloAgents = 0;
 let pulseProjects = [];
-// Brain autonomous supervisor — queue depth + last test timestamp
-let brainQueue = 0, brainLastTest = 'never';
 if (hubRunning) {
   const fetchSync = (urlPath) => safe(() => {
     const result = execFileSync('node', ['-e', `
@@ -193,13 +191,6 @@ if (hubRunning) {
   const pulseData = fetchSync('/api/pulse');
   if (Array.isArray(pulseData)) {
     pulseProjects = pulseData;
-  }
-
-  // Brain — queue depth + last test age so operators see autonomous work
-  const brainData = fetchSync('/api/brain/status');
-  if (brainData && typeof brainData === 'object') {
-    brainQueue = typeof brainData.queue_pending === 'number' ? brainData.queue_pending : 0;
-    brainLastTest = brainData.last_test || 'never';
   }
 }
 
@@ -290,22 +281,6 @@ if (pulseProjects.length > 0) {
     parts.push(`${P.dim}○hexflo`);
   }
 }
-
-// Brain autonomous supervisor — ◉brain or ○brain, with queue depth if > 0.
-// Daemon liveness is detected via the PID file + process check (kill -0).
-const brainPidFile = path.join(require('os').homedir(), '.hex', 'brain-daemon.pid');
-let brainDaemonAlive = false;
-try {
-  const rawPid = fs.readFileSync(brainPidFile, 'utf8').trim();
-  const pid = parseInt(rawPid, 10);
-  if (pid > 0) {
-    try { process.kill(pid, 0); brainDaemonAlive = true; } catch { /* stale pid */ }
-  }
-} catch { /* no pid file — daemon not running */ }
-
-const brainDot = brainDaemonAlive ? `${P.on}◉` : `${P.off}○`;
-const brainQueueTag = brainQueue > 0 ? `${P.branch} ${brainQueue}⤵` : '';
-parts.push(`${brainDot}brain${brainQueueTag}`);
 
 // Services — README format: ●db │ ◉localhost:3456 │ ◉mcp
 const svcDot = (on, label) => on ? `${P.on}◉${label}` : `${P.off}○${label}`;

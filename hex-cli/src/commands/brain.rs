@@ -184,7 +184,14 @@ async fn status() -> anyhow::Result<()> {
     println!("  Test Model: {}", body.get("test_model").unwrap_or(&json!("nemotron-mini")));
     println!("  Interval: {} seconds", body.get("interval_secs").unwrap_or(&json!(600)));
     println!("  Last Test: {}", body.get("last_test").unwrap_or(&json!("never")));
-    
+    let queue = body.get("queue_pending").and_then(|v| v.as_u64()).unwrap_or(0);
+    let queue_label = if queue == 0 {
+        "0 (idle)".dimmed().to_string()
+    } else {
+        format!("{} pending {}", queue, "⤵".cyan())
+    };
+    println!("  Queue:     {}", queue_label);
+
     Ok(())
 }
 

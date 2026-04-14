@@ -16,6 +16,11 @@ pub struct BrainStatus {
     pub test_model: String,
     pub interval_secs: u64,
     pub last_test: String,
+    /// Pending brain tasks in the queue (from hexflo memory search).
+    pub queue_pending: u32,
+    /// Seconds since last brain_tick event (null if never). Operators watching
+    /// the statusline use this to verify brain is actually iterating.
+    pub last_tick_secs_ago: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -41,11 +46,33 @@ pub async fn status(State(state): State<SharedState>) -> Json<BrainStatus> {
         .clone()
         .unwrap_or_else(|| "never".to_string());
 
+    // Queue depth — count brain-task:* entries whose status is "pending".
+    // Best-effort: if the state port isn't configured yet, return 0.
+    let queue_pending = if let Some(sp) = state.state_port.as_ref() {
+        match sp.hexflo_memory_search("brain-task:").await {
+            Ok(entries) => entries
+                .iter()
+                .filter(|(_key, value)| {
+                    serde_json::from_str::<serde_json::Value>(value)
+                        .ok()
+                        .and_then(|v| v.get("status").and_then(|s| s.as_str()).map(|s| s.to_string()))
+                        .as_deref()
+                        == Some("pending")
+                })
+                .count() as u32,
+            Err(_) => 0,
+        }
+    } else {
+        0
+    };
+
     Json(BrainStatus {
         service_enabled: true,
         test_model,
         interval_secs: 600,
         last_test,
+        queue_pending,
+        last_tick_secs_ago: None, // TODO: read from event_adapter once a brain_tick filter exists
     })
 }
 
