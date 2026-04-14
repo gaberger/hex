@@ -487,6 +487,8 @@ enum Commands {
         #[command(subcommand)]
         action: PauseAction,
     },
+    /// Resume a paused workplan (ADR-2604131500 §1 Layer 4)
+    Resume,
     /// (hidden) Decide — use `hex override decide` instead
     #[command(hide = true)]
     Decide {
@@ -634,6 +636,7 @@ async fn main() -> anyhow::Result<()> {
                 PauseAction::Resume => commands::pause::run_resume().await,
             }
         }
+        Commands::Resume => commands::pause::run_resume().await,
         Commands::Decide { action } => commands::decide::run(action).await,
     }
 }
