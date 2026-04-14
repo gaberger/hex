@@ -1,0 +1,15 @@
+{
+  "id": "wp-fixture-mixed",
+  "feature": "fixture — some tasks valid, some missing files[]",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Phase with some bad, some good",
+      "tasks": [
+        {"id": "P1.1", "name": "good", "status": "pending", "files": ["src/a.rs"]},
+        {"id": "P1.2", "name": "bad — no files", "status": "pending"},
+        {"id": "P1.3", "name": "bad — missing id", "status": "pending"}
+      ]
+    }
+  ]
+}

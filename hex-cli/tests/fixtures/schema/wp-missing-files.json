@@ -1,0 +1,15 @@
+{
+  "id": "wp-fixture-missing-files",
+  "feature": "fixture — every task has empty files[]",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Phase with bad tasks",
+      "tasks": [
+        {"id": "P1.1", "name": "first bad task", "status": "pending"},
+        {"id": "P1.2", "name": "second bad task", "status": "pending"},
+        {"id": "P1.3", "name": "third bad task", "status": "pending", "files": []}
+      ]
+    }
+  ]
+}

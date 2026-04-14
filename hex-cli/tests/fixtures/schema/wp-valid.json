@@ -1,0 +1,24 @@
+{
+  "id": "wp-fixture-valid",
+  "feature": "fixture — every task has populated files[]",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Phase with good tasks",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "first task",
+          "status": "pending",
+          "files": ["src/module_a.rs", "tests/module_a.rs"]
+        },
+        {
+          "id": "P1.2",
+          "name": "second task",
+          "status": "pending",
+          "files": ["src/module_b.rs"]
+        }
+      ]
+    }
+  ]
+}

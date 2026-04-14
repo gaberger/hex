@@ -5,6 +5,7 @@
 //! Workplans decompose requirements into hex-bounded tasks organized by
 //! dependency tier. Plans are saved to `docs/workplans/` as JSON.
 
+mod lint;
 pub mod reconcile_evidence;
 mod schema_validate;
 
@@ -92,6 +93,20 @@ pub enum PlanAction {
     Drafts {
         #[command(subcommand)]
         action: DraftsAction,
+    },
+    /// Validate workplan evidence (ADR-2604142200, wp-enforce-workplan-evidence E3.1).
+    ///
+    /// Runs `validate_workplan_evidence` on one workplan or on every
+    /// `docs/workplans/wp-*.json`. Reports violations (task id + kind +
+    /// remediation hint) in a table. Exit 0 when clean, non-zero when
+    /// any violation is found. Intended for pre-commit hooks and CI.
+    Lint {
+        /// Path to a specific workplan JSON. Mutually exclusive with --all.
+        #[arg(conflicts_with = "all")]
+        file: Option<String>,
+        /// Lint every docs/workplans/wp-*.json file.
+        #[arg(long, default_value_t = false)]
+        all: bool,
     },
 }
 
@@ -324,6 +339,7 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::Reconcile { file, update, audit } => reconcile_plan(&file, update, audit).await,
         PlanAction::Draft { prompt, background } => draft_plan(&prompt, background).await,
         PlanAction::Drafts { action } => drafts_dispatch(action).await,
+        PlanAction::Lint { file, all } => lint::run(file.as_deref(), all).await,
     }
 }
 
