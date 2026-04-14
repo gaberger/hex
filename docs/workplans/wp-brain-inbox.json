@@ -1,0 +1,69 @@
+{
+  "id": "wp-brain-inbox",
+  "feature": "Brain Inbox — Task Queue for Supervisor Loop",
+  "description": "Brain daemon drains a task queue each tick. Users/agents enqueue work via hex brain enqueue. Task types: hex-command, workplan, shell. SpacetimeDB-backed for persistence.",
+  "adr": "ADR-2604132330",
+  "status": "planned",
+  "priority": "high",
+  "created_at": "2026-04-13T23:35:00Z",
+  "created_by": "human+agent",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Brain task storage (HexFlo memory)",
+      "tier": 1,
+      "description": "Use HexFlo memory with brain-task: key prefix — no new SpacetimeDB reducer needed, reuses existing infrastructure.",
+      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Brain task enqueue/list/drain via HexFlo memory",
+          "layer": "primary",
+          "description": "In hex-cli/src/commands/brain.rs: add enqueue_brain_task(kind, payload), list_brain_tasks(status_filter), drain_brain_tasks(limit) — all use HexFlo memory with keys brain-task:{uuid}. Value is JSON with {kind, payload, status, created_at, completed_at, result}.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/brain.rs"],
+          "agent": "hex-coder",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "CLI commands: enqueue, queue list/clear/drain",
+      "tier": 2,
+      "description": "hex brain enqueue <kind> <payload>, hex brain queue list/clear/drain.",
+      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Add Enqueue and Queue subcommands to BrainAction",
+          "layer": "primary",
+          "description": "Add BrainAction::Enqueue { kind: String, payload: String } and BrainAction::Queue { #[command(subcommand)] action: QueueAction }. QueueAction: List, Clear, Drain. Wire into run() match.",
+          "deps": ["P1.1"],
+          "files": ["hex-cli/src/commands/brain.rs"],
+          "agent": "hex-coder",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Daemon drains queue each tick",
+      "tier": 2,
+      "description": "Each daemon tick: after validate, fetch up to N pending tasks and execute them sequentially.",
+      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Daemon tick body: drain brain queue",
+          "layer": "primary",
+          "description": "In daemon() tick: after validate(), call drain_brain_tasks(limit=1). For each task, execute based on kind: hex-command=shell 'hex {payload}', workplan=shell 'hex plan execute {payload}', shell=whitelist check + execute. Set status=completed/failed with result, write back to HexFlo memory. Print task progress to stdout.",
+          "deps": ["P1.1", "P2.1"],
+          "files": ["hex-cli/src/commands/brain.rs"],
+          "agent": "hex-coder",
+          "strategy_hint": "codegen"
+        }
+      ]
+    }
+  ]
+}
