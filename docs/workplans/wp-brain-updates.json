@@ -1,88 +1,118 @@
 {
-  "id": "wp-brain-updates",
-  "feature": "Brain Updates to Operator — Push, Don't Poll",
-  "description": "Brain daemon posts to inbox after task completion, failure, validate regression. Adds hex brain watch for streaming. Session-start inbox summary.",
   "adr": "ADR-2604141100",
-  "status": "planned",
-  "priority": "high",
   "created_at": "2026-04-14T11:05:00Z",
   "created_by": "hex+human",
+  "description": "Brain daemon posts to inbox after task completion, failure, validate regression. Adds hex brain watch for streaming. Session-start inbox summary.",
+  "feature": "Brain Updates to Operator — Push, Don't Poll",
+  "id": "wp-brain-updates",
   "phases": [
     {
+      "description": "After each brain task completes or fails, POST to /api/inbox with priority-based notification.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P1",
       "name": "Brain posts to inbox after task events",
-      "tier": 1,
-      "description": "After each brain task completes or fails, POST to /api/inbox with priority-based notification.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P1.1",
-          "name": "Notify on task completion/failure",
-          "layer": "primary",
-          "description": "In hex-cli/src/commands/brain.rs daemon tick: after executing each brain task, POST to /api/inbox with priority=1 (completed) or priority=2 (failed). Body: JSON {task_id, kind, payload, status, result_snippet}. Use NexusClient. Swallow errors — don't fail the tick.",
-          "deps": [],
-          "files": ["hex-cli/src/commands/brain.rs"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "In hex-cli/src/commands/brain.rs daemon tick: after executing each brain task, POST to /api/inbox with priority=1 (completed) or priority=2 (failed). Body: JSON {task_id, kind, payload, status, result_snippet}. Use NexusClient. Swallow errors — don't fail the tick.",
+          "files": [
+            "hex-cli/src/commands/brain.rs"
+          ],
+          "id": "P1.1",
+          "layer": "primary",
+          "name": "Notify on task completion/failure",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 1
     },
     {
+      "description": "Track last tick's validate result. If new issues appear this tick, notify priority-2.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P2",
       "name": "Validate regression detection",
-      "tier": 2,
-      "description": "Track last tick's validate result. If new issues appear this tick, notify priority-2.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P2.1",
-          "name": "Store last validate result, diff per tick",
-          "layer": "primary",
-          "description": "In daemon(): maintain a local HashMap<String, usize> of last check's issue counts (cli_wiring=N, mcp_parity=N, etc). Each tick: if any count increased, POST priority-2 notification with the regression details. If counts decreased, log info. Persist last state in a simple struct between ticks (not SpacetimeDB — daemon-local).",
-          "deps": ["P1.1"],
-          "files": ["hex-cli/src/commands/brain.rs"],
           "agent": "hex-coder",
+          "deps": [
+            "P1.1"
+          ],
+          "description": "In daemon(): maintain a local HashMap<String, usize> of last check's issue counts (cli_wiring=N, mcp_parity=N, etc). Each tick: if any count increased, POST priority-2 notification with the regression details. If counts decreased, log info. Persist last state in a simple struct between ticks (not SpacetimeDB — daemon-local).",
+          "files": [
+            "hex-cli/src/commands/brain.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Store last validate result, diff per tick",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 2
     },
     {
+      "description": "Stream brain_tick events via WebSocket or polling.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P3",
       "name": "hex brain watch — live stream",
-      "tier": 2,
-      "description": "Stream brain_tick events via WebSocket or polling.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P3.1",
-          "name": "Add BrainAction::Watch command",
-          "layer": "primary",
-          "description": "Add BrainAction::Watch { since: Option<String> } variant. Implement watch() that polls /api/events?type=brain_tick every 2s (since last event timestamp) and prints new events. Exits on ctrl-C. Simpler than WebSocket for now — can upgrade later.",
-          "deps": [],
-          "files": ["hex-cli/src/commands/brain.rs"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "Add BrainAction::Watch { since: Option<String> } variant. Implement watch() that polls /api/events?type=brain_tick every 2s (since last event timestamp) and prints new events. Exits on ctrl-C. Simpler than WebSocket for now — can upgrade later.",
+          "files": [
+            "hex-cli/src/commands/brain.rs"
+          ],
+          "id": "P3.1",
+          "layer": "primary",
+          "name": "Add BrainAction::Watch command",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 2
     },
     {
+      "description": "hex hook session-start shows count of unacked brain notifications.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P4",
       "name": "Session-start inbox summary",
-      "tier": 2,
-      "description": "hex hook session-start shows count of unacked brain notifications.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P4.1",
-          "name": "Print inbox summary in session-start handler",
-          "layer": "primary",
-          "description": "In hex-cli/src/commands/hook.rs session-start: GET /api/inbox?unacked=true&min_priority=1. If count > 0, print 'Brain: N new notifications — hex inbox list to review'. Show top 3 titles.",
-          "deps": [],
-          "files": ["hex-cli/src/commands/hook.rs"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "In hex-cli/src/commands/hook.rs session-start: GET /api/inbox?unacked=true&min_priority=1. If count > 0, print 'Brain: N new notifications — hex inbox list to review'. Show top 3 titles.",
+          "files": [
+            "hex-cli/src/commands/hook.rs"
+          ],
+          "id": "P4.1",
+          "layer": "primary",
+          "name": "Print inbox summary in session-start handler",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 2
     }
-  ]
+  ],
+  "priority": "high",
+  "status": "planned"
 }
