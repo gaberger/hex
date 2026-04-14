@@ -8,6 +8,7 @@ pub mod chat;
 pub mod context;
 pub mod doctor;
 pub mod fingerprint;
+pub mod fs;
 pub mod spec;
 pub mod dev;
 pub mod enforce;

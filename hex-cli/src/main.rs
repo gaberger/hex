@@ -39,6 +39,7 @@ use commands::{
     sandbox::SandboxAction,
     plan::PlanAction,
     fingerprint::FingerprintAction,
+    fs::FsAction,
     project::ProjectAction,
     secrets::SecretsAction,
     skill::SkillAction,
@@ -320,6 +321,11 @@ enum Commands {
         #[command(subcommand)]
         action: GitAction,
     },
+    /// Native filesystem primitives (ADR-2604142100) — replaces Bash/Read/Grep/Glob
+    Fs {
+        #[command(subcommand)]
+        action: FsAction,
+    },
     /// Project status
     Status,
     /// One-glance multi-project pulse (ADR-2604131500 P6.1)
@@ -591,6 +597,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Skill { action } => commands::skill::run(action).await,
         Commands::Assets { action } => commands::assets_cmd::run(action).await,
         Commands::Git { action } => commands::git_cmd::run(action).await,
+        Commands::Fs { action } => commands::fs::run(action).await,
         Commands::Status => status::run().await,
         Commands::Pulse => commands::pulse::run().await,
         Commands::Opencode { action } => commands::opencode::run(action),
