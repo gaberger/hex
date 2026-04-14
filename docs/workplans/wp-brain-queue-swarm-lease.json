@@ -178,7 +178,7 @@
           "id": "P3.2",
           "layer": "hex-cli",
           "name": "Sweeper notifications",
-          "status": "pending"
+          "status": "done"
         }
       ],
       "tier": 3
