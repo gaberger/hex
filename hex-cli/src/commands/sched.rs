@@ -1734,14 +1734,44 @@ fn daemon_status() -> anyhow::Result<()> {
     }
     Ok(())
 }
-// ─── wp-brain-updates P3.1: Watch brain_tick events ───────────────────────
+// ─── wp-brain-updates P3.1 / P2.1: Watch brain_tick events ─────────────────
+
+/// Normalize a `--since` value to an ISO 8601 UTC timestamp.
+///
+/// Accepts:
+///   - ISO 8601 / RFC 3339 (`2026-04-14T10:00:00Z`) — returned normalized
+///   - humantime durations (`1h`, `30m`, `2h15m`, `7d`) — subtracted from now
+///
+/// Returns `Err` with a user-facing hint if neither parse succeeds.
+fn parse_since(input: &str) -> anyhow::Result<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("--since value is empty");
+    }
+    // Try RFC 3339 first (it's what the server emits, so the common case).
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        return Ok(dt.with_timezone(&chrono::Utc).to_rfc3339());
+    }
+    // Fall back to humantime duration.
+    if let Ok(dur) = humantime::parse_duration(trimmed) {
+        let now = chrono::Utc::now();
+        let chrono_dur = chrono::Duration::from_std(dur)
+            .map_err(|e| anyhow::anyhow!("duration out of range: {e}"))?;
+        let cutoff = now
+            .checked_sub_signed(chrono_dur)
+            .ok_or_else(|| anyhow::anyhow!("--since {trimmed} underflows"))?;
+        return Ok(cutoff.to_rfc3339());
+    }
+    anyhow::bail!(
+        "--since must be ISO 8601 (e.g. 2026-04-14T10:00:00Z) or a duration (e.g. 1h, 30m, 2h15m); got {trimmed:?}"
+    );
+}
 
 /// Stream new `brain_tick` events to stdout as they appear.
 ///
 /// Polls `GET /api/events` every 2 seconds, filters for `event_type ==
 /// "brain_tick"`, and prints anything newer than the last-seen timestamp.
-/// Ctrl-C exits cleanly. Simpler than a WebSocket subscription — can upgrade
-/// later if polling overhead matters.
+/// Each poll prints newest-first within the batch. Ctrl-C exits cleanly.
 async fn watch(since: Option<String>) -> anyhow::Result<()> {
     let port = std::env::var("HEX_NEXUS_PORT")
         .unwrap_or_else(|_| "5555".to_string())
@@ -1750,44 +1780,59 @@ async fn watch(since: Option<String>) -> anyhow::Result<()> {
     let url = format!("http://127.0.0.1:{}/api/events?limit=200", port);
     let client = reqwest::Client::new();
 
+    // Resolve --since up front so bad input fails before we start polling.
+    let normalized_since: Option<String> = match since.as_deref() {
+        Some(s) => Some(parse_since(s)?),
+        None => None,
+    };
+
     println!(
         "{} (ctrl-C to exit)",
         "⬡ watching brain_tick events".green().bold()
     );
-    if let Some(s) = &since {
-        println!("  since: {}", s);
+    if let (Some(raw), Some(norm)) = (since.as_deref(), normalized_since.as_deref()) {
+        if raw == norm {
+            println!("  since: {}", raw);
+        } else {
+            println!("  since: {} ({})", raw, norm);
+        }
     }
     println!();
 
     // `last_seen` is the newest `created_at` we've printed so far. When
     // `since` is None, the first poll establishes a baseline without printing
     // backlog — the user asked to watch, not to replay history.
-    let mut last_seen: Option<String> = since;
+    let mut last_seen: Option<String> = normalized_since;
     let mut first_poll = last_seen.is_none();
 
     loop {
         match poll_brain_events(&client, &url, last_seen.as_deref()).await {
             Ok(events) => {
+                // `events` is newest-first. `max` works regardless of order.
+                let newest = events
+                    .iter()
+                    .filter_map(|ev| ev.get("created_at").and_then(|v| v.as_str()))
+                    .max()
+                    .map(|s| s.to_string());
+
                 if first_poll {
                     // Seed baseline: record newest without printing.
-                    if let Some(ts) = events.iter()
-                        .filter_map(|ev| ev.get("created_at").and_then(|v| v.as_str()))
-                        .max()
-                    {
-                        last_seen = Some(ts.to_string());
+                    if let Some(ts) = newest {
+                        last_seen = Some(ts);
                     }
                     first_poll = false;
                 } else {
+                    // Print newest-first (server order, no reversal).
                     for ev in &events {
                         print_brain_event(ev);
-                        if let Some(ts) = ev.get("created_at").and_then(|v| v.as_str()) {
-                            let is_newer = last_seen
-                                .as_deref()
-                                .map(|cur| ts > cur)
-                                .unwrap_or(true);
-                            if is_newer {
-                                last_seen = Some(ts.to_string());
-                            }
+                    }
+                    if let Some(ts) = newest {
+                        let advance = last_seen
+                            .as_deref()
+                            .map(|cur| ts.as_str() > cur)
+                            .unwrap_or(true);
+                        if advance {
+                            last_seen = Some(ts);
                         }
                     }
                 }
@@ -1808,7 +1853,7 @@ async fn watch(since: Option<String>) -> anyhow::Result<()> {
 }
 
 /// Fetch recent events, filter to `brain_tick`, and keep only those strictly
-/// newer than `since`. Returned oldest-first for natural print order.
+/// newer than `since`. Returned newest-first (matches server order).
 async fn poll_brain_events(
     client: &reqwest::Client,
     url: &str,
@@ -1829,7 +1874,7 @@ async fn poll_brain_events(
         .cloned()
         .unwrap_or_default();
 
-    let mut filtered: Vec<serde_json::Value> = events
+    let filtered: Vec<serde_json::Value> = events
         .into_iter()
         .filter(|ev| ev.get("event_type").and_then(|v| v.as_str()) == Some("brain_tick"))
         .filter(|ev| match since {
@@ -1842,8 +1887,6 @@ async fn poll_brain_events(
         })
         .collect();
 
-    // Server returns newest-first; reverse so callers see oldest-first.
-    filtered.reverse();
     Ok(filtered)
 }
 
@@ -2190,4 +2233,62 @@ async fn queue_drain() -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_since_accepts_rfc3339_utc() {
+        let got = parse_since("2026-04-14T10:00:00Z").unwrap();
+        let parsed = chrono::DateTime::parse_from_rfc3339(&got).unwrap();
+        assert_eq!(parsed.with_timezone(&chrono::Utc).to_rfc3339(), got);
+    }
+
+    #[test]
+    fn parse_since_accepts_rfc3339_with_offset() {
+        let got = parse_since("2026-04-14T12:00:00+02:00").unwrap();
+        let parsed = chrono::DateTime::parse_from_rfc3339(&got).unwrap();
+        // Normalized to UTC — 12:00+02:00 == 10:00Z.
+        assert_eq!(parsed.with_timezone(&chrono::Utc).to_rfc3339(), got);
+        assert!(got.contains("10:00:00"));
+    }
+
+    #[test]
+    fn parse_since_accepts_humantime_durations() {
+        let before = chrono::Utc::now();
+        let got = parse_since("1h").unwrap();
+        let after = chrono::Utc::now();
+
+        let parsed = chrono::DateTime::parse_from_rfc3339(&got)
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        // Result must be approximately (now - 1h), bracketed by before/after.
+        let lo = before - chrono::Duration::hours(1) - chrono::Duration::seconds(1);
+        let hi = after - chrono::Duration::hours(1) + chrono::Duration::seconds(1);
+        assert!(
+            parsed >= lo && parsed <= hi,
+            "parsed {parsed} outside [{lo}, {hi}]"
+        );
+    }
+
+    #[test]
+    fn parse_since_accepts_compound_durations() {
+        // humantime supports compound like "2h15m"; make sure we don't break it.
+        let got = parse_since("2h15m").unwrap();
+        chrono::DateTime::parse_from_rfc3339(&got).unwrap();
+    }
+
+    #[test]
+    fn parse_since_rejects_garbage() {
+        let err = parse_since("not-a-time").unwrap_err().to_string();
+        assert!(err.contains("--since"), "unhelpful error: {err}");
+    }
+
+    #[test]
+    fn parse_since_rejects_empty() {
+        assert!(parse_since("").is_err());
+        assert!(parse_since("   ").is_err());
+    }
 }
