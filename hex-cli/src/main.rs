@@ -241,7 +241,13 @@ enum Commands {
     Go,
     /// Hey Hex — natural language task classifier (ADR-2604140000)
     Hey(HeyArgs),
-    /// Agentic Brain (self-improving model selection)
+    /// Scheduler daemon — queue drain, validation, auto-fix (ADR-2604150000)
+    Sched {
+        #[command(subcommand)]
+        action: BrainAction,
+    },
+    /// Deprecated alias for `sched` (ADR-2604150000) — forwards with warning
+    #[command(hide = true)]
     Brain {
         #[command(subcommand)]
         action: BrainAction,
@@ -580,7 +586,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Brief(args) => commands::brief::run(args).await,
         Commands::Go => commands::go::run().await,
         Commands::Hey(args) => commands::hey::run(args).await,
-        Commands::Brain { action } => commands::sched::run(action).await,
+        Commands::Sched { action } => commands::sched::run(action).await,
+        Commands::Brain { action } => commands::brain_alias::run(action).await,
         Commands::Stdb { action } => commands::stdb::run(action).await,
         Commands::Swarm { action } => commands::swarm::run(action).await,
         Commands::Task { action } => commands::task::run(action).await,
