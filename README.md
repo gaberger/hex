@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.75+-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
   <a href="https://spacetimedb.com/"><img src="https://img.shields.io/badge/SpacetimeDB-WASM-58a6ff?style=flat-square" alt="SpacetimeDB"></a>
   <a href="https://github.com/gaberger/hex/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
-  <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-154_(144_Accepted)-bc8cff?style=flat-square" alt="ADRs"></a>
+  <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-161_(151_Accepted)-bc8cff?style=flat-square" alt="ADRs"></a>
   <a href="#architecture-enforcement-that-agents-cant-bypass"><img src="https://img.shields.io/badge/Architecture-A%2B_100%2F100-3fb950?style=flat-square" alt="Architecture A+"></a>
 </p>
 
@@ -41,12 +41,54 @@ AI coding agents are powerful — but they're expensive, uncontrolled, and cloud
 
 ```bash
 cargo build -p hex-cli --release && cargo build -p hex-nexus --release
-hex nexus start        # Requires SpacetimeDB running
-hex status
+hex nexus start              # Requires SpacetimeDB running
+hex                          # Status + getting-started guide (no args)
 open http://localhost:5555   # Live dashboard
 ```
 
-See [Getting Started](docs/GETTING-STARTED.md) for full installation, essential commands, and standalone setup.
+### Essential Commands (ADR-2604132200 CLI simplification)
+
+`hex` now consolidates 40+ top-level commands into a small, ambient-first surface:
+
+```bash
+hex                          # Status + next-step suggestions
+hex go                       # Autonomous next-action — rebuild stale binaries, run validate, suggest fixes
+hex hey <text>               # Natural-language interface (ADR-2604140000) — "hey calibrate inference"
+hex brief                    # Progressive context brief (Pulse → Brief → Console)
+hex config | dev | override  # Grouped subcommands (replaces 40+ flat commands)
+```
+
+See [Getting Started](docs/GETTING-STARTED.md) for full installation and standalone setup.
+
+---
+
+## Autonomous Operation (Brain Daemon)
+
+hex ships with a supervisor loop (ADR-2604132300) that validates the project and drains a task queue on a fixed tick. Pair it with `hex hey` for natural-language dispatch and `hex brain enqueue` for explicit work.
+
+```bash
+# 1. Start the supervisor in the background
+hex brain daemon --background --interval 30
+
+# 2. Enqueue work (natural language OR explicit)
+hex hey calibrate inference                                  # Classified via keyword + local LLM fallback
+hex hey --queue "rebuild nexus and run validate"             # Async — daemon picks it up on next tick
+hex brain enqueue workplan docs/workplans/wp-foo.json        # Explicit workplan task
+hex brain enqueue validate                                   # Run self-consistency checks
+
+# 3. Inspect & control
+hex brain queue list                                         # Pending/in-flight/done tasks
+hex brain validate                                           # Self-consistency: CLI wiring, binary freshness,
+                                                             # workplan status, MCP parity, worktree health (ADR-2604131945)
+hex brain daemon status                                      # PID, last tick, tick count
+hex brain daemon stop                                        # Graceful shutdown
+```
+
+Every tick (default 30s) the daemon: runs `brain validate`, applies safe auto-fixes, drains one queued task. Code-first execution (ADR-2604131630) means most tasks complete without hitting an LLM — inference is an accelerator, not a gate. Strategy hints on workplan tasks route work to templates, AST transforms, or scripts first.
+
+Related:
+- `hex plan reconcile --update` — reconcile workplan status against git evidence
+- `hex worktree merge` — integrity-verified merge with `cargo check` gate (ADR-2604131930)
 
 ---
 
@@ -74,7 +116,7 @@ See [Architecture](docs/ARCHITECTURE.md) for crate details, agent roles, enforce
 | [Inference](docs/INFERENCE.md) | Tiered routing, RL self-improvement, code-first execution, GBNF grammars, benchmarking |
 | [Comparison](docs/COMPARISON.md) | hex vs BAML, SpecKit, HUD, LangChain, CrewAI, AutoGen, Claude Agent SDK |
 | [Developer Experience](docs/DEVELOPER-EXPERIENCE.md) | Pulse/Brief/Console/Override layers, trust delegation, workplan dispatch |
-| [Architecture Decision Records](docs/adrs/) | 154 decisions (144 accepted) — the "why" behind every design choice |
+| [Architecture Decision Records](docs/adrs/) | 161 decisions (151 accepted) — the "why" behind every design choice |
 | [Development Guides](docs/guides/) | Workflow walkthrough, OpenRouter setup, feature UX integration |
 | [Behavioral Specs](docs/specs/) | Feature specifications written before code |
 | [Workplans](docs/workplans/) | Structured task decomposition driving HexFlo swarm execution |
