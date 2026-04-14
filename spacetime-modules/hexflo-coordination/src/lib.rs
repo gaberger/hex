@@ -3114,3 +3114,35 @@ pub fn archive_old_briefings(
 
     Ok(())
 }
+
+// ============================================================
+//  Brain-task history — wire type (ADR-2604141400 §1 P1, wp-sched-queue-history P1.1)
+// ============================================================
+//
+// Brain tasks (the `hex sched` / `hex brain queue` pipeline) are NOT stored in
+// a dedicated SpacetimeDB table. They live in `hexflo_memory` keyed by
+// `brain-task:<uuid>` with the full task record serialized as JSON in the
+// value column. This keeps the queue schemaless at the DB layer — daemons can
+// evolve the task record (adding lease/evidence-guard fields per
+// ADR-2604141400) without WASM re-publish gates.
+//
+// Adding a parallel `brain_task` table here would duplicate that state and
+// invite drift between "the canonical task record" (hexflo_memory) and "the
+// projection used by /api/brain/queue/history". Instead, the history endpoint
+// (wp-sched-queue-history P1.2) reads directly from hexflo_memory_search,
+// filters/sorts/truncates in nexus, and returns `BrainTaskSummary` wire shape.
+//
+// `BrainTaskSummary` is re-declared on the nexus side (with serde) rather than
+// shared across the WASM boundary. When/if brain tasks are ever promoted to a
+// first-class SpacetimeDB table, this module should add the table + a
+// `brain_task_list_recent` reducer mirroring the shape below. Until then, the
+// comment is the contract.
+//
+// Expected wire shape (matches hex-nexus/src/routes/brain.rs::BrainTaskSummary):
+//   id: String
+//   kind: String                  // "workplan" | "hex-command" | "shell" | "remote-shell"
+//   status: String                // "pending" | "in_progress" | "completed" | "failed"
+//   payload_truncated: String     // first 80 chars of payload
+//   result_truncated: String      // first 300 chars of result (empty if null)
+//   created_at_us: i64            // RFC3339 → microseconds since epoch
+//   completed_at_us: i64          // 0 if not completed
