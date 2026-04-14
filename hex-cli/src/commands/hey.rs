@@ -28,22 +28,13 @@ fn classify_intent(text: &str) -> TaskIntent {
     let t = text.to_lowercase();
 
     // Remote shell via SSH — "<cmd> on <host>"
-    // Matches: "run nvidia-smi on bazzite", "show ollama list on bazzite"
+    // Detected here as SshRequest placeholder; translation happens via LLM in run().
     if let Some(on_idx) = t.find(" on ") {
         let host = t[on_idx + 4..].split_whitespace().next().unwrap_or("");
         if !host.is_empty() && host.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '.') {
-            // Strip leading verbs like "run", "show", "check"
-            let before_on = &text[..on_idx];
-            let verbs = ["run ", "execute ", "show ", "check ", "get ", "list "];
-            let cmd = verbs.iter()
-                .find_map(|v| before_on.strip_prefix(v))
-                .unwrap_or(before_on)
-                .trim();
-            return TaskIntent::Shell {
-                cmd: format!("ssh {} {}", host, cmd),
-                destructive: false,
-                description: format!("Run '{}' on {} via SSH", cmd, host),
-            };
+            let before_on = text[..on_idx].trim().to_string();
+            // Return as Unknown so run() invokes LLM with context that it's a remote shell translation
+            return TaskIntent::Unknown(format!("__SSH__{}__{}", host, before_on));
         }
     }
 
@@ -257,19 +248,38 @@ pub async fn run(args: HeyArgs) -> anyhow::Result<()> {
         TaskIntent::Workplan { path, description } =>
             ("workplan", path.clone(), false, description.clone()),
         TaskIntent::Unknown(t) => {
-            // P3: LLM fallback
-            println!("  {} keyword classifier couldn't match. Falling back to local LLM...", "⚠".yellow());
-            match llm_classify(t).await {
-                Ok(Some((k, p, d))) => (box_leak_str(k), p, false, d),
-                Ok(None) => {
-                    println!("  {} LLM also couldn't classify. Try:", "✗".red());
-                    println!("    hex brain enqueue hex-command -- \"<your-command>\"");
+            // Remote SSH intent: marker __SSH__<host>__<action>
+            if let Some(rest) = t.strip_prefix("__SSH__") {
+                if let Some((host, action)) = rest.split_once("__") {
+                    println!("  {} translating action to Linux shell command via local LLM...", "→".cyan());
+                    match llm_translate_shell(action).await {
+                        Ok(cmd) => {
+                            let full = format!("ssh {} {}", host, cmd);
+                            ("shell", full, false, format!("Run '{}' on {} via SSH", cmd, host))
+                        }
+                        Err(e) => {
+                            println!("  {} LLM translation failed: {}", "✗".red(), e);
+                            return Ok(());
+                        }
+                    }
+                } else {
                     return Ok(());
                 }
-                Err(e) => {
-                    println!("  {} LLM fallback failed: {}", "✗".red(), e);
-                    println!("    Try: hex brain enqueue hex-command -- \"<your-command>\"");
-                    return Ok(());
+            } else {
+                // P3: LLM fallback for generic intents
+                println!("  {} keyword classifier couldn't match. Falling back to local LLM...", "⚠".yellow());
+                match llm_classify(t).await {
+                    Ok(Some((k, p, d))) => (box_leak_str(k), p, false, d),
+                    Ok(None) => {
+                        println!("  {} LLM also couldn't classify. Try:", "✗".red());
+                        println!("    hex brain enqueue hex-command -- \"<your-command>\"");
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        println!("  {} LLM fallback failed: {}", "✗".red(), e);
+                        println!("    Try: hex brain enqueue hex-command -- \"<your-command>\"");
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -355,4 +365,39 @@ async fn llm_classify(text: &str) -> anyhow::Result<Option<(String, String, Stri
         }
     }
     Ok(None)
+}
+
+async fn llm_translate_shell(action: &str) -> anyhow::Result<String> {
+    let prompt = format!(
+        "Translate this natural-language action into a single Linux shell command. Respond with ONLY the command, no explanation, no quotes, no code blocks. Use standard Linux utilities (df, free, uptime, ps, nvidia-smi, ollama, etc).\n\nAction: {}\n\nCommand:",
+        action
+    );
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    let resp: serde_json::Value = nexus.post("/api/inference/complete", &serde_json::json!({
+        "model": "qwen3:4b",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 100,
+    })).await?;
+    let content = match resp.get("content") {
+        Some(v) if v.is_string() => v.as_str().unwrap_or("").to_string(),
+        Some(v) if v.is_array() => v.as_array().unwrap().iter()
+            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>().join(""),
+        _ => String::new(),
+    };
+    // Take first non-empty line, strip code fences/quotes
+    let cmd = content.lines()
+        .find(|l| !l.trim().is_empty() && !l.trim().starts_with("```"))
+        .unwrap_or("")
+        .trim()
+        .trim_matches('`')
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_string();
+    if cmd.is_empty() {
+        anyhow::bail!("LLM returned empty command");
+    }
+    Ok(cmd)
 }
