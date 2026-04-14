@@ -1410,13 +1410,109 @@ fn collect_issue_counts() -> HashMap<String, usize> {
     counts
 }
 
+/// Per-kind verbosity controls for operator notifications (wp-brain-updates P3.2).
+/// Loaded from `.hex/daemon.toml` under `[notify]`. Every flag defaults to `true`
+/// so out-of-the-box behavior matches the pre-P3.2 "send everything" contract —
+/// operators opt INTO quieter daemons by flipping flags off. `min_priority`
+/// applies after the per-kind toggle: it's an overall noise floor (1 = send
+/// everything, 2 = only send urgent items like failures / regressions).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BrainNotifyConfig {
+    #[serde(default = "BrainNotifyConfig::default_true")]
+    on_task_complete: bool,
+    #[serde(default = "BrainNotifyConfig::default_true")]
+    on_task_failure: bool,
+    #[serde(default = "BrainNotifyConfig::default_true")]
+    on_validate_regression: bool,
+    #[serde(default = "BrainNotifyConfig::default_true")]
+    on_workplan_complete: bool,
+    #[serde(default = "BrainNotifyConfig::default_true")]
+    on_grade_drop: bool,
+    #[serde(default = "BrainNotifyConfig::default_min_priority")]
+    min_priority: u8,
+}
+
+impl Default for BrainNotifyConfig {
+    fn default() -> Self {
+        Self {
+            on_task_complete: true,
+            on_task_failure: true,
+            on_validate_regression: true,
+            on_workplan_complete: true,
+            on_grade_drop: true,
+            min_priority: 1,
+        }
+    }
+}
+
+impl BrainNotifyConfig {
+    fn default_true() -> bool {
+        true
+    }
+
+    fn default_min_priority() -> u8 {
+        1
+    }
+
+    /// Whether a notification of (`kind`, `priority`) should be delivered.
+    /// Unknown kinds are always allowed — new notification types must not be
+    /// silently swallowed just because they're missing from the schema.
+    fn should_notify(&self, kind: &str, priority: u8) -> bool {
+        if priority < self.min_priority {
+            return false;
+        }
+        match kind {
+            k if k.starts_with("brain.task.") && k.ends_with(".completed") => self.on_task_complete,
+            "brain.task.completed" => self.on_task_complete,
+            k if k.starts_with("brain.task.") && k.ends_with(".failed") => self.on_task_failure,
+            "brain.task.failed" => self.on_task_failure,
+            "brain.validate.regression" => self.on_validate_regression,
+            "brain.workplan.complete" => self.on_workplan_complete,
+            "brain.grade.drop" => self.on_grade_drop,
+            _ => true,
+        }
+    }
+}
+
+/// TOML shape for `.hex/daemon.toml`. Only the `[notify]` section is consumed
+/// today — other sections are ignored so adding future daemon knobs won't
+/// break config parsing for existing deployments.
+#[derive(Debug, Default, Deserialize)]
+struct DaemonTomlFile {
+    #[serde(default)]
+    notify: Option<BrainNotifyConfig>,
+}
+
+/// Load `.hex/daemon.toml` from cwd. Missing / unreadable / malformed file →
+/// default config (everything enabled). Must never panic or fail the caller —
+/// config errors should not silence notifications.
+fn load_notify_config() -> BrainNotifyConfig {
+    let Ok(cwd) = std::env::current_dir() else {
+        return BrainNotifyConfig::default();
+    };
+    let path = cwd.join(".hex").join("daemon.toml");
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return BrainNotifyConfig::default();
+    };
+    match toml::from_str::<DaemonTomlFile>(&content) {
+        Ok(parsed) => parsed.notify.unwrap_or_default(),
+        Err(_) => BrainNotifyConfig::default(),
+    }
+}
+
 /// Central fire-and-forget operator notification helper (wp-brain-updates P1.1).
 /// POSTs to `/api/hexflo/inbox/notify` with the project_id auto-resolved from
 /// `.hex/project.json` in cwd. All daemon-side notifications flow through here
 /// so routing, scoping, and error handling stay in one place. Errors are
 /// swallowed — must never fail the caller.
+///
+/// P3.2: Applies `.hex/daemon.toml` verbosity filters before sending. A
+/// suppressed notification is a no-op — no HTTP call, no log spam.
 async fn notify_operator(kind: &str, body: serde_json::Value, priority: u8) {
     let Some(project_id) = brain_project_id() else { return };
+    if !load_notify_config().should_notify(kind, priority) {
+        return;
+    }
     let envelope = json!({
         "project_id": project_id,
         "priority": priority,
@@ -2290,5 +2386,88 @@ mod tests {
     fn parse_since_rejects_empty() {
         assert!(parse_since("").is_err());
         assert!(parse_since("   ").is_err());
+    }
+
+    // ─── BrainNotifyConfig (wp-brain-updates P3.2) ─────────────────────────
+
+    #[test]
+    fn notify_config_default_sends_everything() {
+        let cfg = BrainNotifyConfig::default();
+        assert!(cfg.should_notify("brain.task.completed", 1));
+        assert!(cfg.should_notify("brain.task.failed", 2));
+        assert!(cfg.should_notify("brain.validate.regression", 2));
+        assert!(cfg.should_notify("brain.workplan.complete", 1));
+        assert!(cfg.should_notify("brain.grade.drop", 2));
+    }
+
+    #[test]
+    fn notify_config_unknown_kind_passes_through() {
+        // New notification kinds must not be silently dropped just because
+        // the schema hasn't been updated — default-allow is the safe path.
+        let cfg = BrainNotifyConfig::default();
+        assert!(cfg.should_notify("brain.future.event", 1));
+        assert!(cfg.should_notify("something.else.entirely", 2));
+    }
+
+    #[test]
+    fn notify_config_per_kind_toggle() {
+        let cfg = BrainNotifyConfig {
+            on_task_complete: false,
+            on_task_failure: true,
+            on_validate_regression: true,
+            on_workplan_complete: true,
+            on_grade_drop: true,
+            min_priority: 1,
+        };
+        assert!(!cfg.should_notify("brain.task.completed", 1));
+        assert!(cfg.should_notify("brain.task.failed", 2));
+    }
+
+    #[test]
+    fn notify_config_min_priority_floor() {
+        let cfg = BrainNotifyConfig {
+            min_priority: 2,
+            ..BrainNotifyConfig::default()
+        };
+        // Task-complete fires at priority 1 → suppressed by floor=2.
+        assert!(!cfg.should_notify("brain.task.completed", 1));
+        // Failure / regression fire at priority 2 → still pass.
+        assert!(cfg.should_notify("brain.task.failed", 2));
+        assert!(cfg.should_notify("brain.validate.regression", 2));
+    }
+
+    #[test]
+    fn notify_config_parses_partial_toml() {
+        // User flips off only task-complete; every other field must keep its default.
+        let src = r#"
+[notify]
+on_task_complete = false
+"#;
+        let parsed: DaemonTomlFile = toml::from_str(src).unwrap();
+        let cfg = parsed.notify.unwrap();
+        assert!(!cfg.on_task_complete);
+        assert!(cfg.on_task_failure);
+        assert!(cfg.on_validate_regression);
+        assert!(cfg.on_workplan_complete);
+        assert!(cfg.on_grade_drop);
+        assert_eq!(cfg.min_priority, 1);
+    }
+
+    #[test]
+    fn notify_config_parses_empty_toml() {
+        // Missing [notify] section → defaults.
+        let parsed: DaemonTomlFile = toml::from_str("").unwrap();
+        assert!(parsed.notify.is_none());
+    }
+
+    #[test]
+    fn notify_config_parses_min_priority() {
+        let src = r#"
+[notify]
+min_priority = 2
+"#;
+        let parsed: DaemonTomlFile = toml::from_str(src).unwrap();
+        let cfg = parsed.notify.unwrap();
+        assert_eq!(cfg.min_priority, 2);
     }
 }

@@ -46,6 +46,7 @@ docs/*
 !docs/workplans/
 !docs/specs/
 !docs/analysis/
+!docs/examples/
 !docs/guides/
 !docs/algebra/
 !docs/ARCHITECTURE.md

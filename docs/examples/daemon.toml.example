@@ -1,0 +1,83 @@
+# .hex/daemon.toml — brain daemon runtime configuration
+#
+# Drop this file at `.hex/daemon.toml` inside any hex project to tune what the
+# brain daemon (`hex sched daemon` / `hex brain daemon`) sends to the operator
+# inbox. Every knob is optional; omitted fields fall back to the defaults
+# shown below. A missing / malformed file degrades to the same defaults, so
+# the daemon never goes silent because of a config typo.
+#
+# See also:
+#   - wp-brain-updates-to-operator  (ADR-2604142200 family)
+#   - ADR-060 (inbox priority semantics — 1 = normal, 2 = urgent)
+#
+# Related CLI:
+#   hex brain daemon-status     # live daemon snapshot
+#   hex inbox list              # see the notifications this config controls
+#   hex inbox ack <id>          # mark a notification handled
+
+# ─── Notification verbosity ──────────────────────────────────────────────
+#
+# Per-kind toggles control whether each *category* of daemon notification
+# reaches the operator inbox. All default to `true` — flip to `false` to mute
+# that category. This is the right knob when you're happy the daemon is
+# working and just want it quieter.
+#
+# `min_priority` is an overall noise floor applied AFTER the per-kind toggle.
+# Kinds currently emitted (see sched.rs::notify_operator call sites):
+#
+#   brain.task.completed        priority 1   on_task_complete
+#   brain.task.failed           priority 2   on_task_failure
+#   brain.validate.regression   priority 2   on_validate_regression
+#   brain.workplan.complete     priority 1   on_workplan_complete
+#   brain.grade.drop            priority 2   on_grade_drop
+#
+# Unknown (future) kinds pass through regardless of this config — we never
+# silently swallow a new notification just because the schema is out of date.
+
+[notify]
+
+# Fire when the daemon drains a queued task successfully. Useful while
+# onboarding to see the daemon is alive; often muted once you trust it.
+on_task_complete = true
+
+# Fire when a queued task fails. Should almost always stay on — a silent
+# failing daemon is the worst failure mode.
+on_task_failure = true
+
+# Fire when a validate tick regresses tick-over-tick (e.g. cli_wiring count
+# goes from 0 → 2). This is how the daemon surfaces drift you didn't cause
+# directly. Keep on unless you're doing intentional bulk refactors that will
+# temporarily spike counts.
+on_validate_regression = true
+
+# Fire when a workplan enqueued via `hex brain enqueue workplan ...` finishes
+# every task. Useful end-of-run acknowledgement; safe to mute if you already
+# watch the CLI.
+on_workplan_complete = true
+
+# Fire when architecture grade drops (hex analyze score decreases between
+# ticks). High-signal for regressions introduced by agent work.
+on_grade_drop = true
+
+# Noise floor. 1 = send everything that passes its per-kind toggle (default).
+# 2 = send only urgent notifications (failures, regressions, grade drops);
+#     suppress normal-priority task-complete / workplan-complete events.
+# Use this as a quick "just the important stuff" switch without toggling
+# every per-kind flag individually.
+min_priority = 1
+
+# ─── Example: quiet daemon, urgent-only ──────────────────────────────────
+#
+# [notify]
+# on_task_complete = false
+# on_workplan_complete = false
+# min_priority = 2
+#
+# ─── Example: everything off (daemon runs, inbox silent) ─────────────────
+#
+# [notify]
+# on_task_complete = false
+# on_task_failure = false
+# on_validate_regression = false
+# on_workplan_complete = false
+# on_grade_drop = false
