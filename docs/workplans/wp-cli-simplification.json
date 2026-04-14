@@ -1,107 +1,151 @@
 {
-  "id": "wp-cli-simplification",
-  "feature": "CLI Simplification — 40 commands to 8 groups",
-  "description": "Consolidate 40 top-level CLI commands into 8 groups with progressive disclosure. Old commands become deprecation aliases.",
   "adr": "ADR-2604132200",
-  "status": "planned",
-  "priority": "high",
   "created_at": "2026-04-13T22:30:00Z",
   "created_by": "human+agent",
+  "description": "Consolidate 40 top-level CLI commands into 8 groups with progressive disclosure. Old commands become deprecation aliases.",
+  "feature": "CLI Simplification — 40 commands to 8 groups",
+  "id": "wp-cli-simplification",
   "phases": [
     {
+      "description": "New command that examines project state and takes the best next action.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P1",
       "name": "hex go — autonomous next action",
-      "tier": 1,
-      "description": "New command that examines project state and takes the best next action.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P1.1",
-          "name": "Implement hex go command",
-          "layer": "primary",
-          "description": "New go.rs in commands/. Checks: stale binary → rebuild, pending workplan → suggest execute, failing tests → show failures, stale worktrees → suggest cleanup, nothing to do → say so. Wire into main.rs.",
-          "deps": [],
-          "files": ["hex-cli/src/commands/go.rs", "hex-cli/src/commands/mod.rs", "hex-cli/src/main.rs"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "New go.rs in commands/. Checks: stale binary → rebuild, pending workplan → suggest execute, failing tests → show failures, stale worktrees → suggest cleanup, nothing to do → say so. Wire into main.rs.",
+          "files": [
+            "hex-cli/src/commands/go.rs",
+            "hex-cli/src/commands/mod.rs",
+            "hex-cli/src/main.rs"
+          ],
+          "id": "P1.1",
+          "layer": "primary",
+          "name": "Implement hex go command",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 1
     },
     {
+      "description": "Move trust, taste, inference, enforce, secrets under hex config subcommand.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P2",
       "name": "Group config commands under hex config",
-      "tier": 2,
-      "description": "Move trust, taste, inference, enforce, secrets under hex config subcommand.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P2.1",
-          "name": "Create hex config parent command with subcommands",
-          "layer": "primary",
-          "description": "New config.rs that re-exports trust, taste, inference, enforce, secrets as subcommands. Wire into main.rs as Commands::Config. Keep old top-level commands as hidden aliases that print deprecation notice and delegate.",
-          "deps": [],
-          "files": ["hex-cli/src/commands/config.rs", "hex-cli/src/main.rs"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "New config.rs that re-exports trust, taste, inference, enforce, secrets as subcommands. Wire into main.rs as Commands::Config. Keep old top-level commands as hidden aliases that print deprecation notice and delegate.",
+          "files": [
+            "hex-cli/src/commands/config.rs",
+            "hex-cli/src/main.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Create hex config parent command with subcommands",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 2
     },
     {
+      "description": "Move analyze, validate, test, ci, worktree, init, new, report under hex dev.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P3",
       "name": "Group dev commands under hex dev",
-      "tier": 2,
-      "description": "Move analyze, validate, test, ci, worktree, init, new, report under hex dev.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P3.1",
-          "name": "Expand hex dev to absorb analyze, validate, test, ci, worktree",
-          "layer": "primary",
-          "description": "Update dev.rs to add subcommands for analyze, validate, test, ci, worktree. These delegate to the existing command modules. Keep old top-level commands as hidden aliases.",
-          "deps": [],
-          "files": ["hex-cli/src/commands/dev.rs", "hex-cli/src/main.rs"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "Update dev.rs to add subcommands for analyze, validate, test, ci, worktree. These delegate to the existing command modules. Keep old top-level commands as hidden aliases.",
+          "files": [
+            "hex-cli/src/commands/dev.rs",
+            "hex-cli/src/main.rs"
+          ],
+          "id": "P3.1",
+          "layer": "primary",
+          "name": "Expand hex dev to absorb analyze, validate, test, ci, worktree",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 2
     },
     {
+      "description": "Move steer, pause, decide under hex override.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P4",
       "name": "Group override commands",
-      "tier": 2,
-      "description": "Move steer, pause, decide under hex override.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P4.1",
-          "name": "Create hex override parent with steer, pause, decide subcommands",
-          "layer": "primary",
-          "description": "override_cmd.rs already exists as the emergency override. Expand it or create a new parent that includes steer, pause, and decide as subcommands. Wire into main.rs.",
-          "deps": [],
-          "files": ["hex-cli/src/commands/override_cmd.rs", "hex-cli/src/main.rs"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "override_cmd.rs already exists as the emergency override. Expand it or create a new parent that includes steer, pause, and decide as subcommands. Wire into main.rs.",
+          "files": [
+            "hex-cli/src/commands/override_cmd.rs",
+            "hex-cli/src/main.rs"
+          ],
+          "id": "P4.1",
+          "layer": "primary",
+          "name": "Create hex override parent with steer, pause, decide subcommands",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 2
     },
     {
+      "description": "Old top-level commands print deprecation notice and delegate. Update help text.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test --workspace",
+        "type": "test"
+      },
       "id": "P5",
       "name": "Deprecation aliases + help hierarchy",
-      "tier": 3,
-      "description": "Old top-level commands print deprecation notice and delegate. Update help text.",
-      "gate": { "type": "test", "command": "cargo test --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P5.1",
-          "name": "Add deprecation notices to old top-level commands",
-          "layer": "primary",
-          "description": "For each moved command (trust, taste, inference, enforce, secrets, analyze, validate, test, ci, worktree, steer, pause, decide): keep the Commands enum variant but mark #[command(hide = true)] and print deprecation notice before delegating. e.g. 'hex trust is now hex config trust — redirecting...'",
-          "deps": ["P2.1", "P3.1", "P4.1"],
-          "files": ["hex-cli/src/main.rs"],
           "agent": "hex-coder",
+          "deps": [
+            "P2.1",
+            "P3.1",
+            "P4.1"
+          ],
+          "description": "For each moved command (trust, taste, inference, enforce, secrets, analyze, validate, test, ci, worktree, steer, pause, decide): keep the Commands enum variant but mark #[command(hide = true)] and print deprecation notice before delegating. e.g. 'hex trust is now hex config trust — redirecting...'",
+          "files": [
+            "hex-cli/src/main.rs"
+          ],
+          "id": "P5.1",
+          "layer": "primary",
+          "name": "Add deprecation notices to old top-level commands",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 3
     }
-  ]
+  ],
+  "priority": "high",
+  "status": "done"
 }
