@@ -30,15 +30,22 @@ pub struct BrainTestResponse {
     pub response: String,
 }
 
-pub async fn status(State(_state): State<SharedState>) -> Json<BrainStatus> {
+pub async fn status(State(state): State<SharedState>) -> Json<BrainStatus> {
     let test_model = std::env::var("HEX_BRAIN_TEST_MODEL")
         .unwrap_or_else(|_| "nemotron-mini".to_string());
-    
+
+    let last_test = state
+        .brain_last_test
+        .read()
+        .await
+        .clone()
+        .unwrap_or_else(|| "never".to_string());
+
     Json(BrainStatus {
         service_enabled: true,
         test_model,
         interval_secs: 600,
-        last_test: "never".to_string(),
+        last_test,
     })
 }
 
@@ -47,16 +54,23 @@ pub async fn test(
     Json(_req): Json<BrainTestRequest>,
 ) -> Json<BrainTestResponse> {
     // Run a test cycle synchronously
-    match brain_service::run_improvement_cycle(&state).await {
-        Ok(outcome) => Json(BrainTestResponse {
+    let result = match brain_service::run_improvement_cycle(&state).await {
+        Ok(outcome) => BrainTestResponse {
             outcome: outcome.outcome,
             reward: outcome.reward,
             response: "test completed".to_string(),
-        }),
-        Err(e) => Json(BrainTestResponse {
+        },
+        Err(e) => BrainTestResponse {
             outcome: "error".to_string(),
             reward: -0.5,
             response: e,
-        }),
-    }
+        },
+    };
+
+    // Record the timestamp regardless of outcome — a failed test is still a
+    // test. Operators care "when did we last probe?" not "when did we last
+    // get a green result." (errors are visible in the response body itself.)
+    *state.brain_last_test.write().await = Some(chrono::Utc::now().to_rfc3339());
+
+    Json(result)
 }

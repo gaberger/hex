@@ -71,6 +71,9 @@ pub struct AppState {
     // Used by the workplan executor to route T1/T2/T2.5 tasks directly through
     // the inference adapter (local or remote Ollama) without spawning an agent process.
     pub inference_port: Option<Arc<dyn hex_core::ports::inference::IInferencePort>>,
+    // Timestamp (RFC3339) of last successful brain test run. `None` = never.
+    // Written by POST /api/brain/test, read by GET /api/brain/status.
+    pub brain_last_test: RwLock<Option<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +127,7 @@ impl AppState {
             rate_limiter: RateLimitManager::new(),
             agent_instructions: RwLock::new(HashMap::new()),
             inference_port: None,
+            brain_last_test: RwLock::new(None),
         }
     }
 
