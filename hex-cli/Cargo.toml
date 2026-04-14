@@ -49,6 +49,8 @@ tokio-tungstenite = { version = "0.24", features = ["native-tls", "connect"] }
 futures-util = { version = "0.3", features = ["sink"] }
 # SHA256 verification for self-update (ADR-2604080929)
 sha2 = "0.10"
+# Symbol extraction regex for reconcile evidence (ADR-2604142200)
+regex = "1"
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,0 +1,100 @@
+{
+  "adr": "ADR-TESTFIXTURE-0000",
+  "created_at": "2025-01-01T00:00:00Z",
+  "created_by": "test",
+  "description": "Regression fixture mirroring wp-hex-native-web-search shape. P1 done (files exist in repo), P2/P3 pending (files do NOT exist). Reconcile must NOT promote P2/P3.",
+  "feature": "Test: partial evidence fixture",
+  "id": "wp-test-partial-evidence",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Port traits & domain types (done)",
+      "description": "Already completed phase — reconcile should skip these.",
+      "tier": 0,
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Domain types: SearchResult, SearchOptions",
+          "description": "Domain value objects for web search.",
+          "files": ["hex-core/src/domain/mod.rs"],
+          "layer": "domain",
+          "agent": "hex-coder",
+          "deps": [],
+          "status": "done",
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P1.2",
+          "name": "Port traits: WebSearchPort + WebFetchPort",
+          "description": "Port trait definitions.",
+          "files": ["hex-core/src/ports/mod.rs"],
+          "layer": "ports",
+          "agent": "hex-coder",
+          "deps": ["P1.1"],
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Web fetch adapter (pending, files missing)",
+      "description": "Adapter files do NOT exist — reconcile must leave pending.",
+      "tier": 1,
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "ZzNonexistentFetchAdapter",
+          "description": "Fictional adapter that should never grep-match.",
+          "files": ["hex-nexus/src/adapters/secondary/DOES_NOT_EXIST_web_fetch_test_fixture.rs"],
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "deps": ["P1.2"],
+          "status": "pending",
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P2.2",
+          "name": "ZzNonexistentCacheLayer",
+          "description": "Fictional cache layer that should never grep-match.",
+          "files": ["hex-nexus/src/adapters/secondary/DOES_NOT_EXIST_web_cache_test_fixture.rs"],
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "deps": ["P2.1"],
+          "status": "pending",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Search adapters (pending, files missing)",
+      "description": "Search adapter files do NOT exist — reconcile must leave pending.",
+      "tier": 1,
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "ZzNonexistentBraveSearchAdapter",
+          "description": "Fictional brave adapter.",
+          "files": ["hex-nexus/src/adapters/secondary/DOES_NOT_EXIST_brave_test_fixture.rs"],
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "deps": ["P1.2"],
+          "status": "pending",
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P3.2",
+          "name": "ZzNonexistentDuckDuckGoAdapter",
+          "description": "Fictional DDG adapter.",
+          "files": ["hex-nexus/src/adapters/secondary/DOES_NOT_EXIST_ddg_test_fixture.rs"],
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "deps": ["P1.2"],
+          "status": "pending",
+          "strategy_hint": "codegen"
+        }
+      ]
+    }
+  ]
+}
