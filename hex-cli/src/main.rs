@@ -508,8 +508,10 @@ async fn main() -> anyhow::Result<()> {
     let command = match cli.command {
         Some(cmd) => cmd,
         None => {
-            // hex with no args → pulse (Layer 1: one-glance status)
-            return commands::status::run().await;
+            // hex with no args → status + getting-started guide (Layer 1)
+            commands::status::run().await?;
+            print_getting_started();
+            return Ok(());
         }
     };
 
@@ -627,4 +629,22 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Decide { action } => commands::decide::run(action).await,
     }
+}
+
+/// Getting-started guide printed after `hex` with no args.
+/// Progressive disclosure: shows the 5 commands a new user needs.
+fn print_getting_started() {
+    use colored::Colorize;
+    println!();
+    println!("{}", "  Getting started".bold());
+    println!();
+    println!("    {}              Do the next right thing (autonomous)", "hex go".cyan());
+    println!("    {}           Structured brief of recent activity", "hex brief".cyan());
+    println!("    {}      Workplan lifecycle (create, execute, status)", "hex plan list".cyan());
+    println!("    {}          Configure trust, taste, inference", "hex config".cyan());
+    println!("    {}             Development tools (analyze, test, ci)", "hex dev".cyan());
+    println!("    {}          System health check", "hex doctor".cyan());
+    println!();
+    println!("    {} for full command list", "hex --help".dimmed());
+    println!();
 }
