@@ -107,6 +107,13 @@ pub enum BrainAction {
         #[arg(long)]
         since: Option<String>,
     },
+    /// Prime brain for this project: start daemon if needed, discover active
+    /// workplans in docs/workplans/, and seed the queue in one shot.
+    Prime {
+        /// Tick interval when starting the daemon (default 30s)
+        #[arg(long, default_value = "30")]
+        interval: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -145,6 +152,7 @@ pub async fn run(action: BrainAction) -> anyhow::Result<()> {
             QueueAction::Clear => queue_clear().await,
             QueueAction::Drain => queue_drain().await,
         },
+        BrainAction::Prime { interval } => prime(interval).await,
         BrainAction::Watch { since } => watch(since).await,
     }
 }
@@ -915,6 +923,91 @@ async fn validate() -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Prime brain for this project in one shot: ensure the daemon is running,
+/// discover active workplans, and seed the queue. Idempotent — safe to re-run.
+async fn prime(interval: u64) -> anyhow::Result<()> {
+    println!("{}", "⬡ hex brain prime".bold());
+
+    // 1. Daemon — start if not running
+    match read_pid_file() {
+        Some(pid) if process_alive(pid) => {
+            println!("  Daemon:    {} already running pid={}", "✓".green(), pid);
+        }
+        _ => {
+            remove_pid_file();
+            daemon_background(interval, 3)?;
+            println!("  Daemon:    {} started (interval={}s)", "✓".green(), interval);
+        }
+    }
+
+    // 2. Discover workplans in docs/workplans/*.json — include any with
+    //    status not in {"done", "completed", "abandoned"}.
+    let mut discovered: Vec<PathBuf> = Vec::new();
+    let wp_dir = PathBuf::from("docs/workplans");
+    if wp_dir.is_dir() {
+        for entry in std::fs::read_dir(&wp_dir)?.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(&path) else { continue };
+            let Ok(json): Result<serde_json::Value, _> = serde_json::from_str(&content) else { continue };
+            let status = json.get("status").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+            if matches!(status.as_str(), "done" | "completed" | "abandoned") {
+                continue;
+            }
+            discovered.push(path);
+        }
+    }
+
+    if discovered.is_empty() {
+        println!("  Workplans: {} no active workplans to enqueue", "✓".green());
+    } else {
+        println!("  Workplans: {} {} active, enqueuing...", "✓".green(), discovered.len());
+    }
+
+    // 3. Avoid duplicates — skip if already pending or in-progress
+    let existing = list_brain_tasks(None).await.unwrap_or_default();
+    let existing_paths: std::collections::HashSet<String> = existing
+        .iter()
+        .filter_map(|t| {
+            let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            if matches!(status, "pending" | "in_progress") {
+                t.get("payload").and_then(|v| v.as_str()).map(String::from)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let mut enqueued = 0usize;
+    let mut skipped = 0usize;
+    for path in &discovered {
+        let payload = path.to_string_lossy().to_string();
+        if existing_paths.contains(&payload) {
+            skipped += 1;
+            continue;
+        }
+        match enqueue_brain_task("workplan", &payload).await {
+            Ok(id) => {
+                enqueued += 1;
+                println!("    {} {} ({})", "+".green(), truncate(&payload, 50), &id[..8]);
+            }
+            Err(e) => {
+                eprintln!("    {} {}: {}", "✗".red(), payload, e);
+            }
+        }
+    }
+
+    println!(
+        "  Queue:     {} enqueued {}, skipped {} (already queued)",
+        "✓".green(),
+        enqueued,
+        skipped
+    );
     Ok(())
 }
 
