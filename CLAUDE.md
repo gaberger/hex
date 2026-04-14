@@ -138,6 +138,8 @@ Tasks are classified into inference tiers that map to progressively more capable
 
 9. **`hey hex <question>` is answer-AND-act, not answer-AND-wait.** When asked a recommendation question ("how can we improve X", "what should we do about Y"), produce the analysis, then immediately apply rule 8.
 
+10. **No `echo FIXME` stub tasks.** NEVER enqueue shell tasks like `echo FIXME: ...` or `echo TODO: ...` — they drain in milliseconds with zero implementation (audit theater). `hex brain enqueue shell` rejects them at the CLI. Not-yet-actionable work belongs in an ADR or a TODO comment; real work belongs in a workplan JSON.
+
 ### Legacy Rules
 
 - **Workplans are autonomous**: When executing a workplan, complete ALL phases without asking. Do not pause between phases to ask "want me to continue?" — just keep going until done. Use HexFlo swarm tracking and background agents to parallelize where possible.

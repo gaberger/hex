@@ -18,7 +18,7 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use super::brain::{
+use super::sched::{
     autofix_workplan, check_binary_freshness, check_mcp_cli_parity, check_stale_worktrees,
     check_workplan_status, FreshnessStatus,
 };

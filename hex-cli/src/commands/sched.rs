@@ -1855,6 +1855,27 @@ async fn notify_brain_task_result(
 
 async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String> {
     use crate::nexus_client::NexusClient;
+
+    // Reject "audit theater" stubs: shell tasks whose payload is just an echo
+    // of a FIXME/TODO/NOTE marker. These drain in milliseconds with exit 0,
+    // inflating queue throughput while accomplishing nothing. FIXMEs belong in
+    // ADRs or source comments; actionable work belongs in workplan tasks.
+    if kind == "shell" {
+        let stripped = payload.trim_start();
+        let is_echo_stub = stripped.starts_with("echo ")
+            && (stripped.to_ascii_uppercase().contains("FIXME")
+                || stripped.to_ascii_uppercase().contains("TODO")
+                || stripped.to_ascii_uppercase().contains("NOTE:"));
+        if is_echo_stub {
+            anyhow::bail!(
+                "refusing to enqueue shell stub: `echo FIXME/TODO/NOTE ...` is audit theater, \
+                 not work. If it needs design → write an ADR. If it needs execution → write a \
+                 workplan and enqueue it with `hex brain enqueue workplan <path>`. If it's a \
+                 breadcrumb → put it in a TODO comment at the code site."
+            );
+        }
+    }
+
     // Capture project scope at enqueue time — without this the brain queue is
     // global and tasks enqueued in one repo pollute another repo's statusline.
     let project_id = brain_project_id().unwrap_or_default();

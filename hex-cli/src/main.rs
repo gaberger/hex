@@ -20,7 +20,7 @@ pub mod tui;
 use commands::{
     adr::AdrAction,
     agent::AgentAction,
-    brain::BrainAction,
+    sched::BrainAction,
     brief::BriefArgs,
     chat::ChatArgs,
     context::ContextAction,
@@ -574,7 +574,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Brief(args) => commands::brief::run(args).await,
         Commands::Go => commands::go::run().await,
         Commands::Hey(args) => commands::hey::run(args).await,
-        Commands::Brain { action } => commands::brain::run(action).await,
+        Commands::Brain { action } => commands::sched::run(action).await,
         Commands::Stdb { action } => commands::stdb::run(action).await,
         Commands::Swarm { action } => commands::swarm::run(action).await,
         Commands::Task { action } => commands::task::run(action).await,

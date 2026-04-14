@@ -303,11 +303,11 @@ pub async fn run(args: HeyArgs) -> anyhow::Result<()> {
 
     // Queue vs execute
     if args.queue {
-        let id = super::brain::enqueue_brain_task_pub(kind, &payload).await?;
+        let id = super::sched::enqueue_brain_task_pub(kind, &payload).await?;
         println!("  ⬡ enqueued brain task {}", id.bright_black());
         println!("    daemon will pick up on next tick");
     } else {
-        let (ok, result) = super::brain::execute_brain_task(kind, &payload).await;
+        let (ok, result) = super::sched::execute_brain_task(kind, &payload).await;
         if ok {
             println!("  {} completed", "✓".green());
             if !result.trim().is_empty() {

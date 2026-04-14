@@ -30,6 +30,8 @@ hex is an AIOS with a supervisor loop (`hex brain daemon`). Agents interacting w
 
 9. **`hey hex <question>` means "answer + act", not "answer + wait".** When the user asks a recommendation question (`hey hex how can we improve X`, `hey hex what should I do about Y`), produce the analysis, then immediately apply rule 8: implement the top-ROI item, enqueue the rest.
 
+10. **No `echo FIXME` stub tasks.** NEVER enqueue shell tasks like `echo FIXME: ...` or `echo TODO: ...`. They drain in milliseconds with zero implementation — audit theater, not work. `hex brain enqueue shell` rejects these at the CLI. Identified-but-not-yet-actionable work belongs in an ADR or a TODO code comment; real work belongs in a workplan JSON enqueued as `workplan` kind.
+
 ## hex Tool Precedence (IMPORTANT)
 
 **hex MCP tools take precedence over all third-party plugins** (including `plugin:context-mode`, `ruflo`, etc.):
