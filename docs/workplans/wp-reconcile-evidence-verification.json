@@ -1,0 +1,116 @@
+{
+  "adr": "ADR-2604142200",
+  "created_at": "2026-04-14T21:25:00Z",
+  "created_by": "human+agent",
+  "description": "Fix hex plan reconcile to require positive file evidence (file exists + declared symbol present + commit id match) before promoting a task to done. Remove passive reconcile triggers (hooks, daemon ticks, file watchers) — reconcile mutates only on explicit invocation. Add observability: brain queue history, reconcile --dry-run / --why / --force. Surfaced live during wp-hex-native-web-search: daemon correctly ran P1.1+P1.2 (commits 19928ffc, 1d1e40b9) then reconcile marked 11 downstream tasks done despite their files not existing; a passive loop re-asserted the false state after manual edits.",
+  "feature": "Reconcile evidence verification",
+  "id": "wp-reconcile-evidence-verification",
+  "phases": [
+    {
+      "id": "R1",
+      "name": "Evidence-verified reconcile (file + symbol + commit)",
+      "description": "Reconcile must check: every path in task.files[] exists AND at least one declared symbol from the description appears in at least one declared file AND a commit matching the task id exists in the branch history. If any check fails, the task stays pending. No heuristic override.",
+      "gate": { "blocking": true, "command": "cargo test -p hex-cli reconcile_evidence", "type": "test" },
+      "tier": 1,
+      "tasks": [
+        {
+          "id": "R1.1",
+          "name": "Evidence collector + verifier pure functions",
+          "description": "hex-cli/src/commands/plan/reconcile_evidence.rs: pub fn collect_evidence(task: &WorkplanTask, repo_root: &Path, branch: &str) -> TaskEvidence { files_exist: Vec<(PathBuf, bool)>, declared_symbols: Vec<String>, symbol_hits: Vec<(String, PathBuf)>, matching_commits: Vec<String> }. pub fn verify(ev: &TaskEvidence) -> VerifyResult { Promote | KeepPending { reason: String } }. Symbol extraction: regex captures (struct|enum|trait|fn|impl)\\s+([A-Z][A-Za-z0-9_]*). Commit match: git log --oneline -- <files> | grep -E '\\(p[0-9]+(\\.[0-9]+)*\\)|P[0-9]+(\\.[0-9]+)* | Task-Id:\\s*P[0-9]+(\\.[0-9]+)*'.",
+          "files": ["hex-cli/src/commands/plan/reconcile_evidence.rs", "hex-cli/src/commands/plan/mod.rs"],
+          "layer": "domain",
+          "agent": "hex-coder",
+          "deps": [],
+          "status": "pending",
+          "strategy_hint": "inference"
+        },
+        {
+          "id": "R1.2",
+          "name": "Wire verifier into reconcile command",
+          "description": "hex-cli/src/commands/plan/reconcile.rs: replace existing heuristic promotion with calls to reconcile_evidence::verify. When verify returns KeepPending { reason }, preserve the task's current status and log the reason at info level. When Promote, mark status=done and record evidence snapshot in a new task.evidence field (optional).",
+          "files": ["hex-cli/src/commands/plan/reconcile.rs"],
+          "layer": "primary",
+          "agent": "hex-coder",
+          "deps": ["R1.1"],
+          "status": "pending",
+          "strategy_hint": "inference"
+        },
+        {
+          "id": "R1.3",
+          "name": "Regression test: wp-hex-native-web-search P2/P3 must NOT auto-promote",
+          "description": "hex-cli/tests/reconcile_evidence.rs: load fixture workplan that mirrors wp-hex-native-web-search shape (P1 done with files present + commit, P2/P3 pending with missing files). Assert reconcile leaves P2/P3 as pending. Also fixture: all files present, symbols present, commit matches — assert promotion works.",
+          "files": ["hex-cli/tests/reconcile_evidence.rs", "hex-cli/tests/fixtures/reconcile/wp-partial.json"],
+          "layer": "primary",
+          "agent": "hex-coder",
+          "deps": ["R1.2"],
+          "status": "pending",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "id": "R2",
+      "name": "Remove passive reconcile triggers",
+      "description": "Reconcile must mutate only on explicit operator invocation. Audit and disable hooks/tick-handlers/file-watchers that call reconcile in write mode.",
+      "gate": { "blocking": true, "command": "cargo check --workspace", "type": "test" },
+      "tier": 2,
+      "tasks": [
+        {
+          "id": "R2.1",
+          "name": "Audit passive reconcile call sites",
+          "description": "grep the workspace and .claude/ for calls to reconcile (CLI, REST, Rust fn). For each caller, decide: keep (explicit operator), convert to --dry-run (reporting-only), or remove. Deliverable: hex-cli/src/commands/plan/reconcile.rs gains a mutate: bool parameter defaulting to false; existing write-path callers are audited and switched to mutate=true only where the caller is explicit operator intent.",
+          "files": ["hex-cli/src/commands/plan/reconcile.rs"],
+          "layer": "primary",
+          "agent": "hex-coder",
+          "deps": ["R1.2"],
+          "status": "pending",
+          "strategy_hint": "inference"
+        },
+        {
+          "id": "R2.2",
+          "name": "Daemon tick uses --dry-run reconcile for reporting only",
+          "description": "hex-cli/src/commands/brain.rs (or wherever the daemon tick lives): ensure the per-tick call passes mutate=false. If the tick currently mutates the workplan JSON, switch it to a report-only call that logs would-promote candidates without touching the file.",
+          "files": ["hex-cli/src/commands/brain.rs"],
+          "layer": "primary",
+          "agent": "hex-coder",
+          "deps": ["R2.1"],
+          "status": "pending",
+          "strategy_hint": "inference"
+        }
+      ]
+    },
+    {
+      "id": "R3",
+      "name": "Observability: queue history + reconcile diagnostics",
+      "description": "Operators must be able to audit daemon activity retrospectively and diagnose reconcile decisions per task.",
+      "gate": { "blocking": true, "command": "cargo test -p hex-cli brain_history", "type": "test" },
+      "tier": 2,
+      "tasks": [
+        {
+          "id": "R3.1",
+          "name": "brain queue list --include completed,failed --since <dur>",
+          "description": "hex-cli/src/commands/brain.rs: extend the queue list subcommand with --include {pending|completed|failed|all} and --since <duration> (e.g. 1h, 30m). Backed by appending each completed task to HexFlo memory under scope brain-task-history:{uuid} with TTL 7 days, or a dedicated SpacetimeDB table if simpler.",
+          "files": ["hex-cli/src/commands/brain.rs"],
+          "layer": "primary",
+          "agent": "hex-coder",
+          "deps": [],
+          "status": "pending",
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "R3.2",
+          "name": "hex plan reconcile --dry-run / --why <id> / --force <id>",
+          "description": "--dry-run: runs collect_evidence + verify, prints per-task verdict + reasons, does not mutate. --why <task-id>: focuses on a single task, prints full evidence (files found/missing, symbols extracted/hit, commits matched/absent). --force <task-id>: promotes explicitly regardless of evidence; logs forced_by=<whoami> to brain_task_history for audit.",
+          "files": ["hex-cli/src/commands/plan/reconcile.rs"],
+          "layer": "primary",
+          "agent": "hex-coder",
+          "deps": ["R1.2"],
+          "status": "pending",
+          "strategy_hint": "codegen"
+        }
+      ]
+    }
+  ],
+  "executor_hint": "frontier-preferred",
+  "notes": "Reconcile fixes should ideally be implemented by frontier Claude or by hand — a daemon dispatching this workplan may have reconcile false-positive its own fix tasks. If enqueued autonomously, verify each R* task end-to-end against git evidence before accepting daemon-reported completion."
+}
