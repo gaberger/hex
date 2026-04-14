@@ -8,6 +8,7 @@
 //! models   - List available models for brain selection
 //! validate - Run self-diagnostics (CLI wiring, etc.)
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -16,6 +17,19 @@ use colored::Colorize;
 use serde_json::json;
 
 use crate::fmt::{pretty_table, truncate};
+
+/// Daemon-local state persisted across ticks (wp-brain-updates P2.1).
+/// Tracks issue counts from the previous validate tick so regressions can
+/// be detected — a count that increases tick-over-tick is a regression.
+#[derive(Debug, Default)]
+struct DaemonState {
+    /// Last tick's issue counts keyed by check name
+    /// (e.g. "cli_wiring" → 2, "mcp_parity" → 0, "workplans_stale" → 1).
+    last_counts: HashMap<String, usize>,
+    /// Whether we've observed at least one tick (first tick establishes baseline,
+    /// no regression notification on the first tick).
+    seeded: bool,
+}
 
 /// Summary of a single workplan's reconciliation status.
 #[derive(Debug)]
@@ -976,6 +990,81 @@ fn process_alive(pid: i32) -> bool {
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
+/// Collect issue counts for each validate check without printing.
+/// Pure data view of the same checks `validate()` runs — used by the daemon
+/// to diff tick-over-tick and detect regressions (wp-brain-updates P2.1).
+///
+/// Keys:
+/// - `cli_wiring`       — unwired command modules
+/// - `binary_stale`     — 1 if release binary is stale, else 0
+/// - `workplans_stale`  — total stale workplan tasks across all workplans
+/// - `mcp_parity`       — MCP tools without a matching CLI subcommand
+/// - `worktrees_stale`  — stale git worktrees
+fn collect_issue_counts() -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+
+    counts.insert(
+        "cli_wiring".to_string(),
+        check_cli_wiring().map(|u| u.len()).unwrap_or(0),
+    );
+
+    counts.insert(
+        "binary_stale".to_string(),
+        match check_binary_freshness() {
+            FreshnessStatus::Stale { .. } | FreshnessStatus::Missing => 1,
+            _ => 0,
+        },
+    );
+
+    counts.insert(
+        "workplans_stale".to_string(),
+        check_workplan_status()
+            .map(|ws| ws.iter().map(|w| w.stale_tasks.len()).sum())
+            .unwrap_or(0),
+    );
+
+    counts.insert(
+        "mcp_parity".to_string(),
+        check_mcp_cli_parity().map(|o| o.len()).unwrap_or(0),
+    );
+
+    counts.insert(
+        "worktrees_stale".to_string(),
+        check_stale_worktrees().map(|s| s.len()).unwrap_or(0),
+    );
+
+    counts
+}
+
+/// Fire-and-forget operator notification when validate counts regress
+/// tick-over-tick (wp-brain-updates P2.1). priority=2 — operator intervention
+/// may be needed. Errors are swallowed — must never fail the tick.
+async fn notify_validate_regression(
+    regressions: &[(String, usize, usize)],
+    current: &HashMap<String, usize>,
+) {
+    let Some(project_id) = brain_project_id() else { return };
+    let regression_lines: Vec<String> = regressions
+        .iter()
+        .map(|(k, prev, curr)| format!("{}: {} → {}", k, prev, curr))
+        .collect();
+    let body = json!({
+        "project_id": project_id,
+        "priority": 2,
+        "kind": "brain.validate.regression",
+        "payload": json!({
+            "regressions": regressions
+                .iter()
+                .map(|(k, prev, curr)| json!({"check": k, "previous": prev, "current": curr}))
+                .collect::<Vec<_>>(),
+            "summary": regression_lines.join(", "),
+            "counts": current,
+        }).to_string(),
+    });
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    let _ = nexus.post("/api/hexflo/inbox/notify", &body).await;
+}
+
 /// Foreground supervisor loop. Validates every `interval` seconds; after
 /// `max_failures` consecutive failures, pauses for 5x interval before retrying.
 /// Exits cleanly on ctrl-C.
@@ -994,6 +1083,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
 
     let mut consecutive_failures: u32 = 0;
     let mut paused_cycles: u32 = 0;
+    let mut state = DaemonState::default();
 
     loop {
         let timestamp = chrono::Utc::now().to_rfc3339();
@@ -1002,6 +1092,49 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         let start = Instant::now();
         let validate_result = validate().await;
         let elapsed = start.elapsed();
+
+        // Diff issue counts tick-over-tick (wp-brain-updates P2.1).
+        // First tick seeds the baseline; no notification until we have a prior.
+        let current_counts = collect_issue_counts();
+        if state.seeded {
+            let mut regressions: Vec<(String, usize, usize)> = Vec::new();
+            let mut improvements: Vec<(String, usize, usize)> = Vec::new();
+            for (key, &curr) in &current_counts {
+                let prev = state.last_counts.get(key).copied().unwrap_or(0);
+                if curr > prev {
+                    regressions.push((key.clone(), prev, curr));
+                } else if curr < prev {
+                    improvements.push((key.clone(), prev, curr));
+                }
+            }
+            if !regressions.is_empty() {
+                regressions.sort_by(|a, b| a.0.cmp(&b.0));
+                let summary: Vec<String> = regressions
+                    .iter()
+                    .map(|(k, p, c)| format!("{} {}→{}", k, p, c))
+                    .collect();
+                eprintln!(
+                    "  {} validate regressed: {}",
+                    "⚠".red().bold(),
+                    summary.join(", ")
+                );
+                notify_validate_regression(&regressions, &current_counts).await;
+            }
+            if !improvements.is_empty() {
+                improvements.sort_by(|a, b| a.0.cmp(&b.0));
+                let summary: Vec<String> = improvements
+                    .iter()
+                    .map(|(k, p, c)| format!("{} {}→{}", k, p, c))
+                    .collect();
+                println!(
+                    "  {} validate improved: {}",
+                    "✓".green(),
+                    summary.join(", ")
+                );
+            }
+        }
+        state.last_counts = current_counts;
+        state.seeded = true;
 
         match validate_result {
             Ok(()) => {
