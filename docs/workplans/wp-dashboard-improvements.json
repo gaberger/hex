@@ -4,7 +4,7 @@
   "id": "wp-dashboard-improvements",
   "phases": [
     {
-      "description": "Show a live unread count badge on the Inbox nav item in the left sidebar. Drive it from the agentInbox SpacetimeDB signal: count items where acknowledged_at is null. Use a red pill badge capped at '99+' for priority-2 items and a gray pill for lower-priority unread counts. No new API calls needed — data is already subscribed.",
+      "description": "Show a live unread count badge on the Inbox nav item in the left sidebar. Drive it from the agentInbox SpacetimeDB signal: count items where acknowledged_at is null. Use a red pill badge capped at '99+' for priority-2 items and a gray pill for lower-priority unread counts. No new API calls needed \u2014 data is already subscribed.",
       "id": "p1",
       "tasks": [
         {
@@ -53,10 +53,10 @@
           "title": "Wire router + sidebar nav entry"
         }
       ],
-      "title": "Workplan Panel — Plan Status & Reconcile View"
+      "title": "Workplan Panel \u2014 Plan Status & Reconcile View"
     },
     {
-      "description": "Add a persistent 'Hey Hex' input bar at the bottom of the dashboard (above the BottomBar). On submit, POST to /api/chat/send or dispatch via the existing chat store. Visually distinct from the full ChatView — this is a single-line quick-dispatch, not a conversation view. Show a subtle 'Thinking...' indicator while the request is in flight.",
+      "description": "Add a persistent 'Hey Hex' input bar at the bottom of the dashboard (above the BottomBar). On submit, POST to /api/chat/send or dispatch via the existing chat store. Visually distinct from the full ChatView \u2014 this is a single-line quick-dispatch, not a conversation view. Show a subtle 'Thinking...' indicator while the request is in flight.",
       "id": "p3",
       "tasks": [
         {
@@ -74,10 +74,11 @@
             "hex-nexus/assets/src/app/App.tsx"
           ],
           "id": "p3.2",
+          "status": "done",
           "title": "Mount HeyHexBar between main content and BottomBar"
         }
       ],
-      "title": "Hey Hex — Natural Language Input Widget"
+      "title": "Hey Hex \u2014 Natural Language Input Widget"
     },
     {
       "description": "Add a collapsible 'System Health' panel in the ControlPlane view (or as a sidebar widget) that polls GET /api/validate or runs hex validate via nexus REST. Display result categories: CLI wiring, binary freshness, workplan consistency, MCP parity, worktree health. Each line is a pass/fail row with an icon. Poll on mount + every 60s. Show 'Last checked Xs ago' timestamp.",
@@ -182,7 +183,10 @@
       "tasks": [
         {
           "description": "Run `cd hex-nexus && cargo build` after Vite build. Hard-refresh dashboard. Check browser console for errors on each new route.",
-          "files": [],
+          "files": [
+            "hex-nexus/Cargo.toml",
+            "hex-nexus/src/main.rs"
+          ],
           "id": "p8.1",
           "title": "Rebuild hex-nexus assets"
         }

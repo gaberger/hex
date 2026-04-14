@@ -62,7 +62,9 @@
             "P1.2"
           ],
           "description": "SSH to bazzite, start hex agent worker --once --nexus http://localhost:5556, create a T2 HexFlo task on coordinator, verify worker picks it up, generates code, reports result back. Assert: task status=completed in SpacetimeDB, generated code in result field.",
-          "files": [],
+          "files": [
+            "docs/analysis/wp-nexus-coord-p1.4-bazzite-e2e.md"
+          ],
           "id": "P1.4",
           "layer": "primary",
           "name": "E2E: worker on bazzite executes one task",
@@ -84,7 +86,7 @@
         {
           "agent": "hex-coder",
           "deps": [],
-          "description": "When nexus is reachable, hex plan execute POSTs to /api/workplan/execute which creates a workplan_execution record in SpacetimeDB with id, workplan_path, status=running, started_at. Each task becomes a HexFlo swarm task assigned by tier→agent role mapping.",
+          "description": "When nexus is reachable, hex plan execute POSTs to /api/workplan/execute which creates a workplan_execution record in SpacetimeDB with id, workplan_path, status=running, started_at. Each task becomes a HexFlo swarm task assigned by tier\u2192agent role mapping.",
           "files": [
             "hex-nexus/src/routes/orchestration.rs",
             "hex-cli/src/commands/plan.rs"
@@ -167,7 +169,9 @@
             "P3.2"
           ],
           "description": "Full end-to-end: hex plan execute on coordinator, bazzite worker executes tasks, coordinator generates report. Verify: SpacetimeDB has execution + task records, hex plan report shows correct data, RL Q-table has entries from remote agent.",
-          "files": [],
+          "files": [
+            "docs/analysis/wp-nexus-coord-p3.3-coordinated-workplan-report.md"
+          ],
           "id": "P3.3",
           "layer": "primary",
           "name": "E2E: coordinated workplan on bazzite with report",

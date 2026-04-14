@@ -18,21 +18,30 @@
           "artifact": "hex-cli/src/commands/status.rs analysis note",
           "id": "p1.1",
           "status": "done",
-          "title": "Audit status/pulse/brief output — map fields to a single StatusSnapshot struct"
+          "title": "Audit status/pulse/brief output \u2014 map fields to a single StatusSnapshot struct",
+          "files": [
+            "hex-cli/src/commands/status.rs"
+          ]
         },
         {
           "acceptance": "`hex status` shows one coherent dashboard with sections (health, agents, plans, inbox); `hex brief` is a thin alias; deprecation notice on brief",
           "artifact": "hex-cli/src/commands/status.rs, brief.rs, pulse.rs",
           "id": "p1.2",
           "status": "done",
-          "title": "Promote `hex status` to be the canonical single-project view; `hex pulse` stays multi-project; `hex brief` becomes `hex status --brief` (alias kept)"
+          "title": "Promote `hex status` to be the canonical single-project view; `hex pulse` stays multi-project; `hex brief` becomes `hex status --brief` (alias kept)",
+          "files": [
+            "hex-cli/src/commands/status.rs, brief.rs, pulse.rs"
+          ]
         },
         {
           "acceptance": "`hex status --json | jq` works; same for pulse/brief",
           "artifact": "shared StatusSnapshot serde impl",
           "id": "p1.3",
           "status": "done",
-          "title": "Add --json to all three for machine consumers; default stays human-formatted with color+tables"
+          "title": "Add --json to all three for machine consumers; default stays human-formatted with color+tables",
+          "files": [
+            "shared StatusSnapshot serde impl"
+          ]
         }
       ],
       "title": "Unify status/pulse/brief into a single ambient surface"
@@ -47,24 +56,33 @@
           "artifact": "hex-cli/src/cli.rs",
           "id": "p2.1",
           "status": "done",
-          "title": "Define a GlobalFlags struct in hex-cli/src/cli.rs — --json, --quiet, --no-color, --yes"
+          "title": "Define a GlobalFlags struct in hex-cli/src/cli.rs \u2014 --json, --quiet, --no-color, --yes",
+          "files": [
+            "hex-cli/src/cli.rs"
+          ]
         },
         {
           "acceptance": "OutputContext respects --json/--quiet/--no-color; human output uses consistent prefixes (ok:, warn:, err:, info:)",
           "artifact": "hex-cli/src/output.rs (new)",
           "id": "p2.2",
           "status": "done",
-          "title": "Thread flags through an OutputContext (stdout formatter) — replace scattered println!/eprintln! with ctx.info/warn/error"
+          "title": "Thread flags through an OutputContext (stdout formatter) \u2014 replace scattered println!/eprintln! with ctx.info/warn/error",
+          "files": [
+            "hex-cli/src/output.rs (new)"
+          ]
         },
         {
           "acceptance": "No destructive command runs without confirmation in a TTY or --yes flag",
           "artifact": "audit report + edits across commands/",
           "id": "p2.3",
           "status": "done",
-          "title": "Audit destructive commands (plan drafts clear, swarm cleanup, worktree cleanup, send-override, agent disconnect, trust set) — all require --yes or interactive confirm"
+          "title": "Audit destructive commands (plan drafts clear, swarm cleanup, worktree cleanup, send-override, agent disconnect, trust set) \u2014 all require --yes or interactive confirm",
+          "files": [
+            "audit report + edits across commands/"
+          ]
         }
       ],
-      "title": "Global flag consistency — --json, --quiet, --no-color, --yes"
+      "title": "Global flag consistency \u2014 --json, --quiet, --no-color, --yes"
     },
     {
       "id": "p3",
@@ -76,20 +94,30 @@
           "artifact": "docs/analysis/cli-panic-audit.md",
           "id": "p3.1",
           "status": "done",
-          "title": "Grep hex-cli/src/commands/ for .unwrap()/.expect() — produce inventory"
+          "title": "Grep hex-cli/src/commands/ for .unwrap()/.expect() \u2014 produce inventory",
+          "files": [
+            "docs/analysis/cli-panic-audit.md"
+          ]
         },
         {
           "acceptance": "Remaining .unwrap() calls are all on static regexes, compile-time constants, or documented-unreachable paths",
           "artifact": "edits across hex-cli/src/commands/",
           "id": "p3.2",
-          "title": "Replace user-triggerable unwraps with .context(\"...\")? and typed anyhow errors"
+          "status": "done",
+          "title": "Replace user-triggerable unwraps with .context(\"...\")? and typed anyhow errors",
+          "files": [
+            "edits across hex-cli/src/commands/"
+          ]
         },
         {
           "acceptance": "cargo run -p hex-cli -- <bad-args> shows human error, not backtrace",
           "artifact": "hex-cli/src/main.rs",
           "id": "p3.3",
           "status": "done",
-          "title": "Add a top-level error handler in main.rs that formats anyhow chains as 'Error: X\\n  caused by: Y' (no backtrace unless RUST_BACKTRACE=1)"
+          "title": "Add a top-level error handler in main.rs that formats anyhow chains as 'Error: X\\n  caused by: Y' (no backtrace unless RUST_BACKTRACE=1)",
+          "files": [
+            "hex-cli/src/main.rs"
+          ]
         }
       ],
       "title": "Eliminate .unwrap()/.expect() from primary command paths"
@@ -104,30 +132,42 @@
           "artifact": "hex-cli/src/commands/dev.rs + mod.rs",
           "id": "p4.1",
           "status": "done",
-          "title": "Move skill/assets/context/hook under `hex dev` (developer/platform tools)"
+          "title": "Move skill/assets/context/hook under `hex dev` (developer/platform tools)",
+          "files": [
+            "hex-cli/src/commands/dev.rs + mod.rs"
+          ]
         },
         {
           "acceptance": "`hex brain taste set`, `hex brain neural-lab experiment` work",
           "artifact": "hex-cli/src/commands/brain.rs",
           "id": "p4.2",
           "status": "done",
-          "title": "Move neural-lab, brain, taste under `hex brain` (all self-improvement/learning)"
+          "title": "Move neural-lab, brain, taste under `hex brain` (all self-improvement/learning)",
+          "files": [
+            "hex-cli/src/commands/brain.rs"
+          ]
         },
         {
           "acceptance": "`hex system doctor`, `hex system stdb health` work; legacy aliases kept",
           "artifact": "new hex-cli/src/commands/system.rs",
           "id": "p4.3",
           "status": "done",
-          "title": "Move stdb, nexus, sandbox, doctor, self-update under `hex system` (runtime/infra)"
+          "title": "Move stdb, nexus, sandbox, doctor, self-update under `hex system` (runtime/infra)",
+          "files": [
+            "new hex-cli/src/commands/system.rs"
+          ]
         },
         {
           "acceptance": "Every top-level group has example output in --help",
           "artifact": "clap after_help strings",
           "id": "p4.4",
-          "title": "Add `hex <group> --help` examples block — every group shows 2-3 concrete example invocations"
+          "title": "Add `hex <group> --help` examples block \u2014 every group shows 2-3 concrete example invocations",
+          "files": [
+            "clap after_help strings"
+          ]
         }
       ],
-      "title": "Command grouping cleanup — collapse 44 groups to ~20 via subgrouping"
+      "title": "Command grouping cleanup \u2014 collapse 44 groups to ~20 via subgrouping"
     },
     {
       "id": "p5",
@@ -139,24 +179,33 @@
           "artifact": "hex-cli/src/commands/fix.rs",
           "id": "p5.1",
           "status": "done",
-          "title": "Create hex-cli/src/commands/fix.rs — enumerates remediable doctor failures"
+          "title": "Create hex-cli/src/commands/fix.rs \u2014 enumerates remediable doctor failures",
+          "files": [
+            "hex-cli/src/commands/fix.rs"
+          ]
         },
         {
           "acceptance": "Each remediator is idempotent, prints what it did, and verifies success",
           "artifact": "fix.rs remediators + unit tests",
           "id": "p5.2",
           "status": "done",
-          "title": "Wire remediators: nexus-not-running → `hex nexus start`, stdb-down → start spacetimedb, stale agents → `hex agent prune`, unsynced assets → `hex assets sync`, stale drafts → `hex plan drafts gc --days 7`"
+          "title": "Wire remediators: nexus-not-running \u2192 `hex nexus start`, stdb-down \u2192 start spacetimedb, stale agents \u2192 `hex agent prune`, unsynced assets \u2192 `hex assets sync`, stale drafts \u2192 `hex plan drafts gc --days 7`",
+          "files": [
+            "fix.rs remediators + unit tests"
+          ]
         },
         {
           "acceptance": "If nexus is down when `hex go` runs, output suggests `hex fix` not 'connection refused'",
           "artifact": "hex-cli/src/commands/go.rs",
           "id": "p5.3",
           "status": "done",
-          "title": "Teach `hex go` to suggest `hex fix` when doctor checks fail, instead of raw error"
+          "title": "Teach `hex go` to suggest `hex fix` when doctor checks fail, instead of raw error",
+          "files": [
+            "hex-cli/src/commands/go.rs"
+          ]
         }
       ],
-      "title": "Autonomy gap: `hex fix` — auto-remediate common diagnostic failures"
+      "title": "Autonomy gap: `hex fix` \u2014 auto-remediate common diagnostic failures"
     }
   ],
   "prerequisites": [
@@ -170,6 +219,6 @@
     "`hex fix` recovers a broken environment in one command",
     "`hex status` is the canonical project view; pulse/brief are clearly differentiated"
   ],
-  "title": "hex CLI Polish — AIOS Ergonomics Pass",
+  "title": "hex CLI Polish \u2014 AIOS Ergonomics Pass",
   "workplan_id": "wp-cli-polish"
 }

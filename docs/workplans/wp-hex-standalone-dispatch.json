@@ -12,7 +12,7 @@
   "id": "wp-hex-standalone-dispatch",
   "phases": [
     {
-      "description": "Define the IInferencePort trait surface that OllamaInferenceAdapter (P3) and the reworked ClaudeCodeInferenceAdapter (P4) will implement. Must expose: (1) complete(prompt, params) -> Result<Response>, (2) stream(prompt, params) -> Result<TokenStream>, (3) health() -> Result<HealthStatus>. No concrete adapter yet — this phase is pure interface + unit-testable mock. Domain types live in hex-core; port trait lives in hex-core::ports. Audit current hex-nexus/src/adapters/inference* to identify any ad-hoc trait that is half-formed and either adopt it or replace it. Do NOT leave two competing traits.",
+      "description": "Define the IInferencePort trait surface that OllamaInferenceAdapter (P3) and the reworked ClaudeCodeInferenceAdapter (P4) will implement. Must expose: (1) complete(prompt, params) -> Result<Response>, (2) stream(prompt, params) -> Result<TokenStream>, (3) health() -> Result<HealthStatus>. No concrete adapter yet \u2014 this phase is pure interface + unit-testable mock. Domain types live in hex-core; port trait lives in hex-core::ports. Audit current hex-nexus/src/adapters/inference* to identify any ad-hoc trait that is half-formed and either adopt it or replace it. Do NOT leave two competing traits.",
       "gate": {
         "blocking": true,
         "command": "cargo check -p hex-core -p hex-nexus",
@@ -65,7 +65,7 @@
         {
           "agent": "hex-coder",
           "deps": [],
-          "description": "Add hex-nexus/src/composition/standalone.rs with fn compose_standalone(cfg, inference: Arc<dyn IInferencePort>) -> AgentManager. Wires HexFlo + inference + memory adapter into the same AgentManager type the Claude-integrated path produces. The existing compose() dispatches between the two variants based on env probe. Do NOT duplicate Claude-specific code into the standalone path — share everything except the agent-identity source.",
+          "description": "Add hex-nexus/src/composition/standalone.rs with fn compose_standalone(cfg, inference: Arc<dyn IInferencePort>) -> AgentManager. Wires HexFlo + inference + memory adapter into the same AgentManager type the Claude-integrated path produces. The existing compose() dispatches between the two variants based on env probe. Do NOT duplicate Claude-specific code into the standalone path \u2014 share everything except the agent-identity source.",
           "files": [
             "hex-nexus/src/composition/standalone.rs",
             "hex-nexus/src/composition/mod.rs",
@@ -110,14 +110,14 @@
       "tier": 1
     },
     {
-      "description": "Implement IInferencePort (P1.2) against a local Ollama HTTP endpoint. POST /api/generate + /api/chat + /api/tags for health. Respect OLLAMA_HOST env var (default http://localhost:11434). Stream tokens via Ollama's NDJSON response format. Unit tests use httpmock (or wiremock) to simulate Ollama; no live Ollama required in CI. The adapter is the reference implementation — it must be tight enough that adding OpenAI / vLLM later is a matter of copy+swap, not copy+rewrite.",
+      "description": "Implement IInferencePort (P1.2) against a local Ollama HTTP endpoint. POST /api/generate + /api/chat + /api/tags for health. Respect OLLAMA_HOST env var (default http://localhost:11434). Stream tokens via Ollama's NDJSON response format. Unit tests use httpmock (or wiremock) to simulate Ollama; no live Ollama required in CI. The adapter is the reference implementation \u2014 it must be tight enough that adding OpenAI / vLLM later is a matter of copy+swap, not copy+rewrite.",
       "gate": {
         "blocking": true,
         "command": "cargo test -p hex-nexus adapters::inference::ollama",
         "type": "test"
       },
       "id": "P3",
-      "name": "OllamaInferenceAdapter — first concrete standalone provider",
+      "name": "OllamaInferenceAdapter \u2014 first concrete standalone provider",
       "tasks": [
         {
           "agent": "hex-coder",
@@ -153,7 +153,7 @@
             "P3.2",
             "P2.1"
           ],
-          "description": "Implement health() by GET /api/tags and return HealthStatus::Ok { models: Vec<String> } or HealthStatus::Unreachable on connection failure. Wire the adapter into the standalone composition path from P2.1 as the default when OLLAMA_HOST is reachable. If not reachable, composition returns MissingComposition { inference: 'ollama: connection refused' } — no silent fallback.",
+          "description": "Implement health() by GET /api/tags and return HealthStatus::Ok { models: Vec<String> } or HealthStatus::Unreachable on connection failure. Wire the adapter into the standalone composition path from P2.1 as the default when OLLAMA_HOST is reachable. If not reachable, composition returns MissingComposition { inference: 'ollama: connection refused' } \u2014 no silent fallback.",
           "files": [
             "hex-nexus/src/adapters/inference/ollama.rs",
             "hex-nexus/src/composition/standalone.rs"
@@ -210,7 +210,7 @@
             "P4.1",
             "P1.2"
           ],
-          "description": "hex-nexus/src/adapters/inference/claude_code.rs: implements IInferencePort by spawning `claude -p --dangerously-skip-permissions <prompt>` via tokio::process::Command. ALWAYS passes --dangerously-skip-permissions when not attached to a TTY (fixes exit 1, per feedback_claude_bypass_permissions). complete() captures stdout to completion; stream() reads stdout line-by-line as tokens. health() runs `claude --version`. Does NOT read CLAUDE_SESSION_ID or session files — that's composition's job.",
+          "description": "hex-nexus/src/adapters/inference/claude_code.rs: implements IInferencePort by spawning `claude -p --dangerously-skip-permissions <prompt>` via tokio::process::Command. ALWAYS passes --dangerously-skip-permissions when not attached to a TTY (fixes exit 1, per feedback_claude_bypass_permissions). complete() captures stdout to completion; stream() reads stdout line-by-line as tokens. health() runs `claude --version`. Does NOT read CLAUDE_SESSION_ID or session files \u2014 that's composition's job.",
           "files": [
             "hex-nexus/src/adapters/inference/claude_code.rs",
             "hex-nexus/src/adapters/inference/mod.rs"
@@ -225,7 +225,7 @@
           "deps": [
             "P4.2"
           ],
-          "description": "Inject a process spawner trait so tests can feed canned stdout/exit codes without a real claude binary. Cases: (a) happy path captures full response, (b) exit 1 without --dangerously-skip-permissions flag is impossible (flag is unconditional) — assert flag presence in command line, (c) binary missing -> Unreachable, (d) stream yields tokens in order.",
+          "description": "Inject a process spawner trait so tests can feed canned stdout/exit codes without a real claude binary. Cases: (a) happy path captures full response, (b) exit 1 without --dangerously-skip-permissions flag is impossible (flag is unconditional) \u2014 assert flag presence in command line, (c) binary missing -> Unreachable, (d) stream yields tokens in order.",
           "files": [
             "hex-nexus/tests/claude_code_adapter.rs"
           ],
@@ -238,7 +238,7 @@
       "tier": 1
     },
     {
-      "description": "Replace Err(Self::err()) stubs in hex-nexus/src/adapters/spacetime_state.rs::hexflo_memory_{store,retrieve,search,delete} with real SpacetimeDB reducer calls against the hexflo-coordination module. Reducers already exist in spacetime-modules/hexflo-coordination/src/lib.rs — this phase is pure adapter wiring, no new reducers. SQLite fallback path (ADR-011) remains for offline mode. If the reducer name / signature is missing for any of the four methods, add it to the WASM module in the same phase rather than split across workplans.",
+      "description": "Replace Err(Self::err()) stubs in hex-nexus/src/adapters/spacetime_state.rs::hexflo_memory_{store,retrieve,search,delete} with real SpacetimeDB reducer calls against the hexflo-coordination module. Reducers already exist in spacetime-modules/hexflo-coordination/src/lib.rs \u2014 this phase is pure adapter wiring, no new reducers. SQLite fallback path (ADR-011) remains for offline mode. If the reducer name / signature is missing for any of the four methods, add it to the WASM module in the same phase rather than split across workplans.",
       "gate": {
         "blocking": true,
         "command": "cargo test -p hex-nexus adapters::spacetime_state::hexflo_memory",
@@ -280,7 +280,7 @@
             "P5.1",
             "P5.2"
           ],
-          "description": "Replace Err(Self::err()) bodies in hex-nexus/src/adapters/spacetime_state.rs. Each method calls the corresponding reducer, maps SpacetimeDB errors to domain error types, and returns structured results. Add instrumentation (tracing::debug spans) so failures are diagnosable without attaching a debugger. Adapter-level tests use an in-memory SpacetimeDB fixture (or the existing test harness if one exists — grep hex-nexus/tests/ first).",
+          "description": "Replace Err(Self::err()) bodies in hex-nexus/src/adapters/spacetime_state.rs. Each method calls the corresponding reducer, maps SpacetimeDB errors to domain error types, and returns structured results. Add instrumentation (tracing::debug spans) so failures are diagnosable without attaching a debugger. Adapter-level tests use an in-memory SpacetimeDB fixture (or the existing test harness if one exists \u2014 grep hex-nexus/tests/ first).",
           "files": [
             "hex-nexus/src/adapters/spacetime_state.rs"
           ],
@@ -307,7 +307,7 @@
       "tier": 1
     },
     {
-      "description": "With P2 (composition), P3 (Ollama), P4 (Claude-as-backend), and P5 (memory) in place, wire workplan_executor to dispatch through the standalone AgentManager. A phase with one task in a workplan must produce a real inference call (via MockInferencePort in tests, OllamaInferenceAdapter when run manually), persist progress to HexFlo memory, and surface the result through the existing /api/workplan/execute REST path. The dispatch-evidence guard (ADR-2604111800) must accept the run — its rejection is the signal that we are not cheating.",
+      "description": "With P2 (composition), P3 (Ollama), P4 (Claude-as-backend), and P5 (memory) in place, wire workplan_executor to dispatch through the standalone AgentManager. A phase with one task in a workplan must produce a real inference call (via MockInferencePort in tests, OllamaInferenceAdapter when run manually), persist progress to HexFlo memory, and surface the result through the existing /api/workplan/execute REST path. The dispatch-evidence guard (ADR-2604111800) must accept the run \u2014 its rejection is the signal that we are not cheating.",
       "gate": {
         "blocking": true,
         "command": "cargo test -p hex-nexus orchestration::standalone_dispatch",
@@ -319,7 +319,7 @@
         {
           "agent": "hex-coder",
           "deps": [],
-          "description": "At the point where workplan_executor calls AgentManager.dispatch_task (grep to find the exact line post-P2), ensure the standalone AgentManager routes to IInferencePort rather than expecting a Claude session. The code path should be indistinguishable at the executor level — the composition root already chose the right AgentManager variant. This task is mostly validation that nothing in the executor reaches past the AgentManager abstraction to read session files directly.",
+          "description": "At the point where workplan_executor calls AgentManager.dispatch_task (grep to find the exact line post-P2), ensure the standalone AgentManager routes to IInferencePort rather than expecting a Claude session. The code path should be indistinguishable at the executor level \u2014 the composition root already chose the right AgentManager variant. This task is mostly validation that nothing in the executor reaches past the AgentManager abstraction to read session files directly.",
           "files": [
             "hex-nexus/src/orchestration/workplan_executor.rs"
           ],
@@ -355,7 +355,7 @@
           ],
           "id": "P6.3",
           "layer": "primary",
-          "name": "Reject vacuous completions — explicit test of the guard",
+          "name": "Reject vacuous completions \u2014 explicit test of the guard",
           "status": "done"
         }
       ],
@@ -405,7 +405,7 @@
           "deps": [
             "P7.2"
           ],
-          "description": "Add a 'Running hex standalone (without Claude Code)' section to the root README.md (short — just the three commands: install Ollama, hex nexus start, hex plan execute). Update CLAUDE.md to mention that ADR-2604112000 established the standalone composition path, so future workplans can rely on it. Do NOT document it as experimental — once P7.2 passes, it's a first-class mode.",
+          "description": "Add a 'Running hex standalone (without Claude Code)' section to the root README.md (short \u2014 just the three commands: install Ollama, hex nexus start, hex plan execute). Update CLAUDE.md to mention that ADR-2604112000 established the standalone composition path, so future workplans can rely on it. Do NOT document it as experimental \u2014 once P7.2 passes, it's a first-class mode.",
           "files": [
             "README.md",
             "CLAUDE.md"
@@ -423,7 +423,9 @@
             "P7.3"
           ],
           "description": "Run the adversarial-reviewer agent against the full wp-hex-standalone-dispatch change set before marking status=done. Inputs: every file modified by P1-P7, the ADR text, and the audit report findings. Looks for: (a) dangling refs to the old composition path, (b) stale test harnesses, (c) hex-intf-specific leakage in anything added under hex-cli/assets/ (per ADR-2604111142), (d) reducer name drift between WASM module and adapter bindings. Blocking: any HIGH severity finding halts the workplan.",
-          "files": [],
+          "files": [
+            "docs/analysis/wp-hex-standalone-dispatch-adversarial-review.md"
+          ],
           "id": "P7.4",
           "layer": "primary",
           "name": "Final workplan review via adversarial-reviewer",
