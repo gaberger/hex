@@ -1215,6 +1215,10 @@ fn daemon_status() -> anyhow::Result<()> {
 
 const NEXUS_BASE: &str = "http://127.0.0.1:5555";
 
+pub async fn enqueue_brain_task_pub(kind: &str, payload: &str) -> anyhow::Result<String> {
+    enqueue_brain_task(kind, payload).await
+}
+
 async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String> {
     use crate::nexus_client::NexusClient;
     let id = uuid::Uuid::new_v4().to_string();
