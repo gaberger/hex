@@ -1855,11 +1855,34 @@ async fn notify_brain_task_result(
 
 async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String> {
     use crate::nexus_client::NexusClient;
-    let id = uuid::Uuid::new_v4().to_string();
-    let key = format!("brain-task:{}", id);
     // Capture project scope at enqueue time — without this the brain queue is
     // global and tasks enqueued in one repo pollute another repo's statusline.
     let project_id = brain_project_id().unwrap_or_default();
+
+    // Dedup: if an active (pending/in_progress) task with the same
+    // (kind, payload, project_id) triplet already exists, return its id
+    // rather than creating a duplicate. Multiple enqueue sites
+    // (hex brain prime, hex brain enqueue, other agents) would otherwise
+    // stack up redundant work.
+    if let Ok(existing) = list_brain_tasks(None).await {
+        for task in &existing {
+            let t_status = task.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            if !matches!(t_status, "pending" | "in_progress") {
+                continue;
+            }
+            let t_kind = task.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            let t_payload = task.get("payload").and_then(|v| v.as_str()).unwrap_or("");
+            let t_project = task.get("project_id").and_then(|v| v.as_str()).unwrap_or("");
+            if t_kind == kind && t_payload == payload && t_project == project_id {
+                if let Some(id) = task.get("id").and_then(|v| v.as_str()) {
+                    return Ok(id.to_string());
+                }
+            }
+        }
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let key = format!("brain-task:{}", id);
     let task = json!({
         "id": id,
         "kind": kind,
