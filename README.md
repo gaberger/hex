@@ -76,6 +76,13 @@ hex hey --queue "rebuild nexus and run validate"             # Async — daemon 
 hex brain enqueue workplan docs/workplans/wp-foo.json        # Explicit workplan task
 hex brain enqueue validate                                   # Run self-consistency checks
 
+# 2a. Remote shell via SSH + LLM translation (ADR-2604141200)
+hex hey check gpu memory on bazzite          # qwen3:4b translates → ssh bazzite rocm-smi
+hex hey show disk usage on bazzite           # → ssh bazzite df
+hex hey list running ollama models on bazzite  # → ssh bazzite ollama ps
+# Per-host context lives in .hex/hosts.toml — OS/GPU/tooling hints that
+# teach the LLM which commands are appropriate per machine.
+
 # 3. Inspect & control
 hex brain queue list                                         # Pending/in-flight/done tasks
 hex brain validate                                           # Self-consistency: CLI wiring, binary freshness,
