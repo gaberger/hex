@@ -1570,12 +1570,15 @@ fn file_has_git_evidence(file: &str, since: &str) -> bool {
     }
 }
 
-/// Check if a task ID appears in recent git commit messages (case-insensitive).
+/// Check if a task ID appears in recent git commit messages, scoped to a workplan.
 /// Matches patterns like "p1.1", "P1.1", "(p1.1)", "p1.1:" in commit subjects.
-/// This catches tasks completed via worktree merges where files[] may not match.
+/// When `adr_scope` is non-empty, the commit must ALSO contain the ADR id — this
+/// prevents cross-workplan false positives where generic task IDs like "P1.1"
+/// appear in unrelated commits. When `adr_scope` is empty, falls back to the
+/// legacy unscoped match (for workplans without an ADR link).
 /// Uses --fixed-strings to avoid regex interpretation of dots in task IDs.
 /// Uses a 24h buffer before created_at to account for timezone differences.
-fn task_id_in_git_log(task_id: &str, since: &str) -> bool {
+fn task_id_in_git_log(task_id: &str, since: &str, adr_scope: &str) -> bool {
     if task_id.is_empty() {
         return false;
     }
@@ -1591,8 +1594,53 @@ fn task_id_in_git_log(task_id: &str, since: &str) -> bool {
             .unwrap_or_else(|_| since.to_string());
         format!("--since={}", buffered)
     };
+    let mut args: Vec<String> = vec![
+        "log".to_string(),
+        "--oneline".to_string(),
+        since_arg,
+        "--fixed-strings".to_string(),
+        "-i".to_string(),
+        "--grep".to_string(),
+        task_id.to_string(),
+    ];
+    if !adr_scope.is_empty() {
+        // Require BOTH task_id AND adr_scope to appear — prevents unrelated
+        // commits that happen to share a generic task ID (P1.1, P2.1) from
+        // matching a different workplan.
+        args.push("--all-match".to_string());
+        args.push("--grep".to_string());
+        args.push(adr_scope.to_string());
+    }
+    let output = std::process::Command::new("git").args(&args).output();
+    match output {
+        Ok(out) => !out.stdout.is_empty(),
+        Err(_) => false,
+    }
+}
+
+/// Check if any commit since `since` modified `file` AND mentions `adr_scope` in
+/// its message. This narrows the plain "file was modified" heuristic so a commit
+/// on another workplan that happens to touch the same file doesn't register as
+/// evidence for an unrelated task. When `adr_scope` is empty, falls back to the
+/// legacy unscoped file-modified check.
+fn file_has_scoped_git_evidence(file: &str, since: &str, adr_scope: &str) -> bool {
+    if adr_scope.is_empty() {
+        return file_has_git_evidence(file, since);
+    }
+    if since.is_empty() || file.is_empty() {
+        return false;
+    }
     let output = std::process::Command::new("git")
-        .args(["log", "--oneline", &since_arg, "--fixed-strings", "--grep", task_id, "-i"])
+        .args([
+            "log",
+            "--oneline",
+            &format!("--since={}", since),
+            "--fixed-strings",
+            "--grep",
+            adr_scope,
+            "--",
+            file,
+        ])
         .output();
     match output {
         Ok(out) => !out.stdout.is_empty(),
@@ -1726,11 +1774,13 @@ async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
             continue;
         }
 
-        // 1. Git evidence: check if files were modified since created_at
+        // 1. Git evidence: check if files were modified since created_at by a
+        //    commit that mentions the workplan's ADR — this prevents unrelated
+        //    commits touching the same file from false-matching.
         let git_label = git_evidence_label(&task.files, &workplan.created_at);
         let all_files_modified = !task.files.is_empty()
             && !workplan.created_at.is_empty()
-            && task.files.iter().all(|f| file_has_git_evidence(f, &workplan.created_at));
+            && task.files.iter().all(|f| file_has_scoped_git_evidence(f, &workplan.created_at, &workplan.adr));
 
         // 2. done_command verification
         let cmd_verified = if !task.done_command.is_empty() {
@@ -1739,8 +1789,9 @@ async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
             false
         };
 
-        // 3. Commit message match: task ID in recent git log (catches worktree merges)
-        let commit_match = task_id_in_git_log(&task.id, &workplan.created_at);
+        // 3. Commit message match: task ID scoped to workplan ADR. Without the
+        //    ADR scope, generic task IDs (P1.1, P2.1) cross-match other workplans.
+        let commit_match = task_id_in_git_log(&task.id, &workplan.created_at, &workplan.adr);
 
         // 4. Identifier grep (existing logic)
         let identifiers = extract_identifiers(&task.condition);
