@@ -6,6 +6,7 @@
 //! dependency tier. Plans are saved to `docs/workplans/` as JSON.
 
 pub mod reconcile_evidence;
+mod schema_validate;
 
 use std::path::Path;
 
@@ -135,83 +136,83 @@ fn flexible_phases<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Phase>,
 }
 
 /// A workplan step.
-#[derive(Debug, Serialize, Deserialize)]
-struct Step {
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub(super) struct Step {
     #[serde(default)]
-    id: String,
+    pub(super) id: String,
     #[serde(default)]
-    description: String,
+    pub(super) description: String,
     #[serde(default, deserialize_with = "nullable_string")]
-    adapter: String,
+    pub(super) adapter: String,
     #[serde(default)]
-    tier: u8,
+    pub(super) tier: u8,
     #[serde(default)]
-    dependencies: Vec<String>,
+    pub(super) dependencies: Vec<String>,
     #[serde(default)]
-    status: String,
+    pub(super) status: String,
     #[serde(default)]
-    done_condition: String,
+    pub(super) done_condition: String,
     #[serde(default)]
-    verify: String,
+    pub(super) verify: String,
     #[serde(default)]
-    files: Vec<String>,
+    pub(super) files: Vec<String>,
     #[serde(default)]
-    done_command: String,
+    pub(super) done_command: String,
 }
 
 /// A workplan document — supports both legacy (steps) and current (phases/tasks) formats.
-#[derive(Debug, Serialize, Deserialize)]
-struct Workplan {
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub(super) struct Workplan {
     #[serde(default)]
-    title: String,
+    pub(super) title: String,
     #[serde(default)]
-    feature: String,
+    pub(super) feature: String,
     #[serde(default)]
-    language: String,
+    pub(super) language: String,
     #[serde(default)]
-    status: String,
+    pub(super) status: String,
     #[serde(default)]
-    steps: Vec<Step>,
+    pub(super) steps: Vec<Step>,
     #[serde(default, deserialize_with = "flexible_phases")]
-    phases: Vec<Phase>,
+    pub(super) phases: Vec<Phase>,
     #[serde(default, alias = "createdAt", alias = "created")]
-    created_at: String,
+    pub(super) created_at: String,
     #[serde(default)]
-    adr: String,
+    pub(super) adr: String,
     #[serde(default)]
-    description: String,
+    pub(super) description: String,
     #[serde(default)]
-    priority: String,
+    pub(super) priority: String,
     #[serde(default)]
-    superseded_by: String,
+    pub(super) superseded_by: String,
 }
 
 /// A phase in the current workplan format.
-#[derive(Debug, Serialize, Deserialize)]
-struct Phase {
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub(super) struct Phase {
     #[serde(default)]
-    id: String,
+    pub(super) id: String,
     #[serde(default)]
-    name: String,
+    pub(super) name: String,
     #[serde(default)]
-    tasks: Vec<PhaseTask>,
+    pub(super) tasks: Vec<PhaseTask>,
 }
 
 /// A task within a phase.
-#[derive(Debug, Serialize, Deserialize)]
-struct PhaseTask {
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub(super) struct PhaseTask {
     #[serde(default)]
-    id: String,
+    pub(super) id: String,
     #[serde(default)]
-    name: String,
+    pub(super) name: String,
     #[serde(default)]
-    status: String,
+    pub(super) status: String,
     #[serde(default)]
-    layer: String,
+    pub(super) layer: String,
     #[serde(default)]
-    files: Vec<String>,
+    pub(super) files: Vec<String>,
     #[serde(default)]
-    done_command: String,
+    pub(super) done_command: String,
 }
 
 impl Workplan {
@@ -1720,6 +1721,17 @@ async fn reconcile_plan(file: &str, update: bool, audit: bool) -> anyhow::Result
     // Parse as generic JSON to preserve all fields for optional write-back
     let mut raw: serde_json::Value = serde_json::from_str(&content)?;
     let workplan: Workplan = serde_json::from_str(&content)?;
+
+    // ADR-2604142200 / wp-enforce-workplan-evidence E1.2:
+    // reject workplans with empty files[] — reconcile has nothing to verify.
+    if let Err(violations) = schema_validate::validate_workplan_evidence(&workplan) {
+        eprintln!("{}", schema_validate::format_violations(&violations));
+        anyhow::bail!(
+            "refusing to reconcile {}: schema validation failed ({} violations)",
+            path.display(),
+            violations.len()
+        );
+    }
 
     println!("{} Reconciling: {}", "\u{2b21}".cyan(), workplan.display_title());
     if !workplan.created_at.is_empty() {
