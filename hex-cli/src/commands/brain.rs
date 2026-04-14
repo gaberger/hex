@@ -1041,6 +1041,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                     let status = if ok { "completed" } else { "failed" };
                     let _ = update_brain_task(&id, status, &result).await;
                     println!("    {} {}", if ok { "✓".green() } else { "✗".red() }, status);
+                    notify_brain_task_result(&id, &kind, &payload, status, &result).await;
                 }
             }
             _ => {}
@@ -1217,6 +1218,42 @@ const NEXUS_BASE: &str = "http://127.0.0.1:5555";
 
 pub async fn enqueue_brain_task_pub(kind: &str, payload: &str) -> anyhow::Result<String> {
     enqueue_brain_task(kind, payload).await
+}
+
+/// Resolve project ID from `.hex/project.json` in cwd. Returns `None` if missing/unreadable.
+fn brain_project_id() -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    let content = std::fs::read_to_string(cwd.join(".hex/project.json")).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
+    parsed["id"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string())
+}
+
+/// Fire-and-forget operator notification on brain task completion/failure (wp-brain-updates P1.1).
+/// priority=1 on success, priority=2 on failure. Errors are swallowed — must never fail the tick.
+async fn notify_brain_task_result(
+    task_id: &str,
+    kind: &str,
+    payload: &str,
+    status: &str,
+    result: &str,
+) {
+    let Some(project_id) = brain_project_id() else { return };
+    let priority: u8 = if status == "completed" { 1 } else { 2 };
+    let snippet: String = result.chars().take(200).collect();
+    let body = json!({
+        "project_id": project_id,
+        "priority": priority,
+        "kind": format!("brain.task.{}", status),
+        "payload": json!({
+            "task_id": task_id,
+            "kind": kind,
+            "payload": payload,
+            "status": status,
+            "result_snippet": snippet,
+        }).to_string(),
+    });
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    let _ = nexus.post("/api/hexflo/inbox/notify", &body).await;
 }
 
 async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String> {
