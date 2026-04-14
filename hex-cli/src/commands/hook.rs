@@ -295,6 +295,11 @@ async fn session_start(project_dir: &Path) -> Result<()> {
             // ADR-060: Check for restart checkpoint from a previous session
             let _ = recover_restart_checkpoint().await;
 
+            // ADR-2604132330 + ADR-2604141100: Summarise unacknowledged brain
+            // notifications so the operator notices them without running
+            // `hex inbox list`. Silent when empty or on error.
+            print_inbox_summary().await;
+
             // ADR-050: Load active workplan from HexFlo memory
             let _ = load_workplan_context(id).await;
 
@@ -399,6 +404,50 @@ async fn session_start(project_dir: &Path) -> Result<()> {
     ensure_agent_hook(project_dir);
 
     Ok(())
+}
+
+/// Fetch unacknowledged brain notifications with priority >= 1 and print a
+/// compact summary on session start (ADR-2604132330 + ADR-2604141100).
+///
+/// Prints nothing when the queue is empty or the request fails — silence keeps
+/// the banner clean when nexus is warming up or the operator has no pending
+/// items. Shows the three most recent notifications to give immediate context.
+async fn print_inbox_summary() {
+    let client = match nexus_client(3) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let resp = match client.get(nexus_url("/api/inbox?min_priority=1")).send().await {
+        Ok(r) if r.status().is_success() => r,
+        _ => return,
+    };
+
+    let items: Vec<serde_json::Value> = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    if items.is_empty() {
+        return;
+    }
+
+    let plural = if items.len() == 1 { "" } else { "s" };
+    println!(
+        "  Brain:   {} {} new notification{} \u{2014} `{}` to review",
+        "\u{2709}".yellow(),
+        items.len(),
+        plural,
+        "hex inbox list".cyan()
+    );
+
+    for item in items.iter().take(3) {
+        let priority = item["priority"].as_u64().unwrap_or(0);
+        let msg = item["message"].as_str().unwrap_or("(no message)");
+        let title: String = msg.lines().next().unwrap_or(msg).chars().take(72).collect();
+        let suffix = if msg.chars().count() > 72 { "\u{2026}" } else { "" };
+        println!("           [p{}] {}{}", priority, title, suffix);
+    }
 }
 
 /// Generate a minimal architecture fingerprint block from local project files.
