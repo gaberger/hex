@@ -1,0 +1,97 @@
+{
+  "adr": "ADR-2604140000",
+  "created_at": "2026-04-14T00:00:00Z",
+  "created_by": "human+agent",
+  "description": "hex hey <text> command. Two-tier classifier: keyword match first (80% of intents), LLM fallback via local qwen3:4b. Pairs with brain daemon for async execution.",
+  "feature": "Hey Hex — Natural Language Task Enqueue",
+  "id": "wp-hey-hex",
+  "phases": [
+    {
+      "description": "New hey.rs command with 20-30 keyword patterns. Matches common intents (calibrate, rebuild, reconcile, cleanup, validate, etc).",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
+      "id": "P1",
+      "name": "hex hey command + keyword classifier",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "New hex-cli/src/commands/hey.rs. Accepts free-form text as Vec<String> args. classify_intent(text) function matches keywords and returns TaskIntent enum (HexCommand, Shell, Workplan, Unknown). Wire hex hey <text...> and hex hey --queue <text...> in main.rs. Default: execute sync. With --queue: enqueue via enqueue_brain_task. Covers: calibrate inference, rebuild, reconcile workplans, cleanup worktrees, what's broken (validate), restart nexus, run <workplan>, bench <model>.",
+          "files": [
+            "hex-cli/src/commands/hey.rs",
+            "hex-cli/src/commands/mod.rs",
+            "hex-cli/src/main.rs"
+          ],
+          "id": "P1.1",
+          "layer": "primary",
+          "name": "Create hex hey command with keyword intent classifier",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "description": "Destructive operations (worktree cleanup, delete, remove, rm) prompt y/N before executing.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
+      "id": "P2",
+      "name": "Confirmation prompts for destructive ops",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1"
+          ],
+          "description": "In hey.rs: classify_intent returns a DESTRUCTIVE flag for dangerous operations. Before exec, prompt 'This will [description]. Proceed? [y/N]'. --yes flag bypasses. Destructive keywords: delete, remove, clean, rm, cleanup, force.",
+          "files": [
+            "hex-cli/src/commands/hey.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Add confirmation prompt for destructive intents",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "description": "When keyword match returns Unknown, call local inference (qwen3:4b on bazzite) to classify. Show classification, ask confirmation before execution.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
+      "id": "P3",
+      "name": "LLM fallback via local qwen3:4b",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1",
+            "P2.1"
+          ],
+          "description": "When classify_intent returns Unknown: POST to /api/inference/complete with model=qwen3:4b and a prompt asking to classify the intent into {kind, payload} JSON. Parse response. If kind is valid (hex-command/workplan/shell), show user the classified task and ask 'Execute? [y/N]' unless --yes. If still unknown, suggest manual invocation.",
+          "files": [
+            "hex-cli/src/commands/hey.rs"
+          ],
+          "id": "P3.1",
+          "layer": "secondary",
+          "name": "LLM-powered intent classification fallback",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 3
+    }
+  ],
+  "priority": "high",
+  "status": "planned"
+}
