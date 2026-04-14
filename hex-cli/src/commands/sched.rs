@@ -1654,12 +1654,20 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                     // Mark in_progress so statusline + /api/brain/status can distinguish
                     // actively-running tasks from pending ones (visibility for long
                     // workplan tasks that would otherwise look queued).
-                    let _ = update_brain_task(&id, "in_progress", "").await;
+                    let _ = update_brain_task(&id, BrainTaskStatus::InProgress, "").await;
                     let (ok, result) = execute_brain_task(&kind, &payload).await;
-                    let status = if ok { "completed" } else { "failed" };
+                    let status = if ok {
+                        BrainTaskStatus::Completed
+                    } else {
+                        BrainTaskStatus::Failed
+                    };
                     let _ = update_brain_task(&id, status, &result).await;
-                    println!("    {} {}", if ok { "✓".green() } else { "✗".red() }, status);
-                    notify_brain_task_result(&id, &kind, &payload, status, &result).await;
+                    println!(
+                        "    {} {}",
+                        if ok { "✓".green() } else { "✗".red() },
+                        status.as_str()
+                    );
+                    notify_brain_task_result(&id, &kind, &payload, status.as_str(), &result).await;
                 }
             }
             _ => {}
@@ -2005,6 +2013,159 @@ fn print_brain_event(ev: &serde_json::Value) {
 
 const NEXUS_BASE: &str = "http://127.0.0.1:5555";
 
+// ─── Typed schema (ADR-2604141400 P0.1) ────────────────────────────────────
+//
+// The on-wire JSON shape is shared across daemon/CLI/dashboard. A typed enum
+// replaces the string-stamped `"status"` so variants are enforced at compile
+// time and migration to lease-aware semantics in P1+ is type-safe.
+//
+// Every added field uses `#[serde(default)]` so records written by older
+// daemons (pre-lease schema) deserialize without error — the queue does not
+// require a stop-the-world migration.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BrainTaskStatus {
+    Pending,
+    Leased,
+    InProgress,
+    Completed,
+    Failed,
+}
+
+impl BrainTaskStatus {
+    /// Wire-format string. Kept stable across schema revisions — storage
+    /// keys, REST payloads, and filter predicates all lean on these exact
+    /// tokens.
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            BrainTaskStatus::Pending => "pending",
+            BrainTaskStatus::Leased => "leased",
+            BrainTaskStatus::InProgress => "in_progress",
+            BrainTaskStatus::Completed => "completed",
+            BrainTaskStatus::Failed => "failed",
+        }
+    }
+
+    pub(crate) fn is_terminal(&self) -> bool {
+        matches!(self, BrainTaskStatus::Completed | BrainTaskStatus::Failed)
+    }
+
+    /// Parse a wire string into an enum variant. Tolerant of unknown values
+    /// (returns `None`) so a new variant written by a newer daemon doesn't
+    /// crash an older reader.
+    pub(crate) fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "pending" => Some(BrainTaskStatus::Pending),
+            "leased" => Some(BrainTaskStatus::Leased),
+            "in_progress" => Some(BrainTaskStatus::InProgress),
+            "completed" => Some(BrainTaskStatus::Completed),
+            "failed" => Some(BrainTaskStatus::Failed),
+            _ => None,
+        }
+    }
+}
+
+/// Evidence surfaced by the lease sweeper / reconciler to justify a
+/// completion verdict (ADR-2604141400). Populated in P2+; defaults keep
+/// older records valid.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct BrainTaskEvidence {
+    #[serde(default)]
+    pub(crate) commits: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) reconcile_verdict: Option<String>,
+}
+
+/// Typed value written at `hexflo-memory[brain-task:<id>]`. The JSON on
+/// the wire stays compatible with the legacy shape — unknown fields are
+/// preserved implicitly by the writer (which still builds via
+/// `serde_json::Value` to avoid field-dropping round-trips), and missing
+/// fields default to neutral values on read.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct BrainTaskRecord {
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    pub(crate) payload: String,
+    pub(crate) status: BrainTaskStatus,
+    #[serde(default)]
+    pub(crate) project_id: String,
+    #[serde(default)]
+    pub(crate) created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) completed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) result: Option<String>,
+
+    // ─── Lease fields (P0.1 schema extension) ─────────────────────────
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) leased_to: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) leased_until: Option<String>,
+    #[serde(default)]
+    pub(crate) lease_attempts: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) swarm_task_id: Option<String>,
+    #[serde(default)]
+    pub(crate) evidence: BrainTaskEvidence,
+}
+
+impl BrainTaskRecord {
+    /// Parse a JSON value into a record, tolerating missing lease fields and
+    /// unknown status strings (status falls back to `Pending` if
+    /// unrecognised so the queue stays drainable). Returns `None` only when
+    /// the mandatory id/kind/payload triple is missing — those are structural.
+    pub(crate) fn from_value(v: &serde_json::Value) -> Option<Self> {
+        // Go through serde first so `#[serde(default)]` does the heavy
+        // lifting for missing fields. Fall back to a hand-rolled parse if
+        // the status string isn't a known variant — we don't want an
+        // unrecognised status to nuke the whole record.
+        if let Ok(rec) = serde_json::from_value::<BrainTaskRecord>(v.clone()) {
+            return Some(rec);
+        }
+        let id = v.get("id").and_then(|x| x.as_str())?.to_string();
+        let kind = v.get("kind").and_then(|x| x.as_str())?.to_string();
+        let payload = v.get("payload").and_then(|x| x.as_str())?.to_string();
+        let status = v
+            .get("status")
+            .and_then(|x| x.as_str())
+            .and_then(BrainTaskStatus::from_wire)
+            .unwrap_or(BrainTaskStatus::Pending);
+        let project_id = v.get("project_id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let created_at = v.get("created_at").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let completed_at = v.get("completed_at").and_then(|x| x.as_str()).map(String::from);
+        let result = v.get("result").and_then(|x| x.as_str()).map(String::from);
+        let leased_to = v.get("leased_to").and_then(|x| x.as_str()).map(String::from);
+        let leased_until = v.get("leased_until").and_then(|x| x.as_str()).map(String::from);
+        let lease_attempts = v
+            .get("lease_attempts")
+            .and_then(|x| x.as_u64())
+            .map(|n| n as u32)
+            .unwrap_or(0);
+        let swarm_task_id = v.get("swarm_task_id").and_then(|x| x.as_str()).map(String::from);
+        let evidence = v
+            .get("evidence")
+            .cloned()
+            .and_then(|e| serde_json::from_value::<BrainTaskEvidence>(e).ok())
+            .unwrap_or_default();
+        Some(BrainTaskRecord {
+            id,
+            kind,
+            payload,
+            status,
+            project_id,
+            created_at,
+            completed_at,
+            result,
+            leased_to,
+            leased_until,
+            lease_attempts,
+            swarm_task_id,
+            evidence,
+        })
+    }
+}
+
 pub async fn enqueue_brain_task_pub(kind: &str, payload: &str) -> anyhow::Result<String> {
     enqueue_brain_task(kind, payload).await
 }
@@ -2154,7 +2315,7 @@ pub(crate) async fn drain_brain_tasks(limit: usize) -> anyhow::Result<Vec<serde_
 
 pub(crate) async fn update_brain_task(
     id: &str,
-    status: &str,
+    status: BrainTaskStatus,
     result: &str,
 ) -> anyhow::Result<()> {
     use crate::nexus_client::NexusClient;
@@ -2163,7 +2324,10 @@ pub(crate) async fn update_brain_task(
     nexus.ensure_running().await?;
     // GET current task value
     let resp: serde_json::Value = nexus.get(&format!("/api/hexflo/memory/{}", key)).await?;
-    // Response shape: {"key": ..., "value": "<json string>"} or just the value
+    // Response shape: {"key": ..., "value": "<json string>"} or just the value.
+    // We round-trip through serde_json::Value (not BrainTaskRecord) so lease
+    // fields written by future daemons survive the update — we only mutate
+    // the keys we own here, leaving everything else verbatim.
     let value_str = resp
         .get("value")
         .and_then(|v| v.as_str())
@@ -2171,9 +2335,9 @@ pub(crate) async fn update_brain_task(
     let mut inner: serde_json::Value =
         serde_json::from_str(value_str).unwrap_or(serde_json::json!({}));
     if let Some(obj) = inner.as_object_mut() {
-        obj.insert("status".into(), json!(status));
+        obj.insert("status".into(), json!(status.as_str()));
         obj.insert("result".into(), json!(result));
-        if status == "completed" || status == "failed" {
+        if status.is_terminal() {
             obj.insert(
                 "completed_at".into(),
                 json!(chrono::Utc::now().to_rfc3339()),
@@ -2340,14 +2504,18 @@ async fn queue_drain() -> anyhow::Result<()> {
             .unwrap_or("")
             .to_string();
         println!("  → executing {id} ({kind})");
-        let _ = update_brain_task(&id, "in_progress", "").await;
+        let _ = update_brain_task(&id, BrainTaskStatus::InProgress, "").await;
         let (ok, result) = execute_brain_task(&kind, &payload).await;
-        let status = if ok { "completed" } else { "failed" };
+        let status = if ok {
+            BrainTaskStatus::Completed
+        } else {
+            BrainTaskStatus::Failed
+        };
         update_brain_task(&id, status, &result).await?;
         println!(
             "    {} {}",
             if ok { "✓".green() } else { "✗".red() },
-            status
+            status.as_str()
         );
     }
     Ok(())
@@ -2512,5 +2680,220 @@ min_priority = 2
         let parsed: DaemonTomlFile = toml::from_str(src).unwrap();
         let cfg = parsed.notify.unwrap();
         assert_eq!(cfg.min_priority, 2);
+    }
+
+    // ─── Brain task schema (ADR-2604141400 P0.1) ───────────────────────────
+    //
+    // Nested under `brain::task_schema` so the workplan gate
+    // (`cargo test -p hex-cli brain::task_schema`) runs exactly this set.
+    // The `#[allow(non_snake_case)]` isn't needed because Rust allows module
+    // names that happen to read as lowercase identifiers.
+
+    mod brain {
+        mod task_schema {
+            use super::super::super::{BrainTaskEvidence, BrainTaskRecord, BrainTaskStatus};
+            use serde_json::json;
+
+            #[test]
+            fn status_serializes_as_lowercase_wire_format() {
+                // Wire format stays stable across language-typed callers and
+                // untyped JS dashboards — a rename here would silently break
+                // live queue records.
+                assert_eq!(serde_json::to_string(&BrainTaskStatus::Pending).unwrap(), "\"pending\"");
+                assert_eq!(serde_json::to_string(&BrainTaskStatus::Leased).unwrap(), "\"leased\"");
+                assert_eq!(
+                    serde_json::to_string(&BrainTaskStatus::InProgress).unwrap(),
+                    "\"in_progress\""
+                );
+                assert_eq!(
+                    serde_json::to_string(&BrainTaskStatus::Completed).unwrap(),
+                    "\"completed\""
+                );
+                assert_eq!(serde_json::to_string(&BrainTaskStatus::Failed).unwrap(), "\"failed\"");
+            }
+
+            #[test]
+            fn status_roundtrips_through_serde() {
+                for s in [
+                    BrainTaskStatus::Pending,
+                    BrainTaskStatus::Leased,
+                    BrainTaskStatus::InProgress,
+                    BrainTaskStatus::Completed,
+                    BrainTaskStatus::Failed,
+                ] {
+                    let enc = serde_json::to_string(&s).unwrap();
+                    let dec: BrainTaskStatus = serde_json::from_str(&enc).unwrap();
+                    assert_eq!(s, dec);
+                }
+            }
+
+            #[test]
+            fn status_as_str_matches_serde_output() {
+                // The hand-rolled `as_str` is the source of truth for the
+                // daemon's queue filter predicates (e.g. `status_filter ==
+                // status.as_str()`) — keep it aligned with serde output.
+                for s in [
+                    BrainTaskStatus::Pending,
+                    BrainTaskStatus::Leased,
+                    BrainTaskStatus::InProgress,
+                    BrainTaskStatus::Completed,
+                    BrainTaskStatus::Failed,
+                ] {
+                    let via_serde = serde_json::to_value(s).unwrap();
+                    assert_eq!(via_serde.as_str().unwrap(), s.as_str());
+                }
+            }
+
+            #[test]
+            fn is_terminal_covers_completed_and_failed() {
+                assert!(BrainTaskStatus::Completed.is_terminal());
+                assert!(BrainTaskStatus::Failed.is_terminal());
+                assert!(!BrainTaskStatus::Pending.is_terminal());
+                assert!(!BrainTaskStatus::Leased.is_terminal());
+                assert!(!BrainTaskStatus::InProgress.is_terminal());
+            }
+
+            #[test]
+            fn from_wire_handles_known_variants() {
+                assert_eq!(BrainTaskStatus::from_wire("pending"), Some(BrainTaskStatus::Pending));
+                assert_eq!(BrainTaskStatus::from_wire("leased"), Some(BrainTaskStatus::Leased));
+                assert_eq!(
+                    BrainTaskStatus::from_wire("in_progress"),
+                    Some(BrainTaskStatus::InProgress)
+                );
+                assert_eq!(
+                    BrainTaskStatus::from_wire("completed"),
+                    Some(BrainTaskStatus::Completed)
+                );
+                assert_eq!(BrainTaskStatus::from_wire("failed"), Some(BrainTaskStatus::Failed));
+            }
+
+            #[test]
+            fn from_wire_returns_none_for_unknown_variant() {
+                // Forward-compatibility: a newer daemon may write a status
+                // string we don't recognise yet. We want `None` so the caller
+                // can decide (drop the row, mark it as unknown, etc.) rather
+                // than crashing the reader.
+                assert_eq!(BrainTaskStatus::from_wire("brewing"), None);
+                assert_eq!(BrainTaskStatus::from_wire(""), None);
+            }
+
+            #[test]
+            fn record_deserializes_legacy_shape_without_lease_fields() {
+                // Records written before P0 have no lease fields, no
+                // evidence, and may omit result/completed_at. Every added
+                // field must default cleanly or live tasks become undrainable.
+                let v = json!({
+                    "id": "abc",
+                    "kind": "hex-command",
+                    "payload": "analyze .",
+                    "status": "pending",
+                    "project_id": "p1",
+                    "created_at": "2026-04-14T00:00:00Z",
+                    "completed_at": null,
+                    "result": null
+                });
+                let rec = BrainTaskRecord::from_value(&v).expect("parse legacy record");
+                assert_eq!(rec.id, "abc");
+                assert_eq!(rec.kind, "hex-command");
+                assert_eq!(rec.payload, "analyze .");
+                assert_eq!(rec.status, BrainTaskStatus::Pending);
+                assert_eq!(rec.project_id, "p1");
+                assert_eq!(rec.leased_to, None);
+                assert_eq!(rec.leased_until, None);
+                assert_eq!(rec.lease_attempts, 0);
+                assert_eq!(rec.swarm_task_id, None);
+                assert!(rec.evidence.commits.is_empty());
+                assert_eq!(rec.evidence.reconcile_verdict, None);
+            }
+
+            #[test]
+            fn record_deserializes_new_shape_with_lease_and_evidence() {
+                let v = json!({
+                    "id": "xyz",
+                    "kind": "workplan",
+                    "payload": "docs/workplans/wp-foo.json",
+                    "status": "leased",
+                    "project_id": "p1",
+                    "created_at": "2026-04-14T00:00:00Z",
+                    "leased_to": "swarm-42",
+                    "leased_until": "2026-04-14T00:30:00Z",
+                    "lease_attempts": 2,
+                    "swarm_task_id": "t-1",
+                    "evidence": {
+                        "commits": ["abc1234", "def5678"],
+                        "reconcile_verdict": "verified"
+                    }
+                });
+                let rec = BrainTaskRecord::from_value(&v).expect("parse new-shape record");
+                assert_eq!(rec.status, BrainTaskStatus::Leased);
+                assert_eq!(rec.leased_to.as_deref(), Some("swarm-42"));
+                assert_eq!(rec.leased_until.as_deref(), Some("2026-04-14T00:30:00Z"));
+                assert_eq!(rec.lease_attempts, 2);
+                assert_eq!(rec.swarm_task_id.as_deref(), Some("t-1"));
+                assert_eq!(rec.evidence.commits, vec!["abc1234".to_string(), "def5678".to_string()]);
+                assert_eq!(rec.evidence.reconcile_verdict.as_deref(), Some("verified"));
+            }
+
+            #[test]
+            fn record_from_value_tolerates_unknown_status_by_defaulting_pending() {
+                // Unknown status → pending so the queue stays drainable
+                // rather than losing the row to a strict-mode parse error.
+                let v = json!({
+                    "id": "q",
+                    "kind": "shell",
+                    "payload": "echo hi",
+                    "status": "brewing"
+                });
+                let rec = BrainTaskRecord::from_value(&v).expect("parse unknown-status record");
+                assert_eq!(rec.status, BrainTaskStatus::Pending);
+            }
+
+            #[test]
+            fn record_from_value_rejects_structurally_incomplete_rows() {
+                // Missing the id/kind/payload triple means the row is
+                // structurally unusable — no amount of defaulting lets the
+                // daemon route it.
+                let missing_payload = json!({"id": "x", "kind": "shell"});
+                assert!(BrainTaskRecord::from_value(&missing_payload).is_none());
+            }
+
+            #[test]
+            fn record_roundtrips_preserving_lease_fields() {
+                let original = BrainTaskRecord {
+                    id: "r1".into(),
+                    kind: "workplan".into(),
+                    payload: "wp.json".into(),
+                    status: BrainTaskStatus::InProgress,
+                    project_id: "p".into(),
+                    created_at: "2026-04-14T00:00:00Z".into(),
+                    completed_at: None,
+                    result: None,
+                    leased_to: Some("swarm-7".into()),
+                    leased_until: Some("2026-04-14T00:30:00Z".into()),
+                    lease_attempts: 1,
+                    swarm_task_id: Some("st-1".into()),
+                    evidence: BrainTaskEvidence {
+                        commits: vec!["c1".into()],
+                        reconcile_verdict: None,
+                    },
+                };
+                let v = serde_json::to_value(&original).unwrap();
+                let round = BrainTaskRecord::from_value(&v).expect("roundtrip");
+                assert_eq!(round.status, BrainTaskStatus::InProgress);
+                assert_eq!(round.leased_to, original.leased_to);
+                assert_eq!(round.leased_until, original.leased_until);
+                assert_eq!(round.lease_attempts, 1);
+                assert_eq!(round.swarm_task_id, original.swarm_task_id);
+                assert_eq!(round.evidence.commits, original.evidence.commits);
+            }
+
+            #[test]
+            fn evidence_defaults_are_empty() {
+                let ev = BrainTaskEvidence::default();
+                assert!(ev.commits.is_empty());
+                assert!(ev.reconcile_verdict.is_none());
+            }
+        }
     }
 }
