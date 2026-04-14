@@ -1,0 +1,227 @@
+{
+  "id": "wp-workflow-enforcement",
+  "feature": "System-enforced tier routing + punch-list discipline",
+  "adr": "ADR-TBD-workflow-enforcement",
+  "created_at": "2026-04-14T21:58:00Z",
+  "created_by": "human+agent",
+  "executor_hint": "frontier-preferred",
+  "description": "The hex workflow (T1/T2/T3 tier routing, workplan-wrapped T3 fixes, queue-before-prose, no echo-stubs) is documented in CLAUDE.md but relies on agent discipline to apply. In a single session today the agent violated four separate rules despite each being captured in feedback memory: (1) shipped two T3 fixes without workplan wrappers, (2) emitted prose punch-lists instead of enqueueing, (3) had to be prompted twice to enqueue pending gaps, (4) only the echo-stub rule caught a violation — because it's the only one enforced by a hook. This workplan extends that enforcement pattern: every discipline rule becomes a hook check that blocks the offending output path instead of relying on the agent to remember.",
+  "notes": "Self-consistency: this workplan has files[] populated on every task, uses W1.1/W1.2/... ids for commit matching, and is being committed+enqueued by the same agent it's intended to constrain. If the hooks land and work, the author will be unable to author the next violation the same way.",
+  "phases": [
+    {
+      "id": "W1",
+      "name": "Agent output guard — punch-list linter hook",
+      "description": "Claude Code PostToolUse hook on assistant message emission: parse the emitted text for gap-enumeration patterns (numbered lists with words like 'still open', 'needs', 'follow-up', 'next', 'todo', 'fix') of length >= 2. For each gap item, require either (a) a UUID-shaped task id referenced in the same response, (b) a `docs/workplans/drafts/draft-*.json` path, or (c) an explicit `(out-of-scope)` / `(ask user)` tag. On violation, the hook stderr-warns and appends a machine-readable note to the next UserPromptSubmit so the agent self-corrects.",
+      "gate": {
+        "blocking": true,
+        "type": "test",
+        "command": "cargo test -p hex-cli workflow_punch_list_linter"
+      },
+      "tasks": [
+        {
+          "id": "W1.1",
+          "name": "Punch-list extractor pure function",
+          "description": "hex-cli/src/commands/hook/punch_list.rs: pub fn extract_punch_list(text: &str) -> Vec<PunchItem> where PunchItem { line_no: usize, raw: String, references: Vec<Reference>, classification: Enumeration | Singleton | InlineFix }. Reference enum: TaskId(uuid), DraftPath(path), OutOfScope, AskUser, None. Heuristics: numbered lists, bullet lists with gap-verbs (need/should/fix/open/pending/next/follow-up), tables with Status columns.",
+          "files": [
+            "hex-cli/src/commands/hook/punch_list.rs",
+            "hex-cli/src/commands/hook/mod.rs"
+          ],
+          "deps": [],
+          "layer": "domain",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "inference"
+        },
+        {
+          "id": "W1.2",
+          "name": "Linter verdict + violation reporter",
+          "description": "hex-cli/src/commands/hook/punch_list.rs (same file): pub fn lint_assistant_output(text: &str) -> LintResult { violations: Vec<Violation>, self_correct_note: Option<String> }. Violation when PunchItem.references is empty or contains only None. self_correct_note is a short prompt the next UserPromptSubmit hook can inject: 'Previous turn enumerated N gaps without routing them: [items]. Please enqueue before continuing.'",
+          "files": [
+            "hex-cli/src/commands/hook/punch_list.rs"
+          ],
+          "deps": ["W1.1"],
+          "layer": "domain",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "inference"
+        },
+        {
+          "id": "W1.3",
+          "name": "Wire into hook route + session state",
+          "description": "hex-cli/src/commands/hook/route.rs: on PostToolUse of the response-emitting tool (or on the assistant-message event), call lint_assistant_output and persist self_correct_note to ~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json. hex hook route on UserPromptSubmit injects the note into the reminder block if present, then clears it.",
+          "files": [
+            "hex-cli/src/commands/hook/route.rs",
+            "hex-cli/src/commands/hook/session.rs"
+          ],
+          "deps": ["W1.2"],
+          "layer": "primary",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "inference"
+        },
+        {
+          "id": "W1.4",
+          "name": "Unit tests — punch-list fixtures",
+          "description": "hex-cli/tests/workflow_punch_list_linter.rs: fixtures for (a) prose enumeration with no task ids (violation), (b) enumeration with each item tagged by task id (clean), (c) singleton fix statement (clean), (d) table with Status column and no ids (violation). Assert extract + lint produce expected counts.",
+          "files": [
+            "hex-cli/tests/workflow_punch_list_linter.rs",
+            "hex-cli/tests/fixtures/hook/punch-list-violations.md",
+            "hex-cli/tests/fixtures/hook/punch-list-clean.md"
+          ],
+          "deps": ["W1.2"],
+          "layer": "test",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "id": "W2",
+      "name": "Tier router — `hex classify <prompt>` deterministic tier verdict",
+      "description": "Promote the T1/T2/T3 classifier from an in-process heuristic to a user-visible CLI: `hex classify --prompt <text>` emits tier + recommended artifact + file-count heuristic. Hook route uses the same function. Exposing it lets both humans and agents spot-check classifications before committing to an action.",
+      "gate": {
+        "blocking": true,
+        "type": "test",
+        "command": "cargo test -p hex-cli classify"
+      },
+      "tasks": [
+        {
+          "id": "W2.1",
+          "name": "Extract classifier into shared module",
+          "description": "hex-cli/src/commands/classify.rs: lift hex-cli/src/commands/hook.rs::classify_work_intent into its own module with pub fn classify(prompt: &str, context: ClassifyContext) -> Classification { tier: Tier, artifact: Artifact, rationale: String, file_estimate: Option<usize> }. hook.rs continues to use it; new `hex classify` subcommand also uses it.",
+          "files": [
+            "hex-cli/src/commands/classify.rs",
+            "hex-cli/src/commands/hook.rs",
+            "hex-cli/src/commands/mod.rs"
+          ],
+          "deps": [],
+          "layer": "domain",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "inference"
+        },
+        {
+          "id": "W2.2",
+          "name": "CLI subcommand + main.rs wiring",
+          "description": "Add Commands::Classify { prompt: String } to hex-cli/src/main.rs. Runs classify() and prints a table: tier | artifact | rationale | file_estimate. Exit code 0 always; the output IS the signal.",
+          "files": [
+            "hex-cli/src/main.rs"
+          ],
+          "deps": ["W2.1"],
+          "layer": "primary",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "W2.3",
+          "name": "Classification fixtures + golden tests",
+          "description": "hex-cli/tests/classify.rs: 20 prompts across the tier spectrum (typo fix / add-a-comment = T1; single-adapter edit = T2; cross-cutting 'rename X across all crates' = T3). Assert classifier verdict matches golden. Regression guard against threshold drift.",
+          "files": [
+            "hex-cli/tests/classify.rs",
+            "hex-cli/tests/fixtures/classify/prompts.json"
+          ],
+          "deps": ["W2.1"],
+          "layer": "test",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "id": "W3",
+      "name": "Workplan-wrap enforcement for T3 commits",
+      "description": "PreToolUse hook on Bash with a git-commit command: inspect the commit diff. If total changed line count > 40 OR files span > 2 distinct directories, check that the commit message references a workplan task id (format W1.1 / E1.2 / etc). If absent, block with suggested workplan-draft command. Echo-stub-style rejection.",
+      "gate": {
+        "blocking": true,
+        "type": "test",
+        "command": "cargo test -p hex-cli workplan_wrap_guard"
+      },
+      "tasks": [
+        {
+          "id": "W3.1",
+          "name": "Commit-size + workplan-ref analyzer",
+          "description": "hex-cli/src/commands/hook/commit_guard.rs: pub fn analyze_commit_wrap(diff_text: &str, msg: &str) -> CommitWrapVerdict { tier_estimate: Tier, has_task_ref: bool, verdict: Allow | RequireWorkplan { suggestion: String } }. Regex for task ids: ^\\s*[A-Z][0-9]+\\.[0-9]+\\s or `Task-Id:` trailer.",
+          "files": [
+            "hex-cli/src/commands/hook/commit_guard.rs",
+            "hex-cli/src/commands/hook/mod.rs"
+          ],
+          "deps": [],
+          "layer": "domain",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "inference"
+        },
+        {
+          "id": "W3.2",
+          "name": "Hook asset — workplan-wrap-guard.yml",
+          "description": "hex-cli/assets/hooks/hex/workplan-wrap-guard.yml: PreToolUse on Bash matching `git commit`. Runs analyze_commit_wrap via `hex hook commit-guard --staged`. Blocks commits exceeding T2 threshold without workplan reference. Suggests: `hex plan draft <short intent>` then retry with id in message.",
+          "files": [
+            "hex-cli/assets/hooks/hex/workplan-wrap-guard.yml"
+          ],
+          "deps": ["W3.1"],
+          "layer": "assets",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "scaffold"
+        },
+        {
+          "id": "W3.3",
+          "name": "CLI entry point + tests",
+          "description": "hex-cli/src/commands/hook/commit_guard_cli.rs: `hex hook commit-guard --staged` reads staged diff via git2 or `git diff --cached`, calls analyze, exits 1 on block with stderr message. Test fixtures: large multi-crate diff no ref (block), small single-file diff (allow), large diff with W3.1 in message (allow).",
+          "files": [
+            "hex-cli/src/commands/hook/commit_guard_cli.rs",
+            "hex-cli/src/commands/hook/mod.rs",
+            "hex-cli/tests/workplan_wrap_guard.rs"
+          ],
+          "deps": ["W3.1"],
+          "layer": "primary",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "id": "W4",
+      "name": "ADR + release cut",
+      "description": "Write ADR-TBD-workflow-enforcement documenting the three guards (punch-list linter, tier classifier exposed as CLI, workplan-wrap commit guard) as a single coherent discipline-enforcement layer. Rebuild release, install hooks into .claude/settings.json, run a self-test session that tries to violate each rule and confirms blocks fire.",
+      "gate": {
+        "blocking": true,
+        "type": "shell",
+        "command": "hex plan lint --all && cargo test -p hex-cli --release"
+      },
+      "tasks": [
+        {
+          "id": "W4.1",
+          "name": "ADR doc",
+          "description": "docs/adrs/ADR-TBD-workflow-enforcement.md: Proposed → Accepted on W4.2. Decision: three hooks (W1, W2, W3) are the authoring-time enforcement layer for the CLAUDE.md discipline rules; the discipline rules remain the source of truth, hooks are their compiler.",
+          "files": [
+            "docs/adrs/ADR-TBD-workflow-enforcement.md"
+          ],
+          "deps": [],
+          "layer": "docs",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "transform"
+        },
+        {
+          "id": "W4.2",
+          "name": "Release build + hook install + self-test",
+          "description": "cargo build -p hex-cli --release. Install W3.2 hook asset into target .claude/settings.json via hex init. Author three deliberate violations (prose punch-list, large T3 commit without id, obvious T3 prompt) and verify each is blocked or auto-corrected. Commit the evidence transcript under docs/analysis/workflow-enforcement-selftest.md.",
+          "files": [
+            "hex-cli/Cargo.toml",
+            "docs/analysis/workflow-enforcement-selftest.md"
+          ],
+          "deps": ["W1.3", "W2.2", "W3.3", "W4.1"],
+          "layer": "build",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "script"
+        }
+      ]
+    }
+  ]
+}
