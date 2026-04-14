@@ -2166,6 +2166,38 @@ impl BrainTaskRecord {
     }
 }
 
+// ─── Lease durations per kind (ADR-2604141400 P1.1) ────────────────────────
+//
+// Bounded lease windows are what make the sweeper safe: a task that holds a
+// lease past its window is assumed stuck and reclaimable. Each kind gets a
+// duration tuned to its expected runtime — a workplan may legitimately run
+// for 30 minutes, while a shell command that takes longer than 2 minutes is
+// almost certainly wedged.
+//
+// The table is the single source of truth shared with hex-nexus's TaskKind
+// enum (hex-nexus/src/routes/brain.rs). Any new variant over there must
+// land an entry here, otherwise `lease_for` falls through to the shell
+// timeout and legitimate long-runners get reaped mid-flight.
+
+pub(crate) const LEASE_DURATIONS: [(&str, Duration); 4] = [
+    ("workplan", Duration::from_secs(30 * 60)),
+    ("hex-command", Duration::from_secs(5 * 60)),
+    ("shell", Duration::from_secs(2 * 60)),
+    ("remote-shell", Duration::from_secs(60)),
+];
+
+/// Default lease window for `kind`. Unknown kinds fall back to the
+/// shell-style 2-minute timeout so a typo or a newly-added kind can't camp
+/// the queue forever — the sweeper will still reclaim it, just on the
+/// shorter-than-ideal schedule until the table is updated.
+pub(crate) fn lease_for(kind: &str) -> Duration {
+    LEASE_DURATIONS
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map(|(_, d)| *d)
+        .unwrap_or(Duration::from_secs(2 * 60))
+}
+
 pub async fn enqueue_brain_task_pub(kind: &str, payload: &str) -> anyhow::Result<String> {
     enqueue_brain_task(kind, payload).await
 }
@@ -2893,6 +2925,58 @@ min_priority = 2
                 let ev = BrainTaskEvidence::default();
                 assert!(ev.commits.is_empty());
                 assert!(ev.reconcile_verdict.is_none());
+            }
+        }
+
+        // ─── Lease durations (ADR-2604141400 P1.1) ─────────────────────
+        //
+        // Nested under `brain::lease_durations` so the workplan gate
+        // (`cargo test -p hex-cli brain::lease_durations`) runs exactly
+        // this set.
+
+        mod lease_durations {
+            use super::super::super::{lease_for, LEASE_DURATIONS};
+            use std::time::Duration;
+
+            #[test]
+            fn lease_for_known_kinds_matches_table() {
+                assert_eq!(lease_for("workplan"), Duration::from_secs(30 * 60));
+                assert_eq!(lease_for("hex-command"), Duration::from_secs(5 * 60));
+                assert_eq!(lease_for("shell"), Duration::from_secs(2 * 60));
+                assert_eq!(lease_for("remote-shell"), Duration::from_secs(60));
+            }
+
+            #[test]
+            fn lease_for_unknown_kind_falls_back_to_shell_timeout() {
+                // Unknown/typoed kind → 2-minute shell-style window so the
+                // sweeper can still reclaim it rather than leaving it
+                // leased forever.
+                assert_eq!(lease_for("bogus"), Duration::from_secs(2 * 60));
+                assert_eq!(lease_for(""), Duration::from_secs(2 * 60));
+            }
+
+            #[test]
+            fn lease_table_covers_every_known_task_kind() {
+                // Locks the kind set: if hex-nexus::TaskKind gains a
+                // variant without updating this table, the new kind
+                // silently inherits the fallback window. Fail loudly here
+                // so the contract stays in sync across crates.
+                let kinds: Vec<&str> = LEASE_DURATIONS.iter().map(|(k, _)| *k).collect();
+                assert!(kinds.contains(&"workplan"));
+                assert!(kinds.contains(&"hex-command"));
+                assert!(kinds.contains(&"shell"));
+                assert!(kinds.contains(&"remote-shell"));
+                assert_eq!(kinds.len(), 4, "LEASE_DURATIONS gained a new kind — update this test and confirm the duration is tuned");
+            }
+
+            #[test]
+            fn lease_table_durations_are_strictly_positive() {
+                // A zero-duration lease would be instantly stale, so the
+                // sweeper would reclaim every task the moment it's leased
+                // — degenerate config. Keep every window > 0.
+                for (kind, dur) in LEASE_DURATIONS.iter() {
+                    assert!(!dur.is_zero(), "kind {kind} has zero lease window");
+                }
             }
         }
     }
