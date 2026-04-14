@@ -1,0 +1,80 @@
+# workplan-evidence-lint — Pre-edit hook enforcing workplan evidence schema
+# Blocks edits/writes to docs/workplans/wp-*.json that would introduce
+# empty files[] (the reconcile false-positive class closed by ADR-2604142200).
+
+name: workplan-evidence-lint
+type: pre-tool-use
+description: >
+  Runs `hex plan lint <file>` on every Edit/Write targeting
+  docs/workplans/wp-*.json. Blocks the tool call when violations exist so
+  broken workplan shapes cannot be saved. Complements the runtime verifier
+  in reconcile_evidence.rs by catching the bad input at authoring time.
+
+trigger:
+  tool_use:
+    - Edit
+    - Write
+  path_match: "docs/workplans/wp-*.json"
+
+blocking: true
+
+checks:
+  schema_valid:
+    description: "Every task must declare at least one file path in files[]"
+    action: |
+      After the Edit/Write completes, run:
+        hex plan lint <file_path>
+
+      Exit code interpretation:
+        0 → allow (clean)
+        1 → BLOCK — one or more violations found
+        2 → BLOCK — I/O or parse error, file left in invalid JSON
+
+      Block message surfaces the violation table so the author sees
+      exactly which tasks are missing files[] and why it matters.
+
+bypass:
+  flag: "--accept-incomplete-evidence"
+  warning: >
+    Workplan evidence enforcement bypassed. This workplan will silently
+    false-positive under `hex plan reconcile` because tasks lack files[]
+    assertions. Use only when explicitly authoring a "placeholder" workplan.
+  action_on_bypass: |
+    Log bypass to HexFlo memory:
+      key: "bypass/workplan-evidence/<workplan-id>"
+      value:
+        bypassed_at: <ISO timestamp>
+        reason: <author-supplied>
+        violations: <count>
+
+output:
+  on_pass: "Workplan evidence clean — {{violation_count}} violation(s), {{task_count}} task(s)"
+  on_fail: |
+    BLOCKED: workplan evidence schema violations detected.
+
+    File: {{file_path}}
+    Violations: {{violation_count}}
+
+    Run `hex plan lint {{file_path}}` for the full violation list.
+
+    Every task must declare at least one file path in files[]. The files
+    list is what `hex plan reconcile` uses to verify the task completed;
+    prose-only done-conditions silently false-positive (ADR-2604142200).
+
+    To fix:
+      1. Identify the output files each task produces
+      2. Add them to the task's `files[]` array
+      3. Re-run `hex plan lint <file>` → should exit 0
+
+    To bypass (NOT RECOMMENDED — will false-positive reconcile):
+      pass --accept-incomplete-evidence to the workplan writer
+
+install:
+  target: ".claude/settings.json"
+  location: "hooks.PreToolUse"
+  pattern: |
+    {
+      "matcher": "Edit|Write",
+      "file_match": "docs/workplans/wp-*.json",
+      "hooks": [{ "type": "command", "command": "hex plan lint $CLAUDE_FILE_PATH" }]
+    }
