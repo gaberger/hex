@@ -14,21 +14,63 @@ use std::time::{Duration, Instant, SystemTime};
 
 use clap::Subcommand;
 use colored::Colorize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::fmt::{pretty_table, truncate};
 
-/// Daemon-local state persisted across ticks (wp-brain-updates P2.1).
+/// Daemon-local state persisted across ticks (wp-brain-updates P1.2).
 /// Tracks issue counts from the previous validate tick so regressions can
 /// be detected — a count that increases tick-over-tick is a regression.
-#[derive(Debug, Default)]
+/// Persisted to `~/.hex/brain-state.json` so the baseline survives daemon
+/// restarts (otherwise every restart would silently hide cross-restart
+/// regressions by re-seeding from the current tick).
+#[derive(Debug, Default, Serialize, Deserialize)]
 struct DaemonState {
     /// Last tick's issue counts keyed by check name
     /// (e.g. "cli_wiring" → 2, "mcp_parity" → 0, "workplans_stale" → 1).
+    #[serde(default)]
     last_counts: HashMap<String, usize>,
     /// Whether we've observed at least one tick (first tick establishes baseline,
     /// no regression notification on the first tick).
+    #[serde(default)]
     seeded: bool,
+}
+
+fn brain_state_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".hex").join("brain-state.json")
+}
+
+/// Load persisted daemon state. A missing / unreadable / malformed file
+/// returns default state — we never want a corrupt state file to crash the
+/// daemon. Returns fresh default on any error.
+fn load_daemon_state() -> DaemonState {
+    let path = brain_state_path();
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => DaemonState::default(),
+    }
+}
+
+/// Persist daemon state. Best-effort — a failed write is logged but does
+/// not abort the tick; we'd rather drop the baseline than stop the loop.
+fn save_daemon_state(state: &DaemonState) {
+    let path = brain_state_path();
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("  {} brain-state dir: {}", "warn".yellow(), e);
+            return;
+        }
+    }
+    match serde_json::to_string_pretty(state) {
+        Ok(body) => {
+            if let Err(e) = std::fs::write(&path, body) {
+                eprintln!("  {} brain-state write: {}", "warn".yellow(), e);
+            }
+        }
+        Err(e) => eprintln!("  {} brain-state encode: {}", "warn".yellow(), e),
+    }
 }
 
 /// Summary of a single workplan's reconciliation status.
@@ -1425,7 +1467,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
 
     let mut consecutive_failures: u32 = 0;
     let mut paused_cycles: u32 = 0;
-    let mut state = DaemonState::default();
+    let mut state = load_daemon_state();
 
     loop {
         let timestamp = chrono::Utc::now().to_rfc3339();
@@ -1477,6 +1519,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         }
         state.last_counts = current_counts;
         state.seeded = true;
+        save_daemon_state(&state);
 
         match validate_result {
             Ok(()) => {
