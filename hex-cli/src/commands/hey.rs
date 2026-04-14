@@ -333,13 +333,16 @@ async fn llm_classify(text: &str) -> anyhow::Result<Option<(String, String, Stri
         text
     );
     let nexus = crate::nexus_client::NexusClient::from_env();
-    let resp: serde_json::Value = nexus.post("/api/inference/complete", &serde_json::json!({
-        "model": "qwen3:4b",
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "max_tokens": 200,
-    })).await?;
+    let resp: serde_json::Value = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        nexus.post("/api/inference/complete", &serde_json::json!({
+            "model": "qwen3:4b",
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "max_tokens": 200,
+        }))
+    ).await.map_err(|_| anyhow::anyhow!("LLM classify timed out after 15s — try manual: hex brain enqueue hex-command -- \"<cmd>\""))??;
     // Response content may be a string OR an array of content blocks
     let content_owned = match resp.get("content") {
         Some(v) if v.is_string() => v.as_str().unwrap_or("").to_string(),
@@ -384,13 +387,16 @@ async fn llm_translate_shell_for_host(action: &str, host: Option<&str>) -> anyho
         context_line, action
     );
     let nexus = crate::nexus_client::NexusClient::from_env();
-    let resp: serde_json::Value = nexus.post("/api/inference/complete", &serde_json::json!({
-        "model": "qwen3:4b",
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "max_tokens": 100,
-    })).await?;
+    let resp: serde_json::Value = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        nexus.post("/api/inference/complete", &serde_json::json!({
+            "model": "qwen3:4b",
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "max_tokens": 100,
+        }))
+    ).await.map_err(|_| anyhow::anyhow!("LLM shell-translate timed out after 15s — inference endpoint may be busy"))??;
     let content = match resp.get("content") {
         Some(v) if v.is_string() => v.as_str().unwrap_or("").to_string(),
         Some(v) if v.is_array() => v.as_array().unwrap().iter()
