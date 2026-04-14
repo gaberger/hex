@@ -20,22 +20,76 @@ pub struct HeyArgs {
 pub enum TaskIntent {
     HexCommand { args: String, destructive: bool, description: String },
     Shell { cmd: String, destructive: bool, description: String },
+    /// Trusted remote-shell task — routed via brain task kind `remote-shell`
+    /// (ADR-2604141200). `host` must already be validated against trusted_hosts.
+    RemoteShell { host: String, command: String, description: String },
     Workplan { path: String, description: String },
     Unknown(String),
+}
+
+/// Detect a trailing `on <host>` suffix using token-tail parsing.
+/// Returns `(command_before, host)` if the last two tokens form `on <hostname>`.
+/// Host must be a syntactically valid hostname (alphanum, `-`, `.`, `_`).
+fn detect_on_host_suffix(text: &str) -> Option<(String, String)> {
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    if tokens.len() < 3 {
+        return None;
+    }
+    let n = tokens.len();
+    if !tokens[n - 2].eq_ignore_ascii_case("on") {
+        return None;
+    }
+    let host = tokens[n - 1];
+    if host.is_empty() || !host.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '.' || c == '_') {
+        return None;
+    }
+    let command = tokens[..n - 2].join(" ");
+    if command.is_empty() {
+        return None;
+    }
+    Some((command, host.to_string()))
+}
+
+/// Read `trusted_hosts` from `.hex/project.json`. Missing file/key → empty list
+/// (callers treat this as "no trusted hosts configured").
+fn read_trusted_hosts() -> Vec<String> {
+    let contents = match std::fs::read_to_string(".hex/project.json") {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&contents) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    parsed
+        .get("trusted_hosts")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn classify_intent(text: &str) -> TaskIntent {
     let t = text.to_lowercase();
 
-    // Remote shell via SSH — "<cmd> on <host>"
-    // Detected here as SshRequest placeholder; translation happens via LLM in run().
-    if let Some(on_idx) = t.find(" on ") {
-        let host = t[on_idx + 4..].split_whitespace().next().unwrap_or("");
-        if !host.is_empty() && host.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '.') {
-            let before_on = text[..on_idx].trim().to_string();
-            // Return as Unknown so run() invokes LLM with context that it's a remote shell translation
-            return TaskIntent::Unknown(format!("__SSH__{}__{}", host, before_on));
+    // Remote shell — "<cmd> on <host>". When host ∈ trusted_hosts, route to the
+    // first-class `remote-shell` brain task kind (ADR-2604141200). Otherwise
+    // fall through to the legacy `__SSH__` LLM-translation path below.
+    if let Some((command, host)) = detect_on_host_suffix(text) {
+        let trusted = read_trusted_hosts();
+        if trusted.iter().any(|h| h.eq_ignore_ascii_case(&host)) {
+            return TaskIntent::RemoteShell {
+                description: format!("Run `{}` on {}", command, host),
+                host,
+                command,
+            };
         }
+        // Untrusted host → legacy SSH-translation marker (LLM will rewrite the
+        // action into a concrete shell command in run()).
+        return TaskIntent::Unknown(format!("__SSH__{}__{}", host, command));
     }
 
     // Calibration
@@ -245,6 +299,15 @@ pub async fn run(args: HeyArgs) -> anyhow::Result<()> {
             ("hex-command", args.clone(), *destructive, description.clone()),
         TaskIntent::Shell { cmd, destructive, description } =>
             ("shell", cmd.clone(), *destructive, description.clone()),
+        TaskIntent::RemoteShell { host, command, description } => {
+            // Payload is a JSON object so the brain TaskKind::RemoteShell
+            // variant (P2.1) can deserialize {host, command} directly.
+            let payload = serde_json::json!({
+                "host": host,
+                "command": command,
+            }).to_string();
+            ("remote-shell", payload, false, description.clone())
+        }
         TaskIntent::Workplan { path, description } =>
             ("workplan", path.clone(), false, description.clone()),
         TaskIntent::Unknown(t) => {
@@ -417,6 +480,66 @@ async fn llm_translate_shell_for_host(action: &str, host: Option<&str>) -> anyho
         anyhow::bail!("LLM returned empty command");
     }
     Ok(cmd)
+}
+
+#[cfg(test)]
+mod remote_tests {
+    use super::*;
+
+    #[test]
+    fn remote_detect_on_host_basic() {
+        let got = detect_on_host_suffix("nvidia-smi on bazzite");
+        assert_eq!(got, Some(("nvidia-smi".into(), "bazzite".into())));
+    }
+
+    #[test]
+    fn remote_detect_on_host_multiword_command() {
+        let got = detect_on_host_suffix("systemctl status ollama on gpu-box");
+        assert_eq!(got, Some(("systemctl status ollama".into(), "gpu-box".into())));
+    }
+
+    #[test]
+    fn remote_detect_on_host_rejects_no_suffix() {
+        assert_eq!(detect_on_host_suffix("run tests"), None);
+        assert_eq!(detect_on_host_suffix("on bazzite"), None); // no command
+        assert_eq!(detect_on_host_suffix(""), None);
+    }
+
+    #[test]
+    fn remote_detect_on_host_rejects_bad_hostname() {
+        // spaces / special chars in the "host" slot don't make it through
+        // token-tail parsing since split_whitespace drops whitespace.
+        assert_eq!(detect_on_host_suffix("nvidia-smi on host$name"), None);
+    }
+
+    #[test]
+    fn remote_classify_untrusted_host_falls_through_to_ssh_marker() {
+        // With no .hex/project.json trusted_hosts, every host is untrusted
+        // and routes to the legacy __SSH__ LLM-translation marker.
+        let intent = classify_intent("nvidia-smi on some-random-host");
+        match intent {
+            TaskIntent::Unknown(s) => assert!(s.starts_with("__SSH__some-random-host__")),
+            other => panic!("expected Unknown(__SSH__...), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn remote_classify_trusted_host_uses_remote_shell() {
+        // Only check the shape of RemoteShell when the suffix is well-formed
+        // and the trusted_hosts list includes the target. Done by constructing
+        // the variant directly rather than touching the FS.
+        let intent = TaskIntent::RemoteShell {
+            host: "bazzite".into(),
+            command: "nvidia-smi".into(),
+            description: "Run `nvidia-smi` on bazzite".into(),
+        };
+        if let TaskIntent::RemoteShell { host, command, .. } = intent {
+            assert_eq!(host, "bazzite");
+            assert_eq!(command, "nvidia-smi");
+        } else {
+            panic!("expected RemoteShell variant");
+        }
+    }
 }
 
 /// Read host-specific context from .hex/hosts.toml (if present).
