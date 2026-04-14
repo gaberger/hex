@@ -1,0 +1,145 @@
+# Seed corpus for wp-insight-routing I5.1.
+# Hand-structured extract of insights emitted by the agent in this session.
+# When hex insight process ships, this file becomes the first real input.
+
+insights:
+  - id: insight-2604142215-000
+    kind: meta_pattern
+    source_session: 2604141400
+    source_turn: 15
+    content: |
+      Agent Insight blocks are system inputs, not chat decoration. A self-
+      learning AIOS must ingest its own insights: classify (ADR/workplan/
+      memory/duplicate), route to artifact, track loop-closure. Seeded
+      this workplan; canonical example.
+    route_to: workplan
+    artifact: docs/workplans/wp-insight-routing.json
+    estimated_tier: T3
+    verdict: closed
+    depends_on: []
+
+  - id: insight-2604142200-001
+    kind: architectural_observation
+    source_session: 2604141400
+    source_turn: 13
+    content: |
+      Echo-stub guard is the only CLAUDE.md discipline rule currently
+      compiled (enforced by code) rather than interpreted (agent reading
+      rules on each turn). Every rule with a syntactic signal (prose
+      punch-lists, T3-sized diffs without ids, echo-stubs) can become a
+      hook. Rules without syntactic signals stay interpreted.
+    route_to: workplan
+    artifact: docs/workplans/wp-workflow-enforcement.json
+    estimated_tier: T3
+    verdict: closed
+    depends_on: []
+
+  - id: insight-2604142145-002
+    kind: failure_mode
+    source_session: 2604141400
+    source_turn: 12
+    content: |
+      `done` column in hex plan list is the least trustworthy today.
+      Workplans authored before evidence verifier shipped (3d093c17)
+      reconciled under old heuristic. E2 retrofit will flip 1-3 back to
+      pending with missing-files reasons — that is the bug finally
+      surfacing, not a regression.
+    route_to: duplicate_of
+    artifact: docs/workplans/wp-enforce-workplan-evidence.json#E2
+    estimated_tier: T3
+    verdict: closed
+    depends_on: []
+
+  - id: insight-2604142145-003
+    kind: actionable_gap
+    source_session: 2604141400
+    source_turn: 12
+    content: |
+      Status enum in workplan schema has ambiguous values: done / completed
+      / blank. Rendering distinguishes them but underlying JSON doesn't.
+      Normalize to single enum pending/in_progress/done/abandoned; drop
+      blanks. Makes hex plan list scannable.
+    route_to: memory
+    artifact: memory/reference_workplan_status_enum_cleanup.md
+    estimated_tier: T2
+    verdict: open
+    depends_on: [wp-enforce-workplan-evidence]
+
+  - id: insight-2604142130-004
+    kind: architectural_observation
+    source_session: 2604141400
+    source_turn: 10
+    content: |
+      Two-layer defense closes false-positive classes with no hiding
+      place: ADR-2604142200 is the runtime guard, wp-enforce-workplan-
+      evidence is the authoring guard. Runtime verifiers catch bad
+      inputs; schema validators prevent bad inputs from existing.
+    route_to: adr
+    artifact: docs/adrs/ADR-2604142200-reconcile-evidence-verification.md
+    estimated_tier: T3
+    verdict: closed
+    depends_on: []
+
+  - id: insight-2604142100-005
+    kind: failure_mode
+    source_session: 2604141400
+    source_turn: 8
+    content: |
+      Dogfooding asymmetry — hex-intf devs run hex doctor inside hex-intf
+      (rust workspace) where Cargo.toml IS expected and has_cargo branch
+      disables asset scan entirely. In a TS target project that branch
+      flips, scan runs for the first time, markers were never tuned for
+      it. Need consumer-project posture in CI to catch this class.
+    route_to: workplan
+    artifact: docs/workplans/drafts/draft-2604141754-add-consumer-project-ci-smoke.json
+    estimated_tier: T3
+    verdict: open
+    depends_on: []
+
+  - id: insight-2604142050-006
+    kind: meta_pattern
+    source_session: 2604141400
+    source_turn: 6
+    content: |
+      Rule 8 ("don't stall on menus, ship") and ADR-2604142200 ("require
+      positive file evidence") contradict without the workplan wrapper —
+      ship fast but evidence trail empty, so reconcile either lies
+      (false-positive done) or doesn't know work exists. Workplan is
+      what makes velocity and evidence compatible.
+    route_to: memory
+    artifact: memory/feedback_workplan_wrap_fixes.md
+    estimated_tier: T2
+    verdict: closed
+    depends_on: []
+
+  - id: insight-2604142020-007
+    kind: failure_mode
+    source_session: 2604141400
+    source_turn: 4
+    content: |
+      Reconcile false-positive root cause: wp-rename-brain-to-sched
+      done-conditions were prose like "Rename brain.rs -> sched.rs"
+      with no file-path assertion. Evidence verifier falls back to git-
+      log heuristics; earlier fix(brain) commits contained "sched" in
+      messages; 11/11 falsely promoted. Fix is mandatory files[], not
+      a better verifier.
+    route_to: workplan
+    artifact: docs/workplans/wp-enforce-workplan-evidence.json
+    estimated_tier: T3
+    verdict: closed
+    depends_on: []
+
+  - id: insight-2604141950-008
+    kind: actionable_gap
+    source_session: 2604141400
+    source_turn: 3
+    content: |
+      `hex doctor` reports `target/debug/hex` while the shell alias
+      resolves to release — binary-path detection uses cargo workspace
+      detection instead of `which hex`. Not user-visible wrong but
+      confusing. Low priority cosmetic.
+    route_to: memory
+    artifact: memory/project_doctor_binary_path_cosmetic.md
+    estimated_tier: T1
+    verdict: open
+    depends_on: []
