@@ -1842,10 +1842,18 @@ async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
             }
         }
 
-        // Also update top-level status if all done
-        if all_done {
-            raw["status"] = serde_json::json!("done");
-            updated = true;
+        // Flip top-level workplan.status to "done" if ALL tasks (after status patches)
+        // now have status=done. Re-scan raw JSON as source of truth, and only write
+        // if the status actually changes (idempotent).
+        if all_tasks_marked_done(&raw) {
+            let current = raw.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if current != "done" {
+                raw["status"] = serde_json::json!("done");
+                updated = true;
+                let from = if current.is_empty() { "<unset>".to_string() } else { current };
+                println!("  {} Workplan status flipped: {} {} done",
+                    "\u{2713}".green(), from, "\u{2192}".cyan());
+            }
         }
         if updated {
             std::fs::write(&path, serde_json::to_string_pretty(&raw)?)?;
@@ -1856,6 +1864,39 @@ async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Return true iff every task in the workplan JSON has status="done".
+/// Scans both `steps` (legacy flat) and `phases[].tasks` (current nested) formats.
+/// Empty workplans (no tasks at all) return false to avoid spurious flips.
+fn all_tasks_marked_done(raw: &serde_json::Value) -> bool {
+    let mut saw_task = false;
+
+    if let Some(steps) = raw.get("steps").and_then(|v| v.as_array()) {
+        for step in steps {
+            saw_task = true;
+            let status = step.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            if status != "done" && status != "completed" {
+                return false;
+            }
+        }
+    }
+
+    if let Some(phases) = raw.get("phases").and_then(|v| v.as_array()) {
+        for phase in phases {
+            if let Some(tasks) = phase.get("tasks").and_then(|v| v.as_array()) {
+                for task in tasks {
+                    saw_task = true;
+                    let status = task.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                    if status != "done" && status != "completed" {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    saw_task
 }
 
 /// Extract identifiers worth grepping from a done_condition string.
