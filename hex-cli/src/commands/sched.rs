@@ -72,8 +72,8 @@ pub enum BrainAction {
     Validate,
     /// Run the brain supervisor loop — validates + auto-fixes every interval (ADR-2604132300)
     Daemon {
-        /// Tick interval in seconds (default 60)
-        #[arg(long, default_value = "60")]
+        /// Tick interval in seconds (default 10)
+        #[arg(long, default_value = "10")]
         interval: u64,
         /// Max consecutive failures before pausing (default 3)
         #[arg(long, default_value = "3")]
@@ -110,8 +110,8 @@ pub enum BrainAction {
     /// Prime brain for this project: start daemon if needed, discover active
     /// workplans in docs/workplans/, and seed the queue in one shot.
     Prime {
-        /// Tick interval when starting the daemon (default 30s)
-        #[arg(long, default_value = "30")]
+        /// Tick interval when starting the daemon (default 10s)
+        #[arg(long, default_value = "10")]
         interval: u64,
     },
 }
@@ -189,7 +189,7 @@ async fn status() -> anyhow::Result<()> {
     println!("{}", "Brain Service Status".green().bold());
     println!("  Service: {}", body.get("service_enabled").unwrap_or(&json!(false)));
     println!("  Test Model: {}", body.get("test_model").unwrap_or(&json!("nemotron-mini")));
-    println!("  Interval: {} seconds", body.get("interval_secs").unwrap_or(&json!(600)));
+    println!("  Interval: {} seconds", body.get("interval_secs").unwrap_or(&json!(10)));
     println!("  Last Test: {}", body.get("last_test").unwrap_or(&json!("never")));
     let pending = body.get("queue_pending").and_then(|v| v.as_u64()).unwrap_or(0);
     let running = body.get("queue_running").and_then(|v| v.as_u64()).unwrap_or(0);

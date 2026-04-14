@@ -124,7 +124,7 @@ pub async fn status(
     Json(BrainStatus {
         service_enabled: true,
         test_model,
-        interval_secs: 600,
+        interval_secs: 10,
         last_test,
         queue_pending,
         queue_running,
