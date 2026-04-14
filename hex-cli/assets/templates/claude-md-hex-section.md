@@ -73,3 +73,21 @@ src/
     secondary/       # Driven adapters (DB, API, filesystem)
   composition-root   # Wires adapters to ports (single DI point)
 ```
+
+## Insight emission format
+
+When emitting `★ Insight` blocks, use YAML inside the decorated delimiters:
+
+```
+★ Insight ─────────────────────────────────────
+id: insight-{session}-{turn}-{nn}
+kind: ArchitecturalObservation | ActionableGap | MetaPattern | FailureMode | Duplicate
+content: |
+  Short prose summary of the observation.
+route_to: Adr | Workplan | Memory | DuplicateOf(id) | Skip
+estimated_tier: T1 | T2 | T3
+depends_on: [insight-id-1, insight-id-2]
+─────────────────────────────────────────────────
+```
+
+This structured form is ingested by `hex hook route` on PostToolUse and routed per ADR-2604142345.
