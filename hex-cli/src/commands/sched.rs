@@ -1368,33 +1368,43 @@ fn collect_issue_counts() -> HashMap<String, usize> {
     counts
 }
 
+/// Central fire-and-forget operator notification helper (wp-brain-updates P1.1).
+/// POSTs to `/api/hexflo/inbox/notify` with the project_id auto-resolved from
+/// `.hex/project.json` in cwd. All daemon-side notifications flow through here
+/// so routing, scoping, and error handling stay in one place. Errors are
+/// swallowed — must never fail the caller.
+async fn notify_operator(kind: &str, body: serde_json::Value, priority: u8) {
+    let Some(project_id) = brain_project_id() else { return };
+    let envelope = json!({
+        "project_id": project_id,
+        "priority": priority,
+        "kind": kind,
+        "payload": body.to_string(),
+    });
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    let _ = nexus.post("/api/hexflo/inbox/notify", &envelope).await;
+}
+
 /// Fire-and-forget operator notification when validate counts regress
 /// tick-over-tick (wp-brain-updates P2.1). priority=2 — operator intervention
-/// may be needed. Errors are swallowed — must never fail the tick.
+/// may be needed.
 async fn notify_validate_regression(
     regressions: &[(String, usize, usize)],
     current: &HashMap<String, usize>,
 ) {
-    let Some(project_id) = brain_project_id() else { return };
     let regression_lines: Vec<String> = regressions
         .iter()
         .map(|(k, prev, curr)| format!("{}: {} → {}", k, prev, curr))
         .collect();
     let body = json!({
-        "project_id": project_id,
-        "priority": 2,
-        "kind": "brain.validate.regression",
-        "payload": json!({
-            "regressions": regressions
-                .iter()
-                .map(|(k, prev, curr)| json!({"check": k, "previous": prev, "current": curr}))
-                .collect::<Vec<_>>(),
-            "summary": regression_lines.join(", "),
-            "counts": current,
-        }).to_string(),
+        "regressions": regressions
+            .iter()
+            .map(|(k, prev, curr)| json!({"check": k, "previous": prev, "current": curr}))
+            .collect::<Vec<_>>(),
+        "summary": regression_lines.join(", "),
+        "counts": current,
     });
-    let nexus = crate::nexus_client::NexusClient::from_env();
-    let _ = nexus.post("/api/hexflo/inbox/notify", &body).await;
+    notify_operator("brain.validate.regression", body, 2).await;
 }
 
 /// Foreground supervisor loop. Validates every `interval` seconds; after
@@ -1825,8 +1835,10 @@ fn brain_project_id() -> Option<String> {
     parsed["id"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string())
 }
 
-/// Fire-and-forget operator notification on brain task completion/failure (wp-brain-updates P1.1).
-/// priority=1 on success, priority=2 on failure. Errors are swallowed — must never fail the tick.
+/// Fire-and-forget operator notification on brain task completion/failure
+/// (wp-brain-updates P1.1). priority=1 on Completed, priority=2 on Failed.
+/// Called inline from the daemon loop after each task state transition so
+/// operators see outcomes as they happen, not on next pulse.
 async fn notify_brain_task_result(
     task_id: &str,
     kind: &str,
@@ -1834,23 +1846,16 @@ async fn notify_brain_task_result(
     status: &str,
     result: &str,
 ) {
-    let Some(project_id) = brain_project_id() else { return };
     let priority: u8 = if status == "completed" { 1 } else { 2 };
     let snippet: String = result.chars().take(200).collect();
     let body = json!({
-        "project_id": project_id,
-        "priority": priority,
-        "kind": format!("brain.task.{}", status),
-        "payload": json!({
-            "task_id": task_id,
-            "kind": kind,
-            "payload": payload,
-            "status": status,
-            "result_snippet": snippet,
-        }).to_string(),
+        "task_id": task_id,
+        "kind": kind,
+        "payload": payload,
+        "status": status,
+        "result_snippet": snippet,
     });
-    let nexus = crate::nexus_client::NexusClient::from_env();
-    let _ = nexus.post("/api/hexflo/inbox/notify", &body).await;
+    notify_operator(&format!("brain.task.{}", status), body, priority).await;
 }
 
 async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String> {
