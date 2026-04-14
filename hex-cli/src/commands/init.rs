@@ -115,6 +115,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
 
     // ── 3. .claude/settings.json (hooks → hex hook <event>) ──────
     create_claude_settings(&target)?;
+    install_statusline_script(&target)?;
 
     // ── 4. CLAUDE.md ──────────────────────────────────────────────
     if !args.no_claude_md {
@@ -415,6 +416,20 @@ fn create_claude_md(target: &Path, project_name: &str) -> Result<()> {
 fn hex_claude_md_section() -> String {
     crate::assets::Assets::get_str("templates/claude-md-hex-section.md")
         .expect("claude-md-hex-section.md must be embedded in assets/templates/")
+}
+
+/// Copy the embedded `hex-statusline.cjs` helper into `<target>/scripts/`
+/// so the `.claude/settings.json` statusLine config (`node scripts/hex-statusline.cjs`)
+/// finds a real file. Without this, Claude Code's statusline silently no-ops.
+pub fn install_statusline_script(target: &Path) -> Result<()> {
+    let scripts_dir = target.join("scripts");
+    create_dir_if_missing(&scripts_dir)?;
+    let dest = scripts_dir.join("hex-statusline.cjs");
+    let content = crate::assets::Assets::get_str("helpers/hex-statusline.cjs")
+        .expect("helpers/hex-statusline.cjs must be embedded in assets/");
+    fs::write(&dest, content)
+        .with_context(|| format!("writing {}", dest.display()))?;
+    Ok(())
 }
 
 fn create_scaffold(target: &Path) -> Result<()> {

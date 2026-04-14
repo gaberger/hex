@@ -45,6 +45,23 @@ pub async fn run(args: RefreshArgs) -> Result<()> {
     let target = PathBuf::from(&args.path)
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(&args.path));
+
+    // Refresh the hex-statusline helper alongside CLAUDE.md so legacy projects
+    // that never got the script installed (pre-refresh init) pick it up.
+    if !args.dry_run {
+        match super::init::install_statusline_script(&target) {
+            Ok(()) => println!(
+                "{} scripts/hex-statusline.cjs",
+                "\u{2713}".green()
+            ),
+            Err(e) => eprintln!(
+                "  {} scripts/hex-statusline.cjs: {}",
+                "\u{2717}".red(),
+                e
+            ),
+        }
+    }
+
     let claude_md = target.join("CLAUDE.md");
 
     if !claude_md.exists() {
@@ -91,12 +108,15 @@ pub async fn run(args: RefreshArgs) -> Result<()> {
         out.push('\n');
         (out, "upgraded legacy section (markers inserted)")
     } else {
-        // No hex section at all — append.
-        let mut out = existing.trim_end().to_string();
-        out.push_str("\n\n");
-        out.push_str(&wrapped);
-        out.push('\n');
-        (out, "appended new section")
+        // Neither marker nor legacy heading found — this project isn't a
+        // shipped-template consumer (or hand-rolled its own hex section).
+        // Refuse to append; appending would stomp user-maintained content.
+        println!(
+            "{} {} has no hex-managed section — skipping CLAUDE.md (use `hex init` for fresh installs)",
+            "\u{25CB}".yellow(),
+            claude_md.display()
+        );
+        return Ok(());
     };
 
     if args.dry_run {
