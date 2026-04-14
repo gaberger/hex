@@ -1,0 +1,131 @@
+{
+  "adr": "ADR-2604131800",
+  "created_at": "2026-04-14T10:50:00Z",
+  "created_by": "hex+human",
+  "description": "Fix issues identified during dog-fooding: self-rebuild, MCP-CLI parity gaps, reconcile status field, classifier gaps, dependabot vulns.",
+  "feature": "Hex Self-Improvement — Fix Known Issues",
+  "id": "wp-self-improvement",
+  "phases": [
+    {
+      "description": "hex go can't rebuild the hex binary while it's running (file lock). Fix by spawning detached cargo process.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
+      "id": "P1",
+      "name": "hex go self-rebuild fix",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "In hex-cli/src/commands/go.rs: when binary stale, use std::process::Command with .spawn() + detach (close stdin/stdout/stderr to /dev/null). Print 'rebuild spawned (PID N)' instead of waiting. User rebuilds happen in background without blocking hex go itself.",
+          "files": [
+            "hex-cli/src/commands/go.rs"
+          ],
+          "id": "P1.1",
+          "layer": "primary",
+          "name": "Detached cargo rebuild in hex go",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "description": "MCP has hex_pulse and hex_resume but no CLI equivalents. Add thin shims.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
+      "id": "P2",
+      "name": "hex pulse and hex resume CLI shims",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Create hex-cli/src/commands/pulse.rs. Calls GET /api/pulse via NexusClient. Returns one-glance status table (projects, agents, health). Wire into mod.rs + main.rs as Commands::Pulse.",
+          "files": [
+            "hex-cli/src/commands/pulse.rs",
+            "hex-cli/src/commands/mod.rs",
+            "hex-cli/src/main.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Add hex pulse command",
+          "status": "done",
+          "strategy_hint": "codegen"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Alias Commands::Resume variant that delegates to plan::resume(). No new file needed — add variant + dispatch in main.rs.",
+          "files": [
+            "hex-cli/src/main.rs"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Add hex resume command (alias for hex plan resume)",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "description": "hex plan reconcile --update sets task.status=done but doesn't flip workplan.status from planned to done when all tasks complete.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
+      "id": "P3",
+      "name": "Plan reconcile updates workplan status field",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "In hex-cli/src/commands/plan.rs reconcile handler: after updating task statuses, if all tasks have status=done, set workplan.status=done. Write back.",
+          "files": [
+            "hex-cli/src/commands/plan.rs"
+          ],
+          "id": "P3.1",
+          "layer": "primary",
+          "name": "Flip workplan status when all tasks done",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "description": "Add intents for README accurate check, security audit, dependabot scan, help, list commands.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
+      "id": "P4",
+      "name": "Expand hey hex classifier",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "In hex-cli/src/commands/hey.rs classify_intent: add patterns for 'readme', 'documentation', 'security', 'audit', 'dependabot', 'vulnerabilities', 'help', 'list commands', 'stop nexus', 'logs'. Each returns a sensible TaskIntent.",
+          "files": [
+            "hex-cli/src/commands/hey.rs"
+          ],
+          "id": "P4.1",
+          "layer": "primary",
+          "name": "Add 10 more keyword patterns to classify_intent",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 2
+    }
+  ],
+  "priority": "high",
+  "status": "planned"
+}
