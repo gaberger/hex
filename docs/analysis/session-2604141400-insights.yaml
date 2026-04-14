@@ -129,6 +129,28 @@ insights:
     verdict: closed
     depends_on: []
 
+  - id: insight-2604142245-010
+    kind: failure_mode
+    source_session: 2604141400
+    source_turn: 20
+    content: |
+      Sched daemon drains tasks without executing for `workplan` kind.
+      Enqueued 3 workplans (wp-enforce-workplan-evidence, wp-workflow-
+      enforcement, wp-insight-routing) + 4 hex-commands; queue went from
+      7→0 in <15min but zero expected files produced (no schema_validate.rs,
+      no insight/, no punch_list.rs). Trivial `status` hex-command drains
+      same rate as 10-task workplan → daemon is silent-noop for workplan
+      dispatch. Same class as ADR-2604141400 but now confirmed live on
+      three brand-new workplans. Means: every "enqueued as sched task"
+      message in this session was misleading — tasks only persist in git,
+      not in any execution state.
+    route_to: duplicate_of
+    artifact: docs/workplans/wp-brain-queue-swarm-lease.json
+    estimated_tier: T3
+    verdict: open
+    depends_on: []
+    priority_escalation: true
+
   - id: insight-2604141950-008
     kind: actionable_gap
     source_session: 2604141400
