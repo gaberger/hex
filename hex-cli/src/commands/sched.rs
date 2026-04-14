@@ -1642,32 +1642,39 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             }
         }
 
-        // Drain brain queue — execute up to 1 pending task per tick (ADR-2604132330)
-        // Runs regardless of validate() outcome.
+        // Drain brain queue — hand up to 1 pending task per tick to a
+        // `brain-lease` swarm (ADR-2604141400 P1.2). The daemon no longer
+        // executes work inline; it stamps the lease and moves on. Swarm
+        // workers progress the task; the sweeper reclaims if the lease
+        // expires. Runs regardless of validate() outcome.
         match drain_brain_tasks(1).await {
             Ok(tasks) if !tasks.is_empty() => {
                 for task in tasks {
-                    let id = task.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let kind = task.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let payload = task.get("payload").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    println!("  ⬡ executing brain task {id} ({kind})");
-                    // Mark in_progress so statusline + /api/brain/status can distinguish
-                    // actively-running tasks from pending ones (visibility for long
-                    // workplan tasks that would otherwise look queued).
-                    let _ = update_brain_task(&id, BrainTaskStatus::InProgress, "").await;
-                    let (ok, result) = execute_brain_task(&kind, &payload).await;
-                    let status = if ok {
-                        BrainTaskStatus::Completed
-                    } else {
-                        BrainTaskStatus::Failed
-                    };
-                    let _ = update_brain_task(&id, status, &result).await;
-                    println!(
-                        "    {} {}",
-                        if ok { "✓".green() } else { "✗".red() },
-                        status.as_str()
-                    );
-                    notify_brain_task_result(&id, &kind, &payload, status.as_str(), &result).await;
+                    let id = task
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let kind = task
+                        .get("kind")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    println!("  ⬡ leasing brain task {id} ({kind})");
+                    match dispatch_brain_task(&task).await {
+                        Ok(handle) => {
+                            println!(
+                                "    {} leased to swarm {} (task {}, until {})",
+                                "→".cyan(),
+                                handle.swarm_id,
+                                handle.swarm_task_id,
+                                handle.leased_until,
+                            );
+                        }
+                        Err(err) => {
+                            eprintln!("    {} dispatch failed: {}", "✗".red(), err);
+                        }
+                    }
                 }
             }
             _ => {}
@@ -2375,6 +2382,201 @@ pub(crate) async fn update_brain_task(
                 json!(chrono::Utc::now().to_rfc3339()),
             );
         }
+    }
+    nexus
+        .post(
+            "/api/hexflo/memory",
+            &json!({"key": key, "value": inner.to_string()}),
+        )
+        .await?;
+    Ok(())
+}
+
+// ─── Swarm-leased dispatch (ADR-2604141400 P1.2) ───────────────────────────
+//
+// The direct-subprocess flow (`execute_brain_task` called inline from the
+// daemon tick) is being replaced by a lease handoff: the daemon registers a
+// swarm task referencing the brain task, stamps `Leased` + `leased_until`,
+// and walks away. Swarm workers pick the task up, progress it through
+// `InProgress`, and a later confirm-complete path finalises
+// `Completed`/`Failed`. If the lease expires without progress, the sweeper
+// (P2) flips the task back to `Pending` and bumps `lease_attempts`.
+//
+// Keeping `execute_brain_task` alive below is deliberate: P1.3 will have
+// `dispatch_brain_task` short-circuit to it for `shell` and `hex-command`
+// kinds so trivial tasks don't pay the swarm round-trip.
+
+/// Handle returned by [`dispatch_brain_task`]. Captures the ids the sweeper
+/// (P2) and confirm-complete path need to correlate a brain task with the
+/// swarm that holds its lease. `brain_task_id` and `leased_to` are surfaced
+/// verbatim for callers that log or reconcile handles — the sweeper reads
+/// them after a lease expires.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub(crate) struct LeaseHandle {
+    pub(crate) brain_task_id: String,
+    pub(crate) swarm_id: String,
+    pub(crate) swarm_task_id: String,
+    pub(crate) leased_to: String,
+    pub(crate) leased_until: String,
+}
+
+/// Hand a pending brain task off to a `brain-lease` swarm. Returns a
+/// [`LeaseHandle`] the daemon can surface to the sweeper.
+///
+/// Steps:
+/// 1. Find or create a `brain-lease` swarm scoped to the task's project.
+/// 2. Register a swarm task whose title embeds `brain-task:<id>` so workers
+///    polling the swarm can resolve back to the brain task.
+/// 3. Stamp `Leased` + `leased_to` (swarm id) + `leased_until` (wall clock
+///    deadline from [`lease_for`]) + `swarm_task_id` on the brain task
+///    record, and bump `lease_attempts`.
+pub(crate) async fn dispatch_brain_task(
+    task: &serde_json::Value,
+) -> anyhow::Result<LeaseHandle> {
+    use crate::nexus_client::NexusClient;
+
+    let brain_task_id = task
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("brain task missing id"))?
+        .to_string();
+    let kind = task
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let payload = task
+        .get("payload")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let project_id = task
+        .get("project_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    let swarm_id = match find_brain_lease_swarm(&nexus, &project_id).await? {
+        Some(id) => id,
+        None => create_brain_lease_swarm(&nexus, &project_id).await?,
+    };
+
+    // Truncate payload in the title so a runaway multi-KB shell payload
+    // doesn't blow up swarm UIs. The full payload stays on the brain task.
+    let payload_snippet: String = payload.chars().take(80).collect();
+    let title = format!("brain-task:{} [{}] {}", brain_task_id, kind, payload_snippet);
+    let resp = nexus
+        .post(
+            &format!("/api/swarms/{}/tasks", swarm_id),
+            &json!({ "title": title, "dependsOn": "" }),
+        )
+        .await?;
+    let swarm_task_id = resp
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("create swarm task response missing id"))?
+        .to_string();
+
+    let window = lease_for(&kind);
+    let leased_until = (chrono::Utc::now()
+        + chrono::Duration::from_std(window).unwrap_or_else(|_| chrono::Duration::minutes(2)))
+    .to_rfc3339();
+    let leased_to = swarm_id.clone();
+
+    stamp_brain_task_lease(&brain_task_id, &leased_to, &leased_until, &swarm_task_id).await?;
+
+    Ok(LeaseHandle {
+        brain_task_id,
+        swarm_id,
+        swarm_task_id,
+        leased_to,
+        leased_until,
+    })
+}
+
+/// Look up an existing active `brain-lease` swarm for `project_id`. Returns
+/// `None` if no matching swarm is active — the caller creates one.
+async fn find_brain_lease_swarm(
+    nexus: &crate::nexus_client::NexusClient,
+    project_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let resp: serde_json::Value = nexus.get("/api/swarms/active").await?;
+    // Response may be either a raw array or `{"swarms": [...]}`. Handle both
+    // so we don't break if the envelope changes.
+    let swarms = if let Some(arr) = resp.as_array() {
+        arr.clone()
+    } else if let Some(arr) = resp.get("swarms").and_then(|v| v.as_array()) {
+        arr.clone()
+    } else {
+        Vec::new()
+    };
+    for s in swarms {
+        let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let sp = s
+            .get("projectId")
+            .or_else(|| s.get("project_id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if name == "brain-lease" && sp == project_id {
+            if let Some(id) = s.get("id").and_then(|v| v.as_str()) {
+                return Ok(Some(id.to_string()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+async fn create_brain_lease_swarm(
+    nexus: &crate::nexus_client::NexusClient,
+    project_id: &str,
+) -> anyhow::Result<String> {
+    let resp = nexus
+        .post(
+            "/api/swarms",
+            &json!({
+                "projectId": project_id,
+                "name": "brain-lease",
+                "topology": "hierarchical",
+            }),
+        )
+        .await?;
+    resp.get("id")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or_else(|| anyhow::anyhow!("create swarm response missing id"))
+}
+
+/// Mirror of [`update_brain_task`] that writes lease metadata instead of
+/// `result`. Keeps the round-trip-through-Value pattern so unknown fields
+/// added by other writers (sweeper evidence, etc.) survive the merge.
+async fn stamp_brain_task_lease(
+    brain_task_id: &str,
+    leased_to: &str,
+    leased_until: &str,
+    swarm_task_id: &str,
+) -> anyhow::Result<()> {
+    use crate::nexus_client::NexusClient;
+    let key = format!("brain-task:{}", brain_task_id);
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+    let resp: serde_json::Value = nexus.get(&format!("/api/hexflo/memory/{}", key)).await?;
+    let value_str = resp.get("value").and_then(|v| v.as_str()).unwrap_or("{}");
+    let mut inner: serde_json::Value =
+        serde_json::from_str(value_str).unwrap_or(serde_json::json!({}));
+    if let Some(obj) = inner.as_object_mut() {
+        obj.insert("status".into(), json!(BrainTaskStatus::Leased.as_str()));
+        obj.insert("leased_to".into(), json!(leased_to));
+        obj.insert("leased_until".into(), json!(leased_until));
+        obj.insert("swarm_task_id".into(), json!(swarm_task_id));
+        let attempts = obj
+            .get("lease_attempts")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        obj.insert("lease_attempts".into(), json!(attempts + 1));
     }
     nexus
         .post(
