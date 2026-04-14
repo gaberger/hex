@@ -1,0 +1,236 @@
+{
+  "id": "wp-insight-routing",
+  "feature": "Recursive insight-routing — agent insights become system inputs",
+  "adr": "ADR-TBD-insight-routing",
+  "created_at": "2026-04-14T22:15:00Z",
+  "created_by": "human+agent",
+  "executor_hint": "frontier-preferred",
+  "description": "Close the recursion gap in hex's self-learning loop. Today the agent emits `★ Insight` blocks containing architectural observations, actionable gaps, meta-patterns, and failure-mode notes — but they exist only in the chat transcript. An autonomous system must ingest its own insights: classify each one (ADR-worthy / workplan-worthy / memory-worthy / duplicate), route to the appropriate artifact (draft ADR stub, draft workplan, memory entry), link the resulting artifact back to the insight that spawned it, and track a did-it-close-the-loop metric. This is the recursive half of the self-learning system the user has been asking about — the existing evidence-verifier + workplan-wrap + punch-list hooks close discipline loops; this workplan closes the *learning* loop. Feeds into ReasoningBank (per reasoningbank-agentdb / reasoningbank-intelligence skills).",
+  "notes": "Recursion: insights about insight-handling are themselves valid inputs. I5 explicitly feeds the loop's own outputs back into I1-I4. Also self-apply: this workplan was authored from an insight the user generated ('why not take insight and create a recursive plan') — that insight becomes insight-2604142215-000 in I4's memory store as the canonical seed entry proving the loop exists.",
+  "phases": [
+    {
+      "id": "I1",
+      "name": "Structured insight format + extractor",
+      "description": "Replace prose `★ Insight` blocks with a structured YAML body the hook can parse. New format emits id, kind, content, route_to, estimated_tier, depends_on. PostToolUse hook scans assistant output for structured insights and writes each to ~/.hex/insights/<id>.yaml for downstream stages.",
+      "gate": {
+        "blocking": true,
+        "type": "test",
+        "command": "cargo test -p hex-cli insight_extractor"
+      },
+      "tasks": [
+        {
+          "id": "I1.1",
+          "name": "Insight struct + YAML parser",
+          "description": "hex-cli/src/commands/insight/mod.rs + extractor.rs: struct Insight { id: String, kind: InsightKind, content: String, route_to: RouteTarget, estimated_tier: Tier, depends_on: Vec<String>, source_session: String, source_turn: usize, created_at: DateTime }. enum InsightKind { ArchitecturalObservation, ActionableGap, MetaPattern, FailureMode, Duplicate }. enum RouteTarget { Adr, Workplan, Memory, DuplicateOf(String), Skip }. pub fn extract_insights(assistant_text: &str, session_id: &str, turn: usize) -> Vec<Insight>.",
+          "files": [
+            "hex-cli/src/commands/insight/mod.rs",
+            "hex-cli/src/commands/insight/extractor.rs"
+          ],
+          "deps": [],
+          "layer": "domain",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "inference"
+        },
+        {
+          "id": "I1.2",
+          "name": "PostToolUse hook wiring",
+          "description": "hex-cli/src/commands/hook/route.rs: on PostToolUse of the assistant response, call insight::extract_insights. For each: write to ~/.hex/insights/<id>.yaml. Emit stderr line listing extracted insight ids so the next turn can reference them. Non-blocking — extraction failures log but don't stop the turn.",
+          "files": [
+            "hex-cli/src/commands/hook/route.rs"
+          ],
+          "deps": ["I1.1"],
+          "layer": "primary",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "inference"
+        },
+        {
+          "id": "I1.3",
+          "name": "CLAUDE.md template update + extractor tests",
+          "description": "hex-cli/assets/templates/claude-md-hex-section.md: add an `## Insight emission format` section documenting the structured YAML body. hex-cli/tests/insight_extractor.rs: fixtures for (a) well-formed structured insight (parses), (b) legacy prose insight (extractor attempts best-effort classification, marks extracted_confidence: low), (c) multiple insights in one turn (all extracted), (d) no insights (empty vec).",
+          "files": [
+            "hex-cli/assets/templates/claude-md-hex-section.md",
+            "hex-cli/tests/insight_extractor.rs",
+            "hex-cli/tests/fixtures/insight/structured.md",
+            "hex-cli/tests/fixtures/insight/prose-legacy.md"
+          ],
+          "deps": ["I1.1"],
+          "layer": "test",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "id": "I2",
+      "name": "Classifier — decide which artifact to route to",
+      "description": "Given an Insight, return a routing decision. Uses embedding-similarity search against existing ADRs/workplans/memory to detect duplicates; uses tier heuristics to choose artifact kind (T1 meta-pattern → memory, T2 gap → workplan draft, T3 architectural observation → ADR stub). Separate from I1 so the classifier can be re-run on historical insights.",
+      "gate": {
+        "blocking": true,
+        "type": "test",
+        "command": "cargo test -p hex-cli insight_classifier"
+      },
+      "tasks": [
+        {
+          "id": "I2.1",
+          "name": "Duplicate-detection via AgentDB vector search",
+          "description": "hex-cli/src/commands/insight/classifier.rs: pub async fn classify(insight: &Insight, corpus: &InsightCorpus) -> ClassifyResult. Uses AgentDB HNSW index (per agentdb-vector-search skill) over embeddings of existing ADRs, workplan descriptions, and memory entries. If cosine sim > 0.85 with any existing artifact, returns RouteTarget::DuplicateOf(artifact_id). Otherwise returns the tier-based routing.",
+          "files": [
+            "hex-cli/src/commands/insight/classifier.rs"
+          ],
+          "deps": ["I1.1"],
+          "layer": "domain",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "inference"
+        },
+        {
+          "id": "I2.2",
+          "name": "Tier-based routing heuristics + tests",
+          "description": "Heuristics: FailureMode + T3 → ADR stub. ActionableGap + any → workplan draft. MetaPattern → memory feedback entry. ArchitecturalObservation + T3 → ADR; + T2 → workplan phase appended to the most-related existing workplan. Test fixtures of 10 real session insights classified against a known corpus snapshot.",
+          "files": [
+            "hex-cli/src/commands/insight/classifier.rs",
+            "hex-cli/tests/insight_classifier.rs",
+            "hex-cli/tests/fixtures/insight/classifier-corpus.json"
+          ],
+          "deps": ["I2.1"],
+          "layer": "test",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "id": "I3",
+      "name": "Auto-router — materialize the artifact",
+      "description": "Given a classified insight, create the target artifact as a draft. ADR → docs/adrs/drafts/adr-<ts>-<slug>.md. Workplan → docs/workplans/drafts/draft-<ts>-<slug>.json with files[] populated from insight.affected_paths if present. Memory → ~/.claude/projects/.../memory/<type>_<slug>.md + MEMORY.md index line. Duplicate → append a cross-ref comment to the existing artifact.",
+      "gate": {
+        "blocking": true,
+        "type": "shell",
+        "command": "cargo test -p hex-cli insight_router && hex plan lint --all"
+      },
+      "tasks": [
+        {
+          "id": "I3.1",
+          "name": "Artifact materializers",
+          "description": "hex-cli/src/commands/insight/router.rs: pub async fn route(insight: &Insight, target: &RouteTarget) -> RoutedArtifact. Four materializers: materialize_adr_draft, materialize_workplan_draft, materialize_memory_entry, append_duplicate_xref. Each returns the created artifact path + a reverse-link comment inserted at the top of the artifact pointing back to the insight id.",
+          "files": [
+            "hex-cli/src/commands/insight/router.rs"
+          ],
+          "deps": ["I2.1"],
+          "layer": "primary",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "inference"
+        },
+        {
+          "id": "I3.2",
+          "name": "CLI subcommand hex insight process",
+          "description": "hex-cli/src/main.rs + commands/insight/mod.rs: `hex insight process [--all] [--since <ts>] [--dry-run]` reads ~/.hex/insights/*.yaml, classifies each, routes to the appropriate materializer, prints a table of (insight_id → artifact_path | skip_reason). --dry-run shows what would happen without writing. Also: `hex insight list` shows insights awaiting routing; `hex insight show <id>` prints the yaml.",
+          "files": [
+            "hex-cli/src/main.rs",
+            "hex-cli/src/commands/insight/mod.rs"
+          ],
+          "deps": ["I3.1"],
+          "layer": "primary",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "inference"
+        },
+        {
+          "id": "I3.3",
+          "name": "Daemon integration — sched tick processes unrouted insights",
+          "description": "hex-cli/src/commands/sched.rs: extend the tick loop to call `hex insight process --since <last_tick>` every N ticks (configurable, default every 10). New insights become drafts without manual intervention. Draft count surfaced in `hex sched status`.",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "deps": ["I3.2"],
+          "layer": "primary",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "inference"
+        }
+      ]
+    },
+    {
+      "id": "I4",
+      "name": "ReasoningBank integration + loop-closure metric",
+      "description": "Each insight + its resulting artifact forms a trajectory. Store (insight, classification, artifact_path, verdict) in AgentDB. Verdict assigned when the artifact completes: did_close_loop = artifact.status == done AND artifact.evidence.references_insight_id. Metric: percent of insights that reached closed-loop state within 7 days. This is the self-learning feedback signal the RLM uses to tune classifier thresholds in I2.",
+      "gate": {
+        "blocking": false,
+        "type": "test",
+        "command": "cargo test -p hex-cli insight_reasoningbank"
+      },
+      "tasks": [
+        {
+          "id": "I4.1",
+          "name": "Trajectory writer",
+          "description": "hex-cli/src/commands/insight/reasoningbank.rs: struct InsightTrajectory { insight: Insight, classification: ClassifyResult, artifact: Option<RoutedArtifact>, verdict: Option<LoopVerdict> }. pub async fn store_trajectory(traj: &InsightTrajectory, db: &AgentDb) stores embedding + full record.",
+          "files": [
+            "hex-cli/src/commands/insight/reasoningbank.rs"
+          ],
+          "deps": ["I3.1"],
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "inference"
+        },
+        {
+          "id": "I4.2",
+          "name": "Loop-closure checker + metric",
+          "description": "Nightly sched tick: for each trajectory with Option<LoopVerdict> == None, check the artifact status. If artifact done and its commits/evidence contain the insight_id, set verdict = Closed. If artifact rejected/abandoned, set verdict = Open(rejected). Compute rolling 7-day closure rate; surface in `hex sched status` and dashboard.",
+          "files": [
+            "hex-cli/src/commands/insight/reasoningbank.rs",
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "deps": ["I4.1"],
+          "layer": "primary",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "inference"
+        }
+      ]
+    },
+    {
+      "id": "I5",
+      "name": "Recursive bootstrap — seed with this session's insights",
+      "description": "Apply the loop to the insights generated in this session's transcript BEFORE the hook lands. Manually invoke `hex insight process` (once I3.2 ships) on an insight-dump of this session. Expected artifacts: 1 memory entry ('status enum normalization'), 1 workplan-phase append ('echo-stub as canonical success pattern'), 1 ADR draft ('discipline compilation strategy'). Proves the loop closes end-to-end on real data, not just synthetic fixtures.",
+      "gate": {
+        "blocking": true,
+        "type": "shell",
+        "command": "hex insight list --verdict=closed | wc -l | grep -q '^\\s*[3-9]\\|^\\s*[0-9]{2,}'"
+      },
+      "tasks": [
+        {
+          "id": "I5.1",
+          "name": "Export this session's insights into structured format",
+          "description": "docs/analysis/session-2604141400-insights.yaml: hand-structure the 8+ insights emitted in this session (status column distrust, discipline compilation strategy, echo-stub as canonical success, done-column untrustworthy, etc.). Each gets a stable id, kind, content, route_to, estimated_tier. Serves as the seed corpus for I5.2 and the regression fixture for I2.2.",
+          "files": [
+            "docs/analysis/session-2604141400-insights.yaml"
+          ],
+          "deps": [],
+          "layer": "docs",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "transform"
+        },
+        {
+          "id": "I5.2",
+          "name": "Process seed corpus + verify closure",
+          "description": "Run `hex insight process docs/analysis/session-2604141400-insights.yaml --commit`. Expected: N artifacts created, each with reverse-ref comments pointing back to insight ids. `hex insight list --verdict=closed` returns >= 3 entries within 24 hours after human approves the drafts. Closure metric in sched status updates accordingly.",
+          "files": [
+            "docs/analysis/session-2604141400-insights-closure.md"
+          ],
+          "deps": ["I3.2", "I5.1"],
+          "layer": "test",
+          "agent": "hex-coder",
+          "status": "pending",
+          "strategy_hint": "script"
+        }
+      ]
+    }
+  ]
+}
