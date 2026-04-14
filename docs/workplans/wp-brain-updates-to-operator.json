@@ -1,0 +1,118 @@
+{
+  "adr": "ADR-2604141100",
+  "created_at": "2026-04-14T17:30:00-04:00",
+  "created_by": "claude",
+  "description": "Make brain push meaningful events to the operator via the inbox (ADR-060) instead of requiring polling. Covers task completion/failure notifications, `hex brain watch` live stream, session-start inbox summary, and daemon.toml verbosity config.",
+  "feature": "Brain updates to operator",
+  "id": "wp-brain-updates-to-operator",
+  "phases": [
+    {
+      "description": "Call `hex inbox notify` from brain daemon after task_complete, task_fail, workplan_complete, and validate regression (new issues vs prior tick). Thread priority through: info=1, urgent=2.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check -p hex-cli && cargo test -p hex-cli brain::notify",
+        "type": "smoke"
+      },
+      "id": "P1",
+      "name": "Inbox notifications on task lifecycle",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "In hex-cli/src/commands/sched.rs daemon loop, after a queue task transitions to Completed, synchronously call the inbox-notify REST endpoint with priority=1 and body containing task kind + summary. On Failed, priority=2 + error. Plumb through a helper `notify_operator(kind, body, priority)`.",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.1",
+          "layer": "hex-cli",
+          "name": "Task-complete notifications",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1"
+          ],
+          "description": "Track last tick's validator issue set in the brain daemon state. After each validate run, diff against previous; if NEW issues appeared, emit priority=2 notification. Store prior set in ~/.hex/brain-state.json.",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.2",
+          "layer": "hex-cli",
+          "name": "Validate-regression detection",
+          "status": "done"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "description": "Subscribe to brain_tick events via SpacetimeDB WebSocket (or poll /api/events until subscriptions land). --since flag for replay.",
+      "gate": {
+        "blocking": true,
+        "command": "target/debug/hex brain watch --help",
+        "type": "smoke"
+      },
+      "id": "P2",
+      "name": "hex brain watch live stream",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.2"
+          ],
+          "description": "Add `Watch { since: Option<String> }` — already scaffolded in sched.rs. Implement the poll loop against /api/events filtered to brain_tick; print newest first. Support --since parsing ISO 8601 and humantime (e.g., '1h').",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P2.1",
+          "layer": "hex-cli",
+          "name": "Implement watch subcommand",
+          "status": "done"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "description": "Surface unacked brain notifications on session start. Add .hex/daemon.toml parsing for per-event toggles + min_priority.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "smoke"
+      },
+      "id": "P3",
+      "name": "Session-start inbox summary + daemon.toml config",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P2.1"
+          ],
+          "description": "In `hex hook session-start`, call inbox list filtered to brain-source + unacked. Print count + top 3 subjects.",
+          "files": [
+            "hex-cli/src/commands/hook.rs"
+          ],
+          "id": "P3.1",
+          "layer": "hex-cli",
+          "name": "Session-start unacked count",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P3.1"
+          ],
+          "description": "Read .hex/daemon.toml with defaults; struct BrainNotifyConfig { on_task_complete, on_task_failure, on_validate_regression, on_workplan_complete, on_grade_drop: bool, min_priority: u8 }. Apply filters before calling notify_operator.",
+          "files": [
+            "hex-cli/src/commands/sched.rs",
+            "docs/examples/daemon.toml.example"
+          ],
+          "id": "P3.2",
+          "layer": "hex-cli",
+          "name": "daemon.toml verbosity",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    }
+  ]
+}

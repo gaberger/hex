@@ -1,0 +1,146 @@
+{
+  "adr": "ADR-2604141200",
+  "created_at": "2026-04-14T17:31:00-04:00",
+  "created_by": "claude",
+  "description": "Allow `hex hey run <cmd> on <host>` to execute whitelisted shell commands on remote hosts via hex-agent workers. Introduces a `remote-shell` brain task kind, agent-side poll/execute loop, and a trusted_hosts + command whitelist security model.",
+  "feature": "Remote shell via agent",
+  "id": "wp-remote-shell-via-agent",
+  "phases": [
+    {
+      "description": "Extend the hey-hex natural-language classifier (ADR-2604140000) to recognize trailing `on <host>` and route to the new `remote-shell` kind when the host is in .hex/project.json trusted_hosts.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-cli hey::remote",
+        "type": "unit"
+      },
+      "id": "P1",
+      "name": "Hey classifier — detect 'on <host>' suffix",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Add regex + token-tail detection in hex-cli/src/commands/hey.rs: if suffix matches 'on (\\\\w+)' and host ∈ trusted_hosts, strip suffix, set target_host on the classified task, use kind=remote-shell.",
+          "files": [
+            "hex-cli/src/commands/hey.rs"
+          ],
+          "id": "P1.1",
+          "layer": "hex-cli",
+          "name": "Parse 'on <host>' suffix",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1"
+          ],
+          "description": "Hard-coded initial whitelist: [nvidia-smi, df, ollama, ps, systemctl status, uptime, free]. Reject non-whitelisted commands with a clear error + instruction to add via .hex/project.json.",
+          "files": [
+            "hex-cli/src/commands/hey.rs"
+          ],
+          "id": "P1.2",
+          "layer": "hex-cli",
+          "name": "Command whitelist",
+          "status": "done"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "description": "Add a new brain task kind that serializes {host, command}. Enqueue lands in the brain task table with target_host metadata. Standard brain status/queue views show it.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace && target/debug/hex brain queue list",
+        "type": "smoke"
+      },
+      "id": "P2",
+      "name": "remote-shell brain task kind",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.2"
+          ],
+          "description": "Add the variant to hex-nexus/src/routes/brain.rs TaskKind enum; serde tag 'remote-shell'. Persist host+command in payload. Update queue-list rendering to show target host.",
+          "files": [
+            "hex-nexus/src/routes/brain.rs",
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P2.1",
+          "layer": "hex-nexus",
+          "name": "TaskKind::RemoteShell variant",
+          "status": "done"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "description": "On hex-agent start, discover this host's name; every tick, query brain queue for pending remote-shell tasks with target_host == hostname; execute via whitelisted shell; PATCH task with stdout/stderr/exit.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo build -p hex-agent && cargo test -p hex-agent worker::remote_shell",
+        "type": "smoke"
+      },
+      "id": "P3",
+      "name": "hex-agent worker poll + execute loop",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P2.1"
+          ],
+          "description": "Add a polling task in hex-agent main loop: GET /api/brain/queue?kind=remote-shell&host={hostname}. For each pending task, mark in_progress via PATCH, then spawn via tokio::process::Command with argv split + whitelist recheck.",
+          "files": [
+            "hex-agent/src/main.rs",
+            "hex-agent/src/worker.rs"
+          ],
+          "id": "P3.1",
+          "layer": "hex-agent",
+          "name": "Worker poll",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P3.1"
+          ],
+          "description": "On command completion, PATCH brain task with status=completed and result payload containing stdout (truncated 8KB), stderr, exit code. Timeout 60s; on timeout mark failed.",
+          "files": [
+            "hex-agent/src/worker.rs"
+          ],
+          "id": "P3.2",
+          "layer": "hex-agent",
+          "name": "Result back to brain",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "description": "Log every remote-shell to ~/.hex/audit/remote-shell.jsonl with host/cmd/exit/timestamp. Schema-validate trusted_hosts in .hex/project.json.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-cli audit::remote_shell",
+        "type": "smoke"
+      },
+      "id": "P4",
+      "name": "Audit trail + trusted_hosts config",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P3.2"
+          ],
+          "description": "Append-only JSONL writer with tokio::fs; called from worker on each remote-shell completion (success and failure).",
+          "files": [
+            "hex-agent/src/audit.rs"
+          ],
+          "id": "P4.1",
+          "layer": "hex-agent",
+          "name": "Audit logger",
+          "status": "done"
+        }
+      ],
+      "tier": 4
+    }
+  ]
+}

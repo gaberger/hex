@@ -1,0 +1,104 @@
+{
+  "adr": "ADR-2604142000",
+  "created_at": "2026-04-14T17:32:00-04:00",
+  "created_by": "claude",
+  "description": "Add a task-type classifier as a third routing dimension in hex inference routing, running before the complexity scorer. Uncommitted `hex-nexus/src/task_type_classifier.rs` exists and must be folded in with tests, then wired into `quant_router.rs` + `inference.rs` per the revised routing algorithm.",
+  "feature": "Task-type inference routing",
+  "id": "wp-task-type-inference-routing",
+  "phases": [
+    {
+      "description": "The classifier module exists uncommitted. Review for API shape, add unit tests covering each TaskType variant (ShellCommand, FileTransform, Reasoning, PreciseSyntax, General), then commit.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-nexus task_type_classifier",
+        "type": "unit"
+      },
+      "id": "P0",
+      "name": "Fold in existing classifier + land tests",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Read hex-nexus/src/task_type_classifier.rs. Ensure it exposes `TaskType` enum, `TaskTier` enum (or reuses existing), and `classify(prompt: &str) -> Option<(TaskType, TaskTier)>`. Add at least 12 unit tests covering positive + negative cases for each variant including ADR-listed keyword examples (run, execute, ssh, ollama, systemctl, etc.). Register the module in hex-nexus/src/lib.rs.",
+          "files": [
+            "hex-nexus/src/task_type_classifier.rs",
+            "hex-nexus/src/lib.rs"
+          ],
+          "id": "P0.1",
+          "layer": "hex-nexus",
+          "name": "Review + test classifier",
+          "status": "done"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "description": "Insert the task-type check before complexity scoring. Ensure current_tier monotonically rises per the revised algorithm (classifier floor, then complexity scorer, take max).",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-nexus quant_router && cargo test -p hex-nexus routes::inference",
+        "type": "smoke"
+      },
+      "id": "P1",
+      "name": "Wire into quant_router + inference",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P0.1"
+          ],
+          "description": "In `select_provider`, call `TaskTypeClassifier::classify(prompt)` first. If it returns Some((_, tier)) with tier > current, raise current_tier. Then run existing complexity scoring and take max. Add routing decision to the span log.",
+          "files": [
+            "hex-nexus/src/quant_router.rs"
+          ],
+          "id": "P1.1",
+          "layer": "hex-nexus",
+          "name": "quant_router pre-check",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1"
+          ],
+          "description": "In hex-nexus/src/routes/inference.rs::inference_complete, apply the same classifier override before score_complexity. Log classifier verdict in the structured trace for escalation-report consumption.",
+          "files": [
+            "hex-nexus/src/routes/inference.rs"
+          ],
+          "id": "P1.2",
+          "layer": "hex-nexus",
+          "name": "inference_complete override",
+          "status": "done"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "description": "Regression-proof the original motivating case: `run nvidia-smi on bazzite` is short, but must route to T2.5.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-nexus --test routing_integration",
+        "type": "integration"
+      },
+      "id": "P2",
+      "name": "Integration test — short-prompt shell command",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.2"
+          ],
+          "description": "Create tests/routing_integration.rs with cases: (a) short shell command => T2.5, (b) short 'add a comment' => T1, (c) 'debug why X fails' => T2.5, (d) long generic prose => complexity-scorer-governed.",
+          "files": [
+            "hex-nexus/tests/routing_integration.rs"
+          ],
+          "id": "P2.1",
+          "layer": "hex-nexus",
+          "name": "Integration test",
+          "status": "done"
+        }
+      ],
+      "tier": 2
+    }
+  ]
+}

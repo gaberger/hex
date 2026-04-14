@@ -1,0 +1,233 @@
+{
+  "adr": "ADR-2604150000",
+  "created_at": "2026-04-14T16:50:00-04:00",
+  "created_by": "human",
+  "description": "Rename the brain subsystem to sched across CLI, REST API, statusline, hooks, live docs, and state paths. Mechanical rename; historical ADRs keep 'brain' in titles. Backward-compat: `hex brain` stays as hidden alias with stderr deprecation for one release; /api/brain/* stays dual-routed. 401 files touched per ADR-2604150000 impact analysis.",
+  "feature": "Rename brain -> sched",
+  "id": "wp-rename-brain-to-sched",
+  "phases": [
+    {
+      "description": "Baseline audit. Confirm grep inventory, verify no Cargo feature gates or pub re-exports on 'brain', check SQLite schema for brain-embedded column/table names, snapshot test surface that will need rename.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "typecheck"
+      },
+      "id": "P0",
+      "name": "Audit and baseline",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Run workspace grep for \\bbrain\\b|hex_brain|hex-brain across *.rs *.ts *.toml *.yml *.yaml *.json *.md *.cjs excluding target/ node_modules/ .git/ .claude/worktrees/. Save per-file hit counts to tmp/brain-audit.txt. Verify no Cargo feature named 'brain' (grep Cargo.toml files). Verify no 'pub use brain' re-exports outside hex-cli/src/commands/. Verify no Rust cfg(feature = \"brain\"). Inspect SQLite schema in hex-nexus/src/adapters/state_sqlite.rs for any column/table with 'brain' in the name.",
+          "files": [
+            "tmp/brain-audit.txt"
+          ],
+          "id": "P0.1",
+          "layer": "infra",
+          "name": "Audit sweep",
+          "status": "done"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "description": "Rename the CLI module. hex-cli/src/commands/brain.rs -> sched.rs; module references brain -> sched. Keep a thin `brain` subcommand module that forwards to sched with a one-time stderr warning. Update hex-cli/src/main.rs and hex-cli/src/commands/mod.rs.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace && cargo build -p hex-cli && target/debug/hex sched --help >/dev/null && target/debug/hex brain --help 2>&1 | grep -i 'deprecated'",
+        "type": "smoke"
+      },
+      "id": "P2",
+      "name": "CLI rename with alias",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "git mv hex-cli/src/commands/brain.rs hex-cli/src/commands/sched.rs. Rename pub fn brain() -> sched(), module path mod brain -> mod sched in hex-cli/src/commands/mod.rs. Update clap subcommand name from Brain to Sched; subcommand string 'brain' -> 'sched'. All internal call sites in hex-cli/src/commands/hook.rs (13 hits) update brain -> sched.",
+          "files": [
+            "hex-cli/src/commands/sched.rs",
+            "hex-cli/src/commands/mod.rs",
+            "hex-cli/src/commands/hook.rs",
+            "hex-cli/src/main.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Rename brain.rs -> sched.rs",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P2.1"
+          ],
+          "description": "Add a minimal hex-cli/src/commands/brain_alias.rs exposing a hidden clap subcommand 'brain' (with #[command(hide = true)]) that mirrors the sched subcommand tree and forwards args. On first invocation per process, eprintln!(\"warning: `hex brain` is deprecated; use `hex sched` instead\"). Wire into commands/mod.rs.",
+          "files": [
+            "hex-cli/src/commands/brain_alias.rs",
+            "hex-cli/src/commands/mod.rs"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Hidden `brain` alias with deprecation warning",
+          "status": "done"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "description": "Rename nexus REST routes /api/brain/* -> /api/sched/*. Keep brain routes dual-routed (same handlers) for one release; add X-Hex-Deprecated: true header on brain route responses.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-nexus",
+        "type": "test"
+      },
+      "id": "P3",
+      "name": "Nexus REST rename with dual routing",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "In hex-nexus/src/routes/mod.rs (or wherever the brain route group is registered), add new /api/sched/* routes mounting the same handlers. Keep /api/brain/* routes but wrap their responses in a layer that sets `X-Hex-Deprecated: use /api/sched` header and logs a warn! on every hit. Update any tests that hit /api/brain/* to also cover /api/sched/*.",
+          "files": [
+            "hex-nexus/src/routes/mod.rs",
+            "hex-nexus/src/routes/brain.rs",
+            "hex-nexus/src/routes/sched.rs"
+          ],
+          "id": "P3.1",
+          "layer": "primary",
+          "name": "Dual-route brain + sched",
+          "status": "done"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "description": "Update statusline helpers, embedded hook YAMLs, CLAUDE.md rules 1/2/5, README. Rebuild hex-nexus to bake new statusline assets.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo build -p hex-nexus --release && node hex-cli/assets/helpers/hex-statusline.cjs 2>&1 | grep -v brain || true",
+        "type": "smoke"
+      },
+      "id": "P4",
+      "name": "Statusline + assets + docs",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "In hex-cli/assets/helpers/hex-statusline.cjs and scripts/hex-statusline.cjs: swap statusline segment label 'brain' -> 'sched'. Update the API endpoint called from statusline to /api/sched/status (with fallback to /api/brain/status for older nexus versions during transition).",
+          "files": [
+            "hex-cli/assets/helpers/hex-statusline.cjs",
+            "scripts/hex-statusline.cjs"
+          ],
+          "id": "P4.1",
+          "layer": "primary",
+          "name": "Statusline rename",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Update hex-cli/assets/hooks/hex/*.yml. Any hook invoking `hex brain enqueue` or similar -> `hex sched enqueue`. Verify `hex doctor` still passes embedded-assets-generic after changes.",
+          "files": [
+            "hex-cli/assets/hooks/hex/"
+          ],
+          "id": "P4.2",
+          "layer": "primary",
+          "name": "Embedded hook YAMLs",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Update CLAUDE.md (autonomous operation rules 1, 2, 5) and README.md to use `hex sched` in all command examples. Do NOT rewrite docs/adrs/ADR-* or docs/workplans/wp-brain-*.json yet — that's P5.",
+          "files": [
+            "CLAUDE.md",
+            "README.md"
+          ],
+          "id": "P4.3",
+          "layer": "docs",
+          "name": "Live docs rename",
+          "status": "done"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "description": "Runtime state migration + live workplan rename. On daemon startup, if ~/.hex/brain-daemon.pid exists and ~/.hex/sched.pid does not, rename it. Also rename live workplans wp-brain-*.json -> wp-sched-*.json and update internal refs. Historical ADRs stay untouched.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo build -p hex-cli -p hex-nexus && target/debug/hex sched daemon-status",
+        "type": "smoke"
+      },
+      "id": "P5",
+      "name": "State migration + live workplan rename",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "In the sched daemon startup (formerly brain-daemon), add one-time migration: if ~/.hex/brain-daemon.pid exists and ~/.hex/sched.pid does not, std::fs::rename the pidfile. Same for any other ~/.hex/brain-*.{json,db} state files discovered during P0 audit.",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P5.1",
+          "layer": "primary",
+          "name": "Pidfile/state rename on startup",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "git mv docs/workplans/wp-brain-*.json -> docs/workplans/wp-sched-*.json. Inside each, update the `id` field and any internal `brain` refs in descriptions. Do NOT touch docs/workplans/approved-*-brain-*.json nor docs/adrs/ADR-*brain*.md.",
+          "files": [
+            "docs/workplans/"
+          ],
+          "id": "P5.2",
+          "layer": "docs",
+          "name": "Rename live workplans",
+          "status": "done"
+        }
+      ],
+      "tier": 4
+    },
+    {
+      "description": "Build release binaries, commit, verify. Rebuild release binaries per autonomy rule 2, commit the full rename as one atomic change, re-run hex doctor --verbose to confirm green.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo build -p hex-cli -p hex-nexus --release && target/release/hex doctor",
+        "type": "smoke"
+      },
+      "id": "P6",
+      "name": "Release build + commit",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "cargo build -p hex-cli -p hex-nexus --release. Then git add all renamed paths + content changes and commit with message 'refactor(cli): rename brain subsystem to sched (ADR-2604150000)'. Include ADR-2604150000 ref in commit body. Do NOT --amend; create a new commit.",
+          "files": [
+            ".git/"
+          ],
+          "id": "P6.1",
+          "layer": "infra",
+          "name": "Rebuild + commit",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P6.1"
+          ],
+          "description": "Run `hex doctor --verbose` and `hex sched daemon-status`. Verify statusline renders 'sched' not 'brain'. Verify `hex brain --help` still works and prints the deprecation warning to stderr. If all green, update ADR-2604150000 status from Proposed to Accepted.",
+          "files": [
+            "docs/adrs/ADR-2604150000-rename-brain-to-sched.md"
+          ],
+          "id": "P6.2",
+          "layer": "docs",
+          "name": "Smoke + ADR status flip",
+          "status": "done"
+        }
+      ],
+      "tier": 5
+    }
+  ],
+  "status": "done"
+}

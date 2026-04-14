@@ -1,0 +1,47 @@
+{
+  "id": "wp-claude-md-conform",
+  "title": "Make hex-intf/CLAUDE.md conform to hex refresh marker protocol",
+  "rationale": "hex-intf is the source repo AND a hex project — it must dogfood its own tooling. The current CLAUDE.md lacks the <!-- hex:claude-md:start/end --> markers that `hex refresh` requires, causing refresh to bail with a yellow warning. Fix is to (a) reconcile the shipped template (`hex-cli/assets/templates/claude-md-hex-section.md`) with hex-intf's richer managed-section content so the template is authoritative, (b) insert markers into hex-intf/CLAUDE.md around the sections that map to the template (Behavioral Rules / Autonomous Operation, hex Tool Precedence, Hexagonal Architecture Rules), leaving hex-specific sections (System Components, crate layout, Standalone Mode, Tiered Inference Routing, HexFlo internals, etc.) OUTSIDE the markers as project-authoritative content. After this, `hex refresh` round-trips cleanly.",
+  "adr_refs": [],
+  "tasks": [
+    {
+      "id": "t1",
+      "title": "Audit delta between hex-intf/CLAUDE.md managed sections and the shipped template",
+      "strategy_hint": "inference",
+      "layer": "docs",
+      "acceptance": "Produce docs/analysis/claude-md-conform-delta.md listing every wording divergence between hex-intf/CLAUDE.md sections (Behavioral Rules > Autonomous Operation, Tool Precedence, Hexagonal Architecture Rules) and hex-cli/assets/templates/claude-md-hex-section.md. Flag which divergences should win (hex-intf is canonical unless the template has an improvement)."
+    },
+    {
+      "id": "t2",
+      "title": "Update shipped template to match hex-intf canonical wording",
+      "strategy_hint": "codegen",
+      "layer": "hex-cli",
+      "depends_on": ["t1"],
+      "acceptance": "hex-cli/assets/templates/claude-md-hex-section.md is updated so the Autonomous Behavior rules, Tool Precedence table, and Hexagonal Architecture Rules match hex-intf/CLAUDE.md verbatim (except where the delta doc marks the template wording as intentionally preferred). `cargo build -p hex-cli` succeeds."
+    },
+    {
+      "id": "t3",
+      "title": "Insert marker-wrapped block into hex-intf/CLAUDE.md",
+      "strategy_hint": "transform",
+      "layer": "docs",
+      "depends_on": ["t2"],
+      "acceptance": "CLAUDE.md at the repo root contains a single <!-- hex:claude-md:start --> ... <!-- hex:claude-md:end --> block whose content is byte-identical to the shipped template. The block is placed at the natural point in the file (between the intro prose and System Components). hex-intf-specific sections remain outside the markers. `hex refresh` now reports `✓ CLAUDE.md already up-to-date` instead of the yellow-○ skip."
+    },
+    {
+      "id": "t4",
+      "title": "Add refresh round-trip check to hex ci",
+      "strategy_hint": "codegen",
+      "layer": "hex-cli",
+      "depends_on": ["t3"],
+      "acceptance": "`hex ci` (or equivalent doctor check) verifies that running `hex refresh --dry-run` on hex-intf produces no diff — i.e., the marker-wrapped section matches the shipped template. Prevents drift where someone edits one without the other."
+    },
+    {
+      "id": "t5",
+      "title": "Rebuild hex-cli release binary",
+      "strategy_hint": "script",
+      "layer": "build",
+      "depends_on": ["t4"],
+      "acceptance": "cargo build -p hex-cli --release succeeds; `hex refresh` prints `✓` for CLAUDE.md when run in hex-intf."
+    }
+  ]
+}

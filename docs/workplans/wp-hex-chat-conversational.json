@@ -1,108 +1,150 @@
 {
-  "id": "wp-hex-chat-conversational",
-  "feature": "Hex Chat — Conversational Brain Interface",
-  "description": "Extend hex chat to inject brain context (queue, validate, recent commits) per message, stream brain_tick events inline, persist conversation history, and support --resume.",
   "adr": "ADR-2604142200",
-  "status": "planned",
-  "priority": "high",
   "created_at": "2026-04-14T13:20:00Z",
   "created_by": "hex+human",
+  "description": "Extend hex chat to inject brain context (queue, validate, recent commits) per message, stream brain_tick events inline, persist conversation history, and support --resume.",
+  "feature": "Hex Chat — Conversational Brain Interface",
+  "id": "wp-hex-chat-conversational",
   "phases": [
     {
+      "description": "Function that gathers daemon status + queue + validate summary + last 3 git commits into a ~500-token context block prepended to each chat message.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P1",
       "name": "Brain context bundle injector",
-      "tier": 1,
-      "description": "Function that gathers daemon status + queue + validate summary + last 3 git commits into a ~500-token context block prepended to each chat message.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P1.1",
-          "name": "Implement build_brain_context() in chat.rs",
-          "layer": "primary",
-          "description": "New async fn build_brain_context() -> String in hex-cli/src/commands/chat.rs. Calls hex brain daemon-status, hex brain queue list (count only), hex brain validate (summary), git log -3. Formats as [brain context]\\n...\\n[end context] block. Token-cap at 500 chars.",
-          "deps": [],
-          "files": ["hex-cli/src/commands/chat.rs"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "New async fn build_brain_context() -> String in hex-cli/src/commands/chat.rs. Calls hex brain daemon-status, hex brain queue list (count only), hex brain validate (summary), git log -3. Formats as [brain context]\\n...\\n[end context] block. Token-cap at 500 chars.",
+          "files": [
+            "hex-cli/src/commands/chat.rs"
+          ],
+          "id": "P1.1",
+          "layer": "primary",
+          "name": "Implement build_brain_context() in chat.rs",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
-          "id": "P1.2",
-          "name": "Inject context into chat message",
-          "layer": "primary",
-          "description": "In the chat send handler: prepend build_brain_context() output to system prompt OR as a hidden context turn. User input stays unchanged. Ensures LLM always sees current state without user restating.",
-          "deps": ["P1.1"],
-          "files": ["hex-cli/src/commands/chat.rs"],
           "agent": "hex-coder",
+          "deps": [
+            "P1.1"
+          ],
+          "description": "In the chat send handler: prepend build_brain_context() output to system prompt OR as a hidden context turn. User input stays unchanged. Ensures LLM always sees current state without user restating.",
+          "files": [
+            "hex-cli/src/commands/chat.rs"
+          ],
+          "id": "P1.2",
+          "layer": "primary",
+          "name": "Inject context into chat message",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 1
     },
     {
+      "description": "When chat message matches 'status', 'what are you doing', 'how's it going', generate conversational response using brain context (not raw command output).",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P2",
       "name": "Status intent detection + conversational reply",
-      "tier": 2,
-      "description": "When chat message matches 'status', 'what are you doing', 'how's it going', generate conversational response using brain context (not raw command output).",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P2.1",
-          "name": "Pre-prompt LLM for conversational tone on status queries",
-          "layer": "primary",
-          "description": "Detect status-intent phrases in chat input. When matched, prepend to system prompt: 'Respond conversationally, first-person, acknowledging the operator. Use the brain context to give a natural status update — not a data dump.' Applies only to the single turn.",
-          "deps": ["P1.2"],
-          "files": ["hex-cli/src/commands/chat.rs"],
           "agent": "hex-coder",
+          "deps": [
+            "P1.2"
+          ],
+          "description": "Detect status-intent phrases in chat input. When matched, prepend to system prompt: 'Respond conversationally, first-person, acknowledging the operator. Use the brain context to give a natural status update — not a data dump.' Applies only to the single turn.",
+          "files": [
+            "hex-cli/src/commands/chat.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Pre-prompt LLM for conversational tone on status queries",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 2
     },
     {
+      "description": "hex chat --with-daemon subscribes to brain_tick events. Inline-injects 'just finished X' messages during conversation.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P3",
       "name": "brain_tick event stream integration",
-      "tier": 3,
-      "description": "hex chat --with-daemon subscribes to brain_tick events. Inline-injects 'just finished X' messages during conversation.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P3.1",
-          "name": "Add --with-daemon flag + tokio task for brain_tick polling",
-          "layer": "primary",
-          "description": "In chat.rs: add --with-daemon flag. When set, spawn tokio task that polls /api/events?type=brain_tick every 5s since chat started. Each new event renders as dimmed line '↪ {timestamp} brain: {summary}' above the next prompt. Non-blocking.",
-          "deps": ["P1.2"],
-          "files": ["hex-cli/src/commands/chat.rs"],
           "agent": "hex-coder",
+          "deps": [
+            "P1.2"
+          ],
+          "description": "In chat.rs: add --with-daemon flag. When set, spawn tokio task that polls /api/events?type=brain_tick every 5s since chat started. Each new event renders as dimmed line '↪ {timestamp} brain: {summary}' above the next prompt. Non-blocking.",
+          "files": [
+            "hex-cli/src/commands/chat.rs"
+          ],
+          "id": "P3.1",
+          "layer": "primary",
+          "name": "Add --with-daemon flag + tokio task for brain_tick polling",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 3
     },
     {
+      "description": "Save conversation history to HexFlo memory. hex chat --resume continues prior session.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
       "id": "P4",
       "name": "Chat session persistence + resume",
-      "tier": 3,
-      "description": "Save conversation history to HexFlo memory. hex chat --resume continues prior session.",
-      "gate": { "type": "test", "command": "cargo check --workspace", "blocking": true },
       "tasks": [
         {
-          "id": "P4.1",
-          "name": "Persist chat messages to HexFlo memory",
-          "layer": "primary",
-          "description": "Each user+assistant turn POSTed to /api/hexflo/memory with key chat-session:{session_id}:{turn_number}, value {role, content, timestamp}. Session ID is UUID generated on chat start.",
-          "deps": [],
-          "files": ["hex-cli/src/commands/chat.rs"],
           "agent": "hex-coder",
+          "deps": [],
+          "description": "Each user+assistant turn POSTed to /api/hexflo/memory with key chat-session:{session_id}:{turn_number}, value {role, content, timestamp}. Session ID is UUID generated on chat start.",
+          "files": [
+            "hex-cli/src/commands/chat.rs"
+          ],
+          "id": "P4.1",
+          "layer": "primary",
+          "name": "Persist chat messages to HexFlo memory",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
-          "id": "P4.2",
-          "name": "hex chat --resume <session-id>",
-          "layer": "primary",
-          "description": "New flag. Searches HexFlo memory for chat-session:<id>:*, loads all turns in order, replays as context into new session, continues conversation from there.",
-          "deps": ["P4.1"],
-          "files": ["hex-cli/src/commands/chat.rs"],
           "agent": "hex-coder",
+          "deps": [
+            "P4.1"
+          ],
+          "description": "New flag. Searches HexFlo memory for chat-session:<id>:*, loads all turns in order, replays as context into new session, continues conversation from there.",
+          "files": [
+            "hex-cli/src/commands/chat.rs"
+          ],
+          "id": "P4.2",
+          "layer": "primary",
+          "name": "hex chat --resume <session-id>",
+          "status": "done",
           "strategy_hint": "codegen"
         }
-      ]
+      ],
+      "tier": 3
     }
-  ]
+  ],
+  "priority": "high",
+  "status": "done"
 }

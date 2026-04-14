@@ -1,0 +1,134 @@
+{
+  "adr": "ADR-2604142100",
+  "created_at": "2026-04-14T17:33:00-04:00",
+  "created_by": "claude",
+  "description": "Ship `hex fs` — native filesystem primitives (list/read/search/glob/tree/stat/head/tail) exposed via REST, CLI, and MCP. Removes the context-mode / Bash / Read-Grep-Glob dependency so hex is self-sufficient in standalone mode.",
+  "feature": "hex native filesystem",
+  "id": "wp-hex-native-filesystem",
+  "phases": [
+    {
+      "description": "Implement /api/fs/{list,read,search,glob,tree,stat,head,tail} using `ignore::WalkBuilder` + `grep-regex`. Tokio async IO, 500-line / 50-entry default pagination, truncated+total in responses.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-nexus routes::fs",
+        "type": "unit"
+      },
+      "id": "P1",
+      "name": "REST endpoints in hex-nexus",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Add hex-nexus/src/routes/fs.rs with all eight endpoints. Use existing `safe_path()` helper for traversal protection. Request/response structs serde-derived with camelCase. Register routes in hex-nexus/src/routes/mod.rs router builder.",
+          "files": [
+            "hex-nexus/src/routes/fs.rs",
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "id": "P1.1",
+          "layer": "hex-nexus",
+          "name": "routes/fs.rs",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1"
+          ],
+          "description": "Cover: list with glob filter, read with --lines/--offset, search with --type, pagination truncation, path-traversal rejection (../../etc/passwd => 403). Use tempdir fixture.",
+          "files": [
+            "hex-nexus/src/routes/fs.rs"
+          ],
+          "id": "P1.2",
+          "layer": "hex-nexus",
+          "name": "Unit tests",
+          "status": "done"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "description": "Thin CLI dispatcher calling the REST API. Output in plain text by default, --json for structured.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo build -p hex-cli && target/debug/hex fs --help && target/debug/hex fs list . --pattern '*.toml'",
+        "type": "smoke"
+      },
+      "id": "P2",
+      "name": "CLI subcommand `hex fs`",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.2"
+          ],
+          "description": "Create hex-cli/src/commands/fs.rs with clap subcommands matching all eight operations. Register under `Fs` top-level command in main.rs. Print truncated + total on truncation.",
+          "files": [
+            "hex-cli/src/commands/fs.rs",
+            "hex-cli/src/commands/mod.rs",
+            "hex-cli/src/main.rs"
+          ],
+          "id": "P2.1",
+          "layer": "hex-cli",
+          "name": "commands/fs.rs",
+          "status": "done"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "description": "Register mcp__hex__hex_fs_{list,read,search,glob,tree,stat} in the MCP tool registry.",
+      "gate": {
+        "blocking": true,
+        "command": "target/debug/hex mcp --list-tools | grep hex_fs_",
+        "type": "smoke"
+      },
+      "id": "P3",
+      "name": "MCP tools",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P2.1"
+          ],
+          "description": "In hex-cli/src/commands/mcp.rs, add the six fs tools mapped 1:1 to REST endpoints. JSON schema per-tool with required fields matching endpoint signatures.",
+          "files": [
+            "hex-cli/src/commands/mcp.rs"
+          ],
+          "id": "P3.1",
+          "layer": "hex-cli",
+          "name": "MCP tool registration",
+          "status": "done"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "description": "Require agents to prefer hex fs over Bash/Read/Grep. Update embedded template + agent YAMLs + CLAUDE.md managed section.",
+      "gate": {
+        "blocking": true,
+        "command": "grep -r 'hex_fs_' hex-cli/assets/agents/ | head -5",
+        "type": "smoke"
+      },
+      "id": "P4",
+      "name": "Dog-food — update agent prompts",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P3.1"
+          ],
+          "description": "Update hex-cli/assets/agents/hex/hex/*.yml tool_preferences sections to list hex_fs_* tools first. Update hex-cli/assets/templates/claude-md-hex-section.md with the TOOL PREFERENCE block from the ADR.",
+          "files": [
+            "hex-cli/assets/agents/hex/hex/",
+            "hex-cli/assets/templates/claude-md-hex-section.md"
+          ],
+          "id": "P4.1",
+          "layer": "hex-cli",
+          "name": "Agent YAML prefs",
+          "status": "done"
+        }
+      ],
+      "tier": 4
+    }
+  ]
+}

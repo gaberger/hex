@@ -1,0 +1,271 @@
+{
+  "adr": "ADR-2604141400",
+  "created_at": "2026-04-14T18:05:00-04:00",
+  "created_by": "claude",
+  "description": "Convert the brain queue from subprocess-exit completion to swarm-owned leased completion with git-evidence verification. Adds task states (leased, in_progress), a lease sweeper, and a confirm-complete check that rejects false-positive 'done' from reconciler drift.",
+  "feature": "Brain queue swarm lease",
+  "id": "wp-brain-queue-swarm-lease",
+  "phases": [
+    {
+      "description": "Extend the brain-task JSON value schema. Add status variants leased and in_progress. Add leased_to, leased_until, lease_attempts, swarm_task_id, evidence.commits, evidence.reconcile_verdict. Backfill defaults for existing pending tasks.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-cli brain::task_schema",
+        "type": "unit"
+      },
+      "id": "P0",
+      "name": "Schema extension — add leased/in_progress states + lease fields",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "In hex-cli/src/commands/sched.rs introduce a typed `BrainTaskStatus` enum (Pending, Leased, InProgress, Completed, Failed) replacing the current string-typed status. Derive serde with lowercase. Add lease fields to the task value struct. Migrate read paths (list_brain_tasks, update_brain_task) to the new shape; tolerate missing fields on read.",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P0.1",
+          "layer": "hex-cli",
+          "name": "Schema + serde enum",
+          "status": "done"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "description": "Replace the current `drain_brain_tasks` + `execute_brain_task` direct-subprocess flow with: (a) pop pending task, (b) create or attach HexFlo swarm, (c) register task inside swarm with swarm_task_id, (d) stamp leased_to + leased_until, (e) flip status to Leased. Swarm agents then progress the task through InProgress.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace && cargo test -p hex-cli brain::dispatch",
+        "type": "smoke"
+      },
+      "id": "P1",
+      "name": "Dispatch path — dequeue → create swarm → lease",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P0.1"
+          ],
+          "description": "Define const LEASE_DURATIONS: [(&str, Duration)] = [ (\"workplan\", 30*60), (\"hex-command\", 5*60), (\"shell\", 2*60), (\"remote-shell\", 60) ]. Helper fn lease_for(kind) -> Duration.",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.1",
+          "layer": "hex-cli",
+          "name": "Lease durations per kind",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1"
+          ],
+          "description": "New `dispatch_brain_task(task) -> Result<LeaseHandle>`: POSTs to /api/swarms to create (or reuses) a `brain-lease` swarm; POSTs a swarm task with hexflo_task_id referencing the brain task id; PATCHes the brain task with status=Leased, leased_to, leased_until, swarm_task_id. Return LeaseHandle containing ids for the sweeper. Replace the call site in the daemon tick loop.",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.2",
+          "layer": "hex-cli",
+          "name": "Dispatcher replaces direct execute",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.2"
+          ],
+          "description": "For kinds `shell` and `hex-command`, dispatch_brain_task skips the swarm round-trip but still stamps Leased + leased_until (short lease). The kind ACK path still runs the same confirm-complete check. This preserves latency for trivial tasks.",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.3",
+          "layer": "hex-cli",
+          "name": "Lightweight kinds bypass swarm",
+          "status": "done"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "description": "Introduce `confirm_complete(task, subprocess_result) -> CompletionVerdict`. For workplan kind, run `hex plan reconcile <path>` and check EVERY step has evidence.commits non-empty. For hex-command + shell, exit-code + stderr pattern check. Return Verdict::Complete { evidence } | Verdict::Failed { reason } | Verdict::StillRunning.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-cli brain::confirm_complete",
+        "type": "unit"
+      },
+      "id": "P2",
+      "name": "Confirm-complete check",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.3"
+          ],
+          "description": "In a new fn `confirm_workplan(path: &Path) -> CompletionVerdict`: invoke `hex plan reconcile --update <path>` as subprocess; parse JSON (add --json flag to reconcile if missing); for every step ensure `status == done && !evidence.commits.is_empty()`. If any step is pending OR done-without-commits, return Failed with the offending step ids.",
+          "files": [
+            "hex-cli/src/commands/sched.rs",
+            "hex-cli/src/commands/plan.rs"
+          ],
+          "id": "P2.1",
+          "layer": "hex-cli",
+          "name": "Workplan confirmer",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P2.1"
+          ],
+          "description": "For hex-command: exit 0 AND stderr does not contain `error:`, `panicked`, `FAILED` (case-insensitive). For shell: just exit 0 (retains current semantics). Return Verdict accordingly.",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P2.2",
+          "layer": "hex-cli",
+          "name": "hex-command + shell confirmer",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P2.2"
+          ],
+          "description": "Replace the call to `update_brain_task(id, if ok { completed } else { failed }, stdout)` with a call to confirm_complete(task, result) and dispatch to update accordingly. Completion writes evidence.commits back into the task JSON.",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P2.3",
+          "layer": "hex-cli",
+          "name": "Wire confirmer into daemon loop",
+          "status": "done"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "description": "Background task in the daemon loop that every 30s scans all tasks in Leased or InProgress state, and for each whose leased_until < now: fails the swarm task, increments lease_attempts, returns brain task to Pending (or Failed after 3 attempts). Emits priority-2 inbox notification (ADR-2604141100).",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-cli brain::sweeper && target/debug/hex brain queue list",
+        "type": "smoke"
+      },
+      "id": "P3",
+      "name": "Lease sweeper",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P2.3"
+          ],
+          "description": "New fn `sweep_expired_leases() -> Result<usize>` (returns count swept). Called from the daemon tick before dispatch. For each expired task, PATCH brain task (status, lease_attempts). If attempts >= 3, status=Failed with reason `lease_max_attempts`.",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P3.1",
+          "layer": "hex-cli",
+          "name": "Sweeper implementation",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P3.1"
+          ],
+          "description": "For each expired task, call notify_operator (already added in ADR-2604141100 P1) with priority=2 and body `lease expired for <task.kind>:<task.id> after {elapsed}s — attempt {n}/3`. If kind permanently fails, additional notification priority=2 body `task abandoned after 3 attempts`.",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P3.2",
+          "layer": "hex-cli",
+          "name": "Sweeper notifications",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "description": "The pre-flight workplan reconciler must not transitively flip brain-task statuses to Completed. Audit call sites of update_brain_task; the only permitted callers are dispatch_brain_task (Leased), the confirm-complete path (Completed/Failed), and the sweeper (Failed/Pending).",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-cli brain::reconciler_isolation && ! grep -R 'update_brain_task' hex-cli/src/commands/plan.rs",
+        "type": "smoke"
+      },
+      "id": "P4",
+      "name": "Firewall the reconciler",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P3.2"
+          ],
+          "description": "Make `update_brain_task` pub(in crate::commands::sched) scope-restricted to the sched module. Any plan/reconcile call sites that currently touch brain-task status must be deleted and replaced with workplan-task-only updates.",
+          "files": [
+            "hex-cli/src/commands/sched.rs",
+            "hex-cli/src/commands/plan.rs"
+          ],
+          "id": "P4.1",
+          "layer": "hex-cli",
+          "name": "Access-control audit",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P4.1"
+          ],
+          "description": "Integration test reproducing today's incident: enqueue a workplan whose tasks touch files that already exist on disk (so reconciler would flip them done without git evidence); assert the brain task lands in Failed with reason mentioning missing evidence.commits, NOT Completed.",
+          "files": [
+            "hex-cli/tests/brain_lease_integration.rs"
+          ],
+          "id": "P4.2",
+          "layer": "hex-cli",
+          "name": "Integration test — false-positive reconciler",
+          "status": "done"
+        }
+      ],
+      "tier": 4
+    },
+    {
+      "description": "Expose lease state in brain status output and hex brain queue list. Dashboard gets a leased-vs-in_progress breakdown.",
+      "gate": {
+        "blocking": true,
+        "command": "target/debug/hex brain status && target/debug/hex brain queue list",
+        "type": "smoke"
+      },
+      "id": "P5",
+      "name": "Dashboard + status wiring",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P4.2"
+          ],
+          "description": "Add queue_leased + queue_in_progress to BrainStatus response (hex-nexus/src/routes/brain.rs). Update CLI rendering in sched.rs to show Leased / In-progress / Pending counts.",
+          "files": [
+            "hex-nexus/src/routes/brain.rs",
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P5.1",
+          "layer": "hex-cli",
+          "name": "brain status leased count",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P5.1"
+          ],
+          "description": "`hex brain queue list` gains columns Status | Leased-to | Lease-expires-in. Color urgent when lease_expires_in < 30s.",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P5.2",
+          "layer": "hex-cli",
+          "name": "Queue list columns",
+          "status": "done"
+        }
+      ],
+      "tier": 5
+    }
+  ]
+}
