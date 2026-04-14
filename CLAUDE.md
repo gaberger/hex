@@ -112,6 +112,30 @@ Tasks are classified into inference tiers that map to progressively more capable
 
 ## Behavioral Rules
 
+### Autonomous Operation (HARD RULES)
+
+1. **Enqueue work, NEVER defer to "next session".** Any time you identify outstanding work — a FIXME, a known bug, a stale item, a missed ADR — enqueue it immediately:
+   ```bash
+   hex brain enqueue hex-command -- "worktree cleanup --force"
+   hex brain enqueue workplan docs/workplans/wp-foo.json
+   hex brain enqueue shell -- "echo FIXME <description>"
+   ```
+   hex owns its own queue. "Next session" is a symptom of not using hex.
+
+2. **Rebuild release binaries after commits automatically.** If a commit touches hex-cli/hex-nexus/hex-agent, run `cargo build --release` without asking. Do not let the user discover stale binaries.
+
+3. **Use `hex worktree merge`, NEVER `git checkout <branch> -- <file>`.** Raw checkout silently drops code from parallel worktrees (ADR-2604131930). Always use the integrity-verified tool.
+
+4. **Prefer `hex hey <intent>` over raw commands** when the task maps to natural language. The classifier routes correctly and adds destructive-op confirmation.
+
+5. **Start brain daemon at session start** if not running: `hex brain daemon --background --interval 30`. It validates, auto-fixes, drains queue. Check `hex brain daemon-status`.
+
+6. **Reconcile workplans after agent work**: `hex plan reconcile --all --update`. Sync JSON task statuses with git evidence.
+
+7. **Proactively seek improvements.** When you notice bugs/drift/gaps, write an ADR → workplan → enqueue. Don't wait to be told.
+
+### Legacy Rules
+
 - **Workplans are autonomous**: When executing a workplan, complete ALL phases without asking. Do not pause between phases to ask "want me to continue?" — just keep going until done. Use HexFlo swarm tracking and background agents to parallelize where possible.
 - **Inbox notifications are priority** (ADR-060): When a critical notification (priority 2) appears in hook output, STOP current work, save state (session file + hex memory store), acknowledge the notification (`hex inbox ack <id>`), and inform the user. This takes precedence over all other work. The `route` hook checks the inbox on every user interaction.
 - Do what has been asked; nothing more, nothing less

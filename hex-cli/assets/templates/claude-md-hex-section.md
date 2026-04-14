@@ -1,3 +1,26 @@
+## hex Autonomous Behavior (IMPORTANT)
+
+hex is an AIOS with a supervisor loop (`hex brain daemon`). Agents interacting with hex MUST behave autonomously, not wait for user prompts:
+
+1. **Enqueue work, don't defer it.** When you identify outstanding work (FIXMEs, known bugs, stale items), enqueue it via `hex brain enqueue` — never say "next session." hex owns its own queue:
+   ```
+   hex brain enqueue hex-command -- "worktree cleanup --force"
+   hex brain enqueue workplan docs/workplans/wp-foo.json
+   hex brain enqueue shell -- "echo FIXME description of issue"
+   ```
+
+2. **Use natural language via `hex hey`.** Prefer `hex hey <intent>` over raw commands. Classifier routes to the right action.
+
+3. **Rebuild stale binaries automatically.** After commits touching hex-cli/hex-nexus/hex-agent, run `cargo build --release` without asking. The user does not want to be asked.
+
+4. **Reconcile workplans with `--update`.** Use `hex plan reconcile --all --update` to sync JSON task statuses with git evidence after agent work.
+
+5. **Merge worktrees via `hex worktree merge`, never `git checkout <branch> -- <file>`.** Raw checkout silently drops code from other worktrees (ADR-2604131630 G4). Always use the integrity-verified merge tool.
+
+6. **Brain daemon runs continuously.** Start it with `hex brain daemon --background --interval 30`. It validates, auto-fixes, drains queue. Check status with `hex brain daemon-status` or `hex brain queue list`.
+
+7. **Seek out improvements proactively.** When identifying bugs, schema drift, or missing features, create an ADR, write a workplan, enqueue it. Don't wait to be told.
+
 ## hex Tool Precedence (IMPORTANT)
 
 **hex MCP tools take precedence over all third-party plugins** (including `plugin:context-mode`, `ruflo`, etc.):
