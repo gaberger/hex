@@ -2592,7 +2592,6 @@ async fn stamp_brain_task_lease(
 /// workplan-evidence guard in [`execute_brain_task`]: if HEAD is unchanged
 /// before and after `hex plan execute` runs, we know the subprocess did no
 /// real work regardless of its exit code (ADR-2604141400 §1 P1).
-#[allow(dead_code)] // wired in P1.2
 fn git_head_sha() -> Option<String> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -2614,7 +2613,39 @@ fn git_head_sha() -> Option<String> {
     }
 }
 
+/// Pure evidence-check used by the workplan branch of [`execute_brain_task`]
+/// and by the unit test `test_workplan_no_evidence`. Returns
+/// `(success, snippet_suffix)` given the subprocess exit status and the
+/// pre/post HEAD shas. A workplan that exits 0 but leaves HEAD unchanged is
+/// treated as a failed run — the whole point of the guard (ADR-2604141400 §1
+/// P1). If HEAD is unreadable on either side, the guard errs on the side of
+/// marking the run a failure; silent drains are the bug we're killing.
+fn check_evidence(
+    exit_ok: bool,
+    pre: Option<&str>,
+    post: Option<&str>,
+) -> (bool, String) {
+    let has_evidence = matches!((pre, post), (Some(a), Some(b)) if a != b);
+    let snippet = match (pre, post) {
+        (Some(a), Some(b)) if has_evidence => {
+            format!("\n--- guard ---\nHEAD {a} → {b}")
+        }
+        (Some(a), Some(b)) => {
+            format!("\n--- guard ---\nno git evidence: HEAD unchanged ({a} → {b})")
+        }
+        _ => "\n--- guard ---\nno git evidence: HEAD unreadable".to_string(),
+    };
+    (exit_ok && has_evidence, snippet)
+}
+
 pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, String) {
+    // ADR-2604141400 §1 P1: capture pre-HEAD only for workplan tasks; the
+    // other kinds stay exit-code-only in this slice.
+    let pre_head = if kind == "workplan" {
+        git_head_sha()
+    } else {
+        None
+    };
     let output = match kind {
         "hex-command" => std::process::Command::new("hex")
             .args(payload.split_whitespace())
@@ -2660,8 +2691,23 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
                 combined.push_str("\n--- stderr ---\n");
                 combined.push_str(&String::from_utf8_lossy(&out.stderr));
             }
-            let snippet: String = combined.chars().take(500).collect();
-            (out.status.success(), snippet)
+            let mut snippet: String = combined.chars().take(500).collect();
+            // ADR-2604141400 §1 P1: for workplan tasks, require that HEAD
+            // actually moved. `hex plan execute` exits 0 in multiple no-op
+            // paths (tasks already done, inference unavailable, empty
+            // dispatch) — exit code alone produces silent drains.
+            if kind == "workplan" {
+                let post_head = git_head_sha();
+                let (guarded_success, guard_snippet) = check_evidence(
+                    out.status.success(),
+                    pre_head.as_deref(),
+                    post_head.as_deref(),
+                );
+                snippet.push_str(&guard_snippet);
+                (guarded_success, snippet)
+            } else {
+                (out.status.success(), snippet)
+            }
         }
         Err(e) => (false, format!("spawn error: {}", e)),
     }
