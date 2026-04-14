@@ -9,6 +9,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Deserialize, Default)]
 pub struct BrainStatusQuery {
@@ -227,6 +228,129 @@ pub async fn test(
     Json(result)
 }
 
+/// Truncated summary of a single brain-queue task, returned by
+/// `GET /api/brain/queue/history` (wp-sched-queue-history P1.2).
+///
+/// Source of truth is `hexflo_memory` with key prefix `brain-task:` — the same
+/// store the existing `status` endpoint and `hex sched` CLI read. Payload and
+/// result fields are truncated to keep response bodies bounded and shell-
+/// table-friendly. Operators who need the full record can still query
+/// `/api/hexflo/memory/brain-task:<id>` directly.
+#[derive(Serialize, Clone, Debug)]
+pub struct BrainTaskSummary {
+    pub id: String,
+    pub kind: String,
+    pub status: String,
+    /// First 80 chars of the task payload (command, workplan path, etc.).
+    pub payload_truncated: String,
+    /// First 300 chars of the recorded result. Contains the
+    /// `no git evidence` marker when the evidence-guard (ADR-2604141400 §1 P1)
+    /// flipped a vacuous exit-0 drain to failed — this is the primary signal
+    /// operators hunt for in history output.
+    pub result_truncated: String,
+    /// Task creation timestamp in microseconds since Unix epoch. 0 when the
+    /// stored record has an unparseable `created_at` string.
+    pub created_at_us: i64,
+    /// Completion timestamp in microseconds since Unix epoch. 0 when the task
+    /// has not yet completed or the timestamp is unparseable.
+    pub completed_at_us: i64,
+}
+
+/// Parse an RFC3339 timestamp into microseconds since Unix epoch. Returns 0 on
+/// parse failure so the row is still renderable — losing a timestamp is a
+/// less-bad failure than hiding an entire failed task from the operator.
+fn rfc3339_to_us(s: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.timestamp_micros())
+        .unwrap_or(0)
+}
+
+/// Project a raw brain-task record (serde_json::Value as stored in
+/// hexflo_memory) into the wire-stable `BrainTaskSummary` shape.
+fn summarize_task(task: &serde_json::Value) -> BrainTaskSummary {
+    let payload = task
+        .get("payload")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let result = task
+        .get("result")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let created_at = task
+        .get("created_at")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let completed_at = task
+        .get("completed_at")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    BrainTaskSummary {
+        id: task.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        kind: task.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        status: task.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        payload_truncated: payload.chars().take(80).collect(),
+        result_truncated: result.chars().take(300).collect(),
+        created_at_us: rfc3339_to_us(created_at),
+        completed_at_us: if completed_at.is_empty() { 0 } else { rfc3339_to_us(completed_at) },
+    }
+}
+
+/// GET /api/brain/queue/history[?status=failed][&limit=20]
+///
+/// Returns a paginated, reverse-chronological list of brain-queue tasks. Primary
+/// consumer is `hex sched queue history`, which operators use to verify the
+/// evidence-guard (ADR-2604141400 §1 P1) correctly flips silent-drain workplans
+/// to `failed`. Without this surface, the guard shipped but was invisible.
+///
+/// Parameters:
+/// - `status` — exact match filter ("pending", "in_progress", "completed",
+///   "failed"). Omit to include all statuses.
+/// - `limit`  — max rows to return. Clamped to [1, 200]; default 20.
+///
+/// Sort: newest first by `created_at_us`. Reads from `hexflo_memory` via
+/// `hexflo_memory_search("brain-task:")`, so both SQLite and SpacetimeDB-backed
+/// state adapters are transparently supported.
+pub async fn queue_history(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<Vec<BrainTaskSummary>> {
+    let status_filter = params.get("status").cloned();
+    let limit: usize = params
+        .get("limit")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(20)
+        .clamp(1, 200);
+
+    let Some(sp) = state.state_port.as_ref() else {
+        // No state adapter configured — return empty rather than 500. The CLI
+        // renders "no history" which is accurate in this case.
+        return Json(Vec::new());
+    };
+
+    let entries = match sp.hexflo_memory_search("brain-task:").await {
+        Ok(e) => e,
+        Err(_) => return Json(Vec::new()),
+    };
+
+    let mut summaries: Vec<BrainTaskSummary> = entries
+        .into_iter()
+        .filter_map(|(_key, value)| serde_json::from_str::<serde_json::Value>(&value).ok())
+        .filter(|task| {
+            status_filter.as_deref().is_none_or(|want| {
+                task.get("status").and_then(|s| s.as_str()) == Some(want)
+            })
+        })
+        .map(|task| summarize_task(&task))
+        .collect();
+
+    // Newest first — operators debugging a recent drain want the latest rows
+    // at the top. Tasks with missing/unparseable `created_at` (us=0) sink to
+    // the bottom, which is the correct place for "corrupted record" noise.
+    summaries.sort_by(|a, b| b.created_at_us.cmp(&a.created_at_us));
+    summaries.truncate(limit);
+    Json(summaries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,5 +394,69 @@ mod tests {
         // Legacy tasks with a plain-string payload (e.g. "hex analyze .")
         // must not accidentally parse as remote-shell.
         assert!(RemoteShellPayload::parse("hex analyze .").is_none());
+    }
+
+    // ── wp-sched-queue-history P1.2: projection semantics ─────────────────
+    // summarize_task is the contract shared with the CLI renderer. It must:
+    //   - truncate payload to 80 and result to 300 (bounded response)
+    //   - parse RFC3339 timestamps into microseconds
+    //   - treat a null/missing completed_at as 0 (not an error)
+    // If these break, the `hex sched queue history` table columns go wrong.
+
+    #[test]
+    fn summarize_task_truncates_payload_and_result() {
+        let long_payload = "x".repeat(500);
+        let long_result = "y".repeat(500);
+        let task = serde_json::json!({
+            "id": "abc",
+            "kind": "shell",
+            "status": "failed",
+            "payload": long_payload,
+            "result": long_result,
+            "created_at": "2026-04-14T10:00:00Z",
+            "completed_at": "2026-04-14T10:00:05Z",
+        });
+        let s = summarize_task(&task);
+        assert_eq!(s.payload_truncated.chars().count(), 80);
+        assert_eq!(s.result_truncated.chars().count(), 300);
+    }
+
+    #[test]
+    fn summarize_task_handles_missing_completed_at() {
+        let task = serde_json::json!({
+            "id": "abc",
+            "kind": "workplan",
+            "status": "pending",
+            "payload": "docs/workplans/wp-foo.json",
+            "created_at": "2026-04-14T10:00:00Z",
+        });
+        let s = summarize_task(&task);
+        assert_eq!(s.completed_at_us, 0);
+        assert!(s.created_at_us > 0, "valid RFC3339 must parse to nonzero us");
+    }
+
+    #[test]
+    fn summarize_task_surfaces_no_git_evidence_marker() {
+        // The guard (ADR-2604141400 §1 P1) writes "no git evidence" into
+        // `result` on silent-drain failures. That marker MUST survive the
+        // 300-char truncation for short result strings — this is the primary
+        // operator signal the history endpoint exists to expose.
+        let task = serde_json::json!({
+            "id": "abc",
+            "kind": "workplan",
+            "status": "failed",
+            "payload": "docs/workplans/wp-foo.json",
+            "result": "exit=0 but no git evidence of work (HEAD unchanged)",
+            "created_at": "2026-04-14T10:00:00Z",
+            "completed_at": "2026-04-14T10:00:05Z",
+        });
+        let s = summarize_task(&task);
+        assert!(s.result_truncated.contains("no git evidence"));
+    }
+
+    #[test]
+    fn rfc3339_to_us_returns_zero_on_garbage() {
+        assert_eq!(rfc3339_to_us("not a timestamp"), 0);
+        assert_eq!(rfc3339_to_us(""), 0);
     }
 }

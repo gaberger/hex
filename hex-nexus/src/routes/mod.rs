@@ -2,6 +2,7 @@ pub mod adrs;
 pub mod agents;
 pub mod browse;
 pub mod files;
+pub mod fs;
 pub mod stdb;
 pub mod analysis;
 pub mod chat;
@@ -458,6 +459,10 @@ pub fn build_router(state: SharedState) -> Router {
         // AGENTIC BRAIN (ADR-2604102200) — must register BEFORE {project_id} routes
         .route("/api/brain/status", get(brain::status))
         .route("/api/brain/test", post(brain::test))
+        // Brain-queue history (wp-sched-queue-history P1.2) — observability
+        // surface for ADR-2604141400 §1 P1 evidence-guard. Must register
+        // BEFORE {project_id} so the path doesn't get captured as a project.
+        .route("/api/brain/queue/history", get(brain::queue_history))
         // AIOS Experience (ADR-2604131500) — pulse, steer, taste, trust
         .route("/api/pulse", get(pulse::get_pulse))
         .route("/api/steer", post(steer::handle_steer))
@@ -743,6 +748,17 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
         // Config re-sync (T15: manual refresh from repo → SpacetimeDB)
         .route("/api/config/sync", post(files::resync_config))
+
+        // Native filesystem primitives (ADR-2604142100, wp-hex-native-filesystem)
+        .route("/api/fs/list", get(fs::list))
+        .route("/api/fs/read", get(fs::read))
+        .route("/api/fs/search", post(fs::search)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/fs/glob", get(fs::glob))
+        .route("/api/fs/tree", get(fs::tree))
+        .route("/api/fs/stat", get(fs::stat))
+        .route("/api/fs/head", get(fs::head))
+        .route("/api/fs/tail", get(fs::tail))
 
         // HexFlo coordination (ADR-027)
         .route("/api/hexflo/memory", post(hexflo::memory_store)
