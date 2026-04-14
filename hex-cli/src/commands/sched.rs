@@ -2252,13 +2252,13 @@ async fn queue_list() -> anyhow::Result<()> {
     let rows: Vec<Vec<String>> = tasks
         .iter()
         .map(|t| {
+            let kind = t.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            let raw_payload = t.get("payload").and_then(|v| v.as_str()).unwrap_or("");
             vec![
                 t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                t.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                truncate(
-                    t.get("payload").and_then(|v| v.as_str()).unwrap_or(""),
-                    40,
-                ),
+                kind.to_string(),
+                render_task_target(kind, raw_payload),
+                truncate(raw_payload, 40),
                 t.get("created_at")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
@@ -2266,11 +2266,33 @@ async fn queue_list() -> anyhow::Result<()> {
             ]
         })
         .collect();
+    // Target column surfaces the host for remote-shell tasks so operators
+    // can see at a glance which machine each task runs on (ADR-2604141200
+    // P2.1). Non-remote kinds render a dash — the column stays meaningful
+    // for the mixed-kind queue view.
     println!(
         "{}",
-        pretty_table(&["ID", "Kind", "Payload", "Created"], &rows)
+        pretty_table(&["ID", "Kind", "Target", "Payload", "Created"], &rows)
     );
     Ok(())
+}
+
+/// Extract the user-visible target for a brain task row. For
+/// `remote-shell`, that's the destination host parsed out of the JSON
+/// payload. For any other kind, we render `-` so the Target column stays
+/// aligned without leaking implementation details of the payload shape.
+fn render_task_target(kind: &str, payload: &str) -> String {
+    if kind == "remote-shell" {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) {
+            if let Some(host) = v.get("host").and_then(|h| h.as_str()) {
+                return host.to_string();
+            }
+        }
+        // Malformed remote-shell payloads shouldn't abort the listing — show
+        // a sentinel so the row is still readable and the problem is visible.
+        return "?".to_string();
+    }
+    "-".to_string()
 }
 
 async fn queue_clear() -> anyhow::Result<()> {
@@ -2334,6 +2356,27 @@ async fn queue_drain() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn render_task_target_extracts_host_for_remote_shell() {
+        let payload = r#"{"host":"bazzite","command":"nvidia-smi"}"#;
+        assert_eq!(render_task_target("remote-shell", payload), "bazzite");
+    }
+
+    #[test]
+    fn render_task_target_returns_dash_for_non_remote_kinds() {
+        assert_eq!(render_task_target("hex-command", "hex analyze ."), "-");
+        assert_eq!(render_task_target("workplan", "docs/workplans/x.json"), "-");
+        assert_eq!(render_task_target("shell", "df -h"), "-");
+    }
+
+    #[test]
+    fn render_task_target_returns_sentinel_for_malformed_remote_shell() {
+        // A remote-shell row without a parseable host should still render —
+        // the queue list must stay readable even when a record is malformed.
+        assert_eq!(render_task_target("remote-shell", "not json"), "?");
+        assert_eq!(render_task_target("remote-shell", "{}"), "?");
+    }
 
     #[test]
     fn parse_since_accepts_rfc3339_utc() {

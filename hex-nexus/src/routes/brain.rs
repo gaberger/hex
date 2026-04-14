@@ -22,6 +22,74 @@ pub struct BrainStatusQuery {
 use crate::brain_service;
 use crate::state::SharedState;
 
+/// Kinds of task the brain queue can carry. Serialized as kebab-case so
+/// `RemoteShell` becomes `"remote-shell"` on the wire (ADR-2604141200).
+///
+/// Payload shape varies by kind:
+/// - `HexCommand` — raw `hex <subcommand>` string
+/// - `Workplan`   — path to a workplan JSON
+/// - `Shell`      — local shell command (sandboxed, rejects `echo FIXME` stubs)
+/// - `RemoteShell` — JSON-encoded [`RemoteShellPayload`] `{host, command}`;
+///   the agent on `host` polls `/api/brain/queue?kind=remote-shell&host=<host>`
+///   and executes against its local whitelist (ADR-2604141200 P3).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TaskKind {
+    HexCommand,
+    Workplan,
+    Shell,
+    RemoteShell,
+}
+
+impl TaskKind {
+    /// Wire-form identifier as persisted in the `kind` field of brain-task
+    /// records. Matches the `serde(rename_all = "kebab-case")` output.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TaskKind::HexCommand => "hex-command",
+            TaskKind::Workplan => "workplan",
+            TaskKind::Shell => "shell",
+            TaskKind::RemoteShell => "remote-shell",
+        }
+    }
+
+    /// Parse a wire-form string back into a variant. Used by queue-list and
+    /// the agent poll loop to route by kind.
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "hex-command" => Some(TaskKind::HexCommand),
+            "workplan" => Some(TaskKind::Workplan),
+            "shell" => Some(TaskKind::Shell),
+            "remote-shell" => Some(TaskKind::RemoteShell),
+            _ => None,
+        }
+    }
+}
+
+/// Structured payload for a [`TaskKind::RemoteShell`] task. Serialized to
+/// JSON and stored in the brain-task's `payload` field so host+command
+/// travel together through the queue. The receiving hex-agent matches
+/// `host` against its own hostname before executing `command`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteShellPayload {
+    pub host: String,
+    pub command: String,
+}
+
+impl RemoteShellPayload {
+    /// Encode as the JSON string used in brain-task `payload`.
+    pub fn to_payload_string(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Best-effort parse of a payload string. Returns `None` when the
+    /// payload isn't a remote-shell shape (legacy string payloads, or a
+    /// malformed task record).
+    pub fn parse(payload: &str) -> Option<Self> {
+        serde_json::from_str(payload).ok()
+    }
+}
+
 #[derive(Serialize)]
 pub struct BrainStatus {
     pub service_enabled: bool,
@@ -157,4 +225,50 @@ pub async fn test(
     *state.brain_last_test.write().await = Some(chrono::Utc::now().to_rfc3339());
 
     Json(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_kind_serializes_as_kebab_case() {
+        // Wire format is the contract — downstream agents (and the
+        // `hex brain queue` CLI) grep on these exact strings.
+        assert_eq!(TaskKind::HexCommand.as_str(), "hex-command");
+        assert_eq!(TaskKind::Workplan.as_str(), "workplan");
+        assert_eq!(TaskKind::Shell.as_str(), "shell");
+        assert_eq!(TaskKind::RemoteShell.as_str(), "remote-shell");
+    }
+
+    #[test]
+    fn task_kind_round_trips_through_from_str() {
+        for kind in [
+            TaskKind::HexCommand,
+            TaskKind::Workplan,
+            TaskKind::Shell,
+            TaskKind::RemoteShell,
+        ] {
+            assert_eq!(TaskKind::from_str(kind.as_str()), Some(kind));
+        }
+        assert_eq!(TaskKind::from_str("unknown"), None);
+    }
+
+    #[test]
+    fn remote_shell_payload_round_trips() {
+        let p = RemoteShellPayload {
+            host: "bazzite".to_string(),
+            command: "nvidia-smi".to_string(),
+        };
+        let s = p.to_payload_string();
+        let back = RemoteShellPayload::parse(&s).expect("parses");
+        assert_eq!(back, p);
+    }
+
+    #[test]
+    fn remote_shell_payload_rejects_non_remote_shell_strings() {
+        // Legacy tasks with a plain-string payload (e.g. "hex analyze .")
+        // must not accidentally parse as remote-shell.
+        assert!(RemoteShellPayload::parse("hex analyze .").is_none());
+    }
 }
