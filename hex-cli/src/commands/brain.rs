@@ -72,6 +72,28 @@ pub enum BrainAction {
     DaemonStop,
     /// Show brain daemon status (running/stopped)
     DaemonStatus,
+    /// Enqueue a task for the brain daemon (ADR-2604132330)
+    Enqueue {
+        /// Task kind (hex-command, workplan, shell)
+        kind: String,
+        /// Task payload (command args, workplan path, or shell command)
+        payload: String,
+    },
+    /// Manage the brain task queue
+    Queue {
+        #[command(subcommand)]
+        action: QueueAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum QueueAction {
+    /// List pending brain tasks
+    List,
+    /// Clear completed/failed tasks
+    Clear,
+    /// Force drain and execute pending tasks now
+    Drain,
 }
 
 pub async fn run(action: BrainAction) -> anyhow::Result<()> {
@@ -90,6 +112,16 @@ pub async fn run(action: BrainAction) -> anyhow::Result<()> {
         }
         BrainAction::DaemonStop => daemon_stop(),
         BrainAction::DaemonStatus => daemon_status(),
+        BrainAction::Enqueue { kind, payload } => {
+            let id = enqueue_brain_task(&kind, &payload).await?;
+            println!("⬡ enqueued brain task {id} ({kind}: {payload})");
+            Ok(())
+        }
+        BrainAction::Queue { action } => match action {
+            QueueAction::List => queue_list().await,
+            QueueAction::Clear => queue_clear().await,
+            QueueAction::Drain => queue_drain().await,
+        },
     }
 }
 
@@ -1158,6 +1190,254 @@ fn daemon_status() -> anyhow::Result<()> {
         None => {
             println!("{}", "brain daemon not running".yellow());
         }
+    }
+    Ok(())
+}
+// ─── ADR-2604132330: Brain task queue (HexFlo memory–backed) ───────────────
+
+const NEXUS_BASE: &str = "http://127.0.0.1:5555";
+
+async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let key = format!("brain-task:{}", id);
+    let task = json!({
+        "id": id,
+        "kind": kind,
+        "payload": payload,
+        "status": "pending",
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "completed_at": serde_json::Value::Null,
+        "result": serde_json::Value::Null,
+    });
+    reqwest::Client::new()
+        .post(format!("{}/api/hexflo/memory", NEXUS_BASE))
+        .json(&json!({"key": key, "value": task.to_string(), "scope": "global"}))
+        .send()
+        .await?;
+    Ok(id)
+}
+
+pub(crate) async fn list_brain_tasks(
+    status_filter: Option<&str>,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let resp = reqwest::Client::new()
+        .get(format!(
+            "{}/api/hexflo/memory/search?q=brain-task:",
+            NEXUS_BASE
+        ))
+        .send()
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
+    let results = body
+        .get("results")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut tasks = Vec::new();
+    for item in results {
+        if let Some(arr) = item.as_array() {
+            if let Some(value_str) = arr.get(1).and_then(|v| v.as_str()) {
+                if let Ok(task) = serde_json::from_str::<serde_json::Value>(value_str) {
+                    let status = task.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                    if let Some(filter) = status_filter {
+                        if status != filter {
+                            continue;
+                        }
+                    }
+                    tasks.push(task);
+                }
+            }
+        }
+    }
+    Ok(tasks)
+}
+
+/// Drain up to `limit` pending brain tasks. Reserved for the future `brain daemon` tick loop
+/// (P3 of ADR-2604132330). Also invoked by `hex brain queue drain` logic indirectly.
+#[allow(dead_code)]
+pub(crate) async fn drain_brain_tasks(limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
+    let pending = list_brain_tasks(Some("pending")).await?;
+    Ok(pending.into_iter().take(limit).collect())
+}
+
+pub(crate) async fn update_brain_task(
+    id: &str,
+    status: &str,
+    result: &str,
+) -> anyhow::Result<()> {
+    let key = format!("brain-task:{}", id);
+    let resp = reqwest::Client::new()
+        .get(format!("{}/api/hexflo/memory/{}", NEXUS_BASE, key))
+        .send()
+        .await?;
+    if let Ok(mut task) = resp.json::<serde_json::Value>().await {
+        // The memory endpoint may return either the raw value string or a wrapper.
+        // Support both by detecting a "value" field.
+        let mut inner: serde_json::Value = if let Some(v) = task.get("value").cloned() {
+            if let Some(s) = v.as_str() {
+                serde_json::from_str(s).unwrap_or(task.clone())
+            } else {
+                v
+            }
+        } else {
+            task.take()
+        };
+        if let Some(obj) = inner.as_object_mut() {
+            obj.insert("status".into(), json!(status));
+            obj.insert("result".into(), json!(result));
+            if status == "completed" || status == "failed" {
+                obj.insert(
+                    "completed_at".into(),
+                    json!(chrono::Utc::now().to_rfc3339()),
+                );
+            }
+        }
+        reqwest::Client::new()
+            .post(format!("{}/api/hexflo/memory", NEXUS_BASE))
+            .json(&json!({"key": key, "value": inner.to_string(), "scope": "global"}))
+            .send()
+            .await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, String) {
+    let output = match kind {
+        "hex-command" => std::process::Command::new("hex")
+            .args(payload.split_whitespace())
+            .output(),
+        "workplan" => std::process::Command::new("hex")
+            .args(["plan", "execute", payload])
+            .output(),
+        "shell" => {
+            // Whitelist: only cargo, git, ls, echo
+            let mut parts = payload.split_whitespace();
+            let cmd = match parts.next() {
+                Some(c) => c,
+                None => return (false, "empty shell command".to_string()),
+            };
+            const ALLOWED: &[&str] = &["cargo", "git", "ls", "echo"];
+            if !ALLOWED.contains(&cmd) {
+                return (
+                    false,
+                    format!(
+                        "shell command '{}' not in whitelist (allowed: {:?})",
+                        cmd, ALLOWED
+                    ),
+                );
+            }
+            std::process::Command::new(cmd).args(parts).output()
+        }
+        other => {
+            return (
+                false,
+                format!(
+                    "unknown task kind '{}' (expected: hex-command, workplan, shell)",
+                    other
+                ),
+            )
+        }
+    };
+
+    match output {
+        Ok(out) => {
+            let mut combined = String::new();
+            combined.push_str(&String::from_utf8_lossy(&out.stdout));
+            if !out.stderr.is_empty() {
+                combined.push_str("\n--- stderr ---\n");
+                combined.push_str(&String::from_utf8_lossy(&out.stderr));
+            }
+            let snippet: String = combined.chars().take(500).collect();
+            (out.status.success(), snippet)
+        }
+        Err(e) => (false, format!("spawn error: {}", e)),
+    }
+}
+
+async fn queue_list() -> anyhow::Result<()> {
+    let tasks = list_brain_tasks(Some("pending")).await?;
+    if tasks.is_empty() {
+        println!("{}", "No pending brain tasks.".yellow());
+        return Ok(());
+    }
+    println!("{}", "Pending Brain Tasks".green().bold());
+    let rows: Vec<Vec<String>> = tasks
+        .iter()
+        .map(|t| {
+            vec![
+                t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                t.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                truncate(
+                    t.get("payload").and_then(|v| v.as_str()).unwrap_or(""),
+                    40,
+                ),
+                t.get("created_at")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            ]
+        })
+        .collect();
+    println!(
+        "{}",
+        pretty_table(&["ID", "Kind", "Payload", "Created"], &rows)
+    );
+    Ok(())
+}
+
+async fn queue_clear() -> anyhow::Result<()> {
+    let all = list_brain_tasks(None).await?;
+    let client = reqwest::Client::new();
+    let mut cleared = 0usize;
+    for task in all {
+        let status = task.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        if status == "completed" || status == "failed" {
+            if let Some(id) = task.get("id").and_then(|v| v.as_str()) {
+                let key = format!("brain-task:{}", id);
+                let _ = client
+                    .delete(format!("{}/api/hexflo/memory/{}", NEXUS_BASE, key))
+                    .send()
+                    .await;
+                cleared += 1;
+            }
+        }
+    }
+    println!("⬡ cleared {cleared} completed/failed brain tasks");
+    Ok(())
+}
+
+async fn queue_drain() -> anyhow::Result<()> {
+    let pending = list_brain_tasks(Some("pending")).await?;
+    if pending.is_empty() {
+        println!("{}", "No pending brain tasks to drain.".yellow());
+        return Ok(());
+    }
+    println!("⬡ draining {} pending brain task(s)...", pending.len());
+    for task in pending {
+        let id = task
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let kind = task
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let payload = task
+            .get("payload")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        println!("  → executing {id} ({kind})");
+        let (ok, result) = execute_brain_task(&kind, &payload).await;
+        let status = if ok { "completed" } else { "failed" };
+        update_brain_task(&id, status, &result).await?;
+        println!(
+            "    {} {}",
+            if ok { "✓".green() } else { "✗".red() },
+            status
+        );
     }
     Ok(())
 }
