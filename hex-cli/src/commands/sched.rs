@@ -2587,6 +2587,33 @@ async fn stamp_brain_task_lease(
     Ok(())
 }
 
+/// Return the current HEAD SHA of the workspace git repo, or `None` on any
+/// failure (not a repo, git missing, subprocess error). Used by the
+/// workplan-evidence guard in [`execute_brain_task`]: if HEAD is unchanged
+/// before and after `hex plan execute` runs, we know the subprocess did no
+/// real work regardless of its exit code (ADR-2604141400 §1 P1).
+#[allow(dead_code)] // wired in P1.2
+fn git_head_sha() -> Option<String> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&workspace_root)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if sha.is_empty() {
+        None
+    } else {
+        Some(sha)
+    }
+}
+
 pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, String) {
     let output = match kind {
         "hex-command" => std::process::Command::new("hex")
