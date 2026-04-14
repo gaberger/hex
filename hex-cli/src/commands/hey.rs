@@ -252,7 +252,7 @@ pub async fn run(args: HeyArgs) -> anyhow::Result<()> {
             if let Some(rest) = t.strip_prefix("__SSH__") {
                 if let Some((host, action)) = rest.split_once("__") {
                     println!("  {} translating action to Linux shell command via local LLM...", "→".cyan());
-                    match llm_translate_shell(action).await {
+                    match llm_translate_shell_for_host(action, Some(host)).await {
                         Ok(cmd) => {
                             let full = format!("ssh {} {}", host, cmd);
                             ("shell", full, false, format!("Run '{}' on {} via SSH", cmd, host))
@@ -368,9 +368,20 @@ async fn llm_classify(text: &str) -> anyhow::Result<Option<(String, String, Stri
 }
 
 async fn llm_translate_shell(action: &str) -> anyhow::Result<String> {
+    llm_translate_shell_for_host(action, None).await
+}
+
+async fn llm_translate_shell_for_host(action: &str, host: Option<&str>) -> anyhow::Result<String> {
+    // Look up host context from .hex/hosts.toml
+    let host_context = host.and_then(|h| read_host_context(h)).unwrap_or_default();
+    let context_line = if host_context.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nHost context for '{}':\n{}\n", host.unwrap_or(""), host_context)
+    };
     let prompt = format!(
-        "Translate this natural-language action into a single Linux shell command. Respond with ONLY the command, no explanation, no quotes, no code blocks. Use standard Linux utilities (df, free, uptime, ps, nvidia-smi, ollama, etc).\n\nAction: {}\n\nCommand:",
-        action
+        "Translate this natural-language action into a single Linux shell command. Respond with ONLY the command, no explanation, no quotes, no code blocks. Use standard Linux utilities appropriate for the host.{}\n\nAction: {}\n\nCommand:",
+        context_line, action
     );
     let nexus = crate::nexus_client::NexusClient::from_env();
     let resp: serde_json::Value = nexus.post("/api/inference/complete", &serde_json::json!({
@@ -400,4 +411,20 @@ async fn llm_translate_shell(action: &str) -> anyhow::Result<String> {
         anyhow::bail!("LLM returned empty command");
     }
     Ok(cmd)
+}
+
+/// Read host-specific context from .hex/hosts.toml (if present).
+fn read_host_context(host: &str) -> Option<String> {
+    let contents = std::fs::read_to_string(".hex/hosts.toml").ok()?;
+    // Simple TOML section extractor — find [host] block and collect key=value lines until next [
+    let marker = format!("[{}]", host);
+    let idx = contents.find(&marker)?;
+    let section = &contents[idx + marker.len()..];
+    let end = section.find("\n[").unwrap_or(section.len());
+    let body = &section[..end];
+    let lines: Vec<String> = body.lines()
+        .filter(|l| !l.trim().is_empty() && !l.trim().starts_with('#'))
+        .map(|l| format!("- {}", l.trim()))
+        .collect();
+    if lines.is_empty() { None } else { Some(lines.join("\n")) }
 }
