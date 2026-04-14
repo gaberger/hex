@@ -2832,6 +2832,63 @@ async fn queue_drain() -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    // ── ADR-2604141400 §1 P1: workplan-evidence guard ─────────────────────
+    // These tests lock in the semantics of `check_evidence`: a workplan task
+    // whose subprocess exits 0 but produces no new commit must return
+    // success=false with a snippet that names the drift ("no git evidence").
+    // If these fail, silent-drains are back and autonomy is broken again.
+
+    #[test]
+    fn test_workplan_no_evidence() {
+        // exit 0, HEAD unchanged → should be treated as FAILURE
+        let (success, snippet) =
+            check_evidence(true, Some("abc1234"), Some("abc1234"));
+        assert!(
+            !success,
+            "workplan with no HEAD movement must not be marked success"
+        );
+        assert!(
+            snippet.contains("no git evidence"),
+            "snippet must name the drift; got: {snippet}"
+        );
+    }
+
+    #[test]
+    fn test_workplan_with_evidence() {
+        // exit 0, HEAD moved → should be SUCCESS; snippet records the delta
+        let (success, snippet) =
+            check_evidence(true, Some("abc1234"), Some("def5678"));
+        assert!(success, "workplan with HEAD movement should succeed");
+        assert!(
+            snippet.contains("HEAD abc1234 → def5678"),
+            "snippet must record pre/post SHAs; got: {snippet}"
+        );
+    }
+
+    #[test]
+    fn test_workplan_evidence_exit_failure_never_succeeds() {
+        // exit != 0 overrides evidence: a failing process is a failure even
+        // if HEAD happens to have moved (e.g. partial work then crash).
+        let (success, _snippet) =
+            check_evidence(false, Some("abc1234"), Some("def5678"));
+        assert!(
+            !success,
+            "non-zero exit must not be overridden by HEAD movement"
+        );
+    }
+
+    #[test]
+    fn test_workplan_evidence_unreadable_head_fails() {
+        // HEAD unreadable → guard treats as failure; silent drain is worse
+        // than a visible failure when git itself is broken.
+        let (success, snippet) = check_evidence(true, None, None);
+        assert!(!success);
+        assert!(
+            snippet.contains("no git evidence"),
+            "snippet must surface the HEAD read failure; got: {snippet}"
+        );
+    }
+
     #[test]
     fn render_task_target_extracts_host_for_remote_shell() {
         let payload = r#"{"host":"bazzite","command":"nvidia-smi"}"#;
