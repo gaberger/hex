@@ -27,7 +27,7 @@ jobs:
             | tar -xz -C /usr/local/bin hex
           hex --version
 
-      - name: Start hex-nexus
+      - name: Start hex daemon
         run: hex nexus start --detach
         continue-on-error: true
 

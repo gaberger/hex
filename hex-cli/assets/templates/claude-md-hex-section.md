@@ -11,7 +11,7 @@ hex is an AIOS with a supervisor loop (`hex brain daemon`). Agents interacting w
 
 2. **Use natural language via `hex hey`.** Prefer `hex hey <intent>` over raw commands. Classifier routes to the right action.
 
-3. **Rebuild stale binaries automatically.** After commits touching hex-cli/hex-nexus/hex-agent, run `cargo build --release` without asking. The user does not want to be asked.
+3. **Rebuild stale binaries automatically.** If the installed `hex` version lags the repo (check `hex --version` vs `git log -1`), rebuild without asking. The user does not want to be asked.
 
 4. **Reconcile workplans with `--update`.** Use `hex plan reconcile --all --update` to sync JSON task statuses with git evidence after agent work.
 

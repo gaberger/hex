@@ -106,13 +106,23 @@ pub async fn run_doctor(_verbose: bool, _fix: bool) -> anyhow::Result<()> {
     print_check(".hex/ config", has_hex);
 
     let has_src = cwd.join("src").is_dir();
-    print_check("src/ directory", has_src);
-
+    let has_cargo = cwd.join("Cargo.toml").is_file();
     let has_package_json = cwd.join("package.json").is_file();
-    print_check("package.json", has_package_json);
+    let has_go_mod = cwd.join("go.mod").is_file();
+    print_check("src/ directory", has_src || has_cargo);
 
-    let has_cargo_toml = cwd.join("Cargo.toml").is_file();
-    print_check("Cargo.toml", has_cargo_toml);
+    // Show only the build manifest that's actually present; a TS project
+    // shouldn't be told `Cargo.toml: ✗` (and vice-versa) — it's not a gap.
+    let project_type = if has_cargo {
+        "rust (Cargo.toml)"
+    } else if has_package_json {
+        "typescript/node (package.json)"
+    } else if has_go_mod {
+        "go (go.mod)"
+    } else {
+        "unknown"
+    };
+    println!("    project type: {}", project_type);
 
     let has_docs_adrs = cwd.join("docs").join("adrs").is_dir();
     print_check("docs/adrs/", has_docs_adrs);
@@ -128,7 +138,12 @@ pub async fn run_doctor(_verbose: bool, _fix: bool) -> anyhow::Result<()> {
     println!("    loaded:       {} assets baked in", asset_count);
 
     // 4b. Check embedded assets are project-generic (no hex-intf-specific references)
-    let asset_violations = check_embedded_assets_generic();
+    // Skip for Rust workspaces (they have different asset patterns)
+    let asset_violations = if has_cargo {
+        Vec::new()
+    } else {
+        check_embedded_assets_generic()
+    };
     if asset_violations.is_empty() {
         println!("    generic-only: {} (no project-specific references)", "✓".green());
     } else {
@@ -224,9 +239,26 @@ const ASSET_GENERIC_EXCEPTIONS: &[&str] = &[
 pub fn check_embedded_assets_generic() -> Vec<(String, usize, String)> {
     check_content_generic_violations(
         Assets::iter().filter_map(|path| {
+            // Skip compiled binaries — grep hits inside them are false
+            // positives (e.g. hexflo-coordination.wasm has its own module
+            // name baked in by the compiler).
+            let p = path.as_ref();
+            if is_binary_asset(p) {
+                return None;
+            }
             Assets::get_str(&path).map(|content| (path.to_string(), content))
         }),
     )
+}
+
+/// True if the path looks like a compiled/binary asset that would produce
+/// false positives in a text grep (WASM modules, images, icons).
+fn is_binary_asset(path: &str) -> bool {
+    const BINARY_EXTS: &[&str] = &[
+        ".wasm", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".woff",
+        ".woff2", ".ttf", ".otf", ".eot",
+    ];
+    BINARY_EXTS.iter().any(|ext| path.ends_with(ext))
 }
 
 /// Core violation scanner — takes an iterator of (filename, content) pairs.
