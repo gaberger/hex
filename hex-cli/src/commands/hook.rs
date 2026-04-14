@@ -300,6 +300,12 @@ async fn session_start(project_dir: &Path) -> Result<()> {
             // `hex inbox list`. Silent when empty or on error.
             print_inbox_summary().await;
 
+            // ADR-2604132300: Ensure brain daemon is running. Every Claude
+            // session in a hex project should have autonomous supervision
+            // active — operators shouldn't have to start the daemon manually
+            // after a reboot or `hex brain daemon-stop`.
+            ensure_brain_daemon_running();
+
             // ADR-050: Load active workplan from HexFlo memory
             let _ = load_workplan_context(id).await;
 
@@ -404,6 +410,48 @@ async fn session_start(project_dir: &Path) -> Result<()> {
     ensure_agent_hook(project_dir);
 
     Ok(())
+}
+
+/// Ensure the brain daemon is running. Idempotent: if the PID file references
+/// a live process, does nothing; otherwise spawns `hex brain daemon --background`
+/// with a 30s interval. Silent on success — prints a one-line notice only when
+/// launching a fresh daemon so operators see the autonomous supervisor coming up.
+fn ensure_brain_daemon_running() {
+    let pid_file = match dirs::home_dir() {
+        Some(h) => h.join(".hex").join("brain-daemon.pid"),
+        None => return,
+    };
+
+    if let Ok(raw) = std::fs::read_to_string(&pid_file) {
+        if let Ok(pid) = raw.trim().parse::<i32>() {
+            // kill(pid, 0) probes liveness without actually signalling.
+            // Safe: nix::unistd::kill with signal None is a no-op probe.
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::ExitStatusExt;
+                let status = std::process::Command::new("kill")
+                    .args(["-0", &pid.to_string()])
+                    .status();
+                if let Ok(s) = status {
+                    if s.success() || s.signal().is_none() && s.code() == Some(0) {
+                        return; // Daemon is alive.
+                    }
+                }
+            }
+        }
+    }
+
+    // Launch fresh daemon in the background.
+    let spawn_result = std::process::Command::new("hex")
+        .args(["brain", "daemon", "--background", "--interval", "30"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+
+    match spawn_result {
+        Ok(_) => eprintln!("  Brain:   {} autonomous supervisor", "started".green()),
+        Err(e) => eprintln!("  Brain:   {} failed to start ({})", "\u{2717}".red(), e),
+    }
 }
 
 /// Fetch unacknowledged brain notifications with priority >= 1 and print a
