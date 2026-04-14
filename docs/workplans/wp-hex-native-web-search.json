@@ -72,7 +72,7 @@
           "id": "P2.1",
           "layer": "secondary",
           "name": "ReqwestFetchAdapter",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen"
         },
         {
@@ -87,7 +87,7 @@
           "id": "P2.2",
           "layer": "secondary",
           "name": "Fetch cache (filesystem, 24h TTL)",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen"
         },
         {
@@ -103,7 +103,7 @@
           "id": "P2.3",
           "layer": "secondary",
           "name": "Contract test: fetch golden fixture",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen"
         }
       ],
@@ -132,7 +132,7 @@
           "id": "P3.1",
           "layer": "secondary",
           "name": "BraveSearchAdapter",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen"
         },
         {
@@ -148,7 +148,7 @@
           "id": "P3.2",
           "layer": "secondary",
           "name": "DuckDuckGoAdapter (HTML scrape, no key)",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen"
         },
         {
@@ -164,7 +164,7 @@
           "id": "P3.3",
           "layer": "secondary",
           "name": "WebSearchBroker with fallback chain",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen"
         },
         {
@@ -181,7 +181,7 @@
           "id": "P3.4",
           "layer": "secondary",
           "name": "Contract tests: Brave + DDG against wiremock fixtures",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen"
         }
       ],
@@ -209,7 +209,7 @@
           "id": "P4.1",
           "layer": "secondary",
           "name": "TavilySearchAdapter",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen"
         },
         {
@@ -224,7 +224,7 @@
           "id": "P4.2",
           "layer": "secondary",
           "name": "SerpApiSearchAdapter",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen"
         }
       ],
@@ -251,7 +251,7 @@
           "id": "P5.1",
           "layer": "secondary",
           "name": "web_request SpacetimeDB table + reducer",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen"
         },
         {
@@ -268,7 +268,7 @@
           "id": "P5.2",
           "layer": "primary",
           "name": "POST /api/web/search route",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen"
         },
         {
@@ -284,7 +284,7 @@
           "id": "P5.3",
           "layer": "primary",
           "name": "POST /api/web/fetch route",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen"
         },
         {
@@ -350,7 +350,7 @@
           "id": "P6.1",
           "layer": "primary",
           "name": "hex web CLI subcommand",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen"
         },
         {
@@ -366,7 +366,7 @@
           "id": "P6.2",
           "layer": "primary",
           "name": "hex_web_search + hex_web_fetch MCP tools",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen"
         }
       ],
@@ -392,7 +392,7 @@
           "id": "P7.1",
           "layer": "secondary",
           "name": "Register web.* secret keys in secret-grant",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen"
         },
         {
@@ -458,6 +458,16 @@
             "P6.2"
           ],
           "description": "hex-cli/assets/context-templates/tools/web-search.md and web-fetch.md: replace references to generic WebSearch and ctx_fetch_and_index with hex_web_search and hex_web_fetch. Update 'Prefer these over WebSearch' table. Keep the 'never generate URLs' and 'Sources:' rules. Add a note on provider fallback + caching.",
+          "evidence": {
+            "files_found": [
+              "hex-cli/assets/context-templates/tools/web-search.md",
+              "hex-cli/assets/context-templates/tools/web-fetch.md"
+            ],
+            "matching_commits": [
+              "d237750b feat(context-engineering): P4/P5 - template files + file-based PromptAdapter"
+            ],
+            "symbols_matched": []
+          },
           "files": [
             "hex-cli/assets/context-templates/tools/web-search.md",
             "hex-cli/assets/context-templates/tools/web-fetch.md"
@@ -465,7 +475,7 @@
           "id": "P9.1",
           "layer": "primary",
           "name": "Rewrite context templates",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "transform"
         },
         {
@@ -491,13 +501,26 @@
             "P6.2"
           ],
           "description": "CLAUDE.md: add row 'Web search/fetch | mcp__hex__hex_web_search / mcp__hex__hex_web_fetch' to BOTH tool-precedence tables (there are two — global section and project section). Add a note that context-mode ctx_fetch_and_index must not be used for hex-scope work.",
+          "evidence": {
+            "files_found": [
+              "CLAUDE.md"
+            ],
+            "matching_commits": [
+              "3dadfe79 feat(doctor): Add embedded-assets-generic guardrail (ADR-2604111142 P4)",
+              "092a0aec feat(inference): wp-tiered-inference-routing P4+P5 — escalation, tracking, integration",
+              "91d782aa primary(p5.3): Document tiered routing in CLAUDE.md + README.md",
+              "79531fff chore(finalize): mark ADR-2604050900 accepted, update CLAUDE.md for 7 modules (P6)",
+              "87d0aa36 feat: close P0 workplans — secrets tests, agent-task-sync docs"
+            ],
+            "symbols_matched": []
+          },
           "files": [
             "CLAUDE.md"
           ],
           "id": "P9.3",
           "layer": "primary",
           "name": "Update CLAUDE.md tool precedence table",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "transform"
         }
       ],

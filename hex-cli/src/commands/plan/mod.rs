@@ -65,6 +65,11 @@ pub enum PlanAction {
         /// Write confirmed-done statuses back to the workplan JSON
         #[arg(long, default_value_t = false)]
         update: bool,
+        /// Re-verify tasks already marked done and demote them when evidence
+        /// fails. Heals JSONs corrupted by the pre-ADR-2604142200 reconcile
+        /// loop. Combine with `--update` to persist demotions.
+        #[arg(long, default_value_t = false)]
+        audit: bool,
     },
     /// Output the canonical workplan JSON schema
     Schema,
@@ -315,7 +320,7 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::History => show_execution_history().await,
         PlanAction::Report { id } => show_execution_report(&id).await,
         PlanAction::Schema => show_schema().await,
-        PlanAction::Reconcile { file, update } => reconcile_plan(&file, update).await,
+        PlanAction::Reconcile { file, update, audit } => reconcile_plan(&file, update, audit).await,
         PlanAction::Draft { prompt, background } => draft_plan(&prompt, background).await,
         PlanAction::Drafts { action } => drafts_dispatch(action).await,
     }
@@ -1702,7 +1707,7 @@ struct ReconcileRow {
 /// cross-referencing with git evidence (file modifications since created_at).
 /// When `--update` is set, tasks whose files[] ALL have git modifications
 /// since created_at are promoted from "todo" to "done".
-async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
+async fn reconcile_plan(file: &str, update: bool, audit: bool) -> anyhow::Result<()> {
     let path = if file.contains('/') {
         std::path::PathBuf::from(file)
     } else {
@@ -1764,9 +1769,14 @@ async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
             .collect()
     };
 
+    let mut demoted_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     for task in &tasks_to_check {
-        // Skip tasks already marked done
-        if task.current_status == "done" || task.current_status == "completed" {
+        let was_done = task.current_status == "done" || task.current_status == "completed";
+        // Fast path: in normal mode, trust the existing "done" marker.
+        // In --audit mode, re-verify regardless to heal false promotions
+        // written by the pre-ADR-2604142200 reconcile loop.
+        if was_done && !audit {
             rows.push(ReconcileRow {
                 id: task.id.clone(),
                 icon: "\u{2705}".to_string(),
@@ -1798,8 +1808,14 @@ async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
                 (true, "\u{2705}".to_string(), "evidence-confirmed".green().to_string())
             }
             reconcile_evidence::VerifyResult::KeepPending { reason } => {
-                eprintln!("  {} {}: kept pending — {}", "\u{25cb}".dimmed(), task.id, reason);
-                (false, "\u{274c}".to_string(), "needs work".yellow().to_string())
+                if was_done {
+                    eprintln!("  {} {}: demoting (was done) — {}", "\u{26a0}".red(), task.id, reason);
+                    demoted_ids.insert(task.id.clone());
+                    (false, "\u{26a0}".to_string(), "demoted (no evidence)".red().to_string())
+                } else {
+                    eprintln!("  {} {}: kept pending — {}", "\u{25cb}".dimmed(), task.id, reason);
+                    (false, "\u{274c}".to_string(), "needs work".yellow().to_string())
+                }
             }
         };
 
@@ -1836,7 +1852,7 @@ async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
             reconciled, "\u{2192}".cyan());
     }
 
-    if update && done_count > 0 {
+    if update && (done_count > 0 || !demoted_ids.is_empty()) {
         // Write confirmed-done step statuses back to workplan JSON
         let mut updated = false;
         let done_ids: std::collections::HashSet<&str> = step_results.iter()
@@ -1852,6 +1868,13 @@ async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
                     step["status"] = serde_json::json!("done");
                     if let Some(ev) = evidence_map.get(id.as_str()) {
                         step["evidence"] = evidence_snapshot_json(ev);
+                    }
+                    updated = true;
+                } else if demoted_ids.contains(&id) {
+                    // ADR-2604142200 audit: strip false-done markers
+                    step["status"] = serde_json::json!("pending");
+                    if let Some(obj) = step.as_object_mut() {
+                        obj.remove("evidence");
                     }
                     updated = true;
                 }
@@ -1870,17 +1893,22 @@ async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
                                 task["evidence"] = evidence_snapshot_json(ev);
                             }
                             updated = true;
+                        } else if demoted_ids.contains(&id) {
+                            task["status"] = serde_json::json!("pending");
+                            if let Some(obj) = task.as_object_mut() {
+                                obj.remove("evidence");
+                            }
+                            updated = true;
                         }
                     }
                 }
             }
         }
 
-        // Flip top-level workplan.status to "done" if ALL tasks (after status patches)
-        // now have status=done. Re-scan raw JSON as source of truth, and only write
-        // if the status actually changes (idempotent).
+        // Workplan top-level status: flip up to "done" if everything is done,
+        // or down to "in_progress" if a demotion broke the all-done invariant.
+        let current = raw.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string();
         if all_tasks_marked_done(&raw) {
-            let current = raw.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string();
             if current != "done" {
                 raw["status"] = serde_json::json!("done");
                 updated = true;
@@ -1888,6 +1916,11 @@ async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
                 println!("  {} Workplan status flipped: {} {} done",
                     "\u{2713}".green(), from, "\u{2192}".cyan());
             }
+        } else if !demoted_ids.is_empty() && current == "done" {
+            raw["status"] = serde_json::json!("in_progress");
+            updated = true;
+            println!("  {} Workplan status rolled back: done {} in_progress (demotions)",
+                "\u{26a0}".red(), "\u{2192}".cyan());
         }
         if updated {
             std::fs::write(&path, serde_json::to_string_pretty(&raw)?)?;
