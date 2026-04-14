@@ -46,19 +46,31 @@ pub async fn run(args: RefreshArgs) -> Result<()> {
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(&args.path));
 
-    // Refresh the hex-statusline helper alongside CLAUDE.md so legacy projects
-    // that never got the script installed (pre-refresh init) pick it up.
+    // Refresh the hex-managed config files. This is the install-integrity
+    // sweep — every asset hex init writes, refresh re-syncs (idempotent
+    // merges, never destructive). Solves the "MCP tools not loaded in this
+    // session" failure mode where a project had a partial install and the
+    // hex MCP server entry was never added to .mcp.json.
     if !args.dry_run {
-        match super::init::install_statusline_script(&target) {
-            Ok(()) => println!(
-                "{} scripts/hex-statusline.cjs",
-                "\u{2713}".green()
+        let installs: &[(&str, Box<dyn Fn() -> Result<()>>)] = &[
+            (
+                ".mcp.json (hex MCP server entry)",
+                Box::new(|| super::init::create_mcp_json(&target)),
             ),
-            Err(e) => eprintln!(
-                "  {} scripts/hex-statusline.cjs: {}",
-                "\u{2717}".red(),
-                e
+            (
+                ".claude/settings.json (hooks + statusLine + permissions)",
+                Box::new(|| super::init::create_claude_settings(&target)),
             ),
+            (
+                "scripts/hex-statusline.cjs",
+                Box::new(|| super::init::install_statusline_script(&target)),
+            ),
+        ];
+        for (label, run) in installs {
+            match run() {
+                Ok(()) => println!("{} {}", "\u{2713}".green(), label),
+                Err(e) => eprintln!("  {} {}: {}", "\u{2717}".red(), label, e),
+            }
         }
     }
 

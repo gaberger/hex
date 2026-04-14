@@ -293,7 +293,7 @@ agent:
     Ok(())
 }
 
-fn create_mcp_json(target: &Path) -> Result<()> {
+pub fn create_mcp_json(target: &Path) -> Result<()> {
     let mcp_path = target.join(".mcp.json");
 
     // If .mcp.json exists, merge our server in rather than overwriting
@@ -328,7 +328,7 @@ fn settings_template() -> String {
         .expect("hex-claude-settings.json must be embedded in assets/templates/")
 }
 
-fn create_claude_settings(target: &Path) -> Result<()> {
+pub fn create_claude_settings(target: &Path) -> Result<()> {
     let claude_dir = target.join(".claude");
     create_dir_if_missing(&claude_dir)?;
 
