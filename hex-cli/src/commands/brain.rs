@@ -9,7 +9,7 @@
 //! validate - Run self-diagnostics (CLI wiring, etc.)
 
 use std::path::PathBuf;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use clap::Subcommand;
 use colored::Colorize;
@@ -56,6 +56,22 @@ pub enum BrainAction {
     Models,
     /// Run self-diagnostics (CLI wiring check, etc.)
     Validate,
+    /// Run the brain supervisor loop — validates + auto-fixes every interval (ADR-2604132300)
+    Daemon {
+        /// Tick interval in seconds (default 60)
+        #[arg(long, default_value = "60")]
+        interval: u64,
+        /// Max consecutive failures before pausing (default 3)
+        #[arg(long, default_value = "3")]
+        max_failures: u32,
+        /// Run in background (spawn child process + PID file)
+        #[arg(long)]
+        background: bool,
+    },
+    /// Stop the background brain daemon
+    DaemonStop,
+    /// Show brain daemon status (running/stopped)
+    DaemonStatus,
 }
 
 pub async fn run(action: BrainAction) -> anyhow::Result<()> {
@@ -65,6 +81,15 @@ pub async fn run(action: BrainAction) -> anyhow::Result<()> {
         BrainAction::Scores => scores().await,
         BrainAction::Models => models().await,
         BrainAction::Validate => validate().await,
+        BrainAction::Daemon { interval, max_failures, background } => {
+            if background {
+                daemon_background(interval, max_failures)
+            } else {
+                daemon(interval, max_failures).await
+            }
+        }
+        BrainAction::DaemonStop => daemon_stop(),
+        BrainAction::DaemonStatus => daemon_status(),
     }
 }
 
@@ -888,5 +913,251 @@ async fn models() -> anyhow::Result<()> {
         println!("{:<20}  {:<25}  {}", model, desc, score);
     }
     
+    Ok(())
+}fn pid_file_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".hex").join("brain-daemon.pid")
+}
+
+fn write_pid_file(pid: u32) -> anyhow::Result<()> {
+    let path = pid_file_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, pid.to_string())?;
+    Ok(())
+}
+
+fn read_pid_file() -> Option<i32> {
+    let path = pid_file_path();
+    let contents = std::fs::read_to_string(&path).ok()?;
+    contents.trim().parse::<i32>().ok()
+}
+
+fn remove_pid_file() {
+    let _ = std::fs::remove_file(pid_file_path());
+}
+
+fn process_alive(pid: i32) -> bool {
+    // Signal 0 probes existence without delivering a signal.
+    // Returns 0 on success (process exists), -1 on error.
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+/// Foreground supervisor loop. Validates every `interval` seconds; after
+/// `max_failures` consecutive failures, pauses for 5x interval before retrying.
+/// Exits cleanly on ctrl-C.
+async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
+    // Write the PID so DaemonStop can find a foreground instance too.
+    let pid = std::process::id();
+    let _ = write_pid_file(pid);
+
+    println!(
+        "{} interval={}s max_failures={} pid={}",
+        "⬡ brain daemon starting".green().bold(),
+        interval,
+        max_failures,
+        pid
+    );
+
+    let mut consecutive_failures: u32 = 0;
+    let mut paused_cycles: u32 = 0;
+
+    loop {
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        println!("{} {}", "⬡ brain tick at".cyan(), timestamp);
+
+        let start = Instant::now();
+        let validate_result = validate().await;
+        let elapsed = start.elapsed();
+
+        match validate_result {
+            Ok(()) => {
+                if consecutive_failures > 0 {
+                    println!(
+                        "{} after {} failure(s)",
+                        "  recovered".green(),
+                        consecutive_failures
+                    );
+                }
+                consecutive_failures = 0;
+                paused_cycles = 0;
+                println!("  ok ({}ms)", elapsed.as_millis());
+            }
+            Err(err) => {
+                consecutive_failures += 1;
+                eprintln!(
+                    "  {} ({}/{}) {}",
+                    "fail".red(),
+                    consecutive_failures,
+                    max_failures,
+                    err
+                );
+            }
+        }
+
+        // Emit brain_tick event to nexus (fire-and-forget).
+        let port = std::env::var("HEX_NEXUS_PORT")
+            .unwrap_or_else(|_| "5555".to_string())
+            .parse::<u16>()
+            .unwrap_or(5555);
+        let event_url = format!("http://127.0.0.1:{}/api/events", port);
+        let _ = reqwest::Client::new()
+            .post(&event_url)
+            .json(&serde_json::json!({
+                "type": "brain_tick",
+                "timestamp": timestamp,
+                "duration_ms": elapsed.as_millis() as u64,
+                "checks_run": 5,
+            }))
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await;
+
+        // Sleep — longer if we're over the failure threshold.
+        let sleep_secs = if consecutive_failures >= max_failures {
+            paused_cycles = paused_cycles.saturating_add(1);
+            eprintln!(
+                "{} {}s (paused cycle {})",
+                "  backing off for".yellow(),
+                interval * 5,
+                paused_cycles
+            );
+            interval * 5
+        } else {
+            interval
+        };
+
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(sleep_secs)) => {}
+            _ = tokio::signal::ctrl_c() => {
+                println!("\n{}", "⬡ brain daemon received ctrl-C, shutting down".yellow());
+                remove_pid_file();
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// Background mode: re-exec `hex brain daemon` (without `--background`) as a
+/// detached child process, write its PID, and exit the parent.
+fn daemon_background(interval: u64, max_failures: u32) -> anyhow::Result<()> {
+    // Already running?
+    if let Some(pid) = read_pid_file() {
+        if process_alive(pid) {
+            println!(
+                "{} pid={} (pid file: {})",
+                "brain daemon already running".yellow(),
+                pid,
+                pid_file_path().display()
+            );
+            return Ok(());
+        } else {
+            // Stale pid file — clean it up before starting.
+            remove_pid_file();
+        }
+    }
+
+    let exe = std::env::current_exe()?;
+    let child = std::process::Command::new(exe)
+        .arg("brain")
+        .arg("daemon")
+        .arg("--interval")
+        .arg(interval.to_string())
+        .arg("--max-failures")
+        .arg(max_failures.to_string())
+        // Detach: swallow stdio so the child survives the parent.
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    let pid = child.id();
+    write_pid_file(pid)?;
+
+    println!(
+        "{} pid={} interval={}s",
+        "⬡ brain daemon started in background".green().bold(),
+        pid,
+        interval
+    );
+    println!("  pid file: {}", pid_file_path().display());
+    println!("  stop with: hex brain daemon-stop");
+    Ok(())
+}
+
+/// Stop the background daemon: send SIGTERM, wait up to 5s, remove PID file.
+fn daemon_stop() -> anyhow::Result<()> {
+    let pid = match read_pid_file() {
+        Some(pid) => pid,
+        None => {
+            println!(
+                "{} (no pid file at {})",
+                "brain daemon not running".yellow(),
+                pid_file_path().display()
+            );
+            return Ok(());
+        }
+    };
+
+    if !process_alive(pid) {
+        println!(
+            "{} pid={} not alive — removing stale pid file",
+            "brain daemon".yellow(),
+            pid
+        );
+        remove_pid_file();
+        return Ok(());
+    }
+
+    println!("sending SIGTERM to pid {}...", pid);
+    let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    if rc != 0 {
+        let err = std::io::Error::last_os_error();
+        anyhow::bail!("kill(pid={}, SIGTERM) failed: {}", pid, err);
+    }
+
+    // Wait up to 5s for the process to exit.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if !process_alive(pid) {
+            remove_pid_file();
+            println!("{} pid={}", "⬡ brain daemon stopped".green().bold(), pid);
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    eprintln!(
+        "{} pid={} did not exit within 5s (pid file left in place)",
+        "warning:".yellow(),
+        pid
+    );
+    Ok(())
+}
+
+/// Show whether the brain daemon is running.
+fn daemon_status() -> anyhow::Result<()> {
+    match read_pid_file() {
+        Some(pid) if process_alive(pid) => {
+            println!(
+                "{} pid={}",
+                "⬡ brain daemon running".green().bold(),
+                pid
+            );
+            println!("  pid file: {}", pid_file_path().display());
+        }
+        Some(pid) => {
+            println!(
+                "{} pid={} (stale pid file)",
+                "brain daemon not running".yellow(),
+                pid
+            );
+            println!("  pid file: {}", pid_file_path().display());
+        }
+        None => {
+            println!("{}", "brain daemon not running".yellow());
+        }
+    }
     Ok(())
 }
