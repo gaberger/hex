@@ -1,0 +1,149 @@
+# brain → sched audit sweep
+# Workplan: wp-rename-brain-to-sched (P0.1)
+# ADR: ADR-2604150000-rename-brain-to-sched
+# Date: 2026-04-14
+# Pattern: \bbrain\b|hex_brain|hex-brain
+# Scope: *.rs *.ts *.toml *.yml *.yaml *.json *.md *.cjs (excluding target/ node_modules/ .git/ .claude/worktrees/)
+
+## Summary
+Total occurrences: 346
+Total files with hits: 43
+
+## Per-file hit counts (sorted by count desc)
+62  hex-cli/src/commands/brain.rs
+48  docs/adrs/ADR-2604150000-rename-brain-to-sched.md
+26  docs/workplans/wp-rename-brain-to-sched.json
+21  docs/adrs/ADR-2604132330-brain-inbox-queue.md
+17  docs/workplans/wp-brain-self-consistency.json
+13  hex-cli/src/commands/hook.rs
+10  docs/adrs/ADR-2604140000-hey-hex-natural-language.md
+ 9  README.md
+ 9  docs/workplans/wp-brain-daemon.json
+ 9  docs/workplans/wp-brain-updates.json
+ 9  docs/workplans/wp-brain-inbox.json
+ 9  docs/adrs/ADR-2604141100-brain-updates-to-operator.md
+ 9  docs/adrs/ADR-2604142200-hex-chat-conversational.md
+ 8  hex-cli/src/commands/hey.rs
+ 8  hex-nexus/src/routes/brain.rs
+ 8  docs/adrs/ADR-2604132300-brain-daemon-loop.md
+ 7  hex-cli/assets/templates/claude-md-hex-section.md
+ 5  CLAUDE.md
+ 5  hex-nexus/src/brain_service.rs
+ 5  docs/specs/agentic-brain-core.json
+ 5  docs/adrs/ADR-2604131945-brain-self-consistency-daemon.md
+ 5  docs/workplans/wp-hex-chat-conversational.json
+ 5  hex-cli/assets/helpers/hex-statusline.cjs
+ 4  docs/algebra/ports-signature.md
+ 4  docs/workplans/wp-cli-polish.json
+ 4  docs/adrs/ADR-2604141200-remote-shell-via-agent.md
+ 3  hex-nexus/src/routes/mod.rs
+ 3  hex-nexus/src/adapters/brain.rs  (NOTE: ripgrep reported 1 above — rechecked, single file entry)
+ 3  docs/adrs/ADR-2604142300-brain-auto-cleanup-stale-swarms.md
+ 2  docs/adrs/ADR-2604132200-cli-simplification.md
+ 2  hex-nexus/src/state.rs
+ 2  hex-cli/src/main.rs
+ 1  hex-nexus/src/adapters/brain.rs
+ 1  hex-nexus/src/lib.rs
+ 1  hex-cli/src/commands/mod.rs
+ 1  hex-core/src/domain/brain_tests.rs
+ 1  hex-core/src/domain/mod.rs
+ 1  hex-core/src/ports/brain.rs
+ 1  hex-core/src/ports/mod.rs
+ 1  docs/adrs/ADR-2604102300-agent-framework-competitive-positioning.md
+ 1  docs/adrs/ADR-2604102200-rl-agent-self-improvement.md
+ 1  docs/adrs/ADR-027-hexflo-swarm-coordination.md
+ 1  docs/workplans/wp-hey-hex.json
+ 1  hex-cli/assets/swarms/brain-self-improvement.yml
+
+## Files that will be RENAMED (paths contain 'brain')
+hex-cli/src/commands/brain.rs            → hex-cli/src/commands/sched.rs
+hex-nexus/src/adapters/brain.rs          → hex-nexus/src/adapters/sched.rs
+hex-nexus/src/brain_service.rs           → hex-nexus/src/sched_service.rs
+hex-nexus/src/routes/brain.rs            → hex-nexus/src/routes/sched.rs
+hex-core/src/domain/brain_tests.rs       → hex-core/src/domain/sched_tests.rs
+hex-core/src/ports/brain.rs              → hex-core/src/ports/sched.rs
+hex-cli/assets/swarms/brain-self-improvement.yml → hex-cli/assets/swarms/sched-self-improvement.yml
+docs/specs/agentic-brain-core.json       → docs/specs/agentic-sched-core.json
+
+## Verification checks
+
+### 1. No Cargo feature named 'brain'
+Command: grep `^\s*brain\s*=` across **/Cargo.toml
+Result: NO MATCHES  ✅
+Conclusion: No Cargo feature flag, dependency alias, or workspace member named 'brain' — rename does not require Cargo.toml surgery beyond package crate renames (if any).
+
+### 2. No `pub use brain` re-exports (anywhere)
+Command: grep `pub use brain` across *.rs
+Result: NO MATCHES  ✅
+Conclusion: No crate-public re-exports of a `brain` module exist. Module path renames (e.g., `hex-core::ports::brain` → `hex-core::ports::sched`) will require updating `mod brain;` / `mod sched;` declarations in mod.rs files, but no public re-export chain must be chased.
+
+### 3. No `cfg(feature = "brain")` gates
+Command: grep `cfg\(feature\s*=\s*"brain"\)` across *.rs
+Result: NO MATCHES  ✅
+Conclusion: No conditional-compilation gates keyed on a 'brain' feature. Rename is pure symbol/path work; no feature-flag plumbing to rewrite.
+
+### 4. SQLite schema inspection
+Note: hex-nexus/src/adapters/state_sqlite.rs does NOT exist. Closest matches:
+  - hex-nexus/src/state.rs         (in-memory AppState — has `brain_last_test` RwLock field, not a SQL column)
+  - hex-nexus/src/ports/state.rs   (state port definition)
+  - hex-nexus/src/adapters/state_tests.rs
+
+Grep of hex-nexus/src/state.rs:
+  line 74: `// Timestamp (RFC3339) of last successful brain test run. \`None\` = never.`
+  line 75: `// Written by POST /api/brain/test, read by GET /api/brain/status.`
+  line 76: `pub brain_last_test: RwLock<Option<String>>,`
+  line 130: `brain_last_test: RwLock::new(None),`
+
+No `CREATE TABLE` or `COLUMN` statements with 'brain' in the name found.
+Conclusion: There is NO SQLite table or column containing 'brain'. The only schema-adjacent artifact is an in-memory AppState field `brain_last_test: RwLock<Option<String>>` in hex-nexus/src/state.rs. Renaming to `sched_last_test` is a simple Rust identifier change — no SQL migration required.  ✅
+
+## Routes / HTTP surface to rename
+Observed from grep hits in hex-nexus/src/routes/brain.rs, hex-nexus/src/state.rs, and hex-cli/src/commands/brain.rs:
+  /api/brain/test        → /api/sched/test
+  /api/brain/status      → /api/sched/status
+  /api/brain/*           → /api/sched/*    (full prefix rename per ADR-2604150000)
+
+## ADRs to transition (status update, keep as historical record)
+ADR-2604132200-cli-simplification                — mentions brain subcommand
+ADR-2604132300-brain-daemon-loop                 — will be superseded by ADR-2604150000
+ADR-2604132330-brain-inbox-queue                 — will be superseded
+ADR-2604131945-brain-self-consistency-daemon     — will be superseded
+ADR-2604141100-brain-updates-to-operator         — will be superseded
+ADR-2604142300-brain-auto-cleanup-stale-swarms   — ACTIVE (per session context)
+ADR-2604140000-hey-hex-natural-language          — references brain routing
+ADR-2604141200-remote-shell-via-agent            — references brain
+ADR-2604142200-hex-chat-conversational           — ACTIVE
+ADR-2604102300, ADR-2604102200, ADR-027          — incidental references
+ADR-2604150000-rename-brain-to-sched             — the rename ADR itself
+
+## Workplans referencing brain (update text, keep file history)
+wp-rename-brain-to-sched.json          — driver of this rename
+wp-brain-self-consistency.json
+wp-brain-daemon.json
+wp-brain-updates.json
+wp-brain-inbox.json
+wp-hey-hex.json
+wp-cli-polish.json
+wp-hex-chat-conversational.json
+
+## Risk assessment
+- NO feature flags, Cargo features, or pub re-exports → low blast-radius rename
+- NO SQL schema changes → no migration path needed
+- Primary blast radius:
+  * 6 Rust source files require rename (hex-cli, hex-nexus, hex-core)
+  * 1 YAML swarm file
+  * 1 JSON spec file
+  * HTTP route prefix /api/brain/* → /api/sched/*
+  * In-memory field `brain_last_test` → `sched_last_test`
+  * 62 ADR/workplan/docs files require textual updates (preserve historical filenames per ADR convention)
+- Module `mod brain;` declarations in mod.rs files (hex-core domain, hex-core ports, hex-nexus routes, hex-cli commands) must be updated to `mod sched;`
+- Statusline (hex-statusline.cjs) and CLAUDE.md templates reference brain daemon commands — user-facing text updates required
+
+## Next phases in wp-rename-brain-to-sched.json
+Audit sweep (P0.1) complete. Ready for subsequent phases:
+  - P1: Rename Rust modules (hex-core ports + domain)
+  - P2: Rename hex-nexus service + routes
+  - P3: Rename hex-cli command + update hook.rs + hey.rs dispatch
+  - P4: Update assets (statusline, swarm YAML, CLAUDE.md template)
+  - P5: Update docs (ADRs + workplans textual references; preserve filenames)
+  - P6: Rebuild + cargo check + smoke test
