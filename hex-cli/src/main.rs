@@ -317,6 +317,8 @@ enum Commands {
     },
     /// Project status
     Status,
+    /// One-glance multi-project pulse (ADR-2604131500 P6.1)
+    Pulse,
     /// Inject hex context into opencode (ADR-2603231800)
     Opencode {
         #[command(subcommand)]
@@ -582,6 +584,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Assets { action } => commands::assets_cmd::run(action).await,
         Commands::Git { action } => commands::git_cmd::run(action).await,
         Commands::Status => status::run().await,
+        Commands::Pulse => commands::pulse::run().await,
         Commands::Opencode { action } => commands::opencode::run(action),
         Commands::Sandbox { action } => commands::sandbox::run(action).await,
         Commands::Fingerprint { action } => commands::fingerprint::run(action).await,
