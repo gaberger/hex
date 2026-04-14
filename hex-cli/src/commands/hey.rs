@@ -65,6 +65,67 @@ fn classify_intent(text: &str) -> TaskIntent {
             description: "Restart the hex-nexus daemon".into(),
         };
     }
+    // Stop nexus
+    if t.contains("stop") && t.contains("nexus") {
+        return TaskIntent::HexCommand {
+            args: "nexus stop".into(),
+            destructive: false,
+            description: "Stop the hex-nexus daemon".into(),
+        };
+    }
+    // Nexus logs
+    if t.contains("logs") || (t.contains("tail") && t.contains("nexus")) {
+        return TaskIntent::HexCommand {
+            args: "nexus logs".into(),
+            destructive: false,
+            description: "Tail hex-nexus daemon logs".into(),
+        };
+    }
+    // README check / generate
+    if t.contains("readme") {
+        let args = if t.contains("generate") || t.contains("write") || t.contains("create") {
+            "readme generate"
+        } else {
+            "readme check"
+        };
+        return TaskIntent::HexCommand {
+            args: args.into(),
+            destructive: false,
+            description: format!("Run {}", args),
+        };
+    }
+    // Documentation
+    if t.contains("documentation") || t.contains("docs") {
+        return TaskIntent::HexCommand {
+            args: "brief".into(),
+            destructive: false,
+            description: "Show project documentation briefing".into(),
+        };
+    }
+    // Security audit / vulnerabilities / dependabot
+    if t.contains("security") || t.contains("vulnerabilit") || t.contains("dependabot") {
+        return TaskIntent::Shell {
+            cmd: "cargo audit".into(),
+            destructive: false,
+            description: "Scan dependencies for security vulnerabilities".into(),
+        };
+    }
+    // Audit (developer report)
+    if t.contains("audit") {
+        return TaskIntent::HexCommand {
+            args: "report audit".into(),
+            destructive: false,
+            description: "Show developer audit report for hex dev sessions".into(),
+        };
+    }
+    // Help / list commands
+    if t.contains("help") || (t.contains("list") && t.contains("command")) {
+        return TaskIntent::HexCommand {
+            args: "--help".into(),
+            destructive: false,
+            description: "Show hex CLI help and available commands".into(),
+        };
+    }
     // Reconcile workplans
     if t.contains("reconcile") {
         return TaskIntent::HexCommand {
