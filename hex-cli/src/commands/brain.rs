@@ -809,6 +809,29 @@ async fn validate() -> anyhow::Result<()> {
         }
     }
 
+    // Inference health check — check all registered endpoints via hex-nexus
+    match check_inference_health().await {
+        Ok(results) if results.is_empty() => {
+            println!("  Inference:   {} no endpoints registered", "✓".green());
+        }
+        Ok(results) => {
+            let healthy = results.iter().filter(|r| r.status == "healthy").count();
+            let total = results.len();
+            if healthy == total {
+                println!("  Inference:   {} {}/{} endpoints healthy", "✓".green(), healthy, total);
+            } else {
+                println!("  Inference:   {} {}/{} healthy", "⚠".yellow(), healthy, total);
+                for r in &results {
+                    let icon = if r.status == "healthy" { "✓" } else { "✗" };
+                    println!("    {} {} ({})", icon, r.id, r.status);
+                }
+            }
+        }
+        Err(e) => {
+            println!("  Inference:   {} error: {}", "✗".red(), e);
+        }
+    }
+
     // Stale worktree check (auto-fix: remove worktrees with no commits for 24h+)
     match check_stale_worktrees() {
         Ok(stale) if stale.is_empty() => {
@@ -847,7 +870,167 @@ async fn validate() -> anyhow::Result<()> {
         }
     }
 
+    // Stale swarm check (ADR-2604142300): active swarms whose tasks are all done
+    // but status still "active" — auto-complete them via PATCH /api/swarms/:id.
+    match check_stale_swarms().await {
+        Ok(stale) if stale.is_empty() => {
+            println!("  Swarms:      {} no stale swarms", "✓".green());
+        }
+        Ok(stale) => {
+            let total = stale.len();
+            let mut completed = 0usize;
+            for s in &stale {
+                if autofix_stale_swarm(&s.id).await {
+                    completed += 1;
+                }
+            }
+            if completed == total {
+                println!(
+                    "  Swarms:      {} auto-completed {} stale swarms {}",
+                    "✓".green(),
+                    completed,
+                    "[auto-fixed]".cyan()
+                );
+            } else {
+                println!(
+                    "  Swarms:      {} {}/{} stale swarms completed{}",
+                    "✗".red(),
+                    completed,
+                    total,
+                    if completed > 0 { " [partial auto-fix]" } else { "" }
+                );
+            }
+            for s in &stale {
+                println!(
+                    "    {} {} ({}/{} tasks done)",
+                    truncate(&s.id, 8),
+                    truncate(&s.name, 40),
+                    s.completed_tasks,
+                    s.total_tasks
+                );
+            }
+        }
+        Err(e) => {
+            println!("  Swarms:      {} error: {}", "✗".red(), e);
+        }
+    }
+
     Ok(())
+}
+
+/// A swarm whose tasks are all completed but whose status is still `active`.
+#[derive(Debug)]
+struct StaleSwarm {
+    id: String,
+    name: String,
+    total_tasks: usize,
+    completed_tasks: usize,
+}
+
+/// Identify stale swarms by querying `/api/swarms/active` and filtering to
+/// those where every task has status `completed`. Empty-task swarms are
+/// excluded — they may be freshly initialized and still expecting tasks.
+async fn check_stale_swarms() -> anyhow::Result<Vec<StaleSwarm>> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let resp = client
+        .get("http://127.0.0.1:5555/api/swarms/active")
+        .send()
+        .await?;
+
+    let body: serde_json::Value = resp.json().await?;
+    let swarms = body.as_array().cloned().unwrap_or_default();
+
+    let mut stale = Vec::new();
+    for s in &swarms {
+        if s["status"].as_str() != Some("active") {
+            continue;
+        }
+        let id = s["id"].as_str().unwrap_or("").to_string();
+        if id.is_empty() {
+            continue;
+        }
+        let name = s["name"].as_str().unwrap_or("").to_string();
+        let tasks = s["tasks"].as_array();
+        let total = tasks.map(|t| t.len()).unwrap_or(0);
+        // Exclude empty-task swarms — might be freshly initialized.
+        if total == 0 {
+            continue;
+        }
+        let completed = tasks
+            .map(|t| t.iter().filter(|tk| tk["status"].as_str() == Some("completed")).count())
+            .unwrap_or(0);
+        if completed == total {
+            stale.push(StaleSwarm {
+                id,
+                name,
+                total_tasks: total,
+                completed_tasks: completed,
+            });
+        }
+    }
+    Ok(stale)
+}
+
+/// Mark a stale swarm complete via `PATCH /api/swarms/:id`. Returns `true`
+/// on success. Respects `HEX_BRAIN_DRY_RUN=1` (ADR-2604142300 safety mitigation).
+async fn autofix_stale_swarm(id: &str) -> bool {
+    if std::env::var("HEX_BRAIN_DRY_RUN").as_deref() == Ok("1") {
+        return false;
+    }
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    client
+        .patch(&format!("http://127.0.0.1:5555/api/swarms/{}", id))
+        .json(&json!({}))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+/// Result of a single inference endpoint health check.
+#[derive(Debug)]
+struct InferenceHealthResult {
+    id: String,
+    status: String,
+    #[allow(dead_code)]
+    url: String,
+}
+
+/// Check health of all registered inference endpoints via hex-nexus.
+async fn check_inference_health() -> anyhow::Result<Vec<InferenceHealthResult>> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let resp = client
+        .post("http://127.0.0.1:5555/api/inference/health")
+        .send()
+        .await?;
+
+    let body: serde_json::Value = resp.json().await?;
+    let results = body
+        .get("results")
+        .and_then(|r| r.as_array())
+        .ok_or_else(|| anyhow::anyhow!("missing 'results' in health response"))?;
+
+    let mut output = Vec::new();
+    for r in results {
+        output.push(InferenceHealthResult {
+            id: r.get("id").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
+            status: r.get("status").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
+            url: r.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        });
+    }
+    Ok(output)
 }
 
 /// Convert PascalCase to kebab-case (e.g. "NeuralLab" → "neural-lab").
