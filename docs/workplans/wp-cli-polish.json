@@ -1,0 +1,175 @@
+{
+  "context": "hex-cli exposes 44+ top-level command groups. Many share responsibilities (status/pulse/brief, swarm/task, new/init/scaffold). New users see a wall of commands with no narrative. Error handling relies on .unwrap()/expect() in several primary commands, and output formatting is inconsistent (some commands emit JSON by default, others plain text, few support --json uniformly). This workplan addresses the top 5 highest-leverage improvements identified in an audit on 2026-04-13.",
+  "intent": "Make hex feel like a cohesive AI Operating System, not a collection of 50 subcommands. Focus: discoverability, consistency, error clarity, and autonomy gaps that push users toward manual invocation.",
+  "out_of_scope": [
+    "Full TUI/REPL mode (separate workplan)",
+    "Shell completion regeneration (already handled by clap)",
+    "i18n / locale handling",
+    "Command renames beyond group moves (too disruptive this cycle)"
+  ],
+  "phases": [
+    {
+      "id": "p1",
+      "priority": "critical",
+      "rationale": "hex status, hex pulse, hex brief, and the bare `hex` command all overlap. A new user cannot tell which to run. Each emits slightly different data with different formatting. This is the single biggest source of 'hex feels like 50 tools' confusion.",
+      "tasks": [
+        {
+          "acceptance": "Document overlapping vs unique fields; choose canonical home for each",
+          "artifact": "hex-cli/src/commands/status.rs analysis note",
+          "id": "p1.1",
+          "status": "done",
+          "title": "Audit status/pulse/brief output — map fields to a single StatusSnapshot struct"
+        },
+        {
+          "acceptance": "`hex status` shows one coherent dashboard with sections (health, agents, plans, inbox); `hex brief` is a thin alias; deprecation notice on brief",
+          "artifact": "hex-cli/src/commands/status.rs, brief.rs, pulse.rs",
+          "id": "p1.2",
+          "status": "done",
+          "title": "Promote `hex status` to be the canonical single-project view; `hex pulse` stays multi-project; `hex brief` becomes `hex status --brief` (alias kept)"
+        },
+        {
+          "acceptance": "`hex status --json | jq` works; same for pulse/brief",
+          "artifact": "shared StatusSnapshot serde impl",
+          "id": "p1.3",
+          "status": "done",
+          "title": "Add --json to all three for machine consumers; default stays human-formatted with color+tables"
+        }
+      ],
+      "title": "Unify status/pulse/brief into a single ambient surface"
+    },
+    {
+      "id": "p2",
+      "priority": "high",
+      "rationale": "Some commands have --json, some emit JSON by default, some have no machine-readable mode at all. Destructive commands vary in whether they prompt. Scripting hex is currently painful.",
+      "tasks": [
+        {
+          "acceptance": "Flags parsed at top level, propagated to subcommands via clap global=true",
+          "artifact": "hex-cli/src/cli.rs",
+          "id": "p2.1",
+          "status": "done",
+          "title": "Define a GlobalFlags struct in hex-cli/src/cli.rs — --json, --quiet, --no-color, --yes"
+        },
+        {
+          "acceptance": "OutputContext respects --json/--quiet/--no-color; human output uses consistent prefixes (ok:, warn:, err:, info:)",
+          "artifact": "hex-cli/src/output.rs (new)",
+          "id": "p2.2",
+          "status": "done",
+          "title": "Thread flags through an OutputContext (stdout formatter) — replace scattered println!/eprintln! with ctx.info/warn/error"
+        },
+        {
+          "acceptance": "No destructive command runs without confirmation in a TTY or --yes flag",
+          "artifact": "audit report + edits across commands/",
+          "id": "p2.3",
+          "status": "done",
+          "title": "Audit destructive commands (plan drafts clear, swarm cleanup, worktree cleanup, send-override, agent disconnect, trust set) — all require --yes or interactive confirm"
+        }
+      ],
+      "title": "Global flag consistency — --json, --quiet, --no-color, --yes"
+    },
+    {
+      "id": "p3",
+      "priority": "high",
+      "rationale": "Panics in a user-facing CLI emit Rust backtraces, which look like hex is crashing. Each one should be a user-friendly anyhow::Context error.",
+      "tasks": [
+        {
+          "acceptance": "Full list with file:line + risk classification (user-triggerable vs genuinely-unreachable)",
+          "artifact": "docs/analysis/cli-panic-audit.md",
+          "id": "p3.1",
+          "status": "done",
+          "title": "Grep hex-cli/src/commands/ for .unwrap()/.expect() — produce inventory"
+        },
+        {
+          "acceptance": "Remaining .unwrap() calls are all on static regexes, compile-time constants, or documented-unreachable paths",
+          "artifact": "edits across hex-cli/src/commands/",
+          "id": "p3.2",
+          "title": "Replace user-triggerable unwraps with .context(\"...\")? and typed anyhow errors"
+        },
+        {
+          "acceptance": "cargo run -p hex-cli -- <bad-args> shows human error, not backtrace",
+          "artifact": "hex-cli/src/main.rs",
+          "id": "p3.3",
+          "status": "done",
+          "title": "Add a top-level error handler in main.rs that formats anyhow chains as 'Error: X\\n  caused by: Y' (no backtrace unless RUST_BACKTRACE=1)"
+        }
+      ],
+      "title": "Eliminate .unwrap()/.expect() from primary command paths"
+    },
+    {
+      "id": "p4",
+      "priority": "high",
+      "rationale": "`hex --help` shows 44 top-level commands. Users cannot scan this. Most belong in the existing `config`, `dev`, or `override` groups which were partly rolled out but left incomplete. Finish the consolidation.",
+      "tasks": [
+        {
+          "acceptance": "`hex dev skill list` works; top-level `hex skill` kept as deprecated alias for 1 release",
+          "artifact": "hex-cli/src/commands/dev.rs + mod.rs",
+          "id": "p4.1",
+          "status": "done",
+          "title": "Move skill/assets/context/hook under `hex dev` (developer/platform tools)"
+        },
+        {
+          "acceptance": "`hex brain taste set`, `hex brain neural-lab experiment` work",
+          "artifact": "hex-cli/src/commands/brain.rs",
+          "id": "p4.2",
+          "status": "done",
+          "title": "Move neural-lab, brain, taste under `hex brain` (all self-improvement/learning)"
+        },
+        {
+          "acceptance": "`hex system doctor`, `hex system stdb health` work; legacy aliases kept",
+          "artifact": "new hex-cli/src/commands/system.rs",
+          "id": "p4.3",
+          "status": "done",
+          "title": "Move stdb, nexus, sandbox, doctor, self-update under `hex system` (runtime/infra)"
+        },
+        {
+          "acceptance": "Every top-level group has example output in --help",
+          "artifact": "clap after_help strings",
+          "id": "p4.4",
+          "title": "Add `hex <group> --help` examples block — every group shows 2-3 concrete example invocations"
+        }
+      ],
+      "title": "Command grouping cleanup — collapse 44 groups to ~20 via subgrouping"
+    },
+    {
+      "id": "p5",
+      "priority": "medium",
+      "rationale": "hex doctor finds problems but requires the user to manually invoke the fix. `hex go` is the next-action command but doesn't triage broken environments. Ship `hex fix` as the 'turn the key and it starts' command for an AIOS.",
+      "tasks": [
+        {
+          "acceptance": "`hex fix --dry-run` lists what would be fixed; `hex fix` applies them",
+          "artifact": "hex-cli/src/commands/fix.rs",
+          "id": "p5.1",
+          "status": "done",
+          "title": "Create hex-cli/src/commands/fix.rs — enumerates remediable doctor failures"
+        },
+        {
+          "acceptance": "Each remediator is idempotent, prints what it did, and verifies success",
+          "artifact": "fix.rs remediators + unit tests",
+          "id": "p5.2",
+          "status": "done",
+          "title": "Wire remediators: nexus-not-running → `hex nexus start`, stdb-down → start spacetimedb, stale agents → `hex agent prune`, unsynced assets → `hex assets sync`, stale drafts → `hex plan drafts gc --days 7`"
+        },
+        {
+          "acceptance": "If nexus is down when `hex go` runs, output suggests `hex fix` not 'connection refused'",
+          "artifact": "hex-cli/src/commands/go.rs",
+          "id": "p5.3",
+          "status": "done",
+          "title": "Teach `hex go` to suggest `hex fix` when doctor checks fail, instead of raw error"
+        }
+      ],
+      "title": "Autonomy gap: `hex fix` — auto-remediate common diagnostic failures"
+    }
+  ],
+  "prerequisites": [
+    "hex-cli builds cleanly (cargo build -p hex-cli)",
+    "Existing autonomy features remain untouched: hex (no args), hex go, hex hey, hex brain daemon, hex plan reconcile"
+  ],
+  "success_criteria": [
+    "`hex --help` fits on one screen (<30 top-level entries)",
+    "Every command supports --json or is documented as human-only",
+    "Zero panics from user-triggerable input in hex-cli/src/commands/",
+    "`hex fix` recovers a broken environment in one command",
+    "`hex status` is the canonical project view; pulse/brief are clearly differentiated"
+  ],
+  "title": "hex CLI Polish — AIOS Ergonomics Pass",
+  "workplan_id": "wp-cli-polish"
+}
