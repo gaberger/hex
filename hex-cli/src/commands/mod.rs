@@ -20,6 +20,7 @@ pub mod agent_audit;
 pub mod analyze;
 pub mod hook;
 pub mod inbox;
+pub mod insight;
 pub mod inference;
 pub mod init;
 pub mod interview;

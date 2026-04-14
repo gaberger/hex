@@ -27,7 +27,7 @@ dirs = "5"
 libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 uuid = { version = "1", features = ["v4"] }
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 # Parse --since durations like "1h", "30m" in `hex sched watch` (wp-brain-updates-to-operator P2.1)
 humantime = "2"
 dialoguer = "0.11"
