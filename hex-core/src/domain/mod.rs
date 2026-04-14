@@ -11,4 +11,9 @@ pub mod skills;
 pub mod swarm_task;
 pub mod tokens;
 pub mod tools;
+pub mod web;
 pub mod workplan;
+
+pub use web::{
+    FetchFormat, FetchOptions, FetchedPage, SearchOptions, SearchResult, Url, WebProvider,
+};
