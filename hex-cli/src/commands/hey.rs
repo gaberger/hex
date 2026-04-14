@@ -27,6 +27,26 @@ pub enum TaskIntent {
 fn classify_intent(text: &str) -> TaskIntent {
     let t = text.to_lowercase();
 
+    // Remote shell via SSH — "<cmd> on <host>"
+    // Matches: "run nvidia-smi on bazzite", "show ollama list on bazzite"
+    if let Some(on_idx) = t.find(" on ") {
+        let host = t[on_idx + 4..].split_whitespace().next().unwrap_or("");
+        if !host.is_empty() && host.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '.') {
+            // Strip leading verbs like "run", "show", "check"
+            let before_on = &text[..on_idx];
+            let verbs = ["run ", "execute ", "show ", "check ", "get ", "list "];
+            let cmd = verbs.iter()
+                .find_map(|v| before_on.strip_prefix(v))
+                .unwrap_or(before_on)
+                .trim();
+            return TaskIntent::Shell {
+                cmd: format!("ssh {} {}", host, cmd),
+                destructive: false,
+                description: format!("Run '{}' on {} via SSH", cmd, host),
+            };
+        }
+    }
+
     // Calibration
     if t.contains("calibrate") || (t.contains("test") && t.contains("inference")) {
         return TaskIntent::HexCommand {

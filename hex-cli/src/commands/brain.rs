@@ -1643,7 +1643,7 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
                 Some(c) => c,
                 None => return (false, "empty shell command".to_string()),
             };
-            const ALLOWED: &[&str] = &["cargo", "git", "ls", "echo"];
+            const ALLOWED: &[&str] = &["cargo", "git", "ls", "echo", "ssh"];
             if !ALLOWED.contains(&cmd) {
                 return (
                     false,
