@@ -1,54 +1,58 @@
 {
-  "id": "wp-enforce-workplan-evidence",
-  "feature": "Enforce workplan evidence at authoring time",
   "adr": "ADR-2604142200",
   "created_at": "2026-04-14T21:40:00Z",
   "created_by": "human+agent",
-  "executor_hint": "frontier-preferred",
   "description": "Close the reconcile false-positive class at the authoring layer: make task.files[] a REQUIRED, non-empty field in the workplan schema, refuse to load workplans that violate it, emit clear errors pointing at the offending task, and retrofit every in-flight workplan (starting with wp-rename-brain-to-sched.json and wp-hex-native-web-search.json) so existing reconcile runs stop falsely promoting prose-only done-conditions. Surfaced by: ADR-2604150000 clap wiring reconciled as 11/11 done while `hex sched` command did not exist (commit 75268e70 had to be hand-wired). Complements ADR-2604142200 (runtime verifier) by preventing the broken input shape from ever reaching the verifier.",
+  "executor_hint": "frontier-preferred",
+  "feature": "Enforce workplan evidence at authoring time",
+  "id": "wp-enforce-workplan-evidence",
   "notes": "Per feedback_workplan_wrap_fixes: this workplan is itself a T3 fix being routed through the proper pipeline instead of ad-hoc commits. Each task below has files[] populated and commit-id convention (E1.1, E1.2, ...) so reconcile can verify this workplan's own execution.",
   "phases": [
     {
-      "id": "E1",
-      "name": "Schema validator — reject workplans with missing evidence",
       "description": "Add a loader-time validator that rejects workplans where any task has empty/missing files[]. Error message must point at the task id and suggest adding the output files. Validator runs in both `hex plan execute` (refuse to dispatch) and `hex plan reconcile` (refuse to verify). Same function used in both paths.",
       "gate": {
         "blocking": true,
-        "type": "test",
-        "command": "cargo test -p hex-cli workplan_schema"
+        "command": "cargo test -p hex-cli workplan_schema",
+        "type": "test"
       },
+      "id": "E1",
+      "name": "Schema validator \u2014 reject workplans with missing evidence",
       "tasks": [
         {
-          "id": "E1.1",
-          "name": "Validator pure function",
-          "description": "hex-cli/src/commands/plan/schema_validate.rs: pub fn validate_workplan_evidence(wp: &Workplan) -> Result<(), Vec<EvidenceViolation>>. Struct EvidenceViolation { task_id: String, kind: MissingFiles | EmptyFiles | NonExistentPath | ProseOnlyDescription, detail: String }. Empty files[] → EmptyFiles. Description with no declared symbol or file path → ProseOnlyDescription.",
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "hex-cli/src/commands/plan/schema_validate.rs: pub fn validate_workplan_evidence(wp: &Workplan) -> Result<(), Vec<EvidenceViolation>>. Struct EvidenceViolation { task_id: String, kind: MissingFiles | EmptyFiles | NonExistentPath | ProseOnlyDescription, detail: String }. Empty files[] \u2192 EmptyFiles. Description with no declared symbol or file path \u2192 ProseOnlyDescription.",
           "files": [
             "hex-cli/src/commands/plan/schema_validate.rs",
             "hex-cli/src/commands/plan/mod.rs"
           ],
-          "deps": [],
+          "id": "E1.1",
           "layer": "domain",
-          "agent": "hex-coder",
-          "status": "pending",
+          "name": "Validator pure function",
+          "status": "done",
           "strategy_hint": "inference"
         },
         {
-          "id": "E1.2",
-          "name": "Wire validator into plan execute + reconcile",
+          "agent": "hex-coder",
+          "deps": [
+            "E1.1"
+          ],
           "description": "hex-cli/src/commands/plan/execute.rs and reconcile.rs: call validate_workplan_evidence before any dispatch or promotion. On Err(violations), print each violation with task_id and bail with exit code 2. Add --accept-incomplete-evidence flag that downgrades to a warning (for explicit author intent).",
           "files": [
             "hex-cli/src/commands/plan/execute.rs",
             "hex-cli/src/commands/plan/reconcile.rs"
           ],
-          "deps": ["E1.1"],
+          "id": "E1.2",
           "layer": "primary",
-          "agent": "hex-coder",
-          "status": "pending",
+          "name": "Wire validator into plan execute + reconcile",
+          "status": "done",
           "strategy_hint": "inference"
         },
         {
-          "id": "E1.3",
-          "name": "Unit tests — schema rejection fixtures",
+          "agent": "hex-coder",
+          "deps": [
+            "E1.1"
+          ],
           "description": "hex-cli/tests/workplan_schema.rs: fixtures for each EvidenceViolation kind. Assert validator Err() with correct task_id + kind. Separate passing fixture with fully-populated files[] to prove no false-negative.",
           "files": [
             "hex-cli/tests/workplan_schema.rs",
@@ -56,53 +60,59 @@
             "hex-cli/tests/fixtures/schema/wp-prose-only.json",
             "hex-cli/tests/fixtures/schema/wp-valid.json"
           ],
-          "deps": ["E1.1"],
+          "id": "E1.3",
           "layer": "test",
-          "agent": "hex-coder",
-          "status": "pending",
+          "name": "Unit tests \u2014 schema rejection fixtures",
+          "status": "done",
           "strategy_hint": "codegen"
         }
       ]
     },
     {
-      "id": "E2",
-      "name": "Retrofit in-flight workplans",
-      "description": "Run the new validator against every docs/workplans/wp-*.json. Fix offenders by populating files[] with the actual paths the task touches — derived from git log + manual audit where commits are already landed. Priority: wp-rename-brain-to-sched.json (had 11/11 false-positive), then wp-hex-native-web-search.json (P2+ blocked on same bug), then the rest.",
+      "description": "Run the new validator against every docs/workplans/wp-*.json. Fix offenders by populating files[] with the actual paths the task touches \u2014 derived from git log + manual audit where commits are already landed. Priority: wp-rename-brain-to-sched.json (had 11/11 false-positive), then wp-hex-native-web-search.json (P2+ blocked on same bug), then the rest.",
       "gate": {
         "blocking": true,
-        "type": "shell",
-        "command": "hex plan reconcile --all --audit"
+        "command": "hex plan reconcile --all --audit",
+        "type": "shell"
       },
+      "id": "E2",
+      "name": "Retrofit in-flight workplans",
       "tasks": [
         {
-          "id": "E2.1",
-          "name": "Retrofit wp-rename-brain-to-sched.json",
+          "agent": "hex-coder",
+          "deps": [
+            "E1.2"
+          ],
           "description": "Populate files[] for each of the 11 steps pointing at the actual renamed artifacts: hex-cli/src/commands/sched.rs, hex-cli/src/commands/brain_alias.rs, hex-cli/src/main.rs, hex-nexus/src/routes/sched.rs (if present), scripts/hex-statusline.cjs, docs/adrs/ADR-2604150000-rename-brain-to-sched.md. Re-reconcile and confirm all 11 verify against real evidence (including the new commit 75268e70 that wired the clap variants).",
           "files": [
             "docs/workplans/wp-rename-brain-to-sched.json"
           ],
-          "deps": ["E1.2"],
+          "id": "E2.1",
           "layer": "docs",
-          "agent": "hex-coder",
-          "status": "pending",
+          "name": "Retrofit wp-rename-brain-to-sched.json",
+          "status": "done",
           "strategy_hint": "transform"
         },
         {
-          "id": "E2.2",
-          "name": "Retrofit wp-hex-native-web-search.json",
+          "agent": "hex-coder",
+          "deps": [
+            "E2.1"
+          ],
           "description": "Blocked by E2.1 pattern. Populate files[] for every P2+ task. Reconcile should revert any previously-false 'done' to 'pending' for steps where files[] was empty.",
           "files": [
             "docs/workplans/wp-hex-native-web-search.json"
           ],
-          "deps": ["E2.1"],
+          "id": "E2.2",
           "layer": "docs",
-          "agent": "hex-coder",
-          "status": "pending",
+          "name": "Retrofit wp-hex-native-web-search.json",
+          "status": "done",
           "strategy_hint": "transform"
         },
         {
-          "id": "E2.3",
-          "name": "Retrofit remaining wp-*.json files",
+          "agent": "hex-coder",
+          "deps": [
+            "E2.1"
+          ],
           "description": "For every wp-*.json in docs/workplans/ (excluding already-done P0-historical), run validator, populate missing files[]. Commit per-workplan with message scope `wp(<feature>): retrofit evidence`.",
           "files": [
             "docs/workplans/wp-brain-queue-swarm-lease.json",
@@ -114,87 +124,97 @@
             "docs/workplans/wp-remote-shell-via-agent.json",
             "docs/workplans/wp-task-type-inference-routing.json"
           ],
-          "deps": ["E2.1"],
+          "id": "E2.3",
           "layer": "docs",
-          "agent": "hex-coder",
-          "status": "pending",
+          "name": "Retrofit remaining wp-*.json files",
+          "status": "done",
           "strategy_hint": "transform"
         }
       ]
     },
     {
-      "id": "E3",
-      "name": "Author-time tooling — `hex plan lint`",
       "description": "New CLI: `hex plan lint <path|--all>` runs validate_workplan_evidence against one or all workplans and prints a table (task_id | violation | suggested_fix). Zero exit code = clean. Intended for pre-commit hook and CI.",
       "gate": {
         "blocking": false,
-        "type": "test",
-        "command": "cargo test -p hex-cli plan_lint"
+        "command": "cargo test -p hex-cli plan_lint",
+        "type": "test"
       },
+      "id": "E3",
+      "name": "Author-time tooling \u2014 `hex plan lint`",
       "tasks": [
         {
-          "id": "E3.1",
-          "name": "plan lint subcommand",
+          "agent": "hex-coder",
+          "deps": [
+            "E1.1"
+          ],
           "description": "hex-cli/src/commands/plan/lint.rs: pub async fn run(path: Option<PathBuf>, all: bool) -> anyhow::Result<()>. Reuses validate_workplan_evidence. Wire into main.rs under Commands::Plan subcommand tree.",
           "files": [
             "hex-cli/src/commands/plan/lint.rs",
             "hex-cli/src/commands/plan/mod.rs",
             "hex-cli/src/main.rs"
           ],
-          "deps": ["E1.1"],
+          "id": "E3.1",
           "layer": "primary",
-          "agent": "hex-coder",
-          "status": "pending",
+          "name": "plan lint subcommand",
+          "status": "done",
           "strategy_hint": "inference"
         },
         {
-          "id": "E3.2",
-          "name": "Pre-commit hook asset — workplan-evidence-lint.yml",
+          "agent": "hex-coder",
+          "deps": [
+            "E3.1"
+          ],
           "description": "hex-cli/assets/hooks/hex/workplan-evidence-lint.yml: PreToolUse hook on Edit/Write of docs/workplans/wp-*.json runs `hex plan lint <file>` and blocks commits with violations. Installed into target .claude/settings.json by `hex init`.",
           "files": [
             "hex-cli/assets/hooks/hex/workplan-evidence-lint.yml"
           ],
-          "deps": ["E3.1"],
+          "id": "E3.2",
           "layer": "assets",
-          "agent": "hex-coder",
-          "status": "pending",
+          "name": "Pre-commit hook asset \u2014 workplan-evidence-lint.yml",
+          "status": "done",
           "strategy_hint": "scaffold"
         }
       ]
     },
     {
-      "id": "E4",
-      "name": "Rebuild + ADR status",
-      "description": "Rebuild hex-cli release, install to PATH, run `hex plan lint --all` clean, flip ADR-2604142200 Status line from whatever current → Accepted with a retrospective note pointing at this workplan.",
+      "description": "Rebuild hex-cli release, install to PATH, run `hex plan lint --all` clean, flip ADR-2604142200 Status line from whatever current \u2192 Accepted with a retrospective note pointing at this workplan.",
       "gate": {
         "blocking": true,
-        "type": "shell",
-        "command": "hex plan lint --all && hex plan reconcile --all --audit"
+        "command": "hex plan lint --all && hex plan reconcile --all --audit",
+        "type": "shell"
       },
+      "id": "E4",
+      "name": "Rebuild + ADR status",
       "tasks": [
         {
-          "id": "E4.1",
-          "name": "Release build + self-verify",
+          "agent": "hex-coder",
+          "deps": [
+            "E1.2",
+            "E2.3",
+            "E3.2"
+          ],
           "description": "cargo build -p hex-cli --release. hex plan lint --all reports zero violations. hex plan reconcile --all --audit reports zero false-positive reverts (all previously-\"done\" tasks either stay done with evidence OR flip to pending with logged reason).",
           "files": [
             "hex-cli/Cargo.toml"
           ],
-          "deps": ["E1.2", "E2.3", "E3.2"],
+          "id": "E4.1",
           "layer": "build",
-          "agent": "hex-coder",
+          "name": "Release build + self-verify",
           "status": "pending",
           "strategy_hint": "script"
         },
         {
-          "id": "E4.2",
-          "name": "ADR status flip + retrospective",
-          "description": "docs/adrs/ADR-2604142200-reconcile-evidence-verification.md: Status → Accepted. Add a `## Retrospective` section linking wp-enforce-workplan-evidence.json and noting the two real-world failures it closed (wp-rename-brain-to-sched 11/11 false-positive, wp-hex-native-web-search P2+ blocked).",
+          "agent": "hex-coder",
+          "deps": [
+            "E4.1"
+          ],
+          "description": "docs/adrs/ADR-2604142200-reconcile-evidence-verification.md: Status \u2192 Accepted. Add a `## Retrospective` section linking wp-enforce-workplan-evidence.json and noting the two real-world failures it closed (wp-rename-brain-to-sched 11/11 false-positive, wp-hex-native-web-search P2+ blocked).",
           "files": [
             "docs/adrs/ADR-2604142200-reconcile-evidence-verification.md"
           ],
-          "deps": ["E4.1"],
+          "id": "E4.2",
           "layer": "docs",
-          "agent": "hex-coder",
+          "name": "ADR status flip + retrospective",
           "status": "pending",
           "strategy_hint": "transform"
         }

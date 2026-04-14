@@ -1,6 +1,7 @@
 # ADR-2604142200: Reconcile must verify file evidence, not just match names
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-04-15 (via wp-enforce-workplan-evidence commits `0fac2e9f` `14a91f9b` `7f0e886b` `daa16c3c`)
 **Date:** 2026-04-14
 **Drivers:** Live bug surfaced during autonomous execution of `wp-hex-native-web-search`: the brain daemon correctly executed P1.1 and P1.2 via nemotron-mini (commits `19928ffc`, `1d1e40b9`, cargo check passes), then `hex plan reconcile` marked 11 downstream tasks as `done` even though their target files do not exist on disk. A continuous reconcile loop actively reverted manual attempts to reset those statuses — the false `done` state is re-asserted within one tick of being corrected. Left unaddressed, every autonomous workplan will silently skip real work.
 **Supersedes:** n/a (amends `0f704881 fix(plan): Scope reconcile heuristic to workplan ADR id`)
@@ -94,3 +95,24 @@ Rollback: if the stricter check produces too many false negatives (tasks that re
 - `0f704881 fix(plan): Scope reconcile heuristic to workplan ADR id` — previous partial fix
 - ADR-2604142100 (wp-hex-native-web-search) — the workplan that surfaced this bug
 - Commits `19928ffc`, `1d1e40b9` — correct daemon executions that prove the substrate works
+
+## Retrospective — 2026-04-15
+
+Implemented via `wp-enforce-workplan-evidence` in 4 commits:
+
+| Commit | Scope | Closes |
+|---|---|---|
+| `0fac2e9f` | E1.1 `validate_workplan_evidence()` pure fn + E1.2 reconcile wire | Bad workplans blocked at reconcile time |
+| `14a91f9b` | E3.1 `hex plan lint [<path>|--all]` CLI + E1.3 test fixtures | Author-time + CI detection |
+| `7f0e886b` | E2 retrofit — 20 violations across 4 workplans → 0 | Existing workplans brought to compliance |
+| `daa16c3c` | E3.2 `workplan-evidence-lint.yml` pre-tool-use hook asset | Pre-edit enforcement (after `hex init`) |
+
+**Live validation:** `hex plan lint --all` over the current corpus → exit 0, zero violations. Production-bar item 4 ("no workplan saves with empty files[]") is green at three layers: reconcile-path BLOCKS, author-time lint DETECTS, pre-tool-use hook ENFORCES.
+
+**Known residual failure modes** (not closed by this ADR, tracked separately):
+
+1. **Symbol-hit lenience** — reconcile promotes when files exist + ANY declared symbol hits, not the specific named symbol. Surfaced by `wp-brain-queue-swarm-lease` showing 13/13 done while P2/P3 functions don't exist. Needs a followup ADR tightening `reconcile_evidence::verify` to require *named* symbol match.
+2. **Passive reconcile loop reverts manual edits** — manually flipping 5 false-done statuses during the 2026-04-14 audit, only 1 persisted; 4 were silently re-promoted. Needs the passive loop disabled or evidence-aware.
+3. **Dialect workplans** — `wp-cli-polish.json` uses `artifact: "path"` instead of `files: [...]`. The retrofit converted these by hand; a proper schema normalization ADR would unify the dialect at the loader layer.
+
+These are follow-ups, not bugs in the current ADR. The ADR's contract (positive file evidence before `done` promotion + authoring-time prevention) is upheld.
