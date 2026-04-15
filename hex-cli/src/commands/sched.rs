@@ -191,7 +191,7 @@ pub async fn run(action: BrainAction) -> anyhow::Result<()> {
         BrainAction::Test { model } => test(&model).await,
         BrainAction::Scores => scores().await,
         BrainAction::Models => models().await,
-        BrainAction::Validate => validate().await,
+        BrainAction::Validate => validate(false).await,
         BrainAction::Daemon { interval, max_failures, background } => {
             if background {
                 daemon_background(interval, max_failures)
@@ -748,7 +748,7 @@ fn autofix_worktree(wt: &StaleWorktree) -> bool {
         .unwrap_or(false)
 }
 
-async fn validate() -> anyhow::Result<()> {
+async fn validate(dry_run: bool) -> anyhow::Result<()> {
     println!("{}", "⬡ hex brain validate".bold());
 
     // CLI wiring check
@@ -820,8 +820,10 @@ async fn validate() -> anyhow::Result<()> {
             let total_stale: usize = summaries.iter().map(|s| s.stale_tasks.len()).sum();
             let mut total_fixed = 0usize;
 
-            // Auto-fix: reconcile stale tasks whose git evidence proves completion
-            if total_stale > 0 {
+            // Auto-fix: reconcile stale tasks whose git evidence proves completion.
+            // In dry_run mode (daemon tick), only report candidates — never mutate
+            // workplan JSON (ADR-2604142200, wp-reconcile-evidence-verification R2.2).
+            if total_stale > 0 && !dry_run {
                 for wp in &summaries {
                     match autofix_workplan(wp) {
                         Ok(n) => total_fixed += n,
@@ -837,6 +839,14 @@ async fn validate() -> anyhow::Result<()> {
                     "  Workplans:   {} {} active, all tasks consistent",
                     "✓".green(),
                     summaries.len()
+                );
+            } else if dry_run {
+                println!(
+                    "  Workplans:   {} {} active, {} stale tasks {}",
+                    "⚠".yellow(),
+                    summaries.len(),
+                    total_stale,
+                    "[dry-run, would reconcile]".cyan()
                 );
             } else if total_fixed == total_stale {
                 println!(
@@ -857,7 +867,11 @@ async fn validate() -> anyhow::Result<()> {
                 );
             }
             for wp in &summaries {
-                let effective_done = wp.done_tasks + wp.stale_tasks.len();
+                let effective_done = if dry_run {
+                    wp.done_tasks
+                } else {
+                    wp.done_tasks + wp.stale_tasks.len()
+                };
                 let progress = if wp.total_tasks > 0 {
                     format!("{}/{}", effective_done, wp.total_tasks)
                 } else {
@@ -865,6 +879,11 @@ async fn validate() -> anyhow::Result<()> {
                 };
                 let stale_note = if wp.stale_tasks.is_empty() {
                     String::new()
+                } else if dry_run {
+                    format!(
+                        " — would reconcile: {}",
+                        wp.stale_tasks.join(", ")
+                    )
                 } else {
                     format!(
                         " — reconciled: {} {}",
@@ -1588,7 +1607,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         println!("{} {}", "⬡ brain tick at".cyan(), timestamp);
 
         let start = Instant::now();
-        let validate_result = validate().await;
+        let validate_result = validate(true).await;
         let elapsed = start.elapsed();
 
         // Diff issue counts tick-over-tick (wp-brain-updates P2.1).
