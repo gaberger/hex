@@ -2669,12 +2669,13 @@ impl Tier {
 ///   P1 — Constraint signals: questions, trivial edits, confirmatory replies
 ///   P2 — Scored classification: feature verbs, subsystem nouns, cross-cutting
 
+#[allow(dead_code)]
 pub struct ClassifierRule {
     pub label: &'static str,
     pub tier: Tier,
     pub precedence: u8,
     pub signals: &'static [&'static str],
-    matches: fn(&str) -> bool,
+    pub matches: fn(&str) -> bool,
 }
 
 fn match_escape_hatch(s: &str) -> bool {
