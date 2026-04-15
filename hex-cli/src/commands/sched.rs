@@ -17,6 +17,8 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use tracing::debug;
+
 use crate::fmt::{pretty_table, truncate};
 
 /// Daemon-local state persisted across ticks (wp-brain-updates P1.2).
@@ -2381,6 +2383,13 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
             &json!({"key": key, "value": task.to_string()}),
         )
         .await?;
+    debug!(
+        task_id = %id,
+        kind = %kind,
+        project_id = %project_id,
+        payload_len = payload.len(),
+        "drain-path: enqueue"
+    );
     Ok(id)
 }
 
@@ -2421,7 +2430,13 @@ pub(crate) async fn list_brain_tasks(
 #[allow(dead_code)]
 pub(crate) async fn drain_brain_tasks(limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
     let pending = list_brain_tasks(Some("pending")).await?;
-    Ok(pending.into_iter().take(limit).collect())
+    let claimed: Vec<_> = pending.into_iter().take(limit).collect();
+    for task in &claimed {
+        let id = task.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let kind = task.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        debug!(task_id = %id, kind = %kind, "drain-path: claim");
+    }
+    Ok(claimed)
 }
 
 pub(crate) async fn update_brain_task(
@@ -2454,6 +2469,15 @@ pub(crate) async fn update_brain_task(
                 json!(chrono::Utc::now().to_rfc3339()),
             );
         }
+    }
+    if status.is_terminal() {
+        let result_preview: String = result.chars().take(120).collect();
+        debug!(
+            task_id = %id,
+            status = %status.as_str(),
+            result_preview = %result_preview,
+            "drain-path: terminate"
+        );
     }
     nexus
         .post(
@@ -2618,6 +2642,15 @@ pub(crate) async fn dispatch_brain_task(
 
     stamp_brain_task_lease(&brain_task_id, &leased_to, &leased_until, &swarm_task_id).await?;
 
+    debug!(
+        task_id = %brain_task_id,
+        kind = %kind,
+        swarm_id = %swarm_id,
+        swarm_task_id = %swarm_task_id,
+        leased_until = %leased_until,
+        "drain-path: dispatch"
+    );
+
     Ok(LeaseHandle {
         brain_task_id,
         swarm_id,
@@ -2768,6 +2801,7 @@ fn check_evidence(
 }
 
 pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, String) {
+    debug!(kind = %kind, payload_len = payload.len(), "drain-path: execute-start");
     // ADR-2604141400 §1 P1: capture pre-HEAD only for workplan tasks; the
     // other kinds stay exit-code-only in this slice.
     let pre_head = if kind == "workplan" {
