@@ -26,49 +26,74 @@ pub struct SteerRequest {
     pub directive: String,
 }
 
-/// Classify a directive into one of: priority_change, approach_change,
-/// constraint_add, quality_preference, general.
+/// One rule in the classifier table. `match_fn` returns true when the
+/// (already-lowercased) directive matches. The table is iterated in
+/// declaration order, so position == precedence.
+struct Rule {
+    label: &'static str,
+    /// Human-readable description of the signals this rule keys on.
+    /// Surfaces in the rules listing for debuggability.
+    signals: &'static str,
+    match_fn: fn(&str) -> bool,
+}
+
+/// Classifier rules in precedence order. Ordering is part of the spec —
+/// constraint imperatives ("must"/"never"/"always") MUST precede weak
+/// priority hints ("before"/"first") because a phrase like "tests must
+/// pass before merge" is semantically a constraint, not a priority. A
+/// pre-existing bug had priority before constraint and misfired on that
+/// exact phrase.
+const RULES: &[Rule] = &[
+    Rule {
+        label: "constraint_add",
+        signals: "must / never / always / all+should",
+        match_fn: |s| {
+            s.contains("must")
+                || s.contains("never")
+                || s.contains("always")
+                || (s.contains("all ") && s.contains(" should"))
+        },
+    },
+    Rule {
+        label: "approach_change",
+        signals: "switch to / replace / use…instead",
+        match_fn: |s| {
+            s.contains("switch to")
+                || s.contains("replace")
+                || (s.contains("use ") && s.contains("instead"))
+        },
+    },
+    Rule {
+        label: "quality_preference",
+        signals: "optimize for / prefer / focus on",
+        match_fn: |s| {
+            s.contains("optimize for") || s.contains("prefer") || s.contains("focus on")
+        },
+    },
+    Rule {
+        label: "priority_change",
+        signals: "first / prioritize / before / demo / urgent",
+        match_fn: |s| {
+            s.contains("first")
+                || s.contains("prioritize")
+                || s.contains("before")
+                || s.contains("demo")
+                || s.contains("urgent")
+        },
+    },
+];
+
+/// Classify a directive into one of: constraint_add, approach_change,
+/// quality_preference, priority_change, general.
+///
+/// Precedence is encoded in `RULES` order — first match wins.
 fn classify_directive(directive: &str) -> &'static str {
     let lower = directive.to_lowercase();
-
-    // Constraint signals — checked first because imperatives like "must"
-    // are semantically stronger than weak priority hints ("before merge"
-    // would otherwise be misclassified as priority_change).
-    if lower.contains("must")
-        || lower.contains("never")
-        || lower.contains("always")
-        || (lower.contains("all ") && lower.contains(" should"))
-    {
-        return "constraint_add";
-    }
-
-    // Priority signals
-    if lower.contains("first")
-        || lower.contains("prioritize")
-        || lower.contains("before")
-        || lower.contains("demo")
-        || lower.contains("urgent")
-    {
-        return "priority_change";
-    }
-
-    // Approach change signals
-    if lower.contains("switch to")
-        || lower.contains("replace")
-        || (lower.contains("use ") && lower.contains("instead"))
-    {
-        return "approach_change";
-    }
-
-    // Quality preference signals
-    if lower.contains("optimize for")
-        || lower.contains("prefer")
-        || lower.contains("focus on")
-    {
-        return "quality_preference";
-    }
-
-    "general"
+    RULES
+        .iter()
+        .find(|r| (r.match_fn)(&lower))
+        .map(|r| r.label)
+        .unwrap_or("general")
 }
 
 /// POST /api/steer — receive and classify a developer directive.
@@ -171,5 +196,41 @@ mod tests {
     fn test_classify_general() {
         assert_eq!(classify_directive("Update the README"), "general");
         assert_eq!(classify_directive("Add a changelog entry"), "general");
+    }
+
+    /// Regression: phrases combining a constraint imperative with a
+    /// priority hint must classify as constraint, not priority.
+    /// Documents the precedence rule that the table-ordering encodes.
+    #[test]
+    fn test_constraint_beats_priority_when_both_signals_present() {
+        assert_eq!(
+            classify_directive("Tests must pass before merge"),
+            "constraint_add"
+        );
+        assert_eq!(
+            classify_directive("Always run linter first"),
+            "constraint_add"
+        );
+        assert_eq!(
+            classify_directive("Never demo without auth"),
+            "constraint_add"
+        );
+    }
+
+    /// The rule table is the spec — assert it stays well-formed so a
+    /// future contributor can't add a rule with an empty label or move
+    /// a rule above constraint without noticing.
+    #[test]
+    fn test_rule_table_invariants() {
+        assert!(!RULES.is_empty());
+        assert_eq!(
+            RULES[0].label,
+            "constraint_add",
+            "constraint MUST be first to win over weak priority hints"
+        );
+        for r in RULES {
+            assert!(!r.label.is_empty());
+            assert!(!r.signals.is_empty());
+        }
     }
 }
