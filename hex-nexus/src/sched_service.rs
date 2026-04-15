@@ -1,4 +1,4 @@
-//! Brain self-improvement service — runs as a background service.
+//! Sched self-improvement service — runs as a background service.
 //!
 //! Periodically tests local models, records outcomes, and updates
 //! method scores in SpacetimeDB via the RL engine.
@@ -16,16 +16,16 @@ const TEST_TIMEOUT_SECS: u64 = 30;
 
 /// Model to test (configured via env var, defaults to nemotron-mini).
 fn test_model() -> String {
-    std::env::var("HEX_BRAIN_TEST_MODEL")
+    std::env::var("HEX_SCHED_TEST_MODEL")
         .unwrap_or_else(|_| "nemotron-mini".to_string())
 }
 
-/// State key for brain model selection.
+/// State key for sched model selection.
 fn state_key() -> String {
     "brain:model:selection".to_string()
 }
 
-/// Spawns the brain self-improvement service.
+/// Spawns the sched self-improvement service.
 ///
 /// This runs as a background task that:
 /// 1. Every 10 minutes, tests the configured local model
@@ -44,14 +44,14 @@ pub fn spawn(state: SharedState) {
             match result {
                 Ok(outcome) => {
                     tracing::info!(
-                        "Brain self-improvement: model={}, outcome={}, reward={:.2}",
+                        "Sched self-improvement: model={}, outcome={}, reward={:.2}",
                         test_model(),
                         outcome.outcome,
                         outcome.reward
                     );
                 }
                 Err(e) => {
-                    tracing::warn!("Brain self-improvement cycle failed: {}", e);
+                    tracing::warn!("Sched self-improvement cycle failed: {}", e);
                 }
             }
 

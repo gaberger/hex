@@ -5,12 +5,12 @@ use crate::domain::brain::{
 use std::collections::HashMap;
 use std::error::Error;
 
-pub struct BrainAdapter {
+pub struct SchedAdapter {
     scores: HashMap<String, MethodScore>,
     nexus_url: String,
 }
 
-impl BrainAdapter {
+impl SchedAdapter {
     pub fn new(nexus_url: &str) -> Self {
         Self {
             scores: HashMap::new(),

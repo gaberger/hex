@@ -40,7 +40,7 @@ pub mod spacetime_bindings;
 pub mod config_sync;
 pub mod spacetime_launcher;
 pub mod templates;
-pub mod brain_service;
+pub mod sched_service;
 
 use std::sync::Arc;
 
@@ -512,11 +512,11 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         cleanup::CleanupService::spawn(cleanup_state);
     }
 
-    // Background brain self-improvement service (ADR-2604102200):
+    // Background sched self-improvement service (ADR-2604102200):
     // Tests local models periodically, records outcomes to RL engine.
     {
-        let brain_state = state.clone();
-        brain_service::spawn(brain_state);
+        let sched_state = state.clone();
+        sched_service::spawn(sched_state);
     }
 
     // Background task: evict completed commands older than 1 hour (every 60s)

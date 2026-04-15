@@ -1,8 +1,8 @@
-//! Brain API routes (ADR-2604102200).
+//! Sched API routes (ADR-2604102200).
 //!
-//! GET  /api/brain/status - Service status
-//! POST /api/brain/test  - Run a test
-//! GET  /api/brain/scores - Get method scores
+//! GET  /api/sched/status - Service status
+//! POST /api/sched/test  - Run a test
+//! GET  /api/sched/scores - Get method scores
 
 use axum::{
     extract::{Query, State},
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Deserialize, Default)]
-pub struct BrainStatusQuery {
+pub struct SchedStatusQuery {
     /// Optional project ID — filters queue_pending/queue_running to tasks
     /// whose `project_id` field matches. When omitted, all tasks count
     /// (useful for hex-intf's own operator view; harmful as a default for
@@ -20,10 +20,10 @@ pub struct BrainStatusQuery {
     pub project: Option<String>,
 }
 
-use crate::brain_service;
+use crate::sched_service;
 use crate::state::SharedState;
 
-/// Kinds of task the brain queue can carry. Serialized as kebab-case so
+/// Kinds of task the sched queue can carry. Serialized as kebab-case so
 /// `RemoteShell` becomes `"remote-shell"` on the wire (ADR-2604141200).
 ///
 /// Payload shape varies by kind:
@@ -31,7 +31,7 @@ use crate::state::SharedState;
 /// - `Workplan`   — path to a workplan JSON
 /// - `Shell`      — local shell command (sandboxed, rejects `echo FIXME` stubs)
 /// - `RemoteShell` — JSON-encoded [`RemoteShellPayload`] `{host, command}`;
-///   the agent on `host` polls `/api/brain/queue?kind=remote-shell&host=<host>`
+///   the agent on `host` polls `/api/sched/queue?kind=remote-shell&host=<host>`
 ///   and executes against its local whitelist (ADR-2604141200 P3).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -43,7 +43,7 @@ pub enum TaskKind {
 }
 
 impl TaskKind {
-    /// Wire-form identifier as persisted in the `kind` field of brain-task
+    /// Wire-form identifier as persisted in the `kind` field of sched-task
     /// records. Matches the `serde(rename_all = "kebab-case")` output.
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -68,7 +68,7 @@ impl TaskKind {
 }
 
 /// Structured payload for a [`TaskKind::RemoteShell`] task. Serialized to
-/// JSON and stored in the brain-task's `payload` field so host+command
+/// JSON and stored in the sched-task's `payload` field so host+command
 /// travel together through the queue. The receiving hex-agent matches
 /// `host` against its own hostname before executing `command`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -78,7 +78,7 @@ pub struct RemoteShellPayload {
 }
 
 impl RemoteShellPayload {
-    /// Encode as the JSON string used in brain-task `payload`.
+    /// Encode as the JSON string used in sched-task `payload`.
     pub fn to_payload_string(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|_| "{}".to_string())
     }
@@ -92,39 +92,39 @@ impl RemoteShellPayload {
 }
 
 #[derive(Serialize)]
-pub struct BrainStatus {
+pub struct SchedStatus {
     pub service_enabled: bool,
     pub test_model: String,
     pub interval_secs: u64,
     pub last_test: String,
-    /// Pending brain tasks waiting for the next daemon tick.
+    /// Pending sched tasks waiting for the next daemon tick.
     pub queue_pending: u32,
     /// Tasks the daemon is currently executing (status=in_progress).
-    /// Non-zero = "brain is actively working right now" — the signal
+    /// Non-zero = "sched is actively working right now" — the signal
     /// operators need to distinguish "stalled with queue" from "draining".
     pub queue_running: u32,
-    /// Seconds since last brain_tick event (null if never). Operators watching
-    /// the statusline use this to verify brain is actually iterating.
+    /// Seconds since last sched_tick event (null if never). Operators watching
+    /// the statusline use this to verify sched is actually iterating.
     pub last_tick_secs_ago: Option<u64>,
     /// Most recently started in-progress task (id + kind + payload preview).
     /// `None` when nothing is currently running.
-    pub current_task: Option<BrainCurrentTask>,
+    pub current_task: Option<SchedCurrentTask>,
 }
 
 #[derive(Serialize)]
-pub struct BrainCurrentTask {
+pub struct SchedCurrentTask {
     pub id: String,
     pub kind: String,
     pub payload: String,
 }
 
 #[derive(Deserialize)]
-pub struct BrainTestRequest {
+pub struct SchedTestRequest {
     pub model: String,
 }
 
 #[derive(Serialize)]
-pub struct BrainTestResponse {
+pub struct SchedTestResponse {
     pub outcome: String,
     pub reward: f64,
     pub response: String,
@@ -132,19 +132,19 @@ pub struct BrainTestResponse {
 
 pub async fn status(
     State(state): State<SharedState>,
-    Query(query): Query<BrainStatusQuery>,
-) -> Json<BrainStatus> {
-    let test_model = std::env::var("HEX_BRAIN_TEST_MODEL")
+    Query(query): Query<SchedStatusQuery>,
+) -> Json<SchedStatus> {
+    let test_model = std::env::var("HEX_SCHED_TEST_MODEL")
         .unwrap_or_else(|_| "nemotron-mini".to_string());
 
     let last_test = state
-        .brain_last_test
+        .sched_last_test
         .read()
         .await
         .clone()
         .unwrap_or_else(|| "never".to_string());
 
-    // Count brain tasks by status (pending / in_progress). One search, two
+    // Count sched tasks by status (pending / in_progress). One search, two
     // buckets. Best-effort: if the state port isn't configured, counts = 0.
     let (queue_pending, queue_running, current_task) =
         if let Some(sp) = state.state_port.as_ref() {
@@ -152,7 +152,7 @@ pub async fn status(
                 Ok(entries) => {
                     let mut pending = 0u32;
                     let mut running = 0u32;
-                    let mut current: Option<BrainCurrentTask> = None;
+                    let mut current: Option<SchedCurrentTask> = None;
                     for (_key, value) in &entries {
                         let Ok(task) = serde_json::from_str::<serde_json::Value>(value) else {
                             continue;
@@ -172,7 +172,7 @@ pub async fn status(
                             Some("in_progress") => {
                                 running += 1;
                                 if current.is_none() {
-                                    current = Some(BrainCurrentTask {
+                                    current = Some(SchedCurrentTask {
                                         id: task.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                         kind: task.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                         payload: task.get("payload").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -190,30 +190,30 @@ pub async fn status(
             (0, 0, None)
         };
 
-    Json(BrainStatus {
+    Json(SchedStatus {
         service_enabled: true,
         test_model,
         interval_secs: 10,
         last_test,
         queue_pending,
         queue_running,
-        last_tick_secs_ago: None, // TODO: read from event_adapter once a brain_tick filter exists
+        last_tick_secs_ago: None, // TODO: read from event_adapter once a sched_tick filter exists
         current_task,
     })
 }
 
 pub async fn test(
     State(state): State<SharedState>,
-    Json(_req): Json<BrainTestRequest>,
-) -> Json<BrainTestResponse> {
+    Json(_req): Json<SchedTestRequest>,
+) -> Json<SchedTestResponse> {
     // Run a test cycle synchronously
-    let result = match brain_service::run_improvement_cycle(&state).await {
-        Ok(outcome) => BrainTestResponse {
+    let result = match sched_service::run_improvement_cycle(&state).await {
+        Ok(outcome) => SchedTestResponse {
             outcome: outcome.outcome,
             reward: outcome.reward,
             response: "test completed".to_string(),
         },
-        Err(e) => BrainTestResponse {
+        Err(e) => SchedTestResponse {
             outcome: "error".to_string(),
             reward: -0.5,
             response: e,
@@ -223,13 +223,13 @@ pub async fn test(
     // Record the timestamp regardless of outcome — a failed test is still a
     // test. Operators care "when did we last probe?" not "when did we last
     // get a green result." (errors are visible in the response body itself.)
-    *state.brain_last_test.write().await = Some(chrono::Utc::now().to_rfc3339());
+    *state.sched_last_test.write().await = Some(chrono::Utc::now().to_rfc3339());
 
     Json(result)
 }
 
-/// Truncated summary of a single brain-queue task, returned by
-/// `GET /api/brain/queue/history` (wp-sched-queue-history P1.2).
+/// Truncated summary of a single sched-queue task, returned by
+/// `GET /api/sched/queue/history` (wp-sched-queue-history P1.2).
 ///
 /// Source of truth is `hexflo_memory` with key prefix `brain-task:` — the same
 /// store the existing `status` endpoint and `hex sched` CLI read. Payload and
@@ -237,7 +237,7 @@ pub async fn test(
 /// table-friendly. Operators who need the full record can still query
 /// `/api/hexflo/memory/brain-task:<id>` directly.
 #[derive(Serialize, Clone, Debug)]
-pub struct BrainTaskSummary {
+pub struct SchedTaskSummary {
     pub id: String,
     pub kind: String,
     pub status: String,
@@ -272,9 +272,9 @@ fn rfc3339_to_us(s: &str) -> i64 {
         .unwrap_or(0)
 }
 
-/// Project a raw brain-task record (serde_json::Value as stored in
-/// hexflo_memory) into the wire-stable `BrainTaskSummary` shape.
-fn summarize_task(task: &serde_json::Value) -> BrainTaskSummary {
+/// Project a raw sched-task record (serde_json::Value as stored in
+/// hexflo_memory) into the wire-stable `SchedTaskSummary` shape.
+fn summarize_task(task: &serde_json::Value) -> SchedTaskSummary {
     let payload = task
         .get("payload")
         .and_then(|v| v.as_str())
@@ -291,7 +291,7 @@ fn summarize_task(task: &serde_json::Value) -> BrainTaskSummary {
         .get("completed_at")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    BrainTaskSummary {
+    SchedTaskSummary {
         id: task.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         kind: task.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         status: task.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -303,9 +303,9 @@ fn summarize_task(task: &serde_json::Value) -> BrainTaskSummary {
     }
 }
 
-/// GET /api/brain/queue/history[?status=failed][&limit=20]
+/// GET /api/sched/queue/history[?status=failed][&limit=20]
 ///
-/// Returns a paginated, reverse-chronological list of brain-queue tasks. Primary
+/// Returns a paginated, reverse-chronological list of sched-queue tasks. Primary
 /// consumer is `hex sched queue history`, which operators use to verify the
 /// evidence-guard (ADR-2604141400 §1 P1) correctly flips silent-drain workplans
 /// to `failed`. Without this surface, the guard shipped but was invisible.
@@ -321,7 +321,7 @@ fn summarize_task(task: &serde_json::Value) -> BrainTaskSummary {
 pub async fn queue_history(
     State(state): State<SharedState>,
     Query(params): Query<HashMap<String, String>>,
-) -> Json<Vec<BrainTaskSummary>> {
+) -> Json<Vec<SchedTaskSummary>> {
     let status_filter = params.get("status").cloned();
     let limit: usize = params
         .get("limit")
@@ -340,7 +340,7 @@ pub async fn queue_history(
         Err(_) => return Json(Vec::new()),
     };
 
-    let mut summaries: Vec<BrainTaskSummary> = entries
+    let mut summaries: Vec<SchedTaskSummary> = entries
         .into_iter()
         .filter_map(|(_key, value)| serde_json::from_str::<serde_json::Value>(&value).ok())
         .filter(|task| {
@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn task_kind_serializes_as_kebab_case() {
         // Wire format is the contract — downstream agents (and the
-        // `hex brain queue` CLI) grep on these exact strings.
+        // `hex sched queue` CLI) grep on these exact strings.
         assert_eq!(TaskKind::HexCommand.as_str(), "hex-command");
         assert_eq!(TaskKind::Workplan.as_str(), "workplan");
         assert_eq!(TaskKind::Shell.as_str(), "shell");

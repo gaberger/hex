@@ -43,7 +43,7 @@ pub async fn list_classifier_rules() -> Json<Value> {
         });
     }
 
-    // hex-core: brain intent classifier
+    // hex-core: sched intent classifier
     for r in INTENT_RULES {
         rules.push(RuleEntry {
             table: "intent",
