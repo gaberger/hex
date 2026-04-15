@@ -358,8 +358,12 @@ pub async fn execute_workplan(
 
     match exec.start(&body.workplan_path).await {
         Ok(result) => {
+            // Path B (P1.1): surface execution_id at the top level so fire-and-forget
+            // clients (`hex plan execute`) can poll GET /api/workplan/execute/{id}/status
+            // until the execution reaches a terminal state.
+            let execution_id = result.id.clone();
             let mut response = json!({
-                "execution_id": result.id,
+                "execution_id": execution_id,
                 "execution": result,
                 "status": "started",
             });
@@ -753,34 +757,6 @@ pub async fn workplan_report(
             })))
         }
         Ok(None) => (StatusCode::NOT_FOUND, Json(json!({ "error": format!("Workplan '{}' not found", id) }))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
-    }
-}
-
-/// GET /api/workplan/execute/{id}/status — lightweight polling endpoint for execution status
-pub async fn execution_status(
-    State(state): State<SharedState>,
-    Path(id): Path<String>,
-) -> (StatusCode, Json<serde_json::Value>) {
-    let exec = match state.workplan_executor.get() {
-        Some(e) => e,
-        None => return no_executor(),
-    };
-
-    match exec.get_by_id(&id).await {
-        Ok(Some(execution)) => {
-            let status_str = execution.status.as_str();
-            let result = execution.result.as_ref().and_then(|v| {
-                v.as_str().map(|s| s.to_string()).or_else(|| Some(v.to_string()))
-            });
-            (StatusCode::OK, Json(json!({
-                "status": status_str,
-                "result": result,
-                "head_before": execution.head_before,
-                "head_after": execution.head_after,
-            })))
-        }
-        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({ "error": format!("Execution '{}' not found", id) }))),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
     }
 }

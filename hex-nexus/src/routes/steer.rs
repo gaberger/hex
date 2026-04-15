@@ -31,6 +31,17 @@ pub struct SteerRequest {
 fn classify_directive(directive: &str) -> &'static str {
     let lower = directive.to_lowercase();
 
+    // Constraint signals — checked first because imperatives like "must"
+    // are semantically stronger than weak priority hints ("before merge"
+    // would otherwise be misclassified as priority_change).
+    if lower.contains("must")
+        || lower.contains("never")
+        || lower.contains("always")
+        || (lower.contains("all ") && lower.contains(" should"))
+    {
+        return "constraint_add";
+    }
+
     // Priority signals
     if lower.contains("first")
         || lower.contains("prioritize")
@@ -47,15 +58,6 @@ fn classify_directive(directive: &str) -> &'static str {
         || (lower.contains("use ") && lower.contains("instead"))
     {
         return "approach_change";
-    }
-
-    // Constraint signals
-    if lower.contains("must")
-        || lower.contains("never")
-        || lower.contains("always")
-        || (lower.contains("all ") && lower.contains(" should"))
-    {
-        return "constraint_add";
     }
 
     // Quality preference signals
