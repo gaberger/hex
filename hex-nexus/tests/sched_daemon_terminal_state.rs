@@ -124,6 +124,36 @@ fn make_workplan_task(id: &str, project_id: &str) -> Value {
         "created_at": chrono::Utc::now().to_rfc3339(),
         "completed_at": null,
         "result": null,
+        "timeout_s": 1800,
+    })
+}
+
+fn make_workplan_task_with_timeout(id: &str, project_id: &str, timeout_s: u64) -> Value {
+    json!({
+        "id": id,
+        "kind": "workplan",
+        "payload": "docs/workplans/wp-test-daemon-drain.json",
+        "status": "pending",
+        "project_id": project_id,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "completed_at": null,
+        "result": null,
+        "timeout_s": timeout_s,
+    })
+}
+
+fn make_expired_in_progress_task(id: &str, project_id: &str, timeout_s: u64) -> Value {
+    let expired_at = chrono::Utc::now() - chrono::Duration::seconds((timeout_s + 60) as i64);
+    json!({
+        "id": id,
+        "kind": "workplan",
+        "payload": "docs/workplans/wp-test-sweep.json",
+        "status": "in_progress",
+        "project_id": project_id,
+        "created_at": expired_at.to_rfc3339(),
+        "completed_at": null,
+        "result": null,
+        "timeout_s": timeout_s,
     })
 }
 
@@ -339,5 +369,116 @@ async fn stuck_task_remains_in_progress_without_sweep() {
     assert!(
         body["queue_running"].as_u64().unwrap_or(0) > 0,
         "stuck task should still show as running (no sweep yet): {body}"
+    );
+}
+
+// ── Test: Expired in_progress task gets swept to failed ───────────
+//
+// P2.2: A task stored with created_at in the past (beyond timeout_s +
+// 30s grace) should be retrievable as "failed" after an external sweep
+// updates it. This test simulates what sweep_stuck_tasks() does by
+// checking the timeout arithmetic and performing the status flip via REST.
+
+#[tokio::test]
+async fn expired_in_progress_task_swept_to_failed() {
+    let addr = start_hub().await;
+    let client = Client::new();
+    let project = "test-sweep-proj";
+    let task_id = "test-sweep-expired";
+    let timeout_s: u64 = 5;
+
+    let task = make_expired_in_progress_task(task_id, project, timeout_s);
+    store_brain_task(&client, addr, &task).await;
+
+    // Verify it shows as running
+    let status_resp = client
+        .get(brain_status_url(addr, project))
+        .send()
+        .await
+        .expect("GET brain/status");
+    assert!(status_resp.status().is_success());
+    let body: Value = status_resp.json().await.expect("parse status");
+    assert!(
+        body["queue_running"].as_u64().unwrap_or(0) > 0,
+        "expired task should initially show as running: {body}"
+    );
+
+    // Simulate the sweep: read task, check age > timeout_s + 30s grace, flip to failed
+    let key = format!("brain-task:{}", task_id);
+    let resp = client
+        .get(format!("http://{}/api/hexflo/memory/{}", addr, key))
+        .send()
+        .await
+        .expect("GET task");
+    let mem: Value = resp.json().await.expect("parse memory");
+    let value_str = mem["value"].as_str().unwrap_or("{}");
+    let task_val: Value = serde_json::from_str(value_str).expect("parse task json");
+
+    let created_str = task_val["created_at"].as_str().expect("created_at");
+    let created = chrono::DateTime::parse_from_rfc3339(created_str)
+        .expect("parse created_at")
+        .with_timezone(&chrono::Utc);
+    let age = chrono::Utc::now().signed_duration_since(created);
+    let stored_timeout = task_val["timeout_s"].as_u64().unwrap_or(1800);
+    let deadline = stored_timeout + 30; // grace
+
+    assert!(
+        age.num_seconds() >= deadline as i64,
+        "task age {}s must exceed deadline {}s for sweep",
+        age.num_seconds(),
+        deadline,
+    );
+
+    // Perform the sweep update
+    update_brain_task_status(
+        &client,
+        addr,
+        task_id,
+        "failed",
+        Some(&format!(
+            "timeout sweep: in_progress for {}s exceeds {}s",
+            age.num_seconds(),
+            deadline,
+        )),
+    )
+    .await;
+
+    // Verify task is now failed
+    let history_resp = client
+        .get(format!(
+            "http://{}/api/brain/queue/history?status=failed",
+            addr
+        ))
+        .send()
+        .await
+        .expect("GET history");
+    assert!(history_resp.status().is_success());
+    let history: Vec<Value> = history_resp.json().await.expect("parse history");
+    let entry = history.iter().find(|t| t["id"].as_str() == Some(task_id));
+    assert!(
+        entry.is_some(),
+        "swept task must appear in failed history"
+    );
+    let result_text = entry.unwrap()["result_truncated"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        result_text.contains("timeout sweep"),
+        "sweep reason must be in result: got '{}'",
+        result_text,
+    );
+
+    // Running count should be zero
+    let status_resp = client
+        .get(brain_status_url(addr, project))
+        .send()
+        .await
+        .expect("GET brain/status after sweep");
+    assert!(status_resp.status().is_success());
+    let body: Value = status_resp.json().await.expect("parse status after sweep");
+    assert_eq!(
+        body["queue_running"].as_u64().unwrap_or(99),
+        0,
+        "no running tasks after sweep: {body}"
     );
 }

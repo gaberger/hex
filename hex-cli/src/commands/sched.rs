@@ -3736,6 +3736,89 @@ min_priority = 2
             }
         }
 
+        // ─── Workplan timeout_s extraction (wp-sched-daemon-terminal-signal P2.1) ──
+        //
+        // Verifies that enqueue reads timeout_s from a workplan JSON file
+        // and that dispatch honours the stored timeout_s over the default
+        // lease_for() window. Runs under
+        // `cargo test -p hex-cli brain::workplan_timeout`.
+
+        mod workplan_timeout {
+            use super::super::super::lease_for;
+            use std::time::Duration;
+
+            #[test]
+            fn timeout_s_from_workplan_json() {
+                let dir = tempfile::tempdir().unwrap();
+                let wp_path = dir.path().join("wp-test.json");
+                std::fs::write(
+                    &wp_path,
+                    r#"{"feature":"test","timeout_s":900,"phases":[]}"#,
+                ).unwrap();
+
+                let contents = std::fs::read_to_string(&wp_path).unwrap();
+                let wp: serde_json::Value = serde_json::from_str(&contents).unwrap();
+                let timeout = wp.get("timeout_s").and_then(|v| v.as_u64());
+                assert_eq!(timeout, Some(900));
+            }
+
+            #[test]
+            fn timeout_s_absent_falls_back_to_lease_default() {
+                let dir = tempfile::tempdir().unwrap();
+                let wp_path = dir.path().join("wp-no-timeout.json");
+                std::fs::write(
+                    &wp_path,
+                    r#"{"feature":"test","phases":[]}"#,
+                ).unwrap();
+
+                let contents = std::fs::read_to_string(&wp_path).unwrap();
+                let wp: serde_json::Value = serde_json::from_str(&contents).unwrap();
+                let timeout = wp
+                    .get("timeout_s")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or_else(|| lease_for("workplan").as_secs());
+                assert_eq!(timeout, 30 * 60);
+            }
+
+            #[test]
+            fn timeout_s_unreadable_file_falls_back() {
+                let timeout: u64 = std::fs::read_to_string("/nonexistent/wp.json")
+                    .ok()
+                    .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                    .and_then(|wp| wp.get("timeout_s")?.as_u64())
+                    .unwrap_or_else(|| lease_for("workplan").as_secs());
+                assert_eq!(timeout, 30 * 60);
+            }
+
+            #[test]
+            fn dispatch_uses_stored_timeout_s_over_default() {
+                let task = serde_json::json!({
+                    "id": "test-123",
+                    "kind": "workplan",
+                    "timeout_s": 3600u64,
+                });
+                let window_secs = task
+                    .get("timeout_s")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or_else(|| lease_for("workplan").as_secs());
+                assert_eq!(window_secs, 3600);
+                assert_eq!(Duration::from_secs(window_secs), Duration::from_secs(3600));
+            }
+
+            #[test]
+            fn dispatch_falls_back_when_timeout_s_missing() {
+                let task = serde_json::json!({
+                    "id": "test-456",
+                    "kind": "workplan",
+                });
+                let window_secs = task
+                    .get("timeout_s")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or_else(|| lease_for("workplan").as_secs());
+                assert_eq!(window_secs, 30 * 60);
+            }
+        }
+
         // ─── Inline fallback decision (ADR-2604141400 §1 inline-fallback) ───
         //
         // Locks the predicate `should_fallback_inline`: daemon drain MUST

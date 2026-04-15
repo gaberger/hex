@@ -37,6 +37,11 @@ pub struct Workplan {
     /// Present when status is `Superseded` — points to the absorbing workplan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersession: Option<SupersessionRecord>,
+    /// Per-workplan timeout override in seconds. When set, the sched daemon
+    /// uses this as the lease window instead of the default 30-minute
+    /// workplan lease (ADR-2604141400 §2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_s: Option<u64>,
 }
 
 /// A phase within a workplan — maps to a hex architecture tier.
