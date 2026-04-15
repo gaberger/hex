@@ -2820,7 +2820,12 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
                 combined.push_str("\n--- stderr ---\n");
                 combined.push_str(&String::from_utf8_lossy(&out.stderr));
             }
-            let mut snippet: String = combined.chars().take(500).collect();
+            // Keep the TAIL of output (not head) — errors land at the end of
+            // stdout/stderr; truncating from the front hides them. 8000 chars
+            // is enough for full error context without bloating the STDB row.
+            let count = combined.chars().count();
+            let skip = count.saturating_sub(8000);
+            let mut snippet: String = combined.chars().skip(skip).collect();
             // ADR-2604141400 §1 P1: for workplan tasks, require that HEAD
             // actually moved. `hex plan execute` exits 0 in multiple no-op
             // paths (tasks already done, inference unavailable, empty
