@@ -46,37 +46,37 @@ hex                          # Status + getting-started guide (no args)
 open http://localhost:5555   # Live dashboard
 ```
 
-### Essential Commands (ADR-2604132200 CLI simplification)
+### Essential Commands
 
-`hex` now consolidates 40+ top-level commands into a small, ambient-first surface:
+`hex` exposes a small, ambient-first surface:
 
 ```bash
 hex                          # Status + next-step suggestions
 hex go                       # Autonomous next-action — rebuild stale binaries, run validate, suggest fixes
-hex hey <text>               # Natural-language interface (ADR-2604140000) — "hey calibrate inference"
+hex hey <text>               # Natural-language interface — "hey calibrate inference"
 hex brief                    # Progressive context brief (Pulse → Brief → Console)
-hex config | dev | override  # Grouped subcommands (replaces 40+ flat commands)
+hex config | dev | override  # Grouped subcommands
 ```
 
 See [Getting Started](docs/GETTING-STARTED.md) for full installation and standalone setup.
 
 ---
 
-## Autonomous Operation (Brain Daemon)
+## Autonomous Operation (Sched Daemon)
 
-hex ships with a supervisor loop (ADR-2604132300) that validates the project and drains a task queue on a fixed tick. Pair it with `hex hey` for natural-language dispatch and `hex brain enqueue` for explicit work.
+hex ships with a supervisor loop that validates the project and drains a task queue on a fixed tick. Pair it with `hex hey` for natural-language dispatch and `hex sched enqueue` for explicit work.
 
 ```bash
 # 1. Start the supervisor in the background
-hex brain daemon --background --interval 30
+hex sched daemon --background --interval 30
 
 # 2. Enqueue work (natural language OR explicit)
 hex hey calibrate inference                                  # Classified via keyword + local LLM fallback
 hex hey --queue "rebuild nexus and run validate"             # Async — daemon picks it up on next tick
-hex brain enqueue workplan docs/workplans/wp-foo.json        # Explicit workplan task
-hex brain enqueue validate                                   # Run self-consistency checks
+hex sched enqueue workplan docs/workplans/wp-foo.json        # Explicit workplan task
+hex sched enqueue validate                                   # Run self-consistency checks
 
-# 2a. Remote shell via SSH + LLM translation (ADR-2604141200)
+# 2a. Remote shell via SSH + LLM translation
 hex hey check gpu memory on bazzite          # qwen3:4b translates → ssh bazzite rocm-smi
 hex hey show disk usage on bazzite           # → ssh bazzite df
 hex hey list running ollama models on bazzite  # → ssh bazzite ollama ps
@@ -84,71 +84,24 @@ hex hey list running ollama models on bazzite  # → ssh bazzite ollama ps
 # teach the LLM which commands are appropriate per machine.
 
 # 3. Inspect & control
-hex brain queue list                                         # Pending/in-flight/done tasks
-hex brain validate                                           # Self-consistency: CLI wiring, binary freshness,
-                                                             # workplan status, MCP parity, worktree health (ADR-2604131945)
-hex brain daemon status                                      # PID, last tick, tick count
-hex brain daemon stop                                        # Graceful shutdown
+hex sched queue list                                         # Pending/in-flight/done tasks
+hex sched validate                                           # Self-consistency: CLI wiring, binary freshness,
+                                                             # workplan status, MCP parity, worktree health
+hex sched daemon status                                      # PID, last tick, tick count
+hex sched daemon stop                                        # Graceful shutdown
 ```
 
-Every tick (default 30s) the daemon: runs `brain validate`, applies safe auto-fixes, drains one queued task. Code-first execution (ADR-2604131630) means most tasks complete without hitting an LLM — inference is an accelerator, not a gate. Strategy hints on workplan tasks route work to templates, AST transforms, or scripts first.
+Every tick (default 30s) the daemon: runs `sched validate`, applies safe auto-fixes, drains one queued task. Code-first execution means most tasks complete without hitting an LLM — inference is an accelerator, not a gate. Strategy hints on workplan tasks route work to templates, AST transforms, or scripts first.
 
 Related:
 - `hex plan reconcile --update` — reconcile workplan status against git evidence
-- `hex worktree merge` — integrity-verified merge with `cargo check` gate (ADR-2604131930)
+- `hex worktree merge` — integrity-verified merge with `cargo check` gate
 
 ---
 
-## Formal Verification (TLA+)
+## Formal Verification
 
-hex ships TLA+ models of its coordination, scheduling, and feature-pipeline state machines. The goal is not symbolic decoration — it's catching liveness/safety bugs in the spec before they ship as production regressions.
-
-```
-docs/algebra/
-  hexflo.tla          Swarm coordination
-  sched_daemon.tla    Queue drain + task lifecycle
-  lifecycle.tla       7-phase feature pipeline
-```
-
-Each model pairs with a `.cfg` file that binds constants and selects which invariants + liveness properties to check with TLC.
-
-**Worked example — `sched_daemon.tla`:**
-
-A prod smoke test reproduced a bug where the sched daemon marked tasks `in_progress` but never transitioned to a terminal state. We modeled the daemon's task lifecycle in TLA+ with two configs:
-
-| Config | Spec | Result |
-|---|---|---|
-| `sched_daemon_buggy.cfg` | `DispatchVacuous` reachable, no `WF(TimeoutSweep)` | TLC finds a 3-state counterexample violating `HandleInvariant`: `pending → Claim → claimed → DispatchVacuous → in_progress (handle=FALSE)` |
-| `sched_daemon_fixed.cfg` | `NextFixed` removes `DispatchVacuous`, adds `EvidenceRequired` invariant + WF on `TimeoutSweep` | 14 states checked, all safety + liveness properties hold (`TerminalReachable`, `BoundedTermination`) |
-
-The model told us exactly what the Rust fix needed to be — three changes mapping 1:1 to TLA+ actions:
-
-| TLA+ | Rust |
-|---|---|
-| `HandleInvariant` | Don't mutate `task.status = InProgress` until the executor response future is bound — reorder dispatch around `.await` |
-| `EvidenceRequired` | Call `validate_dispatch_evidence()` on the executor response *on the daemon side* before the InProgress transition |
-| `TimeoutSweep` under weak fairness | Unconditional sweep loop that auto-fails `in_progress` tasks older than `timeout_s + 30s grace` |
-
-Prod verification after the fix: task `ffc4d78e` (workplan with `timeout_s: 30`) traced `pending → in_progress → failed` in 70 s via the sweep — the exact liveness property TLC proved.
-
-**Running TLC:**
-
-```bash
-# one-time — install the TLA+ toolset (~2.3 MB)
-mkdir -p ~/.local/share/tla
-curl -sLo ~/.local/share/tla/tla2tools.jar \
-  https://github.com/tlaplus/tlaplus/releases/latest/download/tla2tools.jar
-
-# check a model
-java -cp ~/.local/share/tla/tla2tools.jar tlc2.TLC \
-  -config docs/algebra/sched_daemon_fixed.cfg \
-  -workers auto \
-  docs/algebra/sched_daemon.tla
-```
-
-**When to add a new module:** any daemon, queue, reconciler, or state machine with three or more states and at least one liveness concern ("every X eventually reaches Y"). Small sub-system state spaces (< 1000 states) model-check in well under a second on modern hardware, so the cost is almost entirely authorship.
-
-See [ADR-2604111229 (algebraic formalization)](docs/adrs/ADR-2604111229-algebraic-formalization-of-process-flow.md) and [ADR-2604142155 (sched daemon stuck in_progress)](docs/adrs/ADR-2604142155-sched-daemon-stuck-in-progress.md) for the full decision trail.
+hex ships TLA+ models of its coordination, scheduling, and feature-pipeline state machines under `docs/algebra/`, model-checked with TLC for safety and liveness. See [Formal Verification (TLA+)](docs/FORMAL-VERIFICATION.md) for the model catalogue, worked examples, and how to run TLC locally.
 
 ---
 
@@ -174,6 +127,7 @@ See [Architecture](docs/ARCHITECTURE.md) for crate details, agent roles, enforce
 | [Architecture](docs/ARCHITECTURE.md) | System components, enforcement rules, agent roles, swarm coordination, security |
 | [Getting Started](docs/GETTING-STARTED.md) | Installation, essential commands, standalone mode, remote agents |
 | [Inference](docs/INFERENCE.md) | Tiered routing, RL self-improvement, code-first execution, GBNF grammars, benchmarking |
+| [Formal Verification](docs/FORMAL-VERIFICATION.md) | TLA+ models for coordination, scheduling, and feature-pipeline state machines |
 | [Comparison](docs/COMPARISON.md) | hex vs BAML, SpecKit, HUD, LangChain, CrewAI, AutoGen, Claude Agent SDK |
 | [Developer Experience](docs/DEVELOPER-EXPERIENCE.md) | Pulse/Brief/Console/Override layers, trust delegation, workplan dispatch |
 | [Architecture Decision Records](docs/adrs/) | 161 decisions (151 accepted) — the "why" behind every design choice |
