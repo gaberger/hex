@@ -1,0 +1,199 @@
+{
+  "adr": "ADR-2604151330",
+  "description": "Move sched queue + daemon PID + sweep-state from ~/.hex/ (global) to <workspace_root>/.hex/sched/ (per-project) per ADR-2604151330. Includes one-time migration of in-scope tasks from the legacy global queue, daemon binding to its workspace_root, orphan-task GC for missing workplan files, and a hex sched gc-global escape hatch.",
+  "id": "wp-sched-queue-per-project",
+  "phases": [
+    {
+      "id": "P1",
+      "tasks": [
+        {
+          "evidence": [
+            "grep -nE 'fn sched_state_dir|fn sched_queue_path' hex-cli/src/commands/sched.rs",
+            "test $(grep -c 'brain-state.json' hex-cli/src/commands/sched.rs) -le 1",
+            "cargo check -p hex-cli"
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add fn sched_state_dir(workspace_root: &Path) -> PathBuf returning <workspace_root>/.hex/sched/. Add fn sched_queue_path / sched_pid_path / sched_log_path / sched_sweep_marker_path helpers. Replace all hard-coded PathBuf::from(home).join('.hex').join('brain-state.json') call sites in hex-cli/src/commands/sched.rs with these helpers."
+        },
+        {
+          "evidence": [
+            "grep -n 'find_workspace_root' hex-cli/src/commands/sched.rs",
+            "grep -n 'not in a hex project' hex-cli/src/commands/sched.rs"
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Every entry-point function (queue_drain, queue_list, queue_enqueue, daemon_start, daemon_stop, daemon_status, …) must resolve workspace_root via the existing find_workspace_root() helper at the top and pass it down. If find_workspace_root returns None, error with: 'hex sched: not in a hex project (no .hex/ or .git/ found from cwd up). Run `hex init` or cd into a project first.'"
+        },
+        {
+          "evidence": [
+            "grep -nE 'test_queue_path_per_project|test_workspace_root_required' hex-cli/src/commands/sched.rs",
+            "cargo test -p hex-cli sched_queue_path"
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.3",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Unit test: queue_path is <workspace_root>/.hex/sched/queue.json regardless of HOME env, and find_workspace_root None case errors with the exact user-facing message."
+        }
+      ],
+      "title": "Path resolution + workspace binding"
+    },
+    {
+      "id": "P2",
+      "tasks": [
+        {
+          "evidence": [
+            "grep -n 'workspace_root' hex-cli/src/commands/sched.rs",
+            "grep -n 'started_at' hex-cli/src/commands/sched.rs"
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P2.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "PID file format becomes JSON: { pid: u32, workspace_root: String, started_at: <RFC3339> }. daemon_start writes this; daemon_status reads + verifies pid still alive AND workspace_root matches the cwd's resolved root (else: 'daemon for this workspace not running; another daemon may be running for <other_root>')."
+        },
+        {
+          "evidence": [
+            "test -f hex-cli/tests/sched_per_project_isolation.rs",
+            "cargo test -p hex-cli sched_per_project_isolation"
+          ],
+          "files": [
+            "hex-cli/tests/sched_per_project_isolation.rs"
+          ],
+          "id": "P2.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Smoke test: spawn daemon in tmpdir-A, spawn daemon in tmpdir-B, both succeed, both have distinct PID files, queue_list in A does not show tasks enqueued in B."
+        }
+      ],
+      "title": "Daemon binds to workspace_root"
+    },
+    {
+      "id": "P3",
+      "tasks": [
+        {
+          "evidence": [
+            "grep -nE 'migrate_from_global|\\.migrated-from-global' hex-cli/src/commands/sched.rs"
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P3.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "On any sched command that reads the queue: if <workspace_root>/.hex/sched/queue.json does not exist AND ~/.hex/brain-state.json does AND <workspace_root>/.hex/sched/.migrated-from-global does not exist, run the migration: load global, partition tasks by whether kind=workplan resolves to a file under workspace_root, write the in-scope tasks to the new per-project queue, write the marker file, print the one-line stderr notice. NEVER delete from the global queue (that's gc-global's job)."
+        },
+        {
+          "evidence": [
+            "grep -n 'gc-global\\|GcGlobal' hex-cli/src/commands/sched.rs"
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P3.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add `hex sched gc-global` subcommand: errors if ~/.hex/brain-state.json contains any tasks not migrated by ANY known project (cross-references .migrated-from-global markers under known project roots in ~/.hex/projects/). On confirmation, deletes the legacy file. Add --force to bypass the safety check."
+        },
+        {
+          "evidence": [
+            "grep -n 'test_migration_partitions_by_project' hex-cli/src/commands/sched.rs",
+            "cargo test -p hex-cli migration_partitions"
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P3.3",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "title": "Migration unit test: seed ~/.hex/brain-state.json with 3 tasks (one for project-A, one for project-B, one shell task), run migration in project-A's tmpdir, assert only the project-A task is in the new queue, the global file is unchanged, the marker file exists."
+        }
+      ],
+      "title": "One-time migration from global queue"
+    },
+    {
+      "id": "P4",
+      "tasks": [
+        {
+          "evidence": [
+            "grep -n 'workplan_file_missing' hex-cli/src/commands/sched.rs"
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P4.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Before draining a kind=workplan task, check workspace_root.join(task.path) exists + is readable. If not, mark task failed with snippet 'workplan_file_missing: <path>' WITHOUT spawning the subprocess. Increment a per-day counter so we don't loop forever on the same orphan."
+        },
+        {
+          "evidence": [
+            "grep -n 'test_orphan_workplan_marked_failed' hex-cli/src/commands/sched.rs",
+            "cargo test -p hex-cli orphan_workplan"
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P4.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Unit test: enqueue a workplan task pointing at a non-existent path, drain once, assert task is marked failed with workplan_file_missing reason and no subprocess was spawned."
+        }
+      ],
+      "title": "Orphan-task GC"
+    },
+    {
+      "id": "P5",
+      "tasks": [
+        {
+          "evidence": [
+            "cargo check --workspace",
+            "cargo test --workspace --no-fail-fast"
+          ],
+          "files": [],
+          "id": "P5.1",
+          "status": "done",
+          "strategy_hint": "script",
+          "title": "Workspace build gate: cargo check --workspace + cargo test --workspace --no-fail-fast both pass."
+        },
+        {
+          "evidence": [
+            "cargo build -p hex-cli --release"
+          ],
+          "files": [],
+          "id": "P5.2",
+          "status": "done",
+          "strategy_hint": "script",
+          "title": "Rebuild release binaries (cargo build -p hex-cli --release) and smoke test in two tmpdirs: enqueue task in dir-A, queue list in dir-B shows zero tasks. Repeat with --watch to confirm daemon binding."
+        },
+        {
+          "evidence": [
+            "grep -n '.hex/sched/queue.json' CLAUDE.md",
+            "test $(grep -c 'brain-state.json' CLAUDE.md) -eq 0"
+          ],
+          "files": [
+            "CLAUDE.md"
+          ],
+          "id": "P5.3",
+          "status": "done",
+          "strategy_hint": "transform",
+          "title": "Update CLAUDE.md sched section: document new path layout, migration behavior, gc-global command, and orphan-task GC. Replace any references to ~/.hex/brain-state.json with the per-project path."
+        }
+      ],
+      "title": "Verification + binary rebuild + docs"
+    }
+  ]
+}
