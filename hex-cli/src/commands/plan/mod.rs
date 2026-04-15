@@ -73,6 +73,15 @@ pub enum PlanAction {
         /// loop. Combine with `--update` to persist demotions.
         #[arg(long, default_value_t = false)]
         audit: bool,
+        /// Print per-task verdict and reasons without mutating the workplan
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+        /// Show full evidence detail for a single task
+        #[arg(long)]
+        why: Option<String>,
+        /// Force-promote a task regardless of evidence (logs forced_by for audit)
+        #[arg(long)]
+        force: Option<String>,
     },
     /// Output the canonical workplan JSON schema
     Schema,
@@ -337,7 +346,9 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::History => show_execution_history().await,
         PlanAction::Report { id } => show_execution_report(&id).await,
         PlanAction::Schema => show_schema().await,
-        PlanAction::Reconcile { file, update, audit } => reconcile::run(&file, update, audit).await,
+        PlanAction::Reconcile { file, update, audit, dry_run, why, force } => {
+            reconcile::run(&file, update, audit, dry_run, why.as_deref(), force.as_deref()).await
+        }
         PlanAction::Draft { prompt, background } => draft_plan(&prompt, background).await,
         PlanAction::Drafts { action } => drafts_dispatch(action).await,
         PlanAction::Lint { file, all } => lint::run(file.as_deref(), all).await,
