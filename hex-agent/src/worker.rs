@@ -1,13 +1,13 @@
-//! Remote-shell brain-task worker (ADR-2604141200 P3).
+//! Remote-shell sched-task worker (ADR-2604141200 P3).
 //!
-//! Polls nexus hexflo-memory for pending brain-task records with
+//! Polls nexus hexflo-memory for pending sched-task records with
 //! kind=remote-shell and payload.host == local hostname, argv-splits the
 //! command, re-checks against a local whitelist (sender is not trusted),
 //! marks the task `in_progress`, and spawns the command via
 //! `tokio::process::Command`.
 //!
 //! P3.2 will extend [`RemoteShellWorker::dispatch`] to wait for the
-//! child, capture stdout/stderr/exit, and PATCH the brain task with the
+//! child, capture stdout/stderr/exit, and PATCH the sched task with the
 //! result. P3.1 only wires the poll → mark → spawn path.
 
 use serde::{Deserialize, Serialize};
@@ -83,7 +83,7 @@ pub fn local_hostname() -> String {
     "unknown".to_string()
 }
 
-/// Structured payload for a remote-shell brain task. Mirrors
+/// Structured payload for a remote-shell sched task. Mirrors
 /// `hex_nexus::routes::brain::RemoteShellPayload`. Duplicated so
 /// hex-agent doesn't take a compile-time dep on hex-nexus.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -98,7 +98,7 @@ impl RemoteShellPayload {
     }
 }
 
-/// Minimal brain-task view — the fields the worker reads. Full task
+/// Minimal sched-task view — the fields the worker reads. Full task
 /// records carry more (project_id, created_at, lease, result); those
 /// are preserved across updates by round-tripping through
 /// `serde_json::Value` in [`RemoteShellWorker::mark_in_progress`].
@@ -134,7 +134,7 @@ impl RemoteShellWorker {
         }
     }
 
-    /// One poll tick: list pending brain tasks, filter to remote-shell
+    /// One poll tick: list pending sched tasks, filter to remote-shell
     /// tasks addressed to this host, and dispatch each. Returns the
     /// number of tasks dispatched; a per-task failure is logged but
     /// does not abort the tick.
@@ -232,7 +232,7 @@ impl RemoteShellWorker {
         // Recheck the whitelist here — never trust that the enqueue side
         // (hex-cli on a sender host) applied it correctly or honestly.
         // A task left in `pending` after a rejection is intentional:
-        // operators see the attempted command in `hex brain queue list`.
+        // operators see the attempted command in `hex sched queue list`.
         if !is_whitelisted(&payload.command) {
             anyhow::bail!(
                 "refusing non-whitelisted remote-shell command on {}: `{}`",
