@@ -137,7 +137,7 @@ pub enum BrainAction {
         /// Task payload (command args, workplan path, or shell command)
         payload: String,
     },
-    /// Manage the brain task queue
+    /// Manage the sched task queue
     Queue {
         #[command(subcommand)]
         action: QueueAction,
@@ -162,13 +162,13 @@ pub enum BrainAction {
 
 #[derive(Subcommand)]
 pub enum QueueAction {
-    /// List pending brain tasks
+    /// List pending sched tasks
     List,
     /// Clear completed/failed tasks
     Clear,
     /// Force drain and execute pending tasks now
     Drain,
-    /// Show recent brain tasks across all statuses (wp-sched-queue-history P1.3).
+    /// Show recent sched tasks across all statuses (wp-sched-queue-history P1.3).
     ///
     /// Primary use: verify the ADR-2604141400 §1 P1 evidence-guard correctly
     /// flipped silent-drain workplans to `failed`. Filter with `--status failed`
@@ -203,7 +203,7 @@ pub async fn run(action: BrainAction) -> anyhow::Result<()> {
         BrainAction::DaemonStatus => daemon_status(),
         BrainAction::Enqueue { kind, payload } => {
             let id = enqueue_brain_task(&kind, &payload).await?;
-            println!("⬡ enqueued brain task {id} ({kind}: {payload})");
+            println!("⬡ enqueued sched task {id} ({kind}: {payload})");
             Ok(())
         }
         BrainAction::Queue { action } => match action {
@@ -1710,7 +1710,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    println!("  ⬡ leasing brain task {id} ({kind})");
+                    println!("  ⬡ leasing sched task {id} ({kind})");
                     let outcome = match dispatch_brain_task(&task).await {
                         Ok(handle) => classify_dispatch(&handle).await,
                         Err(err) => DispatchOutcome::Error(err.to_string()),
@@ -2340,7 +2340,7 @@ fn brain_project_id() -> Option<String> {
     parsed["id"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string())
 }
 
-/// Fire-and-forget operator notification on brain task completion/failure
+/// Fire-and-forget operator notification on sched task completion/failure
 /// (wp-brain-updates P1.1). priority=1 on Completed, priority=2 on Failed.
 /// Called inline from the daemon loop after each task state transition so
 /// operators see outcomes as they happen, not on next pulse.
@@ -2489,7 +2489,7 @@ pub(crate) async fn list_brain_tasks(
     Ok(tasks)
 }
 
-/// Drain up to `limit` pending brain tasks. Reserved for the future `brain daemon` tick loop
+/// Drain up to `limit` pending sched tasks. Reserved for the future sched daemon tick loop
 /// (P3 of ADR-2604132330). Also invoked by `hex brain queue drain` logic indirectly.
 #[allow(dead_code)]
 pub(crate) async fn drain_brain_tasks(limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
@@ -2604,7 +2604,7 @@ pub(crate) async fn sweep_stuck_tasks() -> anyhow::Result<Vec<String>> {
 //
 // The direct-subprocess flow (`execute_brain_task` called inline from the
 // daemon tick) is being replaced by a lease handoff: the daemon registers a
-// swarm task referencing the brain task, stamps `Leased` + `leased_until`,
+// swarm task referencing the sched task, stamps `Leased` + `leased_until`,
 // and walks away. Swarm workers pick the task up, progress it through
 // `InProgress`, and a later confirm-complete path finalises
 // `Completed`/`Failed`. If the lease expires without progress, the sweeper
@@ -2615,7 +2615,7 @@ pub(crate) async fn sweep_stuck_tasks() -> anyhow::Result<Vec<String>> {
 // kinds so trivial tasks don't pay the swarm round-trip.
 
 /// Handle returned by [`dispatch_brain_task`]. Captures the ids the sweeper
-/// (P2) and confirm-complete path need to correlate a brain task with the
+/// (P2) and confirm-complete path need to correlate a sched task with the
 /// swarm that holds its lease. `brain_task_id` and `leased_to` are surfaced
 /// verbatim for callers that log or reconcile handles — the sweeper reads
 /// them after a lease expires.
@@ -2686,15 +2686,15 @@ pub(crate) async fn classify_dispatch(handle: &LeaseHandle) -> DispatchOutcome {
     }
 }
 
-/// Hand a pending brain task off to a `brain-lease` swarm. Returns a
+/// Hand a pending sched task off to a `sched-lease` swarm. Returns a
 /// [`LeaseHandle`] the daemon can surface to the sweeper.
 ///
 /// Steps:
-/// 1. Find or create a `brain-lease` swarm scoped to the task's project.
-/// 2. Register a swarm task whose title embeds `brain-task:<id>` so workers
-///    polling the swarm can resolve back to the brain task.
+/// 1. Find or create a `sched-lease` swarm scoped to the task's project.
+/// 2. Register a swarm task whose title embeds `sched-task:<id>` so workers
+///    polling the swarm can resolve back to the sched task.
 /// 3. Stamp `Leased` + `leased_to` (swarm id) + `leased_until` (wall clock
-///    deadline from [`lease_for`]) + `swarm_task_id` on the brain task
+///    deadline from [`lease_for`]) + `swarm_task_id` on the sched task
 ///    record, and bump `lease_attempts`.
 pub(crate) async fn dispatch_brain_task(
     task: &serde_json::Value,
@@ -2704,7 +2704,7 @@ pub(crate) async fn dispatch_brain_task(
     let brain_task_id = task
         .get("id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("brain task missing id"))?
+        .ok_or_else(|| anyhow::anyhow!("sched task missing id"))?
         .to_string();
     let kind = task
         .get("kind")
@@ -2731,7 +2731,7 @@ pub(crate) async fn dispatch_brain_task(
     };
 
     // Truncate payload in the title so a runaway multi-KB shell payload
-    // doesn't blow up swarm UIs. The full payload stays on the brain task.
+    // doesn't blow up swarm UIs. The full payload stays on the sched task.
     let payload_snippet: String = payload.chars().take(80).collect();
     let title = format!("brain-task:{} [{}] {}", brain_task_id, kind, payload_snippet);
     let resp = nexus
@@ -3025,7 +3025,7 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
 async fn queue_list() -> anyhow::Result<()> {
     let tasks = list_brain_tasks(Some("pending")).await?;
     if tasks.is_empty() {
-        println!("{}", "No pending brain tasks.".yellow());
+        println!("{}", "No pending sched tasks.".yellow());
         return Ok(());
     }
     println!("{}", "Pending Brain Tasks".green().bold());
@@ -3083,7 +3083,7 @@ async fn queue_history(status: Option<String>, limit: u32) -> anyhow::Result<()>
             .as_deref()
             .map(|s| format!(" (status={})", s))
             .unwrap_or_default();
-        println!("{}", format!("No brain tasks in history{}.", scope).yellow());
+        println!("{}", format!("No sched tasks in history{}.", scope).yellow());
         return Ok(());
     }
 
@@ -3141,7 +3141,7 @@ fn result_tail(s: &str, n: usize) -> String {
     s.chars().skip(count - n).collect()
 }
 
-/// Extract the user-visible target for a brain task row. For
+/// Extract the user-visible target for a sched task row. For
 /// `remote-shell`, that's the destination host parsed out of the JSON
 /// payload. For any other kind, we render `-` so the Target column stays
 /// aligned without leaking implementation details of the payload shape.
@@ -3176,17 +3176,17 @@ async fn queue_clear() -> anyhow::Result<()> {
             }
         }
     }
-    println!("⬡ cleared {cleared} completed/failed brain tasks");
+    println!("⬡ cleared {cleared} completed/failed sched tasks");
     Ok(())
 }
 
 async fn queue_drain() -> anyhow::Result<()> {
     let pending = list_brain_tasks(Some("pending")).await?;
     if pending.is_empty() {
-        println!("{}", "No pending brain tasks to drain.".yellow());
+        println!("{}", "No pending sched tasks to drain.".yellow());
         return Ok(());
     }
-    println!("⬡ draining {} pending brain task(s)...", pending.len());
+    println!("⬡ draining {} pending sched task(s)...", pending.len());
     for task in pending {
         let id = task
             .get("id")
