@@ -254,6 +254,13 @@ pub struct BrainTaskSummary {
     /// Completion timestamp in microseconds since Unix epoch. 0 when the task
     /// has not yet completed or the timestamp is unparseable.
     pub completed_at_us: i64,
+    /// Workplan timeout in seconds plumbed through the enqueue payload
+    /// (ADR-2604142155 P2.1). Used by the daemon's `sweep_stuck_tasks()` to
+    /// auto-fail tasks that exceed `timeout_s + 30s` grace. `None` when the
+    /// stored record predates P2.1 — sweep falls back to the kind-default
+    /// lease window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_s: Option<u64>,
 }
 
 /// Parse an RFC3339 timestamp into microseconds since Unix epoch. Returns 0 on
@@ -292,6 +299,7 @@ fn summarize_task(task: &serde_json::Value) -> BrainTaskSummary {
         result_truncated: result.chars().take(300).collect(),
         created_at_us: rfc3339_to_us(created_at),
         completed_at_us: if completed_at.is_empty() { 0 } else { rfc3339_to_us(completed_at) },
+        timeout_s: task.get("timeout_s").and_then(|v| v.as_u64()),
     }
 }
 
@@ -458,5 +466,38 @@ mod tests {
     fn rfc3339_to_us_returns_zero_on_garbage() {
         assert_eq!(rfc3339_to_us("not a timestamp"), 0);
         assert_eq!(rfc3339_to_us(""), 0);
+    }
+
+    // ── ADR-2604142155 P2.1: timeout_s surfaced through history ─────────
+    // Operators rely on `hex sched queue history` to verify the daemon's
+    // sweeper armed itself with the workplan's declared timeout. If the
+    // field is dropped at the projection layer the sweep diagnostics are
+    // unverifiable from the operator surface.
+
+    #[test]
+    fn summarize_task_surfaces_timeout_s() {
+        let task = serde_json::json!({
+            "id": "abc",
+            "kind": "workplan",
+            "status": "in_progress",
+            "payload": "docs/workplans/wp-foo.json",
+            "created_at": "2026-04-14T10:00:00Z",
+            "timeout_s": 1800u64,
+        });
+        let s = summarize_task(&task);
+        assert_eq!(s.timeout_s, Some(1800));
+    }
+
+    #[test]
+    fn summarize_task_timeout_s_absent_is_none() {
+        let task = serde_json::json!({
+            "id": "abc",
+            "kind": "shell",
+            "status": "pending",
+            "payload": "echo hi",
+            "created_at": "2026-04-14T10:00:00Z",
+        });
+        let s = summarize_task(&task);
+        assert_eq!(s.timeout_s, None);
     }
 }
