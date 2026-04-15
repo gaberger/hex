@@ -40,6 +40,7 @@ pub mod brain;
 pub mod briefing;
 pub mod pulse;
 pub mod steer;
+pub mod classifier;
 pub mod taste;
 pub mod trust;
 pub mod workplan;
@@ -462,6 +463,7 @@ pub fn build_router(state: SharedState) -> Router {
         // AIOS Experience (ADR-2604131500) — pulse, steer, taste, trust
         .route("/api/pulse", get(pulse::get_pulse))
         .route("/api/steer", post(steer::handle_steer))
+        .route("/api/classifier/rules", get(classifier::list_classifier_rules))
         .route("/api/taste", get(taste::get_taste).post(taste::set_taste))
         .route("/api/taste/{key}", delete(taste::forget_taste))
         .route("/api/taste/{key}/pin", patch(taste::pin_taste))

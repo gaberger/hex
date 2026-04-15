@@ -29,12 +29,12 @@ pub struct SteerRequest {
 /// One rule in the classifier table. `match_fn` returns true when the
 /// (already-lowercased) directive matches. The table is iterated in
 /// declaration order, so position == precedence.
-struct Rule {
-    label: &'static str,
+pub struct Rule {
+    pub label: &'static str,
     /// Human-readable description of the signals this rule keys on.
     /// Surfaces in the rules listing for debuggability.
-    signals: &'static str,
-    match_fn: fn(&str) -> bool,
+    pub signals: &'static str,
+    pub match_fn: fn(&str) -> bool,
 }
 
 /// Classifier rules in precedence order. Ordering is part of the spec —
@@ -43,7 +43,7 @@ struct Rule {
 /// pass before merge" is semantically a constraint, not a priority. A
 /// pre-existing bug had priority before constraint and misfired on that
 /// exact phrase.
-const RULES: &[Rule] = &[
+pub static STEER_RULES: &[Rule] = &[
     Rule {
         label: "constraint_add",
         signals: "must / never / always / all+should",
@@ -89,7 +89,7 @@ const RULES: &[Rule] = &[
 /// Precedence is encoded in `RULES` order — first match wins.
 fn classify_directive(directive: &str) -> &'static str {
     let lower = directive.to_lowercase();
-    RULES
+    STEER_RULES
         .iter()
         .find(|r| (r.match_fn)(&lower))
         .map(|r| r.label)
@@ -222,13 +222,13 @@ mod tests {
     /// a rule above constraint without noticing.
     #[test]
     fn test_rule_table_invariants() {
-        assert!(!RULES.is_empty());
+        assert!(!STEER_RULES.is_empty());
         assert_eq!(
-            RULES[0].label,
+            STEER_RULES[0].label,
             "constraint_add",
             "constraint MUST be first to win over weak priority hints"
         );
-        for r in RULES {
+        for r in STEER_RULES {
             assert!(!r.label.is_empty());
             assert!(!r.signals.is_empty());
         }
