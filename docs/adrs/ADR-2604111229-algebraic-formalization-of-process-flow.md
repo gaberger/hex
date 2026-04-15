@@ -108,7 +108,7 @@ is a follow-up ADR, not this one.
 - **No rewrite of hex-core in Haskell / OCaml / Lean.** The algebra is a
   model, not an implementation language. hex stays in Rust.
 - **No mandatory theorem proving.** Proofs are welcome where they're cheap
-  and catch real bugs. We do not require every commit to ship a Coq proof.
+  and catch real bugs. We do not require every commit to ship a machine-checked proof.
 - **No runtime overhead.** The Σ-algebra is a compile-time model. The
   workflow Petri net lives in documentation, not as a library dependency.
   The π-calculus spec is a TLA+ file checked in CI.
