@@ -631,6 +631,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/workplan/by-path", get(orchestration::workplan_by_path))
         .route("/api/workplan/{id}", get(orchestration::get_workplan))
         .route("/api/workplan/{id}/report", get(orchestration::workplan_report))
+        .route("/api/workplan/execute/{id}/status", get(orchestration::execution_status))
         // Steering API (P3a/b) — must come AFTER /api/agents/{id} to avoid route conflict
         .route("/api/steering/{agent_id}/event", post(orchestration::session_events))
         .route("/api/steering/{agent_id}/interrupt", post(orchestration::session_interrupt))

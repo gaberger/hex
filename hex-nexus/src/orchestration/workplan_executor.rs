@@ -110,6 +110,12 @@ pub struct ExecutionState {
     /// Task IDs that have already completed successfully (used to skip on resume).
     #[serde(default)]
     pub completed_task_ids: Vec<String>,
+    /// Git HEAD before execution started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_before: Option<String>,
+    /// Git HEAD after execution completed/failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_after: Option<String>,
 }
 
 /// Result of a phase gate check (ADR-046).
@@ -535,6 +541,8 @@ impl WorkplanExecutor {
 
         let total_tasks: usize = workplan.phases.iter().map(|p| p.tasks.len()).sum();
 
+        let head_before = Self::capture_git_head();
+
         let exec_state = ExecutionState {
             id: id.clone(),
             workplan_path: workplan_path.to_string(),
@@ -554,6 +562,8 @@ impl WorkplanExecutor {
             phase_results: Vec::new(),
             gate_results: Vec::new(),
             completed_task_ids: Vec::new(),
+            head_before,
+            head_after: None,
         };
 
         // Persist via state port
@@ -1707,12 +1717,29 @@ impl WorkplanExecutor {
             .await?
             .ok_or_else(|| format!("Execution {} not found", execution_id))?;
 
-        state.status = status;
+        state.status = status.clone();
         state.updated_at = chrono::Utc::now().to_rfc3339();
         if let Some(errs) = errors {
             state.result = Some(serde_json::json!({ "errors": errs }));
         }
+        if status == ExecutionStatus::Completed || status == ExecutionStatus::Failed {
+            state.head_after = Self::capture_git_head();
+        }
         Self::store_execution(port, &state).await
+    }
+
+    fn capture_git_head() -> Option<String> {
+        std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            })
     }
 }
 
