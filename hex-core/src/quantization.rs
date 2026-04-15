@@ -45,25 +45,10 @@ impl QuantizationLevel {
     /// Returns `None` if the suffix is not a recognized GGUF quantization tag.
     pub fn from_gguf_tag(tag: &str) -> Option<Self> {
         let lower = tag.to_lowercase();
-        if lower.contains("q2_k") || lower.contains("q2") {
-            Some(QuantizationLevel::Q2)
-        } else if lower.contains("q3_k") || lower.contains("q3") {
-            Some(QuantizationLevel::Q3)
-        } else if lower.contains("q4_k") || lower.contains("q4_0") || lower.contains("q4_1") || lower.contains("q4") {
-            Some(QuantizationLevel::Q4)
-        } else if lower.contains("q5_k") || lower.contains("q5") {
-            // Q5 is between Q4 and Q8 — map to Q4 (conservative)
-            Some(QuantizationLevel::Q4)
-        } else if lower.contains("q8_0") || lower.contains("q8") {
-            Some(QuantizationLevel::Q8)
-        } else if lower.contains("f16") || lower.contains("fp16")
-            || lower.contains("f32") || lower.contains("fp32")
-        {
-            // fp32 is treated as fp16 tier (conservative downgrade)
-            Some(QuantizationLevel::Fp16)
-        } else {
-            None
-        }
+        GGUF_RULES
+            .iter()
+            .find(|r| (r.matches)(&lower))
+            .map(|r| r.level)
     }
 
     /// Detect quantization level from an Ollama model name.
@@ -92,6 +77,34 @@ impl QuantizationLevel {
         }
     }
 }
+
+#[allow(dead_code)]
+pub struct GgufRule {
+    pub label: &'static str,
+    pub level: QuantizationLevel,
+    pub signals: &'static [&'static str],
+    pub matches: fn(&str) -> bool,
+}
+
+fn match_q2(s: &str) -> bool { s.contains("q2_k") || s.contains("q2") }
+fn match_q3(s: &str) -> bool { s.contains("q3_k") || s.contains("q3") }
+fn match_q4(s: &str) -> bool {
+    s.contains("q4_k") || s.contains("q4_0") || s.contains("q4_1") || s.contains("q4")
+}
+fn match_q5(s: &str) -> bool { s.contains("q5_k") || s.contains("q5") }
+fn match_q8(s: &str) -> bool { s.contains("q8_0") || s.contains("q8") }
+fn match_fp16(s: &str) -> bool {
+    s.contains("f16") || s.contains("fp16") || s.contains("f32") || s.contains("fp32")
+}
+
+pub static GGUF_RULES: &[GgufRule] = &[
+    GgufRule { label: "q2", level: QuantizationLevel::Q2, signals: &["q2_k", "q2"], matches: match_q2 },
+    GgufRule { label: "q3", level: QuantizationLevel::Q3, signals: &["q3_k", "q3"], matches: match_q3 },
+    GgufRule { label: "q4", level: QuantizationLevel::Q4, signals: &["q4_k", "q4_0", "q4_1", "q4"], matches: match_q4 },
+    GgufRule { label: "q5_as_q4", level: QuantizationLevel::Q4, signals: &["q5_k", "q5"], matches: match_q5 },
+    GgufRule { label: "q8", level: QuantizationLevel::Q8, signals: &["q8_0", "q8"], matches: match_q8 },
+    GgufRule { label: "fp16", level: QuantizationLevel::Fp16, signals: &["f16", "fp16", "f32", "fp32"], matches: match_fp16 },
+];
 
 impl fmt::Display for QuantizationLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -174,5 +187,18 @@ mod tests {
         for window in tiers.windows(2) {
             assert!(window[0].default_quality_score() < window[1].default_quality_score());
         }
+    }
+
+    #[test]
+    fn gguf_rule_table_invariants() {
+        assert!(GGUF_RULES.len() >= 6, "expected at least 6 GGUF rules");
+        for rule in GGUF_RULES {
+            assert!(!rule.label.is_empty());
+            assert!(!rule.signals.is_empty(), "rule {:?} has no signals", rule.label);
+        }
+        let q2_idx = GGUF_RULES.iter().position(|r| r.label == "q2").unwrap();
+        let q4_idx = GGUF_RULES.iter().position(|r| r.label == "q4").unwrap();
+        assert!(q2_idx < q4_idx,
+            "q2 must precede q4 (q2 contains 'q2' which won't match 'q4', but order documents intent)");
     }
 }

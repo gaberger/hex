@@ -36,10 +36,29 @@ if-elif chains or keyword-array matching to classify input by string content.
 | 11 | `hex-cli/src/pipeline/code_phase.rs` | 1520–1562 | `infer_workplan_language()` | Workplan title + step descriptions → language (rust/go/typescript) | Keyword scoring: each keyword match increments a counter; highest wins |
 | 12 | `hex-cli/src/pipeline/code_phase.rs` | 1583–1589 | (inside `infer_target_path()`) | Step description → file extension (go/rs/ts) | 3-branch if-elif on `.contains()` — **duplicated** at lines 1623–1634 |
 
+## P3.1 Disposition
+
+| # | Status | Rationale |
+|---|--------|-----------|
+| 0 | **Exemplar** | Already rule-table (steer.rs RULES) |
+| 1 | **Converted** | → `INTENT_RULES` in brain.rs |
+| 2 | **Skipped** | Dispatch table, not classifier — each branch constructs unique `TaskIntent` variants with different fields; rule table would relocate complexity without simplifying |
+| 3 | **Converted** | → `GO_LAYER_RULES` in analyze.rs |
+| 4 | **Converted** | → `RUST_LAYER_RULES` in analyze.rs |
+| 5 | **Converted** | → `GGUF_RULES` in quantization.rs |
+| 6 | **Converted** | → `LAYER_RULES` in boundary.rs |
+| 7 | **Converted** | → `KNOWLEDGE_RULES` in hex_knowledge.rs |
+| 8 | **Converted** | → `TASK_TYPE_RULES` in task_type_classifier.rs (folds helpers #9-10) |
+| 9 | **Folded** | Helper fn consumed by `TASK_TYPE_RULES[0]` (shell_command) |
+| 10 | **Folded** | Helper fns consumed by `TASK_TYPE_RULES[1-3]` |
+| 11 | **Skipped** | Scoring classifier — tallies per-language scores, fundamentally different from first-match pattern |
+| 12 | **Skipped** | Inline language detection duplicates — deduplication concern, not rule-table lift |
+
 ## Summary
 
 - **12 distinct classifiers** across 7 files (plus 1 already converted)
-- **Largest**: `classify_intent()` in hey.rs at ~220 lines / 22 branches
-- **Most duplicated**: language detection appears 3× in code_phase.rs (lines 1526–1538, 1583–1589, 1623–1634) with slightly different keyword sets
-- **Layer classification** is implemented independently in 4 places: boundary.rs, analyze.rs (Go), analyze.rs (Rust), hex_knowledge.rs — all classifying paths to hex layers with overlapping but inconsistent logic
+- **7 converted** to rule tables with structural invariant tests
+- **3 skipped** with rationale (dispatch table, scoring, dedup)
+- **2 folded** into parent rule table entries
+- **Largest**: `classify_intent()` in hey.rs at ~220 lines / 22 branches (skipped — dispatch table)
 - **steer.rs** (`#0`) is the exemplar — const rule table with labeled match functions and explicit precedence

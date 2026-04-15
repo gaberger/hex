@@ -72,21 +72,44 @@ ADR Conventions:\n\
 - Create ADR for: new ports, new external dependencies, architectural changes\n\
 - Use `hex adr list` to see existing ADRs and avoid conflicts";
 
+#[allow(dead_code)]
+pub struct KnowledgeRule {
+    pub label: &'static str,
+    pub knowledge: &'static str,
+    pub signals: &'static [&'static str],
+    pub matches: fn(&str) -> bool,
+}
+
+fn match_kn_domain(s: &str) -> bool {
+    s.contains("core/domain") || s.contains("domain/")
+}
+fn match_kn_ports(s: &str) -> bool {
+    s.contains("core/ports") || s.contains("ports/")
+}
+fn match_kn_adapters(s: &str) -> bool {
+    s.contains("adapters/primary") || s.contains("adapters/secondary")
+}
+fn match_kn_usecases(s: &str) -> bool {
+    s.contains("core/usecases") || s.contains("usecases/")
+}
+fn match_kn_composition(s: &str) -> bool {
+    s.contains("composition-root") || s.contains("composition_root")
+}
+
+pub static KNOWLEDGE_RULES: &[KnowledgeRule] = &[
+    KnowledgeRule { label: "domain", knowledge: tier1::DOMAIN_RULES, signals: &["core/domain", "domain/"], matches: match_kn_domain },
+    KnowledgeRule { label: "ports", knowledge: tier1::PORT_RULES, signals: &["core/ports", "ports/"], matches: match_kn_ports },
+    KnowledgeRule { label: "adapters", knowledge: tier1::ADAPTER_RULES, signals: &["adapters/primary", "adapters/secondary"], matches: match_kn_adapters },
+    KnowledgeRule { label: "usecases", knowledge: tier1::USECASE_RULES, signals: &["core/usecases", "usecases/"], matches: match_kn_usecases },
+    KnowledgeRule { label: "composition_root", knowledge: tier1::COMPOSITION_ROOT_RULES, signals: &["composition-root", "composition_root"], matches: match_kn_composition },
+];
+
 /// Detect which tier 1 knowledge to inject based on file path.
 pub fn tier1_for_path(path: &str) -> Option<&'static str> {
-    if path.contains("core/domain") || path.contains("domain/") {
-        Some(tier1::DOMAIN_RULES)
-    } else if path.contains("core/ports") || path.contains("ports/") {
-        Some(tier1::PORT_RULES)
-    } else if path.contains("adapters/primary") || path.contains("adapters/secondary") {
-        Some(tier1::ADAPTER_RULES)
-    } else if path.contains("core/usecases") || path.contains("usecases/") {
-        Some(tier1::USECASE_RULES)
-    } else if path.contains("composition-root") || path.contains("composition_root") {
-        Some(tier1::COMPOSITION_ROOT_RULES)
-    } else {
-        None
-    }
+    KNOWLEDGE_RULES
+        .iter()
+        .find(|r| (r.matches)(path))
+        .map(|r| r.knowledge)
 }
 
 /// Detect if the user's message suggests architecture work (triggers tier 2).
@@ -186,5 +209,15 @@ mod tests {
         assert!(!needs_tier2("Fix the typo in the README"));
         assert!(!needs_tier2("Add a unit test for the parser"));
         assert!(!needs_tier2("Update the version number"));
+    }
+
+    #[test]
+    fn knowledge_rule_table_invariants() {
+        assert_eq!(KNOWLEDGE_RULES.len(), 5, "expected 5 knowledge rules (one per hex layer)");
+        for rule in KNOWLEDGE_RULES {
+            assert!(!rule.label.is_empty());
+            assert!(!rule.signals.is_empty(), "rule {:?} has no signals", rule.label);
+            assert!(!rule.knowledge.is_empty(), "rule {:?} has empty knowledge", rule.label);
+        }
     }
 }

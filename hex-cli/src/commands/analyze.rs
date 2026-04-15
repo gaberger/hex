@@ -610,21 +610,36 @@ fn find_crate_src_for_file(file: &Path) -> Option<PathBuf> {
 
 // ── Go Layer Classification ─────────────────────────────────────────────
 
+#[allow(dead_code)]
+struct GoLayerRule {
+    label: &'static str,
+    layer: &'static str,
+    signals: &'static [&'static str],
+    matches: fn(&str) -> bool,
+}
+
+fn match_go_domain(s: &str) -> bool { s.contains("internal/domain") }
+fn match_go_ports(s: &str) -> bool { s.contains("internal/ports") }
+fn match_go_usecases(s: &str) -> bool { s.contains("internal/usecases") }
+fn match_go_adapters(s: &str) -> bool {
+    s.contains("internal/adapters") || s.contains("cmd/") || s.contains("pkg/")
+}
+fn match_go_internal_fallback(s: &str) -> bool { s.contains("internal/") }
+
+static GO_LAYER_RULES: &[GoLayerRule] = &[
+    GoLayerRule { label: "domain", layer: "domain", signals: &["internal/domain"], matches: match_go_domain },
+    GoLayerRule { label: "ports", layer: "ports", signals: &["internal/ports"], matches: match_go_ports },
+    GoLayerRule { label: "usecases", layer: "usecases", signals: &["internal/usecases"], matches: match_go_usecases },
+    GoLayerRule { label: "adapters", layer: "adapters", signals: &["internal/adapters", "cmd/", "pkg/"], matches: match_go_adapters },
+    GoLayerRule { label: "internal_fallback", layer: "usecases", signals: &["internal/"], matches: match_go_internal_fallback },
+];
+
 /// Classify a Go file path into its hexagonal layer.
 fn classify_go_layer(path: &str) -> Option<String> {
-    if path.contains("internal/domain") {
-        Some("domain".to_string())
-    } else if path.contains("internal/ports") {
-        Some("ports".to_string())
-    } else if path.contains("internal/usecases") {
-        Some("usecases".to_string())
-    } else if path.contains("internal/adapters") || path.contains("cmd/") || path.contains("pkg/") {
-        Some("adapters".to_string())
-    } else if path.contains("internal/") {
-        Some("usecases".to_string())
-    } else {
-        None
-    }
+    GO_LAYER_RULES
+        .iter()
+        .find(|r| (r.matches)(path))
+        .map(|r| r.layer.to_string())
 }
 
 /// Read go.mod to extract the module path.
@@ -683,31 +698,48 @@ fn find_workspace_crate_dirs(root: &Path) -> Vec<PathBuf> {
     dirs
 }
 
+#[allow(dead_code)]
+struct RustLayerRule {
+    label: &'static str,
+    layer: &'static str,
+    signals: &'static [&'static str],
+    matches: fn(&str) -> bool,
+}
+
+fn match_rust_primary(s: &str) -> bool {
+    s.starts_with("adapters/primary/") || s.starts_with("adapters/primary.rs")
+        || s.starts_with("commands/") || s.starts_with("routes/")
+}
+fn match_rust_secondary(s: &str) -> bool {
+    s.starts_with("adapters/secondary/") || s.starts_with("adapters/secondary.rs")
+        || s.starts_with("adapters/")
+}
+fn match_rust_domain(s: &str) -> bool {
+    s.starts_with("domain/") || s.starts_with("domain.rs")
+}
+fn match_rust_ports(s: &str) -> bool {
+    s.starts_with("ports/") || s.starts_with("ports.rs")
+}
+fn match_rust_usecases(s: &str) -> bool {
+    s.starts_with("orchestration/") || s.starts_with("usecases/")
+}
+
+static RUST_LAYER_RULES: &[RustLayerRule] = &[
+    RustLayerRule { label: "primary_adapters", layer: "Primary Adapters", signals: &["adapters/primary/", "commands/", "routes/"], matches: match_rust_primary },
+    RustLayerRule { label: "secondary_adapters", layer: "Secondary Adapters", signals: &["adapters/secondary/", "adapters/"], matches: match_rust_secondary },
+    RustLayerRule { label: "domain", layer: "Domain", signals: &["domain/", "domain.rs"], matches: match_rust_domain },
+    RustLayerRule { label: "ports", layer: "Ports", signals: &["ports/", "ports.rs"], matches: match_rust_ports },
+    RustLayerRule { label: "usecases", layer: "Use Cases", signals: &["orchestration/", "usecases/"], matches: match_rust_usecases },
+];
+
 /// Classify a path relative to a crate's `src/` directory into a hex layer label.
 /// Returns `None` for infrastructure (unclassified) files.
 fn classify_rust_src_layer(rel_to_src: &str) -> Option<&'static str> {
     let p = rel_to_src.replace('\\', "/");
-    // More specific patterns first
-    if p.starts_with("adapters/primary/") || p.starts_with("adapters/primary.rs")
-        || p.starts_with("commands/") || p.starts_with("routes/")
-    {
-        return Some("Primary Adapters");
-    }
-    if p.starts_with("adapters/secondary/") || p.starts_with("adapters/secondary.rs")
-        || p.starts_with("adapters/")
-    {
-        return Some("Secondary Adapters");
-    }
-    if p.starts_with("domain/") || p.starts_with("domain.rs") {
-        return Some("Domain");
-    }
-    if p.starts_with("ports/") || p.starts_with("ports.rs") {
-        return Some("Ports");
-    }
-    if p.starts_with("orchestration/") || p.starts_with("usecases/") {
-        return Some("Use Cases");
-    }
-    None
+    RUST_LAYER_RULES
+        .iter()
+        .find(|r| (r.matches)(&p))
+        .map(|r| r.layer)
 }
 
 /// Scan Rust workspace crates and return layer label → file count aggregated across all crates.
@@ -1490,5 +1522,31 @@ mod tests {
             "{} Rust boundary violation(s) found in hex-intf — these are real bugs",
             violations.len()
         );
+    }
+
+    #[test]
+    fn go_layer_rule_table_invariants() {
+        assert_eq!(GO_LAYER_RULES.len(), 5, "expected 5 Go layer rules");
+        for rule in GO_LAYER_RULES {
+            assert!(!rule.label.is_empty());
+            assert!(!rule.signals.is_empty(), "rule {:?} has no signals", rule.label);
+        }
+        let domain_idx = GO_LAYER_RULES.iter().position(|r| r.label == "domain").unwrap();
+        let fallback_idx = GO_LAYER_RULES.iter().position(|r| r.label == "internal_fallback").unwrap();
+        assert!(domain_idx < fallback_idx,
+            "specific internal/ rules must precede internal_fallback");
+    }
+
+    #[test]
+    fn rust_layer_rule_table_invariants() {
+        assert_eq!(RUST_LAYER_RULES.len(), 5, "expected 5 Rust layer rules");
+        for rule in RUST_LAYER_RULES {
+            assert!(!rule.label.is_empty());
+            assert!(!rule.signals.is_empty(), "rule {:?} has no signals", rule.label);
+        }
+        let primary_idx = RUST_LAYER_RULES.iter().position(|r| r.label == "primary_adapters").unwrap();
+        let secondary_idx = RUST_LAYER_RULES.iter().position(|r| r.label == "secondary_adapters").unwrap();
+        assert!(primary_idx < secondary_idx,
+            "primary_adapters must precede secondary_adapters (adapters/ fallback)");
     }
 }

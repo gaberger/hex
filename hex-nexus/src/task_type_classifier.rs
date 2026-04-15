@@ -61,41 +61,34 @@ pub fn classify(prompt: &str) -> Option<(TaskType, TaskTier)> {
     classify_task_type(prompt).map(|r| (r.task_type, r.raised_tier))
 }
 
+#[allow(dead_code)]
+pub struct TaskTypeRule {
+    pub label: &'static str,
+    pub task_type: TaskType,
+    pub raised_tier: TaskTier,
+    pub signals: &'static [&'static str],
+    pub matches: fn(&str) -> bool,
+}
+
+pub static TASK_TYPE_RULES: &[TaskTypeRule] = &[
+    TaskTypeRule { label: "shell_command", task_type: TaskType::ShellCommand, raised_tier: TaskTier::T2_5, signals: &["run+tool", "execute+tool", "ssh", "docker", "cargo"], matches: is_shell_command },
+    TaskTypeRule { label: "file_transform", task_type: TaskType::FileTransform, raised_tier: TaskTier::T2, signals: &["convert", "migrate", "transform", "rename across"], matches: is_file_transform },
+    TaskTypeRule { label: "reasoning", task_type: TaskType::Reasoning, raised_tier: TaskTier::T2_5, signals: &["debug", "trace", "root cause", "investigate"], matches: is_reasoning },
+    TaskTypeRule { label: "precise_syntax", task_type: TaskType::PreciseSyntax, raised_tier: TaskTier::T2_5, signals: &["api endpoint", "exact flag", "correct syntax"], matches: is_precise_syntax },
+];
+
 /// Classify a prompt by task type and return the minimum required tier.
 ///
 /// Classification is deterministic keyword + pattern matching — no LLM call.
 pub fn classify_task_type(prompt: &str) -> Option<TaskTypeResult> {
     let lower = prompt.to_lowercase();
-
-    if is_shell_command(&lower) {
-        return Some(TaskTypeResult {
-            task_type: TaskType::ShellCommand,
-            raised_tier: TaskTier::T2_5,
-        });
-    }
-
-    if is_file_transform(&lower) {
-        return Some(TaskTypeResult {
-            task_type: TaskType::FileTransform,
-            raised_tier: TaskTier::T2,
-        });
-    }
-
-    if is_reasoning(&lower) {
-        return Some(TaskTypeResult {
-            task_type: TaskType::Reasoning,
-            raised_tier: TaskTier::T2_5,
-        });
-    }
-
-    if is_precise_syntax(&lower) {
-        return Some(TaskTypeResult {
-            task_type: TaskType::PreciseSyntax,
-            raised_tier: TaskTier::T2_5,
-        });
-    }
-
-    None
+    TASK_TYPE_RULES
+        .iter()
+        .find(|r| (r.matches)(&lower))
+        .map(|r| TaskTypeResult {
+            task_type: r.task_type,
+            raised_tier: r.raised_tier,
+        })
 }
 
 /// Shell command generation signal.
@@ -373,5 +366,16 @@ mod tests {
             raise_tier_if_needed(t(TaskTier::T2), classify_task_type("add a comment")),
             t(TaskTier::T2)
         );
+    }
+
+    #[test]
+    fn task_type_rule_table_invariants() {
+        assert_eq!(TASK_TYPE_RULES.len(), 4, "expected 4 task type rules");
+        for rule in TASK_TYPE_RULES {
+            assert!(!rule.label.is_empty());
+            assert!(!rule.signals.is_empty(), "rule {:?} has no signals", rule.label);
+        }
+        assert_eq!(TASK_TYPE_RULES[0].label, "shell_command",
+            "shell_command must be first (most specific compound match)");
     }
 }

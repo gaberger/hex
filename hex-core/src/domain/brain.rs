@@ -103,7 +103,7 @@ pub enum SteeringStatus {
     Stopped,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum IntentType {
     Code,
     Doc,
@@ -121,45 +121,51 @@ pub struct Intent {
     pub confidence: f64,
 }
 
+#[allow(dead_code)]
+pub struct IntentRule {
+    pub label: &'static str,
+    pub intent_type: IntentType,
+    pub confidence: f64,
+    pub signals: &'static [&'static str],
+    pub matches: fn(&str) -> bool,
+}
+
+fn match_code_primary(s: &str) -> bool {
+    s.contains("function") || s.contains("implement")
+}
+fn match_doc_primary(s: &str) -> bool {
+    s.contains("documentation") || s.contains("readme")
+}
+fn match_review(s: &str) -> bool { s.contains("review") }
+fn match_test(s: &str) -> bool { s.contains("test") }
+fn match_write_file(s: &str) -> bool {
+    s.contains("write") || s.contains("file")
+}
+fn match_agent(s: &str) -> bool { s.contains("agent") }
+fn match_code_fallback(s: &str) -> bool { s.contains("code") }
+fn match_doc_fallback(s: &str) -> bool { s.contains("doc") }
+
+pub static INTENT_RULES: &[IntentRule] = &[
+    IntentRule { label: "code_primary", intent_type: IntentType::Code, confidence: 0.9, signals: &["function", "implement"], matches: match_code_primary },
+    IntentRule { label: "doc_primary", intent_type: IntentType::Doc, confidence: 0.9, signals: &["documentation", "readme"], matches: match_doc_primary },
+    IntentRule { label: "review", intent_type: IntentType::Review, confidence: 0.9, signals: &["review"], matches: match_review },
+    IntentRule { label: "test", intent_type: IntentType::Test, confidence: 0.9, signals: &["test"], matches: match_test },
+    IntentRule { label: "write_file", intent_type: IntentType::WriteFile, confidence: 0.8, signals: &["write", "file"], matches: match_write_file },
+    IntentRule { label: "agent", intent_type: IntentType::Agent, confidence: 0.7, signals: &["agent"], matches: match_agent },
+    IntentRule { label: "code_fallback", intent_type: IntentType::Code, confidence: 0.9, signals: &["code"], matches: match_code_fallback },
+    IntentRule { label: "doc_fallback", intent_type: IntentType::Doc, confidence: 0.9, signals: &["doc"], matches: match_doc_fallback },
+];
+
 impl Intent {
     pub fn parse(request: &str) -> Self {
         let lower = request.to_lowercase();
 
-        // Order matters - check longer/more specific matches first
-        let intent_type = if lower.contains("function") || lower.contains("implement") {
-            IntentType::Code
-        } else if lower.contains("documentation") || lower.contains("readme") {
-            IntentType::Doc
-        } else if lower.contains("review") {
-            IntentType::Review
-        } else if lower.contains("test") {
-            IntentType::Test
-        } else if lower.contains("write") || lower.contains("file") {
-            IntentType::WriteFile
-        } else if lower.contains("agent") {
-            IntentType::Agent
-        } else if lower.contains("code") || lower.contains("doc") {
-            // Check substrings after longer matches
-            if lower.contains("code") {
-                IntentType::Code
-            } else {
-                IntentType::Doc
-            }
-        } else {
-            IntentType::Unknown
-        };
-
-        let confidence = match intent_type {
-            IntentType::Code | IntentType::Doc | IntentType::Test | IntentType::Review => 0.9,
-            IntentType::WriteFile => 0.8,
-            IntentType::Agent => 0.7,
-            IntentType::Unknown => 0.0,
-        };
+        let matched = INTENT_RULES.iter().find(|r| (r.matches)(&lower));
 
         Intent {
-            intent_type,
+            intent_type: matched.map(|r| r.intent_type).unwrap_or(IntentType::Unknown),
             entities: vec![],
-            confidence,
+            confidence: matched.map(|r| r.confidence).unwrap_or(0.0),
         }
     }
 }
@@ -243,6 +249,22 @@ mod tests {
     fn intent_parse_unknown() {
         let intent = Intent::parse("gibberish xyz");
         assert!(matches!(intent.intent_type, IntentType::Unknown));
+    }
+
+    #[test]
+    fn intent_rule_table_invariants() {
+        assert!(INTENT_RULES.len() >= 8, "expected at least 8 intent rules");
+        for rule in INTENT_RULES {
+            assert!(!rule.label.is_empty());
+            assert!(!rule.signals.is_empty(), "rule {:?} has no signals", rule.label);
+            assert!(rule.confidence > 0.0, "rule {:?} has zero confidence", rule.label);
+        }
+        assert_eq!(INTENT_RULES[0].label, "code_primary",
+            "primary code rule must precede fallback");
+        let fallback_idx = INTENT_RULES.iter().position(|r| r.label == "code_fallback").unwrap();
+        let primary_idx = INTENT_RULES.iter().position(|r| r.label == "code_primary").unwrap();
+        assert!(primary_idx < fallback_idx,
+            "code_primary must precede code_fallback to avoid short-substring match");
     }
 
     #[test]

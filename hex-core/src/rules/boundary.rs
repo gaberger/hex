@@ -39,33 +39,90 @@ impl std::fmt::Display for Layer {
     }
 }
 
+#[allow(dead_code)]
+pub struct LayerRule {
+    pub label: &'static str,
+    pub layer: Layer,
+    pub signals: &'static [&'static str],
+    pub matches: fn(&str) -> bool,
+}
+
+fn match_composition_root(s: &str) -> bool {
+    s.contains("composition-root") || s.contains("composition_root")
+}
+fn match_domain(s: &str) -> bool {
+    s.contains("/domain/") || s.ends_with("/domain")
+}
+fn match_ports(s: &str) -> bool {
+    s.contains("/ports/") || s.ends_with("/ports")
+}
+fn match_usecases(s: &str) -> bool {
+    s.contains("/usecases/") || s.ends_with("/usecases")
+}
+fn match_adapter_primary(s: &str) -> bool {
+    s.contains("/adapters/primary/") || s.contains("/adapters/primary")
+}
+fn match_adapter_secondary(s: &str) -> bool {
+    s.contains("/adapters/secondary/") || s.contains("/adapters/secondary")
+}
+fn match_infrastructure(s: &str) -> bool {
+    s.contains("/infrastructure/") || s.ends_with("/infrastructure")
+}
+
+pub static LAYER_RULES: &[LayerRule] = &[
+    LayerRule {
+        label: "composition_root",
+        layer: Layer::CompositionRoot,
+        signals: &["composition-root", "composition_root"],
+        matches: match_composition_root,
+    },
+    LayerRule {
+        label: "domain",
+        layer: Layer::Domain,
+        signals: &["/domain/", "/domain"],
+        matches: match_domain,
+    },
+    LayerRule {
+        label: "ports",
+        layer: Layer::Ports,
+        signals: &["/ports/", "/ports"],
+        matches: match_ports,
+    },
+    LayerRule {
+        label: "usecases",
+        layer: Layer::Usecases,
+        signals: &["/usecases/", "/usecases"],
+        matches: match_usecases,
+    },
+    LayerRule {
+        label: "adapter_primary",
+        layer: Layer::AdapterPrimary,
+        signals: &["/adapters/primary/", "/adapters/primary"],
+        matches: match_adapter_primary,
+    },
+    LayerRule {
+        label: "adapter_secondary",
+        layer: Layer::AdapterSecondary,
+        signals: &["/adapters/secondary/", "/adapters/secondary"],
+        matches: match_adapter_secondary,
+    },
+    LayerRule {
+        label: "infrastructure",
+        layer: Layer::Infrastructure,
+        signals: &["/infrastructure/", "/infrastructure"],
+        matches: match_infrastructure,
+    },
+];
+
 /// Detect the hex layer from a file path.
 pub fn detect_layer(path: &str) -> Layer {
     let normalized = path.replace('\\', "/").to_lowercase();
 
-    if normalized.contains("composition-root") || normalized.contains("composition_root") {
-        return Layer::CompositionRoot;
-    }
-    if normalized.contains("/domain/") || normalized.ends_with("/domain") {
-        return Layer::Domain;
-    }
-    if normalized.contains("/ports/") || normalized.ends_with("/ports") {
-        return Layer::Ports;
-    }
-    if normalized.contains("/usecases/") || normalized.ends_with("/usecases") {
-        return Layer::Usecases;
-    }
-    if normalized.contains("/adapters/primary/") || normalized.contains("/adapters/primary") {
-        return Layer::AdapterPrimary;
-    }
-    if normalized.contains("/adapters/secondary/") || normalized.contains("/adapters/secondary") {
-        return Layer::AdapterSecondary;
-    }
-    if normalized.contains("/infrastructure/") || normalized.ends_with("/infrastructure") {
-        return Layer::Infrastructure;
-    }
-
-    Layer::Unknown
+    LAYER_RULES
+        .iter()
+        .find(|r| (r.matches)(&normalized))
+        .map(|r| r.layer)
+        .unwrap_or(Layer::Unknown)
 }
 
 /// A boundary violation — an illegal import across layers.
@@ -199,5 +256,16 @@ mod tests {
         );
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].imported_layer, Layer::AdapterSecondary);
+    }
+
+    #[test]
+    fn layer_rule_table_invariants() {
+        assert!(LAYER_RULES.len() >= 7, "expected at least 7 layer rules");
+        for rule in LAYER_RULES {
+            assert!(!rule.label.is_empty(), "rule label must not be empty");
+            assert!(!rule.signals.is_empty(), "rule {:?} has no signals", rule.label);
+        }
+        assert_eq!(LAYER_RULES[0].label, "composition_root",
+            "composition_root must be first (most specific)");
     }
 }
