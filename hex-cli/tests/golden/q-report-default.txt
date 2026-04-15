@@ -1,0 +1,5 @@
+MODEL                    TIER     TASK TYPE          VISITS    Q-VAL    TREND
+────────────────────────────────────────────────────────────────────────────
+qwen3:4b                 t1       scaffold              142    0.870 +0.050 ▲
+qwen2.5-coder:32b        t2       codegen                87    0.650 -0.120 ▼
+devstral-small-2:24b     t2.5     reasoning              23    0.430        ─

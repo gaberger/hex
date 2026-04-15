@@ -2270,6 +2270,82 @@ async fn q_report(
     Ok(())
 }
 
+/// Classify a numeric 7-day trend value into a display symbol.
+pub fn trend_symbol(value: f64) -> &'static str {
+    if value > 0.0 {
+        "▲"
+    } else if value < 0.0 {
+        "▼"
+    } else {
+        "─"
+    }
+}
+
+/// Format an optional trend_7d float as a human-readable string.
+pub fn format_trend(value: Option<f64>) -> String {
+    match value {
+        Some(v) if v > 0.0 => format!("+{:.3} ▲", v),
+        Some(v) if v < 0.0 => format!("{:.3} ▼", v),
+        Some(_) => "─".to_string(),
+        None => "─".to_string(),
+    }
+}
+
+/// Render q-report JSON body as a plain-text table (no ANSI colour codes).
+pub fn render_q_report_table(body: &serde_json::Value) -> String {
+    use std::fmt::Write;
+
+    let entries = match body.get("entries").and_then(|e| e.as_array()) {
+        Some(arr) if !arr.is_empty() => arr,
+        _ => return "No q-report entries found.".to_string(),
+    };
+
+    let mut out = String::new();
+    writeln!(
+        out,
+        "{:<24} {:<8} {:<16} {:>8} {:>8} {:>8}",
+        "MODEL", "TIER", "TASK TYPE", "VISITS", "Q-VAL", "TREND"
+    )
+    .unwrap();
+    writeln!(out, "{}", "─".repeat(76)).unwrap();
+
+    for entry in entries {
+        let model = entry
+            .get("model")
+            .or_else(|| entry.get("action"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("-");
+        let tier = entry.get("tier").and_then(|v| v.as_str()).unwrap_or("-");
+        let task_type = entry
+            .get("task_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("-");
+        let visits = entry
+            .get("visits")
+            .or_else(|| entry.get("visit_count"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let q_value = entry
+            .get("q_value")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let trend = entry
+            .get("trend_7d")
+            .and_then(|v| v.as_f64())
+            .map(|f| format_trend(Some(f)))
+            .unwrap_or_else(|| format_trend(None));
+
+        writeln!(
+            out,
+            "{:<24} {:<8} {:<16} {:>8} {:>8.3} {:>8}",
+            model, tier, task_type, visits, q_value, trend
+        )
+        .unwrap();
+    }
+
+    out.trim_end().to_string()
+}
+
 fn print_q_report_table(body: &serde_json::Value) {
     let entries = match body.get("entries").and_then(|e| e.as_array()) {
         Some(arr) => arr,
