@@ -162,8 +162,16 @@ pub enum BrainAction {
 
 #[derive(Subcommand)]
 pub enum QueueAction {
-    /// List pending sched tasks
-    List,
+    /// List sched tasks (defaults to pending; use --include to widen)
+    List {
+        /// Comma-separated statuses to include: pending, completed, failed, all
+        /// (default: pending).
+        #[arg(long, default_value = "pending")]
+        include: String,
+        /// Only show tasks newer than this duration (e.g. 1h, 30m, 2d, 7d).
+        #[arg(long)]
+        since: Option<String>,
+    },
     /// Clear completed/failed tasks
     Clear,
     /// Force drain and execute pending tasks now
@@ -207,7 +215,7 @@ pub async fn run(action: BrainAction) -> anyhow::Result<()> {
             Ok(())
         }
         BrainAction::Queue { action } => match action {
-            QueueAction::List => queue_list().await,
+            QueueAction::List { include, since } => queue_list(&include, since.as_deref()).await,
             QueueAction::Clear => queue_clear().await,
             QueueAction::Drain => queue_drain().await,
             QueueAction::History { status, limit } => queue_history(status, limit).await,
@@ -3022,38 +3030,136 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
     }
 }
 
-async fn queue_list() -> anyhow::Result<()> {
-    let tasks = list_brain_tasks(Some("pending")).await?;
+/// Parse a human-friendly duration string into [`Duration`].
+/// Supports: `30s`, `5m`, `2h`, `7d`. Bare numbers are treated as seconds.
+fn parse_duration_str(s: &str) -> anyhow::Result<Duration> {
+    let s = s.trim();
+    if s.is_empty() {
+        anyhow::bail!("empty duration string");
+    }
+    let (num_part, unit) = if s.ends_with('d') {
+        (&s[..s.len() - 1], 'd')
+    } else if s.ends_with('h') {
+        (&s[..s.len() - 1], 'h')
+    } else if s.ends_with('m') {
+        (&s[..s.len() - 1], 'm')
+    } else if s.ends_with('s') {
+        (&s[..s.len() - 1], 's')
+    } else {
+        (s, 's')
+    };
+    let n: u64 = num_part
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid duration: {}", s))?;
+    let secs = match unit {
+        'd' => n * 86400,
+        'h' => n * 3600,
+        'm' => n * 60,
+        _ => n,
+    };
+    Ok(Duration::from_secs(secs))
+}
+
+async fn queue_list(include: &str, since: Option<&str>) -> anyhow::Result<()> {
+    let statuses: Vec<&str> = include.split(',').map(|s| s.trim()).collect();
+    let show_all = statuses.iter().any(|s| *s == "all");
+
+    let cutoff = match since {
+        Some(dur_str) => {
+            let dur = parse_duration_str(dur_str)?;
+            Some(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs() - dur.as_secs())
+        }
+        None => None,
+    };
+
+    let status_filter: Option<&str> = if show_all || statuses.len() > 1 {
+        None
+    } else {
+        Some(statuses[0])
+    };
+
+    let all_tasks = list_brain_tasks(status_filter).await?;
+
+    let tasks: Vec<_> = all_tasks
+        .into_iter()
+        .filter(|t| {
+            if !show_all && statuses.len() > 1 {
+                let st = t.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                if !statuses.contains(&st) {
+                    return false;
+                }
+            }
+            if let Some(cutoff_epoch) = cutoff {
+                if let Some(created) = t.get("created_at").and_then(|v| v.as_str()) {
+                    if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(created) {
+                        return ts.timestamp() as u64 >= cutoff_epoch;
+                    }
+                    if let Ok(epoch) = created.parse::<u64>() {
+                        return epoch >= cutoff_epoch;
+                    }
+                }
+            }
+            true
+        })
+        .collect();
+
     if tasks.is_empty() {
-        println!("{}", "No pending sched tasks.".yellow());
+        let scope = if show_all {
+            "all".to_string()
+        } else {
+            include.to_string()
+        };
+        let since_label = since.map(|s| format!(" (since {})", s)).unwrap_or_default();
+        println!(
+            "{}",
+            format!("No sched tasks matching status={}{}", scope, since_label).yellow()
+        );
         return Ok(());
     }
-    println!("{}", "Pending Brain Tasks".green().bold());
+
+    let heading = if show_all {
+        "Brain Tasks (all)".to_string()
+    } else {
+        format!("Brain Tasks ({})", include)
+    };
+    println!("{}", heading.green().bold());
+
+    let show_status_col = show_all || statuses.len() > 1;
     let rows: Vec<Vec<String>> = tasks
         .iter()
         .map(|t| {
             let kind = t.get("kind").and_then(|v| v.as_str()).unwrap_or("");
             let raw_payload = t.get("payload").and_then(|v| v.as_str()).unwrap_or("");
-            vec![
+            let mut row = vec![
                 t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 kind.to_string(),
-                render_task_target(kind, raw_payload),
-                truncate(raw_payload, 40),
+            ];
+            if show_status_col {
+                row.push(
+                    t.get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                );
+            }
+            row.push(render_task_target(kind, raw_payload));
+            row.push(truncate(raw_payload, 40));
+            row.push(
                 t.get("created_at")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string(),
-            ]
+            );
+            row
         })
         .collect();
-    // Target column surfaces the host for remote-shell tasks so operators
-    // can see at a glance which machine each task runs on (ADR-2604141200
-    // P2.1). Non-remote kinds render a dash — the column stays meaningful
-    // for the mixed-kind queue view.
-    println!(
-        "{}",
-        pretty_table(&["ID", "Kind", "Target", "Payload", "Created"], &rows)
-    );
+
+    let headers: Vec<&str> = if show_status_col {
+        vec!["ID", "Kind", "Status", "Target", "Payload", "Created"]
+    } else {
+        vec!["ID", "Kind", "Target", "Payload", "Created"]
+    };
+    println!("{}", pretty_table(&headers, &rows));
     Ok(())
 }
 
