@@ -3,11 +3,17 @@
 //! `hex brief` — shows a compact summary of recent events grouped by session.
 //! `hex brief --full` — returns all events with full bodies (no truncation).
 
-use clap::Args;
+use clap::{Args, Subcommand};
 use colored::Colorize;
 use serde_json::Value;
 
 use crate::nexus_client::NexusClient;
+
+#[derive(Debug, Subcommand)]
+pub enum BriefAction {
+    /// Show the briefing
+    Show(BriefArgs),
+}
 
 #[derive(Debug, Args)]
 pub struct BriefArgs {

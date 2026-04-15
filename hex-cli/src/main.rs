@@ -184,15 +184,18 @@ enum OverrideAction {
         action: SteerAction,
     },
     /// Emergency pause/resume the active workplan
+    #[command(subcommand_required = false)]
     Pause {
         #[command(subcommand)]
-        action: PauseAction,
+        action: Option<PauseAction>,
     },
     /// Resolve, approve, or explain pending project decisions
     Decide {
         #[command(subcommand)]
         action: DecideAction,
     },
+    #[command(external_subcommand)]
+    Direct(Vec<String>),
 }
 
 #[derive(Subcommand)]
@@ -236,7 +239,13 @@ enum Commands {
     /// Refresh hex-managed sections of CLAUDE.md in place (no interview, no reset)
     Refresh(RefreshArgs),
     /// Developer briefing — recent events, decisions, health
-    Brief(BriefArgs),
+    #[command(subcommand_required = false, args_conflicts_with_subcommands = true)]
+    Brief {
+        #[command(subcommand)]
+        action: Option<commands::brief::BriefAction>,
+        #[command(flatten)]
+        args: BriefArgs,
+    },
     /// Do the next right thing — check project health and suggest/execute actions
     Go,
     /// Hey Hex — natural language task classifier (ADR-2604140000)
@@ -499,10 +508,10 @@ enum Commands {
         action: SteerAction,
     },
     /// (hidden) Pause — use `hex override pause` instead
-    #[command(hide = true)]
+    #[command(hide = true, subcommand_required = false)]
     Pause {
         #[command(subcommand)]
-        action: PauseAction,
+        action: Option<PauseAction>,
     },
     /// Resume a paused workplan (ADR-2604131500 §1 Layer 4)
     Resume,
@@ -573,17 +582,32 @@ async fn main() -> anyhow::Result<()> {
             OverrideAction::Steer { action } => commands::steer::run(action).await,
             OverrideAction::Pause { action } => {
                 match action {
-                    PauseAction::Pause => commands::pause::run_pause().await,
-                    PauseAction::Resume => commands::pause::run_resume().await,
+                    Some(PauseAction::Pause) | None => commands::pause::run_pause().await,
+                    Some(PauseAction::Resume) => commands::pause::run_resume().await,
                 }
             }
             OverrideAction::Decide { action } => commands::decide::run(action).await,
+            OverrideAction::Direct(args) => {
+                if args.len() >= 2 {
+                    commands::override_cmd::run(&args[0], &args[1..].join(" ")).await
+                } else if args.len() == 1 {
+                    commands::override_cmd::run(&args[0], "").await
+                } else {
+                    anyhow::bail!("Usage: hex override <project> <instruction>")
+                }
+            }
         },
 
         // ── Standalone commands ──────────────────────────────────────
         Commands::Nexus { action } => commands::nexus::run(action).await,
         Commands::Agent { action } => commands::agent::run(action).await,
-        Commands::Brief(args) => commands::brief::run(args).await,
+        Commands::Brief { action, args } => {
+            let effective_args = match action {
+                Some(commands::brief::BriefAction::Show(a)) => a,
+                None => args,
+            };
+            commands::brief::run(effective_args).await
+        }
         Commands::Go => commands::go::run().await,
         Commands::Hey(args) => commands::hey::run(args).await,
         Commands::Sched { action } => commands::sched::run(action).await,
@@ -653,8 +677,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Steer { action } => commands::steer::run(action).await,
         Commands::Pause { action } => {
             match action {
-                PauseAction::Pause => commands::pause::run_pause().await,
-                PauseAction::Resume => commands::pause::run_resume().await,
+                Some(PauseAction::Pause) | None => commands::pause::run_pause().await,
+                Some(PauseAction::Resume) => commands::pause::run_resume().await,
             }
         }
         Commands::Resume => commands::pause::run_resume().await,
