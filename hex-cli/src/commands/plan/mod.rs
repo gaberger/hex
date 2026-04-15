@@ -415,7 +415,20 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
                         }
                     }
                     Err(e) => {
-                        println!("  {} Nexus executor unavailable ({}), falling back to distributed", "!".yellow(), e);
+                        // Path B 5xx surface: NexusClient bails with
+                        // "POST <path> returned <status>: <body>". When the
+                        // body is JSON like {"error":"..."}, surface the
+                        // underlying message so schema drift (e.g. "missing
+                        // field `name`") is self-diagnostic instead of just
+                        // showing the bare status. Keep it one line so the
+                        // queue history result-tail still captures it.
+                        let raw = format!("{}", e);
+                        let detail = raw
+                            .rsplit_once(": ")
+                            .and_then(|(_, body)| serde_json::from_str::<serde_json::Value>(body.trim()).ok())
+                            .and_then(|v| v.get("error").and_then(|s| s.as_str()).map(|s| s.to_string()))
+                            .unwrap_or(raw);
+                        println!("  {} Nexus executor unavailable ({}), falling back to distributed", "!".yellow(), detail);
                         return execute_plan_distributed(&wp).await;
                     }
                 }
