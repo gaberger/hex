@@ -222,6 +222,11 @@ pub struct WorkplanPhase {
     /// Schema: `id` e.g. "P0", "P1". Used for tracking and logging.
     #[serde(default)]
     pub id: String,
+    /// Phase display name. Schema canonical is `name`; `title` accepted as alias
+    /// for backward compat with workplans authored against `hex plan lint`
+    /// (which accepts `title` per the schema). When both are present, explicit
+    /// `name` wins because serde processes the rename before falling back to alias.
+    #[serde(alias = "title")]
     pub name: String,
     pub tier: Option<u32>,
     /// Alias `steps` accepted — LLMs commonly generate `steps` instead of `tasks`.
