@@ -1,0 +1,102 @@
+{
+  "adr": "ADR-2604142243-classifier-rule-tables",
+  "id": "wp-classifier-rule-tables",
+  "phases": [
+    {
+      "id": "P1",
+      "tasks": [
+        {
+          "acceptance": "Inventory document committed at docs/analysis/classifier-inventory.md listing every candidate function with current shape and proposed Rule struct",
+          "adapter": "hex-cli",
+          "evidence": "new file under docs/analysis/",
+          "id": "P1.1",
+          "status": "done",
+          "strategy_hint": "script",
+          "title": "Grep workspace for if-elif keyword classifier patterns; produce list with file:line citations"
+        }
+      ],
+      "title": "Inventory existing classifiers"
+    },
+    {
+      "id": "P2",
+      "tasks": [
+        {
+          "acceptance": "Function uses RULES table with label/signals/match_fn rows; control flow is a single .find() over the table",
+          "adapter": "hex-cli",
+          "evidence": "git diff shows table + .find()",
+          "id": "P2.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Refactor hex-cli/src/commands/hook.rs::classify_work_intent into a precedence-ordered Rule table (3 tiers)"
+        },
+        {
+          "acceptance": "Test pinning RULES[0] precedence + non-empty fields + at least one regression case for cross-tier wording",
+          "adapter": "hex-cli",
+          "evidence": "new test + cargo test passes",
+          "id": "P2.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add test_rule_table_invariants asserting trivial-edit rule precedes feature rule (regression for T1 false-T3 spawn)"
+        },
+        {
+          "acceptance": "Tests cover at least: trivial+feature-noun, question+implement-verb, confirmatory+cross-adapter-noun",
+          "adapter": "hex-cli",
+          "evidence": "tests added",
+          "id": "P2.3",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add 3 cross-tier regression cases (e.g., 'rename the variable that implements feature X' must classify as T1, not T3)"
+        }
+      ],
+      "title": "Lift hex-cli hook classifier (T1/T2/T3)"
+    },
+    {
+      "id": "P3",
+      "tasks": [
+        {
+          "acceptance": "Every candidate from P1.1 either refactored or annotated with rationale for skipping",
+          "adapter": "hex-nexus",
+          "evidence": "diff per file + updated inventory",
+          "id": "P3.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "For each classifier in inventory, apply same Rule table refactor + structural test"
+        }
+      ],
+      "title": "Lift any other classifiers found in P1.1"
+    },
+    {
+      "id": "P4",
+      "tasks": [
+        {
+          "acceptance": "Endpoint returns JSON array; integration test asserts at least 2 tables present",
+          "adapter": "hex-nexus",
+          "evidence": "new route + test",
+          "id": "P4.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Expose GET /api/classifier/rules returning the union of all rule tables (label + signals) for dashboard listing"
+        }
+      ],
+      "title": "Operator visibility (optional)"
+    },
+    {
+      "id": "P5",
+      "tasks": [
+        {
+          "acceptance": "All tests green; clippy clean on hook.rs and steer.rs",
+          "adapter": "hex-cli",
+          "evidence": "test output pasted in result",
+          "id": "P5.1",
+          "status": "done",
+          "strategy_hint": "script",
+          "title": "cargo test --workspace --lib --tests passes; no new warnings on touched files"
+        }
+      ],
+      "title": "Verify"
+    }
+  ],
+  "status": "pending",
+  "timeout_s": 1800,
+  "title": "Lift remaining if-elif classifiers into rule tables (ADR-2604142243)"
+}
