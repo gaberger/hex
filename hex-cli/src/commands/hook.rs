@@ -2663,35 +2663,38 @@ impl Tier {
 /// returns a lower tier. False negatives (missed T3 → T2) are cheap
 /// (user manually invokes planner); false positives (T1 → T3) would
 /// spawn unwanted background agents, so the threshold errs high.
-pub fn classify_work_intent(prompt: &str) -> Tier {
-    let lower = prompt.to_lowercase();
-    let trimmed = lower.trim();
+///
+/// Implemented as a precedence-ordered Rule table (ADR-2604142243):
+///   P0 — Escape hatches (always T1, evaluated first)
+///   P1 — Constraint signals: questions, trivial edits, confirmatory replies
+///   P2 — Scored classification: feature verbs, subsystem nouns, cross-cutting
 
-    // Escape hatches → always T1
-    if trimmed.is_empty() {
-        return Tier::T1Todo;
-    }
-    if trimmed.contains("hex skip plan") || trimmed.contains("hex: skip plan") {
-        return Tier::T1Todo;
-    }
+pub struct ClassifierRule {
+    pub label: &'static str,
+    pub tier: Tier,
+    pub precedence: u8,
+    pub signals: &'static [&'static str],
+    matches: fn(&str) -> bool,
+}
 
-    // Questions are T1 (conversational). A trailing '?' or leading
-    // interrogative is a strong signal.
-    let is_question = trimmed.ends_with('?')
-        || trimmed.starts_with("what ")
-        || trimmed.starts_with("why ")
-        || trimmed.starts_with("how ")
-        || trimmed.starts_with("when ")
-        || trimmed.starts_with("where ")
-        || trimmed.starts_with("who ")
-        || trimmed.starts_with("can you explain")
-        || trimmed.starts_with("explain ")
-        || trimmed.starts_with("show me ");
-    if is_question {
-        return Tier::T1Todo;
-    }
+fn match_escape_hatch(s: &str) -> bool {
+    s.is_empty() || s.contains("hex skip plan") || s.contains("hex: skip plan")
+}
 
-    // Trivial-edit phrases → T1 regardless of other signals
+fn match_question(s: &str) -> bool {
+    s.ends_with('?')
+        || s.starts_with("what ")
+        || s.starts_with("why ")
+        || s.starts_with("how ")
+        || s.starts_with("when ")
+        || s.starts_with("where ")
+        || s.starts_with("who ")
+        || s.starts_with("can you explain")
+        || s.starts_with("explain ")
+        || s.starts_with("show me ")
+}
+
+fn match_trivial_edit(s: &str) -> bool {
     const TRIVIAL: &[&str] = &[
         "fix typo", "fix a typo", "typo in",
         "rename ", "renaming ",
@@ -2702,38 +2705,34 @@ pub fn classify_work_intent(prompt: &str) -> Tier {
         "minor tweak", "small tweak", "tiny change",
         "format ", "reformat ", "run fmt", "run rustfmt",
     ];
-    if TRIVIAL.iter().any(|p| trimmed.contains(p)) {
-        return Tier::T1Todo;
-    }
+    TRIVIAL.iter().any(|p| s.contains(p))
+}
 
-    // Score-based classification for the non-trivial, non-question case.
+fn match_confirmatory(s: &str) -> bool {
+    is_confirmatory_response(s)
+}
+
+fn score_prompt(s: &str) -> i32 {
     let mut score: i32 = 0;
 
-    // Feature-sized verbs: each contributes +2
     const FEATURE_VERBS: &[&str] = &[
         "implement", "build a", "build an", "build the", "build support",
         "add support for", "add a new ", "add an ", "design a", "design an",
         "ship ", "deliver ", "roll out",
     ];
     for v in FEATURE_VERBS {
-        if trimmed.contains(v) {
-            score += 2;
-        }
+        if s.contains(v) { score += 2; }
     }
 
-    // Generic work verbs: each contributes +1
     const WORK_VERBS: &[&str] = &[
         "create", "add ", "fix", "refactor", "update", "change",
         "modify", "write", "generate", "scaffold", "wire ", "connect ",
         "remove", "delete", "migrate", "upgrade", "port ",
     ];
     for v in WORK_VERBS {
-        if trimmed.contains(v) {
-            score += 1;
-        }
+        if s.contains(v) { score += 1; }
     }
 
-    // Architectural/subsystem nouns: +2 each (cross-adapter signal)
     const SUBSYSTEM_NOUNS: &[&str] = &[
         "feature", "pipeline", "system", "module", "subsystem",
         "adapter", "port", "endpoint", "api", "service", "dashboard",
@@ -2741,38 +2740,81 @@ pub fn classify_work_intent(prompt: &str) -> Tier {
         "migration", "cli command", "mcp tool",
     ];
     for n in SUBSYSTEM_NOUNS {
-        if trimmed.contains(n) {
-            score += 2;
-        }
+        if s.contains(n) { score += 2; }
     }
 
-    // Cross-cutting / integration verbs: +2 (multi-adapter hint)
     const CROSS_CUTTING: &[&str] = &[
         "end to end", "end-to-end", "integrate ", "integration ",
         "across ", "cross-cutting", "refactor across",
     ];
     for c in CROSS_CUTTING {
-        if trimmed.contains(c) {
-            score += 2;
-        }
+        if s.contains(c) { score += 2; }
     }
 
-    // Length signal: very short work prompts are probably T1-T2, not T3
-    if trimmed.len() < 30 {
-        score -= 1;
-    }
+    if s.len() < 30 { score -= 1; }
+    score
+}
 
-    // Confirmatory replies inherit the previous prompt's classification —
-    // we return T1 here and let the caller re-check session state.
-    if is_confirmatory_response(trimmed) {
-        return Tier::T1Todo;
-    }
+fn match_t3_score(s: &str) -> bool { score_prompt(s) >= 4 }
+fn match_t2_score(s: &str) -> bool { score_prompt(s) >= 1 }
 
-    match score {
-        s if s >= 4 => Tier::T3Workplan,
-        s if s >= 1 => Tier::T2MiniPlan,
-        _ => Tier::T1Todo,
-    }
+pub static WORK_INTENT_RULES: &[ClassifierRule] = &[
+    // P0 — Escape hatches
+    ClassifierRule {
+        label: "escape_hatch",
+        tier: Tier::T1Todo,
+        precedence: 0,
+        signals: &["empty input", "hex skip plan", "hex: skip plan"],
+        matches: match_escape_hatch,
+    },
+    // P1 — Constraint signals (override scored classification)
+    ClassifierRule {
+        label: "question",
+        tier: Tier::T1Todo,
+        precedence: 1,
+        signals: &["trailing ?", "what/why/how/when/where/who", "explain", "show me"],
+        matches: match_question,
+    },
+    ClassifierRule {
+        label: "trivial_edit",
+        tier: Tier::T1Todo,
+        precedence: 1,
+        signals: &["fix typo", "rename", "add comment", "docstring", "minor tweak", "run fmt"],
+        matches: match_trivial_edit,
+    },
+    ClassifierRule {
+        label: "confirmatory",
+        tier: Tier::T1Todo,
+        precedence: 1,
+        signals: &["yes", "ok", "go ahead", "ship it", "lgtm"],
+        matches: match_confirmatory,
+    },
+    // P2 — Scored classification (feature-sized → T3, work-sized → T2)
+    ClassifierRule {
+        label: "feature_score",
+        tier: Tier::T3Workplan,
+        precedence: 2,
+        signals: &["implement/build/design +2", "subsystem nouns +2", "cross-cutting +2", "score >= 4"],
+        matches: match_t3_score,
+    },
+    ClassifierRule {
+        label: "work_score",
+        tier: Tier::T2MiniPlan,
+        precedence: 2,
+        signals: &["create/add/fix/refactor +1", "work verbs +1", "score >= 1"],
+        matches: match_t2_score,
+    },
+];
+
+pub fn classify_work_intent(prompt: &str) -> Tier {
+    let lower = prompt.to_lowercase();
+    let trimmed = lower.trim();
+
+    WORK_INTENT_RULES
+        .iter()
+        .find(|r| (r.matches)(trimmed))
+        .map(|r| r.tier)
+        .unwrap_or(Tier::T1Todo)
 }
 
 /// Walk the PPID chain from this process to find the ancestor `claude` process PID.
@@ -3148,6 +3190,72 @@ mod tests {
                 tier
             );
         }
+    }
+
+    #[test]
+    fn cross_tier_regression_trivial_verb_with_t3_nouns() {
+        // Cross-tier regression: prompts with T3-triggering nouns (feature,
+        // subsystem, pipeline) must stay T1 when the verb is trivial.
+        // These would score ≥4 if the TRIVIAL early-return didn't fire.
+
+        // "rename" is trivial even when the target is a feature-level concept
+        assert_eq!(
+            classify_work_intent("rename the variable that implements the OAuth feature"),
+            Tier::T1Todo
+        );
+
+        // "add a comment" is trivial even inside a cross-adapter subsystem
+        assert_eq!(
+            classify_work_intent("add a comment explaining the migration pipeline endpoint"),
+            Tier::T1Todo
+        );
+
+        // "fix typo" is trivial even when the file lives in a subsystem module
+        assert_eq!(
+            classify_work_intent("fix typo in the authentication subsystem adapter module"),
+            Tier::T1Todo
+        );
+    }
+
+    #[test]
+    fn test_rule_table_invariants() {
+        // Structural invariant: the TRIVIAL early-return MUST fire before
+        // score-based classification. If the ordering flips, prompts that
+        // combine a trivial marker with subsystem nouns false-positive as T3,
+        // spawning unwanted workplan drafts.
+        //
+        // Each tuple: (prompt with trivial marker + T3 nouns, which marker wins)
+        let trivial_beats_feature = [
+            ("fix typo in the feature pipeline", "fix typo"),
+            ("rename the adapter port to something clearer", "rename "),
+            ("add a comment explaining the auth subsystem", "add a comment"),
+            ("update the docstring on the api endpoint handler", "docstring"),
+            ("reformat the migration module", "reformat "),
+            ("run rustfmt on the mcp tool adapter", "run rustfmt"),
+            ("fix a typo in the database schema docs", "fix a typo"),
+            ("minor tweak to the jwt service port", "minor tweak"),
+        ];
+        for (prompt, trivial_marker) in trivial_beats_feature {
+            assert_eq!(
+                classify_work_intent(prompt),
+                Tier::T1Todo,
+                "trivial marker '{}' must precede feature-scoring in: '{}'",
+                trivial_marker,
+                prompt
+            );
+        }
+
+        // Positive control: without the trivial marker, the same nouns reach T3.
+        assert_eq!(
+            classify_work_intent("implement the auth subsystem with jwt"),
+            Tier::T3Workplan,
+            "positive control: subsystem nouns without trivial marker → T3"
+        );
+        assert_eq!(
+            classify_work_intent("build a new feature for the database migration pipeline"),
+            Tier::T3Workplan,
+            "positive control: feature + pipeline + database without trivial → T3"
+        );
     }
 
     // ─ Existing helpers (sanity checks) ─
