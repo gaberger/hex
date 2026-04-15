@@ -1716,7 +1716,14 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                         }
                         let _ =
                             update_brain_task(&id, BrainTaskStatus::InProgress, "").await;
-                        let (ok, result) = execute_brain_task(&kind, &payload).await;
+                        let (mut ok, mut result) = execute_brain_task(&kind, &payload).await;
+                        // ADR-2604142155 P2.3: reject vacuous executor output
+                        if ok {
+                            if let Err(reason) = validate_dispatch_evidence(Some(&result)) {
+                                ok = false;
+                                result.push_str(&format!("\n--- dispatch-evidence guard ---\n{reason}"));
+                            }
+                        }
                         let status = if ok {
                             BrainTaskStatus::Completed
                         } else {
@@ -1750,6 +1757,23 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                         );
                     }
                 }
+            }
+            _ => {}
+        }
+
+        // Sweep stuck in_progress tasks (ADR-2604142155 P2.2).
+        match sweep_stuck_tasks().await {
+            Ok(swept) if !swept.is_empty() => {
+                for tid in &swept {
+                    eprintln!(
+                        "  {} swept stuck task {} → failed",
+                        "⏱".red(),
+                        tid,
+                    );
+                }
+            }
+            Err(err) => {
+                eprintln!("  {} sweep error: {}", "✗".red(), err);
             }
             _ => {}
         }
@@ -2178,6 +2202,10 @@ pub(crate) struct BrainTaskRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) result: Option<String>,
 
+    // ─── Timeout (P2.1: stored at enqueue, used by sweep) ──────────────
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) timeout_s: Option<u64>,
+
     // ─── Lease fields (P0.1 schema extension) ─────────────────────────
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) leased_to: Option<String>,
@@ -2216,6 +2244,7 @@ impl BrainTaskRecord {
         let created_at = v.get("created_at").and_then(|x| x.as_str()).unwrap_or("").to_string();
         let completed_at = v.get("completed_at").and_then(|x| x.as_str()).map(String::from);
         let result = v.get("result").and_then(|x| x.as_str()).map(String::from);
+        let timeout_s = v.get("timeout_s").and_then(|x| x.as_u64());
         let leased_to = v.get("leased_to").and_then(|x| x.as_str()).map(String::from);
         let leased_until = v.get("leased_until").and_then(|x| x.as_str()).map(String::from);
         let lease_attempts = v
@@ -2238,6 +2267,7 @@ impl BrainTaskRecord {
             created_at,
             completed_at,
             result,
+            timeout_s,
             leased_to,
             leased_until,
             lease_attempts,
@@ -2363,6 +2393,20 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
         }
     }
 
+    // For workplan tasks, read timeout_s from the workplan JSON so the
+    // daemon can honour per-workplan lease windows. Falls back to the
+    // default lease_for() duration when the field is absent or the file
+    // can't be read (e.g. the payload is a workplan ID, not a path).
+    let timeout: u64 = if kind == "workplan" {
+        std::fs::read_to_string(payload)
+            .ok()
+            .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
+            .and_then(|wp| wp.get("timeout_s")?.as_u64())
+            .unwrap_or_else(|| lease_for(kind).as_secs())
+    } else {
+        lease_for(kind).as_secs()
+    };
+
     let id = uuid::Uuid::new_v4().to_string();
     let key = format!("brain-task:{}", id);
     let task = json!({
@@ -2374,6 +2418,7 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
         "created_at": chrono::Utc::now().to_rfc3339(),
         "completed_at": serde_json::Value::Null,
         "result": serde_json::Value::Null,
+        "timeout_s": timeout,
     });
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
@@ -2486,6 +2531,54 @@ pub(crate) async fn update_brain_task(
         )
         .await?;
     Ok(())
+}
+
+// ─── Timeout sweep (ADR-2604142155 P2.2) ──────────────────────────────────
+//
+// Weak fairness guarantee: every in_progress task eventually reaches a
+// terminal state. The daemon calls sweep_stuck_tasks() each tick, which
+// scans for in_progress tasks whose age exceeds timeout_s + 30s grace
+// and flips them to Failed. The 30s grace prevents races where a task
+// completes legitimately at the timeout boundary.
+
+const SWEEP_GRACE_SECS: u64 = 30;
+
+pub(crate) async fn sweep_stuck_tasks() -> anyhow::Result<Vec<String>> {
+    let in_progress = list_brain_tasks(Some("in_progress")).await?;
+    let now = chrono::Utc::now();
+    let mut swept: Vec<String> = Vec::new();
+
+    for task_val in &in_progress {
+        let Some(rec) = BrainTaskRecord::from_value(task_val) else {
+            continue;
+        };
+        let created = match chrono::DateTime::parse_from_rfc3339(&rec.created_at) {
+            Ok(dt) => dt.with_timezone(&chrono::Utc),
+            Err(_) => continue,
+        };
+        let timeout = rec
+            .timeout_s
+            .unwrap_or_else(|| lease_for(&rec.kind).as_secs());
+        let deadline_secs = timeout + SWEEP_GRACE_SECS;
+        let age = now.signed_duration_since(created);
+        if age.num_seconds() < deadline_secs as i64 {
+            continue;
+        }
+        let reason = format!(
+            "timeout sweep: in_progress for {}s exceeds {}s (timeout_s={} + grace={})",
+            age.num_seconds(),
+            deadline_secs,
+            timeout,
+            SWEEP_GRACE_SECS,
+        );
+        debug!(task_id = %rec.id, age_s = %age.num_seconds(), deadline_s = %deadline_secs, "sweep: failing stuck task");
+        if let Err(err) = update_brain_task(&rec.id, BrainTaskStatus::Failed, &reason).await {
+            eprintln!("  {} sweep update failed for {}: {}", "✗".red(), rec.id, err);
+            continue;
+        }
+        swept.push(rec.id.clone());
+    }
+    Ok(swept)
 }
 
 // ─── Swarm-leased dispatch (ADR-2604141400 P1.2) ───────────────────────────
@@ -2634,7 +2727,11 @@ pub(crate) async fn dispatch_brain_task(
         .ok_or_else(|| anyhow::anyhow!("create swarm task response missing id"))?
         .to_string();
 
-    let window = lease_for(&kind);
+    let window_secs = task
+        .get("timeout_s")
+        .and_then(|v| v.as_u64())
+        .unwrap_or_else(|| lease_for(&kind).as_secs());
+    let window = Duration::from_secs(window_secs);
     let leased_until = (chrono::Utc::now()
         + chrono::Duration::from_std(window).unwrap_or_else(|_| chrono::Duration::minutes(2)))
     .to_rfc3339();
@@ -2779,6 +2876,26 @@ fn git_head_sha() -> Option<String> {
 /// and by the unit test `test_workplan_no_evidence`. Returns
 /// `(success, snippet_suffix)` given the subprocess exit status and the
 /// pre/post HEAD shas. A workplan that exits 0 but leaves HEAD unchanged is
+/// ADR-2604142155 P2.3: output-level evidence guard mirroring
+/// `hex_nexus::orchestration::workplan_executor::validate_dispatch_evidence`.
+/// Rejects empty / whitespace-only executor output so vacuous acks like
+/// `"Execution dispatched: Object {"` cannot promote a task to `completed`.
+pub(crate) fn validate_dispatch_evidence(output: Option<&str>) -> Result<(), String> {
+    match output {
+        Some(s) if !s.trim().is_empty() => Ok(()),
+        Some(_) => Err(
+            "dispatch-evidence guard: executor produced whitespace-only output — \
+             refusing to accept completion (ADR-2604111800)"
+                .to_string(),
+        ),
+        None => Err(
+            "dispatch-evidence guard: no executor output received — \
+             refusing to accept completion (ADR-2604111800)"
+                .to_string(),
+        ),
+    }
+}
+
 /// treated as a failed run — the whole point of the guard (ADR-2604141400 §1
 /// P1). If HEAD is unreadable on either side, the guard errs on the side of
 /// marking the run a failure; silent drains are the bug we're killing.
@@ -3064,7 +3181,14 @@ async fn queue_drain() -> anyhow::Result<()> {
             .to_string();
         println!("  → executing {id} ({kind})");
         let _ = update_brain_task(&id, BrainTaskStatus::InProgress, "").await;
-        let (ok, result) = execute_brain_task(&kind, &payload).await;
+        let (mut ok, mut result) = execute_brain_task(&kind, &payload).await;
+        // ADR-2604142155 P2.3: reject vacuous executor output
+        if ok {
+            if let Err(reason) = validate_dispatch_evidence(Some(&result)) {
+                ok = false;
+                result.push_str(&format!("\n--- dispatch-evidence guard ---\n{reason}"));
+            }
+        }
         let status = if ok {
             BrainTaskStatus::Completed
         } else {
@@ -3320,6 +3444,31 @@ min_priority = 2
         assert_eq!(cfg.min_priority, 2);
     }
 
+    // ─── ADR-2604142155 P2.3: validate_dispatch_evidence ────────────────────
+
+    #[test]
+    fn dispatch_evidence_accepts_non_empty_output() {
+        assert!(validate_dispatch_evidence(Some("compiled OK")).is_ok());
+    }
+
+    #[test]
+    fn dispatch_evidence_rejects_empty_string() {
+        let err = validate_dispatch_evidence(Some("")).unwrap_err();
+        assert!(err.contains("dispatch-evidence guard"), "got: {err}");
+    }
+
+    #[test]
+    fn dispatch_evidence_rejects_whitespace_only() {
+        let err = validate_dispatch_evidence(Some("   \n\t  ")).unwrap_err();
+        assert!(err.contains("whitespace-only"), "got: {err}");
+    }
+
+    #[test]
+    fn dispatch_evidence_rejects_none() {
+        let err = validate_dispatch_evidence(None).unwrap_err();
+        assert!(err.contains("no executor output"), "got: {err}");
+    }
+
     // ─── Brain task schema (ADR-2604141400 P0.1) ───────────────────────────
     //
     // Nested under `brain::task_schema` so the workplan gate
@@ -3507,6 +3656,7 @@ min_priority = 2
                     created_at: "2026-04-14T00:00:00Z".into(),
                     completed_at: None,
                     result: None,
+                    timeout_s: Some(1800),
                     leased_to: Some("swarm-7".into()),
                     leased_until: Some("2026-04-14T00:30:00Z".into()),
                     lease_attempts: 1,
@@ -3636,6 +3786,131 @@ min_priority = 2
                     !should_fallback_inline(&out),
                     "live worker must retain the lease — no inline exec"
                 );
+            }
+        }
+
+        // ─── Sweep timeout logic (ADR-2604142155 P2.2) ────────────────────
+
+        mod sweep_timeout {
+            use super::super::super::{
+                BrainTaskEvidence, BrainTaskRecord, BrainTaskStatus,
+                lease_for, SWEEP_GRACE_SECS,
+            };
+            use serde_json::json;
+
+            fn make_record(id: &str, kind: &str, created_at: &str, timeout_s: Option<u64>) -> BrainTaskRecord {
+                BrainTaskRecord {
+                    id: id.into(),
+                    kind: kind.into(),
+                    payload: "test".into(),
+                    status: BrainTaskStatus::InProgress,
+                    project_id: "p".into(),
+                    created_at: created_at.into(),
+                    completed_at: None,
+                    result: None,
+                    timeout_s,
+                    leased_to: None,
+                    leased_until: None,
+                    lease_attempts: 0,
+                    swarm_task_id: None,
+                    evidence: BrainTaskEvidence::default(),
+                }
+            }
+
+            #[test]
+            fn grace_period_is_30s() {
+                assert_eq!(SWEEP_GRACE_SECS, 30);
+            }
+
+            #[test]
+            fn timeout_s_stored_in_record_via_serde() {
+                let v = json!({
+                    "id": "t1",
+                    "kind": "workplan",
+                    "payload": "wp.json",
+                    "status": "in_progress",
+                    "created_at": "2026-04-14T00:00:00Z",
+                    "timeout_s": 600,
+                });
+                let rec = BrainTaskRecord::from_value(&v).expect("parse");
+                assert_eq!(rec.timeout_s, Some(600));
+            }
+
+            #[test]
+            fn timeout_s_defaults_to_none_when_absent() {
+                let v = json!({
+                    "id": "t2",
+                    "kind": "shell",
+                    "payload": "echo hi",
+                    "status": "in_progress",
+                    "created_at": "2026-04-14T00:00:00Z",
+                });
+                let rec = BrainTaskRecord::from_value(&v).expect("parse");
+                assert_eq!(rec.timeout_s, None);
+            }
+
+            #[test]
+            fn effective_timeout_uses_stored_value_when_present() {
+                let rec = make_record("t3", "workplan", "2026-04-14T00:00:00Z", Some(600));
+                let effective = rec.timeout_s.unwrap_or_else(|| lease_for(&rec.kind).as_secs());
+                assert_eq!(effective, 600);
+            }
+
+            #[test]
+            fn effective_timeout_falls_back_to_lease_for_when_absent() {
+                let rec = make_record("t4", "workplan", "2026-04-14T00:00:00Z", None);
+                let effective = rec.timeout_s.unwrap_or_else(|| lease_for(&rec.kind).as_secs());
+                assert_eq!(effective, 30 * 60);
+            }
+
+            #[test]
+            fn sweep_deadline_includes_grace() {
+                let timeout: u64 = 120;
+                let deadline = timeout + SWEEP_GRACE_SECS;
+                assert_eq!(deadline, 150);
+            }
+
+            #[test]
+            fn task_within_deadline_is_not_swept() {
+                let now = chrono::Utc::now();
+                let created = now - chrono::Duration::seconds(100);
+                let rec = make_record("t5", "shell", &created.to_rfc3339(), Some(120));
+                let age = now.signed_duration_since(
+                    chrono::DateTime::parse_from_rfc3339(&rec.created_at)
+                        .unwrap()
+                        .with_timezone(&chrono::Utc),
+                );
+                let deadline = rec.timeout_s.unwrap() + SWEEP_GRACE_SECS;
+                assert!(
+                    age.num_seconds() < deadline as i64,
+                    "task at 100s should be within 150s deadline"
+                );
+            }
+
+            #[test]
+            fn task_past_deadline_is_swept() {
+                let now = chrono::Utc::now();
+                let created = now - chrono::Duration::seconds(200);
+                let rec = make_record("t6", "shell", &created.to_rfc3339(), Some(120));
+                let age = now.signed_duration_since(
+                    chrono::DateTime::parse_from_rfc3339(&rec.created_at)
+                        .unwrap()
+                        .with_timezone(&chrono::Utc),
+                );
+                let deadline = rec.timeout_s.unwrap() + SWEEP_GRACE_SECS;
+                assert!(
+                    age.num_seconds() >= deadline as i64,
+                    "task at 200s should exceed 150s deadline"
+                );
+            }
+
+            #[test]
+            fn timeout_s_roundtrips_through_json() {
+                let rec = make_record("t7", "workplan", "2026-04-14T00:00:00Z", Some(1800));
+                let v = serde_json::to_value(&rec).unwrap();
+                assert_eq!(v["timeout_s"].as_u64(), Some(1800));
+                let round = BrainTaskRecord::from_value(&v).expect("roundtrip");
+                assert_eq!(round.timeout_s, Some(1800));
             }
         }
     }
