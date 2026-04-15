@@ -99,6 +99,59 @@ Related:
 
 ---
 
+## Formal Verification (TLA+)
+
+hex ships TLA+ models of its coordination, scheduling, and feature-pipeline state machines. The goal is not symbolic decoration — it's catching liveness/safety bugs in the spec before they ship as production regressions.
+
+```
+docs/algebra/
+  hexflo.tla          Swarm coordination
+  sched_daemon.tla    Queue drain + task lifecycle
+  lifecycle.tla       7-phase feature pipeline
+```
+
+Each model pairs with a `.cfg` file that binds constants and selects which invariants + liveness properties to check with TLC.
+
+**Worked example — `sched_daemon.tla`:**
+
+A prod smoke test reproduced a bug where the sched daemon marked tasks `in_progress` but never transitioned to a terminal state. We modeled the daemon's task lifecycle in TLA+ with two configs:
+
+| Config | Spec | Result |
+|---|---|---|
+| `sched_daemon_buggy.cfg` | `DispatchVacuous` reachable, no `WF(TimeoutSweep)` | TLC finds a 3-state counterexample violating `HandleInvariant`: `pending → Claim → claimed → DispatchVacuous → in_progress (handle=FALSE)` |
+| `sched_daemon_fixed.cfg` | `NextFixed` removes `DispatchVacuous`, adds `EvidenceRequired` invariant + WF on `TimeoutSweep` | 14 states checked, all safety + liveness properties hold (`TerminalReachable`, `BoundedTermination`) |
+
+The model told us exactly what the Rust fix needed to be — three changes mapping 1:1 to TLA+ actions:
+
+| TLA+ | Rust |
+|---|---|
+| `HandleInvariant` | Don't mutate `task.status = InProgress` until the executor response future is bound — reorder dispatch around `.await` |
+| `EvidenceRequired` | Call `validate_dispatch_evidence()` on the executor response *on the daemon side* before the InProgress transition |
+| `TimeoutSweep` under weak fairness | Unconditional sweep loop that auto-fails `in_progress` tasks older than `timeout_s + 30s grace` |
+
+Prod verification after the fix: task `ffc4d78e` (workplan with `timeout_s: 30`) traced `pending → in_progress → failed` in 70 s via the sweep — the exact liveness property TLC proved.
+
+**Running TLC:**
+
+```bash
+# one-time — install the TLA+ toolset (~2.3 MB)
+mkdir -p ~/.local/share/tla
+curl -sLo ~/.local/share/tla/tla2tools.jar \
+  https://github.com/tlaplus/tlaplus/releases/latest/download/tla2tools.jar
+
+# check a model
+java -cp ~/.local/share/tla/tla2tools.jar tlc2.TLC \
+  -config docs/algebra/sched_daemon_fixed.cfg \
+  -workers auto \
+  docs/algebra/sched_daemon.tla
+```
+
+**When to add a new module:** any daemon, queue, reconciler, or state machine with three or more states and at least one liveness concern ("every X eventually reaches Y"). Small sub-system state spaces (< 1000 states) model-check in well under a second on modern hardware, so the cost is almost entirely authorship.
+
+See [ADR-2604111229 (algebraic formalization)](docs/adrs/ADR-2604111229-algebraic-formalization-of-process-flow.md) and [ADR-2604142155 (sched daemon stuck in_progress)](docs/adrs/ADR-2604142155-sched-daemon-stuck-in-progress.md) for the full decision trail.
+
+---
+
 ## System Architecture
 
 ```
