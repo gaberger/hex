@@ -2905,15 +2905,20 @@ fn check_evidence(
     post: Option<&str>,
 ) -> (bool, String) {
     let has_evidence = matches!((pre, post), (Some(a), Some(b)) if a != b);
-    let snippet = match (pre, post) {
+    let pre_kv = pre.unwrap_or("UNREADABLE");
+    let post_kv = post.unwrap_or("UNREADABLE");
+    let verdict = match (pre, post) {
         (Some(a), Some(b)) if has_evidence => {
-            format!("\n--- guard ---\nHEAD {a} → {b}")
+            format!("HEAD {a} → {b}")
         }
         (Some(a), Some(b)) => {
-            format!("\n--- guard ---\nno git evidence: HEAD unchanged ({a} → {b})")
+            format!("no git evidence: HEAD unchanged ({a} → {b})")
         }
-        _ => "\n--- guard ---\nno git evidence: HEAD unreadable".to_string(),
+        _ => "no git evidence: HEAD unreadable".to_string(),
     };
+    let snippet = format!(
+        "\n--- guard ---\npre_head={pre_kv}\npost_head={post_kv}\n{verdict}"
+    );
     (exit_ok && has_evidence, snippet)
 }
 
@@ -3227,6 +3232,14 @@ mod tests {
             snippet.contains("no git evidence"),
             "snippet must name the drift; got: {snippet}"
         );
+        assert!(
+            snippet.contains("pre_head=abc1234"),
+            "snippet must include structured pre_head; got: {snippet}"
+        );
+        assert!(
+            snippet.contains("post_head=abc1234"),
+            "snippet must include structured post_head; got: {snippet}"
+        );
     }
 
     #[test]
@@ -3239,17 +3252,29 @@ mod tests {
             snippet.contains("HEAD abc1234 → def5678"),
             "snippet must record pre/post SHAs; got: {snippet}"
         );
+        assert!(
+            snippet.contains("pre_head=abc1234"),
+            "structured pre_head for reconcile audit; got: {snippet}"
+        );
+        assert!(
+            snippet.contains("post_head=def5678"),
+            "structured post_head for reconcile audit; got: {snippet}"
+        );
     }
 
     #[test]
     fn test_workplan_evidence_exit_failure_never_succeeds() {
         // exit != 0 overrides evidence: a failing process is a failure even
         // if HEAD happens to have moved (e.g. partial work then crash).
-        let (success, _snippet) =
+        let (success, snippet) =
             check_evidence(false, Some("abc1234"), Some("def5678"));
         assert!(
             !success,
             "non-zero exit must not be overridden by HEAD movement"
+        );
+        assert!(
+            snippet.contains("pre_head=abc1234") && snippet.contains("post_head=def5678"),
+            "structured SHAs present even on exit failure; got: {snippet}"
         );
     }
 
@@ -3262,6 +3287,14 @@ mod tests {
         assert!(
             snippet.contains("no git evidence"),
             "snippet must surface the HEAD read failure; got: {snippet}"
+        );
+        assert!(
+            snippet.contains("pre_head=UNREADABLE"),
+            "unreadable HEAD must be explicit; got: {snippet}"
+        );
+        assert!(
+            snippet.contains("post_head=UNREADABLE"),
+            "unreadable HEAD must be explicit; got: {snippet}"
         );
     }
 
