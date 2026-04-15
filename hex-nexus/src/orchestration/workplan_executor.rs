@@ -1715,3 +1715,55 @@ impl WorkplanExecutor {
         Self::store_execution(port, &state).await
     }
 }
+
+#[cfg(test)]
+mod workplan_schema_tests {
+    //! P1.2 — verify `title` ↔ `name` aliasing on phase deserialization.
+    //! Pinpoints the bug that caused `POST /api/workplan/execute` to 500 with
+    //! `missing field 'name'` on workplans authored against `hex plan lint`
+    //! (which accepts `title` as canonical per workplan.schema.json).
+    use super::*;
+
+    #[test]
+    fn workplan_accepts_title_as_alias_for_name() {
+        let j = r#"{"phases":[{"id":"P1","title":"just-title","tasks":[]}]}"#;
+        let wp: Workplan = serde_json::from_str(j).expect("title-only phase must deserialize");
+        assert_eq!(wp.phases[0].name, "just-title");
+    }
+
+    #[test]
+    fn workplan_rejects_duplicate_name_and_title() {
+        // serde's `alias` treats both spellings as the same logical field,
+        // so a JSON object containing both `name` AND `title` is a duplicate
+        // and rejected. This is the safest tie-breaker — surfaces author
+        // ambiguity at parse time instead of silently picking one. Pin it so
+        // a future refactor can't accidentally relax this to "last wins".
+        let j = r#"{"phases":[{"id":"P1","name":"real-name","title":"also-title","tasks":[]}]}"#;
+        let res: Result<Workplan, _> = serde_json::from_str(j);
+        assert!(
+            res.is_err(),
+            "phase with both name and title should be rejected as duplicate"
+        );
+    }
+
+    #[test]
+    fn workplan_rejects_when_neither_name_nor_title_present() {
+        let j = r#"{"phases":[{"id":"P1","tasks":[]}]}"#;
+        let res: Result<Workplan, _> = serde_json::from_str(j);
+        assert!(
+            res.is_err(),
+            "phase with neither name nor title should fail to deserialize"
+        );
+    }
+
+    #[test]
+    fn workplan_task_accepts_title_as_alias_for_name() {
+        // Belt-and-suspenders: WorkplanTask.name has had `alias = "title"`
+        // since the original schema, but pin the contract so a future refactor
+        // can't drop it silently.
+        let j = r#"{"phases":[{"id":"P1","name":"phase","tasks":[{"id":"P1.1","title":"a-task"}]}]}"#;
+        let wp: Workplan = serde_json::from_str(j).expect("title-only task must deserialize");
+        assert_eq!(wp.phases[0].tasks[0].name, "a-task");
+    }
+}
+
