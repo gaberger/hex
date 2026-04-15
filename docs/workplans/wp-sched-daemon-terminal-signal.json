@@ -1,0 +1,141 @@
+{
+  "adr": "ADR-2604142155-sched-daemon-stuck-in-progress",
+  "id": "wp-sched-daemon-terminal-signal",
+  "phases": [
+    {
+      "id": "P0",
+      "tasks": [
+        {
+          "acceptance": "File exists; TLC parses it cleanly",
+          "adapter": "docs",
+          "evidence": "docs/algebra/sched_daemon.tla committed",
+          "id": "P0.1",
+          "status": "done",
+          "strategy_hint": "script",
+          "title": "Write docs/algebra/sched_daemon.tla modeling pending/claimed/in_progress/terminal states + HandleInvariant + TerminalReachable"
+        },
+        {
+          "acceptance": "TLC reports liveness counterexample with task stuck in_progress",
+          "adapter": "docs",
+          "evidence": "counterexample trace pasted in task result",
+          "id": "P0.2",
+          "status": "pending",
+          "strategy_hint": "script",
+          "title": "Run TLC against current-daemon model (DispatchVacuous enabled, no TimeoutSweep fairness): confirm TerminalReachable FAILS"
+        },
+        {
+          "acceptance": "TLC reports no violation of Safety, SafetyFixed, TerminalReachable, BoundedTermination",
+          "adapter": "docs",
+          "evidence": "TLC pass-output pasted in task result",
+          "id": "P0.3",
+          "status": "pending",
+          "strategy_hint": "script",
+          "title": "Run TLC against fixed-daemon model (EvidenceRequired invariant + WF TimeoutSweep): confirm all properties hold"
+        },
+        {
+          "acceptance": "ADR body references sched_daemon.tla and the failed liveness property",
+          "adapter": "docs",
+          "evidence": "git diff on ADR-2604142155",
+          "id": "P0.4",
+          "status": "pending",
+          "strategy_hint": "transform",
+          "title": "Update ADR-2604142155 Context to cite the TLA+ counterexample as the formal root cause"
+        }
+      ],
+      "title": "Formal spec — TLA+ model of daemon task lifecycle"
+    },
+    {
+      "id": "P1",
+      "tasks": [
+        {
+          "acceptance": "tests/sched_daemon_terminal_state.rs fails on current main with timeout; passes after P2",
+          "adapter": "hex-nexus",
+          "evidence": "new test file committed",
+          "id": "P1.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add integration test: enqueue workplan, assert daemon drains to terminal within timeout"
+        },
+        {
+          "acceptance": "tracing::debug! at each lifecycle edge in sched drain loop",
+          "adapter": "hex-nexus",
+          "evidence": "grep shows 4+ new tracing points in drain_queue code path",
+          "id": "P1.2",
+          "status": "done",
+          "strategy_hint": "transform",
+          "title": "Capture daemon drain-path trace (log lines added at enqueue, claim, dispatch, terminate)"
+        }
+      ],
+      "title": "Reproduce + pin the bug"
+    },
+    {
+      "id": "P2",
+      "tasks": [
+        {
+          "acceptance": "Task struct has timeout_s; hex sched queue history shows it",
+          "adapter": "hex-nexus",
+          "evidence": "schema migration + field on Task",
+          "id": "P2.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Daemon reads workplan timeout_s from enqueue payload, stores alongside task"
+        },
+        {
+          "acceptance": "Stale-task sweep runs each drain tick; reason: 'daemon timeout — no terminal signal from executor'",
+          "adapter": "hex-nexus",
+          "evidence": "unit test for sweep_stuck_tasks() + matches TLA+ TimeoutSweep action",
+          "id": "P2.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Daemon auto-fails in_progress tasks older than timeout_s + 30s grace (TimeoutSweep under weak fairness)"
+        },
+        {
+          "acceptance": "Vacuous 'Object {}' response fails the task immediately; only real dispatch handles transition to in_progress",
+          "adapter": "hex-nexus",
+          "evidence": "call-site + unit test with vacuous payload + matches TLA+ EvidenceRequired invariant",
+          "id": "P2.3",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Daemon calls validate_dispatch_evidence() on executor response before accepting in_progress (enforces EvidenceRequired)"
+        }
+      ],
+      "title": "Fix — bounded timeout + evidence guard on daemon side"
+    },
+    {
+      "id": "P3",
+      "tasks": [
+        {
+          "acceptance": "Smoke exits 0 with task in terminal state within 60s",
+          "adapter": "hex-nexus",
+          "evidence": "smoke output pasted in task result",
+          "id": "P3.1",
+          "status": "done",
+          "strategy_hint": "script",
+          "title": "Re-run scripts/smoke-path-b-wait.sh against rebuilt binary"
+        },
+        {
+          "acceptance": "TLC pass; model matches implementation",
+          "adapter": "docs",
+          "evidence": "TLC output",
+          "id": "P3.2",
+          "status": "done",
+          "strategy_hint": "script",
+          "title": "Re-run TLC on sched_daemon.tla against the shipped code's state machine: all properties still hold"
+        },
+        {
+          "acceptance": "hex plan reconcile --all --update clean",
+          "adapter": "hex-cli",
+          "evidence": "reconcile output",
+          "id": "P3.3",
+          "status": "done",
+          "strategy_hint": "script",
+          "title": "Reconcile wp-sched-evidence-guard + this workplan against git evidence"
+        }
+      ],
+      "title": "Verify"
+    }
+  ],
+  "status": "pending",
+  "timeout_s": 1800,
+  "title": "sched daemon must transition tasks to terminal state (ADR-2604142155)"
+}
