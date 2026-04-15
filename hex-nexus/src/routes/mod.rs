@@ -36,7 +36,7 @@ pub mod context;
 pub mod inference_ws;
 pub mod events;
 pub mod fingerprint;
-pub mod brain;
+pub mod sched;
 pub mod briefing;
 pub mod pulse;
 pub mod steer;
@@ -457,9 +457,9 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/events", post(events::post_event).get(events::list_events))
         // Paginated briefing (ADR-2604131500 P1.1)
         .route("/api/briefing", get(briefing::get_briefing))
-        // AGENTIC BRAIN (ADR-2604102200) — must register BEFORE {project_id} routes
-        .route("/api/brain/status", get(brain::status))
-        .route("/api/brain/test", post(brain::test))
+        // AGENTIC SCHED (ADR-2604102200) — must register BEFORE {project_id} routes
+        .route("/api/sched/status", get(sched::status))
+        .route("/api/sched/test", post(sched::test))
         // AIOS Experience (ADR-2604131500) — pulse, steer, taste, trust
         .route("/api/pulse", get(pulse::get_pulse))
         .route("/api/steer", post(steer::handle_steer))
@@ -698,6 +698,7 @@ pub fn build_router(state: SharedState) -> Router {
         // Rate limit state + cost attribution (ADR-2604052125)
         .route("/api/inference/rate-state", get(inference::rate_state))
         .route("/api/inference/stats", get(inference::inference_stats_endpoint))
+        .route("/api/inference/q-report", get(inference::q_report))
         // SSE streaming chat endpoint (hex chat TUI — wp-cli-chat-tui)
         .route("/api/inference/chat/stream", post(inference::inference_stream))
         // OpenAI-compatible proxy (opencode first-class — feat-hex-opencode-first-class)

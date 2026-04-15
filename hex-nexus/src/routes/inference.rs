@@ -1411,3 +1411,242 @@ pub async fn inference_stats_endpoint(
     let stats = state.rate_limiter.get_cost_stats().await;
     (StatusCode::OK, Json(stats))
 }
+
+// ── Q-Report (ADR-2604120202 + wp-inference-q-report) ───────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct QReportParams {
+    pub tier: Option<String>,
+    pub task_type: Option<String>,
+    pub model: Option<String>,
+    pub since: Option<String>,
+    #[serde(default = "default_q_limit")]
+    pub limit: u32,
+    pub sort: Option<String>,
+}
+
+fn default_q_limit() -> u32 {
+    50
+}
+
+fn parse_duration_secs(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if s.len() < 2 {
+        return None;
+    }
+    let (num, unit) = s.split_at(s.len() - 1);
+    let n: i64 = num.parse().ok()?;
+    match unit {
+        "s" => Some(n),
+        "m" => Some(n * 60),
+        "h" => Some(n * 3600),
+        "d" => Some(n * 86400),
+        "w" => Some(n * 604800),
+        _ => None,
+    }
+}
+
+async fn stdb_query_rl(sql: &str) -> Result<Vec<serde_json::Value>, String> {
+    let host = std::env::var("SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| hex_core::SPACETIMEDB_DEFAULT_HOST.to_string());
+    let db = hex_core::STDB_DATABASE_RL;
+    let url = format!("{}/v1/database/{}/sql", host, db);
+
+    let client = reqwest::Client::new();
+    let mut req = client.post(&url).body(sql.to_string());
+    if let Ok(token) = std::env::var("SPACETIMEDB_TOKEN") {
+        if !token.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+    }
+
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("STDB SQL failed: {}", body));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let body: serde_json::Value =
+        serde_json::from_str(trimmed).map_err(|e| e.to_string())?;
+    Ok(crate::adapters::spacetime_state::SpacetimeStateAdapter::parse_stdb_response(body))
+}
+
+/// GET /api/inference/q-report — Q-table report with filtering, sorting, and 7-day trend.
+pub async fn q_report(
+    axum::extract::Query(params): axum::extract::Query<QReportParams>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let q_rows = match stdb_query_rl("SELECT * FROM rl_q_entry").await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "q-report: failed to query rl_q_entry");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": e })),
+            );
+        }
+    };
+
+    let exp_rows = match stdb_query_rl("SELECT * FROM rl_experience").await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "q-report: failed to query rl_experience");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": e })),
+            );
+        }
+    };
+
+    let now = chrono::Utc::now();
+    let seven_days_ago = now - chrono::Duration::days(7);
+
+    // Build experience lookup: (state_key, action) → Vec<(timestamp, reward)>
+    let mut exp_map: std::collections::HashMap<(String, String), Vec<(chrono::DateTime<Utc>, f64)>> =
+        std::collections::HashMap::new();
+    for row in &exp_rows {
+        let sk = row.get("state_key").and_then(|v| v.as_str()).unwrap_or("");
+        let action = row.get("action").and_then(|v| v.as_str()).unwrap_or("");
+        let reward = row.get("reward").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let ts_str = row.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
+        let ts = chrono::DateTime::parse_from_rfc3339(ts_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or(now);
+        exp_map
+            .entry((sk.to_string(), action.to_string()))
+            .or_default()
+            .push((ts, reward));
+    }
+
+    // Parse since cutoff
+    let since_cutoff = params
+        .since
+        .as_deref()
+        .and_then(parse_duration_secs)
+        .map(|secs| now - chrono::Duration::seconds(secs));
+
+    // Process Q-entries
+    let mut entries: Vec<serde_json::Value> = Vec::new();
+    for row in &q_rows {
+        let state_key = row.get("state_key").and_then(|v| v.as_str()).unwrap_or("");
+        let action = row.get("action").and_then(|v| v.as_str()).unwrap_or("");
+        let q_value = row.get("q_value").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let visit_count = row.get("visit_count").and_then(|v| v.as_u64()).unwrap_or(0);
+        let last_updated = row.get("last_updated").and_then(|v| v.as_str()).unwrap_or("");
+
+        // Extract task_type from state_key (first segment before '_')
+        let entry_task_type = state_key.split('_').next().unwrap_or("");
+
+        // Infer tier from action (model name)
+        let entry_tier = infer_tier_from_model(action);
+
+        // Apply filters
+        if let Some(ref tier_filter) = params.tier {
+            if !entry_tier.eq_ignore_ascii_case(tier_filter) {
+                continue;
+            }
+        }
+        if let Some(ref tt_filter) = params.task_type {
+            if !entry_task_type.eq_ignore_ascii_case(tt_filter) {
+                continue;
+            }
+        }
+        if let Some(ref model_filter) = params.model {
+            if !action.contains(model_filter.as_str()) {
+                continue;
+            }
+        }
+        if let Some(cutoff) = since_cutoff {
+            let updated = chrono::DateTime::parse_from_rfc3339(last_updated)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or(now);
+            if updated < cutoff {
+                continue;
+            }
+        }
+
+        // Compute trend_7d: mean reward in last 7d vs current Q
+        let trend_7d = exp_map
+            .get(&(state_key.to_string(), action.to_string()))
+            .map(|exps| {
+                let recent: Vec<f64> = exps
+                    .iter()
+                    .filter(|(ts, _)| *ts >= seven_days_ago)
+                    .map(|(_, r)| *r)
+                    .collect();
+                if recent.is_empty() {
+                    0.0
+                } else {
+                    let mean = recent.iter().sum::<f64>() / recent.len() as f64;
+                    mean - q_value
+                }
+            })
+            .unwrap_or(0.0);
+
+        entries.push(json!({
+            "state_key": state_key,
+            "action": action,
+            "tier": entry_tier,
+            "task_type": entry_task_type,
+            "q_value": q_value,
+            "visit_count": visit_count,
+            "last_updated": last_updated,
+            "trend_7d": (trend_7d * 1000.0).round() / 1000.0,
+        }));
+    }
+
+    // Sort
+    let sort_key = params.sort.as_deref().unwrap_or("visits");
+    entries.sort_by(|a, b| {
+        match sort_key {
+            "q" => {
+                let qa = a["q_value"].as_f64().unwrap_or(0.0);
+                let qb = b["q_value"].as_f64().unwrap_or(0.0);
+                qb.partial_cmp(&qa).unwrap_or(std::cmp::Ordering::Equal)
+            }
+            "recency" => {
+                let ta = a["last_updated"].as_str().unwrap_or("");
+                let tb = b["last_updated"].as_str().unwrap_or("");
+                tb.cmp(ta)
+            }
+            _ => {
+                // "visits" (default) — descending
+                let va = a["visit_count"].as_u64().unwrap_or(0);
+                let vb = b["visit_count"].as_u64().unwrap_or(0);
+                vb.cmp(&va)
+            }
+        }
+    });
+
+    // Apply limit
+    let limit = params.limit as usize;
+    entries.truncate(limit);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "count": entries.len(),
+            "sort": sort_key,
+            "entries": entries,
+        })),
+    )
+}
+
+fn infer_tier_from_model(model: &str) -> String {
+    let m = model.to_lowercase();
+    if m.contains("qwen3:4b") || m.contains("qwen3-4b") {
+        "t1".into()
+    } else if m.contains("qwen2.5-coder") || m.contains("qwen2.5_coder") || m.contains("codellama") {
+        "t2".into()
+    } else if m.contains("devstral") || m.contains("deepseek") {
+        "t2.5".into()
+    } else if m.contains("claude") || m.contains("gpt-4") || m.contains("opus") || m.contains("sonnet") {
+        "t3".into()
+    } else {
+        "unknown".into()
+    }
+}
