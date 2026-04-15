@@ -151,6 +151,33 @@ pub enum InferenceAction {
     Stats,
     /// Show escalation rates per task-tier and model (P4.2 — escalation tracking)
     EscalationReport,
+    /// Query the inference q-report: per-model usage, latency, and 7-day trends
+    QReport {
+        /// Filter by inference tier (e.g. t1, t2, t2_5, t3)
+        #[arg(long)]
+        tier: Option<String>,
+        /// Filter by task type (e.g. code_generation, reasoning)
+        #[arg(long)]
+        task_type: Option<String>,
+        /// Filter by model name substring
+        #[arg(long)]
+        model: Option<String>,
+        /// Sort column: visits, latency_p50, latency_p99, tokens, errors
+        #[arg(long, default_value = "visits")]
+        sort: String,
+        /// Maximum rows to display
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+        /// Output format: table, json, yaml
+        #[arg(long, default_value = "table")]
+        format: String,
+        /// Show only entries since this duration (e.g. 1h, 7d, 30m)
+        #[arg(long)]
+        since: Option<String>,
+        /// Continuously refresh the report (like top)
+        #[arg(long)]
+        watch: bool,
+    },
     /// Benchmark a model: code-gen, reasoning, and identity prompts — quality + speed + tier recommendation (ADR-2604131238)
     Bench {
         /// Provider ID, model name, or URL (e.g. "bazzite-ollama", "minimax-m2.7:cloud", "http://bazzite:11434")
@@ -230,6 +257,9 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
         InferenceAction::Queue => queue_list().await,
         InferenceAction::Stats => inference_stats().await,
         InferenceAction::EscalationReport => escalation_report().await,
+        InferenceAction::QReport { tier, task_type, model, sort, limit, format, since, watch } => {
+            q_report(tier, task_type, model, &sort, limit, &format, since, watch).await
+        }
         InferenceAction::Bench { target, model, quick, compare, save } => {
             bench_provider(&target, model.as_deref(), quick, compare.as_deref(), save).await
         }
@@ -2181,6 +2211,123 @@ async fn bench_provider(
     }
 
     Ok(())
+}
+
+/// `hex inference q-report` — fetch the q-report from nexus and display it.
+async fn q_report(
+    tier: Option<String>,
+    task_type: Option<String>,
+    model: Option<String>,
+    sort: &str,
+    limit: u32,
+    format: &str,
+    since: Option<String>,
+    watch: bool,
+) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    loop {
+        let mut params = vec![
+            ("sort".to_string(), sort.to_string()),
+            ("limit".to_string(), limit.to_string()),
+        ];
+        if let Some(ref t) = tier {
+            params.push(("tier".to_string(), t.clone()));
+        }
+        if let Some(ref tt) = task_type {
+            params.push(("task_type".to_string(), tt.clone()));
+        }
+        if let Some(ref m) = model {
+            params.push(("model".to_string(), m.clone()));
+        }
+        if let Some(ref s) = since {
+            params.push(("since".to_string(), s.clone()));
+        }
+
+        let query = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join("&");
+
+        let body: serde_json::Value = nexus
+            .get(&format!("/api/inference/q-report?{}", query))
+            .await?;
+
+        match format {
+            "json" => println!("{}", serde_json::to_string_pretty(&body)?),
+            "yaml" => println!("{}", serde_yaml::to_string(&body)?),
+            _ => print_q_report_table(&body),
+        }
+
+        if !watch {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        print!("\x1B[2J\x1B[1;1H"); // clear screen
+    }
+    Ok(())
+}
+
+fn print_q_report_table(body: &serde_json::Value) {
+    let entries = match body.get("entries").and_then(|e| e.as_array()) {
+        Some(arr) => arr,
+        None => {
+            println!("{}", "No q-report entries found.".dimmed());
+            return;
+        }
+    };
+
+    if entries.is_empty() {
+        println!("{}", "No q-report entries found.".dimmed());
+        return;
+    }
+
+    println!(
+        "{:<24} {:<8} {:<16} {:>8} {:>10} {:>10} {:>8} {:>8}",
+        "MODEL".bold(),
+        "TIER".bold(),
+        "TASK TYPE".bold(),
+        "VISITS".bold(),
+        "P50 (ms)".bold(),
+        "P99 (ms)".bold(),
+        "TOKENS".bold(),
+        "TREND".bold(),
+    );
+    println!("{}", "─".repeat(100).dimmed());
+
+    for entry in entries {
+        let model = entry.get("model").and_then(|v| v.as_str()).unwrap_or("-");
+        let tier = entry.get("tier").and_then(|v| v.as_str()).unwrap_or("-");
+        let task_type = entry.get("task_type").and_then(|v| v.as_str()).unwrap_or("-");
+        let visits = entry.get("visits").and_then(|v| v.as_u64()).unwrap_or(0);
+        let p50 = entry.get("latency_p50_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let p99 = entry.get("latency_p99_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let tokens = entry.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let trend = entry.get("trend_7d").and_then(|v| v.as_str()).unwrap_or("");
+
+        let trend_colored = match trend {
+            t if t.starts_with('+') => t.green().to_string(),
+            t if t.starts_with('-') => t.red().to_string(),
+            t => t.dimmed().to_string(),
+        };
+
+        println!(
+            "{:<24} {:<8} {:<16} {:>8} {:>10.0} {:>10.0} {:>8} {:>8}",
+            model, tier, task_type, visits, p50, p99, tokens, trend_colored,
+        );
+    }
+
+    if let Some(summary) = body.get("summary") {
+        println!("\n{}", "Summary".bold().underline());
+        if let Some(total) = summary.get("total_visits").and_then(|v| v.as_u64()) {
+            println!("  Total visits: {}", total);
+        }
+        if let Some(avg) = summary.get("avg_latency_ms").and_then(|v| v.as_f64()) {
+            println!("  Avg latency:  {:.0} ms", avg);
+        }
+    }
 }
 
 /// `hex inference escalation-report` — read escalation/success keys from HexFlo
