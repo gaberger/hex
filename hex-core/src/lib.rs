@@ -14,6 +14,7 @@
 //! ```
 
 pub mod domain;
+pub mod inference_q;
 pub mod ports;
 pub mod quantization;
 pub mod rules;
@@ -85,5 +86,6 @@ pub use domain::tools::{ToolCall, ToolDefinition, ToolInputSchema, ToolResult};
 pub use domain::swarm_task::{SwarmTaskCompletion, SwarmTaskStatus};
 pub use domain::workplan::{PhaseGate, TaskStatus, Workplan, WorkplanPhase, WorkplanTask};
 pub use domain::capability::{AgentCapabilityToken, Capability, VerifiedClaims};
+pub use inference_q::QReportEntry;
 pub use quantization::QuantizationLevel;
 pub use types::TaskCompletionBody;
