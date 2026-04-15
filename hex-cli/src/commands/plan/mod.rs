@@ -406,22 +406,9 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
                 let body = serde_json::json!({
                     "workplanPath": _abs_path.to_string_lossy(),
                 });
-                match client.post_long("/api/workplan/execute", &body).await {
-                    Ok(resp) => {
-                        if let Some(id) = resp.get("execution_id").and_then(|v| v.as_str()) {
-                            println!("{} Execution started: {}", "\u{2b21}".green(), id);
-                        } else {
-                            println!("{} Execution dispatched: {:?}", "\u{2b21}".green(), resp);
-                        }
-                    }
+                let dispatch_resp = match client.post_long("/api/workplan/execute", &body).await {
+                    Ok(resp) => resp,
                     Err(e) => {
-                        // Path B 5xx surface: NexusClient bails with
-                        // "POST <path> returned <status>: <body>". When the
-                        // body is JSON like {"error":"..."}, surface the
-                        // underlying message so schema drift (e.g. "missing
-                        // field `name`") is self-diagnostic instead of just
-                        // showing the bare status. Keep it one line so the
-                        // queue history result-tail still captures it.
                         let raw = format!("{}", e);
                         let detail = raw
                             .rsplit_once(": ")
@@ -430,6 +417,75 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
                             .unwrap_or(raw);
                         println!("  {} Nexus executor unavailable ({}), falling back to distributed", "!".yellow(), detail);
                         return execute_plan_distributed(&wp).await;
+                    }
+                };
+
+                let execution_id = match dispatch_resp.get("execution_id").and_then(|v| v.as_str()) {
+                    Some(id) => {
+                        println!("{} Execution started: {}", "\u{2b21}".green(), id);
+                        id.to_string()
+                    }
+                    None => {
+                        println!("{} Execution dispatched (no execution_id): {:?}", "\u{2b21}".green(), dispatch_resp);
+                        return Ok(());
+                    }
+                };
+
+                // Poll for completion: 2s interval, 600s timeout, heartbeat every 30s
+                let poll_interval = std::time::Duration::from_secs(2);
+                let timeout = std::time::Duration::from_secs(600);
+                let heartbeat_interval = std::time::Duration::from_secs(30);
+                let start = std::time::Instant::now();
+                let mut last_heartbeat = start;
+
+                loop {
+                    tokio::time::sleep(poll_interval).await;
+                    let elapsed = start.elapsed();
+
+                    if elapsed > timeout {
+                        eprintln!("Workplan execution timed out after {}s", timeout.as_secs());
+                        std::process::exit(1);
+                    }
+
+                    let status_path = format!("/api/workplan/{}", execution_id);
+                    match client.get(&status_path).await {
+                        Ok(resp) => {
+                            let status = resp
+                                .pointer("/data/status")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+
+                            if last_heartbeat.elapsed() >= heartbeat_interval {
+                                println!("  {} [{}s] status: {}", "\u{2661}".dimmed(), elapsed.as_secs(), status);
+                                last_heartbeat = std::time::Instant::now();
+                            }
+
+                            match status {
+                                "completed" => {
+                                    println!("{} Workplan completed ({}s)", "\u{2713}".green(), elapsed.as_secs());
+                                    return Ok(());
+                                }
+                                "failed" => {
+                                    let errors = resp
+                                        .pointer("/data/errors")
+                                        .and_then(|v| v.as_array())
+                                        .map(|arr| arr.iter()
+                                            .filter_map(|e| e.as_str())
+                                            .collect::<Vec<_>>()
+                                            .join("; "))
+                                        .unwrap_or_default();
+                                    eprintln!("Workplan failed ({}s): {}", elapsed.as_secs(), errors);
+                                    std::process::exit(1);
+                                }
+                                _ => {} // running, paused — keep polling
+                            }
+                        }
+                        Err(e) => {
+                            if last_heartbeat.elapsed() >= heartbeat_interval {
+                                println!("  {} [{}s] poll error: {}", "!".yellow(), elapsed.as_secs(), e);
+                                last_heartbeat = std::time::Instant::now();
+                            }
+                        }
                     }
                 }
             } else {
