@@ -1,0 +1,70 @@
+{
+  "adr": "ADR-2604151400",
+  "description": "Make `hex sched queue list` include running tasks (and any other non-terminal states) by default, with --all for terminal states and --status / --json for filtering. Closes the disagreement between `queue list` and `status`. Includes brain→sched title rename on this surface.",
+  "id": "wp-sched-queue-list-show-running",
+  "phases": [
+    {
+      "id": "P1",
+      "tasks": [
+        {
+          "evidence": [
+            "grep -nE 'fn queue_list|--status|--all' hex-cli/src/commands/sched.rs",
+            "cargo check -p hex-cli"
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Refactor queue_list handler in hex-cli/src/commands/sched.rs to load all non-terminal tasks (status in {running, pending, failed_retrying}) by default, sort by status (running first) then created_at ASC. Add --all, --status <STATUS>, --limit (default 50), --json flags via clap."
+        },
+        {
+          "evidence": [
+            "grep -nE 'Sched Queue|STATUS' hex-cli/src/commands/sched.rs",
+            "test $(grep -c 'Pending Brain Tasks' hex-cli/src/commands/sched.rs) -eq 0"
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.2",
+          "status": "done",
+          "strategy_hint": "transform",
+          "title": "Update table renderer: add STATUS column with ▶ running, ⤵ pending glyphs (matching `hex sched status` output). Title 'Pending Brain Tasks' → 'Sched Queue'. Footer line: 'N running, M pending, K completed (use --all to show)'."
+        },
+        {
+          "evidence": [
+            "grep -nE 'test_queue_list_default|test_queue_list_all' hex-cli/src/commands/sched.rs",
+            "cargo test -p hex-cli queue_list"
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.3",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Test: snapshot queue with 1 running + 2 pending + 1 completed; default render shows 3 rows (no completed); --all shows 4; --status running shows 1; --json output round-trips through serde."
+        }
+      ],
+      "title": "Render running + pending by default"
+    },
+    {
+      "id": "P2",
+      "tasks": [
+        {
+          "evidence": [
+            "cargo check --workspace",
+            "cargo build -p hex-cli --release",
+            "hex sched queue list 2>&1 | grep -qE 'Sched Queue|running'"
+          ],
+          "files": [],
+          "id": "P2.1",
+          "status": "done",
+          "strategy_hint": "script",
+          "title": "Workspace build + release rebuild + smoke: cargo check --workspace, cargo build -p hex-cli --release, then `hex sched queue list` shows current running task if one exists."
+        }
+      ],
+      "title": "Build + smoke"
+    }
+  ]
+}
