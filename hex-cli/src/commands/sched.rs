@@ -1663,6 +1663,14 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         // executes work inline; it stamps the lease and moves on. Swarm
         // workers progress the task; the sweeper reclaims if the lease
         // expires. Runs regardless of validate() outcome.
+        //
+        // ADR-2604141400 §1 partial-impl gap (dog-food finding 2026-04-14):
+        // no swarm workers register against `brain-lease`, and no reclaim
+        // sweeper exists, so a pure swarm-lease path silently parks every
+        // task in `leased` forever — bypassing the §1 P1 evidence guard
+        // that lives in execute_brain_task. Until §2 ships fully, fall
+        // back to inline execution whenever dispatch reports no live
+        // worker. The guard runs on the fallback path.
         match drain_brain_tasks(1).await {
             Ok(tasks) if !tasks.is_empty() => {
                 for task in tasks {
@@ -1676,20 +1684,68 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
+                    let payload = task
+                        .get("payload")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     println!("  ⬡ leasing brain task {id} ({kind})");
-                    match dispatch_brain_task(&task).await {
-                        Ok(handle) => {
-                            println!(
-                                "    {} leased to swarm {} (task {}, until {})",
-                                "→".cyan(),
-                                handle.swarm_id,
-                                handle.swarm_task_id,
-                                handle.leased_until,
+                    let outcome = match dispatch_brain_task(&task).await {
+                        Ok(handle) => classify_dispatch(&handle).await,
+                        Err(err) => DispatchOutcome::Error(err.to_string()),
+                    };
+                    if should_fallback_inline(&outcome) {
+                        // Inline fallback: guard-active execute_brain_task.
+                        // Mirrors queue_drain()'s inline pattern 1:1.
+                        match &outcome {
+                            DispatchOutcome::Error(err) => {
+                                eprintln!(
+                                    "    {} dispatch failed: {} — inline exec (guard active)",
+                                    "✗".red(),
+                                    err
+                                );
+                            }
+                            _ => {
+                                println!(
+                                    "    {} leased swarm empty — inline exec (guard active)",
+                                    "→".cyan(),
+                                );
+                            }
+                        }
+                        let _ =
+                            update_brain_task(&id, BrainTaskStatus::InProgress, "").await;
+                        let (ok, result) = execute_brain_task(&kind, &payload).await;
+                        let status = if ok {
+                            BrainTaskStatus::Completed
+                        } else {
+                            BrainTaskStatus::Failed
+                        };
+                        if let Err(err) = update_brain_task(&id, status, &result).await {
+                            eprintln!(
+                                "    {} update_brain_task failed: {}",
+                                "✗".red(),
+                                err
                             );
                         }
-                        Err(err) => {
-                            eprintln!("    {} dispatch failed: {}", "✗".red(), err);
-                        }
+                        println!(
+                            "    {} {}",
+                            if ok { "✓".green() } else { "✗".red() },
+                            status.as_str()
+                        );
+                    } else if let DispatchOutcome::LeasedToWorker {
+                        swarm_id,
+                        swarm_task_id,
+                        leased_until,
+                        ..
+                    } = &outcome
+                    {
+                        println!(
+                            "    {} leased to swarm {} (task {}, until {})",
+                            "→".cyan(),
+                            swarm_id,
+                            swarm_task_id,
+                            leased_until,
+                        );
                     }
                 }
             }
@@ -2435,6 +2491,63 @@ pub(crate) struct LeaseHandle {
     pub(crate) swarm_task_id: String,
     pub(crate) leased_to: String,
     pub(crate) leased_until: String,
+}
+
+/// Result of `dispatch_brain_task` as seen by the daemon drain loop
+/// (ADR-2604141400 §1 inline-fallback). Separated from `LeaseHandle`
+/// because the daemon's decision about whether to inline-execute depends
+/// on whether a live worker actually holds the lease, not just whether
+/// the swarm/task records were created.
+#[derive(Debug, Clone)]
+pub(crate) enum DispatchOutcome {
+    /// Dispatch registered a swarm task AND a live worker is polling the
+    /// swarm. Daemon should NOT fall back; the worker will progress it.
+    #[allow(dead_code)]
+    LeasedToWorker {
+        swarm_id: String,
+        swarm_task_id: String,
+        #[allow(dead_code)]
+        agent_id: String,
+        leased_until: String,
+    },
+    /// Dispatch registered a swarm task but no worker is registered against
+    /// it. This is the default outcome today because §2 worker registration
+    /// has not shipped. Daemon MUST fall back to inline `execute_brain_task`
+    /// so the evidence guard runs and the task doesn't sit `leased` forever.
+    LeasedEmpty {
+        #[allow(dead_code)]
+        swarm_id: String,
+        #[allow(dead_code)]
+        swarm_task_id: String,
+    },
+    /// Dispatch itself failed (nexus down, swarm create errored, etc.).
+    /// Daemon falls back to inline so the task still makes progress.
+    Error(String),
+}
+
+/// Pure predicate: should the daemon fall back to inline execute_brain_task?
+/// Tested in isolation so the fallback decision is verifiable without
+/// standing up a full daemon loop.
+pub(crate) fn should_fallback_inline(outcome: &DispatchOutcome) -> bool {
+    matches!(
+        outcome,
+        DispatchOutcome::Error(_) | DispatchOutcome::LeasedEmpty { .. }
+    )
+}
+
+/// Classify a successful `dispatch_brain_task` result into a
+/// [`DispatchOutcome`]. Currently treats every lease as empty because no
+/// swarm workers register against `brain-lease` — that's the §2 gap the
+/// inline fallback papers over. Once §2 lands, this helper will probe the
+/// swarm's live-agent list and return `LeasedToWorker` when applicable.
+pub(crate) async fn classify_dispatch(handle: &LeaseHandle) -> DispatchOutcome {
+    // TODO(§2): query /api/swarms/{swarm_id}/agents and return
+    // LeasedToWorker when a registered agent exists. For now, every lease
+    // is empty in practice — see ADR-2604141400 §1 "Known gaps".
+    DispatchOutcome::LeasedEmpty {
+        swarm_id: handle.swarm_id.clone(),
+        swarm_task_id: handle.swarm_task_id.clone(),
+    }
 }
 
 /// Hand a pending brain task off to a `brain-lease` swarm. Returns a
