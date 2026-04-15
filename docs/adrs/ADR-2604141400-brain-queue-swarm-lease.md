@@ -36,6 +36,17 @@ When the brain daemon picks a task off the queue, it must:
 
 The brain daemon never executes work itself — it is exclusively a dispatcher. HexFlo owns execution.
 
+### Known gaps (dog-food finding 2026-04-14)
+
+Partial §2 implementation shipped ahead of this workplan: daemon drain already calls `dispatch_brain_task` (swarm-lease path), but:
+
+- `dispatch_brain_task` routes to a phantom swarm — the `brain-lease` swarm gets created, but nothing registers workers against it
+- No swarm workers register against the `brain-lease` swarm (no worker-registration code path exists yet)
+- No lease-reclaim sweeper exists; `leased` tasks never transition out on their own
+- `execute_brain_task` (with the §1 P1 evidence guard) is bypassed on the daemon hot path, so the guard was dead code for the autonomous drain loop
+
+**Interim remediation (inline-fallback, wp-sched-inline-fallback):** daemon falls back to inline `execute_brain_task` when dispatch lands on an empty swarm (or errors). The §1 P1 evidence guard is active on the fallback path — workplan tasks that exit 0 but leave HEAD unchanged are marked `failed` with a `no git evidence` snippet. Fallback is gated by a `DispatchOutcome` enum (`LeasedToWorker | LeasedEmpty | Error`) + a pure `should_fallback_inline` predicate unit-tested in `sched::tests::brain::inline_fallback`. Full §2 (swarm workers + reclaim sweeper) remains a separate workplan.
+
 ### 2. New task states: `pending → leased → in_progress → completed | failed`
 
 | State | Transition | Who sets it |
