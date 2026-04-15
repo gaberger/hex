@@ -3546,5 +3546,58 @@ min_priority = 2
                 }
             }
         }
+
+        // ─── Inline fallback decision (ADR-2604141400 §1 inline-fallback) ───
+        //
+        // Locks the predicate `should_fallback_inline`: daemon drain MUST
+        // fall back to inline execute_brain_task whenever the swarm-lease
+        // path yields no live worker, so the §1 P1 evidence guard stays
+        // active on the daemon hot path. Runs under
+        // `cargo test -p hex-cli brain::inline_fallback`.
+
+        mod inline_fallback {
+            use super::super::super::{should_fallback_inline, DispatchOutcome};
+
+            #[test]
+            fn error_outcome_triggers_fallback() {
+                let out = DispatchOutcome::Error("nexus down".into());
+                assert!(
+                    should_fallback_inline(&out),
+                    "Err(_) from dispatch_brain_task must force inline exec"
+                );
+            }
+
+            #[test]
+            fn leased_empty_triggers_fallback() {
+                // Today every dispatch returns LeasedEmpty because §2 worker
+                // registration has not shipped — so the fallback path is the
+                // one actually exercised. This test is the contract that
+                // keeps the guard alive on the hot path.
+                let out = DispatchOutcome::LeasedEmpty {
+                    swarm_id: "s1".into(),
+                    swarm_task_id: "st1".into(),
+                };
+                assert!(
+                    should_fallback_inline(&out),
+                    "empty swarm must fall back to inline exec"
+                );
+            }
+
+            #[test]
+            fn leased_to_worker_does_not_fall_back() {
+                // Once §2 lands, a live worker-polling swarm must NOT be
+                // pre-empted by inline exec — that would double-run the task.
+                let out = DispatchOutcome::LeasedToWorker {
+                    swarm_id: "s1".into(),
+                    swarm_task_id: "st1".into(),
+                    agent_id: "agent-7".into(),
+                    leased_until: "2026-04-14T00:30:00Z".into(),
+                };
+                assert!(
+                    !should_fallback_inline(&out),
+                    "live worker must retain the lease — no inline exec"
+                );
+            }
+        }
     }
 }
