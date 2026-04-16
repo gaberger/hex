@@ -8,6 +8,7 @@
   <a href="https://github.com/gaberger/hex/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
   <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-161_(151_Accepted)-bc8cff?style=flat-square" alt="ADRs"></a>
   <a href="#architecture-enforcement-that-agents-cant-bypass"><img src="https://img.shields.io/badge/Architecture-A%2B_100%2F100-3fb950?style=flat-square" alt="Architecture A+"></a>
+   <a href="docs/adrs/"><img src="https://img.shields.io/badge/Rekease-Alpha-bc8cff?style=flat-square" alt="ALPHA"></a>
 </p>
 
 <p align="center">
