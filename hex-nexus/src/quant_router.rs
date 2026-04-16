@@ -116,14 +116,14 @@ fn complexity_to_tier(level: ComplexityLevel) -> TaskTier {
 
 /// Ordering helper for taking the maximum of two `TaskTier` values.
 fn tier_max(a: TaskTier, b: TaskTier) -> TaskTier {
-    let ord = |t: TaskTier| -> u8 {
+    fn ord(t: TaskTier) -> u8 {
         match t {
             TaskTier::T1 => 1,
             TaskTier::T2 => 2,
             TaskTier::T2_5 => 3,
             TaskTier::T3 => 4,
         }
-    };
+    }
     if ord(b) > ord(a) { b } else { a }
 }
 
