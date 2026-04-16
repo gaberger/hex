@@ -8,6 +8,7 @@
   <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-161_(151_Accepted)-bc8cff?style=flat-square" alt="ADRs"></a>
   <a href="#architecture-enforcement-that-agents-cant-bypass"><img src="https://img.shields.io/badge/Architecture-A%2B_100%2F100-3fb950?style=flat-square" alt="Architecture A+"></a>
   <a href="#-two-modes-standalone-or-aios-linked"><img src="https://img.shields.io/badge/Mode-Choose_Your_Own-58a6ff?style=flat-square" alt="Mode"></a>
+  <a href="docs/adrs/"><img src="https://img.shields.io/badge/Release-Alpha-bc8cff?style=flat-square" alt="ALPHA"></a>
 </p>
 
 <p align="center">
