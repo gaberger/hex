@@ -81,19 +81,10 @@ docker run -d --name hex \
 
 # Or use docker-compose
 docker-compose up -d
-```
 
-### From Source
-
-```bash
-# Build
-cargo build -p hex-cli --release && cargo build -p hex-nexus --release
-
-# Start (requires SpacetimeDB running)
-hex nexus start
-
-# Install into a target project
-cd your-project && hex init
+# Install hex CLI
+curl -L https://github.com/gaberger/hex/releases/latest/download/hex-darwin-arm64 -o /usr/local/bin/hex
+chmod +x /usr/local/bin/hex
 ```
 
 After starting, run `hex` for status + next steps. Open `http://localhost:5555` for the dashboard.
