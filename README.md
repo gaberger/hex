@@ -77,7 +77,7 @@ Most agent frameworks are thin wrappers around LLM APIs. hex is different — it
 docker run -d --name hex \
   -p 5555:5555 -p 3033:3033 \
   -v $(pwd):/workspace \
-  ghcr.io/anthropic-hex/hex-nexus:latest
+  ghcr.io/gaberger/hex-nexus:latest
 
 # Or use docker-compose
 docker-compose up -d

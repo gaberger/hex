@@ -18,7 +18,7 @@ services:
 
   # hex-nexus - daemon that bridges SpacetimeDB with local filesystem
   hex-nexus:
-    image: ghcr.io/anthropic-hex/hex-nexus:latest
+    image: ghcr.io/gaberger/hex-nexus:latest
     ports:
       - "5555:5555"
     depends_on:
