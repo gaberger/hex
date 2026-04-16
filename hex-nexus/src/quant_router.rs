@@ -7,7 +7,10 @@
 use hex_core::QuantizationLevel;
 
 use crate::adapters::spacetime_inference::InferenceProviderRow;
+use crate::complexity::{score_complexity, ComplexityLevel};
 use crate::rate_limiter::RateLimitManager;
+use crate::remote::transport::TaskTier;
+use crate::task_type_classifier::classify_task_type;
 
 /// Policy for quantization selection, read from agent YAML `model.quantization`.
 #[derive(Debug, Clone)]
@@ -89,6 +92,75 @@ pub fn select_provider(
     });
 
     candidates.into_iter().next()
+}
+
+/// Map a `TaskTier` to the minimum `QuantizationLevel` required.
+fn tier_to_quant(tier: TaskTier) -> QuantizationLevel {
+    match tier {
+        TaskTier::T1 => QuantizationLevel::Q2,
+        TaskTier::T2 => QuantizationLevel::Q4,
+        TaskTier::T2_5 => QuantizationLevel::Q8,
+        TaskTier::T3 => QuantizationLevel::Cloud,
+    }
+}
+
+/// Map a `ComplexityLevel` to its equivalent `TaskTier`.
+fn complexity_to_tier(level: ComplexityLevel) -> TaskTier {
+    match level {
+        ComplexityLevel::Low => TaskTier::T1,
+        ComplexityLevel::Medium => TaskTier::T2,
+        ComplexityLevel::High => TaskTier::T2_5,
+        ComplexityLevel::Critical => TaskTier::T3,
+    }
+}
+
+/// Ordering helper for taking the maximum of two `TaskTier` values.
+fn tier_max(a: TaskTier, b: TaskTier) -> TaskTier {
+    let ord = |t: TaskTier| -> u8 {
+        match t {
+            TaskTier::T1 => 1,
+            TaskTier::T2 => 2,
+            TaskTier::T2_5 => 3,
+            TaskTier::T3 => 4,
+        }
+    };
+    if ord(b) > ord(a) { b } else { a }
+}
+
+/// Task-type-aware provider selection (ADR-2604142000).
+///
+/// Combines three tier signals with take-max semantics:
+///   1. `caller_tier` — the minimum tier requested by the caller.
+///   2. Classifier floor — `task_type_classifier::classify_task_type` may raise
+///      the tier based on prompt intent (shell command, reasoning, etc.).
+///   3. Complexity scorer — `complexity::score_complexity` may raise the tier
+///      based on prompt length and cross-file signals.
+///
+/// The effective tier is `max(caller_tier, classifier_tier, complexity_tier)`.
+/// Provider selection then delegates to `select_provider` with the quantization
+/// level that corresponds to the effective tier.
+///
+/// Returns `(effective_tier, Option<&InferenceProviderRow>)`.
+pub fn select_provider_task_aware<'a>(
+    providers: &'a [InferenceProviderRow],
+    prompt: &str,
+    caller_tier: TaskTier,
+    context_files: &[&str],
+) -> (TaskTier, Option<&'a InferenceProviderRow>) {
+    // Classifier floor
+    let classifier_tier = classify_task_type(prompt)
+        .map(|r| r.raised_tier)
+        .unwrap_or(TaskTier::T1);
+
+    // Complexity scorer
+    let complexity_tier = complexity_to_tier(score_complexity(prompt, context_files));
+
+    // Take-max across all three signals
+    let effective = tier_max(caller_tier, tier_max(classifier_tier, complexity_tier));
+
+    let min_quant = tier_to_quant(effective);
+    let provider = select_provider(providers, min_quant);
+    (effective, provider)
 }
 
 /// Free-tier-aware provider selection (ADR-2604052125).
