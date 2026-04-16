@@ -18,6 +18,9 @@ services:
 
   # hex-nexus - daemon that bridges SpacetimeDB with local filesystem
   hex-nexus:
+    build:
+      context: .
+      dockerfile: hex-nexus/Dockerfile
     image: ghcr.io/gaberger/hex-nexus:latest
     ports:
       - "5555:5555"
@@ -31,10 +34,6 @@ services:
       - ./.hex:/workspace/.hex
     networks:
       - hex-net
-    # Note: Build locally for now
-    # build:
-    #   context: .
-    #   dockerfile: hex-nexus/Dockerfile
 
 volumes:
   spacetimedb_data:
