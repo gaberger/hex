@@ -70,18 +70,33 @@ Most agent frameworks are thin wrappers around LLM APIs. hex is different — it
 
 ## Quick Start
 
+### With Docker (recommended)
+
+```bash
+# Start SpacetimeDB + hex-nexus with one command
+docker run -d --name hex \
+  -p 5555:5555 -p 3033:3033 \
+  -v $(pwd):/workspace \
+  ghcr.io/anthropic-hex/hex-nexus:latest
+
+# Or use docker-compose
+docker-compose up -d
+```
+
+### From Source
+
 ```bash
 # Build
 cargo build -p hex-cli --release && cargo build -p hex-nexus --release
 
 # Start (requires SpacetimeDB running)
 hex nexus start
-hex                          # Status + next steps
-open http://localhost:5555   # Live dashboard
 
 # Install into a target project
 cd your-project && hex init
 ```
+
+After starting, run `hex` for status + next steps. Open `http://localhost:5555` for the dashboard.
 
 ### Essential Commands
 
