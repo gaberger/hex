@@ -88,6 +88,73 @@ jobs:
           path: ${{ steps.version.outputs.tarball }}
           retention-days: 7
 
+  build-macos-x86_64:
+    runs-on: macos-13
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+      TARGET: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache build target
+        uses: actions/cache@v4
+        with:
+          path: target/
+          key: ${{ runner.os }}-cargo-target-x86_64-apple-darwin-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-x86_64-apple-darwin-
+
+      - name: Add Rust target
+        run: rustup target add "$TARGET"
+
+      - name: Ensure dashboard assets directory exists
+        run: mkdir -p hex-nexus/assets/dist
+
+      - name: Build hex-cli
+        run: cargo build --release --target "$TARGET" -p hex-cli
+
+      - name: Build hex-nexus
+        run: cargo build --release --target "$TARGET" -p hex-nexus
+
+      - name: Determine version
+        id: version
+        env:
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          GIT_REF: ${{ github.ref }}
+        run: |
+          if [[ "$GIT_REF" == refs/tags/* ]]; then
+            VERSION="${GIT_REF#refs/tags/v}"
+          else
+            VERSION="${DISPATCH_VERSION:-26.8.0}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tarball=hex-${VERSION}-${TARGET}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Create tarball
+        env:
+          TARBALL: ${{ steps.version.outputs.tarball }}
+        run: |
+          tar czf "$TARBALL" \
+            -C "target/${TARGET}/release" \
+            hex hex-nexus
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hex-macos-x86_64
+          path: ${{ steps.version.outputs.tarball }}
+          retention-days: 7
+
   build-linux-x86_64:
     runs-on: ubuntu-22.04
     env:
@@ -159,8 +226,79 @@ jobs:
           path: ${{ steps.version.outputs.tarball }}
           retention-days: 7
 
+  build-linux-arm64:
+    runs-on: ubuntu-22.04
+    env:
+      TARGET: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev libsqlite3-dev gcc-aarch64-linux-gnu
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache build target
+        uses: actions/cache@v4
+        with:
+          path: target/
+          key: ${{ runner.os }}-cargo-target-aarch64-unknown-linux-gnu-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-aarch64-unknown-linux-gnu-
+
+      - name: Add Rust target
+        run: rustup target add "$TARGET"
+
+      - name: Ensure dashboard assets directory exists
+        run: mkdir -p hex-nexus/assets/dist
+
+      - name: Build hex-cli
+        run: cargo build --release --target "$TARGET" -p hex-cli
+
+      - name: Build hex-nexus
+        run: cargo build --release --target "$TARGET" -p hex-nexus
+
+      - name: Determine version
+        id: version
+        env:
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          GIT_REF: ${{ github.ref }}
+        run: |
+          if [[ "$GIT_REF" == refs/tags/* ]]; then
+            VERSION="${GIT_REF#refs/tags/v}"
+          else
+            VERSION="${DISPATCH_VERSION:-26.8.0}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tarball=hex-${VERSION}-${TARGET}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Create tarball
+        env:
+          TARBALL: ${{ steps.version.outputs.tarball }}
+        run: |
+          tar czf "$TARBALL" \
+            -C "target/${TARGET}/release" \
+            hex hex-nexus
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hex-linux-arm64
+          path: ${{ steps.version.outputs.tarball }}
+          retention-days: 7
+
   release:
-    needs: [build-macos-arm64, build-linux-x86_64]
+    needs: [build-macos-arm64, build-macos-x86_64, build-linux-x86_64, build-linux-arm64]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -173,10 +311,22 @@ jobs:
           name: hex-macos-arm64
           path: artifacts/
 
+      - name: Download macOS x86_64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hex-macos-x86_64
+          path: artifacts/
+
       - name: Download Linux x86_64 artifact
         uses: actions/download-artifact@v4
         with:
           name: hex-linux-x86_64
+          path: artifacts/
+
+      - name: Download Linux ARM64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hex-linux-arm64
           path: artifacts/
 
       - name: List artifacts
@@ -222,14 +372,24 @@ jobs:
           VERSION="${TAG#v}"
           echo "## Install Instructions" >> "$GITHUB_STEP_SUMMARY"
           printf '```bash\n' >> "$GITHUB_STEP_SUMMARY"
-          echo "# macOS ARM64" >> "$GITHUB_STEP_SUMMARY"
+          echo "# macOS ARM64 (Apple Silicon)" >> "$GITHUB_STEP_SUMMARY"
           echo "curl -LO https://github.com/gaberger/hex/releases/download/${TAG}/hex-${VERSION}-aarch64-apple-darwin.tar.gz" >> "$GITHUB_STEP_SUMMARY"
           echo "tar xzf hex-${VERSION}-aarch64-apple-darwin.tar.gz" >> "$GITHUB_STEP_SUMMARY"
+          echo "sudo mv hex /usr/local/bin/hex" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "# macOS x86_64 (Intel)" >> "$GITHUB_STEP_SUMMARY"
+          echo "curl -LO https://github.com/gaberger/hex/releases/download/${TAG}/hex-${VERSION}-x86_64-apple-darwin.tar.gz" >> "$GITHUB_STEP_SUMMARY"
+          echo "tar xzf hex-${VERSION}-x86_64-apple-darwin.tar.gz" >> "$GITHUB_STEP_SUMMARY"
           echo "sudo mv hex /usr/local/bin/hex" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "# Linux x86_64" >> "$GITHUB_STEP_SUMMARY"
           echo "curl -LO https://github.com/gaberger/hex/releases/download/${TAG}/hex-${VERSION}-x86_64-unknown-linux-gnu.tar.gz" >> "$GITHUB_STEP_SUMMARY"
           echo "tar xzf hex-${VERSION}-x86_64-unknown-linux-gnu.tar.gz" >> "$GITHUB_STEP_SUMMARY"
+          echo "sudo mv hex /usr/local/bin/hex" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "# Linux ARM64" >> "$GITHUB_STEP_SUMMARY"
+          echo "curl -LO https://github.com/gaberger/hex/releases/download/${TAG}/hex-${VERSION}-aarch64-unknown-linux-gnu.tar.gz" >> "$GITHUB_STEP_SUMMARY"
+          echo "tar xzf hex-${VERSION}-aarch64-unknown-linux-gnu.tar.gz" >> "$GITHUB_STEP_SUMMARY"
           echo "sudo mv hex /usr/local/bin/hex" >> "$GITHUB_STEP_SUMMARY"
           printf '```\n' >> "$GITHUB_STEP_SUMMARY"
 
