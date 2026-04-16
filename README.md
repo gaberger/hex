@@ -26,27 +26,14 @@ AI coding agents are powerful — but they're expensive, uncontrolled, and cloud
 
 ---
 
-## Two Modes: Standalone or AIOS-linked
+## What Is hex?
 
-hex runs **two ways** — choose what fits your setup:
+hex is an **AI Operating System (AIOS)** — a microkernel runtime that manages AI agents, coordinates distributed workloads, and enforces architectural constraints. It is not a standalone app; it is the **operating system layer** that gets installed into target projects to orchestrate AI-driven development.
 
-| Mode | When to use | What's required |
-|:-----|:------------|:----------------|
-| **Standalone** (default) | Single machine, local models only, zero cloud | Ollama only |
-| **AIOS-linked** | Multi-agent swarms, autonomous self-improvement, real-time dashboards | SpacetimeDB |
-
-**Standalone** is the default. No database, no server, no cloud. Just you, Ollama, and hex:
-```bash
-hex plan execute wp-feature.json   # Runs entirely on local Ollama
-```
-
-**AIOS-linked** adds SpacetimeDB when you want to connect your app to the AIOS:
-- **Autonomous self-improvement** — RL Q-learning dispatch optimization, memory persistence across runs
-- **Live dashboard** — WebSocket push (not polling), real-time agent status
-- **Multi-host fleet** — see agents across machines
-- **HexFlo coordination** — atomic swarm state, heartbeat recovery
-
-SpacetimeDB is for **linking your application to the AIOS**, not for running hex itself. A generated hex app runs standalone. You only need SpacetimeDB when you want autonomous improvement.
+**SpacetimeDB is required** — it provides the coordination core:
+- Real-time state synchronization via WebSocket subscriptions
+- Atomic reducers for swarm coordination, agent lifecycle, inference routing
+- Memory persistence across runs for autonomous self-improvement
 
 ---
 
@@ -83,21 +70,17 @@ Most agent frameworks are thin wrappers around LLM APIs. hex is different — it
 
 ## Quick Start
 
-### Standalone (no database)
-
 ```bash
-cargo build -p hex-cli --release
-hex                          # Status + next steps
-hex plan execute wp-my-feature.json  # Run on local Ollama
-```
-
-### With SpacetimeDB (real-time features)
-
-```bash
+# Build
 cargo build -p hex-cli --release && cargo build -p hex-nexus --release
-hex nexus start              # Requires SpacetimeDB running
-hex                          # Status + getting-started guide
-open http://localhost:5555   # Live dashboard (optional)
+
+# Start (requires SpacetimeDB running)
+hex nexus start
+hex                          # Status + next steps
+open http://localhost:5555   # Live dashboard
+
+# Install into a target project
+cd your-project && hex init
 ```
 
 ### Essential Commands
@@ -170,8 +153,10 @@ hex-parser/            Code parsing utilities (tree-sitter)
 spacetime-modules/    7 WASM modules (only needed for AIOS-linked mode)
 ```
 
-- **Standalone mode**: hex-cli + hex-agent only. No database. Runs your app autonomously.
-- **AIOS-linked mode**: Add hex-nexus + spacetime-modules to connect your app to the AIOS for self-improvement.
+hex is built as a Rust workspace with these deployment units:
+- **hex-cli** — CLI entry point and MCP server
+- **hex-nexus** — daemon bridging SpacetimeDB with the local filesystem
+- **spacetime-modules** — WASM modules for coordination (always required)
 
 See [Architecture](docs/ARCHITECTURE.md) for crate details, agent roles, enforcement rules.
 
