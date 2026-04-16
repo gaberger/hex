@@ -290,15 +290,8 @@ jobs:
             -C "target/${TARGET}/release" \
             hex hex-nexus
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: hex-linux-arm64
-          path: ${{ steps.version.outputs.tarball }}
-          retention-days: 7
-
   release:
-    needs: [build-macos-arm64, build-macos-x86_64, build-linux-x86_64, build-linux-arm64]
+    needs: [build-macos-arm64, build-macos-x86_64, build-linux-x86_64]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -321,12 +314,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: hex-linux-x86_64
-          path: artifacts/
-
-      - name: Download Linux ARM64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: hex-linux-arm64
           path: artifacts/
 
       - name: List artifacts
@@ -385,11 +372,6 @@ jobs:
           echo "# Linux x86_64" >> "$GITHUB_STEP_SUMMARY"
           echo "curl -LO https://github.com/gaberger/hex/releases/download/${TAG}/hex-${VERSION}-x86_64-unknown-linux-gnu.tar.gz" >> "$GITHUB_STEP_SUMMARY"
           echo "tar xzf hex-${VERSION}-x86_64-unknown-linux-gnu.tar.gz" >> "$GITHUB_STEP_SUMMARY"
-          echo "sudo mv hex /usr/local/bin/hex" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "# Linux ARM64" >> "$GITHUB_STEP_SUMMARY"
-          echo "curl -LO https://github.com/gaberger/hex/releases/download/${TAG}/hex-${VERSION}-aarch64-unknown-linux-gnu.tar.gz" >> "$GITHUB_STEP_SUMMARY"
-          echo "tar xzf hex-${VERSION}-aarch64-unknown-linux-gnu.tar.gz" >> "$GITHUB_STEP_SUMMARY"
           echo "sudo mv hex /usr/local/bin/hex" >> "$GITHUB_STEP_SUMMARY"
           printf '```\n' >> "$GITHUB_STEP_SUMMARY"
 
