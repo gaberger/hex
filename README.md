@@ -4,11 +4,10 @@
 
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.75+-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
-  <a href="https://spacetimedb.com/"><img src="https://img.shields.io/badge/SpacetimeDB-WASM-58a6ff?style=flat-square" alt="SpacetimeDB"></a>
   <a href="https://github.com/gaberger/hex/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
   <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-161_(151_Accepted)-bc8cff?style=flat-square" alt="ADRs"></a>
   <a href="#architecture-enforcement-that-agents-cant-bypass"><img src="https://img.shields.io/badge/Architecture-A%2B_100%2F100-3fb950?style=flat-square" alt="Architecture A+"></a>
-   <a href="docs/adrs/"><img src="https://img.shields.io/badge/Rekease-Alpha-bc8cff?style=flat-square" alt="ALPHA"></a>
+  <a href="#-two-modes-standalone-or-aios-linked"><img src="https://img.shields.io/badge/Mode-Choose_Your_Own-58a6ff?style=flat-square" alt="Mode"></a>
 </p>
 
 <p align="center">
@@ -26,25 +25,78 @@ AI coding agents are powerful — but they're expensive, uncontrolled, and cloud
 
 ---
 
-## What You Get
+## Two Modes: Standalone or AIOS-linked
 
-- **[Architecture Enforcement](docs/ARCHITECTURE.md#architecture-enforcement-that-agents-cant-bypass)** — Tree-sitter boundary checking at the kernel level. Agents physically cannot violate hex rules. Grade: A+ (100/100).
-- **[Tiered Inference](docs/INFERENCE.md)** — T1-T3 routing: 4B for typos (68 tok/s), 32B for codegen (11 tok/s), frontier only when needed. RL Q-learning self-optimizes over time.
-- **[Code-First Execution](docs/INFERENCE.md#code-first-execution)** — Templates, AST transforms, and scripts before inference. 14 of 20 workplan tasks need zero tokens.
-- **[Swarm Coordination](docs/ARCHITECTURE.md#swarm-coordination-without-merge-conflicts)** — HexFlo: native Rust, <1ms latency, isolated git worktrees, heartbeat recovery.
-- **[Developer Experience](docs/DEVELOPER-EXPERIENCE.md)** — 4 progressive layers (Pulse/Brief/Console/Override), trust delegation, taste graph.
-- **[Standalone Mode](docs/GETTING-STARTED.md#running-hex-standalone--zero-cloud-dependencies)** — Ollama + any GGUF model. No API keys, no cloud accounts, no billing.
-- **[Agent Security](docs/ARCHITECTURE.md#capability-based-agent-security)** — HMAC-SHA256 capability tokens, least-privilege scoping, zero secrets in storage.
+hex runs **two ways** — choose what fits your setup:
+
+| Mode | When to use | What's required |
+|:-----|:------------|:----------------|
+| **Standalone** (default) | Single machine, local models only, zero cloud | Ollama only |
+| **AIOS-linked** | Multi-agent swarms, autonomous self-improvement, real-time dashboards | SpacetimeDB |
+
+**Standalone** is the default. No database, no server, no cloud. Just you, Ollama, and hex:
+```bash
+hex plan execute wp-feature.json   # Runs entirely on local Ollama
+```
+
+**AIOS-linked** adds SpacetimeDB when you want to connect your app to the AIOS:
+- **Autonomous self-improvement** — RL Q-learning dispatch optimization, memory persistence across runs
+- **Live dashboard** — WebSocket push (not polling), real-time agent status
+- **Multi-host fleet** — see agents across machines
+- **HexFlo coordination** — atomic swarm state, heartbeat recovery
+
+SpacetimeDB is for **linking your application to the AIOS**, not for running hex itself. A generated hex app runs standalone. You only need SpacetimeDB when you want autonomous improvement.
+
+---
+
+## Why Hex Is Different
+
+Most agent frameworks are thin wrappers around LLM APIs. hex is different — it's an **operating system** for AI agents:
+
+1. **70% of tasks run free** — T1 (scaffold/transform/script) and T2 (codegen) tasks execute on local models. Only complex reasoning escalates to frontier.
+
+2. **Tiered inference routing** — 4B model handles typos at 68 tok/s. 32B model handles codegen at 11 tok/s. Frontier only when multi-file features need it.
+
+3. **GBNF grammar constraints** — hard token-level masks force valid output. 2.8x faster (31s vs 89s) with same quality. No other framework does this.
+
+4. **Best-of-N + compile gate** — generates N completions, returns the first that passes `cargo check`/`tsc --noEmit`. Observed 100% first-attempt compile rate on local 32B models.
+
+5. **RL self-improvement** — Q-learning engine records every dispatch outcome. The system gets better the more you use it.
+
+6. **Hexagonal enforcement at compile-time** — tree-sitter boundary checking. Agents physically cannot violate architecture rules.
+
+7. **Native Rust** — sub-100ms coordination latency, single binary, no Python dependency.
+
+---
+
+## Key Features
+
+- **[Architecture Enforcement](docs/ARCHITECTURE.md#architecture-enforcement-that-agents-cant-bypass)** — Tree-sitter boundary checking. Agents physically cannot violate hex rules. Grade: A+ (100/100).
+- **[Tiered Inference](docs/INFERENCE.md)** — T1-T3 routing: 4B→32B→frontier. RL Q-learning self-optimizes.
+- **[Code-First Execution](docs/INFERENCE.md#code-first-execution)** — Templates, AST transforms, scripts before inference. 14 of 20 workplan tasks need zero tokens.
+- **[Swarm Coordination](docs/ARCHITECTURE.md#swarm-coordination-without-merge-conflicts)** — HexFlo: native Rust, <1ms latency, isolated git worktrees.
+- **[Developer Experience](docs/DEVELOPER-EXPERIENCE.md)** — 4 layers: Pulse → Brief → Console → Override.
+- **[Agent Security](docs/ARCHITECTURE.md#capability-based-agent-security)** — HMAC-SHA256 capability tokens, least-privilege scoping.
 
 ---
 
 ## Quick Start
 
+### Standalone (no database)
+
+```bash
+cargo build -p hex-cli --release
+hex                          # Status + next steps
+hex plan execute wp-my-feature.json  # Run on local Ollama
+```
+
+### With SpacetimeDB (real-time features)
+
 ```bash
 cargo build -p hex-cli --release && cargo build -p hex-nexus --release
 hex nexus start              # Requires SpacetimeDB running
-hex                          # Status + getting-started guide (no args)
-open http://localhost:5555   # Live dashboard
+hex                          # Status + getting-started guide
+open http://localhost:5555   # Live dashboard (optional)
 ```
 
 ### Essential Commands
@@ -110,14 +162,17 @@ hex ships TLA+ models of its coordination, scheduling, and feature-pipeline stat
 
 ```
 hex-cli/               Rust CLI — shell + MCP server (canonical entry point)
-hex-nexus/             Daemon — REST API, dashboard, filesystem bridge
+hex-nexus/             Daemon — REST API, dashboard, filesystem bridge (optional for standalone)
 hex-core/              Domain types + 10 port traits (zero external deps)
 hex-agent/             Agent runtime — skills, hooks, architecture enforcement
 hex-parser/            Code parsing utilities (tree-sitter)
-spacetime-modules/     7 WASM modules (SpacetimeDB microkernel)
+spacetime-modules/    7 WASM modules (only needed for AIOS-linked mode)
 ```
 
-See [Architecture](docs/ARCHITECTURE.md) for crate details, agent roles, enforcement rules, and the SpacetimeDB microkernel.
+- **Standalone mode**: hex-cli + hex-agent only. No database. Runs your app autonomously.
+- **AIOS-linked mode**: Add hex-nexus + spacetime-modules to connect your app to the AIOS for self-improvement.
+
+See [Architecture](docs/ARCHITECTURE.md) for crate details, agent roles, enforcement rules.
 
 ---
 
