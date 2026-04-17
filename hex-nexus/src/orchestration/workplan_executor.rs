@@ -988,6 +988,14 @@ impl WorkplanExecutor {
             // ADR-2604120202 P5.1: Classify task tier for routing
             let task_tier = classify_task_tier(task);
 
+            // ADR-2604180001 P2: Tier-specific timeout guards
+            let timeout_secs = match task_tier {
+                TaskTier::T1 => 30u64,
+                TaskTier::T2 => 120u64,
+                TaskTier::T2_5 => 300u64,
+                TaskTier::T3 => 600u64,
+            };
+
             // Path C: headless inference dispatch for T1/T2/T2.5 in standalone mode.
             // Routes directly through the inference adapter (local or remote Ollama)
             // without spawning an agent process. Faster and cheaper than Path A.
@@ -1133,27 +1141,61 @@ impl WorkplanExecutor {
                         tracing::info!(queue_id = %queue_id, task_id = %task_id, "Path B: task enqueued, broadcast notification (no session found)");
                     }
                     // Poll STDB inference_task for completion (2s interval, faster than 5s memory poll)
+                    // Timeout is tier-specific (ADR-2604180001 P2): T1=30s, T2=120s, T2.5=300s, T3=600s
+                    tracing::info!(
+                        queue_id = %queue_id,
+                        task_id = %task_id,
+                        tier = ?task_tier,
+                        timeout_secs = timeout_secs,
+                        "Inference task dispatched with timeout guard"
+                    );
+
                     let mut elapsed_secs = 0u64;
-                    let timeout_secs = 1800u64; // 30 minutes
+                    let heartbeat_interval = 30u64; // Emit heartbeat every 30s (P3)
+                    let mut last_heartbeat = 0u64;
+
                     loop {
                         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                         elapsed_secs += 2;
 
+                        // Emit heartbeat every 30 seconds for stall detection (ADR-2604180001 P3)
+                        if elapsed_secs - last_heartbeat >= heartbeat_interval {
+                            tracing::info!(
+                                queue_id = %queue_id,
+                                elapsed_secs = elapsed_secs,
+                                timeout_secs = timeout_secs,
+                                "Task heartbeat — still waiting for completion"
+                            );
+                            last_heartbeat = elapsed_secs;
+                        }
+
                         match sp.inference_task_get(&queue_id).await {
                             Ok(Some(ref task)) => match task.status.as_str() {
-                                "Completed" => break Ok(crate::orchestration::agent_manager::AgentInstance {
-                                    id: queue_id.clone(),
-                                    process_id: 0,
-                                    agent_name: path_b_agent_name,
-                                    project_dir: path_b_project_dir,
-                                    model: path_b_model,
-                                    status: crate::orchestration::agent_manager::AgentStatus::Completed,
-                                    started_at: chrono::Utc::now().to_rfc3339(),
-                                    ended_at: Some(chrono::Utc::now().to_rfc3339()),
-                                    metrics: None,
-                                    role: None,
-                                }),
+                                "Completed" => {
+                                    tracing::info!(
+                                        queue_id = %queue_id,
+                                        elapsed_secs = elapsed_secs,
+                                        "Inference task completed"
+                                    );
+                                    break Ok(crate::orchestration::agent_manager::AgentInstance {
+                                        id: queue_id.clone(),
+                                        process_id: 0,
+                                        agent_name: path_b_agent_name,
+                                        project_dir: path_b_project_dir,
+                                        model: path_b_model,
+                                        status: crate::orchestration::agent_manager::AgentStatus::Completed,
+                                        started_at: chrono::Utc::now().to_rfc3339(),
+                                        ended_at: Some(chrono::Utc::now().to_rfc3339()),
+                                        metrics: None,
+                                        role: None,
+                                    })
+                                },
                                 "Failed" => {
+                                    tracing::error!(
+                                        queue_id = %queue_id,
+                                        error = %task.error,
+                                        "Inference task failed"
+                                    );
                                     break Err(format!("inference task {} failed: {}", queue_id, task.error));
                                 }
                                 _ => {} // Pending or InProgress — keep waiting
@@ -1168,8 +1210,16 @@ impl WorkplanExecutor {
 
                         if elapsed_secs >= timeout_secs {
                             let now = chrono::Utc::now().to_rfc3339();
+                            tracing::error!(
+                                queue_id = %queue_id,
+                                task_id = %task_id,
+                                tier = ?task_tier,
+                                timeout_secs = timeout_secs,
+                                elapsed_secs = elapsed_secs,
+                                "Inference task timeout — killing stalled process (ADR-2604180001)"
+                            );
                             let _ = sp.inference_task_fail(&queue_id, "executor timeout", &now).await;
-                            break Err(format!("inference task {} timed out after {}s", queue_id, timeout_secs));
+                            break Err(format!("inference task {} timed out after {}s (tier: {:?})", queue_id, timeout_secs, task_tier));
                         }
                     }
                 } else if let Some(ref mgr) = agent_mgr {
