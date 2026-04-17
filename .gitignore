@@ -49,6 +49,7 @@ docs/*
 !docs/examples/
 !docs/guides/
 !docs/algebra/
+!docs/reference/
 !docs/ARCHITECTURE.md
 !docs/GETTING-STARTED.md
 !docs/INFERENCE.md
