@@ -1,0 +1,66 @@
+{
+  "name": "wp-claudecode-session-fallback",
+  "title": "Use CLAUDECODE=1 as fallback for session ID",
+  "description": "When CLAUDE_SESSION_ID is not set but CLAUDECODE=1 is present, auto-derive session context from most recent agent file. Eliminates manual session file hunting in Claude Code sessions.",
+  "adr": null,
+  "created_at": "2026-04-17T00:00:00Z",
+  "priority": "P1",
+  "phases": [
+    {
+      "number": 1,
+      "title": "Create session resolution helper",
+      "description": "Add function to resolve effective session ID: CLAUDE_SESSION_ID > CLAUDECODE+recent_agent_file > None",
+      "tasks": [
+        {
+          "id": "P1-1",
+          "title": "Add get_effective_session_id() helper in session.rs",
+          "description": "Create helper function that:\n1. Returns CLAUDE_SESSION_ID if set\n2. If CLAUDECODE=1 and no CLAUDE_SESSION_ID, looks for most recent agent-*.json\n3. Extracts sessionId from that file\n4. Returns the resolved ID or None",
+          "file": "hex-cli/src/session.rs",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "title": "Update session.rs to use helper",
+      "description": "Replace resolve_agent_id() calls to use the new effective session ID logic",
+      "tasks": [
+        {
+          "id": "P2-1",
+          "title": "Update resolve_agent_id() to use get_effective_session_id()",
+          "description": "Refactor resolve_agent_id() to first establish effective_session_id, then use that to find the agent file. This makes CLAUDECODE=1 work transparently.",
+          "file": "hex-cli/src/session.rs",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 3,
+      "title": "Update nexus_client.rs session resolution",
+      "description": "Apply same logic to nexus_client.rs where CLAUDE_SESSION_ID is checked",
+      "tasks": [
+        {
+          "id": "P3-1",
+          "title": "Update nexus_client.rs to use effective session ID",
+          "description": "In SessionResolutionStrategy, add CLAUDECODE=1 fallback before searching for most recent file. Import or call the session helper.",
+          "file": "hex-cli/src/nexus_client.rs",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 4,
+      "title": "Verify and test",
+      "description": "Build and verify that hex commands work with CLAUDECODE=1 set and CLAUDE_SESSION_ID unset",
+      "tasks": [
+        {
+          "id": "P4-1",
+          "title": "Build and test CLAUDECODE fallback",
+          "description": "cargo build -p hex-cli, then test: unset CLAUDE_SESSION_ID, set CLAUDECODE=1, run hex sched enqueue. Verify it finds the session from recent agent file.",
+          "file": "hex-cli/src/session.rs",
+          "strategy_hint": "codegen"
+        }
+      ]
+    }
+  ]
+}
