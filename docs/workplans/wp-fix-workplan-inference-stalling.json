@@ -1,0 +1,164 @@
+{
+  "name": "wp-fix-workplan-inference-stalling",
+  "title": "Fix workplan inference task stalling and state sync (ADR-2604180001)",
+  "description": "Critical: Workplan processes hang silently during inference. Implement task-level timeouts, heartbeats, state sync, and orphan cleanup to enable autonomous workplan execution.",
+  "adr": "ADR-2604180001",
+  "created_at": "2026-04-17T16:00:00Z",
+  "priority": "P0",
+  "phases": [
+    {
+      "number": 1,
+      "title": "Root cause diagnostics",
+      "description": "Determine why inference tasks stall: Ollama hang, I/O block, deadlock, or other",
+      "tasks": [
+        {
+          "id": "P1-1",
+          "title": "Instrument task execution with detailed logging",
+          "description": "Add logging at every checkpoint:\n- Task state change (queued → running → done/error)\n- Inference call start/end\n- Ollama response received\n- Compile gate result\nFile: hex-cli/src/commands/plan/executor.rs",
+          "files": ["hex-cli/src/commands/plan/executor.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P1-2",
+          "title": "Run instrumented workplan on Bazzite and capture stall logs",
+          "description": "Execute: hex plan execute wp-bazzite-e2e-arch-validation.json 2>&1 | tee /tmp/debug-stall.log\nLet it run until stall (15min), capture full log.\nAnalyze: where does output stop? (inference call, waiting for nexus, compile gate, etc.)",
+          "files": ["hex-cli/src/commands/plan/executor.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P1-3",
+          "title": "Check Ollama status during stall",
+          "description": "While workplan is stalled:\n1. ssh bazzite 'ollama ps' — is model running?\n2. ssh bazzite 'ollama list' — models still available?\n3. Check Bazzite system resources (free, top) — OOM? Disk full?\n4. Check hex-nexus logs: any errors?",
+          "files": ["hex-cli/src/commands/plan/executor.rs"],
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "title": "Implement task-level timeout guards",
+      "description": "Add timeout enforcement per inference tier (prevent infinite hangs)",
+      "tasks": [
+        {
+          "id": "P2-1",
+          "title": "Add TimeoutGuard trait to task execution",
+          "description": "Implement TimeoutGuard in hex-cli/src/commands/plan/executor.rs:\n- T1 tasks: 30s timeout\n- T2 tasks: 120s timeout\n- T2.5 tasks: 300s timeout\n- T3 tasks: 600s timeout\nOn timeout: emit error, cleanup process, update nexus state",
+          "files": ["hex-cli/src/commands/plan/executor.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P2-2",
+          "title": "Test timeout guard on Bazzite with artificial delay",
+          "description": "Modify qwen2.5-coder to artificially delay response (sleep 200s).\nRun workplan, verify:\n- Task times out at 120s\n- Process killed cleanly\n- Nexus state updated to 'failed'\n- Error message surfaces to user",
+          "files": ["hex-cli/src/commands/plan/executor.rs"],
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 3,
+      "title": "Implement heartbeat mechanism",
+      "description": "Emit progress every 30s so observers can detect stalls",
+      "tasks": [
+        {
+          "id": "P3-1",
+          "title": "Add TaskHeartbeat emission to executor",
+          "description": "Every 30s during task execution, emit heartbeat with:\n- task_id\n- phase\n- current_step (e.g., 'generating code', 'compiling', 'testing')\n- elapsed_ms\n- tokens_used (if inference)\nFile: hex-cli/src/commands/plan/executor.rs",
+          "files": ["hex-cli/src/commands/plan/executor.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P3-2",
+          "title": "Wire heartbeat to nexus state updates",
+          "description": "On each heartbeat, POST /api/hexflo/tasks/{id}/heartbeat with progress data.\nNexus stores last_heartbeat timestamp.\nUse for stale detection: if (now - last_heartbeat) > timeout → mark task dead",
+          "files": ["hex-cli/src/nexus_client.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P3-3",
+          "title": "Verify heartbeat on Bazzite",
+          "description": "Run workplan and monitor:\nhex swarm status (should show task heartbeats every 30s)\nOr: curl http://localhost:5555/api/hexflo/tasks | jq '.[] | {id, last_heartbeat}'",
+          "files": ["hex-cli/src/commands/plan/executor.rs"],
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 4,
+      "title": "Implement orphan cleanup",
+      "description": "Background reaper kills processes that are stale (no heartbeat, state not updating)",
+      "tasks": [
+        {
+          "id": "P4-1",
+          "title": "Create OrphanReaper in hex-nexus",
+          "description": "Background task in hex-nexus:\n1. Every 60s, scan all active tasks\n2. For each task: if (now - last_heartbeat) > timeout\n   - Emit warning log\n   - Send SIGTERM to process\n   - Wait 10s\n   - If still running, send SIGKILL\n   - Update task state to 'failed' (timeout)\n3. Report reaper activity in nexus logs\nFile: hex-nexus/src/coordination/mod.rs",
+          "files": ["hex-nexus/src/coordination/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P4-2",
+          "title": "Test orphan cleanup on Bazzite",
+          "description": "Manually create a stalled task process (infinite sleep).\nVerify reaper detects it after timeout and kills it.\nCheck: process gone, task state updated, log entry present.",
+          "files": ["hex-nexus/src/coordination/mod.rs"],
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 5,
+      "title": "Error reporting and surface causes",
+      "description": "Make failure reasons visible to user (not silent hangs)",
+      "tasks": [
+        {
+          "id": "P5-1",
+          "title": "Add TaskFailureReason enum",
+          "description": "Implement in hex-core/src/ports/:\nenum TaskFailureReason {\n  InferenceTimeout,\n  CompileGateTimeout,\n  InferenceError(String),\n  OOM,\n  NetworkError(String),\n  UnknownError(String),\n}\n\nUpdate task state to include failure_reason.\nFile: hex-core/src/ports/task.rs",
+          "files": ["hex-core/src/ports/task.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P5-2",
+          "title": "Capture and report failure reasons",
+          "description": "When task fails, populate failure_reason:\n- If timeout: InferenceTimeout\n- If compile failed: log the error, surface in CompileGateError\n- If Ollama error: InferenceError(stderr)\nFile: hex-cli/src/commands/plan/executor.rs",
+          "files": ["hex-cli/src/commands/plan/executor.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P5-3",
+          "title": "Display failure reason to user",
+          "description": "When task completes with error, show:\nTask P1-1 FAILED: InferenceTimeout (120s)\n  Model: qwen2.5-coder:32b\n  Tokens consumed: 755\n  Action: Escalating to T2.5...\n\nFile: hex-cli/src/commands/plan/mod.rs (output formatting)",
+          "files": ["hex-cli/src/commands/plan/mod.rs"],
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 6,
+      "title": "End-to-end validation on Bazzite",
+      "description": "Retry e2e workplan with fixes in place",
+      "tasks": [
+        {
+          "id": "P6-1",
+          "title": "Rebuild hex-cli with all fixes",
+          "description": "ssh bazzite 'cd ~/hex-intf && cargo build -p hex-cli --release --target x86_64-unknown-linux-gnu'\nVerify binary size/compile time (should be minimal changes)",
+          "files": ["hex-cli/src/commands/plan/executor.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P6-2",
+          "title": "Run e2e validation with monitoring",
+          "description": "Execute: hex plan execute wp-bazzite-e2e-arch-validation.json -v\nMonitor in parallel:\n- hex swarm status (every 30s)\n- curl http://localhost:5555/api/hexflo/tasks (check heartbeats)\n- tail /tmp/e2e.log (check task progress)\nExpect: each task to emit heartbeat, show progress, either complete or fail with reason",
+          "files": ["hex-cli/src/commands/plan/executor.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P6-3",
+          "title": "Verify all 6 phases execute or fail gracefully",
+          "description": "Workplan should:\n- P1: Complete or timeout with visible reason\n- P2-P6: If P1 fails, attempt P2 anyway (or skip gracefully)\n- Final report: which phases completed, which failed, why\nSuccess: at least 50% of tasks complete (vs. 0% hanging)",
+          "files": ["hex-cli/src/commands/plan/executor.rs"],
+          "strategy_hint": "codegen"
+        }
+      ]
+    }
+  ]
+}
