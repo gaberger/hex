@@ -1,0 +1,213 @@
+{
+  "name": "wp-bazzite-e2e-arch-validation",
+  "title": "End-to-end hex architecture validation on Bazzite (GPU)",
+  "description": "Comprehensive validation of hex system on target deployment environment: system health, project execution, architecture enforcement, swarm coordination, and tiered inference routing with GPU acceleration.",
+  "adr": "ADR-2604170001, ADR-2604120202, ADR-2603240130",
+  "created_at": "2026-04-17T14:30:00Z",
+  "priority": "P1",
+  "phases": [
+    {
+      "number": 1,
+      "title": "Hex system health validation",
+      "description": "Verify all hex system components operational: SpacetimeDB, hex-nexus, Ollama, CLI connectivity",
+      "tasks": [
+        {
+          "id": "P1-1",
+          "title": "Bootstrap complete stack on Bazzite",
+          "description": "ssh bazzite './target/x86_64-unknown-linux-gnu/release/hex bootstrap --profile dev --skip-prereq'\nVerify output shows all components started (SpacetimeDB, hex-nexus, Ollama with models)",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P1-2",
+          "title": "Validate hex doctor passes",
+          "description": "ssh bazzite 'hex doctor composition'\nShould report: ✓ SpacetimeDB, ✓ hex-nexus, ✓ Ollama, ✓ CLAUDE_SESSION_ID (or standalone mode)",
+          "files": ["hex-cli/src/commands/doctor/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P1-3",
+          "title": "Verify nexus dashboard accessible",
+          "description": "ssh -L 5555:localhost:5555 bazzite 'sleep 60'\nBrowser: http://localhost:5555\nShould show dashboard with project status, swarms, inference metrics",
+          "files": ["hex-nexus/assets/"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P1-4",
+          "title": "Check Ollama GPU inference working",
+          "description": "ssh bazzite 'OLLAMA_VULKAN=true ollama run qwen3:4b \"What is hex?\" --stream'\nShould stream response from GPU (not CPU). Check /proc/gpu or nvidia-smi if available.",
+          "files": ["hex-cli/src/commands/inference/mod.rs"],
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "title": "Deploy and validate example hex project",
+      "description": "Clone hex-task-tracker (4-layer hexagonal example), verify structure, run workplan",
+      "tasks": [
+        {
+          "id": "P2-1",
+          "title": "Clone hex-task-tracker on Bazzite",
+          "description": "ssh bazzite 'cd /tmp && git clone --depth 1 https://github.com/gaberger/hex-task-tracker.git && cd hex-task-tracker && hex init'\nShould create .hex/ directory with project.json, hooks, agents",
+          "files": ["examples/hex-task-tracker/"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P2-2",
+          "title": "Run hex analyze on project",
+          "description": "ssh bazzite 'cd /tmp/hex-task-tracker && hex analyze .'\nShould validate hexagonal boundaries:\n- domain/ imports only domain/\n- ports/ imports domain/ only\n- adapters/ import ports/ only\n- composition-root imports adapters\nNo violations expected.",
+          "files": ["hex-cli/src/commands/analyze/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P2-3",
+          "title": "List available workplans in project",
+          "description": "ssh bazzite 'cd /tmp/hex-task-tracker && hex plan list'\nShould show workplans in docs/workplans/",
+          "files": ["hex-cli/src/commands/plan/mod.rs"],
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 3,
+      "title": "Architecture enforcement validation",
+      "description": "Verify hex rules are enforced via ADRs, dead code analysis, and compilation gates",
+      "tasks": [
+        {
+          "id": "P3-1",
+          "title": "Check ADRs are loaded and visible",
+          "description": "ssh bazzite 'cd /tmp/hex-task-tracker && hex adr list'\nShould show project ADRs (ADR-001, ADR-002, etc. depending on project)",
+          "files": ["hex-cli/src/commands/adr/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P3-2",
+          "title": "Run cargo check with hex enforce rules",
+          "description": "ssh bazzite 'cd /tmp/hex-task-tracker && cargo check --workspace'\nShould compile cleanly. If violations exist, cargo check will fail.",
+          "files": ["hex-cli/src/commands/enforce/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P3-3",
+          "title": "Validate dead code analyzer catches violations",
+          "description": "Intentionally add a boundary violation (e.g., adapter importing another adapter) in a test branch.\nhex analyze . should report the violation.\nRevert change.",
+          "files": ["hex-cli/src/commands/analyze/mod.rs"],
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 4,
+      "title": "Swarm coordination validation (HexFlo)",
+      "description": "Verify multi-agent workplan execution with task tracking, heartbeats, memory sync",
+      "tasks": [
+        {
+          "id": "P4-1",
+          "title": "Initiate swarm and create tasks",
+          "description": "ssh bazzite 'hex swarm init bazzite-test hierarchical'\nShould create swarm with ID.\nhex task create <swarm-id> 'Test task 1'\nhex task create <swarm-id> 'Test task 2'\nShould list 2 pending tasks.",
+          "files": ["hex-cli/src/commands/swarm/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P4-2",
+          "title": "Spawn background worker agents",
+          "description": "For each task, spawn a hex-coder agent:\nhex task assign <task-id> hex-coder\nAgent should poll task, mark in_progress, execute work, mark completed.\nVerify via hex swarm status (shows agents, heartbeats, task progress)",
+          "files": ["hex-cli/src/commands/agent/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P4-3",
+          "title": "Validate memory sync across agents",
+          "description": "One agent stores: hex memory store 'key1' 'value1'\nAnother agent retrieves: hex memory get 'key1'\nShould see 'value1' (via SpacetimeDB or SQLite fallback)",
+          "files": ["hex-cli/src/commands/memory/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P4-4",
+          "title": "Check agent heartbeats and stale detection",
+          "description": "Verify agents beat on every prompt submit.\nhex swarm status should show heartbeat timestamps.\nAfter 120s of inactivity, agents marked 'dead' and tasks reclaimed.",
+          "files": ["hex-nexus/src/coordination/mod.rs"],
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 5,
+      "title": "Tiered inference routing validation (GPU)",
+      "description": "Verify T1-T3 dispatch, best-of-N, compile gate, GPU acceleration on Bazzite Strix Halo",
+      "tasks": [
+        {
+          "id": "P5-1",
+          "title": "Verify project.json tier models configured",
+          "description": "ssh bazzite 'cat ~/.hex/project.json | jq .inference.tier_models'\nShould show:\n  t1: qwen3:4b\n  t2: qwen2.5-coder:32b\n  t2_5: devstral-small-2:24b",
+          "files": ["hex-cli/src/commands/bootstrap/config.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P5-2",
+          "title": "Test T1 dispatch (scaffold/transform)",
+          "description": "Create workplan task with strategy_hint: 'scaffold'\nInference gateway should route to T1 (qwen3:4b).\nVerify: hex inference escalation-report shows T1 usage",
+          "files": ["hex-cli/src/pipeline/model_selection.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P5-3",
+          "title": "Test T2 dispatch (codegen) with best-of-N",
+          "description": "Create workplan task with strategy_hint: 'codegen'\nInference gateway routes to T2 (qwen2.5-coder:32b) and generates 3 candidates.\nCompile gate (cargo check) selects best.\nVerify: escal report shows T2 best-of-N count",
+          "files": ["hex-cli/src/pipeline/model_selection.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P5-4",
+          "title": "Test T2.5 dispatch (inference/complex reasoning)",
+          "description": "Create workplan task with strategy_hint: 'inference'\nRoutes to T2.5 (devstral-small-2:24b) for cross-adapter or architectural reasoning.\nVerify: escal report shows T2.5 single-shot (no best-of-N)",
+          "files": ["hex-cli/src/pipeline/model_selection.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P5-5",
+          "title": "Benchmark GPU inference on Bazzite Strix Halo",
+          "description": "Run qwen3:4b inference 5 times, measure tokens/sec:\nOLLAMA_VULKAN=true ollama run qwen3:4b \"<prompt>\" --stream | measure\nExpected: 32 tok/s (GPU) vs 11 tok/s (CPU)\nVerify GPU acceleration is 3x faster.",
+          "files": ["hex-cli/src/commands/inference/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P5-6",
+          "title": "Verify escalation tracking and overflow handling",
+          "description": "Simulate T1/T2/T2.5 timeout or failure.\nInference gateway should escalate to next tier or fallback to Claude API if configured.\nVerify: escal report shows escalation count, recovery strategy",
+          "files": ["hex-cli/src/commands/inference/mod.rs"],
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 6,
+      "title": "Integration test: full workplan execution on Bazzite",
+      "description": "Run a real multi-phase workplan end-to-end with swarms, agents, architecture checks, GPU inference",
+      "tasks": [
+        {
+          "id": "P6-1",
+          "title": "Create integration test workplan",
+          "description": "Design 3-phase workplan:\n- P1: Domain + ports (T1 scaffold on qwen3:4b)\n- P2: Adapters (T2 codegen on qwen2.5-coder:32b with best-of-N)\n- P3: Integration tests (T2.5 reasoning on devstral-small-2:24b)\nEach phase spawns agents, validates architecture, runs tests.",
+          "files": ["docs/workplans/wp-bazzite-e2e-integration-test.json"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P6-2",
+          "title": "Execute workplan autonomously on Bazzite",
+          "description": "hex plan execute wp-bazzite-e2e-integration-test.json\nMonitor via: hex swarm status, hex inference escalation-report\nShould complete all phases with 0 architecture violations, 100% test pass",
+          "files": ["hex-cli/src/commands/plan/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P6-3",
+          "title": "Collect performance metrics and report",
+          "description": "Gather:\n- Inference timing per tier (T1/T2/T2.5 latency, tok/s)\n- GPU utilization (OLLAMA_VULKAN=true efficiency)\n- Agent coordination overhead (swarm heartbeat, memory sync)\n- Architecture analysis runtime\nGenerate: docs/bazzite-e2e-report.md with results",
+          "files": ["hex-cli/src/commands/report/mod.rs"],
+          "strategy_hint": "codegen"
+        }
+      ]
+    }
+  ]
+}
