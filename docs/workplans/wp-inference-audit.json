@@ -1,75 +1,81 @@
 {
-  "id": "wp-inference-audit",
-  "title": "Inference Audit — Models, Tokens & Cost",
   "adr": "ADR-2604052125",
   "description": "Audit all registered inference models, track token usage, and calculate cost attribution across providers",
-  "priority": "high",
+  "id": "wp-inference-audit",
   "phases": [
     {
       "id": "P1",
-      "title": "Audit registered models",
       "tasks": [
         {
-          "id": "P1.1",
-          "title": "List all registered inference providers",
           "cmd": "hex inference list",
-          "evidence": "providers listed with status"
+          "evidence": "providers listed with status",
+          "id": "P1.1",
+          "status": "done",
+          "title": "List all registered inference providers"
         },
         {
-          "id": "P1.2",
-          "title": "Test connectivity to each provider",
           "cmd": "hex inference test --all",
-          "evidence": "connectivity results"
+          "evidence": "connectivity results",
+          "id": "P1.2",
+          "status": "done",
+          "title": "Test connectivity to each provider"
         }
-      ]
+      ],
+      "title": "Audit registered models"
     },
     {
       "id": "P2",
-      "title": "Token usage tracking",
       "tasks": [
         {
-          "id": "P2.1",
-          "title": "Query inference q-report for token usage",
           "cmd": "hex inference q-report",
-          "evidence": "token counts per model"
+          "evidence": "token counts per model",
+          "id": "P2.1",
+          "status": "done",
+          "title": "Query inference q-report for token usage"
         },
         {
-          "id": "P2.2",
-          "title": "Show inference stats",
           "cmd": "hex inference stats",
-          "evidence": "cost summary"
+          "evidence": "cost summary",
+          "id": "P2.2",
+          "status": "done",
+          "title": "Show inference stats"
         }
-      ]
+      ],
+      "title": "Token usage tracking"
     },
     {
       "id": "P3",
-      "title": "Provider health check",
       "tasks": [
         {
-          "id": "P3.1",
-          "title": "Run hex validate to check inference health",
           "cmd": "hex validate",
-          "evidence": "inference provider status"
+          "evidence": "inference provider status",
+          "id": "P3.1",
+          "status": "done",
+          "title": "Run hex validate to check inference health"
         }
-      ]
+      ],
+      "title": "Provider health check"
     },
     {
       "id": "P4",
-      "title": "Cost analysis",
       "tasks": [
         {
-          "id": "P4.1",
-          "title": "Generate cost attribution report",
           "cmd": "hex inference stats",
-          "evidence": "cost breakdown by provider"
+          "evidence": "cost breakdown by provider",
+          "id": "P4.1",
+          "status": "done",
+          "title": "Generate cost attribution report"
         },
         {
-          "id": "P4.2",
-          "title": "Show escalation report",
           "cmd": "hex inference escalation-report",
-          "evidence": "tier escalation rates"
+          "evidence": "tier escalation rates",
+          "id": "P4.2",
+          "title": "Show escalation report"
         }
-      ]
+      ],
+      "title": "Cost analysis"
     }
-  ]
+  ],
+  "priority": "high",
+  "title": "Inference Audit — Models, Tokens & Cost"
 }
