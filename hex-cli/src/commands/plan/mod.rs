@@ -459,11 +459,11 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
                         std::process::exit(1);
                     }
 
-                    let status_path = format!("/api/workplan/{}", execution_id);
+                    let status_path = format!("/api/workplan/execute/{}/status", execution_id);
                     match client.get(&status_path).await {
                         Ok(resp) => {
                             let status = resp
-                                .pointer("/data/status")
+                                .get("status")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("unknown");
 
@@ -478,25 +478,20 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
                                     return Ok(());
                                 }
                                 "failed" => {
-                                    let errors = resp
-                                        .pointer("/data/errors")
-                                        .and_then(|v| v.as_array())
-                                        .map(|arr| arr.iter()
-                                            .filter_map(|e| e.as_str())
-                                            .collect::<Vec<_>>()
-                                            .join("; "))
-                                        .unwrap_or_default();
-                                    eprintln!("Workplan failed ({}s): {}", elapsed.as_secs(), errors);
+                                    let result = resp
+                                        .get("result")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("(no error details)");
+                                    eprintln!("Workplan failed ({}s): {}", elapsed.as_secs(), result);
                                     std::process::exit(1);
                                 }
                                 _ => {} // running, paused — keep polling
                             }
                         }
                         Err(e) => {
-                            if last_heartbeat.elapsed() >= heartbeat_interval {
-                                println!("  {} [{}s] poll error: {}", "!".yellow(), elapsed.as_secs(), e);
-                                last_heartbeat = std::time::Instant::now();
-                            }
+                            // Log all polling errors immediately, not just on heartbeat.
+                            // Silent errors are the root cause of the bug (user sees nothing for 30s).
+                            eprintln!("  {} [{}s] poll error: {}", "!".yellow(), elapsed.as_secs(), e);
                         }
                     }
                 }
