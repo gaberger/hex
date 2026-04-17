@@ -15,9 +15,9 @@ hex classifies every task by complexity and routes it to the right model — loc
 | **T2.5** | qwen3.5:27b (Q4) | Multi-function, agentic | ~11 | 100% | 5 |
 | **T3** | Frontier (Claude) | Multi-file features | -- | -- | 1 |
 
-*Benchmarked on Strix Halo (Vulkan GPU, 32 tok/s peak) with 12 Ollama models over 4 pipeline runs.*
+*Benchmarked on one reference machine (AMD Ryzen AI Max+ 395 / Strix Halo, 64 GB, Vulkan-accelerated Ollama, Q4 quantized) over 4 pipeline runs of a 9-task corpus (3 Rust + 3 TypeScript + 3 Go). Numbers will differ on other hardware — CPU-only Ollama is ~5–10× slower. Reproduce your own via `examples/standalone-pipeline-test/run.sh --verbose`; see [EVIDENCE.md](EVIDENCE.md) for details.*
 
-**Best-of-N + Compile Gate**: For T2/T2.5 tasks, hex generates N completions and returns the first that passes `rustc`/`cargo check`. Across 4 full pipeline runs, every task compiled on the first attempt — the scaffolding wasn't even needed. The ADR predicted ~85% one-shot; observed was 100%.
+**Best-of-N + Compile Gate**: For T2/T2.5 tasks, hex generates N completions and returns the first that passes `rustc`/`cargo check`. In the 9-task reference corpus every task compiled on the first attempt — the retry scaffolding wasn't exercised. The ADR predicted ~85% one-shot; observed on this corpus was 100%. Generalizing the 100% figure to arbitrary codebases is **not claimed** — larger or more novel tasks will fail candidates and exercise the retry loop.
 
 **RL Q-Learning closes the loop.** The SpacetimeDB `rl-engine` module records rewards after every dispatch and updates Q-values via the Bellman equation. After 3 pipeline runs, the learned Q-table:
 

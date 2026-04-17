@@ -23,7 +23,7 @@ T2.5: Multi-file edit  qwen3.5:27b        $0.00     380.0s
 T3: Architecture       Claude Opus        $0.03+      varies
 ```
 
-**70% of real workplan tasks are T1 or T2.** They run entirely on local hardware — a consumer GPU or even a laptop CPU. No API keys. No billing. No cloud dependency.
+**On the workplans we've exercised, roughly 70% of tasks classify as T1 or T2** and run entirely on local hardware — a consumer GPU or even a laptop CPU. That ratio is a property of a workplan's decomposition (how many scaffolding / transform / single-function steps it contains), not a universal constant. Inspect your own: `hex plan analyze <workplan.json>` groups steps by tier.
 
 The system classifies tasks automatically and routes them to the right model. When a local model fails, it escalates to frontier. When it succeeds, the RL engine records the win and routes similar tasks the same way next time.
 
@@ -40,7 +40,7 @@ Adapters → can only import  →  Ports
 Adapters → CANNOT import    →  Other Adapters
 ```
 
-Violations are caught before code ships. Not by a linter that suggests — by a kernel that blocks.
+Violations are caught before code ships: `hex analyze` returns a non-zero exit code on cross-layer imports, and the pre-commit hook runs it on every commit.
 
 **The Dispatch Algebra.** Task routing is a function composition:
 
@@ -61,9 +61,9 @@ Each step is pure, testable, and composable. The scaffold layer generates N comp
 
 ### 1. Local AI is a First-Class Citizen
 
-hex was built for Ollama, not bolted onto it. The inference adapter speaks Ollama's API natively. GBNF grammar constraints force models to emit only valid output — a technique that reduces token waste by 2.8x on local models. The Best-of-N compile gate generates multiple completions and returns the first that passes `rustc` / `tsc` / `go build`.
+hex was built for Ollama, not bolted onto it. The inference adapter speaks Ollama's API natively. GBNF grammar constraints force models to emit only valid output — on the reference corpus (a one-line typo fix against `qwen3:4b` Q4 on Strix Halo) grammar-constrained decoding cut generation time from 88.6s to 31.2s (2.8×). The Best-of-N compile gate generates multiple completions and returns the first that passes `rustc` / `tsc` / `go build`.
 
-Benchmarked result: **100% first-attempt compile rate** across Rust, TypeScript, and Go on local 32B models. The scaffolding wasn't even needed.
+On the 9-task reference corpus (3 Rust + 3 TypeScript + 3 Go) every task compiled on the first attempt against local 32B models — the retry scaffolding wasn't exercised. Larger or more novel tasks will fail candidates; the retry loop feeds compiler errors back into the next attempt. Reproducer: `examples/standalone-pipeline-test/run.sh --verbose`. See [EVIDENCE.md](EVIDENCE.md).
 
 ### 2. RL Self-Improvement
 
@@ -76,7 +76,7 @@ Q-value: +1.1 (and climbing)
 Visits: 5
 ```
 
-Local models get a success bonus. Models that fail see Q-values drop. The epsilon-greedy selector (90% exploit, 10% explore) occasionally tries alternatives — discovering better pairings without human intervention. The system gets smarter every time you use it.
+Local models get a success bonus. Models that fail see Q-values drop. The epsilon-greedy selector (90% exploit, 10% explore) occasionally tries alternatives so the router can discover better pairings as outcomes accumulate. Convergence behavior on real workloads has not been published; inspect your own with `hex inference escalation-report`.
 
 ### 3. Three-Path Dispatch
 

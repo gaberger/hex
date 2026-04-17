@@ -153,7 +153,7 @@ hex runs in two modes:
 
 ## Status
 
-Alpha. 182 ADRs document the design trail; core paths (classifier, compile gate, reconciler, HexFlo, tree-sitter analyzer) are in place and exercised by the examples. Not every claim in `docs/INFERENCE.md` benchmarks is reproduced upstream — performance numbers were measured on a Strix Halo box with Vulkan-accelerated Ollama and will differ on other hardware. Treat benchmark tables as starting points, not guarantees.
+Alpha. 182 ADRs document the design trail; core paths (classifier, compile gate, reconciler, HexFlo, tree-sitter analyzer) are in place and exercised by tests and examples. Every mechanical claim above has a reproducer — see [EVIDENCE.md](docs/EVIDENCE.md) for the exact command per claim, prerequisites, and expected output. Benchmark numbers in [INFERENCE.md](docs/INFERENCE.md) were measured on a single Strix Halo + Vulkan-Ollama box and will differ on other hardware; the evidence page includes a script you can run to get numbers for your own environment.
 
 Formal specs of the coordination, scheduling, and feature-pipeline state machines live in `docs/algebra/` (TLA+, model-checked with TLC).
 
@@ -163,6 +163,7 @@ Formal specs of the coordination, scheduling, and feature-pipeline state machine
 
 | Doc | Contents |
 |---|---|
+| [Evidence](docs/EVIDENCE.md) | Reproducer for every claim in this README — commands, tests, expected output |
 | [Architecture](docs/ARCHITECTURE.md) | Crates, layers, analyzer rules, SpacetimeDB modules |
 | [Getting Started](docs/GETTING-STARTED.md) | Install, standalone mode, remote agents |
 | [Inference](docs/INFERENCE.md) | Tier routing, GBNF grammar constraints, RL model selection |

@@ -55,6 +55,7 @@ docs/*
 !docs/COMPARISON.md
 !docs/DEVELOPER-EXPERIENCE.md
 !docs/FORMAL-VERIFICATION.md
+!docs/EVIDENCE.md
 
 # Filesystem artifacts
 Volumes/
