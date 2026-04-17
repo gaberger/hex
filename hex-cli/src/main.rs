@@ -21,6 +21,7 @@ use commands::{
     adr::AdrAction,
     agent::AgentAction,
     sched::BrainAction,
+    bootstrap::BootstrapArgs,
     brief::BriefArgs,
     chat::ChatArgs,
     context::ContextAction,
@@ -225,6 +226,8 @@ enum Commands {
     // Standalone commands (not grouped)
     // ════════════════════════════════════════════════════════════════════
 
+    /// Bootstrap hex environment (prerequisites, services, models, config)
+    Bootstrap(BootstrapArgs),
     /// Start/stop/manage the hex-nexus daemon
     #[command(alias = "daemon")]
     Nexus {
@@ -599,6 +602,7 @@ async fn main() -> anyhow::Result<()> {
         },
 
         // ── Standalone commands ──────────────────────────────────────
+        Commands::Bootstrap(args) => commands::bootstrap::run(args).await,
         Commands::Nexus { action } => commands::nexus::run(action).await,
         Commands::Agent { action } => commands::agent::run(action).await,
         Commands::Brief { action, args } => {

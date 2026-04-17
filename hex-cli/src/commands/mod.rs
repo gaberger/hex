@@ -1,6 +1,7 @@
 pub mod adr;
 pub mod assets_cmd;
 pub mod brain_alias;
+pub mod bootstrap;
 pub mod sched;
 pub mod brief;
 pub mod ci;
