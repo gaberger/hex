@@ -118,10 +118,10 @@ Tasks route to the least-loaded server with the requested model. SSH tunnels han
 $ hex analyze .
   422 source files scanned
   0 boundary violations
-  Architecture grade: A+ — score 100/100
+  Score: 100/100  (weights in hex-cli/src/commands/analyze.rs)
 ```
 
-This isn't aspirational. It's enforced.
+The analyzer exit code is wired into the pre-commit hook and CI. A new cross-layer import fails the analyzer and blocks the commit. Treat the numeric score as a regression signal — the weights are tunable, so the absolute number is meaningful only relative to the project's own baseline.
 
 ## The Numbers
 
