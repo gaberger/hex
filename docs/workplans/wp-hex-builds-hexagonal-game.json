@@ -1,0 +1,118 @@
+{
+  "title": "hex-coder builds hexagonal game autonomously",
+  "description": "Demonstrate hex agents building real software while enforcing hexagonal architecture. Each task specifies layer, imports, and dependencies. Agent must follow architecture rules or code fails compile gate.",
+  "phases": [
+    {
+      "name": "P1: Domain Layer (Core Game Logic)",
+      "description": "Build pure domain logic with zero external imports",
+      "tasks": [
+        {
+          "id": "P1-1",
+          "title": "hex-coder: Write domain/mod.rs — Game state machine",
+          "description": "Create src/domain/mod.rs. NO imports allowed (only use std built-ins if needed). Must define:\n\n1. GameState struct with fields: secret: u32, guesses: u32, won: bool\n2. impl GameState::new(secret: u32) → initializes all fields\n3. GuessResult enum: TooLow, TooHigh, Correct\n4. impl GameState::guess(&mut self, num: u32) → GuessResult { compares num to secret, updates won }\n5. Unit tests: test_guess_correct(), test_too_low()\n\nCRITICAL: This file must compile with ZERO imports besides std. It is the domain layer — pure business logic.",
+          "strategy_hint": "codegen",
+          "tier": "T2"
+        }
+      ]
+    },
+    {
+      "name": "P2: Ports Layer (Trait Boundaries)",
+      "description": "Define port traits without implementation",
+      "tasks": [
+        {
+          "id": "P2-1",
+          "title": "hex-coder: Write ports/mod.rs — Dependency injection traits",
+          "description": "Create src/ports/mod.rs. Imports: NONE. Must define:\n\n1. trait RandomNumberGenerator { fn gen_range(&self, min: u32, max: u32) → u32; }\n2. trait UserInterface {\n   fn welcome(&self);\n   fn prompt_guess(&self) → u32;\n   fn display_feedback(&self, msg: &str);\n   fn victory(&self, secret: u32, guesses: u32);\n}\n\nNO implementations. These are boundaries only. Code must compile with zero imports.",
+          "strategy_hint": "codegen",
+          "tier": "T2"
+        }
+      ]
+    },
+    {
+      "name": "P3: Secondary Adapter (Random Number Generation)",
+      "description": "Implement RNG using external rand crate",
+      "tasks": [
+        {
+          "id": "P3-1",
+          "title": "hex-coder: Write adapters/secondary/mod.rs — OS random source",
+          "description": "Create src/adapters/secondary/mod.rs. Imports: ONLY crate::ports + rand. Must:\n\n1. Import: use crate::ports::RandomNumberGenerator;\n2. Import: use rand::{thread_rng, Rng};\n3. Define: pub struct OsRandomGenerator;\n4. impl RandomNumberGenerator for OsRandomGenerator {\n   fn gen_range(&self, min: u32, max: u32) → u32 { thread_rng().gen_range(min..=max) }\n}\n\nIMPORTANT: NO other imports, NO domain layer import, NO other adapters.",
+          "strategy_hint": "codegen",
+          "tier": "T2"
+        }
+      ]
+    },
+    {
+      "name": "P4: Primary Adapter (User Interface)",
+      "description": "Implement UI using stdin/stdout",
+      "tasks": [
+        {
+          "id": "P4-1",
+          "title": "hex-coder: Write adapters/primary/mod.rs — Stdio UI",
+          "description": "Create src/adapters/primary/mod.rs. Imports: std::io + crate::ports ONLY. Must:\n\n1. Import: use std::io::{self, Write};\n2. Import: use crate::ports::UserInterface;\n3. Define: pub struct StdioUI;\n4. impl UserInterface for StdioUI { all 4 methods using println!/print!/io::stdin() }\n\nIMPORTANT: NO domain import, NO other adapters, NO rand/external crates.",
+          "strategy_hint": "codegen",
+          "tier": "T2"
+        },
+        {
+          "id": "P4-2",
+          "title": "hex-coder: Write adapters/mod.rs — Module declaration",
+          "description": "Create src/adapters/mod.rs with:\npub mod primary;\npub mod secondary;\n\nThis file ONLY declares submodules.",
+          "strategy_hint": "scaffold",
+          "tier": "T1"
+        }
+      ]
+    },
+    {
+      "name": "P5: Usecases Layer (Orchestration)",
+      "description": "Wire domain logic with port traits",
+      "tasks": [
+        {
+          "id": "P5-1",
+          "title": "hex-coder: Write usecases/mod.rs — Game orchestration",
+          "description": "Create src/usecases/mod.rs. Imports: crate::domain + crate::ports ONLY. Must:\n\n1. Import domain types and ports\n2. Define: pub struct GameOrchestration;\n3. impl GameOrchestration {\n   pub fn run(rng: &dyn RandomNumberGenerator, ui: &dyn UserInterface) {\n     ui.welcome();\n     let secret = rng.gen_range(1, 100);\n     let mut game = GameState::new(secret);\n     loop {\n       let guess = ui.prompt_guess();\n       if guess < 1 || guess > 100 { ui.display_feedback(\"Invalid\"); continue; }\n       game.guesses += 1;\n       match game.guess(guess) {\n         GuessResult::TooLow => ui.display_feedback(\"Too low\"),\n         GuessResult::TooHigh => ui.display_feedback(\"Too high\"),\n         GuessResult::Correct => { ui.victory(secret, game.guesses); break; }\n       }\n     }\n   }\n}\n\nIMPORTANT: NO adapter imports, NO external crates, ONLY domain + ports.",
+          "strategy_hint": "codegen",
+          "tier": "T2"
+        }
+      ]
+    },
+    {
+      "name": "P6: Composition Root (Main Assembly)",
+      "description": "Wire everything together",
+      "tasks": [
+        {
+          "id": "P6-1",
+          "title": "hex-coder: Write src/main.rs — Composition root",
+          "description": "Create src/main.rs. This is the ONLY file allowed to import adapters. Must:\n\n1. mod domain; mod ports; mod adapters; mod usecases;\n2. use adapters::primary::StdioUI;\n3. use adapters::secondary::OsRandomGenerator;\n4. use usecases::GameOrchestration;\n5. fn main() { GameOrchestration::run(&OsRandomGenerator, &StdioUI); }\n\nIMPORTANT: This file ONLY wires the game together. NO business logic here.",
+          "strategy_hint": "codegen",
+          "tier": "T2"
+        },
+        {
+          "id": "P6-2",
+          "title": "hex-coder: Create Cargo.toml",
+          "description": "Write Cargo.toml:\n\n[package]\nname = \"hex-game\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nrand = \"0.8\"",
+          "strategy_hint": "scaffold",
+          "tier": "T1"
+        }
+      ]
+    },
+    {
+      "name": "P7: Build & Validate",
+      "description": "Compile and verify architecture",
+      "tasks": [
+        {
+          "id": "P7-1",
+          "title": "hex-coder: Compile and test game",
+          "description": "Run: cargo build --release. Binary must compile without errors. Then test:\necho -e '50\\n75\\n88\\n94\\n97\\n99' | ./target/release/hex-game\n\nExpected output: welcome message, feedback (too low/high), invalid input handling.",
+          "strategy_hint": "inference",
+          "tier": "T2"
+        },
+        {
+          "id": "P7-2",
+          "title": "hex-coder: Run hex analyze to validate architecture",
+          "description": "Run: hex init . && hex analyze .\n\nVerify output shows ZERO violations. Architecture must pass validation:\n- domain/ has no imports\n- ports/ imports nothing\n- adapters import ports only\n- usecases imports domain+ports only\n- main.rs imports adapters\n- NO cross-adapter imports\n- NO forbidden dependency directions",
+          "strategy_hint": "inference",
+          "tier": "T2"
+        }
+      ]
+    }
+  ]
+}
