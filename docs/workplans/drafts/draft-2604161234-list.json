@@ -1,0 +1,15 @@
+{
+  "adr": "ADR-2604110227",
+  "created_at": "2026-04-16T12:34:26.206773-04:00",
+  "id": "draft-2604161234-list",
+  "kind": "workplan-draft",
+  "next_steps": [
+    "Run /hex-feature-dev to expand this draft into a full workplan",
+    "Or run `hex plan drafts approve draft-2604161234-list.json`",
+    "Or run `hex plan drafts clear --name draft-2604161234-list`"
+  ],
+  "notes": "This is a draft created by ADR-2604110227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up.",
+  "origin": "auto-invoke",
+  "prompt": "list",
+  "status": "pending-planner"
+}

@@ -1,108 +1,118 @@
 {
   "adr": "ADR-2604150000",
-  "id": "wp-brain-string-cleanup",
   "description": "Finish ADR-2604150000 brain→sched rename for user-facing strings only. The hidden `hex brain` alias stays (intentional per ADR §Backward-compat posture). Bug: invoking `hex sched enqueue …` still prints \"enqueued brain task <id>\" because internal log/print strings carry the old name. Scope is println!/eprintln!/info!/warn!/anyhow! strings invoked from the sched command path — NOT identifier renames, NOT the brain alias module, NOT memory-dir paths or persisted JSON keys (those are separate breaking-change ADRs).",
+  "id": "wp-brain-string-cleanup",
   "phases": [
     {
       "id": "P1",
-      "title": "Audit user-facing brain strings in new sched code paths",
       "tasks": [
         {
-          "id": "P1.1",
-          "title": "Generate audit report at docs/analysis/brain-string-audit.md listing every println!/eprintln!/log macro string containing 'brain' across hex-cli, hex-nexus, hex-agent, hex-core. For each, classify: (a) reachable from `hex sched` command path, (b) only reachable from `hex brain` alias path, (c) internal debug log only. Only category (a) is in scope for this workplan.",
-          "files": ["docs/analysis/brain-string-audit.md"],
           "evidence": [
             "test -f docs/analysis/brain-string-audit.md",
             "grep -c 'category (a)' docs/analysis/brain-string-audit.md"
           ],
+          "files": [
+            "docs/analysis/brain-string-audit.md"
+          ],
+          "id": "P1.1",
+          "status": "done",
           "strategy_hint": "script",
-          "status": "pending"
+          "title": "Generate audit report at docs/analysis/brain-string-audit.md listing every println!/eprintln!/log macro string containing 'brain' across hex-cli, hex-nexus, hex-agent, hex-core. For each, classify: (a) reachable from `hex sched` command path, (b) only reachable from `hex brain` alias path, (c) internal debug log only. Only category (a) is in scope for this workplan."
         }
-      ]
+      ],
+      "title": "Audit user-facing brain strings in new sched code paths"
     },
     {
       "id": "P2",
-      "title": "Fix category-(a) user-facing strings in hex-cli sched path",
       "tasks": [
         {
-          "id": "P2.1",
-          "title": "Replace 'brain task' → 'sched task' in all println!/eprintln! strings inside hex-cli/src/commands/sched.rs and any helper module called from sched.rs (NOT brain_alias.rs).",
-          "files": ["hex-cli/src/commands/sched.rs"],
           "evidence": [
             "test $(grep -c \"'brain task'\\|\\\"brain task\\\"\" hex-cli/src/commands/sched.rs) -eq 0",
             "cargo check -p hex-cli"
           ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P2.1",
+          "status": "done",
           "strategy_hint": "transform",
-          "status": "pending"
+          "title": "Replace 'brain task' → 'sched task' in all println!/eprintln! strings inside hex-cli/src/commands/sched.rs and any helper module called from sched.rs (NOT brain_alias.rs)."
         },
         {
-          "id": "P2.2",
-          "title": "Smoke test: `hex sched enqueue shell -- 'true'` prints 'enqueued sched task <uuid>' (not 'brain task'). Add this assertion as a CLI integration test under hex-cli/tests/.",
-          "files": ["hex-cli/tests/sched_enqueue_messaging.rs"],
           "evidence": [
             "test -f hex-cli/tests/sched_enqueue_messaging.rs",
             "cargo test -p hex-cli sched_enqueue_messaging"
           ],
+          "files": [
+            "hex-cli/tests/sched_enqueue_messaging.rs"
+          ],
+          "id": "P2.2",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Smoke test: `hex sched enqueue shell -- 'true'` prints 'enqueued sched task <uuid>' (not 'brain task'). Add this assertion as a CLI integration test under hex-cli/tests/."
         }
-      ]
+      ],
+      "title": "Fix category-(a) user-facing strings in hex-cli sched path"
     },
     {
       "id": "P3",
-      "title": "Fix category-(a) strings in hex-nexus + hex-agent surfaces",
       "tasks": [
         {
-          "id": "P3.1",
-          "title": "hex-nexus: rename user-facing brain strings in route handlers, error responses, and log lines that surface to the dashboard or REST clients. Internal HexFlo coordination keys/paths stay (separate ADR).",
-          "files": ["hex-nexus/src/"],
           "evidence": [
             "cargo check -p hex-nexus"
           ],
+          "files": [
+            "hex-nexus/src/"
+          ],
+          "id": "P3.1",
+          "status": "done",
           "strategy_hint": "transform",
-          "status": "pending"
+          "title": "hex-nexus: rename user-facing brain strings in route handlers, error responses, and log lines that surface to the dashboard or REST clients. Internal HexFlo coordination keys/paths stay (separate ADR)."
         },
         {
-          "id": "P3.2",
-          "title": "hex-agent: rename user-facing brain strings in agent-emitted log lines. Internal protocol field names (if any) stay.",
-          "files": ["hex-agent/src/"],
           "evidence": [
             "cargo check -p hex-agent"
           ],
+          "files": [
+            "hex-agent/src/"
+          ],
+          "id": "P3.2",
+          "status": "done",
           "strategy_hint": "transform",
-          "status": "pending"
+          "title": "hex-agent: rename user-facing brain strings in agent-emitted log lines. Internal protocol field names (if any) stay."
         }
-      ]
+      ],
+      "title": "Fix category-(a) strings in hex-nexus + hex-agent surfaces"
     },
     {
       "id": "P4",
-      "title": "Verification + binary rebuild",
       "tasks": [
         {
-          "id": "P4.1",
-          "title": "Workspace build gate: `cargo check --workspace` AND `cargo test --workspace --no-fail-fast` both pass.",
-          "files": [],
           "evidence": [
             "cargo check --workspace",
             "cargo test --workspace --no-fail-fast"
           ],
+          "files": [],
+          "id": "P4.1",
+          "status": "done",
           "strategy_hint": "script",
-          "status": "pending"
+          "title": "Workspace build gate: `cargo check --workspace` AND `cargo test --workspace --no-fail-fast` both pass."
         },
         {
-          "id": "P4.2",
-          "title": "Rebuild release binaries (per CLAUDE.md autonomous-rebuild rule): `cargo build -p hex-cli --release && cargo build -p hex-nexus --release`. Smoke-verify: `hex sched enqueue shell -- 'true'` output contains 'sched task' and not 'brain task'.",
-          "files": [],
           "evidence": [
             "cargo build -p hex-cli --release",
             "cargo build -p hex-nexus --release",
             "hex sched enqueue shell -- 'true' 2>&1 | grep -q 'sched task'",
             "! hex sched enqueue shell -- 'true' 2>&1 | grep -q 'brain task'"
           ],
+          "files": [],
+          "id": "P4.2",
+          "status": "pending",
           "strategy_hint": "script",
-          "status": "pending"
+          "title": "Rebuild release binaries (per CLAUDE.md autonomous-rebuild rule): `cargo build -p hex-cli --release && cargo build -p hex-nexus --release`. Smoke-verify: `hex sched enqueue shell -- 'true'` output contains 'sched task' and not 'brain task'."
         }
-      ]
+      ],
+      "title": "Verification + binary rebuild"
     }
   ]
 }

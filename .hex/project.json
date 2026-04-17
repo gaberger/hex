@@ -1,7 +1,9 @@
 {
-  "createdAt": "2026-03-22T19:05:18.027395+00:00",
-  "hexVersion": "26.4.0",
-  "id": "a15280d0-332a-4c55-83ef-29d7d2311425",
-  "name": "hex-intf",
-  "lifecycle_enforcement": "mandatory"
+  "inference": {
+    "tier_models": {
+      "t1": "local-codellama",
+      "t2": "local-gemma4",
+      "t2_5": "local-llama3"
+    }
+  }
 }

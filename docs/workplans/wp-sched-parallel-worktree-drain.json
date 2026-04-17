@@ -1,232 +1,264 @@
 {
   "adr": "ADR-2604151430",
-  "id": "wp-sched-parallel-worktree-drain",
   "description": "Implement parallel worktree-isolated sched drain per ADR-2604151430. P1 introduces the slot table + max_parallel_drains config. P2 adds the worktree create/dispatch path (each running task gets feat/sched-drain/<task-id>/). P3 adds the static file-overlap conflict gate. P4 adds tier-aware throttles (T2.5, T3 caps). P5 adds gc-worktrees + post-merge cleanup. P6 covers tests, build, and docs.",
+  "id": "wp-sched-parallel-worktree-drain",
   "phases": [
     {
       "id": "P1",
-      "title": "Slot table + concurrency config",
       "tasks": [
         {
-          "id": "P1.1",
-          "title": "Replace single `current_task: Option<Task>` daemon state with `slots: Vec<DrainSlot>` where DrainSlot { slot_id, task_id, worktree_path, started_at, child_pid }. Slot count = max_parallel_drains (default 3, persisted in .hex/project.json under sched.max_parallel_drains, env override HEX_SCHED_MAX_PARALLEL).",
-          "files": ["hex-cli/src/commands/sched.rs"],
           "evidence": [
             "grep -nE 'struct DrainSlot|max_parallel_drains' hex-cli/src/commands/sched.rs",
             "cargo check -p hex-cli"
           ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.1",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Replace single `current_task: Option<Task>` daemon state with `slots: Vec<DrainSlot>` where DrainSlot { slot_id, task_id, worktree_path, started_at, child_pid }. Slot count = max_parallel_drains (default 3, persisted in .hex/project.json under sched.max_parallel_drains, env override HEX_SCHED_MAX_PARALLEL)."
         },
         {
-          "id": "P1.2",
-          "title": "queue_drain becomes drain_step: examines free slots, walks pending tasks in FIFO order, promotes the first task that passes the conflict + tier gates (gates land in P3/P4) into the first free slot.",
-          "files": ["hex-cli/src/commands/sched.rs"],
           "evidence": [
             "grep -nE 'fn drain_step|free_slot' hex-cli/src/commands/sched.rs"
           ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.2",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "queue_drain becomes drain_step: examines free slots, walks pending tasks in FIFO order, promotes the first task that passes the conflict + tier gates (gates land in P3/P4) into the first free slot."
         },
         {
-          "id": "P1.3",
-          "title": "Unit tests: slot allocation FIFO, slot release on task completion, max_parallel_drains respected when 5 tasks queued and cap=3, env var overrides .hex/project.json.",
-          "files": ["hex-cli/src/commands/sched.rs"],
           "evidence": [
             "grep -nE 'test_slot_allocation|test_max_parallel_cap' hex-cli/src/commands/sched.rs",
             "cargo test -p hex-cli slot_allocation"
           ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.3",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Unit tests: slot allocation FIFO, slot release on task completion, max_parallel_drains respected when 5 tasks queued and cap=3, env var overrides .hex/project.json."
         }
-      ]
+      ],
+      "title": "Slot table + concurrency config"
     },
     {
       "id": "P2",
-      "title": "Worktree create + dispatch + merge per slot",
       "tasks": [
         {
-          "id": "P2.1",
-          "title": "On promotion, sched daemon creates a worktree at feat/sched-drain/<task-id>/ on a fresh branch sched/<task-id> by shelling out to the existing `hex worktree create`. Sets the spawned subprocess CWD to the worktree path. Stores worktree_path in DrainSlot.",
-          "files": ["hex-cli/src/commands/sched.rs"],
           "evidence": [
             "grep -nE 'feat/sched-drain|sched/<task' hex-cli/src/commands/sched.rs"
           ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P2.1",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "On promotion, sched daemon creates a worktree at feat/sched-drain/<task-id>/ on a fresh branch sched/<task-id> by shelling out to the existing `hex worktree create`. Sets the spawned subprocess CWD to the worktree path. Stores worktree_path in DrainSlot."
         },
         {
-          "id": "P2.2",
-          "title": "On task success (evidence-guard passes per ADR-2604141400), sched daemon shells out to `hex worktree merge feat/sched-drain/<task-id>` to integrate. On merge success, run `hex worktree cleanup feat/sched-drain/<task-id>`. On merge failure, leave worktree, mark task failed with reason 'merge_failed: <stderr>'.",
-          "files": ["hex-cli/src/commands/sched.rs"],
           "evidence": [
             "grep -nE 'merge_failed|hex worktree merge' hex-cli/src/commands/sched.rs"
           ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P2.2",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "On task success (evidence-guard passes per ADR-2604141400), sched daemon shells out to `hex worktree merge feat/sched-drain/<task-id>` to integrate. On merge success, run `hex worktree cleanup feat/sched-drain/<task-id>`. On merge failure, leave worktree, mark task failed with reason 'merge_failed: <stderr>'."
         },
         {
-          "id": "P2.3",
-          "title": "Pre-flight: before promoting any task, daemon runs `git status --porcelain` on main; if dirty, log warning ('main has uncommitted changes — pausing parallel drain until clean') and skip this tick.",
-          "files": ["hex-cli/src/commands/sched.rs"],
           "evidence": [
             "grep -n 'main has uncommitted changes' hex-cli/src/commands/sched.rs"
           ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P2.3",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Pre-flight: before promoting any task, daemon runs `git status --porcelain` on main; if dirty, log warning ('main has uncommitted changes — pausing parallel drain until clean') and skip this tick."
         },
         {
-          "id": "P2.4",
-          "title": "Integration test: enqueue 2 disjoint workplans into a tmpdir git repo, drive 4 daemon ticks, assert both worktrees were created, both subprocesses ran, both merged back to main, both worktrees were cleaned up.",
-          "files": ["hex-cli/tests/sched_parallel_drain.rs"],
           "evidence": [
             "test -f hex-cli/tests/sched_parallel_drain.rs",
             "cargo test -p hex-cli sched_parallel_drain"
           ],
+          "files": [
+            "hex-cli/tests/sched_parallel_drain.rs"
+          ],
+          "id": "P2.4",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Integration test: enqueue 2 disjoint workplans into a tmpdir git repo, drive 4 daemon ticks, assert both worktrees were created, both subprocesses ran, both merged back to main, both worktrees were cleaned up."
         }
-      ]
+      ],
+      "title": "Worktree create + dispatch + merge per slot"
     },
     {
       "id": "P3",
-      "title": "File-overlap conflict gate",
       "tasks": [
         {
-          "id": "P3.1",
-          "title": "Add fn workplan_file_set(path: &Path) -> HashSet<PathBuf> that loads a workplan JSON and returns the union of phases[].tasks[].files[]. Empty/missing files arrays return empty set (treated as 'unknown — block parallel by default').",
-          "files": ["hex-cli/src/commands/sched.rs"],
           "evidence": [
             "grep -n 'fn workplan_file_set' hex-cli/src/commands/sched.rs",
             "cargo test -p hex-cli workplan_file_set"
           ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P3.1",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Add fn workplan_file_set(path: &Path) -> HashSet<PathBuf> that loads a workplan JSON and returns the union of phases[].tasks[].files[]. Empty/missing files arrays return empty set (treated as 'unknown — block parallel by default')."
         },
         {
-          "id": "P3.2",
-          "title": "drain_step gate: a candidate workplan task is only promoted if its file_set is non-empty AND disjoint from every running slot's file_set. If file_set is empty (workplan didn't declare files), do NOT promote concurrently — wait until all other slots are free (conservative-by-default).",
-          "files": ["hex-cli/src/commands/sched.rs"],
           "evidence": [
             "grep -nE 'file_set|conflict_gate' hex-cli/src/commands/sched.rs"
           ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P3.2",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "drain_step gate: a candidate workplan task is only promoted if its file_set is non-empty AND disjoint from every running slot's file_set. If file_set is empty (workplan didn't declare files), do NOT promote concurrently — wait until all other slots are free (conservative-by-default)."
         },
         {
-          "id": "P3.3",
-          "title": "Test: workplan A claims [src/a.rs], workplan B claims [src/b.rs] → both promote concurrently. Workplan C claims [src/a.rs] while A is running → C waits. Workplan D with empty files[] → waits until all slots empty.",
-          "files": ["hex-cli/src/commands/sched.rs"],
           "evidence": [
             "grep -nE 'test_disjoint_workplans_parallel|test_overlap_serializes' hex-cli/src/commands/sched.rs",
             "cargo test -p hex-cli conflict_gate"
           ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P3.3",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Test: workplan A claims [src/a.rs], workplan B claims [src/b.rs] → both promote concurrently. Workplan C claims [src/a.rs] while A is running → C waits. Workplan D with empty files[] → waits until all slots empty."
         }
-      ]
+      ],
+      "title": "File-overlap conflict gate"
     },
     {
       "id": "P4",
-      "title": "Tier-aware throttles",
       "tasks": [
         {
-          "id": "P4.1",
-          "title": "Add fn workplan_max_tier(path: &Path) -> Tier — returns max(strategy_hint→tier) across all tasks. strategy_hint mapping: scaffold/transform/script→T1, codegen→T2, inference→T2.5; absent hint defaults to T2.",
-          "files": ["hex-cli/src/commands/sched.rs"],
           "evidence": [
             "grep -nE 'fn workplan_max_tier|Tier::' hex-cli/src/commands/sched.rs",
             "cargo test -p hex-cli workplan_max_tier"
           ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P4.1",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Add fn workplan_max_tier(path: &Path) -> Tier — returns max(strategy_hint→tier) across all tasks. strategy_hint mapping: scaffold/transform/script→T1, codegen→T2, inference→T2.5; absent hint defaults to T2."
         },
         {
-          "id": "P4.2",
-          "title": "Per-tier slot caps in .hex/project.json: sched.max_parallel_drains_t25 (default 1), sched.max_parallel_drains_t3 (default 1). drain_step counts running slots by tier; if promoting candidate would exceed its tier's cap, skip.",
-          "files": ["hex-cli/src/commands/sched.rs"],
           "evidence": [
             "grep -nE 'max_parallel_drains_t25|tier_cap' hex-cli/src/commands/sched.rs"
           ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P4.2",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Per-tier slot caps in .hex/project.json: sched.max_parallel_drains_t25 (default 1), sched.max_parallel_drains_t3 (default 1). drain_step counts running slots by tier; if promoting candidate would exceed its tier's cap, skip."
         },
         {
-          "id": "P4.3",
-          "title": "Test: with t25 cap=1, two T2.5 workplans queued → only one promotes. Once first completes, second promotes. Mixed T1+T2.5 with disjoint files → both promote (different tier buckets).",
-          "files": ["hex-cli/src/commands/sched.rs"],
           "evidence": [
             "grep -n 'test_t25_cap_serializes' hex-cli/src/commands/sched.rs",
             "cargo test -p hex-cli tier_cap"
           ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P4.3",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Test: with t25 cap=1, two T2.5 workplans queued → only one promotes. Once first completes, second promotes. Mixed T1+T2.5 with disjoint files → both promote (different tier buckets)."
         }
-      ]
+      ],
+      "title": "Tier-aware throttles"
     },
     {
       "id": "P5",
-      "title": "Worktree GC",
       "tasks": [
         {
-          "id": "P5.1",
-          "title": "Add `hex sched gc-worktrees` subcommand: lists all feat/sched-drain/<task-id>/ worktrees; for each, look up the task in the queue; if task status is failed AND task age > N days (default 7, --days flag) AND user passes --force, run `hex worktree cleanup` on it. Without --force, lists what would be cleaned (dry-run).",
-          "files": ["hex-cli/src/commands/sched.rs"],
           "evidence": [
             "grep -nE 'gc-worktrees|GcWorktrees' hex-cli/src/commands/sched.rs"
           ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P5.1",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Add `hex sched gc-worktrees` subcommand: lists all feat/sched-drain/<task-id>/ worktrees; for each, look up the task in the queue; if task status is failed AND task age > N days (default 7, --days flag) AND user passes --force, run `hex worktree cleanup` on it. Without --force, lists what would be cleaned (dry-run)."
         },
         {
-          "id": "P5.2",
-          "title": "On daemon startup, log any orphan feat/sched-drain/ worktrees (worktree exists but task is gone from queue) with a one-line warning + suggestion to run `hex sched gc-worktrees`.",
-          "files": ["hex-cli/src/commands/sched.rs"],
           "evidence": [
             "grep -n 'orphan.*worktree' hex-cli/src/commands/sched.rs"
           ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P5.2",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "On daemon startup, log any orphan feat/sched-drain/ worktrees (worktree exists but task is gone from queue) with a one-line warning + suggestion to run `hex sched gc-worktrees`."
         }
-      ]
+      ],
+      "title": "Worktree GC"
     },
     {
       "id": "P6",
-      "title": "Build + docs + smoke",
       "tasks": [
         {
-          "id": "P6.1",
-          "title": "Workspace build gate: cargo check --workspace + cargo test --workspace --no-fail-fast.",
-          "files": [],
           "evidence": [
             "cargo check --workspace",
             "cargo test --workspace --no-fail-fast"
           ],
+          "files": [],
+          "id": "P6.1",
+          "status": "pending",
           "strategy_hint": "script",
-          "status": "pending"
+          "title": "Workspace build gate: cargo check --workspace + cargo test --workspace --no-fail-fast."
         },
         {
-          "id": "P6.2",
-          "title": "Rebuild release binaries: cargo build -p hex-cli --release. Smoke: enqueue 2 disjoint dummy workplans, observe both promote concurrently in `hex sched queue list` (depends on ADR-2604151400 having shipped first — list this dependency in the workplan description).",
-          "files": [],
           "evidence": [
             "cargo build -p hex-cli --release"
           ],
+          "files": [],
+          "id": "P6.2",
+          "status": "pending",
           "strategy_hint": "script",
-          "status": "pending"
+          "title": "Rebuild release binaries: cargo build -p hex-cli --release. Smoke: enqueue 2 disjoint dummy workplans, observe both promote concurrently in `hex sched queue list` (depends on ADR-2604151400 having shipped first — list this dependency in the workplan description)."
         },
         {
-          "id": "P6.3",
-          "title": "Update CLAUDE.md sched section: document max_parallel_drains, file-overlap gate, tier caps, gc-worktrees command. Cross-reference ADR-2604151430.",
-          "files": ["CLAUDE.md"],
           "evidence": [
             "grep -n 'max_parallel_drains' CLAUDE.md",
             "grep -n 'ADR-2604151430' CLAUDE.md"
           ],
+          "files": [
+            "CLAUDE.md"
+          ],
+          "id": "P6.3",
+          "status": "pending",
           "strategy_hint": "transform",
-          "status": "pending"
+          "title": "Update CLAUDE.md sched section: document max_parallel_drains, file-overlap gate, tier caps, gc-worktrees command. Cross-reference ADR-2604151430."
         }
-      ]
+      ],
+      "title": "Build + docs + smoke"
     }
   ]
 }

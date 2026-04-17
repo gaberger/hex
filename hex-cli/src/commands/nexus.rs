@@ -496,25 +496,43 @@ async fn start(port: u16, bind: &str, token: Option<&str>, _no_agent: bool) -> a
             cmd.args(["--hub-url", &nexus_url, "--project-dir", &project_dir]);
 
             // Forward inference provider config as env vars
+            // Pick the best Ollama provider based on quality_score
             if let Ok(resp) = nexus.get("/api/inference/endpoints").await {
                 let resp: serde_json::Value = resp;
                 if let Some(eps) = resp.get("endpoints").and_then(|v| v.as_array()) {
-                    for ep in eps {
-                        let provider = ep["provider"].as_str().unwrap_or("");
+                    // Find best Ollama provider (highest quality_score)
+                    let best_ollama = eps.iter()
+                        .filter(|ep| ep["provider"].as_str() == Some("ollama"))
+                        .filter(|ep| ep["qualityScore"].as_f64().unwrap_or(0.0) > 0.0)
+                        .max_by(|a, b| {
+                            let a_score = a["qualityScore"].as_f64().unwrap_or(0.0);
+                            let b_score = b["qualityScore"].as_f64().unwrap_or(0.0);
+                            a_score.partial_cmp(&b_score).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+
+                    if let Some(ep) = best_ollama {
                         let url = ep["url"].as_str().unwrap_or("");
                         let model = ep["model"].as_str().unwrap_or("");
-                        match provider {
-                            "ollama" => {
-                                cmd.env("HEX_OLLAMA_HOST", url);
-                                cmd.env("HEX_OLLAMA_MODEL", model);
-                                cmd.args(["--model", model]);
+                        if !url.is_empty() && !model.is_empty() {
+                            cmd.env("HEX_OLLAMA_HOST", url);
+                            cmd.env("HEX_OLLAMA_MODEL", model);
+                            cmd.args(["--model", model]);
+                            eprintln!("  → Using best Ollama: {} (q={})", model, ep["qualityScore"].as_f64().unwrap_or(0.0));
+                        }
+                    } else {
+                        // Fallback: use first Ollama endpoint
+                        for ep in eps.iter() {
+                            let provider = ep["provider"].as_str().unwrap_or("");
+                            if provider == "ollama" {
+                                let url = ep["url"].as_str().unwrap_or("");
+                                let model = ep["model"].as_str().unwrap_or("");
+                                if !url.is_empty() {
+                                    cmd.env("HEX_OLLAMA_HOST", url);
+                                    cmd.env("HEX_OLLAMA_MODEL", model);
+                                    cmd.args(["--model", model]);
+                                    break;
+                                }
                             }
-                            "vllm" | "openai_compat" | "openai-compatible" => {
-                                cmd.env("HEX_INFERENCE_URL", format!("{}/v1", url));
-                                cmd.env("HEX_INFERENCE_MODEL", model);
-                                cmd.args(["--model", model]);
-                            }
-                            _ => {}
                         }
                     }
                 }

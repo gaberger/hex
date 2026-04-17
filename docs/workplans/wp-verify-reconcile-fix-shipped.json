@@ -1,67 +1,75 @@
 {
   "adr": "ADR-2604142200",
-  "id": "wp-verify-reconcile-fix-shipped",
   "description": "Investigate whether wp-reconcile-evidence-verification (task adfbe699, drained earlier in this session) actually shipped its fix, or was itself false-positive-completed by the bug it targets. Deliverable is a short report at docs/analysis/reconcile-fix-shipped-verification.md with a verdict + evidence. NO code changes — if fix didn't ship, the report names a follow-up workplan.",
+  "id": "wp-verify-reconcile-fix-shipped",
   "phases": [
     {
       "id": "P1",
-      "title": "Verify code-level evidence",
       "tasks": [
         {
-          "id": "P1.1",
-          "title": "Read docs/workplans/wp-reconcile-evidence-verification.json and list every file it promised to change. For each, run `git log --oneline -20 -- <file>` and assert at least one commit since 2026-04-14 touched the claimed code path. Record findings in docs/analysis/reconcile-fix-shipped-verification.md under ## File-Level Evidence with columns: promised_file, commits_since_enqueue, match_verdict (SHIPPED | MISSING | INCONCLUSIVE).",
-          "files": ["docs/analysis/reconcile-fix-shipped-verification.md"],
           "evidence": [
             "test -f docs/analysis/reconcile-fix-shipped-verification.md",
             "grep -n '## File-Level Evidence' docs/analysis/reconcile-fix-shipped-verification.md"
           ],
+          "files": [
+            "docs/analysis/reconcile-fix-shipped-verification.md"
+          ],
+          "id": "P1.1",
+          "status": "done",
           "strategy_hint": "script",
-          "status": "pending"
+          "title": "Read docs/workplans/wp-reconcile-evidence-verification.json and list every file it promised to change. For each, run `git log --oneline -20 -- <file>` and assert at least one commit since 2026-04-14 touched the claimed code path. Record findings in docs/analysis/reconcile-fix-shipped-verification.md under ## File-Level Evidence with columns: promised_file, commits_since_enqueue, match_verdict (SHIPPED | MISSING | INCONCLUSIVE)."
         }
-      ]
+      ],
+      "title": "Verify code-level evidence"
     },
     {
       "id": "P2",
-      "title": "Runtime reproduction",
       "tasks": [
         {
-          "id": "P2.1",
-          "title": "Pick a workplan from recent sched queue history that failed with 'no git evidence'. Manually invoke `hex plan execute <path>` and capture: (a) stdout/stderr, (b) number of tasks the planner thought were 'done' before execution, (c) whether any cargo/git/fs mutation actually happened. Record under ## Runtime Reproduction with exact commands + outputs.",
-          "files": ["docs/analysis/reconcile-fix-shipped-verification.md"],
           "evidence": [
             "grep -n '## Runtime Reproduction' docs/analysis/reconcile-fix-shipped-verification.md"
           ],
+          "files": [
+            "docs/analysis/reconcile-fix-shipped-verification.md"
+          ],
+          "id": "P2.1",
+          "status": "done",
           "strategy_hint": "script",
-          "status": "pending"
+          "title": "Pick a workplan from recent sched queue history that failed with 'no git evidence'. Manually invoke `hex plan execute <path>` and capture: (a) stdout/stderr, (b) number of tasks the planner thought were 'done' before execution, (c) whether any cargo/git/fs mutation actually happened. Record under ## Runtime Reproduction with exact commands + outputs."
         },
         {
-          "id": "P2.2",
-          "title": "Run `hex plan reconcile --dry-run --all` on this repo. For each workplan it claims is 'done', verify by cross-checking git log for commits touching the workplan's declared files[]. Record any workplans that reconcile claims are done but git log shows no matching commits as FALSE POSITIVES under ## False-Positive Reconciliations.",
-          "files": ["docs/analysis/reconcile-fix-shipped-verification.md"],
           "evidence": [
             "grep -n '## False-Positive Reconciliations' docs/analysis/reconcile-fix-shipped-verification.md"
           ],
+          "files": [
+            "docs/analysis/reconcile-fix-shipped-verification.md"
+          ],
+          "id": "P2.2",
+          "status": "done",
           "strategy_hint": "script",
-          "status": "pending"
+          "title": "Run `hex plan reconcile --dry-run --all` on this repo. For each workplan it claims is 'done', verify by cross-checking git log for commits touching the workplan's declared files[]. Record any workplans that reconcile claims are done but git log shows no matching commits as FALSE POSITIVES under ## False-Positive Reconciliations."
         }
-      ]
+      ],
+      "title": "Runtime reproduction"
     },
     {
       "id": "P3",
-      "title": "Verdict + follow-up",
       "tasks": [
         {
-          "id": "P3.1",
-          "title": "Write a ## Verdict section with one of: SHIPPED (fix landed and works), PARTIALLY SHIPPED (some files changed but bug still reproduces), NOT SHIPPED (workplan was false-positive-reconciled, no code changed). If NOT SHIPPED or PARTIALLY SHIPPED, the verdict section names a single follow-up workplan path (docs/workplans/wp-reconcile-evidence-verification-v2.json) that should be authored. Do NOT author that workplan in this task — name it only.",
-          "files": ["docs/analysis/reconcile-fix-shipped-verification.md"],
           "evidence": [
             "grep -n '## Verdict' docs/analysis/reconcile-fix-shipped-verification.md",
             "grep -nE 'SHIPPED|PARTIALLY SHIPPED|NOT SHIPPED' docs/analysis/reconcile-fix-shipped-verification.md"
           ],
+          "files": [
+            "docs/analysis/reconcile-fix-shipped-verification.md"
+          ],
+          "id": "P3.1",
+          "status": "done",
           "strategy_hint": "transform",
-          "status": "pending"
+          "title": "Write a ## Verdict section with one of: SHIPPED (fix landed and works), PARTIALLY SHIPPED (some files changed but bug still reproduces), NOT SHIPPED (workplan was false-positive-reconciled, no code changed). If NOT SHIPPED or PARTIALLY SHIPPED, the verdict section names a single follow-up workplan path (docs/workplans/wp-reconcile-evidence-verification-v2.json) that should be authored. Do NOT author that workplan in this task — name it only."
         }
-      ]
+      ],
+      "title": "Verdict + follow-up"
     }
   ]
 }

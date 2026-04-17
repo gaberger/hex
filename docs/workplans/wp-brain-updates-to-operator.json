@@ -109,7 +109,7 @@
           "id": "P3.2",
           "layer": "hex-cli",
           "name": "daemon.toml verbosity",
-          "status": "pending"
+          "status": "done"
         }
       ],
       "tier": 3

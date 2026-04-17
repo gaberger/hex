@@ -437,7 +437,7 @@ impl ModelSelector {
         let mut candidates: Vec<(f32, u32, String)> = list
             .endpoints
             .into_iter()
-            .filter(|ep| ep.provider == "openrouter")
+            .filter(|ep| ep.provider == "openrouter" || ep.provider == "ollama")
             .filter_map(|ep| {
                 let score = ep.quality_score.filter(|&s| s >= 0.0)?;
                 let model_id = ep.first_model_id()?;
@@ -484,6 +484,13 @@ impl ModelSelector {
 
         let rl: RlActionResponse = serde_json::from_value(resp)
             .context("unexpected shape from /api/rl/action")?;
+
+        // If RL returns a non-model action (e.g., "explore"), treat as unavailable
+        // and fall through to registry-based selection
+        if !rl.action.starts_with("model:") {
+            debug!(action = %rl.action, "RL returned non-model action — falling through to registry");
+            return Err(anyhow::anyhow!("RL returned non-model action"));
+        }
 
         // Parse compound action string to extract the model directive.
         let rl_model_id = extract_model_from_action(&rl.action, task_type);

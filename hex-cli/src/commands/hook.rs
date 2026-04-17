@@ -265,7 +265,7 @@ async fn session_start(project_dir: &Path) -> Result<()> {
         name
     );
     println!("  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
-    println!("  Project: {} ({})", name, &id[..8]);
+    println!("  Project: {} ({})", name, id.get(..8).unwrap_or(id));
 
     // Check if nexus is reachable and register as agent (ADR-048)
     let nexus_status = check_nexus_health().await;

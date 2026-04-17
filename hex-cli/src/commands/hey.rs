@@ -327,16 +327,73 @@ fn classify_intent(text: &str) -> TaskIntent {
             description: "Show developer briefing".into(),
         };
     }
-    // Status
-    if t.contains("status") || t.contains("pulse") {
+    // Brain/daemon status - check before general "status" to avoid false match
+    if t.contains("brain") && (t.contains("status") || t.contains("daemon")) {
+        return TaskIntent::HexCommand {
+            args: "sched daemon-status".into(),
+            destructive: false,
+            description: "Show brain scheduler status".into(),
+        };
+    }
+    // Start brain/daemon
+    if (t.contains("start") || t.contains("run") || t.contains("launch")) && (t.contains("brain") || t.contains("daemon")) {
+        return TaskIntent::HexCommand {
+            args: "sched daemon --background".into(),
+            destructive: false,
+            description: "Start the brain scheduler daemon".into(),
+        };
+    }
+    // Stop brain/daemon
+    if t.contains("stop") && (t.contains("brain") || t.contains("daemon")) {
+        return TaskIntent::HexCommand {
+            args: "sched daemon-stop".into(),
+            destructive: false,
+            description: "Stop the brain scheduler daemon".into(),
+        };
+    }
+    // Prime brain (start daemon + discover workplans + seed queue)
+    if t.contains("prime") && t.contains("brain") {
+        return TaskIntent::HexCommand {
+            args: "sched prime".into(),
+            destructive: false,
+            description: "Prime brain: start daemon, discover workplans, seed queue".into(),
+        };
+    }
+    // Validate brain
+    if t.contains("validate") && t.contains("brain") {
+        return TaskIntent::HexCommand {
+            args: "sched validate".into(),
+            destructive: false,
+            description: "Run brain self-diagnostics".into(),
+        };
+    }
+    // Sched watch - watch brain tick events
+    if t.contains("watch") && (t.contains("brain") || t.contains("tick") || t.contains("sched")) {
+        return TaskIntent::HexCommand {
+            args: "sched watch".into(),
+            destructive: false,
+            description: "Watch brain tick events in real-time".into(),
+        };
+    }
+    // Sched queue - show queue
+    if (t.contains("queue") || t.contains("tasks")) && (t.contains("sched") || t.contains("brain")) {
+        return TaskIntent::HexCommand {
+            args: "sched queue list".into(),
+            destructive: false,
+            description: "Show brain task queue".into(),
+        };
+    }
+    // Status / what's happening
+    if t.contains("status") || t.contains("pulse") || (t.contains("what") && (t.contains("doing") || t.contains("happening") || t.contains("going"))) {
         return TaskIntent::HexCommand {
             args: "status".into(),
             destructive: false,
             description: "Show project status".into(),
         };
     }
-    // Show workplans
-    if t.contains("list") && (t.contains("plan") || t.contains("workplan")) {
+    // Show workplans / what plans are running
+    if t.contains("list") && (t.contains("plan") || t.contains("workplan"))
+        || (t.contains("what") && t.contains("plan")) {
         return TaskIntent::HexCommand {
             args: "plan list".into(),
             destructive: false,
@@ -373,6 +430,46 @@ fn classify_intent(text: &str) -> TaskIntent {
             cmd: "cargo test --workspace".into(),
             destructive: false,
             description: "Run all tests".into(),
+        };
+    }
+    // Git log
+    if t.contains("git") && t.contains("log") {
+        return TaskIntent::HexCommand {
+            args: "git log".into(),
+            destructive: false,
+            description: "Show git commit history".into(),
+        };
+    }
+    // Git diff
+    if t.contains("git") && (t.contains("diff") || t.contains("changes")) {
+        return TaskIntent::HexCommand {
+            args: "git diff".into(),
+            destructive: false,
+            description: "Show uncommitted changes".into(),
+        };
+    }
+    // List files / what's here
+    if t.contains("list") && (t.contains("file") || t.contains("directory") || t.contains("dir")) {
+        return TaskIntent::Shell {
+            cmd: "ls -la".into(),
+            destructive: false,
+            description: "List files in current directory".into(),
+        };
+    }
+    // Show secrets status
+    if t.contains("show") && t.contains("secret") {
+        return TaskIntent::HexCommand {
+            args: "secrets status".into(),
+            destructive: false,
+            description: "Show secrets backend status".into(),
+        };
+    }
+    // Show inbox
+    if t.contains("inbox") || (t.contains("message") && (t.contains("pending") || t.contains("unread"))) {
+        return TaskIntent::HexCommand {
+            args: "inbox list".into(),
+            destructive: false,
+            description: "Show agent notification inbox".into(),
         };
     }
 
@@ -493,9 +590,9 @@ async fn llm_classify(text: &str) -> anyhow::Result<Option<(String, String, Stri
     );
     let nexus = crate::nexus_client::NexusClient::from_env();
     let resp: serde_json::Value = tokio::time::timeout(
-        std::time::Duration::from_secs(15),
+        std::time::Duration::from_secs(45),
         nexus.post("/api/inference/complete", &serde_json::json!({
-            "model": "qwen3:4b",
+            "model": "gemma4:latest",
             "messages": [
                 {"role": "user", "content": prompt}
             ],
@@ -549,7 +646,7 @@ async fn llm_translate_shell_for_host(action: &str, host: Option<&str>) -> anyho
     let resp: serde_json::Value = tokio::time::timeout(
         std::time::Duration::from_secs(15),
         nexus.post("/api/inference/complete", &serde_json::json!({
-            "model": "qwen3:4b",
+            "model": "gemma4:latest",
             "messages": [
                 {"role": "user", "content": prompt}
             ],

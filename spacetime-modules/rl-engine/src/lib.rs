@@ -39,6 +39,15 @@ pub struct RlPattern {
     pub decay_rate: f64,
 }
 
+#[table(name = rl_last_action, public)]
+#[derive(Clone, Debug)]
+pub struct RlLastAction {
+    #[unique]
+    pub id: String,
+    pub state_key: String,
+    pub action: String,
+}
+
 const EPSILON: f64 = 0.1;
 const LEARNING_RATE: f64 = 0.1;
 const DISCOUNT_FACTOR: f64 = 0.95;
@@ -160,25 +169,26 @@ pub fn select_action(ctx: &ReducerContext, state_key: String) -> Result<(), Stri
     // Select best context action
     let context_action = best_action_matching(&entries, is_context_action);
 
-    match context_action {
+    let result = match context_action {
         Some(ctx_action) => {
-            let compound = format!("{}|{}", model_action, ctx_action);
-            log::info!(
-                "Selected compound action '{}' for state '{}' (epsilon={:.2})",
-                compound,
-                state_key,
-                EPSILON
-            );
+            format!("{}|{}", model_action, ctx_action)
         }
-        None => {
-            log::info!(
-                "Selected model '{}' for state '{}', context exploration needed (epsilon={:.2})",
-                model_action,
-                state_key,
-                EPSILON
-            );
-        }
-    }
+        None => model_action,
+    };
+
+    log::info!(
+        "Selected action '{}' for state '{}' (epsilon={:.2})",
+        result,
+        state_key,
+        EPSILON
+    );
+
+    // Write to singleton table for caller to read (timestamp not needed)
+    ctx.db.rl_last_action().insert(RlLastAction {
+        id: "last".to_string(),
+        state_key: state_key,
+        action: result,
+    });
 
     Ok(())
 }

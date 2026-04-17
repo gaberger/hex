@@ -1,120 +1,137 @@
 {
   "adr": "ADR-2604151500",
-  "id": "wp-statusline-audit",
   "description": "Audit (not fix) the Claude Code status line per ADR-2604151500. Deliverable: docs/analysis/statusline-audit-2604151500.md containing per-segment provenance, glyph legend, inaccuracy log, confusion log, and ranked recommendation set. NO code changes in this workplan — every recommendation routes to a downstream ADR draft if action is warranted.",
+  "id": "wp-statusline-audit",
   "phases": [
     {
       "id": "P1",
-      "title": "Build the per-segment provenance map",
       "tasks": [
         {
-          "id": "P1.1",
-          "title": "Read hex-cli/assets/helpers/hex-statusline.cjs end-to-end. Enumerate every parts.push(...) call. For each, capture: (1) the segment template, (2) the data variables it consumes, (3) the file:line, (4) the source(s) those variables were populated from (REST endpoint, file, env). Write the table into docs/analysis/statusline-audit-2604151500.md under section ## Provenance Map.",
-          "files": ["docs/analysis/statusline-audit-2604151500.md"],
           "evidence": [
             "test -f docs/analysis/statusline-audit-2604151500.md",
             "grep -n '## Provenance Map' docs/analysis/statusline-audit-2604151500.md",
             "test $(grep -cE '^\\| ' docs/analysis/statusline-audit-2604151500.md) -ge 10"
           ],
+          "files": [
+            "docs/analysis/statusline-audit-2604151500.md"
+          ],
+          "id": "P1.1",
+          "status": "done",
           "strategy_hint": "script",
-          "status": "pending"
+          "title": "Read hex-cli/assets/helpers/hex-statusline.cjs end-to-end. Enumerate every parts.push(...) call. For each, capture: (1) the segment template, (2) the data variables it consumes, (3) the file:line, (4) the source(s) those variables were populated from (REST endpoint, file, env). Write the table into docs/analysis/statusline-audit-2604151500.md under section ## Provenance Map."
         },
         {
-          "id": "P1.2",
-          "title": "For every data source named in P1.1 that is also exposed as a hex command (e.g. /api/brain/status ↔ `hex sched status`), name the canonical CLI command in a 'Canonical Command' column. Mark segments with NO canonical command — those are status-line-only views with no other way to verify the number.",
-          "files": ["docs/analysis/statusline-audit-2604151500.md"],
           "evidence": [
             "grep -n 'Canonical Command' docs/analysis/statusline-audit-2604151500.md"
           ],
+          "files": [
+            "docs/analysis/statusline-audit-2604151500.md"
+          ],
+          "id": "P1.2",
+          "status": "done",
           "strategy_hint": "transform",
-          "status": "pending"
+          "title": "For every data source named in P1.1 that is also exposed as a hex command (e.g. /api/brain/status ↔ `hex sched status`), name the canonical CLI command in a 'Canonical Command' column. Mark segments with NO canonical command — those are status-line-only views with no other way to verify the number."
         }
-      ]
+      ],
+      "title": "Build the per-segment provenance map"
     },
     {
       "id": "P2",
-      "title": "Glyph legend",
       "tasks": [
         {
-          "id": "P2.1",
-          "title": "Extract every Unicode glyph used in the status line via a regex over hex-statusline.cjs. For each, document: (a) symbol, (b) intended meaning, (c) sections it appears in, (d) whether meaning is consistent across sections. Write into the report as ## Glyph Legend with an explicit 'Ambiguity' column flagging glyphs whose meaning shifts by section (initial suspects: ○ used for both 'idle but fine' and 'service down').",
-          "files": ["docs/analysis/statusline-audit-2604151500.md"],
           "evidence": [
             "grep -n '## Glyph Legend' docs/analysis/statusline-audit-2604151500.md"
           ],
+          "files": [
+            "docs/analysis/statusline-audit-2604151500.md"
+          ],
+          "id": "P2.1",
+          "status": "done",
           "strategy_hint": "script",
-          "status": "pending"
+          "title": "Extract every Unicode glyph used in the status line via a regex over hex-statusline.cjs. For each, document: (a) symbol, (b) intended meaning, (c) sections it appears in, (d) whether meaning is consistent across sections. Write into the report as ## Glyph Legend with an explicit 'Ambiguity' column flagging glyphs whose meaning shifts by section (initial suspects: ○ used for both 'idle but fine' and 'service down')."
         }
-      ]
+      ],
+      "title": "Glyph legend"
     },
     {
       "id": "P3",
-      "title": "Inaccuracy log — reproduce disagreements",
       "tasks": [
         {
-          "id": "P3.1",
-          "title": "For each row in the provenance map with a Canonical Command, run a comparison: capture the status-line value, run the canonical command, diff the numbers. Repeat with the daemon idle and with the daemon mid-drain. Record every disagreement (status, fixture, expected, actual, severity) under ## Inaccuracy Log. Severity rubric: HIGH = wrong sign or order-of-magnitude; MED = stale (value lags by > 1 tick interval); LOW = field-mapping mismatch (e.g. status line shows total, command shows pending).",
-          "files": ["docs/analysis/statusline-audit-2604151500.md"],
           "evidence": [
             "grep -n '## Inaccuracy Log' docs/analysis/statusline-audit-2604151500.md"
           ],
+          "files": [
+            "docs/analysis/statusline-audit-2604151500.md"
+          ],
+          "id": "P3.1",
+          "status": "done",
           "strategy_hint": "script",
-          "status": "pending"
+          "title": "For each row in the provenance map with a Canonical Command, run a comparison: capture the status-line value, run the canonical command, diff the numbers. Repeat with the daemon idle and with the daemon mid-drain. Record every disagreement (status, fixture, expected, actual, severity) under ## Inaccuracy Log. Severity rubric: HIGH = wrong sign or order-of-magnitude; MED = stale (value lags by > 1 tick interval); LOW = field-mapping mismatch (e.g. status line shows total, command shows pending)."
         },
         {
-          "id": "P3.2",
-          "title": "Specifically verify the four open suspicions raised in ADR-2604151500: (a) brain/sched stale terminology in the live binary; (b) per-project leak — does the line aggregate counts across projects or scope to cwd?; (c) agent_count semantics — live or registered?; (d) ○db visual silence on a REQUIRED dependency. Each suspicion confirmed or refuted in the log with exact reproduction commands.",
-          "files": ["docs/analysis/statusline-audit-2604151500.md"],
           "evidence": [
             "grep -n 'brain/sched stale\\|per-project leak\\|agent_count semantics\\|.db visual silence' docs/analysis/statusline-audit-2604151500.md"
           ],
+          "files": [
+            "docs/analysis/statusline-audit-2604151500.md"
+          ],
+          "id": "P3.2",
+          "status": "done",
           "strategy_hint": "script",
-          "status": "pending"
+          "title": "Specifically verify the four open suspicions raised in ADR-2604151500: (a) brain/sched stale terminology in the live binary; (b) per-project leak — does the line aggregate counts across projects or scope to cwd?; (c) agent_count semantics — live or registered?; (d) ○db visual silence on a REQUIRED dependency. Each suspicion confirmed or refuted in the log with exact reproduction commands."
         }
-      ]
+      ],
+      "title": "Inaccuracy log — reproduce disagreements"
     },
     {
       "id": "P4",
-      "title": "Confusion log — UX issues",
       "tasks": [
         {
-          "id": "P4.1",
-          "title": "Enumerate every UX issue found while reading the live line: glyph density (chars/glyph ratio), unlabeled counts, truncation artifacts that look like names, dim-glyph collisions where 'down' and 'idle' use the same color, segment ordering that buries the most operationally important info. Each issue gets a row under ## Confusion Log with a one-sentence proposed mitigation. NO implementation — mitigation column is suggestion only.",
-          "files": ["docs/analysis/statusline-audit-2604151500.md"],
           "evidence": [
             "grep -n '## Confusion Log' docs/analysis/statusline-audit-2604151500.md"
           ],
+          "files": [
+            "docs/analysis/statusline-audit-2604151500.md"
+          ],
+          "id": "P4.1",
+          "status": "done",
           "strategy_hint": "script",
-          "status": "pending"
+          "title": "Enumerate every UX issue found while reading the live line: glyph density (chars/glyph ratio), unlabeled counts, truncation artifacts that look like names, dim-glyph collisions where 'down' and 'idle' use the same color, segment ordering that buries the most operationally important info. Each issue gets a row under ## Confusion Log with a one-sentence proposed mitigation. NO implementation — mitigation column is suggestion only."
         }
-      ]
+      ],
+      "title": "Confusion log — UX issues"
     },
     {
       "id": "P5",
-      "title": "Ranked recommendations + downstream ADR drafts",
       "tasks": [
         {
-          "id": "P5.1",
-          "title": "Aggregate findings from P3 (Inaccuracy Log) + P4 (Confusion Log) into a single ranked recommendation table under ## Recommendations. Rank rubric: (1) Accuracy impact (HIGH inaccuracy = top), (2) Confusion impact, (3) Implementation cost. For each top-N recommendation (N = top 5 by rank), open a draft ADR stub under docs/adrs/drafts/ADR-statusline-fix-NNN.md with a 1-paragraph problem statement copied from the report, status: Draft. NO implementation in this workplan.",
-          "files": ["docs/analysis/statusline-audit-2604151500.md", "docs/adrs/drafts/"],
           "evidence": [
             "grep -n '## Recommendations' docs/analysis/statusline-audit-2604151500.md",
             "ls docs/adrs/drafts/ADR-statusline-fix-*.md 2>/dev/null | wc -l | xargs test 5 -le"
           ],
+          "files": [
+            "docs/analysis/statusline-audit-2604151500.md",
+            "docs/adrs/drafts/"
+          ],
+          "id": "P5.1",
+          "status": "done",
           "strategy_hint": "script",
-          "status": "pending"
+          "title": "Aggregate findings from P3 (Inaccuracy Log) + P4 (Confusion Log) into a single ranked recommendation table under ## Recommendations. Rank rubric: (1) Accuracy impact (HIGH inaccuracy = top), (2) Confusion impact, (3) Implementation cost. For each top-N recommendation (N = top 5 by rank), open a draft ADR stub under docs/adrs/drafts/ADR-statusline-fix-NNN.md with a 1-paragraph problem statement copied from the report, status: Draft. NO implementation in this workplan."
         },
         {
-          "id": "P5.2",
-          "title": "Cross-link the audit report from MEMORY.md under the Active section so future sessions can pick up the recommendations rather than re-investigating. One-line entry only — full content stays in the audit file.",
-          "files": ["/Users/gary/.claude/projects/-Volumes-ExtendedStorage-para-01-Projects-hex-intf/memory/MEMORY.md"],
           "evidence": [
             "grep -n 'statusline-audit-2604151500' /Users/gary/.claude/projects/-Volumes-ExtendedStorage-para-01-Projects-hex-intf/memory/MEMORY.md"
           ],
+          "files": [
+            "/Users/gary/.claude/projects/-Volumes-ExtendedStorage-para-01-Projects-hex-intf/memory/MEMORY.md"
+          ],
+          "id": "P5.2",
+          "status": "done",
           "strategy_hint": "transform",
-          "status": "pending"
+          "title": "Cross-link the audit report from MEMORY.md under the Active section so future sessions can pick up the recommendations rather than re-investigating. One-line entry only — full content stays in the audit file."
         }
-      ]
+      ],
+      "title": "Ranked recommendations + downstream ADR drafts"
     }
   ]
 }

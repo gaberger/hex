@@ -340,11 +340,19 @@ mod real {
     impl IRlStatePort for SpacetimeStateAdapter {
         async fn rl_select_action(&self, state: &RlState) -> Result<String, StateError> {
             let state_key = discretize_state(state);
-            let resp = self.call_reducer_on("rl-engine", "select_action", serde_json::json!([state_key])).await?;
-            // Reducer returns the selected action as a string
-            let action = resp.as_str()
-                .map(String::from)
-                .or_else(|| resp.get("action").and_then(|a| a.as_str()).map(String::from))
+            // Call reducer to select action (writes to rl_last_action table)
+            tracing::info!("Calling rl_select_action for state_key={}", state_key);
+            match self.call_reducer_on("rl-engine", "select_action", serde_json::json!([state_key])).await {
+                Ok(resp) => tracing::info!("reducer response: {:?}", resp),
+                Err(e) => tracing::warn!("reducer call failed: {}", e),
+            }
+            // Read the selected action from the table
+            tracing::info!("Querying rl_last_action table");
+            let rows = self.query_table_on("rl-engine", "SELECT action FROM rl_last_action WHERE id = 'last'").await?;
+            let action = rows.into_iter()
+                .next()
+                .and_then(|r| r.get("action").cloned())
+                .and_then(|v| v.as_str().map(String::from))
                 .unwrap_or_else(|| "explore".to_string());
             Ok(action)
         }

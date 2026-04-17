@@ -153,6 +153,10 @@ pub async fn auto_register_project(project_root: &Path, stdb_host: &str, stdb_db
 /// Called during startup after SpacetimeDB connection is established (ADR-2604080813).
 /// Re-registers any cached endpoints that are missing from the inference-gateway module.
 /// Stale/unreachable endpoints are logged as warnings but never fail startup.
+///
+/// IMPORTANT: Preserves existing quality_score for providers that were previously calibrated
+/// via `hex inference test`. Providers with quality_score > 0 are NOT re-registered to avoid
+/// overwriting benchmarked scores.
 pub async fn preload_inference_cache(stdb_host: &str) {
     let hex_dir = match dirs::home_dir() {
         Some(h) => h.join(".hex"),
@@ -162,6 +166,48 @@ pub async fn preload_inference_cache(stdb_host: &str) {
     if !cache_path.exists() {
         tracing::debug!("No inference cache found at {:?} — skipping preload", cache_path);
         return;
+    }
+
+    // Query existing providers from SpacetimeDB to preserve calibrated quality_scores.
+    let client = reqwest::Client::new();
+    let existing_providers: std::collections::HashSet<String> = match client
+        .get(format!("{}/api/inference/endpoints", stdb_host))
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(resp) => match resp.json::<serde_json::Value>().await {
+            Ok(json) => json
+                .get("endpoints")
+                .and_then(|e| e.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter(|ep| {
+                            ep.get("qualityScore")
+                                .and_then(|q| q.as_f64())
+                                .map(|q| q > 0.0)
+                                .unwrap_or(false)
+                        })
+                        .filter_map(|ep| ep.get("id").and_then(|id| id.as_str()).map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            Err(_) => {
+                tracing::warn!("Failed to parse existing providers response");
+                std::collections::HashSet::new()
+            }
+        },
+        Err(e) => {
+            tracing::warn!("Failed to query existing providers: {}", e);
+            std::collections::HashSet::new()
+        }
+    };
+
+    if !existing_providers.is_empty() {
+        tracing::debug!(
+            "Preserving quality_scores for {} calibrated providers",
+            existing_providers.len()
+        );
     }
 
     let content = match std::fs::read_to_string(&cache_path) {
@@ -191,7 +237,6 @@ pub async fn preload_inference_cache(stdb_host: &str) {
     let inference_db = std::env::var("HEX_INFERENCE_STDB_DATABASE")
         .unwrap_or_else(|_| hex_core::stdb_database_for_module("inference-gateway").to_string());
 
-    let client = reqwest::Client::new();
     let mut preloaded = 0usize;
 
     for ep in &endpoints {
@@ -199,6 +244,14 @@ pub async fn preload_inference_cache(stdb_host: &str) {
         if id.is_empty() {
             continue;
         }
+
+        // Skip providers that already exist with a calibrated quality_score.
+        // This preserves benchmark results from `hex inference test`.
+        if existing_providers.contains(id) {
+            tracing::debug!(id = %id, "Skipping preload — provider has existing quality_score");
+            continue;
+        }
+
         let provider_type = ep.get("provider").and_then(|v| v.as_str()).unwrap_or("ollama");
         let base_url = ep.get("url").and_then(|v| v.as_str()).unwrap_or_default();
         // `model` is the primary model scalar; `models` is the full JSON array string

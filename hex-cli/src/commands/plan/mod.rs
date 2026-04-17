@@ -490,8 +490,7 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
                         }
                         Err(e) => {
                             // Log all polling errors immediately, not just on heartbeat.
-                            // Silent errors are the root cause of the bug (user sees nothing for 30s).
-                            eprintln!("  {} [{}s] poll error: {}", "!".yellow(), elapsed.as_secs(), e);
+                            eprintln!("  {} [{}s] poll error: {} (endpoint: {})", "!".yellow(), elapsed.as_secs(), e, status_path);
                         }
                     }
                 }

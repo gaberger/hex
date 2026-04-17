@@ -16,12 +16,12 @@
         "type": "test"
       },
       "id": "E1",
-      "name": "Schema validator \u2014 reject workplans with missing evidence",
+      "name": "Schema validator — reject workplans with missing evidence",
       "tasks": [
         {
           "agent": "hex-coder",
           "deps": [],
-          "description": "hex-cli/src/commands/plan/schema_validate.rs: pub fn validate_workplan_evidence(wp: &Workplan) -> Result<(), Vec<EvidenceViolation>>. Struct EvidenceViolation { task_id: String, kind: MissingFiles | EmptyFiles | NonExistentPath | ProseOnlyDescription, detail: String }. Empty files[] \u2192 EmptyFiles. Description with no declared symbol or file path \u2192 ProseOnlyDescription.",
+          "description": "hex-cli/src/commands/plan/schema_validate.rs: pub fn validate_workplan_evidence(wp: &Workplan) -> Result<(), Vec<EvidenceViolation>>. Struct EvidenceViolation { task_id: String, kind: MissingFiles | EmptyFiles | NonExistentPath | ProseOnlyDescription, detail: String }. Empty files[] → EmptyFiles. Description with no declared symbol or file path → ProseOnlyDescription.",
           "files": [
             "hex-cli/src/commands/plan/schema_validate.rs",
             "hex-cli/src/commands/plan/mod.rs"
@@ -62,14 +62,14 @@
           ],
           "id": "E1.3",
           "layer": "test",
-          "name": "Unit tests \u2014 schema rejection fixtures",
+          "name": "Unit tests — schema rejection fixtures",
           "status": "done",
           "strategy_hint": "codegen"
         }
       ]
     },
     {
-      "description": "Run the new validator against every docs/workplans/wp-*.json. Fix offenders by populating files[] with the actual paths the task touches \u2014 derived from git log + manual audit where commits are already landed. Priority: wp-rename-brain-to-sched.json (had 11/11 false-positive), then wp-hex-native-web-search.json (P2+ blocked on same bug), then the rest.",
+      "description": "Run the new validator against every docs/workplans/wp-*.json. Fix offenders by populating files[] with the actual paths the task touches — derived from git log + manual audit where commits are already landed. Priority: wp-rename-brain-to-sched.json (had 11/11 false-positive), then wp-hex-native-web-search.json (P2+ blocked on same bug), then the rest.",
       "gate": {
         "blocking": true,
         "command": "hex plan reconcile --all --audit",
@@ -140,7 +140,7 @@
         "type": "test"
       },
       "id": "E3",
-      "name": "Author-time tooling \u2014 `hex plan lint`",
+      "name": "Author-time tooling — `hex plan lint`",
       "tasks": [
         {
           "agent": "hex-coder",
@@ -170,14 +170,14 @@
           ],
           "id": "E3.2",
           "layer": "assets",
-          "name": "Pre-commit hook asset \u2014 workplan-evidence-lint.yml",
+          "name": "Pre-commit hook asset — workplan-evidence-lint.yml",
           "status": "done",
           "strategy_hint": "scaffold"
         }
       ]
     },
     {
-      "description": "Rebuild hex-cli release, install to PATH, run `hex plan lint --all` clean, flip ADR-2604142200 Status line from whatever current \u2192 Accepted with a retrospective note pointing at this workplan.",
+      "description": "Rebuild hex-cli release, install to PATH, run `hex plan lint --all` clean, flip ADR-2604142200 Status line from whatever current → Accepted with a retrospective note pointing at this workplan.",
       "gate": {
         "blocking": true,
         "command": "hex plan lint --all && hex plan reconcile --all --audit",
@@ -200,7 +200,7 @@
           "id": "E4.1",
           "layer": "build",
           "name": "Release build + self-verify",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "script"
         },
         {
@@ -208,14 +208,14 @@
           "deps": [
             "E4.1"
           ],
-          "description": "docs/adrs/ADR-2604142200-reconcile-evidence-verification.md: Status \u2192 Accepted. Add a `## Retrospective` section linking wp-enforce-workplan-evidence.json and noting the two real-world failures it closed (wp-rename-brain-to-sched 11/11 false-positive, wp-hex-native-web-search P2+ blocked).",
+          "description": "docs/adrs/ADR-2604142200-reconcile-evidence-verification.md: Status → Accepted. Add a `## Retrospective` section linking wp-enforce-workplan-evidence.json and noting the two real-world failures it closed (wp-rename-brain-to-sched 11/11 false-positive, wp-hex-native-web-search P2+ blocked).",
           "files": [
             "docs/adrs/ADR-2604142200-reconcile-evidence-verification.md"
           ],
           "id": "E4.2",
           "layer": "docs",
           "name": "ADR status flip + retrospective",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "transform"
         }
       ]

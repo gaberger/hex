@@ -661,8 +661,12 @@ pub(crate) fn check_stale_worktrees() -> anyhow::Result<Vec<StaleWorktree>> {
         } else if let Some(b) = line.strip_prefix("branch refs/heads/") {
             current_branch = b.to_string();
         } else if line.is_empty() && !current_path.is_empty() && !current_branch.is_empty() {
-            // Skip the main worktree (no branch prefix pattern like feat/ or hex/)
-            if !current_branch.starts_with("feat/") && !current_branch.starts_with("hex/") {
+            // Skip the main worktree (no branch prefix pattern like feat/, hex/, worktree-, claude/)
+            let is_feature_branch = current_branch.starts_with("feat/")
+                || current_branch.starts_with("hex/")
+                || current_branch.starts_with("worktree-")
+                || current_branch.starts_with("claude/");
+            if !is_feature_branch {
                 current_path.clear();
                 current_branch.clear();
                 continue;

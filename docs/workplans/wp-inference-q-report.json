@@ -1,171 +1,198 @@
 {
   "adr": "ADR-2604151300",
-  "id": "wp-inference-q-report",
   "description": "Implement `hex inference q-report` per ADR-2604151300. Reads rl_q_entry + rl_experience tables from SpacetimeDB via a new hex-nexus REST endpoint and renders a tier/model/Q/visits/trend table. P1 builds the nexus endpoint, P2 wires the CLI subcommand + renderers, P3 adds the --watch streaming path, P4 adds the doc + smoke test.",
+  "id": "wp-inference-q-report",
   "phases": [
     {
       "id": "P1",
-      "title": "hex-nexus: GET /api/inference/q-report endpoint",
       "tasks": [
         {
-          "id": "P1.1",
-          "title": "Add QReportEntry { state, model, q_value, visits, last_seen, trend_7d } struct in hex-core/src/inference_q.rs with serde derives + serde_json round-trip test.",
-          "files": ["hex-core/src/inference_q.rs", "hex-core/src/lib.rs"],
           "evidence": [
             "grep -n 'pub struct QReportEntry' hex-core/src/inference_q.rs",
             "cargo test -p hex-core inference_q"
           ],
+          "files": [
+            "hex-core/src/inference_q.rs",
+            "hex-core/src/lib.rs"
+          ],
+          "id": "P1.1",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Add QReportEntry { state, model, q_value, visits, last_seen, trend_7d } struct in hex-core/src/inference_q.rs with serde derives + serde_json round-trip test."
         },
         {
-          "id": "P1.2",
-          "title": "Add hex-nexus route GET /api/inference/q-report with query params tier, task_type, model, since (duration), limit (default 50), sort (q|visits|recency, default visits). Subscribe to rl_q_entry + rl_experience via existing STDB client; compute trend_7d by diffing current Q vs Q 7d ago from rl_experience reward sequence.",
-          "files": ["hex-nexus/src/routes/inference.rs", "hex-nexus/src/routes/mod.rs"],
           "evidence": [
             "grep -n 'fn q_report\\|api/inference/q-report' hex-nexus/src/routes/inference.rs",
             "cargo check -p hex-nexus"
           ],
+          "files": [
+            "hex-nexus/src/routes/inference.rs",
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "id": "P1.2",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Add hex-nexus route GET /api/inference/q-report with query params tier, task_type, model, since (duration), limit (default 50), sort (q|visits|recency, default visits). Subscribe to rl_q_entry + rl_experience via existing STDB client; compute trend_7d by diffing current Q vs Q 7d ago from rl_experience reward sequence."
         },
         {
-          "id": "P1.3",
-          "title": "Integration test: hit /api/inference/q-report against an in-memory STDB fixture seeded with 5 q-entries + 10 experiences, assert correct filtering, sorting, and trend computation.",
-          "files": ["hex-nexus/tests/q_report_route.rs"],
           "evidence": [
             "test -f hex-nexus/tests/q_report_route.rs",
             "cargo test -p hex-nexus q_report_route"
           ],
+          "files": [
+            "hex-nexus/tests/q_report_route.rs"
+          ],
+          "id": "P1.3",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Integration test: hit /api/inference/q-report against an in-memory STDB fixture seeded with 5 q-entries + 10 experiences, assert correct filtering, sorting, and trend computation."
         }
-      ]
+      ],
+      "title": "hex-nexus: GET /api/inference/q-report endpoint"
     },
     {
       "id": "P2",
-      "title": "hex-cli: `hex inference q-report` subcommand",
       "tasks": [
         {
-          "id": "P2.1",
-          "title": "Add QReport variant to InferenceSubCmd enum in hex-cli/src/commands/inference.rs with clap args: --tier, --task-type, --model, --sort (default visits), --limit (default 20), --format (table|json|yaml, default table), --since (duration), --watch (bool).",
-          "files": ["hex-cli/src/commands/inference.rs"],
           "evidence": [
             "grep -n 'QReport\\|q-report' hex-cli/src/commands/inference.rs",
             "cargo check -p hex-cli"
           ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
+          "id": "P2.1",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Add QReport variant to InferenceSubCmd enum in hex-cli/src/commands/inference.rs with clap args: --tier, --task-type, --model, --sort (default visits), --limit (default 20), --format (table|json|yaml, default table), --since (duration), --watch (bool)."
         },
         {
-          "id": "P2.2",
-          "title": "Implement non-watch handler: hits hex-nexus GET /api/inference/q-report with the user's flags as query string, deserializes Vec<QReportEntry>, dispatches to renderer based on --format.",
-          "files": ["hex-cli/src/commands/inference.rs"],
           "evidence": [
             "grep -n 'fn run_q_report' hex-cli/src/commands/inference.rs"
           ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
+          "id": "P2.2",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Implement non-watch handler: hits hex-nexus GET /api/inference/q-report with the user's flags as query string, deserializes Vec<QReportEntry>, dispatches to renderer based on --format."
         },
         {
-          "id": "P2.3",
-          "title": "Table renderer: aligned columns STATE, MODEL, Q (signed, 4dp), VISITS, LAST_SEEN (relative duration), TREND (↑/→/↓ from trend_7d threshold ±0.05). Footer: 3 lines — convergence, drift, coverage — computed from the result set.",
-          "files": ["hex-cli/src/commands/inference.rs"],
           "evidence": [
             "grep -n 'fn render_q_report_table\\|render_q_report' hex-cli/src/commands/inference.rs"
           ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
+          "id": "P2.3",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Table renderer: aligned columns STATE, MODEL, Q (signed, 4dp), VISITS, LAST_SEEN (relative duration), TREND (↑/→/↓ from trend_7d threshold ±0.05). Footer: 3 lines — convergence, drift, coverage — computed from the result set."
         },
         {
-          "id": "P2.4",
-          "title": "JSON + YAML renderers: pass-through serde_json::to_string_pretty / serde_yaml::to_string of the Vec<QReportEntry>.",
-          "files": ["hex-cli/src/commands/inference.rs"],
           "evidence": [
             "grep -n 'render_q_report_json\\|render_q_report_yaml' hex-cli/src/commands/inference.rs"
           ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
+          "id": "P2.4",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "JSON + YAML renderers: pass-through serde_json::to_string_pretty / serde_yaml::to_string of the Vec<QReportEntry>."
         },
         {
-          "id": "P2.5",
-          "title": "Unit tests: table renderer formats fixture data correctly (golden test under tests/golden/q-report-default.txt); JSON renderer round-trips; trend symbol selection at boundary values (-0.05, 0.0, +0.05).",
-          "files": ["hex-cli/tests/q_report_render.rs", "hex-cli/tests/golden/q-report-default.txt"],
           "evidence": [
             "test -f hex-cli/tests/q_report_render.rs",
             "cargo test -p hex-cli q_report_render"
           ],
+          "files": [
+            "hex-cli/tests/q_report_render.rs",
+            "hex-cli/tests/golden/q-report-default.txt"
+          ],
+          "id": "P2.5",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Unit tests: table renderer formats fixture data correctly (golden test under tests/golden/q-report-default.txt); JSON renderer round-trips; trend symbol selection at boundary values (-0.05, 0.0, +0.05)."
         }
-      ]
+      ],
+      "title": "hex-cli: `hex inference q-report` subcommand"
     },
     {
       "id": "P3",
-      "title": "Live --watch streaming",
       "tasks": [
         {
-          "id": "P3.1",
-          "title": "Add hex-nexus route GET /api/inference/q-report/stream as Server-Sent Events. Push a fresh report whenever rl_q_entry mutates (subscribe via STDB row-update callback).",
-          "files": ["hex-nexus/src/routes/inference.rs"],
           "evidence": [
             "grep -n 'q-report/stream\\|sse_q_report' hex-nexus/src/routes/inference.rs",
             "cargo check -p hex-nexus"
           ],
+          "files": [
+            "hex-nexus/src/routes/inference.rs"
+          ],
+          "id": "P3.1",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Add hex-nexus route GET /api/inference/q-report/stream as Server-Sent Events. Push a fresh report whenever rl_q_entry mutates (subscribe via STDB row-update callback)."
         },
         {
-          "id": "P3.2",
-          "title": "CLI --watch mode: open SSE stream to /api/inference/q-report/stream, repaint table on each event using a small ANSI cursor-home + clear-below trick. Ctrl+C closes the stream cleanly.",
-          "files": ["hex-cli/src/commands/inference.rs"],
           "evidence": [
             "grep -n 'fn run_q_report_watch' hex-cli/src/commands/inference.rs"
           ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
+          "id": "P3.2",
+          "status": "done",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "CLI --watch mode: open SSE stream to /api/inference/q-report/stream, repaint table on each event using a small ANSI cursor-home + clear-below trick. Ctrl+C closes the stream cleanly."
         }
-      ]
+      ],
+      "title": "Live --watch streaming"
     },
     {
       "id": "P4",
-      "title": "Documentation + binary rebuild + smoke",
       "tasks": [
         {
-          "id": "P4.1",
-          "title": "Update docs/INFERENCE.md: replace the static 'after 3 pipeline runs' Q-table example with a `hex inference q-report` invocation showing live data. Add a 'Reading the Q-report' subsection (5-10 lines) explaining trend, convergence, drift, coverage.",
-          "files": ["docs/INFERENCE.md"],
           "evidence": [
             "grep -n 'hex inference q-report' docs/INFERENCE.md",
             "grep -n 'Reading the Q-report' docs/INFERENCE.md"
           ],
+          "files": [
+            "docs/INFERENCE.md"
+          ],
+          "id": "P4.1",
+          "status": "done",
           "strategy_hint": "transform",
-          "status": "pending"
+          "title": "Update docs/INFERENCE.md: replace the static 'after 3 pipeline runs' Q-table example with a `hex inference q-report` invocation showing live data. Add a 'Reading the Q-report' subsection (5-10 lines) explaining trend, convergence, drift, coverage."
         },
         {
-          "id": "P4.2",
-          "title": "Workspace build gate + binary rebuild: cargo check --workspace, cargo test --workspace --no-fail-fast, then cargo build -p hex-cli --release && cargo build -p hex-nexus --release. Smoke: `hex inference q-report --limit 5` returns within 2s without panic on a clean install with no Q-data (empty table is a valid state, must render gracefully).",
-          "files": [],
           "evidence": [
             "cargo check --workspace",
             "cargo build -p hex-cli --release",
             "cargo build -p hex-nexus --release",
             "hex inference q-report --limit 5"
           ],
+          "files": [],
+          "id": "P4.2",
+          "status": "pending",
           "strategy_hint": "script",
-          "status": "pending"
+          "title": "Workspace build gate + binary rebuild: cargo check --workspace, cargo test --workspace --no-fail-fast, then cargo build -p hex-cli --release && cargo build -p hex-nexus --release. Smoke: `hex inference q-report --limit 5` returns within 2s without panic on a clean install with no Q-data (empty table is a valid state, must render gracefully)."
         },
         {
-          "id": "P4.3",
-          "title": "Wire the Q-report endpoint into the idle-research swarm performance analyst (ADR-2604151200 P3.1) as one of its inputs — flag any model with trend ↓ AND visits ≥ 5 as a Finding with severity=med, suggested_action=adr.",
-          "files": ["hex-nexus/src/research/performance_analyst.rs"],
           "evidence": [
             "grep -n 'q_report\\|q-report' hex-nexus/src/research/performance_analyst.rs"
           ],
+          "files": [
+            "hex-nexus/src/research/performance_analyst.rs"
+          ],
+          "id": "P4.3",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "status": "pending"
+          "title": "Wire the Q-report endpoint into the idle-research swarm performance analyst (ADR-2604151200 P3.1) as one of its inputs — flag any model with trend ↓ AND visits ≥ 5 as a Finding with severity=med, suggested_action=adr."
         }
-      ]
+      ],
+      "title": "Documentation + binary rebuild + smoke"
     }
   ]
 }

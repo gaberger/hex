@@ -1,0 +1,75 @@
+{
+  "id": "wp-inference-audit",
+  "title": "Inference Audit — Models, Tokens & Cost",
+  "adr": "ADR-2604052125",
+  "description": "Audit all registered inference models, track token usage, and calculate cost attribution across providers",
+  "priority": "high",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Audit registered models",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "List all registered inference providers",
+          "cmd": "hex inference list",
+          "evidence": "providers listed with status"
+        },
+        {
+          "id": "P1.2",
+          "title": "Test connectivity to each provider",
+          "cmd": "hex inference test --all",
+          "evidence": "connectivity results"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "Token usage tracking",
+      "tasks": [
+        {
+          "id": "P2.1",
+          "title": "Query inference q-report for token usage",
+          "cmd": "hex inference q-report",
+          "evidence": "token counts per model"
+        },
+        {
+          "id": "P2.2",
+          "title": "Show inference stats",
+          "cmd": "hex inference stats",
+          "evidence": "cost summary"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "Provider health check",
+      "tasks": [
+        {
+          "id": "P3.1",
+          "title": "Run hex validate to check inference health",
+          "cmd": "hex validate",
+          "evidence": "inference provider status"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "title": "Cost analysis",
+      "tasks": [
+        {
+          "id": "P4.1",
+          "title": "Generate cost attribution report",
+          "cmd": "hex inference stats",
+          "evidence": "cost breakdown by provider"
+        },
+        {
+          "id": "P4.2",
+          "title": "Show escalation report",
+          "cmd": "hex inference escalation-report",
+          "evidence": "tier escalation rates"
+        }
+      ]
+    }
+  ]
+}

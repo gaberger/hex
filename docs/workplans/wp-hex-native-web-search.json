@@ -72,7 +72,7 @@
           "id": "P2.1",
           "layer": "secondary",
           "name": "ReqwestFetchAdapter",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -87,7 +87,7 @@
           "id": "P2.2",
           "layer": "secondary",
           "name": "Fetch cache (filesystem, 24h TTL)",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -103,7 +103,7 @@
           "id": "P2.3",
           "layer": "secondary",
           "name": "Contract test: fetch golden fixture",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         }
       ],
@@ -132,7 +132,7 @@
           "id": "P3.1",
           "layer": "secondary",
           "name": "BraveSearchAdapter",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -148,7 +148,7 @@
           "id": "P3.2",
           "layer": "secondary",
           "name": "DuckDuckGoAdapter (HTML scrape, no key)",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -209,7 +209,7 @@
           "id": "P4.1",
           "layer": "secondary",
           "name": "TavilySearchAdapter",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -251,7 +251,7 @@
           "id": "P5.1",
           "layer": "secondary",
           "name": "web_request SpacetimeDB table + reducer",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -268,7 +268,7 @@
           "id": "P5.2",
           "layer": "primary",
           "name": "POST /api/web/search route",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {

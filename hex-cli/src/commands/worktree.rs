@@ -575,25 +575,70 @@ async fn merge(
 async fn cleanup(force: bool) -> anyhow::Result<()> {
     let worktrees = parse_worktrees()?;
     let main = main_branch();
+    let stale_threshold = std::time::Duration::from_secs(24 * 60 * 60);
 
     println!("{}", "Worktree Cleanup".bold());
     println!("{}", "\u{2500}".repeat(60));
 
+    // Find merged worktrees
     let merged_wts: Vec<(String, String)> = worktrees
-        .into_iter()
+        .iter()
         .filter(|(_, branch)| {
             branch != &main && branch != "(detached)" && is_merged(branch, &main)
         })
+        .cloned()
         .collect();
 
-    if merged_wts.is_empty() {
-        println!("  {} No merged worktrees to clean up.", "\u{2713}".green());
+    // Find stale worktrees (24h+ no commits)
+    let stale_wts: Vec<(String, String)> = worktrees
+        .iter()
+        .filter(|(path, branch)| {
+            if branch == &main || branch == "(detached)" {
+                return false;
+            }
+            // Check if branch is a feature-type branch
+            let is_feature = branch.starts_with("feat/")
+                || branch.starts_with("hex/")
+                || branch.starts_with("worktree-")
+                || branch.starts_with("claude/");
+            if !is_feature {
+                return false;
+            }
+            // Check last commit age
+            if let Ok(output) = Command::new("git")
+                .args(["log", "-1", "--format=%ct", branch])
+                .output()
+            {
+                if output.status.success() {
+                    if let Ok(ts) = String::from_utf8_lossy(&output.stdout).trim().parse::<u64>() {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        return now.saturating_sub(ts) > stale_threshold.as_secs();
+                    }
+                }
+            }
+            false
+        })
+        .cloned()
+        .collect();
+
+    let all_to_clean: Vec<(String, String)> = merged_wts
+        .into_iter()
+        .chain(stale_wts.into_iter())
+        .collect();
+
+    if all_to_clean.is_empty() {
+        println!("  {} No merged or stale worktrees to clean up.", "\u{2713}".green());
         return Ok(());
     }
 
-    println!("  Found {} merged worktree(s):", merged_wts.len());
-    for (path, branch) in &merged_wts {
-        println!("    {} {} ({})", "\u{2013}".green(), branch.cyan(), path.dimmed());
+    let merged_count = all_to_clean.len();
+    println!("  Found {} worktree(s) to clean up:", merged_count);
+    for (path, branch) in &all_to_clean {
+        let status = if is_merged(branch, &main) { "merged" } else { "stale" };
+        println!("    {} {} ({}) [{}]", "\u{2013}".green(), branch.cyan(), path.dimmed(), status);
     }
 
     if !force {
@@ -606,10 +651,10 @@ async fn cleanup(force: bool) -> anyhow::Result<()> {
     }
 
     let mut removed = 0usize;
-    for (path, branch) in &merged_wts {
-        // Remove worktree
+    for (path, branch) in &all_to_clean {
+        // Remove worktree (use --force for stale worktrees with untracked files)
         let wt_result = Command::new("git")
-            .args(["worktree", "remove", path])
+            .args(["worktree", "remove", "--force", path])
             .output()?;
 
         if wt_result.status.success() {
