@@ -1,0 +1,94 @@
+{
+  "name": "wp-bootstrap-linux-build-fix",
+  "title": "Debug and fix hex bootstrap missing from Linux build",
+  "description": "Bootstrap command works on macOS but mysteriously vanishes from Linux binary despite clean compilation. Isolate link-time issue and restore bootstrap to Linux release binary.",
+  "adr": "ADR-2604170001",
+  "created_at": "2026-04-17T14:15:00Z",
+  "priority": "P2",
+  "phases": [
+    {
+      "number": 1,
+      "title": "Isolate compiler divergence",
+      "description": "Find where macOS and Linux builds diverge — LLVM IR generation, linking, or dead code elimination",
+      "tasks": [
+        {
+          "id": "P1-1",
+          "title": "Capture verbose build output for both platforms",
+          "description": "Run: cargo build -p hex-cli --release -v 2>&1 | tee /tmp/macos-build.log (macOS) and on Linux.\nGrep for 'bootstrap' in both logs. Compare.\nIf bootstrap appears in macOS but not Linux LLVM output, it's a codegen issue.",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P1-2",
+          "title": "Check if bootstrap module is dead-code eliminated on Linux",
+          "description": "cargo build -p hex-cli --release --target x86_64-unknown-linux-gnu 2>&1 | grep -i 'dead code\\|unused\\|bootstrap'.\nIf bootstrap code is marked unused on Linux but not macOS, check if there's a platform-specific trait bound or feature gate.",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P1-3",
+          "title": "Verify Commands enum dispatch is identical on both",
+          "description": "Compare hex-cli/src/main.rs across platforms (git diff main~1 hex-cli/src/main.rs | grep -A5 -B5 Bootstrap).\nEnsure Commands::Bootstrap(args) => commands::bootstrap::run(args).await is present and unconditional.",
+          "files": ["hex-cli/src/main.rs"],
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "title": "Apply fix and validate",
+      "description": "Once root cause found, apply fix (likely: add explicit use statement, remove dead code marker, or fix trait bound)",
+      "tasks": [
+        {
+          "id": "P2-1",
+          "title": "Implement fix based on P1 findings",
+          "description": "Apply the minimal fix that restores bootstrap to Linux binary. Rebuild both platforms.",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs", "hex-cli/src/main.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P2-2",
+          "title": "Verify bootstrap in Linux binary",
+          "description": "cargo build -p hex-cli --release --target x86_64-unknown-linux-gnu\nfile target/x86_64-unknown-linux-gnu/release/hex\n./target/x86_64-unknown-linux-gnu/release/hex --help | grep bootstrap\n./target/x86_64-unknown-linux-gnu/release/hex bootstrap --help",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P2-3",
+          "title": "Commit fix",
+          "description": "git add hex-cli/src/\ngit commit -m 'fix: restore bootstrap command to Linux binary (compiler divergence)'\nInclude root cause in commit message.",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs"],
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 3,
+      "title": "E2E test on Bazzite",
+      "description": "Once bootstrap is in Linux binary, test on Bazzite",
+      "tasks": [
+        {
+          "id": "P3-1",
+          "title": "Deploy fixed hex to Bazzite",
+          "description": "scp target/x86_64-unknown-linux-gnu/release/hex bazzite:~/hex-intf/target/release/hex\nor: cd ~/hex-intf && git pull && cargo build -p hex-cli --release",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P3-2",
+          "title": "Test bootstrap --dry-run on Bazzite",
+          "description": "ssh bazzite './target/release/hex bootstrap --dry-run'\nVerify output shows:\n- Prereq check (rust, bun, cargo, SpacetimeDB, Ollama)\n- Service startup plan (SpacetimeDB, hex-nexus, Ollama)\n- Model loading (qwen3:4b, qwen2.5-coder:32b, devstral-small-2:24b)\n- Config setup (.hex/project.json)\n- Validation status",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs"],
+          "strategy_hint": "codegen"
+        },
+        {
+          "id": "P3-3",
+          "title": "Test bootstrap --profile dev (actual execution)",
+          "description": "ssh bazzite 'OLLAMA_VULKAN=true ./target/release/hex bootstrap --profile dev'\nVerify:\n- Services start (check lsof -i :5555, :11434, etc.)\n- Models load into Ollama (ollama list)\n- .hex/project.json created with tier defaults\n- hex doctor passes",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs"],
+          "strategy_hint": "codegen"
+        }
+      ]
+    }
+  ]
+}
