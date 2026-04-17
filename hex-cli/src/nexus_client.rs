@@ -253,10 +253,11 @@ fn read_persisted_token() -> Option<String> {
 ///
 /// Resolution order (ADR-065 §4):
 /// 1. `CLAUDE_SESSION_ID` env → exact session file
-/// 2. `HEX_AGENT_ID` env → use directly (for scripts/CI)
-/// 3. `claude_pid` match — walk PPID chain to find the `claude` process,
+/// 2. `CLAUDECODE=1` fallback → find most recent agent-*.json and extract sessionId
+/// 3. `HEX_AGENT_ID` env → use directly (for scripts/CI)
+/// 4. `claude_pid` match — walk PPID chain to find the `claude` process,
 ///    then match session files whose `claude_pid` field equals that PID
-/// 4. Fallback: most recently modified session file in ~/.hex/sessions/
+/// 5. Fallback: most recently modified session file in ~/.hex/sessions/
 ///
 /// This is the **canonical** resolution function — all call sites should
 /// delegate here rather than reimplementing.
@@ -273,23 +274,67 @@ pub fn read_session_agent_id() -> Option<String> {
         }
     }
 
-    // Strategy 2: HEX_AGENT_ID env (for scripts/CI)
+    // Strategy 2: CLAUDECODE=1 fallback
+    if let Ok(claudecode) = std::env::var("CLAUDECODE") {
+        if claudecode == "1" {
+            if let Some(id) = resolve_by_claudecode_fallback(&sessions_dir) {
+                return Some(id);
+            }
+        }
+    }
+
+    // Strategy 3: HEX_AGENT_ID env (for scripts/CI)
     if let Ok(agent_id) = std::env::var("HEX_AGENT_ID") {
         if !agent_id.is_empty() {
             return Some(agent_id);
         }
     }
 
-    // Strategy 3: match by claude_pid via PPID chain
+    // Strategy 4: match by claude_pid via PPID chain
     if let Some(id) = resolve_by_claude_pid(&sessions_dir) {
         return Some(id);
     }
 
-    // Strategy 4: most recently modified session file (within last 2 hours)
+    // Strategy 5: most recently modified session file (within last 2 hours)
     if let Some(id) = resolve_by_newest(&sessions_dir) {
         return Some(id);
     }
 
+    None
+}
+
+/// Resolve agent ID when CLAUDECODE=1 is set (Claude Code bypass mode).
+/// Find the most recent agent-*.json file and extract the sessionId field,
+/// then use that to find the corresponding agent-{sessionId}.json file.
+fn resolve_by_claudecode_fallback(sessions_dir: &std::path::Path) -> Option<String> {
+    let entries = std::fs::read_dir(sessions_dir).ok()?;
+    let mut newest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with("agent-") || !name_str.ends_with(".json") {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata() {
+            if let Ok(modified) = meta.modified() {
+                if newest.as_ref().is_none_or(|(t, _)| modified > *t) {
+                    newest = Some((modified, entry.path()));
+                }
+            }
+        }
+    }
+    if let Some((_, path)) = newest {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(val) = serde_json::from_str::<Value>(&content) {
+                if let Some(session_id) = val["sessionId"].as_str() {
+                    if !session_id.is_empty() {
+                        let agent_path = sessions_dir.join(format!("agent-{}.json", session_id));
+                        return read_agent_id_from_file(&agent_path);
+                    }
+                }
+            }
+        }
+    }
     None
 }
 

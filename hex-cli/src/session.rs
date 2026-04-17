@@ -402,10 +402,62 @@ fn session_path(id: &str) -> Result<PathBuf> {
     Ok(sessions_dir()?.join(format!("{}.json", id)))
 }
 
+/// Get the effective session ID, with CLAUDECODE=1 as fallback.
+///
+/// Returns the session ID in order of precedence:
+/// 1. CLAUDE_SESSION_ID env var
+/// 2. If CLAUDECODE=1 is set, find most recent agent-*.json and extract sessionId field
+/// 3. None if neither available
+fn get_effective_session_id() -> Option<String> {
+    // Try CLAUDE_SESSION_ID first
+    if let Ok(session_id) = std::env::var("CLAUDE_SESSION_ID") {
+        if !session_id.is_empty() {
+            return Some(session_id);
+        }
+    }
+
+    // Fallback: if CLAUDECODE=1, find most recent agent-*.json and extract sessionId
+    if let Ok(claudecode) = std::env::var("CLAUDECODE") {
+        if claudecode == "1" {
+            let home = dirs::home_dir()?;
+            let sessions_dir = home.join(".hex").join("sessions");
+            if let Ok(entries) = fs::read_dir(&sessions_dir) {
+                let mut newest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if name.starts_with("agent-") && name.ends_with(".json") {
+                        if let Ok(meta) = path.metadata() {
+                            if let Ok(modified) = meta.modified() {
+                                if newest.as_ref().is_none_or(|(t, _)| modified > *t) {
+                                    newest = Some((modified, path.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some((_, path)) = newest {
+                    if let Ok(data) = fs::read_to_string(&path) {
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
+                            if let Some(session_id) = parsed.get("sessionId").and_then(|v| v.as_str()) {
+                                if !session_id.is_empty() {
+                                    return Some(session_id.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Best-effort resolution of agent identity.
 ///
 /// Tries in order:
-/// 1. CLAUDE_SESSION_ID env var → `~/.hex/sessions/agent-{id}.json`
+/// 1. Effective session ID (CLAUDE_SESSION_ID or CLAUDECODE=1 fallback) → `~/.hex/sessions/agent-{id}.json`
 /// 2. Most recent `agent-*.json` file in `~/.hex/sessions/`
 ///
 /// Returns `None` if no agent identity can be found.
@@ -413,9 +465,9 @@ fn resolve_agent_id() -> Option<String> {
     let home = dirs::home_dir()?;
     let sessions_dir = home.join(".hex").join("sessions");
 
-    // Try CLAUDE_SESSION_ID first
-    if let Ok(claude_session) = std::env::var("CLAUDE_SESSION_ID") {
-        let agent_file = sessions_dir.join(format!("agent-{}.json", claude_session));
+    // Try effective session ID (CLAUDE_SESSION_ID or CLAUDECODE=1 fallback)
+    if let Some(session_id) = get_effective_session_id() {
+        let agent_file = sessions_dir.join(format!("agent-{}.json", session_id));
         if let Ok(data) = fs::read_to_string(&agent_file) {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
                 if let Some(id) = parsed.get("agent_id").or_else(|| parsed.get("agentId")).and_then(|v| v.as_str()) {
