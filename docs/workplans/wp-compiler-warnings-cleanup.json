@@ -1,0 +1,66 @@
+{
+  "name": "wp-compiler-warnings-cleanup",
+  "title": "Clean compiler warnings from test run",
+  "description": "Fix 3 compiler warnings discovered in test run: unreachable code in plan/mod.rs, unused variable in worktree.rs, and unused function in sched.rs",
+  "adr": "ADR-2604050900",
+  "created_at": "2026-04-17T00:00:00Z",
+  "priority": "P2",
+  "phases": [
+    {
+      "number": 1,
+      "title": "Fix unreachable code in plan/mod.rs",
+      "description": "Remove unreachable Ok(()) at line 532; refactor match arms or simplify control flow",
+      "tasks": [
+        {
+          "id": "P1-1",
+          "title": "Fix unreachable code in hex-cli/src/commands/plan/mod.rs:532",
+          "description": "Match expression at line 405 diverges all arms; line 532 Ok(()) is unreachable. Refactor to either remove dead code or restructure match.",
+          "file": "hex-cli/src/commands/plan/mod.rs",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "title": "Fix unused variable in worktree.rs",
+      "description": "Prefix unused `path` parameter with underscore or remove if genuinely unused",
+      "tasks": [
+        {
+          "id": "P2-1",
+          "title": "Fix unused `path` variable in hex-cli/src/commands/worktree.rs:595",
+          "description": "Variable `path` in filter closure is unused. Either use it or prefix with underscore to suppress warning.",
+          "file": "hex-cli/src/commands/worktree.rs",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 3,
+      "title": "Remove unused function in sched.rs",
+      "description": "Delete notify_brain_task_result or integrate into call chain",
+      "tasks": [
+        {
+          "id": "P3-1",
+          "title": "Remove unused notify_brain_task_result in hex-cli/src/commands/sched.rs:2359",
+          "description": "Function is never called; likely incomplete refactoring from brain queue work. Delete unless it should be wired into the brain task flow.",
+          "file": "hex-cli/src/commands/sched.rs",
+          "strategy_hint": "codegen"
+        }
+      ]
+    },
+    {
+      "number": 4,
+      "title": "Verify and commit",
+      "description": "Run cargo test --lib to confirm warnings are resolved",
+      "tasks": [
+        {
+          "id": "P4-1",
+          "title": "Verify compilation succeeds with no warnings",
+          "description": "Run 'cargo test --lib' and confirm all 3 warnings are gone and tests still pass",
+          "file": "hex-cli/src/commands/plan/mod.rs",
+          "strategy_hint": "codegen"
+        }
+      ]
+    }
+  ]
+}
