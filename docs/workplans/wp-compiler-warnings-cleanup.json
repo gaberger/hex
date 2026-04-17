@@ -15,7 +15,7 @@
           "id": "P1-1",
           "title": "Fix unreachable code in hex-cli/src/commands/plan/mod.rs:532",
           "description": "Match expression at line 405 diverges all arms; line 532 Ok(()) is unreachable. Refactor to either remove dead code or restructure match.",
-          "file": "hex-cli/src/commands/plan/mod.rs",
+          "files": ["hex-cli/src/commands/plan/mod.rs"],
           "strategy_hint": "codegen"
         }
       ]
@@ -29,7 +29,7 @@
           "id": "P2-1",
           "title": "Fix unused `path` variable in hex-cli/src/commands/worktree.rs:595",
           "description": "Variable `path` in filter closure is unused. Either use it or prefix with underscore to suppress warning.",
-          "file": "hex-cli/src/commands/worktree.rs",
+          "files": ["hex-cli/src/commands/worktree.rs"],
           "strategy_hint": "codegen"
         }
       ]
@@ -43,7 +43,7 @@
           "id": "P3-1",
           "title": "Remove unused notify_brain_task_result in hex-cli/src/commands/sched.rs:2359",
           "description": "Function is never called; likely incomplete refactoring from brain queue work. Delete unless it should be wired into the brain task flow.",
-          "file": "hex-cli/src/commands/sched.rs",
+          "files": ["hex-cli/src/commands/sched.rs"],
           "strategy_hint": "codegen"
         }
       ]
@@ -57,7 +57,7 @@
           "id": "P4-1",
           "title": "Verify compilation succeeds with no warnings",
           "description": "Run 'cargo test --lib' and confirm all 3 warnings are gone and tests still pass",
-          "file": "hex-cli/src/commands/plan/mod.rs",
+          "files": ["hex-cli/src/commands/plan/mod.rs"],
           "strategy_hint": "codegen"
         }
       ]
