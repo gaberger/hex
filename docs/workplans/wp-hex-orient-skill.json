@@ -1,0 +1,199 @@
+{
+  "adr": "ADR-2604170905",
+  "id": "wp-hex-orient-skill",
+  "description": "Implement the /hex-orient skill per ADR-2604170905. The skill provides on-demand agent onboarding — a single trigger that loads hex's hard rules + a curated subset of docs/reference/ (README, components, lessons) so fresh sessions can get grounded without reading everything. This fills the gap left by ADR-2604170900 where CLAUDE.md became a terse skill-map kernel. Non-goals: no auto-load at session start (would reintroduce the context tax); no duplication of CLAUDE.md rules verbatim (skill summarises and points back to CLAUDE.md as authoritative).",
+  "prior_work": {
+    "done": [
+      "ADR-2604170900 shipped CLAUDE.md kernel condensation (commit 0ccc02a)",
+      "docs/reference/ tree created with 9 files including README.md, components.md, lessons.md",
+      "ADR-2604170905 proposed the /hex-orient skill (commit be2aa2f)"
+    ]
+  },
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Author the skill file",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "Create hex-cli/assets/skills/hex-orient.md with YAML frontmatter matching existing skills (name, description with trigger keywords). Description MUST include triggers: '/hex-orient', 'orient me', 'bring me up to speed', 'new to hex', 'agent onboarding'. Body sections: (1) What hex is — one paragraph, (2) Hard rules summary — 13 rules from CLAUDE.md in condensed form with explicit 'CLAUDE.md is authoritative' pointer, (3) System components tour — pull highlights from docs/reference/components.md (SpacetimeDB required, nexus bridges WASM↔OS, agent enforces architecture, dashboard is control plane), (4) Key lessons — 2-3 from docs/reference/lessons.md (tests-mirror-bugs, trace-all-consumers, build-gates-between-phases), (5) Where to go next — table mapping 'I want to…' → skill. No more than ~180 lines total.",
+          "files": ["hex-cli/assets/skills/hex-orient.md"],
+          "evidence": [
+            "test -f hex-cli/assets/skills/hex-orient.md",
+            "grep -q '^name: hex-orient$' hex-cli/assets/skills/hex-orient.md",
+            "grep -q 'orient me' hex-cli/assets/skills/hex-orient.md",
+            "grep -q 'new to hex' hex-cli/assets/skills/hex-orient.md",
+            "test $(wc -l < hex-cli/assets/skills/hex-orient.md) -le 220"
+          ],
+          "strategy_hint": "codegen",
+          "status": "pending"
+        },
+        {
+          "id": "P1.2",
+          "title": "Verify skill frontmatter parses correctly. Compare structure against hex-cli/assets/skills/hex-feature-dev/SKILL.md and hex-cli/assets/skills/hex-adr-create.md — name and description are required top-level keys. Decide: does /hex-orient use the flat form (hex-orient.md in assets/skills/) or the directory form (hex-orient/SKILL.md)? Flat form is simpler and matches hex-adr-* skills; use flat form.",
+          "files": ["hex-cli/assets/skills/hex-orient.md"],
+          "evidence": [
+            "head -5 hex-cli/assets/skills/hex-orient.md | grep -q '^---$'",
+            "head -5 hex-cli/assets/skills/hex-orient.md | grep -q '^name: '",
+            "head -5 hex-cli/assets/skills/hex-orient.md | grep -q '^description: '"
+          ],
+          "strategy_hint": "script",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "Register the skill in discovery surfaces",
+      "tasks": [
+        {
+          "id": "P2.1",
+          "title": "Add /hex-orient row to the skill-map table in CLAUDE.md (under '## Skill-first discovery'). Intent: 'Bring a fresh session up to speed on hex'. Insert alphabetically or at the end of the list — match existing row style.",
+          "files": ["CLAUDE.md"],
+          "evidence": [
+            "grep -q '/hex-orient' CLAUDE.md",
+            "grep -c '/hex-' CLAUDE.md | awk '{ if ($1 < 18) exit 1 }'"
+          ],
+          "strategy_hint": "transform",
+          "status": "pending"
+        },
+        {
+          "id": "P2.2",
+          "title": "Add /hex-orient row to the skills catalog in docs/reference/skills-and-agents.md. Include a one-line purpose: 'Agent onboarding — loads hard rules + components + lessons for fresh sessions'.",
+          "files": ["docs/reference/skills-and-agents.md"],
+          "evidence": [
+            "grep -q '/hex-orient' docs/reference/skills-and-agents.md"
+          ],
+          "strategy_hint": "transform",
+          "status": "pending"
+        },
+        {
+          "id": "P2.3",
+          "title": "Verify the skill is baked into the binary via rust-embed. Check hex-cli/src/assets.rs (or wherever RustEmbed is declared) — confirm hex-cli/assets/skills/ is the embedded folder so hex-orient.md is picked up automatically with no additional registration needed.",
+          "files": ["hex-cli/src/assets.rs"],
+          "evidence": [
+            "grep -q 'folder = .*assets' hex-cli/src/assets.rs || grep -rq 'RustEmbed' hex-cli/src/"
+          ],
+          "strategy_hint": "script",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "Rebuild release binaries",
+      "tasks": [
+        {
+          "id": "P3.1",
+          "title": "Run cargo build --release for hex-cli and hex-nexus. Required because rust-embed bakes hex-cli/assets/* at compile time — edits to the skill file do not take effect in installed projects until the binary is rebuilt. This is a hard rule from CLAUDE.md (rule #3).",
+          "files": [],
+          "evidence": [
+            "cargo build --release -p hex-cli",
+            "cargo build --release -p hex-nexus",
+            "test -x target/release/hex",
+            "./target/release/hex --help | head -3"
+          ],
+          "strategy_hint": "script",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "title": "Verify deployment into a target project",
+      "tasks": [
+        {
+          "id": "P4.1",
+          "title": "Choose an examples/ project (prefer a small one — todo-app or weather) and run the freshly-built `./target/release/hex init` in it. Confirm .claude/skills/hex-orient.md appears in the target, with content matching the source. If hex init does not deploy skills by default, consult hex-cli/src/commands/init.rs for the right flag or sub-step.",
+          "files": [],
+          "evidence": [
+            "ls examples/ | head -1",
+            "test -f examples/$(ls examples/ | head -1)/.claude/skills/hex-orient.md || echo 'DEPLOY_CHECK_PENDING'"
+          ],
+          "strategy_hint": "script",
+          "status": "pending"
+        },
+        {
+          "id": "P4.2",
+          "title": "Smoke test: open a Claude Code session in the target project and verify /hex-orient appears in the skills list. If this cannot be scripted, leave a manual-verification note in the evidence and mark the task complete once P4.1 passes.",
+          "files": [],
+          "evidence": [
+            "echo 'MANUAL: verify /hex-orient in Claude Code skill picker'"
+          ],
+          "strategy_hint": "script",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "title": "Commit + push + update ADR status",
+      "tasks": [
+        {
+          "id": "P5.1",
+          "title": "Commit the changes (hex-cli/assets/skills/hex-orient.md + CLAUDE.md + docs/reference/skills-and-agents.md) on the current branch with message 'feat(skills): add /hex-orient agent onboarding skill (ADR-2604170905)'. Push to origin.",
+          "files": [
+            "hex-cli/assets/skills/hex-orient.md",
+            "CLAUDE.md",
+            "docs/reference/skills-and-agents.md"
+          ],
+          "evidence": [
+            "git log -1 --format='%s' | grep -q 'hex-orient'",
+            "git status --short | grep -v '^??' | wc -l | awk '{ if ($1 != 0) exit 1 }'"
+          ],
+          "strategy_hint": "script",
+          "status": "pending"
+        },
+        {
+          "id": "P5.2",
+          "title": "Flip ADR-2604170905 status from Proposed → Accepted, add 'Shipped in commit <hash>' to the Implementation section, and commit separately so the ADR status change is atomic and reviewable.",
+          "files": ["docs/adrs/ADR-2604170905-hex-orient-skill.md"],
+          "evidence": [
+            "grep -q '^\\*\\*Status:\\*\\* Accepted' docs/adrs/ADR-2604170905-hex-orient-skill.md",
+            "git log -1 --format='%s' | grep -qE '(adr|ADR).*orient'"
+          ],
+          "strategy_hint": "transform",
+          "status": "pending"
+        }
+      ]
+    }
+  ],
+  "riskRegister": [
+    {
+      "risk": "Skill frontmatter schema has undocumented required fields (e.g., model, allowed_tools) — skill won't load",
+      "impact": "medium",
+      "mitigation": "P1.2 explicitly diffs against two known-good skills (hex-adr-create.md, hex-feature-dev/SKILL.md) before rebuild"
+    },
+    {
+      "risk": "rust-embed caches stale assets if cargo build --release sees no Rust source changes",
+      "impact": "medium",
+      "mitigation": "If the binary still shows old assets after P3.1, touch a .rs file in hex-cli/src/ or run cargo clean -p hex-cli first"
+    },
+    {
+      "risk": "hex init does not deploy newly-added skills into existing target projects (only on first init)",
+      "impact": "low",
+      "mitigation": "P4 checks a fresh init. If existing projects need the skill, document a `hex refresh` or `hex init --force-skills` follow-up — out of scope for this workplan"
+    },
+    {
+      "risk": "Skill body drifts from CLAUDE.md hard rules over time",
+      "impact": "low",
+      "mitigation": "Skill explicitly labels itself as a summary and points to CLAUDE.md as authoritative. ADR-2604170905 flags adding a hex doctor check as future work — not in scope here"
+    }
+  ],
+  "successCriteria": [
+    "/hex-orient appears in Claude Code's skill picker when invoked in a hex-enabled project",
+    "Running the skill produces a concise orientation (<200 lines of loaded context) covering identity, hard rules, components, key lessons, and next-skill pointers",
+    "ADR-2604170905 is marked Accepted with the commit hash populated",
+    "No regressions: bun test, cargo check --workspace, and hex analyze . all pass"
+  ],
+  "mergeOrder": [
+    "P1 (skill file) → P2 (register in discovery surfaces) — P1 must complete first so the registrations point at a real file",
+    "P2 → P3 (rebuild) — rebuild picks up both the new skill and any CLAUDE.md references",
+    "P3 → P4 (verify deployment) — must use the rebuilt binary",
+    "P4 → P5 (commit + flip ADR) — only commit after deployment verified"
+  ],
+  "budget": "~15000 tokens",
+  "topology": "pipeline",
+  "status": "planned",
+  "created": "2026-04-17"
+}
