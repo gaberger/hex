@@ -714,7 +714,7 @@ fn spawn_default_agent(port: u16, token: &str) -> Option<std::process::Child> {
             "--no-preflight",
         ])
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
         .spawn()
     {
         Ok(child) => {
