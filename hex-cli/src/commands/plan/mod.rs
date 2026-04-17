@@ -536,6 +536,7 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
 /// for remote workers to complete them (ADR-2604121630).
 ///
 /// Flow: create swarm → create tasks per phase → poll until complete → run gates → next phase
+/// Falls back to local execution if no workers are available.
 async fn execute_plan_distributed(wp: &serde_json::Value) -> anyhow::Result<()> {
     let feature = wp.get("feature").and_then(|v| v.as_str()).unwrap_or("workplan");
     let phases = match wp.get("phases").and_then(|v| v.as_array()) {
@@ -545,6 +546,24 @@ async fn execute_plan_distributed(wp: &serde_json::Value) -> anyhow::Result<()> 
 
     // NexusClient::from_env auto-resolves agent identity from session files + env
     let client = NexusClient::from_env();
+
+    // Check if any workers are available before creating swarm
+    let available_workers = match client.get("/api/hex-agents").await {
+        Ok(resp) => {
+            resp.as_array()
+                .map(|agents| agents.iter()
+                    .filter(|a| a["status"].as_str() == Some("active"))
+                    .count())
+                .unwrap_or(0)
+        }
+        Err(_) => 0,
+    };
+
+    if available_workers == 0 {
+        println!("  {} No active workers available — falling back to local execution", "\u{2192}".dimmed());
+        println!();
+        return execute_plan_local(&std::path::Path::new(""), wp).await;
+    }
 
     // Step 1: Create swarm for this execution
     let swarm_resp = client.post("/api/swarms", &serde_json::json!({
@@ -711,7 +730,7 @@ async fn execute_plan_distributed(wp: &serde_json::Value) -> anyhow::Result<()> 
     Ok(())
 }
 
-/// Local workplan execution fallback — runs when nexus is unavailable.
+/// Local workplan execution fallback — runs when nexus is unavailable or no workers available.
 /// Iterates phases sequentially, dispatches each task through Ollama,
 /// runs compile gates, and records results.
 /// ADR-005 6-gate pipeline: generate → compile → test → retry → escalate.
