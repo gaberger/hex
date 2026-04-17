@@ -27,15 +27,15 @@ spacetime-modules/     7 WASM modules (SpacetimeDB microkernel)
 
 ---
 
-## Architecture Enforcement That Agents Can't Bypass
+## Architecture enforcement
 
 <p align="center">
   <img src="../.github/assets/architecture.svg" alt="Hexagonal Architecture Enforcement" width="800">
 </p>
 
-hex enforces [hexagonal architecture](https://alistair.cockburn.us/hexagonal-architecture/) at the **kernel level**. This isn't a linting suggestion — it's a privilege boundary baked into the runtime. Domain can't reach adapters. Adapters can't reach each other. Only the composition root wires them.
+hex enforces [hexagonal architecture](https://alistair.cockburn.us/hexagonal-architecture/) via static analysis at commit time. `hex analyze` parses source with [tree-sitter](https://tree-sitter.github.io/), classifies each file into a layer (`domain/`, `ports/`, `adapters/primary/`, `adapters/secondary/`, `usecases/`), and fails the analyzer exit code when an import crosses a disallowed boundary. The check is run by a pre-commit hook and by CI; it is not a runtime kernel boundary.
 
-The enforcement engine uses **[tree-sitter](https://tree-sitter.github.io/) grammars** to parse source code into ASTs without compiling — extracting every import, export, type definition, and function signature across **TypeScript, Go, and Rust** in milliseconds. Tree-sitter classifies each file into its hexagonal layer (`domain/`, `ports/`, `adapters/primary/`, `adapters/secondary/`, `usecases/`) and then validates that imports respect the dependency direction:
+The analyzer extracts every import, export, type definition, and function signature across TypeScript and Rust (Go support is partial) and validates the dependency direction:
 
 | Rule | Enforced Via |
 |:-----|:-------------|
@@ -51,24 +51,24 @@ Each language maps to its own conventions — Go uses `internal/domain/`, `cmd/`
 Each ADR maps to **static analysis rules** that run automatically. `adr-001-domain-purity` checks that the domain layer has zero external imports. `adr-039-spacetimedb-first` flags REST handlers that read from local state instead of SpacetimeDB. Violations are caught at commit time — before agents waste tokens on architectural drift.
 
 ```bash
-hex analyze .    # Boundary violations, dead code, cross-adapter coupling — blocks commits
+hex analyze .    # Reports boundary violations, dead code, cross-adapter coupling. Non-zero exit fails the commit hook.
 ```
 
-**Current grade: A+ (100/100)** — 0 boundary violations across 438 source files. Every AI-generated commit maintains this score.
+The analyzer emits a composite score derived from boundary-violation count, dead-export count, and cycle count; weights are in `hex-cli/src/commands/analyze.rs`. Treat the score as a regression signal rather than an absolute grade.
 
-**What this means in practice**: Workplan boundaries map to adapter boundaries. An agent working on `adapters/secondary/database` physically cannot edit `adapters/primary/cli`. Every AI-generated PR maintains the same architectural integrity as hand-crafted code.
+**In practice**: workplan boundaries map to adapter boundaries. Worktrees are scoped to a single adapter path, so an agent assigned to `adapters/secondary/database` edits only files under that prefix. A commit that introduces a cross-adapter import fails `hex analyze` and is rejected by the pre-commit hook.
 
 ---
 
-## Swarm Coordination Without Merge Conflicts
+## Swarm coordination (HexFlo)
 
 <p align="center">
   <img src="../.github/assets/swarm.svg?v=2" alt="HexFlo Swarm Coordination" width="800">
 </p>
 
-HexFlo is the native Rust coordination layer that replaced external Node.js dependencies. Coordination call latency dropped from **~200ms to <1ms**. Agents work in **isolated git worktrees** — one per adapter boundary — so a feature touching 4 boundaries gets 4 parallel agents that never conflict.
+HexFlo is the in-process Rust coordination layer in `hex-nexus/src/coordination/`. It replaced a prior Node.js dependency (`ruflo`), moving task claim + heartbeat calls from subprocess IPC (~200ms) to direct function calls (sub-millisecond). Agents work in isolated `git worktree` checkouts — one per adapter boundary — so parallel tasks that would otherwise edit the same files are serialized by worktree scope, not by merge conflict.
 
-Quality gates block tier advancement: domain and ports (Tier 0) must compile before secondary adapters (Tier 1) begin. Tests must pass before integration. Every agent heartbeats every 15 seconds — stale after 45s, dead after 120s, with automatic task reclamation.
+Tier gates serialize dependent work: domain and ports (Tier 0) must pass `cargo check` / `tsc --noEmit` before secondary adapters (Tier 1) dispatch; tests must pass before integration. Agents send a heartbeat on every `UserPromptSubmit`; the hub marks an agent `stale` at 45s without heartbeat and `dead` at 120s, reclaiming its tasks.
 
 ```bash
 hex swarm init feature-auth    # Spawn parallel agents across boundaries
@@ -76,13 +76,13 @@ hex task list                  # Real-time progress via WebSocket
 hex task complete <id>         # Mark done — all clients see it instantly
 ```
 
-**What this means in practice**: No more "two agents claimed the same task." No more zombie agents blocking swarms. Compare-And-Swap task claims prevent double-assignment. Heartbeat timeouts auto-recover from agent crashes. What used to take serial agent passes now runs concurrently with transactional guarantees.
+**In practice**: Compare-And-Swap task claims prevent two agents from picking the same task; heartbeat timeouts release tasks from crashed agents; what previously ran serially across agent passes runs concurrently under worktree isolation.
 
 ---
 
-## Capability-Based Agent Security
+## Capability-based agent security
 
-Every agent receives an **HMAC-SHA256 signed capability token** at spawn, scoped to exactly what it needs. Secrets never enter persistent storage — the SpacetimeDB grant table stores only metadata (key names, TTLs). If the database is compromised, attackers see zero secret values.
+Each agent receives an HMAC-SHA256 signed capability token at spawn, scoped to a specific set of operations. The SpacetimeDB `secret_grant` table stores only metadata (key names, TTLs, grantee IDs); secret values themselves are fetched on demand and never persisted in the table. A database compromise exposes metadata, not secret material.
 
 | Capability | What It Grants |
 |:-----------|:---------------|
@@ -94,7 +94,7 @@ Every agent receives an **HMAC-SHA256 signed capability token** at spawn, scoped
 | `Notify` | Send agent-to-agent notifications |
 | `Admin` | Full system access (daemon agents only) |
 
-**What this means in practice**: A coder agent scoped to `adapters/secondary/` can't touch `adapters/primary/`. A reviewer agent can read everything but write nothing. Daemon agents get admin; worker agents get the minimum they need. Principle of least privilege, enforced at the OS level — not by convention.
+**In practice**: a coder agent scoped to `FileSystem("adapters/secondary/")` cannot open files outside that path through the capability API; reviewer agents hold read-only capabilities; daemon agents hold `Admin`. Enforcement happens in the adapter that issues filesystem calls, which checks the token scope on each request.
 
 ---
 
@@ -223,7 +223,7 @@ src/
                        Wires InMemoryTaskStore -> TaskStore trait -> CLI commands.
 ```
 
-Every import boundary is validated by `hex analyze .`. An agent working on `adapters/` physically cannot import from another adapter — the architecture enforcement blocks it at commit time, not in code review.
+Every import boundary is validated by `hex analyze .`. A commit introducing a cross-adapter import fails the analyzer and is rejected by the pre-commit hook — the check runs at commit time, not in code review.
 
 **Distributed execution proven.** The same task-tracker was also built on a remote GPU box (bazzite) via `hex plan execute` → HexFlo swarm → bazzite worker with local Ollama (qwen2.5-coder:32b). The worker received hex architecture rules + GBNF grammar in every inference call, ran ADR-005 compile gates with error-feedback retry, and reported results back to the Mac coordinator via SSH tunnel. Zero cloud APIs, $0 cost.
 

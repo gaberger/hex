@@ -48,4 +48,4 @@ All major frameworks are Python-first, polling-based, cloud-dependent, and archi
 - **RL self-improvement** — Q-learning engine in SpacetimeDB records every dispatch outcome and learns optimal model selection per task type. The system gets better the more you use it.
 - **Native Rust** — not Python-dependent. Sub-100ms coordination, single binary, no runtime dependencies.
 - **SpacetimeDB microkernel** — real-time WebSocket push, not polling. 7 WASM modules with atomic reducers.
-- **Hexagonal enforcement** — compile-time boundary checking, not linting suggestions. Agents physically cannot violate architecture rules.
+- **Hexagonal enforcement** — tree-sitter boundary check runs in the pre-commit hook and in CI; cross-layer imports fail the analyzer and block the commit.
