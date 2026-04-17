@@ -15,21 +15,21 @@
           "id": "P1-1",
           "title": "Create hex-cli/src/commands/bootstrap/mod.rs",
           "description": "New bootstrap command module with:\n- ClaudeCommand trait impl\n- BootstrapConfig struct (profile, skip_models, force, dry_run)\n- Main orchestration loop\n- Imports for service starters and diagnostics",
-          "files": ["hex-cli/src/commands/bootstrap/mod.rs",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs"],
           "strategy_hint": "codegen"
         },
         {
           "id": "P1-2",
           "title": "Add bootstrap to hex-cli/src/commands/mod.rs",
           "description": "Register bootstrap command in Commands enum and dispatch",
-          "files": ["hex-cli/src/commands/mod.rs",
+          "files": ["hex-cli/src/commands/mod.rs"],
           "strategy_hint": "codegen"
         },
         {
           "id": "P1-3",
           "title": "Create bootstrap submodules",
           "description": "Create:\n- bootstrap/prereq.rs — OS detection, brew/apt checks, install helpers\n- bootstrap/services.rs — parallel startup logic for SpacetimeDB, hex-nexus, Ollama\n- bootstrap/models.rs — Ollama model pull, progress output\n- bootstrap/config.rs — .hex/project.json creation and defaults\n- bootstrap/validate.rs — health checks and diagnostics",
-          "files": ["hex-cli/src/commands/bootstrap/prereq.rs",
+          "files": ["hex-cli/src/commands/bootstrap/prereq.rs"],
           "strategy_hint": "codegen"
         }
       ]
@@ -43,14 +43,14 @@
           "id": "P2-1",
           "title": "Implement prereq detection in bootstrap/prereq.rs",
           "description": "For each prerequisite (SpacetimeDB, Ollama, Rust, Bun, Cargo):\n1. Check if installed (version check)\n2. If missing, suggest install command (brew/apt/rustup/bun)\n3. Return PrereqStatus { name, installed, version, install_cmd }\n4. Collect into PrereqReport",
-          "files": ["hex-cli/src/commands/bootstrap/prereq.rs",
+          "files": ["hex-cli/src/commands/bootstrap/prereq.rs"],
           "strategy_hint": "codegen"
         },
         {
           "id": "P2-2",
           "title": "Add --skip-prereq flag for CI",
           "description": "Allow --skip-prereq so CI (GitHub Actions) can skip checks if run in container. Still validate after services start.",
-          "files": ["hex-cli/src/commands/bootstrap/mod.rs",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs"],
           "strategy_hint": "codegen"
         }
       ]
@@ -64,14 +64,14 @@
           "id": "P3-1",
           "title": "Implement service startup in bootstrap/services.rs",
           "description": "Struct ServiceStarter with methods:\n- start_spacetimedb() → check if running, spawn if not, poll /api/health\n- start_hex_nexus() → check if running, spawn if not, poll :5555/api/health\n- start_ollama() → check if running, spawn if not, poll :11434/api/tags\n- All run concurrently via tokio::join!\n- Timeout: 30s per service, up to 3 retries with backoff\n- Return ServiceStatus { name, running, pid, error }",
-          "files": ["hex-cli/src/commands/bootstrap/services.rs",
+          "files": ["hex-cli/src/commands/bootstrap/services.rs"],
           "strategy_hint": "codegen"
         },
         {
           "id": "P3-2",
           "title": "Detect already-running services",
           "description": "Check if processes already running (via lsof or direct socket check) before spawning. Idempotent: skip if alive, only restart if --force.",
-          "files": ["hex-cli/src/commands/bootstrap/services.rs",
+          "files": ["hex-cli/src/commands/bootstrap/services.rs"],
           "strategy_hint": "codegen"
         }
       ]
@@ -85,7 +85,7 @@
           "id": "P4-1",
           "title": "Implement model loading in bootstrap/models.rs",
           "description": "struct ModelLoader with methods:\n- load_tier_models(tier_defaults) → pull each model via `ollama pull <model>`\n- Show progress: model name, % downloaded, ETA\n- Skip if --skip-models or if already present (ollama show <model>)\n- Default tiers from ADR-2604120202: qwen3:4b (T1), qwen2.5-coder:32b (T2), devstral-small-2:24b (T2.5)\n- Return ModelStatus { name, loaded, size_mb, time_s }",
-          "files": ["hex-cli/src/commands/bootstrap/models.rs",
+          "files": ["hex-cli/src/commands/bootstrap/models.rs"],
           "strategy_hint": "codegen"
         }
       ]
@@ -99,7 +99,7 @@
           "id": "P5-1",
           "title": "Implement config in bootstrap/config.rs",
           "description": "Create .hex/project.json (or preserve existing) with:\n{\n  \"inference\": {\n    \"tier_models\": {\n      \"t1\": \"qwen3:4b\",\n      \"t2\": \"qwen2.5-coder:32b\",\n      \"t2_5\": \"devstral-small-2:24b\"\n    }\n  },\n  \"bootstrap\": {\n    \"profile\": \"dev\",\n    \"timestamp\": \"2026-04-17T...\",\n    \"services_started\": [\"spacetimedb\", \"hex-nexus\", \"ollama\"]\n  }\n}\n\nSupport profiles: dev (local Ollama), ci (Claude API), prod (remote)",
-          "files": ["hex-cli/src/commands/bootstrap/config.rs",
+          "files": ["hex-cli/src/commands/bootstrap/config.rs"],
           "strategy_hint": "codegen"
         }
       ]
@@ -113,14 +113,14 @@
           "id": "P6-1",
           "title": "Implement validation in bootstrap/validate.rs",
           "description": "BootstrapValidator with methods:\n- validate_services() → check /api/health for each service\n- validate_models() → check ollama show for each tier model\n- validate_config() → check .hex/project.json exists and is valid\n- Collect BootstrapReport { services, models, config, ready: bool }\n- Return report",
-          "files": ["hex-cli/src/commands/bootstrap/validate.rs",
+          "files": ["hex-cli/src/commands/bootstrap/validate.rs"],
           "strategy_hint": "codegen"
         },
         {
           "id": "P6-2",
           "title": "Display bootstrap status table",
           "description": "After validation, show table:\n\n╭─ Bootstrap Status ───────────────────╮\n│ SpacetimeDB      ✓ running (PID ...) │\n│ hex-nexus        ✓ running (PID ...) │\n│ Ollama           ✓ running (PID ...) │\n├─ Models (qwen3:4b) ─────────────────┤\n│ T1: qwen3:4b     ✓ 4.7 GB loaded    │\n│ T2: qwen2.5-coder:32b ✓ 19 GB      │\n│ T2.5: devstral-small-2:24b ✓ 14 GB │\n├─ Status ────────────────────────────┤\n│ Profile: dev                         │\n│ Ready:   ✓ All systems go            │\n│ Next:    hex plan execute ...        │\n╰──────────────────────────────────────╯",
-          "files": ["hex-cli/src/commands/bootstrap/validate.rs",
+          "files": ["hex-cli/src/commands/bootstrap/validate.rs"],
           "strategy_hint": "codegen"
         }
       ]
@@ -134,7 +134,7 @@
           "id": "P7-1",
           "title": "Add CLI flags to bootstrap command",
           "description": "Add to ClaudeCommand::Bootstrap:\n- --profile <dev|ci|prod> (default: dev)\n- --skip-models (skip model pulling)\n- --force (restart services even if running)\n- --dry-run (show what would be done, no side effects)\n- --skip-prereq (for CI; skip OS checks)",
-          "files": ["hex-cli/src/commands/bootstrap/mod.rs",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs"],
           "strategy_hint": "codegen"
         }
       ]
@@ -148,28 +148,28 @@
           "id": "P8-1",
           "title": "Build hex bootstrap",
           "description": "cargo build -p hex-cli --release. Ensure no errors or warnings.",
-          "files": ["hex-cli/src/commands/bootstrap/mod.rs",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs"],
           "strategy_hint": "codegen"
         },
         {
           "id": "P8-2",
           "title": "Test bootstrap on dev machine",
           "description": "Run: hex bootstrap --dry-run (show what would happen)\nThen: hex bootstrap (full setup)\nThen: hex bootstrap (idempotent — should skip already-running services)\nVerify: all services responsive, models loaded, project.json created",
-          "files": ["hex-cli/src/commands/bootstrap/mod.rs",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs"],
           "strategy_hint": "codegen"
         },
         {
           "id": "P8-3",
           "title": "Test error handling",
           "description": "Simulate failures:\n- SpacetimeDB not installed: verify helpful message\n- Ollama timeout: verify retry logic and graceful degrade\n- Disk full during model pull: verify clear error\n- Services already running: verify --force restarts them",
-          "files": ["hex-cli/src/commands/bootstrap/mod.rs",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs"],
           "strategy_hint": "codegen"
         },
         {
           "id": "P8-4",
           "title": "Commit and document",
           "description": "git add hex-cli/src/commands/bootstrap/ hex-cli/src/commands/mod.rs\ngit commit -m 'feat: add hex bootstrap command (ADR-2604170001)'\n\nAdd to docs/BOOTSTRAP.md:\n- Usage: hex bootstrap [--profile dev|ci|prod] [--dry-run]\n- Profiles and what they do\n- Troubleshooting (common errors and fixes)",
-          "files": ["hex-cli/src/commands/bootstrap/mod.rs",
+          "files": ["hex-cli/src/commands/bootstrap/mod.rs"],
           "strategy_hint": "codegen"
         }
       ]
