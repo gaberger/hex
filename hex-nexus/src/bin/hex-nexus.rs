@@ -19,7 +19,7 @@ async fn main() {
         return;
     }
 
-    let is_daemon = args.iter().any(|a| a == "--daemon");
+    let _is_daemon = args.iter().any(|a| a == "--daemon");
     let no_agent = args.iter().any(|a| a == "--no-agent");
 
     let port = args
@@ -41,38 +41,9 @@ async fn main() {
         .and_then(|i| args.get(i + 1).cloned())
         .unwrap_or_else(|| "127.0.0.1".to_string());
 
-    // Daemonize if requested (fork so parent can exit, child continues)
-    if is_daemon {
-        let hex_dir = dirs::home_dir()
-            .map(|d| d.join(".hex"))
-            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-        let _ = std::fs::create_dir_all(&hex_dir);
-
-        let pid_path = hex_dir.join("nexus.pid");
-
-        // Fork: parent exits immediately, child continues in background
-        // The child continues with all file descriptors intact (including redirected stdout/stderr).
-        unsafe {
-            match libc::fork() {
-                -1 => {
-                    eprintln!("Failed to fork");
-                    std::process::exit(1);
-                }
-                0 => {
-                    // Child process continues here
-                    // Just write the PID file and continue to server initialization
-                    let pid = libc::getpid();
-                    let _ = std::fs::write(&pid_path, pid.to_string());
-                    // Note: DO NOT call setsid() or redirect FDs — Tokio doesn't like it
-                    // The CLI parent already has stdout/stderr redirected to the log file.
-                }
-                _ => {
-                    // Parent process exits immediately
-                    std::process::exit(0);
-                }
-            }
-        }
-    }
+    // Note: --daemon flag is accepted but ignored. The hex CLI handles process daemonization
+    // by redirecting stdout/stderr to a log file and managing the process lifecycle.
+    // Attempting to fork() here breaks Tokio's event loop (kqueue on macOS, epoll on Linux).
 
     // Initialize tracing (after daemonization)
     tracing_subscriber::fmt()
@@ -85,7 +56,7 @@ async fn main() {
         port,
         bind,
         token,
-        is_daemon,
+        is_daemon: false, // Daemonization handled by CLI, not here
         no_agent,
     })
     .await;
