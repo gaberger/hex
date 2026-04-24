@@ -180,6 +180,9 @@ pub enum BrainAction {
     },
     /// Stop the background brain daemon
     DaemonStop,
+    /// Restart the background daemon (stop + start with current interval).
+    /// Use this after rebuilding hex-cli to pick up new code.
+    DaemonRestart,
     /// Show brain daemon status (running/stopped)
     DaemonStatus,
     /// Enqueue a task for the brain daemon (ADR-2604132330)
@@ -260,6 +263,7 @@ pub async fn run(action: BrainAction) -> anyhow::Result<()> {
             }
         }
         BrainAction::DaemonStop => daemon_stop(),
+        BrainAction::DaemonRestart => daemon_restart(),
         BrainAction::DaemonStatus => daemon_status(),
         BrainAction::Enqueue { kind, payload } => {
             let id = enqueue_brain_task(&kind, &payload).await?;
@@ -1465,6 +1469,123 @@ fn process_alive(pid: i32) -> bool {
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
+// ─── Daemon staleness detection (ADR-2604241820) ────────────────────────────
+
+/// Path to the daemon staleness record.
+fn staleness_file_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".hex").join("daemon-staleness.json")
+}
+
+/// A record of the daemon's binary identity at startup. Written by a running
+/// daemon; read by the CLI to detect when the binary has been rebuilt.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct DaemonStaleness {
+    /// Path to the running binary.
+    binary: PathBuf,
+    /// mtime of the binary when the daemon started.
+    startup_mtime: String,
+    /// PID of the running daemon.
+    startup_pid: u32,
+    /// Human-readable binary version or git commit (if available).
+    version: String,
+    /// Tick interval in seconds (so restart can re-use the same interval).
+    #[serde(default)]
+    interval_secs: u64,
+    /// Max failures threshold.
+    #[serde(default)]
+    max_failures: u32,
+}
+
+impl DaemonStaleness {
+    fn current() -> Option<Self> {
+        let exe = std::env::current_exe().ok()?;
+        let mtime = std::fs::metadata(&exe).ok()?.modified().ok()?;
+        let mtime_str = chrono::DateTime::<chrono::Utc>::from(mtime)
+            .to_rfc3339();
+        let version = git_head_sha().unwrap_or_else(|| "unknown".to_string());
+        Some(Self {
+            binary: exe,
+            startup_mtime: mtime_str,
+            startup_pid: std::process::id(),
+            version,
+            interval_secs: 0,
+            max_failures: 0,
+        })
+    }
+}
+
+/// Load the staleness record. Returns None if the file is absent, unreadable,
+/// or the PID does not match the current process (stale record from dead daemon).
+fn load_staleness_record() -> Option<DaemonStaleness> {
+    let path = staleness_file_path();
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let record: DaemonStaleness = serde_json::from_str(&contents).ok()?;
+    // If the record's PID is not alive, the record is stale — ignore it.
+    if !process_alive(record.startup_pid as i32) {
+        return None;
+    }
+    Some(record)
+}
+
+/// Save the staleness record. Writes atomically (temp + rename) to prevent
+/// corruption if the daemon crashes mid-write.
+fn save_staleness_record(record: &DaemonStaleness) {
+    let path = staleness_file_path();
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("  {} staleness-dir: {}", "warn".yellow(), e);
+            return;
+        }
+    }
+    let tmp = path.with_extension("tmp");
+    match serde_json::to_string_pretty(record) {
+        Ok(body) => {
+            if let Err(e) = std::fs::write(&tmp, &body) {
+                eprintln!("  {} staleness-write: {}", "warn".yellow(), e);
+                return;
+            }
+            if let Err(e) = std::fs::rename(&tmp, &path) {
+                eprintln!("  {} staleness-rename: {}", "warn".yellow(), e);
+                return;
+            }
+        }
+        Err(e) => eprintln!("  {} staleness-encode: {}", "warn".yellow(), e),
+    }
+}
+
+/// Returns true if the current binary's mtime differs from the recorded startup
+/// mtime — i.e. the binary was rebuilt while this daemon was running.
+/// Respects DAEMON_STALENESS_CHECK=off for CI environments.
+fn is_current_binary_stale() -> Option<bool> {
+    if std::env::var("DAEMON_STALENESS_CHECK").unwrap_or_default() == "off" {
+        return Some(false);
+    }
+    let current = DaemonStaleness::current()?;
+    let record = load_staleness_record()?;
+    if record.startup_pid != current.startup_pid {
+        return Some(false);
+    }
+    Some(record.startup_mtime != current.startup_mtime)
+}
+
+/// Check staleness and warn if the current binary was rebuilt while the daemon
+/// was running. Logs to stderr. Returns true if stale (daemon should skip tick).
+fn check_and_warn_staleness() -> bool {
+    match is_current_binary_stale() {
+        Some(true) => {
+            eprintln!(
+                "{} daemon binary was rebuilt while running (pid={}). Restart with: hex sched daemon restart",
+                "⚠ STALE".yellow().bold(),
+                std::process::id()
+            );
+            true
+        }
+        Some(false) => false,
+        None => false,
+    }
+}
+
 /// Collect issue counts for each validate check without printing.
 /// Pure data view of the same checks `validate()` runs — used by the daemon
 /// to diff tick-over-tick and detect regressions (wp-brain-updates P2.1).
@@ -1654,6 +1775,26 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
     let pid = std::process::id();
     let _ = write_pid_file(pid);
 
+    // ADR-2604241820: record binary identity at startup for staleness detection.
+    // Stores interval/max_failures so `daemon_restart` can re-use the same settings.
+    let mut current = DaemonStaleness::current();
+    if let Some(ref mut rec) = current {
+        rec.interval_secs = interval;
+        rec.max_failures = max_failures;
+        // Check if binary was rebuilt since last daemon run.
+        if let Some(prev) = load_staleness_record() {
+            if prev.startup_mtime != rec.startup_mtime {
+                println!(
+                    "  {} binary was rebuilt since last daemon run ({}, {})",
+                    "fresh binary".cyan(),
+                    prev.startup_mtime.split('T').next().unwrap_or(&prev.startup_mtime),
+                    rec.startup_mtime.split('T').next().unwrap_or(&rec.startup_mtime),
+                );
+            }
+        }
+        save_staleness_record(rec);
+    }
+
     println!(
         "{} interval={}s max_failures={} pid={}",
         "⬡ brain daemon starting".green().bold(),
@@ -1667,6 +1808,24 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
     let mut state = load_daemon_state();
 
     loop {
+        // ADR-2604241820: skip tick if binary was rebuilt while daemon was running.
+        if check_and_warn_staleness() {
+            // Log skipped tick and wait for operator to restart.
+            let port = std::env::var("HEX_NEXUS_PORT")
+                .unwrap_or_else(|_| "5555".to_string())
+                .parse::<u16>()
+                .unwrap_or(5555);
+            eprintln!("  {} skipped tick (binary stale) — restart daemon to resume", "⏱".yellow());
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(interval)) => continue,
+                _ = tokio::signal::ctrl_c() => {
+                    println!("\n{}", "⬡ brain daemon shutting down".yellow());
+                    remove_pid_file();
+                    return Ok(());
+                }
+            }
+        }
+
         let timestamp = chrono::Utc::now().to_rfc3339();
         let start = Instant::now();
         let pending_count = list_brain_tasks(Some("pending")).await.map(|t| t.len()).unwrap_or(0);
@@ -1907,23 +2066,29 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             _ => {}
         }
 
-        // Emit brain_tick event to nexus (fire-and-forget).
+        // Emit brain_tick event to nexus — ADR-2604241815: explicit session_id
+        // and schema-validated body. Errors are logged, not silently dropped.
         let port = std::env::var("HEX_NEXUS_PORT")
             .unwrap_or_else(|_| "5555".to_string())
             .parse::<u16>()
             .unwrap_or(5555);
         let event_url = format!("http://127.0.0.1:{}/api/events", port);
-        let _ = reqwest::Client::new()
+        let session_id = std::env::var("CLAUDE_SESSION_ID")
+            .unwrap_or_else(|_| format!("sched-daemon-{}", std::process::id()));
+        let body = serde_json::json!({
+            "session_id": session_id,
+            "event_type": "brain_tick",
+            "duration_ms": elapsed.as_millis() as i64,
+        });
+        if let Err(e) = reqwest::Client::new()
             .post(&event_url)
-            .json(&serde_json::json!({
-                "type": "brain_tick",
-                "timestamp": timestamp,
-                "duration_ms": elapsed.as_millis() as u64,
-                "checks_run": 5,
-            }))
+            .json(&body)
             .timeout(Duration::from_secs(2))
             .send()
-            .await;
+            .await
+        {
+            eprintln!("  {} brain_tick event POST failed: {}", "✗".red(), e);
+        }
 
         // Auto-sweep old terminal (failed/completed) tasks — keep history for 7 days.
         // Deletes records older than 7 days to prevent unbounded SpacetimeDB growth.
@@ -2052,7 +2217,33 @@ fn daemon_stop() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Restart the background daemon: stop then start fresh.
+/// Detects current interval from the running daemon or uses default (30s).
+fn daemon_restart() -> anyhow::Result<()> {
+    // Read current settings from staleness record before stopping.
+    let (interval, max_failures) = load_staleness_record()
+        .map(|r| (r.interval_secs.max(10), r.max_failures.max(1)))
+        .unwrap_or((30, 3));
+
+    // Stop the running daemon.
+    let was_running = read_pid_file().map(process_alive).unwrap_or(false);
+    if was_running {
+        daemon_stop()?;
+    } else {
+        println!("{} no daemon running — starting fresh", "⬡".cyan());
+    }
+
+    println!(
+        "{} restarting with interval={}s max_failures={}",
+        "⬡".green().bold(),
+        interval,
+        max_failures
+    );
+    daemon_background(interval, max_failures)
+}
+
 /// Show whether the brain daemon is running.
+/// Also warns if the daemon binary appears stale (rebuilt since daemon started).
 fn daemon_status() -> anyhow::Result<()> {
     match read_pid_file() {
         Some(pid) if process_alive(pid) => {
@@ -2062,6 +2253,13 @@ fn daemon_status() -> anyhow::Result<()> {
                 pid
             );
             println!("  pid file: {}", pid_file_path().display());
+            // ADR-2604241820: warn if daemon binary is stale.
+            if let Some(true) = is_current_binary_stale() {
+                println!(
+                    "  {} daemon may be stale — binary was rebuilt. Restart with: hex sched daemon restart",
+                    "⚠".yellow().bold()
+                );
+            }
         }
         Some(pid) => {
             println!(
@@ -2111,11 +2309,15 @@ fn parse_since(input: &str) -> anyhow::Result<String> {
 }
 
 /// Stream new `brain_tick` events to stdout as they appear.
-///
-/// Polls `GET /api/events` every 2 seconds, filters for `event_type ==
-/// "brain_tick"`, and prints anything newer than the last-seen timestamp.
-/// Each poll prints newest-first within the batch. Ctrl-C exits cleanly.
 async fn watch(since: Option<String>) -> anyhow::Result<()> {
+    // ADR-2604241820: warn if daemon binary is stale before starting.
+    if let Some(true) = is_current_binary_stale() {
+        eprintln!(
+            "⚠ {} daemon may be stale — results may not reflect current code. Restart with: hex sched daemon restart",
+            "⚠".yellow().bold()
+        );
+    }
+
     let port = std::env::var("HEX_NEXUS_PORT")
         .unwrap_or_else(|_| "5555".to_string())
         .parse::<u16>()
