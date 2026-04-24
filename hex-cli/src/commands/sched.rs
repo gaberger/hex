@@ -52,6 +52,10 @@ struct DaemonState {
     /// Stored for regression detection across daemon restarts.
     #[serde(default)]
     last_analysis_summary: HashMap<String, usize>,
+    /// UTC date of last terminal-task sweep (YYYY-MM-DD). Prevents running the
+    /// deletion every tick — only first tick of each UTC day actually deletes.
+    #[serde(default)]
+    sweep_date: String,
 }
 
 /// Default idle-tick threshold — after this many consecutive fully-idle
@@ -1664,16 +1668,21 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
 
     loop {
         let timestamp = chrono::Utc::now().to_rfc3339();
+        let start = Instant::now();
         let pending_count = list_brain_tasks(Some("pending")).await.map(|t| t.len()).unwrap_or(0);
         let in_progress_count = list_brain_tasks(Some("in_progress")).await.map(|t| t.len()).unwrap_or(0);
-        let queue_summary = if pending_count + in_progress_count == 0 {
-            "queue=0".to_string()
-        } else {
-            format!("queue={}+{}p", pending_count, in_progress_count)
-        };
-        let start = Instant::now();
+        let failed_count = list_brain_tasks(Some("failed")).await.map(|t| t.len()).unwrap_or(0);
         let validate_result = validate(true).await;
         let elapsed = start.elapsed();
+        let queue_summary = if pending_count + in_progress_count == 0 && failed_count == 0 {
+            "queue=0".to_string()
+        } else {
+            let mut parts = Vec::new();
+            if pending_count > 0 { parts.push(format!("{}p", pending_count)); }
+            if in_progress_count > 0 { parts.push(format!("{}w", in_progress_count)); }
+            if failed_count > 0 { parts.push(format!("{}f", failed_count)); }
+            format!("queue={}", parts.join("+"))
+        };
         println!("{} {} ✓ {}ms  {}", "⬡".cyan(), timestamp, elapsed.as_millis(), queue_summary.bold());
 
         // Diff issue counts tick-over-tick (wp-brain-updates P2.1).
@@ -1915,6 +1924,11 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             .timeout(Duration::from_secs(2))
             .send()
             .await;
+
+        // Auto-sweep old terminal (failed/completed) tasks — keep history for 7 days.
+        // Deletes records older than 7 days to prevent unbounded SpacetimeDB growth.
+        // Runs every tick but only actually deletes on the first tick of each day.
+        sweep_old_terminal_tasks(&mut state).await;
 
         // Sleep — longer if we're over the failure threshold.
         let sleep_secs = if consecutive_failures >= max_failures {
@@ -2702,7 +2716,66 @@ pub(crate) async fn sweep_stuck_tasks() -> anyhow::Result<Vec<String>> {
     Ok(swept)
 }
 
-// ─── Swarm-leased dispatch (ADR-2604141400 P1.2) ───────────────────────────
+/// Default age threshold before a terminal (failed/completed) task is swept (7 days).
+const TERMINAL_SWEEP_DAYS: i64 = 7;
+
+/// Sweep old terminal tasks — delete completed/failed records older than 7 days.
+/// Prevents unbounded SpacetimeDB growth. Uses a date-based throttle so deletion
+/// only actually runs on the first tick of each UTC day (not every 30s).
+async fn sweep_old_terminal_tasks(state: &mut DaemonState) {
+    // Throttle: only run deletion once per UTC day (stored in brain-state).
+    let today = chrono::Utc::now().date_naive().to_string();
+    if state.sweep_date == today {
+        return; // already ran today
+    }
+
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(TERMINAL_SWEEP_DAYS);
+    let cutoff_str = cutoff.to_rfc3339();
+
+    // Collect terminal tasks older than cutoff
+    let old_tasks: Vec<String> = match list_brain_tasks(None).await {
+        Ok(tasks) => tasks
+            .into_iter()
+            .filter(|t| {
+                let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                if !matches!(status, "failed" | "completed") {
+                    return false;
+                }
+                let completed_at = t.get("completed_at")
+                    .or_else(|| t.get("created_at"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                completed_at < cutoff_str.as_str()
+            })
+            .filter_map(|t| t.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+            .collect(),
+        Err(_) => return,
+    };
+
+    if old_tasks.is_empty() {
+        state.sweep_date = today;
+        return;
+    }
+
+    // Delete each old task from SpacetimeDB via DELETE /api/hexflo/memory/{key}
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    if nexus.ensure_running().await.is_err() {
+        return;
+    }
+
+    let mut deleted = 0;
+    for task_id in &old_tasks {
+        let key = format!("brain-task:{}", task_id);
+        if nexus.delete(&format!("/api/hexflo/memory/{}", key)).await.is_ok() {
+            deleted += 1;
+        }
+    }
+
+    if deleted > 0 {
+        println!("  {} swept {} old terminal tasks (>{}-day)", "🗑".cyan(), deleted, TERMINAL_SWEEP_DAYS);
+    }
+    state.sweep_date = today;
+}
 //
 // The direct-subprocess flow (`execute_brain_task` called inline from the
 // daemon tick) is being replaced by a lease handoff: the daemon registers a
