@@ -101,6 +101,12 @@ const projectSubNav: NavItem[] = [
     routeFactory: (pid) => ({ page: 'project-chat', projectId: pid }),
   },
   {
+    label: 'Inbox',
+    icon: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12" /><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />',
+    page: 'project-inbox',
+    routeFactory: (pid) => ({ page: 'project-inbox', projectId: pid }),
+  },
+  {
     label: 'Config',
     icon: '<circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />',
     page: 'project-config',
@@ -148,9 +154,8 @@ const App: Component = () => {
       (n) => (n.acknowledged_at == null || n.acknowledged_at === '') && n.priority === 2,
     ).length,
   );
-  // Expose for child components via context-free passthrough (p1.2 will consume).
-  void unreadCount;
-  void criticalCount;
+  // Consumed by the sidebar Inbox nav button to render a pill badge overlay
+  // (see projectSubNav rendering below).
 
   // Initialize reactive stores SYNCHRONOUSLY before any child renders.
   // These must run during component creation (not onMount) so child
@@ -399,13 +404,17 @@ const App: Component = () => {
               <For each={projectSubNav}>
                 {(item) => (
                   <button
-                    class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+                    class="relative flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
                     classList={{
                       "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": isPageActive(item.page),
                       "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": !isPageActive(item.page),
                       "justify-center px-0": sidebarCollapsed(),
                     }}
-                    aria-label={sidebarCollapsed() ? item.label : undefined}
+                    aria-label={sidebarCollapsed()
+                      ? (item.page === 'project-inbox' && unreadCount() > 0
+                        ? `${item.label} (${unreadCount()} unread${criticalCount() > 0 ? `, ${criticalCount()} critical` : ''})`
+                        : item.label)
+                      : undefined}
                     aria-current={isPageActive(item.page) ? "page" : undefined}
                     onClick={() => { navigate(item.routeFactory(activeProjectId())); setMobileDrawerOpen(false); }}
                   >
@@ -414,6 +423,20 @@ const App: Component = () => {
                       innerHTML={item.icon}
                     />
                     <Show when={!sidebarCollapsed()}>{item.label}</Show>
+                    <Show when={item.page === 'project-inbox' && unreadCount() > 0}>
+                      <span
+                        class="flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[10px] font-semibold leading-none ring-1 ring-gray-950"
+                        classList={{
+                          "absolute top-0.5 right-0.5": sidebarCollapsed(),
+                          "ml-auto": !sidebarCollapsed(),
+                          "bg-red-500 text-white": criticalCount() > 0,
+                          "bg-gray-500 text-gray-100": criticalCount() === 0,
+                        }}
+                        aria-hidden="true"
+                      >
+                        {unreadCount() > 99 ? '99+' : unreadCount()}
+                      </span>
+                    </Show>
                   </button>
                 )}
               </For>
