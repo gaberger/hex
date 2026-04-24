@@ -1664,11 +1664,17 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
 
     loop {
         let timestamp = chrono::Utc::now().to_rfc3339();
-        println!("{} {}", "⬡ brain tick at".cyan(), timestamp);
-
+        let pending_count = list_brain_tasks(Some("pending")).await.map(|t| t.len()).unwrap_or(0);
+        let in_progress_count = list_brain_tasks(Some("in_progress")).await.map(|t| t.len()).unwrap_or(0);
+        let queue_summary = if pending_count + in_progress_count == 0 {
+            "queue=0".to_string()
+        } else {
+            format!("queue={}+{}p", pending_count, in_progress_count)
+        };
         let start = Instant::now();
         let validate_result = validate(true).await;
         let elapsed = start.elapsed();
+        println!("{} {} ✓ {}ms  {}", "⬡".cyan(), timestamp, elapsed.as_millis(), queue_summary.bold());
 
         // Diff issue counts tick-over-tick (wp-brain-updates P2.1).
         // First tick seeds the baseline; no notification until we have a prior.
@@ -1714,28 +1720,18 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         state.seeded = true;
         save_daemon_state(&state);
 
+        // ── Validate result ────────────────────────────────────────────────
         match validate_result {
             Ok(()) => {
                 if consecutive_failures > 0 {
-                    println!(
-                        "{} after {} failure(s)",
-                        "  recovered".green(),
-                        consecutive_failures
-                    );
+                    println!("  {} after {} failure(s)", "recovered".green(), consecutive_failures);
                 }
                 consecutive_failures = 0;
                 paused_cycles = 0;
-                println!("  ok ({}ms)", elapsed.as_millis());
             }
             Err(err) => {
                 consecutive_failures += 1;
-                eprintln!(
-                    "  {} ({}/{}) {}",
-                    "fail".red(),
-                    consecutive_failures,
-                    max_failures,
-                    err
-                );
+                eprintln!("  {} ({}/{}) validate: {}", "fail".red(), consecutive_failures, max_failures, err);
             }
         }
 
