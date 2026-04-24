@@ -15,6 +15,7 @@ pub struct CompositionResult {
     pub ollama: CheckStatus,
     pub claude_binary: CheckStatus,
     pub nexus: CheckStatus,
+    pub spacetimedb: CheckStatus,
 }
 
 #[derive(Clone)]
@@ -28,7 +29,9 @@ pub enum CheckStatus {
 impl CompositionResult {
     /// Returns true if at least one inference adapter is available and nexus is up.
     pub fn all_ok(&self) -> bool {
-        self.has_any_inference() && matches!(self.nexus, CheckStatus::Pass(_))
+        self.has_any_inference()
+            && matches!(self.nexus, CheckStatus::Pass(_))
+            && matches!(self.spacetimedb, CheckStatus::Pass(_))
     }
 
     /// Returns true if at least one inference adapter (Ollama or claude) is reachable.
@@ -71,6 +74,7 @@ pub async fn run_composition_check_quiet() -> CompositionResult {
     let ollama = check_ollama().await;
     let claude_binary = check_claude_binary().await;
     let nexus = check_nexus().await;
+    let spacetimedb = check_spacetimedb().await;
 
     CompositionResult {
         claude_session_id,
@@ -78,6 +82,7 @@ pub async fn run_composition_check_quiet() -> CompositionResult {
         ollama,
         claude_binary,
         nexus,
+        spacetimedb,
     }
 }
 
@@ -105,12 +110,17 @@ pub async fn run_composition_check() -> CompositionResult {
     let nexus = check_nexus().await;
     print_status("hex-nexus", &nexus);
 
+    // (f) SpacetimeDB reachability
+    let spacetimedb = check_spacetimedb().await;
+    print_status("SpacetimeDB", &spacetimedb);
+
     let result = CompositionResult {
         claude_session_id,
         session_file,
         ollama,
         claude_binary,
         nexus,
+        spacetimedb,
     };
 
     println!();
@@ -260,6 +270,35 @@ async fn check_claude_binary() -> CheckStatus {
             }
         }
         _ => CheckStatus::Fail("not found on PATH".to_string()),
+    }
+}
+
+async fn check_spacetimedb() -> CheckStatus {
+    let host = std::env::var("HEX_SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return CheckStatus::Fail("cannot build HTTP client".to_string()),
+    };
+
+    let url = format!("{}{}", host, hex_core::SPACETIMEDB_PING_PATH);
+    match client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => CheckStatus::Pass(host),
+        Ok(resp) => CheckStatus::Fail(format!("{}, HTTP {}", host, resp.status())),
+        Err(e) => {
+            let reason = if e.is_connect() {
+                "connection refused"
+            } else if e.is_timeout() {
+                "timeout (2s)"
+            } else {
+                "unreachable"
+            };
+            CheckStatus::Fail(format!("{}, {}", host, reason))
+        }
     }
 }
 
