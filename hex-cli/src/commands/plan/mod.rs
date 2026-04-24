@@ -1158,35 +1158,44 @@ async fn create_plan(requirements: &[String], lang: &str, adr: Option<&str>, no_
     Ok(())
 }
 
-/// List workplans from docs/workplans/.
+/// List workplans from docs/workplans/ plus any root-level workplan.json
+/// (common in small/example projects that don't use the docs/ layout).
 async fn list_plans() -> anyhow::Result<()> {
     let dir = Path::new("docs/workplans");
-    if !dir.is_dir() {
-        println!("No workplans directory found (docs/workplans/)");
-        return Ok(());
+    let root_wp = Path::new("workplan.json");
+
+    let mut paths: Vec<std::path::PathBuf> = Vec::new();
+    if dir.is_dir() {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "json" || ext == "md")
+                    .unwrap_or(false)
+            })
+            .map(|e| e.path())
+            .collect();
+        entries.sort_by_key(|p| p.file_name().map(|n| n.to_os_string()));
+        paths.extend(entries);
+    }
+    if root_wp.is_file() {
+        paths.push(root_wp.to_path_buf());
     }
 
-    let mut entries: Vec<_> = std::fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|ext| ext == "json" || ext == "md")
-                .unwrap_or(false)
-        })
-        .collect();
-
-    entries.sort_by_key(|e| e.file_name());
-
-    if entries.is_empty() {
-        println!("No workplans found in docs/workplans/");
+    if paths.is_empty() {
+        if !dir.is_dir() {
+            println!("No workplans directory found (docs/workplans/) and no root-level workplan.json");
+        } else {
+            println!("No workplans found in docs/workplans/");
+        }
         return Ok(());
     }
 
     println!(
-        "{} {} workplan(s) in docs/workplans/",
+        "{} {} workplan(s) found",
         "\u{2b21}".cyan(),
-        entries.len()
+        paths.len()
     );
     println!();
 
@@ -1195,8 +1204,7 @@ async fn list_plans() -> anyhow::Result<()> {
 
     let mut rows: Vec<PlanRow> = Vec::new();
 
-    for entry in &entries {
-        let path = entry.path();
+    for path in &paths {
         let name = path.file_name().unwrap().to_string_lossy();
 
         if path.extension().map(|e| e == "json").unwrap_or(false) {

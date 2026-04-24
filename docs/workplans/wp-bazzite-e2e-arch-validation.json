@@ -79,6 +79,7 @@
             "hex-cli/src/commands/plan/mod.rs"
           ],
           "id": "P2-3",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "List available workplans in project"
         }
