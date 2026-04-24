@@ -94,9 +94,15 @@ impl CompileChecker for ShellCompileChecker {
         let parts: Vec<&str> = self.command.split_whitespace().collect();
         let (cmd, args) = parts.split_first().unwrap_or((&"cargo", &[]));
 
-        let output = tokio::process::Command::new(cmd)
-            .args(args)
-            .arg(&tmp_path)
+        // Some commands accept file arguments (rustc, gcc, clang, etc.),
+        // but cargo check, tsc --noEmit, go build don't.
+        let accepts_file_arg = matches!(*cmd, "rustc" | "gcc" | "clang" | "cc" | "c++" | "g++" | "javac");
+        let mut cmd_builder = tokio::process::Command::new(cmd);
+        cmd_builder.args(args);
+        if accepts_file_arg {
+            cmd_builder.arg(&tmp_path);
+        }
+        let output = cmd_builder
             .output()
             .await
             .map_err(|e| CompileError {
