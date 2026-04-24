@@ -1,5 +1,5 @@
-import { type Component, onMount, onCleanup, createSignal, For, Show, Switch, Match, lazy } from 'solid-js';
-import { initConnectionStore, initConnections } from '../stores/connection';
+import { type Component, onMount, onCleanup, createSignal, createMemo, For, Show, Switch, Match, lazy } from 'solid-js';
+import { initConnectionStore, initConnections, agentInbox, type AgentInboxRow } from '../stores/connection';
 import BottomBar from '../components/layout/BottomBar';
 import Breadcrumbs from '../components/layout/Breadcrumbs';
 import SpawnDialog from '../components/agent/SpawnDialog';
@@ -136,6 +136,21 @@ const App: Component = () => {
   const [moreMenuOpen, setMoreMenuOpen] = createSignal(false);
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = createSignal(false);
+
+  // Inbox badge derivations — drive the sidebar Inbox pill badge.
+  // Reads the agentInbox SpacetimeDB reactive store and counts un-acked rows
+  // (acknowledged_at null/empty) plus priority-2 (critical) un-acked rows.
+  const unreadCount = createMemo(() =>
+    (agentInbox() as AgentInboxRow[]).filter((n) => n.acknowledged_at == null || n.acknowledged_at === '').length,
+  );
+  const criticalCount = createMemo(() =>
+    (agentInbox() as AgentInboxRow[]).filter(
+      (n) => (n.acknowledged_at == null || n.acknowledged_at === '') && n.priority === 2,
+    ).length,
+  );
+  // Expose for child components via context-free passthrough (p1.2 will consume).
+  void unreadCount;
+  void criticalCount;
 
   // Initialize reactive stores SYNCHRONOUSLY before any child renders.
   // These must run during component creation (not onMount) so child

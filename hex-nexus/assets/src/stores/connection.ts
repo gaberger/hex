@@ -43,6 +43,27 @@ const SPACETIMEDB_URI = resolveSpacetimeDbUri();
 const TOKEN_KEY_PREFIX = "stdb_token_";
 
 // ---------------------------------------------------------------------------
+// Row shape exports (consumed by derived memos — e.g. inbox unread counts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Runtime shape of an `agent_inbox` row as delivered by the SpacetimeDB client.
+ * Field names are snake_case to match the wire column names used by existing
+ * consumers (InboxPanel, App.tsx memos). Timestamps are ISO strings; an empty
+ * or null `acknowledged_at` indicates the notification is unread.
+ */
+export interface AgentInboxRow {
+  id: number | bigint;
+  agent_id: string;
+  priority: number;
+  kind: string;
+  payload: string;
+  created_at: string;
+  acknowledged_at: string | null;
+  expired_at: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // Connection state signals — assigned inside createRoot by initConnectionStore
 // ---------------------------------------------------------------------------
 
@@ -79,7 +100,7 @@ let skillRegistry: Accessor<any[]> = () => [];
 let agentDefinitions: Accessor<any[]> = () => [];
 let registryAgents: Accessor<any[]> = () => [];
 let agentHeartbeats: Accessor<any[]> = () => [];
-let agentInbox: Accessor<any[]> = () => [];
+let agentInbox: Accessor<AgentInboxRow[]> = () => [];
 let remoteAgents: Accessor<any[]> = () => [];
 
 // inference-gateway tables
@@ -237,7 +258,7 @@ export function initConnectionStore() {
     agentDefinitions = useTable(() => _hexfloConn()?.db.agent_definition as SpacetimeDBTableHandle<any> | undefined);
     registryAgents = useTable(() => _hexfloConn()?.db.hex_agent as SpacetimeDBTableHandle<any> | undefined);
     agentHeartbeats = () => []; // Heartbeat data inline on hex_agent.lastHeartbeat (ADR-058)
-    agentInbox = useTable(() => _hexfloConn()?.db.agent_inbox as SpacetimeDBTableHandle<any> | undefined);
+    agentInbox = useTable(() => _hexfloConn()?.db.agent_inbox as SpacetimeDBTableHandle<AgentInboxRow> | undefined);
     remoteAgents = useTable(() => _hexfloConn()?.db.remote_agent as SpacetimeDBTableHandle<any> | undefined);
 
     // inference-gateway tables
