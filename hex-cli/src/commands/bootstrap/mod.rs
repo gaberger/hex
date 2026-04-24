@@ -77,6 +77,13 @@ pub struct BootstrapArgs {
 }
 
 pub async fn run(args: BootstrapArgs) -> anyhow::Result<()> {
+    if BootstrapProfile::from_str(&args.profile).is_none() {
+        return Err(anyhow::anyhow!(
+            "invalid --profile '{}': must be one of dev, ci, prod",
+            args.profile
+        ));
+    }
+
     let config = BootstrapConfig {
         profile: args.profile.clone(),
         skip_models: args.skip_models,
