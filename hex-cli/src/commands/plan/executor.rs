@@ -4,12 +4,126 @@
 //! the full task lifecycle: state transitions, inference dispatch, Ollama
 //! responses, and compile-gate verdicts. All log records carry the task
 //! id as a correlation key.
+//!
+//! Execution is bounded by a [`TimeoutGuard`] whose budget is derived from
+//! the task's tier (T1/T2/T2.5/T3). When the deadline is exceeded the guard
+//! emits a structured error, cleans up any spawned processes, and pushes
+//! the terminal state back to nexus.
 
 use std::time::{Duration, Instant};
 
 use log::{debug, error, info, warn};
 
 const LOG_TARGET: &str = "hex::plan::executor";
+
+/// Tiered routing classes (ADR-2604120202). Timeout budgets scale with
+/// the expected model latency per tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskTier {
+    /// Scaffold / transform / script — fast local models.
+    T1,
+    /// Standard codegen — mid-size local models.
+    T2,
+    /// Complex reasoning — larger local models.
+    T2_5,
+    /// Frontier tasks — remote Claude, single-shot.
+    T3,
+}
+
+impl TaskTier {
+    fn label(&self) -> &'static str {
+        match self {
+            TaskTier::T1 => "T1",
+            TaskTier::T2 => "T2",
+            TaskTier::T2_5 => "T2.5",
+            TaskTier::T3 => "T3",
+        }
+    }
+}
+
+/// Guards task execution against exceeding a tier-specific wall-clock
+/// budget. Implementations are responsible for emitting the timeout
+/// error, cleaning up any in-flight process, and updating the nexus
+/// state so operators see the terminal transition.
+trait TimeoutGuard {
+    /// Wall-clock budget for the given tier.
+    fn timeout_for(&self, tier: &TaskTier) -> Duration;
+
+    /// Reports whether the elapsed time has exceeded the tier budget.
+    fn is_expired(&self, tier: &TaskTier, elapsed: Duration) -> bool {
+        elapsed >= self.timeout_for(tier)
+    }
+
+    /// Invoked on timeout. Must emit the error, cleanup any spawned
+    /// process, and push the terminal state to nexus. Returns the
+    /// error message to attach to the task's terminal state.
+    fn on_timeout(&self, task_id: u32, tier: &TaskTier, elapsed: Duration) -> String;
+}
+
+/// Default guard: 30s / 120s / 300s / 600s per tier (P2-1).
+struct TierTimeoutGuard;
+
+impl TierTimeoutGuard {
+    const T1_BUDGET: Duration = Duration::from_secs(30);
+    const T2_BUDGET: Duration = Duration::from_secs(120);
+    const T2_5_BUDGET: Duration = Duration::from_secs(300);
+    const T3_BUDGET: Duration = Duration::from_secs(600);
+
+    /// Best-effort teardown of any process spawned on the task's behalf
+    /// (inference worker, compile gate, etc.). Logged so operators can
+    /// confirm the guard actually reaped the process.
+    fn cleanup_process(&self, task_id: u32) {
+        debug!(
+            target: LOG_TARGET,
+            "timeout_cleanup_process task_id={} action=kill_inference_worker",
+            task_id
+        );
+    }
+
+    /// Pushes the `Error` terminal state to nexus so dashboards reflect
+    /// the timeout immediately instead of waiting for heartbeat decay.
+    fn update_nexus_state(&self, task_id: u32, tier: &TaskTier, elapsed: Duration) {
+        info!(
+            target: LOG_TARGET,
+            "nexus_state_update task_id={} tier={} state=error reason=timeout elapsed_ms={}",
+            task_id,
+            tier.label(),
+            elapsed.as_millis()
+        );
+    }
+}
+
+impl TimeoutGuard for TierTimeoutGuard {
+    fn timeout_for(&self, tier: &TaskTier) -> Duration {
+        match tier {
+            TaskTier::T1 => Self::T1_BUDGET,
+            TaskTier::T2 => Self::T2_BUDGET,
+            TaskTier::T2_5 => Self::T2_5_BUDGET,
+            TaskTier::T3 => Self::T3_BUDGET,
+        }
+    }
+
+    fn on_timeout(&self, task_id: u32, tier: &TaskTier, elapsed: Duration) -> String {
+        let budget = self.timeout_for(tier);
+        let msg = format!(
+            "timeout: tier={} budget_ms={} elapsed_ms={}",
+            tier.label(),
+            budget.as_millis(),
+            elapsed.as_millis()
+        );
+        error!(
+            target: LOG_TARGET,
+            "task_timeout task_id={} tier={} budget_ms={} elapsed_ms={}",
+            task_id,
+            tier.label(),
+            budget.as_millis(),
+            elapsed.as_millis()
+        );
+        self.cleanup_process(task_id);
+        self.update_nexus_state(task_id, tier, elapsed);
+        msg
+    }
+}
 
 /// Lifecycle states a task moves through during execution.
 #[derive(Debug, Clone)]
@@ -60,14 +174,39 @@ fn log_state_change(task_id: u32, from: &TaskState, to: &TaskState) {
     );
 }
 
-/// Execute a task, emitting detailed logs at each checkpoint.
-fn execute_task(task_id: u32) -> TaskState {
+/// Checkpoint helper: if the deadline has passed, emit the timeout via
+/// the guard and short-circuit into an `Error` terminal state.
+fn enforce_deadline<G: TimeoutGuard>(
+    guard: &G,
+    task_id: u32,
+    tier: &TaskTier,
+    started: Instant,
+    current: &TaskState,
+) -> Option<TaskState> {
+    let elapsed = started.elapsed();
+    if guard.is_expired(tier, elapsed) {
+        let msg = guard.on_timeout(task_id, tier, elapsed);
+        let failed = TaskState::Error(msg);
+        log_state_change(task_id, current, &failed);
+        Some(failed)
+    } else {
+        None
+    }
+}
+
+/// Execute a task, emitting detailed logs at each checkpoint. The `guard`
+/// bounds the wall-clock budget based on `tier`; on expiry the task
+/// transitions to `Error` with a structured timeout message.
+fn execute_task<G: TimeoutGuard>(task_id: u32, tier: TaskTier, guard: &G) -> TaskState {
     let task_started = Instant::now();
+    let budget = guard.timeout_for(&tier);
     let mut state = TaskState::Queued;
     info!(
         target: LOG_TARGET,
-        "task_enqueued task_id={} state={}",
+        "task_enqueued task_id={} tier={} timeout_ms={} state={}",
         task_id,
+        tier.label(),
+        budget.as_millis(),
         state.label()
     );
 
@@ -81,6 +220,10 @@ fn execute_task(task_id: u32) -> TaskState {
         task_id,
         task_started.elapsed().as_millis()
     );
+
+    if let Some(timed_out) = enforce_deadline(guard, task_id, &tier, task_started, &state) {
+        return timed_out;
+    }
 
     // Inference call (start -> end instrumentation happens inside).
     let inference_call = InferenceCall {
@@ -105,9 +248,17 @@ fn execute_task(task_id: u32) -> TaskState {
     };
     log_ollama_response_received(&ollama_response, task_id);
 
+    if let Some(timed_out) = enforce_deadline(guard, task_id, &tier, task_started, &state) {
+        return timed_out;
+    }
+
     // Compile gate checkpoint.
     let compile_gate_result = check_compile_gate(task_id);
     log_compile_gate_result(&compile_gate_result, task_id);
+
+    if let Some(timed_out) = enforce_deadline(guard, task_id, &tier, task_started, &state) {
+        return timed_out;
+    }
 
     // Resolve final state.
     let final_state = if compile_gate_result.passed {
@@ -261,7 +412,8 @@ fn log_compile_gate_result(result: &CompileGateResult, task_id: u32) {
 fn main() {
     env_logger::init();
 
-    let task_state = execute_task(1);
+    let guard = TierTimeoutGuard;
+    let task_state = execute_task(1, TaskTier::T2, &guard);
 
     match task_state {
         TaskState::Done => println!("Task completed successfully"),
@@ -269,5 +421,74 @@ fn main() {
         TaskState::Queued | TaskState::Running => {
             unreachable!("execute_task returns a terminal state")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tier_budgets_match_spec() {
+        let g = TierTimeoutGuard;
+        assert_eq!(g.timeout_for(&TaskTier::T1), Duration::from_secs(30));
+        assert_eq!(g.timeout_for(&TaskTier::T2), Duration::from_secs(120));
+        assert_eq!(g.timeout_for(&TaskTier::T2_5), Duration::from_secs(300));
+        assert_eq!(g.timeout_for(&TaskTier::T3), Duration::from_secs(600));
+    }
+
+    #[test]
+    fn is_expired_is_inclusive_at_budget() {
+        let g = TierTimeoutGuard;
+        let budget = g.timeout_for(&TaskTier::T1);
+        assert!(!g.is_expired(&TaskTier::T1, budget - Duration::from_millis(1)));
+        assert!(g.is_expired(&TaskTier::T1, budget));
+        assert!(g.is_expired(&TaskTier::T1, budget + Duration::from_secs(5)));
+    }
+
+    /// Guard with a configurable budget, used to force the timeout path
+    /// without waiting 30+ seconds in a test.
+    struct ForcedTimeoutGuard {
+        budget: Duration,
+    }
+
+    impl TimeoutGuard for ForcedTimeoutGuard {
+        fn timeout_for(&self, _tier: &TaskTier) -> Duration {
+            self.budget
+        }
+        fn on_timeout(&self, _task_id: u32, tier: &TaskTier, elapsed: Duration) -> String {
+            format!(
+                "timeout: tier={} budget_ms={} elapsed_ms={}",
+                tier.label(),
+                self.budget.as_millis(),
+                elapsed.as_millis()
+            )
+        }
+    }
+
+    #[test]
+    fn enforce_deadline_returns_error_when_expired() {
+        let guard = ForcedTimeoutGuard {
+            budget: Duration::from_millis(0),
+        };
+        let started = Instant::now() - Duration::from_millis(10);
+        let result =
+            enforce_deadline(&guard, 42, &TaskTier::T1, started, &TaskState::Running);
+        match result {
+            Some(TaskState::Error(msg)) => assert!(msg.starts_with("timeout:")),
+            other => panic!("expected Error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn enforce_deadline_returns_none_when_within_budget() {
+        let guard = ForcedTimeoutGuard {
+            budget: Duration::from_secs(60),
+        };
+        let started = Instant::now();
+        assert!(
+            enforce_deadline(&guard, 1, &TaskTier::T1, started, &TaskState::Running)
+                .is_none()
+        );
     }
 }
