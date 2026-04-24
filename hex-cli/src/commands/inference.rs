@@ -195,6 +195,15 @@ pub enum InferenceAction {
         #[arg(long)]
         save: bool,
     },
+    /// Verify Ollama GPU inference is working (WP P1-4)
+    GpuCheck {
+        /// Model to run for the check (default: qwen3:4b — small, fast)
+        #[arg(long, default_value = "qwen3:4b")]
+        model: String,
+        /// Prompt text for the streaming test
+        #[arg(long, default_value = "What is hex?")]
+        prompt: String,
+    },
 }
 
 /// Write the full inference endpoint list to ~/.hex/inference-servers.json.
@@ -262,6 +271,99 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
         }
         InferenceAction::Bench { target, model, quick, compare, save } => {
             bench_provider(&target, model.as_deref(), quick, compare.as_deref(), save).await
+        }
+        InferenceAction::GpuCheck { model, prompt } => gpu_check(&model, &prompt).await,
+    }
+}
+
+/// `hex inference gpu-check` — verify Ollama runs the given model on the GPU (WP P1-4).
+///
+/// Workplan wp-bazzite-e2e-arch-validation task P1-4 required confirming that
+/// `OLLAMA_VULKAN=true ollama run qwen3:4b "..."` streams a response from the GPU
+/// (not CPU). This subcommand wraps that check so it can be re-run non-interactively.
+async fn gpu_check(model: &str, prompt: &str) -> anyhow::Result<()> {
+    use std::process::Command;
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    println!("{}", "Ollama GPU inference check (WP P1-4)".bold().underline());
+    println!("  Model:  {}", model);
+    println!("  Prompt: {:?}", prompt);
+    println!();
+
+    // Best-effort GPU detection — absence isn't fatal, Ollama placement is authoritative.
+    let gpu_probe = Command::new("rocm-smi")
+        .arg("--showproductname")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| ("rocm-smi", String::from_utf8_lossy(&o.stdout).into_owned()))
+        .or_else(|| {
+            Command::new("nvidia-smi")
+                .args(["--query-gpu=name", "--format=csv,noheader"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| ("nvidia-smi", String::from_utf8_lossy(&o.stdout).into_owned()))
+        });
+
+    match &gpu_probe {
+        Some((tool, out)) => {
+            let first = out.lines().find(|l| !l.trim().is_empty()).unwrap_or("(no name)");
+            println!("  {} GPU detected ({}): {}", "✓".green(), tool, first.trim());
+        }
+        None => println!("  {} No rocm-smi / nvidia-smi — relying on Ollama placement", "!".yellow()),
+    }
+
+    println!("\n  {} Running inference (60s timeout)...", "→".cyan());
+    let model_owned = model.to_string();
+    let prompt_owned = prompt.to_string();
+    let run = tokio::task::spawn_blocking(move || {
+        Command::new("ollama")
+            .env("OLLAMA_VULKAN", "true")
+            .arg("run")
+            .arg(&model_owned)
+            .arg(&prompt_owned)
+            .output()
+    });
+    let output = match timeout(Duration::from_secs(60), run).await {
+        Ok(Ok(Ok(o))) => o,
+        Ok(Ok(Err(e))) => anyhow::bail!("failed to spawn ollama: {}", e),
+        Ok(Err(e)) => anyhow::bail!("ollama task join error: {}", e),
+        Err(_) => anyhow::bail!("ollama inference timed out after 60s"),
+    };
+    if !output.status.success() {
+        anyhow::bail!("ollama run failed: {}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let first_line = stdout.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+    let preview: String = first_line.chars().take(120).collect();
+    println!("  {} Response streamed ({} bytes). First line: {}", "✓".green(), stdout.len(), preview);
+
+    println!("\n  {} Checking `ollama ps` for GPU placement...", "→".cyan());
+    let ps = Command::new("ollama").arg("ps").output()?;
+    if !ps.status.success() {
+        anyhow::bail!("`ollama ps` failed: {}", String::from_utf8_lossy(&ps.stderr).trim());
+    }
+    let ps_out = String::from_utf8_lossy(&ps.stdout);
+    println!("{}", ps_out);
+
+    let row = ps_out.lines().find(|l| l.contains(model));
+    match row {
+        Some(line) if line.contains("100% GPU") => {
+            println!("  {} {} loaded at 100% GPU", "✓".green().bold(), model);
+            Ok(())
+        }
+        Some(line) if line.contains("GPU") => {
+            println!("  {} {} partially on GPU — not a full offload", "!".yellow().bold(), model);
+            println!("    row: {}", line.trim());
+            Ok(())
+        }
+        Some(line) => anyhow::bail!("model {} is NOT on GPU — row: {}", model, line.trim()),
+        None => {
+            // Model may unload between `ollama run` finishing and `ollama ps` — don't fail.
+            println!("  {} {} not currently loaded (may have unloaded after run)", "!".yellow(), model);
+            Ok(())
         }
     }
 }
