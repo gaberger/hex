@@ -17,6 +17,7 @@ pub mod domain;
 pub mod inference_q;
 pub mod ports;
 pub mod quantization;
+pub mod research_finding;
 pub mod rules;
 pub mod types;
 
@@ -88,4 +89,5 @@ pub use domain::workplan::{PhaseGate, TaskStatus, Workplan, WorkplanPhase, Workp
 pub use domain::capability::{AgentCapabilityToken, Capability, VerifiedClaims};
 pub use inference_q::QReportEntry;
 pub use quantization::QuantizationLevel;
+pub use research_finding::{ActionKind, Domain, Finding, Severity, SuggestedAction};
 pub use types::TaskCompletionBody;
