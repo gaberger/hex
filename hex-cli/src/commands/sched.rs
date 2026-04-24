@@ -37,6 +37,54 @@ struct DaemonState {
     /// no regression notification on the first tick).
     #[serde(default)]
     seeded: bool,
+    /// Consecutive ticks the queue has been fully idle — both `pending` and
+    /// `in_flight` (in_progress) at zero. Bumped by `queue_drain` each time it
+    /// runs and sees the queue empty, reset the moment either counter is
+    /// non-zero. Paired with `sched.idle_threshold_ticks` so downstream code
+    /// can treat sustained idleness as a signal (e.g. wind down a worker).
+    #[serde(default)]
+    idle_tick_count: u32,
+    /// Last time an analyze task was enqueued (RFC3339). Used to enforce the
+    /// `brain.analyze_interval_secs` interval so we don't spam the queue.
+    #[serde(default)]
+    last_analyze_at: Option<String>,
+    /// Summary of the last analysis result (violation counts by category).
+    /// Stored for regression detection across daemon restarts.
+    #[serde(default)]
+    last_analysis_summary: HashMap<String, usize>,
+}
+
+/// Default idle-tick threshold — after this many consecutive fully-idle
+/// `queue_drain` calls the scheduler is "quiet". Override per-project in
+/// `.hex/project.json` at `sched.idle_threshold_ticks`.
+const DEFAULT_IDLE_THRESHOLD_TICKS: u32 = 4;
+
+/// Default interval between periodic analyze tasks (1 hour).
+const DEFAULT_ANALYZE_INTERVAL_SECS: u64 = 3600;
+
+/// Read the idle-tick threshold from `.hex/project.json` (key
+/// `sched.idle_threshold_ticks`). Falls back to [`DEFAULT_IDLE_THRESHOLD_TICKS`]
+/// on any read/parse failure or when the key is absent — the feature degrades
+/// to its default rather than erroring on a missing config.
+fn load_idle_threshold_ticks() -> u32 {
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(_) => return DEFAULT_IDLE_THRESHOLD_TICKS,
+    };
+    let content = match std::fs::read_to_string(cwd.join(".hex/project.json")) {
+        Ok(c) => c,
+        Err(_) => return DEFAULT_IDLE_THRESHOLD_TICKS,
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(p) => p,
+        Err(_) => return DEFAULT_IDLE_THRESHOLD_TICKS,
+    };
+    parsed
+        .get("sched")
+        .and_then(|s| s.get("idle_threshold_ticks"))
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32)
+        .unwrap_or(DEFAULT_IDLE_THRESHOLD_TICKS)
 }
 
 fn brain_state_path() -> PathBuf {
@@ -1772,6 +1820,14 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                             if ok { "✓".green() } else { "✗".red() },
                             status.as_str()
                         );
+                        notify_brain_task_result(
+                            &id,
+                            &kind,
+                            &payload,
+                            status.as_str(),
+                            &result,
+                        )
+                        .await;
                     } else if let DispatchOutcome::LeasedToWorker {
                         swarm_id,
                         swarm_task_id,
@@ -1790,6 +1846,43 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                 }
             }
             _ => {}
+        }
+
+        // ── Periodic dead-code analysis (ADR-2604241800) ─────────────────
+        if should_enqueue_analyze(&state).await {
+            match enqueue_analyze_task().await {
+                Ok(id) => {
+                    println!("  ⬡ enqueued periodic analyze task {}", id);
+                    state.last_analyze_at = Some(timestamp.clone());
+                }
+                Err(e) => {
+                    eprintln!("  {} enqueue analyze: {}", "✗".red(), e);
+                }
+            }
+        }
+
+        // ── Analyze regression detection (ADR-2604241800) ────────────────
+        // After each tick, check if a completed analyze task has more violations
+        // than last time. Notify operator on regression.
+        if state.seeded {
+            if let Some(summary) = check_analyze_regression(&state).await {
+                let body = serde_json::json!({
+                    "regressions": summary.regressions,
+                    "current": summary.current,
+                    "previous": summary.previous,
+                });
+                notify_operator("brain.analyze.regression", body, 2).await;
+                for (key, prev, curr) in &summary.regressions {
+                    eprintln!(
+                        "  {} analyze regressed: {} {} → {}",
+                        "⚠".red().bold(),
+                        key,
+                        prev,
+                        curr
+                    );
+                }
+                state.last_analysis_summary = summary.current.clone();
+            }
         }
 
         // Sweep stuck in_progress tasks (ADR-2604142155 P2.2).
@@ -2321,9 +2414,10 @@ impl BrainTaskRecord {
 // land an entry here, otherwise `lease_for` falls through to the shell
 // timeout and legitimate long-runners get reaped mid-flight.
 
-pub(crate) const LEASE_DURATIONS: [(&str, Duration); 4] = [
+pub(crate) const LEASE_DURATIONS: [(&str, Duration); 5] = [
     ("workplan", Duration::from_secs(30 * 60)),
     ("hex-command", Duration::from_secs(5 * 60)),
+    ("analyze", Duration::from_secs(5 * 60)),
     ("shell", Duration::from_secs(2 * 60)),
     ("remote-shell", Duration::from_secs(60)),
 ];
@@ -2882,6 +2976,186 @@ async fn stamp_brain_task_lease(
 /// workplan-evidence guard in [`execute_brain_task`]: if HEAD is unchanged
 /// before and after `hex plan execute` runs, we know the subprocess did no
 /// real work regardless of its exit code (ADR-2604141400 §1 P1).
+/// Read the analyze interval from `.hex/project.json` (key
+/// `brain.analyze_interval_secs`). Falls back to `DEFAULT_ANALYZE_INTERVAL_SECS`
+/// when absent or unreadable.
+fn load_analyze_interval_secs() -> u64 {
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(_) => return DEFAULT_ANALYZE_INTERVAL_SECS,
+    };
+    let content = match std::fs::read_to_string(cwd.join(".hex/project.json")) {
+        Ok(c) => c,
+        Err(_) => return DEFAULT_ANALYZE_INTERVAL_SECS,
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(p) => p,
+        Err(_) => return DEFAULT_ANALYZE_INTERVAL_SECS,
+    };
+    parsed
+        .get("brain")
+        .and_then(|b| b.get("analyze_interval_secs"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(DEFAULT_ANALYZE_INTERVAL_SECS)
+}
+
+/// Read whether analyze is enabled from `.hex/project.json`
+/// (key `brain.analyze_enabled`). Default true.
+fn is_analyze_enabled() -> bool {
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(_) => return true,
+    };
+    let content = match std::fs::read_to_string(cwd.join(".hex/project.json")) {
+        Ok(c) => c,
+        Err(_) => return true,
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(p) => p,
+        Err(_) => return true,
+    };
+    parsed
+        .get("brain")
+        .and_then(|b| b.get("analyze_enabled"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
+
+/// Check if the periodic analyze task should be enqueued this tick.
+/// Returns true if: analysis is enabled, no analyze task is already
+/// pending/in_progress for this project, and the interval has elapsed.
+async fn should_enqueue_analyze(state: &DaemonState) -> bool {
+    if !is_analyze_enabled() {
+        return false;
+    }
+
+    // Skip if an analyze task is already pending/in_progress
+    if let Ok(tasks) = list_brain_tasks(None).await {
+        for t in &tasks {
+            let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            if status != "pending" && status != "in_progress" {
+                continue;
+            }
+            let kind = t.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            if kind == "analyze" {
+                return false;
+            }
+        }
+    }
+
+    // Check interval
+    let interval_secs = load_analyze_interval_secs();
+    let now = chrono::Utc::now();
+
+    if let Some(last) = &state.last_analyze_at {
+        if let Ok(last_time) = chrono::DateTime::parse_from_rfc3339(last) {
+            let elapsed = now.signed_duration_since(last_time.with_timezone(&chrono::Utc));
+            if elapsed.num_seconds() < interval_secs as i64 {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+/// Enqueue an "analyze" task for the current project. Returns the task ID.
+async fn enqueue_analyze_task() -> anyhow::Result<String> {
+    let project_id = brain_project_id().unwrap_or_default();
+    let payload = serde_json::json!({
+        "project_id": project_id,
+        "command": "hex analyze . --json",
+    });
+    enqueue_brain_task("analyze", &payload.to_string()).await
+}
+
+/// Summary of an analyze regression detection run.
+struct AnalyzeRegressionSummary {
+    regressions: Vec<(String, usize, usize)>,
+    current: HashMap<String, usize>,
+    previous: HashMap<String, usize>,
+}
+
+/// Parse violation counts from a `hex analyze --json` output string.
+/// Returns a HashMap keyed by category (e.g. "boundary_violations",
+/// "dead_exports", "circular_deps") with the count as value.
+fn parse_analyze_summary(output: &str) -> HashMap<String, usize> {
+    let mut summary = HashMap::new();
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(output) {
+        let get_count = |key| {
+            parsed
+                .get(key)
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+                .unwrap_or(0)
+        };
+        summary.insert(
+            "boundary_violations".to_string(),
+            get_count("boundary_violations"),
+        );
+        summary.insert("dead_exports".to_string(), get_count("dead_exports"));
+        summary.insert("circular_deps".to_string(), get_count("circular_deps"));
+        summary.insert("unused_adapters".to_string(), get_count("unused_adapters"));
+        if let Some(violations) = parsed.get("violations").and_then(|v| v.as_array()) {
+            summary.insert("total_violations".to_string(), violations.len());
+        }
+    }
+    summary
+}
+
+/// Check if the most recently completed analyze task has more violations
+/// than the last recorded summary. Returns Some(summary) if regressions found,
+/// None otherwise. Updates state.last_analysis_summary on call.
+async fn check_analyze_regression(state: &DaemonState) -> Option<AnalyzeRegressionSummary> {
+    // Find the most recently completed analyze task
+    if let Ok(tasks) = list_brain_tasks(Some("completed")).await {
+        let mut analyze_tasks: Vec<_> = tasks
+            .into_iter()
+            .filter(|t| {
+                t.get("kind").and_then(|v| v.as_str()) == Some("analyze")
+            })
+            .collect();
+        analyze_tasks.sort_by(|a, b| {
+            let a_time = a
+                .get("completed_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let b_time = b
+                .get("completed_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            b_time.cmp(a_time) // descending — most recent first
+        });
+
+        if let Some(last_task) = analyze_tasks.first() {
+            let result = last_task
+                .get("result")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let current = parse_analyze_summary(result);
+            let previous = state.last_analysis_summary.clone();
+
+            let mut regressions = Vec::new();
+            for (key, curr_count) in &current {
+                if let Some(&prev_count) = previous.get(key) {
+                    if curr_count > &prev_count {
+                        regressions.push((key.clone(), prev_count, *curr_count));
+                    }
+                }
+            }
+
+            if !regressions.is_empty() {
+return Some(AnalyzeRegressionSummary {
+                    regressions,
+                    current,
+                    previous,
+                });
+            }
+        }
+    }
+    None
+}
+
 fn git_head_sha() -> Option<String> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -2965,6 +3239,9 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
     let output = match kind {
         "hex-command" => std::process::Command::new("hex")
             .args(payload.split_whitespace())
+            .output(),
+        "analyze" => std::process::Command::new("hex")
+            .args(["analyze", ".", "--json"])
             .output(),
         "workplan" => std::process::Command::new("hex")
             .args(["plan", "execute", payload])
@@ -3292,8 +3569,34 @@ async fn queue_clear() -> anyhow::Result<()> {
 
 async fn queue_drain() -> anyhow::Result<()> {
     let pending = list_brain_tasks(Some("pending")).await?;
+    // Snapshot in_flight alongside pending so the idle-tick gate counts real
+    // inactivity (no queued work AND no tasks actively running). A failure to
+    // read in_progress is treated as "unknown" → non-idle, so we don't
+    // spuriously declare the queue quiet when we can't see it.
+    let in_flight = list_brain_tasks(Some("in_progress")).await.unwrap_or_default();
+    let is_idle = pending.is_empty() && in_flight.is_empty();
+
+    let mut state = load_daemon_state();
+    let threshold = load_idle_threshold_ticks();
+    if is_idle {
+        state.idle_tick_count = state.idle_tick_count.saturating_add(1);
+    } else {
+        state.idle_tick_count = 0;
+    }
+    let idle_ticks = state.idle_tick_count;
+    save_daemon_state(&state);
+
     if pending.is_empty() {
-        println!("{}", "No pending sched tasks to drain.".yellow());
+        if idle_ticks >= threshold {
+            println!(
+                "{} (idle {}/{} ticks)",
+                "No pending sched tasks to drain.".yellow(),
+                idle_ticks,
+                threshold,
+            );
+        } else {
+            println!("{}", "No pending sched tasks to drain.".yellow());
+        }
         return Ok(());
     }
     println!("⬡ draining {} pending sched task(s)...", pending.len());

@@ -5,5 +5,9 @@
       "t2": "local-gemma4",
       "t2_5": "local-llama3"
     }
+  },
+  "brain": {
+    "analyze_enabled": true,
+    "analyze_interval_secs": 3600
   }
 }
