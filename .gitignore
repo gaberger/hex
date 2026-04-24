@@ -49,6 +49,8 @@ docs/*
 !docs/examples/
 !docs/guides/
 !docs/algebra/
+# TLC model-checker state cache — per-run scratch, do not commit
+docs/algebra/states/
 !docs/ARCHITECTURE.md
 !docs/GETTING-STARTED.md
 !docs/INFERENCE.md

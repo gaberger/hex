@@ -153,7 +153,18 @@ Fairness ==
     /\ \A t \in Tasks : WF_vars(Complete(t) \/ Fail(t))
     /\ \A t \in Tasks : WF_vars(DispatchReal(t))
 
+\* Buggy-daemon fairness: identical to Fairness BUT with no WF on
+\* TimeoutSweep. Models the current Rust daemon, which has no
+\* auto-fail sweeper. Under this fairness a task that enters
+\* in_progress via DispatchVacuous can be stuck forever.
+FairnessBuggy ==
+    /\ \A t \in Tasks : WF_vars(Tick(t))
+    /\ \A t \in Tasks : WF_vars(Claim(t))
+    /\ \A t \in Tasks : WF_vars(Complete(t) \/ Fail(t))
+    /\ \A t \in Tasks : WF_vars(DispatchReal(t))
+
 Spec == Init /\ [][Next]_vars /\ Fairness
+SpecBuggy == Init /\ [][Next]_vars /\ FairnessBuggy
 SpecFixed == Init /\ [][NextFixed]_vars /\ Fairness
 
 \* ─── Safety Properties ─────────────────────────────────────

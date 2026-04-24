@@ -38,6 +38,18 @@ pub struct SwarmDetail {
     pub tasks: Vec<SwarmTaskInfo>,
 }
 
+// ── Heartbeat thresholds (P4-4) ───────────────────────
+
+/// Seconds without a heartbeat before a swarm agent is marked "stale".
+/// Stale agents are still considered recoverable — they haven't been
+/// reclaimed yet, but clients should treat their state as suspect.
+pub const HEARTBEAT_STALE_SECS: u64 = 45;
+
+/// Seconds without a heartbeat before a swarm agent is marked "dead".
+/// Dead agents have their claimed tasks reset to "pending" so another
+/// agent can pick them up. Threshold fixed at 120s per P4-4.
+pub const HEARTBEAT_DEAD_SECS: u64 = 120;
+
 // ── Hex-Pipeline Topology ─────────────────────────────
 
 /// Valid topology values for swarm creation.
@@ -477,6 +489,80 @@ impl HexFlo {
         Ok(swarms.iter().any(|s| s.id == swarm_id && s.topology == "hex-pipeline"))
     }
 
+    // ── Swarm agent heartbeat (P4-4) ──────────────────
+
+    /// Register a swarm agent and set its initial heartbeat.
+    ///
+    /// After registration the agent must call `swarm_agent_heartbeat` on
+    /// every prompt submit (or at least every `HEARTBEAT_STALE_SECS`) to
+    /// avoid being marked stale. If it stays silent past
+    /// `HEARTBEAT_DEAD_SECS` its tasks are reclaimed.
+    pub async fn swarm_agent_register(
+        &self,
+        id: &str,
+        swarm_id: &str,
+        name: &str,
+        role: &str,
+        worktree_path: &str,
+    ) -> Result<(), String> {
+        self.state
+            .swarm_agent_register(id, swarm_id, name, role, worktree_path)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let _ = self.ws_tx.send(WsEnvelope {
+            topic: "hexflo".to_string(),
+            event: "agent:registered".to_string(),
+            data: serde_json::json!({
+                "agentId": id,
+                "swarmId": swarm_id,
+                "name": name,
+                "role": role,
+            }),
+        });
+
+        Ok(())
+    }
+
+    /// Record a swarm agent heartbeat — called on every prompt submit.
+    ///
+    /// The heartbeat timestamp is surfaced via swarm status so operators
+    /// can see liveness, and used by `cleanup_stale_agents` to decide
+    /// which agents are stale/dead.
+    pub async fn swarm_agent_heartbeat(&self, id: &str) -> Result<(), String> {
+        self.state
+            .swarm_agent_heartbeat(id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let _ = self.ws_tx.send(WsEnvelope {
+            topic: "hexflo".to_string(),
+            event: "agent:heartbeat".to_string(),
+            data: serde_json::json!({
+                "agentId": id,
+                "at": chrono::Utc::now().to_rfc3339(),
+            }),
+        });
+
+        Ok(())
+    }
+
+    /// Remove a swarm agent (clean shutdown — skips the stale/dead path).
+    pub async fn swarm_agent_remove(&self, id: &str) -> Result<(), String> {
+        self.state
+            .swarm_agent_remove(id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let _ = self.ws_tx.send(WsEnvelope {
+            topic: "hexflo".to_string(),
+            event: "agent:removed".to_string(),
+            data: serde_json::json!({ "agentId": id }),
+        });
+
+        Ok(())
+    }
+
     // ── Agent operations ───────────────────────────────
 
     /// List all tracked agents.
@@ -621,5 +707,18 @@ mod tests {
         assert!(VALID_TOPOLOGIES.contains(&"hierarchical"));
         assert!(VALID_TOPOLOGIES.contains(&"pipeline"));
         assert!(!VALID_TOPOLOGIES.contains(&"star"));
+    }
+
+    /// P4-4 contract: dead threshold must be exactly 120s so tasks are reclaimed
+    /// after two minutes of silence. Stale must be shorter than dead so clients
+    /// see a warning state before reclamation kicks in.
+    #[test]
+    fn heartbeat_thresholds_match_p4_4_spec() {
+        assert_eq!(HEARTBEAT_DEAD_SECS, 120, "P4-4 requires 120s dead timeout");
+        assert!(
+            HEARTBEAT_STALE_SECS < HEARTBEAT_DEAD_SECS,
+            "stale must trigger before dead"
+        );
+        assert!(HEARTBEAT_STALE_SECS > 0, "stale threshold must be positive");
     }
 }

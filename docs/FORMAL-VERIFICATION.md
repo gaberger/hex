@@ -17,8 +17,8 @@ The sched daemon's task lifecycle is modeled with two configs:
 
 | Config | Spec | Result |
 |---|---|---|
-| `sched_daemon_buggy.cfg` | `DispatchVacuous` reachable, no `WF(TimeoutSweep)` | TLC finds a 3-state counterexample violating `HandleInvariant`: `pending → Claim → claimed → DispatchVacuous → in_progress (handle=FALSE)` |
-| `sched_daemon_fixed.cfg` | `NextFixed` removes `DispatchVacuous`, adds `EvidenceRequired` invariant + WF on `TimeoutSweep` | 14 states checked, all safety + liveness properties hold (`TerminalReachable`, `BoundedTermination`) |
+| `sched_daemon_buggy.cfg` | `SpecBuggy`: `DispatchVacuous` reachable, no `WF(TimeoutSweep)` | TLC reports a `TerminalReachable` liveness counterexample: `pending → Claim → claimed → DispatchVacuous → in_progress (handle=FALSE) → Tick × (TimeoutTicks+GraceTicks) → stuttering` — task stuck forever, no sweep is forced. (`HandleInvariant` is also violated by this trace; it's checked separately under `SpecFixed`.) |
+| `sched_daemon_fixed.cfg` | `SpecFixed`: `NextFixed` removes `DispatchVacuous`, adds `EvidenceRequired` invariant + WF on `TimeoutSweep` | 14 states checked, all safety + liveness properties hold (`TerminalReachable`, `BoundedTermination`) |
 
 The model maps 1:1 to the Rust implementation:
 
@@ -41,6 +41,12 @@ curl -sLo ~/.local/share/tla/tla2tools.jar \
 # check a model
 java -cp ~/.local/share/tla/tla2tools.jar tlc2.TLC \
   -config docs/algebra/sched_daemon_fixed.cfg \
+  -workers auto \
+  docs/algebra/sched_daemon.tla
+
+# reproduce the current-daemon liveness counterexample (P0.2)
+java -cp ~/.local/share/tla/tla2tools.jar tlc2.TLC \
+  -config docs/algebra/sched_daemon_buggy.cfg \
   -workers auto \
   docs/algebra/sched_daemon.tla
 ```
