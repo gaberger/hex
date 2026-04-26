@@ -1,0 +1,66 @@
+{
+  "adr": "ADR-2604261430",
+  "created_at": "2026-04-26T14:30:00Z",
+  "created_by": "claude+adr-synthesis",
+  "description": "Phase 1 of ADR-2604261430. Land the new IConsolidationMemoryPort trait and its supporting domain types in hex-core. No adapter implementations yet — this phase is the contract surface only. Subsequent phases (P2 Noop adapter, P3 inference-gateway facade, P4 Stash sidecar adapter, P5 CLI/MCP, P6 doctor + smoke, P7 Compose + docs, P8 hypothesis/goal/failure surface) build on this contract and ship as separate workplans.",
+  "feature": "Stash-backed Consolidation Memory Port — Phase 1 (Port Contract)",
+  "id": "wp-consolidation-memory-port-p1",
+  "phases": [
+    {
+      "description": "Contract-only phase: domain types + trait, no impls. Gate is cargo check -p hex-core to confirm the surface compiles. This is intentionally narrow so downstream phases (Noop adapter, Stash adapter) can branch in parallel.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check -p hex-core",
+        "type": "test"
+      },
+      "id": "P1",
+      "name": "IConsolidationMemoryPort trait + domain types",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Create hex-core/src/domain/consolidation.rs with the value types the port surface returns. All types derive Debug+Clone+serde::Serialize+serde::Deserialize. Types: (1) EpisodeId(String) — newtype around the stash episode UUID. (2) Episode { id: EpisodeId, content: String, namespace: String, created_at: chrono::DateTime<Utc>, score: Option<f32> }. (3) FactId(String). (4) Fact { id: FactId, content: String, confidence: f32, namespace: String, sources: Vec<EpisodeId>, last_seen_at: chrono::DateTime<Utc> }. (5) Relationship { id: String, subject: String, predicate: String, object: String, confidence: f32 }. (6) ContradictionId(String). (7) Contradiction { id: ContradictionId, fact_a: FactId, fact_b: FactId, detected_at: chrono::DateTime<Utc>, resolution: Option<String> }. (8) CausalDirection enum { Forward, Backward }. (9) CausalLink { cause: FactId, effect: FactId, confidence: f32 }. (10) CausalChain { root: FactId, links: Vec<CausalLink>, max_depth_reached: bool }. (11) ConsolidationReport { stages_run: Vec<String>, episodes_processed: u32, facts_created: u32, contradictions_found: u32, took_ms: u64 }. (12) ConsolidationError enum thiserror with variants: NotImplemented, Backend(String), InvalidNamespace(String), Reasoner(String), Timeout. Add `pub mod consolidation;` to hex-core/src/domain/mod.rs. Per ADR-001 rule 1, this module imports only std + chrono + serde + thiserror — never from ports/ or adapters/.",
+          "files": [
+            "hex-core/src/domain/consolidation.rs",
+            "hex-core/src/domain/mod.rs"
+          ],
+          "id": "P1.1",
+          "layer": "domain",
+          "name": "Add consolidation domain types to hex-core",
+          "status": "pending"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1"
+          ],
+          "description": "Create hex-core/src/ports/consolidation_memory.rs defining IConsolidationMemoryPort as an async_trait. Method signatures (verbatim): async fn remember(&self, content: &str, namespace: &str) -> Result<EpisodeId, ConsolidationError>; async fn recall(&self, query: &str, namespaces: &[String], limit: u32) -> Result<Vec<Episode>, ConsolidationError>; async fn forget(&self, about: &str, namespaces: &[String]) -> Result<u32, ConsolidationError>; async fn consolidate(&self, namespaces: &[String]) -> Result<ConsolidationReport, ConsolidationError>; async fn query_facts(&self, query: &str, namespace: &str) -> Result<Vec<Fact>, ConsolidationError>; async fn query_relationships(&self, entity: &str, namespace: &str) -> Result<Vec<Relationship>, ConsolidationError>; async fn list_contradictions(&self, namespace: &str) -> Result<Vec<Contradiction>, ConsolidationError>; async fn resolve_contradiction(&self, id: &str, resolution: &str) -> Result<(), ConsolidationError>; async fn trace_causal_chain(&self, fact_id: &str, direction: CausalDirection, max_depth: u8) -> Result<CausalChain, ConsolidationError>. Trait bounds: Send + Sync. Imports: super::super::domain::consolidation::* only (ADR-001 rule 2 — ports import domain only). Add `pub mod consolidation_memory;` to hex-core/src/ports/mod.rs and re-export the trait at the crate root if other ports are re-exported there (match the existing pattern).",
+          "files": [
+            "hex-core/src/ports/consolidation_memory.rs",
+            "hex-core/src/ports/mod.rs"
+          ],
+          "id": "P1.2",
+          "layer": "ports",
+          "name": "Add IConsolidationMemoryPort trait to hex-core",
+          "status": "pending"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1",
+            "P1.2"
+          ],
+          "description": "Add a compile-only smoke test in hex-core/src/ports/consolidation_memory.rs (under #[cfg(test)]) that defines a minimal struct DummyConsolidation; impl IConsolidationMemoryPort for DummyConsolidation returning ConsolidationError::NotImplemented from every method. Asserts the trait is object-safe via a let _: &dyn IConsolidationMemoryPort = &DummyConsolidation; line. This catches regressions where a future method signature breaks dyn-compatibility.",
+          "files": [
+            "hex-core/src/ports/consolidation_memory.rs"
+          ],
+          "id": "P1.3",
+          "layer": "ports",
+          "name": "Object-safety smoke test for IConsolidationMemoryPort",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ]
+}
