@@ -22,6 +22,7 @@ pub mod query;
 pub mod rl;
 pub mod secrets;
 pub mod sessions;
+pub mod swaps;
 pub mod swarms;
 pub mod neural_lab;
 pub mod test_sessions;
@@ -453,13 +454,17 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
         .route("/api/event", post(push::push_event)
             .layer(DefaultBodyLimit::max(EVENT_BODY_LIMIT)))
-        // Tool-call event log (ADR-2604012137) — SQLite + WebSocket broadcast
+        // Tool-call event log (ADR-2604012137, ADR-2604020900) — in-memory ring buffer + WebSocket broadcast.
         .route("/api/events", post(events::post_event).get(events::list_events))
         // Paginated briefing (ADR-2604131500 P1.1)
         .route("/api/briefing", get(briefing::get_briefing))
         // AGENTIC SCHED (ADR-2604102200) — must register BEFORE {project_id} routes
         .route("/api/sched/status", get(sched::status))
         .route("/api/sched/test", post(sched::test))
+        // wp-sched-queue-history P1.2 — handler existed in sched.rs but was
+        // never registered. Wired here so `hex sched queue history` and the
+        // sched_daemon_terminal_state.rs tests have an endpoint to call.
+        .route("/api/sched/queue/history", get(sched::queue_history))
         // AIOS Experience (ADR-2604131500) — pulse, steer, taste, trust
         .route("/api/pulse", get(pulse::get_pulse))
         .route("/api/steer", post(steer::handle_steer))
@@ -521,6 +526,15 @@ pub fn build_router(state: SharedState) -> Router {
         // Swarm + HexFlo routes — guarded: only registered agents can mutate
         .route("/api/swarms", post(swarms::create_swarm)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        // Substrate swap-tickets (ADR-2604261500 P5).
+        .route("/api/swaps", get(swaps::list_swaps))
+        .route("/api/swaps/propose", post(swaps::propose_swap))
+        .route("/api/swaps/dry-run", post(swaps::dry_run_swap))
+        .route("/api/swaps/secret/propose", post(swaps::propose_secret_swap))
+        .route("/api/swaps/secret/dry-run", post(swaps::dry_run_secret_swap))
+        .route("/api/swaps/{id}/samples", get(swaps::list_samples))
+        // Substrate operator health snapshot.
+        .route("/api/substrate/status", get(swaps::substrate_status))
         .route("/api/swarms/active", get(swarms::list_active_swarms))
         .route("/api/swarms/failed", get(swarms::list_failed_swarms))
         .route("/api/swarms/all", get(swarms::list_all_swarms))
@@ -800,7 +814,7 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/command-sessions/{session_id}/search", get(command_sessions::search_session));
 
-    // Session persistence (ADR-036 / ADR-042 P2.5) — SpacetimeDB primary, SQLite fallback
+    // Session persistence (ADR-036 / ADR-042 P2.5) — SpacetimeDB.
     let router = router
         .route("/api/sessions", post(sessions::create_session)
             .get(sessions::list_sessions)

@@ -316,8 +316,7 @@ fn summarize_task(task: &serde_json::Value) -> SchedTaskSummary {
 /// - `limit`  — max rows to return. Clamped to [1, 200]; default 20.
 ///
 /// Sort: newest first by `created_at_us`. Reads from `hexflo_memory` via
-/// `hexflo_memory_search("brain-task:")`, so both SQLite and SpacetimeDB-backed
-/// state adapters are transparently supported.
+/// `hexflo_memory_search("brain-task:")` — backed by SpacetimeDB.
 pub async fn queue_history(
     State(state): State<SharedState>,
     Query(params): Query<HashMap<String, String>>,

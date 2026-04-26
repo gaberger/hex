@@ -215,10 +215,10 @@ async fn sync_check(
 }
 
 /// Perform a store→get roundtrip against the nexus memory API to validate
-/// that multi-agent memory sync is intact. If SpacetimeDB is online, the
-/// value flows through it; otherwise nexus falls back to its SQLite hub.
-/// Either path satisfies P4-3: a second agent calling `hex memory get` on
-/// the same key would observe the stored value.
+/// that multi-agent memory sync is intact. The value flows through
+/// SpacetimeDB; if STDB is unreachable the roundtrip fails. Satisfies
+/// P4-3: a second agent calling `hex memory get` on the same key would
+/// observe the stored value.
 async fn validate(
     key: Option<String>,
     value: Option<String>,

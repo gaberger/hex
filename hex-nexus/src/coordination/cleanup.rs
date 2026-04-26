@@ -1,6 +1,6 @@
 //! Agent heartbeat timeout and task reclamation for HexFlo.
 //!
-//! Delegates to IStatePort — works with both SQLite and SpacetimeDB backends.
+//! Delegates to IStatePort — backed by SpacetimeDB.
 
 use serde::{Deserialize, Serialize};
 

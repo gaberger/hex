@@ -1,8 +1,8 @@
 //! In-memory tool-call event adapter (ADR-2604012137, ADR-2604020900).
 //!
-//! Replaces the former SQLite-backed SqliteEventAdapter. Events are ephemeral
-//! (WebSocket broadcast is the primary delivery mechanism) — a bounded ring
-//! buffer of the last 1000 events is sufficient for dashboard history.
+//! Events are ephemeral (WebSocket broadcast is the primary delivery
+//! mechanism) — a bounded ring buffer of the last 1000 events is sufficient
+//! for dashboard history.
 
 use std::collections::VecDeque;
 use std::sync::Arc;

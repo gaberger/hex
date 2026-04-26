@@ -3066,10 +3066,14 @@ name = "hex-core"
 version = "26.4.31"
 dependencies = [
  "async-trait",
+ "chrono",
+ "futures",
  "serde",
  "serde_json",
  "serde_yaml",
  "thiserror 2.0.18",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

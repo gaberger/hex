@@ -2,10 +2,10 @@
 //!
 //! Validates the brain-task lifecycle through hex-nexus REST endpoints:
 //!   1. Enqueue a brain task via POST /api/hexflo/memory
-//!   2. Verify it appears as pending via GET /api/brain/status
+//!   2. Verify it appears as pending via GET /api/sched/status
 //!   3. Transition through in_progress → completed (simulating daemon drain)
-//!   4. Assert the task reaches terminal state via /api/brain/queue/history
-//!   5. Assert /api/brain/status shows zero pending/running
+//!   4. Assert the task reaches terminal state via /api/sched/queue/history
+//!   5. Assert /api/sched/status shows zero pending/running
 //!
 //! This test is designed to FAIL on current main (no terminal-signal
 //! sweep) and PASS after P2 lands the sweep logic.
@@ -158,7 +158,7 @@ fn make_expired_in_progress_task(id: &str, project_id: &str, timeout_s: u64) -> 
 }
 
 fn brain_status_url(addr: SocketAddr, project: &str) -> String {
-    format!("http://{}/api/brain/status?project={}", addr, project)
+    format!("http://{}/api/sched/status?project={}", addr, project)
 }
 
 // ── Test: Enqueue appears in brain status as pending ─────────────────
@@ -193,7 +193,7 @@ async fn enqueued_task_visible_in_brain_status() {
 
     assert!(
         found_pending,
-        "enqueued brain task must appear as pending in /api/brain/status"
+        "enqueued brain task must appear as pending in /api/sched/status"
     );
 }
 
@@ -271,7 +271,7 @@ async fn enqueue_drain_reaches_terminal_within_timeout() {
     // Step 6: Verify terminal via history endpoint
     let history_resp = client
         .get(format!(
-            "http://{}/api/brain/queue/history?status=completed",
+            "http://{}/api/sched/queue/history?status=completed",
             addr
         ))
         .send()
@@ -315,7 +315,7 @@ async fn failed_task_reaches_terminal() {
     // Verify via history
     let history_resp = client
         .get(format!(
-            "http://{}/api/brain/queue/history?status=failed",
+            "http://{}/api/sched/queue/history?status=failed",
             addr
         ))
         .send()
@@ -446,7 +446,7 @@ async fn expired_in_progress_task_swept_to_failed() {
     // Verify task is now failed
     let history_resp = client
         .get(format!(
-            "http://{}/api/brain/queue/history?status=failed",
+            "http://{}/api/sched/queue/history?status=failed",
             addr
         ))
         .send()

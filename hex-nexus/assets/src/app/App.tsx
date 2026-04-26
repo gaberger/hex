@@ -34,6 +34,7 @@ const SwarmDetail = lazy(() => import('../components/project/SwarmDetail'));
 const WorkPlanDetail = lazy(() => import('../components/project/WorkPlanDetail'));
 const InboxPanel = lazy(() => import('../components/inbox/InboxPanel'));
 const ResearchLab = lazy(() => import('../components/neural-lab/ResearchLab'));
+const SwapsView = lazy(() => import('../components/swaps/SwapsView'));
 const ActivityPanel = lazy(() => import('../components/views/ActivityPanel'));
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
@@ -504,6 +505,24 @@ const App: Component = () => {
               </svg>
               <Show when={!sidebarCollapsed()}>Research Lab</Show>
             </button>
+            {/* Substrate Swaps (ADR-2604261500) */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              classList={{
+                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "swaps",
+                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "swaps",
+                "justify-center px-0": sidebarCollapsed(),
+              }}
+              aria-label={sidebarCollapsed() ? "Substrate Swaps" : undefined}
+              aria-current={route().page === "swaps" ? "page" : undefined}
+              onClick={() => { navigate({ page: "swaps" }); setMobileDrawerOpen(false); }}
+            >
+              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                classList={{ "text-cyan-400": route().page === "swaps" }}>
+                <path d="M16 3l4 4-4 4M20 7H8M8 21l-4-4 4-4M4 17h12" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Swaps</Show>
+            </button>
 
             {/* Collapse toggle (desktop only) */}
             <button
@@ -546,6 +565,7 @@ const App: Component = () => {
             <Match when={route().page === "inference"}><ControlPlane /></Match>
             <Match when={route().page === "fleet"}><ControlPlane /></Match>
             <Match when={route().page === "research-lab"}><ResearchLab /></Match>
+            <Match when={route().page === "swaps"}><SwapsView /></Match>
           </Switch>
           {/* BottomBar -- inside center content so it doesn't span under sidebar */}
           <BottomBar />

@@ -1,6 +1,6 @@
 //! Key-value persistent memory store for HexFlo.
 //!
-//! Delegates to IStatePort — works with both SQLite and SpacetimeDB backends.
+//! Delegates to IStatePort — backed by SpacetimeDB.
 
 use serde::{Deserialize, Serialize};
 
@@ -85,7 +85,7 @@ impl HexFlo {
     /// List all memory entries in a given scope.
     /// (Implemented as a search with scope filter — IStatePort search covers this.)
     pub async fn memory_list(&self, scope: &str) -> Result<Vec<MemoryEntry>, String> {
-        // Search with scope prefix as query — the SQLite LIKE will match
+        // Search with scope prefix as query — the STDB filter matches by prefix.
         let results = self.state
             .hexflo_memory_search(scope)
             .await

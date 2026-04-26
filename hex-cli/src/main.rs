@@ -269,6 +269,11 @@ enum Commands {
         #[command(subcommand)]
         action: StdbAction,
     },
+    /// Substrate (ADR-2604261500): propose / list / inspect inference swaps
+    Substrate {
+        #[command(subcommand)]
+        action: commands::substrate::SubstrateAction,
+    },
     /// Swarm coordination
     Swarm {
         #[command(subcommand)]
@@ -617,6 +622,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Sched { action } => commands::sched::run(action).await,
         Commands::Brain { action } => commands::brain_alias::run(action).await,
         Commands::Stdb { action } => commands::stdb::run(action).await,
+        Commands::Substrate { action } => commands::substrate::run(action).await,
         Commands::Swarm { action } => commands::swarm::run(action).await,
         Commands::Task { action } => commands::task::run(action).await,
         Commands::Inbox { action } => commands::inbox::run(action).await,

@@ -1292,7 +1292,6 @@ async fn worker(
         }
 
         // Step 1: claim a pending task via /api/swarms/active (SpacetimeDB-backed).
-        // /api/work-items/incomplete uses the SQLite port and misses SpacetimeDB tasks.
         if let Ok(resp) = nexus.get("/api/swarms/active").await {
             if let Some(swarms) = resp.as_array() {
                 'claim: for swarm in swarms {

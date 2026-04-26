@@ -82,7 +82,7 @@ macro_rules! require_session_port {
             None => {
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
-                    Json(json!({ "error": "session persistence not available (SpacetimeDB unreachable, SQLite disabled)" })),
+                    Json(json!({ "error": "session persistence not available (SpacetimeDB unreachable)" })),
                 );
             }
         }

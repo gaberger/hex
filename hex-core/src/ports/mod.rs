@@ -1,3 +1,4 @@
+pub mod adapter_generator;
 pub mod agent_runtime;
 pub mod brain;
 pub mod build;

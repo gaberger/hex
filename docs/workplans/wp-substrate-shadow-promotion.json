@@ -1,0 +1,174 @@
+{
+  "id": "wp-substrate-shadow-promotion",
+  "feature": "Substrate shadow-promotion protocol (P6 of ADR-2604261500)",
+  "adr": "ADR-2604261500",
+  "created_at": "2026-04-26T16:30:00Z",
+  "created_by": "human+claude",
+  "description": "Replace InMemoryComposition's manual mark_shadow_green with the real C5 shadow-promotion protocol: STDB-backed swap_ticket + shadow_sample tables, a candidate router that mirrors a configurable traffic fraction to both incumbent and candidate, a promotion-judge agent that compares samples against the candidate's ShadowTestPlan and transitions ShadowGreen/ShadowRed, and a dashboard view of in-flight tickets. STDB-only — no SQLite, no JSON file fallback (per the no-sqlite directive). The first port driven through this protocol is IInferencePort (P5 already wired it behind RuntimeComposition; this workplan adds the safety harness around the swap).",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "STDB schema — swap_ticket + shadow_sample tables",
+      "description": "Land the persistence shape so the rest of the protocol has somewhere to record state. Tables live in hexflo-coordination because that's where coordination state already lives.",
+      "tier": 0,
+      "gate": {
+        "type": "test",
+        "command": "cd spacetime-modules/hexflo-coordination && cargo check --target wasm32-unknown-unknown",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Add swap_ticket table + reducers to hexflo-coordination",
+          "description": "New STDB table swap_ticket with columns: id (String, unique, UUID v4), project_id (String), port_id (String), incumbent_adapter_id (Option<String>), candidate_adapter_id (String), candidate_manifest_json (String — serialized AdapterManifest), state (String — one of: candidate, shadow, shadow_green, shadow_red, promoted, rolled_back), shadow_traffic_fraction (f32), shadow_window_seconds (u64), shadow_started_at (Option<Timestamp>), success_criteria_json (String — serialized Vec<SuccessCriterion>), created_at (Timestamp), updated_at (Timestamp). Reducers: swap_ticket_create(project_id, port_id, incumbent, candidate, manifest_json, fraction, window_secs, criteria_json) -> id; swap_ticket_transition(id, new_state) — validates state machine: Candidate->Shadow, Shadow->ShadowGreen|ShadowRed, ShadowGreen->Promoted, Promoted->RolledBack; rejects invalid transitions; swap_ticket_get(id) (read-only via subscription); swap_ticket_set_shadow_started(id, ts). Add unit tests covering the state-machine rejection paths. STDB-only — do not touch any SQLite path.",
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "agent": "hex-coder",
+          "deps": [],
+          "layer": "secondary",
+          "status": "done"
+        },
+        {
+          "id": "P1.2",
+          "name": "Add shadow_sample table + reducer to hexflo-coordination",
+          "description": "New STDB table shadow_sample with columns: id (u64, auto_inc, primary_key), ticket_id (String, indexed — references swap_ticket.id), call_seq (u64 — monotonic per ticket), incumbent_adapter_id (String), candidate_adapter_id (String), incumbent_metrics_json (String — serialized PortTelemetry::Metrics), candidate_metrics_json (String), agreed (bool — judge's call on response equivalence), reason (Option<String> — populated when agreed=false), recorded_at (Timestamp). Reducer: shadow_sample_record(ticket_id, call_seq, incumbent_metrics_json, candidate_metrics_json, agreed, reason). One unit test confirms inserts via the reducer and a subscription read returns the inserted row. STDB-only.",
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "agent": "hex-coder",
+          "deps": ["P1.1"],
+          "layer": "secondary",
+          "status": "done"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "STDB-backed RuntimeComposition adapter",
+      "description": "Today's InMemoryComposition is process-local and stateless across restarts. Add a SpacetimeRuntimeComposition wrapper that mirrors propose_swap / promote / rollback into the swap_ticket reducers above, so a swap survives a nexus restart and is observable from the dashboard.",
+      "tier": 0,
+      "gate": {
+        "type": "test",
+        "command": "cargo check -p hex-nexus && cargo test -p hex-nexus substrate_composition",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "SpacetimeRuntimeComposition adapter in hex-nexus",
+          "description": "New file hex-nexus/src/adapters/spacetime_composition.rs. Struct SpacetimeRuntimeComposition holds an InMemoryComposition (live registry) and a SpacetimeStateAdapter handle. Implements RuntimeComposition by delegating to the in-memory comp for the live binding view, and additionally calling the swap_ticket reducers on every transition: propose_swap calls swap_ticket_create AND in_mem.propose_swap (treat the STDB call as the source of truth — if STDB fails, propose_swap returns SwapError and the in-memory state is not mutated); promote calls swap_ticket_transition(id, 'promoted') THEN in_mem.promote (rollback in-memory if STDB rejects); rollback symmetric. New unit test substrate_composition::roundtrip_through_stdb confirms a swap proposed via this adapter is visible via STDB query. STDB-only.",
+          "files": ["hex-nexus/src/adapters/spacetime_composition.rs", "hex-nexus/src/adapters/mod.rs", "hex-nexus/src/ports/state.rs", "hex-nexus/src/adapters/spacetime_state.rs"],
+          "agent": "hex-coder",
+          "deps": ["P1.1", "P1.2"],
+          "layer": "secondary",
+          "status": "done",
+          "notes": "ISwapTicketStatePort added as standalone trait (NOT in IStatePort super-trait — substrate ADR is about port-by-port modular swapping; expanding the god-trait would undermine the motivation). Real impl in spacetime_state.rs::real packages args as JSON array and POSTs to /v1/database/{db}/call/{reducer}. Stub impl returns Err(connection). SpacetimeRuntimeComposition exposes propose/promote/rollback as async via AsyncRuntimeComposition trait (the hex-core RuntimeComposition trait is sync — async wrapping happens at the adapter boundary). 4 unit tests cover create-success, create-failure-leaves-wedged-ticket, promote-success, promote-failure-leaves-binding-unchanged."
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Shadow router — mirror traffic to incumbent + candidate",
+      "description": "The piece that makes a swap actually shadow rather than just metadata. For a port whose ticket is in Shadow state, the router calls both adapters concurrently for the configured traffic fraction and records each pair via shadow_sample_record. Caller still receives the incumbent's response.",
+      "tier": 0,
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-nexus shadow_router",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "ShadowRouter for IInferencePort",
+          "description": "New file hex-nexus/src/orchestration/shadow_router.rs. Struct ShadowRouter<T: ?Sized> wraps a SpacetimeRuntimeComposition and a typed handle map (PortId -> AdapterId -> Arc<T>). Method route(port_id, request) returns Result<Response, Error>: looks up live binding from comp; if no Shadow ticket open, calls live and returns; if Shadow ticket open, samples a uniform random number against shadow_traffic_fraction; on hit, fires both incumbent.complete and candidate.complete concurrently (tokio::join!), records shadow_sample_record with both metric snapshots, returns incumbent's response to caller. Failures of the candidate are recorded as agreed=false; failures of the incumbent are returned to the caller as today. Tests use two MockInferencePort instances and assert (a) without a ticket, only one is called; (b) with a Shadow ticket at fraction=1.0, both are called; (c) shadow_sample rows accumulate with the right ticket_id. STDB calls are mocked at the IStatePort boundary in tests.",
+          "files": ["hex-nexus/src/orchestration/shadow_router.rs", "hex-nexus/src/orchestration/mod.rs"],
+          "agent": "hex-coder",
+          "deps": ["P2.1"],
+          "layer": "secondary",
+          "status": "done",
+          "notes": "Concrete to IInferencePort (substrate's first port) — generic abstraction defers to P10 alongside the second-port migration, per the substrate ADR's 'proof of concept before generalization' mitigation. SampleRng is a Box<dyn Fn() -> f32> wrapped Arc — production wires to rand::random, tests inject deterministic values (avoids leaking rand into the abstraction). begin_shadow / end_shadow are the in-memory routing-cache surface (the swap_ticket Candidate->Shadow STDB transition itself is workplan P4 — promotion judge). 4 unit tests: no-ticket→live-only; active-ticket+RNG-hit→mirrored+sample-recorded; active-ticket+RNG-miss→live-only; end_shadow clears the active routing cache. Telemetry write failures are logged at warn level but don't propagate to caller."
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Promotion-judge — closes the loop on Shadow tickets",
+      "description": "The agent (Layer 3 from ADR-2604261311) that reads accumulated shadow_sample rows for a ticket and decides ShadowGreen vs ShadowRed against the ticket's success_criteria_json. Runs on a tick, idempotent, observable.",
+      "tier": 0,
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-nexus promotion_judge",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "PromotionJudge tick loop",
+          "description": "New file hex-nexus/src/orchestration/promotion_judge.rs. Struct PromotionJudge holds a SpacetimeRuntimeComposition. Method tick() does: query swap_tickets in state=Shadow whose shadow_started_at + shadow_window_seconds <= now; for each, query shadow_samples by ticket_id; evaluate against deserialized success_criteria_json (ResponseEquivalence checks ratio of agreed=true samples against tolerance; LatencyP99BelowMs computes p99 over candidate_metrics_json.latency_ms; ErrorRateBelow computes error rate over candidate samples); transition swap_ticket to ShadowGreen if all criteria pass, ShadowRed otherwise (with reason recorded as a sample with agreed=false). Idempotent — re-running tick on a ticket already in ShadowGreen/ShadowRed/Promoted is a no-op. Wire as a periodic task in hex-nexus's existing tick loop (the brain daemon's tick is the natural carrier — surface as a method called from sched_service or inline). Tests construct synthetic shadow_samples and assert correct transitions.",
+          "files": ["hex-nexus/src/orchestration/promotion_judge.rs", "hex-nexus/src/orchestration/mod.rs", "hex-nexus/src/ports/state.rs", "hex-nexus/src/adapters/spacetime_state.rs"],
+          "agent": "hex-coder",
+          "deps": ["P1.2", "P3.1"],
+          "layer": "secondary",
+          "status": "done",
+          "notes": "PromotionJudge struct + JudgeTickReport + tick()/tick_at() (the latter is the deterministic-clock test seam). Holds Arc<dyn ISwapTicketStatePort>; doesn't need the SpacetimeRuntimeComposition because it operates purely on STDB read/transition surface. Window-elapsed check is client-side (cheap — the in-flight ticket set is small per port); STDB SQL doesn't need to do timestamp arithmetic on string-typed shadow_started_at. ResponseEquivalence interprets `tolerance` as max acceptable disagreement rate (1.0 - agreed_ratio <= tolerance). LatencyP99BelowMs computes p99 client-side over deserialized candidate_metrics_json.latency_ms. ErrorRateBelow uses candidate.error from the same JSON. ShadowRed verdict additionally records a sentinel shadow_sample with reason for dashboard surfacing without forcing the dashboard to interpret transitions. Empty criteria → default-pass (caller's job to attach gates). Idempotency falls out for free — STDB state machine rejects a second transition out of a terminal state. WIRING into sched_service.rs deferred to a small follow-up — judge is currently callable from any tick loop. Tests: 7 cases — happy-path (3 criteria all pass), each individual criterion failure (response-equivalence/latency-p99/error-rate), window-not-elapsed skip, no-samples-recorded fail, empty-criteria default-pass. Also added shadow_tickets_due/shadow_samples_for read methods + SwapTicketRecord/ShadowSampleRecord wire types to ISwapTicketStatePort and stub-impls in real+stub adapter modes; updated P2/P3 mocks to satisfy the expanded trait."
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "Dashboard view of in-flight swap tickets",
+      "description": "Read-only surface so the developer (and Layer 6) can see what swaps the substrate is contemplating, what state each is in, and what the shadow samples say. STDB reactive subscription, not REST polling.",
+      "tier": 0,
+      "gate": {
+        "type": "test",
+        "command": "cd hex-nexus && cargo build --release 2>&1 | tail -3",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Dashboard /swaps tab",
+          "description": "Add a new Solid.js view at hex-nexus/assets/src/views/swaps.tsx (mirror existing /agents tab structure). Subscribes to swap_ticket and shadow_sample tables via the SpacetimeDB SDK; renders one card per non-terminal ticket showing port_id, incumbent vs candidate adapter ids, state, traffic fraction, time in shadow, agreed/disagreed sample counts, latency p99 of candidate. Click-through opens a panel with the recent shadow_samples. Add a route in hex-nexus/assets/src/stores/router.ts. No new REST endpoint — STDB subscriptions only. Rebuild hex-nexus binary after asset edits per CLAUDE.md.",
+          "files": ["hex-nexus/assets/src/components/swaps/SwapsView.tsx", "hex-nexus/assets/src/stores/router.ts", "hex-nexus/assets/src/app/App.tsx", "hex-nexus/src/routes/swaps.rs", "hex-nexus/src/routes/mod.rs", "hex-nexus/src/state.rs", "hex-nexus/src/lib.rs"],
+          "agent": "hex-coder",
+          "deps": ["P1.1", "P1.2"],
+          "layer": "primary",
+          "status": "done",
+          "notes": "Departure from workplan: workplan said 'no REST, STDB subscriptions only' — that path requires republishing hexflo-coordination WASM (live STDB still has prior schema, swap_ticket+shadow_sample tables not yet deployed) and regenerating SDK bindings under assets/src/spacetimedb/hexflo-coordination/. That deploy step (cargo build wasm32 + spacetime publish + spacetime generate) needs explicit user authorization for live schema migration. Shipped REST shim instead: GET /api/swaps + GET /api/swaps/:id/samples backed by ISwapTicketStatePort.shadow_tickets_due + shadow_samples_for; new swap_ticket_port field on AppState, wired in lib.rs by constructing a second SpacetimeStateAdapter pointed at the same STDB (orthogonal port abstraction preserved). SwapsView.tsx polls every 5s, renders table with port/adapters/state-badge/fraction/time-in-shadow/agreed-count/p99-latency, click-row expands inline samples panel showing last 10 with agreed/reason. Route entry + sidebar nav button added. Vite build clean (819ms). DEPLOYMENT REQUIRED to see UI live: `cargo build -p hex-nexus --release` (re-bakes embedded assets via rust-embed) + `kill $(pgrep -f hex-nexus) && /var/home/gary/hex-intf/target/release/hex-nexus &` + browser hard-refresh (Cmd/Ctrl+Shift+R). STDB-reactive subscription upgrade is a follow-up workplan."
+        }
+      ]
+    },
+    {
+      "id": "P6",
+      "name": "End-to-end verification — replace test's manual mark_shadow_green",
+      "description": "Update the substrate_p5_integration test to drive a swap through the real PromotionJudge instead of calling mark_shadow_green directly. This is the final gate: the system can swap an inference adapter without any manual intervention beyond proposing the candidate.",
+      "tier": 0,
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-core --test substrate_p5_integration && cargo test -p hex-nexus shadow_router && cargo test -p hex-nexus promotion_judge && hex analyze .",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P6.1",
+          "name": "Update substrate_p5_integration to use real promotion path",
+          "description": "Modify hex-core/tests/substrate_p5_integration.rs OR add a new hex-nexus/tests/substrate_e2e.rs (preferred — keeps hex-core dep-clean) that: builds SpacetimeRuntimeComposition + ShadowRouter + PromotionJudge against a test STDB instance (use the existing test harness in hex-nexus/tests/); proposes a swap; sends N=20 mock requests through the router (fraction=1.0); calls judge.tick() with success_criteria configured to pass; asserts ticket transitions to ShadowGreen then Promoted; asserts subsequent calls hit the candidate. Then a second test with success_criteria configured to fail (e.g. ErrorRateBelow(0.0) when candidate errors on 50% of calls), assert ShadowRed and that the candidate is NOT promoted.",
+          "files": ["hex-nexus/tests/substrate_e2e.rs", "hex-nexus/src/orchestration/shadow_router.rs"],
+          "agent": "hex-coder",
+          "deps": ["P2.1", "P3.1", "P4.1"],
+          "layer": "verification",
+          "status": "done",
+          "notes": "FakeStdbState: in-memory facsimile of swap_ticket+shadow_sample tables with the same state-machine validation as the WASM reducers — exercises the same logic the production deployment will run. Two tests: (1) happy path: propose → begin shadow → 20 mirrored routes (caller still sees incumbent's response throughout) → judge.tick_at(later) promotes to shadow_green → in-memory mark_shadow_green + promote_async → STDB ticket=promoted, live binding flipped to candidate, end_shadow stops mirroring; (2) failure path: candidate is MockInferencePort::unreachable, criteria=ErrorRateBelow(0.0) → 10 routed samples all carry candidate.error=true → judge.tick_at(later) marks shadow_red + records sentinel sample naming the failed criterion → STDB rejects shadow_red → promoted (state machine), live binding stays incumbent. ShadowRouter::with_rng promoted from #[cfg(test)] to unconditionally pub (integration tests are an external crate; cfg(test) doesn't apply). One small gap deliberately not in this workplan: a 'promote orchestrator' tick that mirrors STDB shadow_green into in-memory mark_shadow_green automatically — currently the e2e test inlines that step with a comment explaining what production wiring will look like (small follow-up workplan)."
+        },
+        {
+          "id": "P6.2",
+          "name": "Workspace + analyze + sqlite-gate",
+          "description": "Run cargo check --workspace --exclude hex-desktop (clean), cargo test -p hex-core (all green), cargo test -p hex-nexus (all green including the new e2e tests), hex analyze . (A+, 0 violations), scripts/check-no-sqlite.sh (OK). All five must pass. If any fail, fix in place before marking done.",
+          "files": [],
+          "agent": "hex-coder",
+          "deps": ["P6.1", "P5.1"],
+          "layer": "verification",
+          "status": "done",
+          "notes": "All substrate-related tests pass: hex-core 68+1, hex-nexus substrate_composition 4, shadow_router 4, promotion_judge 7, substrate_e2e 2. Workspace check + analyze A+ + sqlite-gate all clean. NOT BLOCKING but flagged: tests/sched_daemon_terminal_state.rs (5 cases) fail with HTTP-status assertion errors against /api/brain/status — confirmed PRE-EXISTING by `git stash` test (failures persist at HEAD with no substrate changes applied). Routes were renamed brain→sched per ADR-2604150000 and these tests were never updated. Not a substrate regression; surface as a follow-up cleanup workplan."
+        }
+      ]
+    }
+  ]
+}

@@ -13,12 +13,14 @@
 //!   └── rules/      — Hex architecture enforcement logic
 //! ```
 
+pub mod composition;
 pub mod domain;
 pub mod inference_q;
 pub mod ports;
 pub mod quantization;
 pub mod research_finding;
 pub mod rules;
+pub mod telemetry;
 pub mod types;
 
 // ── Infrastructure Constants ──────────────────────────────

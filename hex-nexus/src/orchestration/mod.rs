@@ -1,3 +1,5 @@
+pub mod adr_conformance;
+pub mod adversarial_swarm;
 pub mod agent;
 pub mod agent_manager;
 pub mod constraint_enforcer;
@@ -5,8 +7,15 @@ pub mod context_pressure;
 pub mod directive;
 pub mod errors;
 pub mod grammars;
+pub mod inference_strategy_builder;
 pub mod regression;
+pub mod promote_orchestrator;
+pub mod promotion_judge;
 pub mod scaffolding;
+pub mod secret_shadow_router;
+pub mod shadow_decision;
+pub mod shadow_router;
+pub mod shrinkage_daemon;
 pub mod skill_selector;
 pub mod workplan_executor;
 

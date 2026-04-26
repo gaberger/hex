@@ -39,6 +39,7 @@ pub mod secrets;
 pub mod skill;
 pub mod stdb;
 pub mod status;
+pub mod substrate;
 pub mod sandbox;
 pub mod swarm;
 pub mod task;

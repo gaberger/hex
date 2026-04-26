@@ -868,7 +868,7 @@ async fn status() -> anyhow::Result<()> {
                         }
                     }
                 }
-                Err(_) => println!("  Sessions: {} (SQLite not enabled)", "unavailable".dimmed()),
+                Err(_) => println!("  Sessions: {} (SpacetimeDB unreachable)", "unavailable".dimmed()),
             }
 
             // Dashboard is served by hex-nexus at the same port

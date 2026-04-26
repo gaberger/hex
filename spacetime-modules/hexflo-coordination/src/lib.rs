@@ -1,5 +1,5 @@
 #![allow(clippy::too_many_arguments)]
-use spacetimedb::{table, reducer, ReducerContext, Table};
+use spacetimedb::{reducer, table, ReducerContext, Table};
 
 // ============================================================
 //  Tables
@@ -140,7 +140,12 @@ pub fn agent_connect(
 ) -> Result<(), String> {
     if let Some(existing) = ctx.db.hex_agent().id().find(&id) {
         ctx.db.hex_agent().id().update(HexAgent {
-            name, host, project_id, project_dir, model, session_id,
+            name,
+            host,
+            project_id,
+            project_dir,
+            model,
+            session_id,
             capabilities_json,
             status: "online".to_string(),
             last_heartbeat: timestamp.clone(),
@@ -149,7 +154,13 @@ pub fn agent_connect(
         });
     } else {
         ctx.db.hex_agent().insert(HexAgent {
-            id: id.clone(), name, host, project_id, project_dir, model, session_id,
+            id: id.clone(),
+            name,
+            host,
+            project_id,
+            project_dir,
+            model,
+            session_id,
             status: "online".to_string(),
             swarm_id: String::new(),
             role: String::new(),
@@ -163,7 +174,10 @@ pub fn agent_connect(
     // Revive any dead swarm_agent entries for this agent (TLA+ finding:
     // after agent_evict_dead deletes the hex_agent row, a reconnecting
     // agent re-creates hex_agent but the orphaned swarm_agent stays "dead").
-    let dead_swarm_agents: Vec<SwarmAgent> = ctx.db.swarm_agent().iter()
+    let dead_swarm_agents: Vec<SwarmAgent> = ctx
+        .db
+        .swarm_agent()
+        .iter()
         .filter(|sa| sa.id == id && sa.status == "dead")
         .collect();
     for sa in dead_swarm_agents {
@@ -179,12 +193,12 @@ pub fn agent_connect(
 
 /// Disconnect an agent (set status to completed).
 #[reducer]
-pub fn agent_disconnect(
-    ctx: &ReducerContext,
-    id: String,
-    timestamp: String,
-) -> Result<(), String> {
-    let agent = ctx.db.hex_agent().id().find(&id)
+pub fn agent_disconnect(ctx: &ReducerContext, id: String, timestamp: String) -> Result<(), String> {
+    let agent = ctx
+        .db
+        .hex_agent()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("Agent '{}' not found", id))?;
     ctx.db.hex_agent().id().update(HexAgent {
         status: "completed".to_string(),
@@ -203,7 +217,11 @@ pub fn agent_update_capabilities(
     capabilities_json: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let agent = ctx.db.hex_agent().id().find(&id)
+    let agent = ctx
+        .db
+        .hex_agent()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("Agent '{}' not found", id))?;
     ctx.db.hex_agent().id().update(HexAgent {
         capabilities_json,
@@ -220,7 +238,11 @@ pub fn agent_heartbeat_update(
     id: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let agent = ctx.db.hex_agent().id().find(&id)
+    let agent = ctx
+        .db
+        .hex_agent()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("Agent '{}' not found", id))?;
     ctx.db.hex_agent().id().update(HexAgent {
         status: "online".to_string(),
@@ -238,10 +260,16 @@ pub fn agent_assign_swarm(
     swarm_id: String,
     role: String,
 ) -> Result<(), String> {
-    let agent = ctx.db.hex_agent().id().find(&id)
+    let agent = ctx
+        .db
+        .hex_agent()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("Agent '{}' not found", id))?;
     ctx.db.hex_agent().id().update(HexAgent {
-        swarm_id, role, ..agent
+        swarm_id,
+        role,
+        ..agent
     });
     Ok(())
 }
@@ -249,10 +277,11 @@ pub fn agent_assign_swarm(
 /// Evict dead agents — delete agents with status "dead" whose heartbeat
 /// is older than the given threshold timestamp.
 #[reducer]
-pub fn agent_evict_dead(
-    ctx: &ReducerContext,
-) -> Result<(), String> {
-    let to_remove: Vec<String> = ctx.db.hex_agent().iter()
+pub fn agent_evict_dead(ctx: &ReducerContext) -> Result<(), String> {
+    let to_remove: Vec<String> = ctx
+        .db
+        .hex_agent()
+        .iter()
         .filter(|a| a.status == "dead")
         .map(|a| a.id.clone())
         .collect();
@@ -274,7 +303,10 @@ pub fn agent_mark_inactive(
     // Normalize Z → +00:00 for consistent string comparison of RFC3339 timestamps
     let stale_t = stale_threshold.replace("Z", "+00:00");
     let dead_t = dead_threshold.replace("Z", "+00:00");
-    let agents: Vec<HexAgent> = ctx.db.hex_agent().iter()
+    let agents: Vec<HexAgent> = ctx
+        .db
+        .hex_agent()
+        .iter()
         .filter(|a| a.status == "online" || a.status == "idle" || a.status == "stale")
         .collect();
     for agent in agents {
@@ -375,10 +407,7 @@ pub fn register_project(
 
 /// Remove a project by ID.
 #[reducer]
-pub fn remove_project(
-    ctx: &ReducerContext,
-    project_id: String,
-) -> Result<(), String> {
+pub fn remove_project(ctx: &ReducerContext, project_id: String) -> Result<(), String> {
     if ctx.db.project().project_id().find(&project_id).is_some() {
         ctx.db.project().project_id().delete(&project_id);
         Ok(())
@@ -411,11 +440,18 @@ pub fn sync_config(
 ) -> Result<(), String> {
     if let Some(existing) = ctx.db.project_config().key().find(&key) {
         ctx.db.project_config().key().update(ProjectConfig {
-            value_json, source_file, synced_at, ..existing
+            value_json,
+            source_file,
+            synced_at,
+            ..existing
         });
     } else {
         ctx.db.project_config().insert(ProjectConfig {
-            key, project_id, value_json, source_file, synced_at,
+            key,
+            project_id,
+            value_json,
+            source_file,
+            synced_at,
         });
     }
     Ok(())
@@ -449,11 +485,22 @@ pub fn sync_skill(
 ) -> Result<(), String> {
     if let Some(existing) = ctx.db.skill_registry().skill_id().find(&skill_id) {
         ctx.db.skill_registry().skill_id().update(SkillEntry {
-            name, trigger_cmd, description, source_path, synced_at, ..existing
+            name,
+            trigger_cmd,
+            description,
+            source_path,
+            synced_at,
+            ..existing
         });
     } else {
         ctx.db.skill_registry().insert(SkillEntry {
-            skill_id, project_id, name, trigger_cmd, description, source_path, synced_at,
+            skill_id,
+            project_id,
+            name,
+            trigger_cmd,
+            description,
+            source_path,
+            synced_at,
         });
     }
     Ok(())
@@ -491,11 +538,26 @@ pub fn sync_agent_def(
 ) -> Result<(), String> {
     if let Some(existing) = ctx.db.agent_definition().agent_def_id().find(&agent_def_id) {
         ctx.db.agent_definition().agent_def_id().update(AgentDef {
-            name, role, model, capabilities_json, tools_json, source_path, synced_at, ..existing
+            name,
+            role,
+            model,
+            capabilities_json,
+            tools_json,
+            source_path,
+            synced_at,
+            ..existing
         });
     } else {
         ctx.db.agent_definition().insert(AgentDef {
-            agent_def_id, project_id, name, role, model, capabilities_json, tools_json, source_path, synced_at,
+            agent_def_id,
+            project_id,
+            name,
+            role,
+            model,
+            capabilities_json,
+            tools_json,
+            source_path,
+            synced_at,
         });
     }
     Ok(())
@@ -535,12 +597,25 @@ pub fn mcp_tool_sync(
 ) -> Result<(), String> {
     if let Some(existing) = ctx.db.mcp_tool().name().find(&name) {
         ctx.db.mcp_tool().name().update(McpTool {
-            category, description, route_method, route_path, input_schema, version, synced_at,
+            category,
+            description,
+            route_method,
+            route_path,
+            input_schema,
+            version,
+            synced_at,
             ..existing
         });
     } else {
         ctx.db.mcp_tool().insert(McpTool {
-            name, category, description, route_method, route_path, input_schema, version, synced_at,
+            name,
+            category,
+            description,
+            route_method,
+            route_path,
+            input_schema,
+            version,
+            synced_at,
         });
     }
     Ok(())
@@ -586,7 +661,11 @@ pub fn register_remote_agent(
 ) -> Result<(), String> {
     if let Some(existing) = ctx.db.remote_agent().agent_id().find(&agent_id) {
         ctx.db.remote_agent().agent_id().update(RemoteAgent {
-            name, host, project_dir, capabilities_json, tunnel_id,
+            name,
+            host,
+            project_dir,
+            capabilities_json,
+            tunnel_id,
             status: "online".to_string(),
             last_heartbeat: timestamp.clone(),
             connected_at: timestamp,
@@ -594,7 +673,12 @@ pub fn register_remote_agent(
         });
     } else {
         ctx.db.remote_agent().insert(RemoteAgent {
-            agent_id, name, host, project_dir, capabilities_json, tunnel_id,
+            agent_id,
+            name,
+            host,
+            project_dir,
+            capabilities_json,
+            tunnel_id,
             status: "online".to_string(),
             last_heartbeat: timestamp.clone(),
             connected_at: timestamp,
@@ -611,7 +695,11 @@ pub fn remote_agent_heartbeat(
     status: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let agent = ctx.db.remote_agent().agent_id().find(&agent_id)
+    let agent = ctx
+        .db
+        .remote_agent()
+        .agent_id()
+        .find(&agent_id)
         .ok_or_else(|| format!("Remote agent '{}' not found", agent_id))?;
     ctx.db.remote_agent().agent_id().update(RemoteAgent {
         status,
@@ -623,10 +711,7 @@ pub fn remote_agent_heartbeat(
 
 /// Remove a remote agent (on disconnect or death).
 #[reducer]
-pub fn remove_remote_agent(
-    ctx: &ReducerContext,
-    agent_id: String,
-) -> Result<(), String> {
+pub fn remove_remote_agent(ctx: &ReducerContext, agent_id: String) -> Result<(), String> {
     if !ctx.db.remote_agent().agent_id().delete(&agent_id) {
         return Err(format!("Remote agent '{}' not found", agent_id));
     }
@@ -640,7 +725,11 @@ pub fn update_remote_heartbeat(
     agent_id: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let agent = ctx.db.remote_agent().agent_id().find(&agent_id)
+    let agent = ctx
+        .db
+        .remote_agent()
+        .agent_id()
+        .find(&agent_id)
         .ok_or_else(|| format!("Remote agent '{}' not found", agent_id))?;
     ctx.db.remote_agent().agent_id().update(RemoteAgent {
         status: "online".to_string(),
@@ -657,21 +746,22 @@ pub fn update_remote_status(
     agent_id: String,
     status: String,
 ) -> Result<(), String> {
-    let agent = ctx.db.remote_agent().agent_id().find(&agent_id)
+    let agent = ctx
+        .db
+        .remote_agent()
+        .agent_id()
+        .find(&agent_id)
         .ok_or_else(|| format!("Remote agent '{}' not found", agent_id))?;
-    ctx.db.remote_agent().agent_id().update(RemoteAgent {
-        status,
-        ..agent
-    });
+    ctx.db
+        .remote_agent()
+        .agent_id()
+        .update(RemoteAgent { status, ..agent });
     Ok(())
 }
 
 /// Delete a remote agent row (alias used by P4.1 fleet management).
 #[reducer]
-pub fn deregister_remote_agent(
-    ctx: &ReducerContext,
-    agent_id: String,
-) -> Result<(), String> {
+pub fn deregister_remote_agent(ctx: &ReducerContext, agent_id: String) -> Result<(), String> {
     if !ctx.db.remote_agent().agent_id().delete(&agent_id) {
         return Err(format!("Remote agent '{}' not found", agent_id));
     }
@@ -730,15 +820,25 @@ pub fn register_inference_server(
     timestamp: String,
 ) -> Result<(), String> {
     if let Some(existing) = ctx.db.inference_server().server_id().find(&server_id) {
-        ctx.db.inference_server().server_id().update(InferenceServer {
-            name, host, provider, models_json,
-            status: "online".to_string(),
-            last_health_check: timestamp,
-            ..existing
-        });
+        ctx.db
+            .inference_server()
+            .server_id()
+            .update(InferenceServer {
+                name,
+                host,
+                provider,
+                models_json,
+                status: "online".to_string(),
+                last_health_check: timestamp,
+                ..existing
+            });
     } else {
         ctx.db.inference_server().insert(InferenceServer {
-            server_id, name, host, provider, models_json,
+            server_id,
+            name,
+            host,
+            provider,
+            models_json,
             status: "online".to_string(),
             last_health_check: timestamp.clone(),
             registered_at: timestamp,
@@ -749,10 +849,7 @@ pub fn register_inference_server(
 
 /// Remove an inference server.
 #[reducer]
-pub fn remove_inference_server(
-    ctx: &ReducerContext,
-    server_id: String,
-) -> Result<(), String> {
+pub fn remove_inference_server(ctx: &ReducerContext, server_id: String) -> Result<(), String> {
     if !ctx.db.inference_server().server_id().delete(&server_id) {
         return Err(format!("Inference server '{}' not found", server_id));
     }
@@ -830,7 +927,10 @@ pub fn notify_all_agents(
         return Err("Priority must be 0 (info), 1 (warning), or 2 (critical)".to_string());
     }
 
-    let agents: Vec<String> = ctx.db.hex_agent().iter()
+    let agents: Vec<String> = ctx
+        .db
+        .hex_agent()
+        .iter()
         .filter(|a| a.project_id == project_id && (a.status == "online" || a.status == "idle"))
         .map(|a| a.id.clone())
         .collect();
@@ -859,11 +959,18 @@ pub fn acknowledge_notification(
     agent_id: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let notif = ctx.db.agent_inbox().id().find(notification_id)
+    let notif = ctx
+        .db
+        .agent_inbox()
+        .id()
+        .find(notification_id)
         .ok_or_else(|| format!("Notification '{}' not found", notification_id))?;
 
     if notif.agent_id != agent_id {
-        return Err(format!("Agent '{}' is not the target of notification '{}'", agent_id, notification_id));
+        return Err(format!(
+            "Agent '{}' is not the target of notification '{}'",
+            agent_id, notification_id
+        ));
     }
 
     if !notif.acknowledged_at.is_empty() {
@@ -884,7 +991,10 @@ pub fn expire_stale_notifications(
     ctx: &ReducerContext,
     threshold_timestamp: String,
 ) -> Result<(), String> {
-    let expired: Vec<AgentInbox> = ctx.db.agent_inbox().iter()
+    let expired: Vec<AgentInbox> = ctx
+        .db
+        .agent_inbox()
+        .iter()
         .filter(|n| {
             n.acknowledged_at.is_empty()
                 && n.expired_at.is_empty()
@@ -926,7 +1036,10 @@ pub fn swarm_init(
     // ADR-2603241900: enforce 1:1 agent↔swarm ownership.
     // An agent may not own more than one active swarm at a time.
     if !created_by.is_empty() {
-        let already_owns = ctx.db.swarm().iter()
+        let already_owns = ctx
+            .db
+            .swarm()
+            .iter()
             .any(|s| s.owner_agent_id == created_by && s.status == "active");
         if already_owns {
             return Err(format!(
@@ -961,12 +1074,12 @@ pub fn swarm_init(
 
 /// Mark a swarm as completed.
 #[reducer]
-pub fn swarm_complete(
-    ctx: &ReducerContext,
-    id: String,
-    timestamp: String,
-) -> Result<(), String> {
-    let existing = ctx.db.swarm().id().find(&id)
+pub fn swarm_complete(ctx: &ReducerContext, id: String, timestamp: String) -> Result<(), String> {
+    let existing = ctx
+        .db
+        .swarm()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("Swarm '{}' not found", id))?;
 
     ctx.db.swarm().id().update(Swarm {
@@ -986,7 +1099,11 @@ pub fn swarm_fail(
     reason: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let existing = ctx.db.swarm().id().find(&id)
+    let existing = ctx
+        .db
+        .swarm()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("Swarm '{}' not found", id))?;
 
     ctx.db.swarm().id().update(Swarm {
@@ -1023,11 +1140,18 @@ pub fn task_create(
     timestamp: String,
 ) -> Result<(), String> {
     // Verify swarm exists and is active
-    let swarm = ctx.db.swarm().id().find(&swarm_id)
+    let swarm = ctx
+        .db
+        .swarm()
+        .id()
+        .find(&swarm_id)
         .ok_or_else(|| format!("Swarm '{}' not found", swarm_id))?;
 
     if swarm.status != "active" {
-        return Err(format!("Swarm '{}' is not active (status: {})", swarm_id, swarm.status));
+        return Err(format!(
+            "Swarm '{}' is not active (status: {})",
+            swarm_id, swarm.status
+        ));
     }
 
     // Validate that all referenced dependency task IDs actually exist
@@ -1097,7 +1221,11 @@ pub fn task_assign(
     expected_version: u64,
     timestamp: String,
 ) -> Result<(), String> {
-    let task = ctx.db.swarm_task().id().find(&task_id)
+    let task = ctx
+        .db
+        .swarm_task()
+        .id()
+        .find(&task_id)
         .ok_or_else(|| format!("Task '{}' not found", task_id))?;
 
     // CAS version check (skip if caller passes u64::MAX)
@@ -1109,10 +1237,7 @@ pub fn task_assign(
     }
 
     if task.status != "pending" {
-        return Err(format!(
-            "already_claimed:{}",
-            task.claimed_by
-        ));
+        return Err(format!("already_claimed:{}", task.claimed_by));
     }
 
     // Check that all dependency tasks are completed before allowing assignment
@@ -1149,7 +1274,11 @@ pub fn task_assign(
 
     // Ensure a swarm_agent row exists for this agent in this swarm
     if ctx.db.swarm_agent().id().find(&agent_id).is_none() {
-        let name = ctx.db.hex_agent().id().find(&agent_id)
+        let name = ctx
+            .db
+            .hex_agent()
+            .id()
+            .find(&agent_id)
             .map(|a| a.name.clone())
             .unwrap_or_else(|| agent_id.clone());
         ctx.db.swarm_agent().insert(SwarmAgent {
@@ -1175,20 +1304,32 @@ pub fn swarm_transfer(
     new_owner_agent_id: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let swarm = ctx.db.swarm().id().find(&swarm_id)
+    let swarm = ctx
+        .db
+        .swarm()
+        .id()
+        .find(&swarm_id)
         .ok_or_else(|| format!("Swarm '{}' not found", swarm_id))?;
 
     if swarm.status != "active" {
-        return Err(format!("Swarm '{}' is not active — cannot transfer", swarm_id));
+        return Err(format!(
+            "Swarm '{}' is not active — cannot transfer",
+            swarm_id
+        ));
     }
 
     // Verify new owner exists
-    let new_owner = ctx.db.hex_agent().id().find(&new_owner_agent_id)
+    let new_owner = ctx
+        .db
+        .hex_agent()
+        .id()
+        .find(&new_owner_agent_id)
         .ok_or_else(|| format!("New owner agent '{}' not found", new_owner_agent_id))?;
 
     // New owner must not already own an active swarm
-    let already_owns = ctx.db.swarm().iter()
-        .any(|s| s.owner_agent_id == new_owner_agent_id && s.status == "active" && s.id != swarm_id);
+    let already_owns = ctx.db.swarm().iter().any(|s| {
+        s.owner_agent_id == new_owner_agent_id && s.status == "active" && s.id != swarm_id
+    });
     if already_owns {
         return Err(format!(
             "Agent '{}' already owns an active swarm — cannot receive transfer",
@@ -1235,7 +1376,11 @@ pub fn task_complete(
     result: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let task = ctx.db.swarm_task().id().find(&task_id)
+    let task = ctx
+        .db
+        .swarm_task()
+        .id()
+        .find(&task_id)
         .ok_or_else(|| format!("Task '{}' not found", task_id))?;
 
     ctx.db.swarm_task().id().update(SwarmTask {
@@ -1256,7 +1401,11 @@ pub fn task_fail(
     reason: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let task = ctx.db.swarm_task().id().find(&task_id)
+    let task = ctx
+        .db
+        .swarm_task()
+        .id()
+        .find(&task_id)
         .ok_or_else(|| format!("Task '{}' not found", task_id))?;
 
     ctx.db.swarm_task().id().update(SwarmTask {
@@ -1271,11 +1420,11 @@ pub fn task_fail(
 
 /// Reclaim all tasks assigned to a dead agent back to pending.
 #[reducer]
-pub fn task_reclaim(
-    ctx: &ReducerContext,
-    agent_id: String,
-) -> Result<(), String> {
-    let tasks: Vec<SwarmTask> = ctx.db.swarm_task().iter()
+pub fn task_reclaim(ctx: &ReducerContext, agent_id: String) -> Result<(), String> {
+    let tasks: Vec<SwarmTask> = ctx
+        .db
+        .swarm_task()
+        .iter()
         .filter(|t| t.agent_id == agent_id && t.status == "in_progress")
         .collect();
 
@@ -1340,7 +1489,11 @@ pub fn inference_task_claim(
     agent_id: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let task = ctx.db.inference_task().id().find(&id)
+    let task = ctx
+        .db
+        .inference_task()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("InferenceTask '{}' not found", id))?;
 
     if task.status != "Pending" {
@@ -1365,7 +1518,11 @@ pub fn inference_task_complete(
     result: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let task = ctx.db.inference_task().id().find(&id)
+    let task = ctx
+        .db
+        .inference_task()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("InferenceTask '{}' not found", id))?;
 
     ctx.db.inference_task().id().update(InferenceTask {
@@ -1386,12 +1543,23 @@ pub fn inference_task_fail(
     error: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let task = ctx.db.inference_task().id().find(&id)
+    let task = ctx
+        .db
+        .inference_task()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("InferenceTask '{}' not found", id))?;
+
+    // ADR-2604241630: sanitize empty error strings - never store empty
+    let sanitized_error = if error.trim().is_empty() {
+        "unknown error".to_string()
+    } else {
+        error
+    };
 
     ctx.db.inference_task().id().update(InferenceTask {
         status: "Failed".to_string(),
-        error,
+        error: sanitized_error,
         updated_at: timestamp,
         ..task
     });
@@ -1434,12 +1602,12 @@ pub fn agent_register(
 
 /// Update an agent's heartbeat timestamp.
 #[reducer]
-pub fn agent_heartbeat(
-    ctx: &ReducerContext,
-    id: String,
-    timestamp: String,
-) -> Result<(), String> {
-    let agent = ctx.db.swarm_agent().id().find(&id)
+pub fn agent_heartbeat(ctx: &ReducerContext, id: String, timestamp: String) -> Result<(), String> {
+    let agent = ctx
+        .db
+        .swarm_agent()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("Agent '{}' not found", id))?;
 
     ctx.db.swarm_agent().id().update(SwarmAgent {
@@ -1457,11 +1625,11 @@ pub fn agent_heartbeat(
 /// `threshold_timestamp` is the cutoff — any agent with last_heartbeat
 /// before this value is marked stale.
 #[reducer]
-pub fn agent_mark_stale(
-    ctx: &ReducerContext,
-    threshold_timestamp: String,
-) -> Result<(), String> {
-    let stale: Vec<SwarmAgent> = ctx.db.swarm_agent().iter()
+pub fn agent_mark_stale(ctx: &ReducerContext, threshold_timestamp: String) -> Result<(), String> {
+    let stale: Vec<SwarmAgent> = ctx
+        .db
+        .swarm_agent()
+        .iter()
         .filter(|a| a.status == "active" && a.last_heartbeat < threshold_timestamp)
         .collect();
 
@@ -1478,17 +1646,20 @@ pub fn agent_mark_stale(
 /// Mark stale agents as dead and reclaim their tasks.
 /// `threshold_timestamp` is the cutoff for dead (stricter than stale).
 #[reducer]
-pub fn agent_mark_dead(
-    ctx: &ReducerContext,
-    threshold_timestamp: String,
-) -> Result<(), String> {
-    let dead: Vec<SwarmAgent> = ctx.db.swarm_agent().iter()
+pub fn agent_mark_dead(ctx: &ReducerContext, threshold_timestamp: String) -> Result<(), String> {
+    let dead: Vec<SwarmAgent> = ctx
+        .db
+        .swarm_agent()
+        .iter()
         .filter(|a| a.status == "stale" && a.last_heartbeat < threshold_timestamp)
         .collect();
 
     for agent in dead {
         // Reclaim tasks from this dead agent
-        let orphaned: Vec<SwarmTask> = ctx.db.swarm_task().iter()
+        let orphaned: Vec<SwarmTask> = ctx
+            .db
+            .swarm_task()
+            .iter()
             .filter(|t| t.agent_id == agent.id && t.status == "in_progress")
             .collect();
 
@@ -1511,10 +1682,7 @@ pub fn agent_mark_dead(
 
 /// Remove a disconnected agent from the swarm.
 #[reducer]
-pub fn agent_remove(
-    ctx: &ReducerContext,
-    id: String,
-) -> Result<(), String> {
+pub fn agent_remove(ctx: &ReducerContext, id: String) -> Result<(), String> {
     if !ctx.db.swarm_agent().id().delete(&id) {
         return Err(format!("Agent '{}' not found", id));
     }
@@ -1551,10 +1719,7 @@ pub fn memory_store(
 
 /// Delete a key from memory.
 #[reducer]
-pub fn memory_delete(
-    ctx: &ReducerContext,
-    key: String,
-) -> Result<(), String> {
+pub fn memory_delete(ctx: &ReducerContext, key: String) -> Result<(), String> {
     if !ctx.db.hexflo_memory().key().delete(&key) {
         return Err(format!("Key '{}' not found", key));
     }
@@ -1685,7 +1850,11 @@ pub fn complete_quality_gate(
     error_output: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let gate = ctx.db.quality_gate_task().id().find(&id)
+    let gate = ctx
+        .db
+        .quality_gate_task()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("QualityGateTask '{}' not found", id))?;
 
     if status != "pass" && status != "fail" {
@@ -1722,7 +1891,13 @@ pub fn create_fix_task(
     timestamp: String,
 ) -> Result<(), String> {
     // Verify the gate task exists
-    if ctx.db.quality_gate_task().id().find(&gate_task_id).is_none() {
+    if ctx
+        .db
+        .quality_gate_task()
+        .id()
+        .find(&gate_task_id)
+        .is_none()
+    {
         return Err(format!("QualityGateTask '{}' not found", gate_task_id));
     }
 
@@ -1757,11 +1932,18 @@ pub fn complete_fix_task(
     cost_usd: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let fix = ctx.db.fix_task().id().find(&id)
+    let fix = ctx
+        .db
+        .fix_task()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("FixTask '{}' not found", id))?;
 
     if status != "completed" && status != "failed" {
-        return Err(format!("Status must be 'completed' or 'failed', got '{}'", status));
+        return Err(format!(
+            "Status must be 'completed' or 'failed', got '{}'",
+            status
+        ));
     }
 
     ctx.db.fix_task().id().update(FixTask {
@@ -1779,11 +1961,11 @@ pub fn complete_fix_task(
 
 /// Clear all memory entries for a given scope.
 #[reducer]
-pub fn memory_clear_scope(
-    ctx: &ReducerContext,
-    scope: String,
-) -> Result<(), String> {
-    let to_delete: Vec<HexFloMemory> = ctx.db.hexflo_memory().iter()
+pub fn memory_clear_scope(ctx: &ReducerContext, scope: String) -> Result<(), String> {
+    let to_delete: Vec<HexFloMemory> = ctx
+        .db
+        .hexflo_memory()
+        .iter()
         .filter(|m| m.scope == scope)
         .collect();
 
@@ -1907,7 +2089,11 @@ pub fn session_update_phase(
     phase: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let session = ctx.db.dev_session().id().find(&id)
+    let session = ctx
+        .db
+        .dev_session()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("session {} not found", id))?;
     ctx.db.dev_session().id().update(DevSession {
         status: phase.clone(),
@@ -1925,7 +2111,11 @@ pub fn session_complete_step(
     step_id: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let session = ctx.db.dev_session().id().find(&id)
+    let session = ctx
+        .db
+        .dev_session()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("session {} not found", id))?;
     let mut steps = session.completed_steps.clone();
     if !steps.is_empty() {
@@ -1951,7 +2141,11 @@ pub fn session_set_quality(
     total_cost_usd: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let session = ctx.db.dev_session().id().find(&id)
+    let session = ctx
+        .db
+        .dev_session()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("session {} not found", id))?;
     ctx.db.dev_session().id().update(DevSession {
         architecture_grade: grade,
@@ -1972,7 +2166,11 @@ pub fn session_finalize(
     status: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let session = ctx.db.dev_session().id().find(&id)
+    let session = ctx
+        .db
+        .dev_session()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("session {} not found", id))?;
     ctx.db.dev_session().id().update(DevSession {
         status,
@@ -1992,7 +2190,11 @@ pub fn session_set_paths(
     output_dir: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let session = ctx.db.dev_session().id().find(&id)
+    let session = ctx
+        .db
+        .dev_session()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("session {} not found", id))?;
     ctx.db.dev_session().id().update(DevSession {
         adr_path,
@@ -2120,7 +2322,11 @@ pub fn enforcement_rule_toggle(
     enabled: u8,
     timestamp: String,
 ) -> Result<(), String> {
-    let rule = ctx.db.enforcement_rule().id().find(&id)
+    let rule = ctx
+        .db
+        .enforcement_rule()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("Rule '{}' not found", id))?;
 
     ctx.db.enforcement_rule().id().delete(&id);
@@ -2134,10 +2340,7 @@ pub fn enforcement_rule_toggle(
 }
 
 #[reducer]
-pub fn enforcement_rule_delete(
-    ctx: &ReducerContext,
-    id: String,
-) -> Result<(), String> {
+pub fn enforcement_rule_delete(ctx: &ReducerContext, id: String) -> Result<(), String> {
     ctx.db.enforcement_rule().id().delete(&id);
     Ok(())
 }
@@ -2151,17 +2354,17 @@ pub fn enforcement_rule_delete(
 /// Logs each run to `cleanup_log` when any work is done (absorbed from
 /// hexflo-cleanup module).
 #[reducer]
-pub fn coordination_cleanup(
-    ctx: &ReducerContext,
-    cutoff: String,
-) -> Result<(), String> {
+pub fn coordination_cleanup(ctx: &ReducerContext, cutoff: String) -> Result<(), String> {
     let mut stale_count: u32 = 0;
     let mut dead_count: u32 = 0;
     let mut reclaimed_tasks: u32 = 0;
     let mut expired_notifications: u32 = 0;
 
     // 1. Mark active swarm agents as stale if their heartbeat is before the cutoff.
-    let stale: Vec<SwarmAgent> = ctx.db.swarm_agent().iter()
+    let stale: Vec<SwarmAgent> = ctx
+        .db
+        .swarm_agent()
+        .iter()
         .filter(|a| a.status == "active" && a.last_heartbeat < cutoff)
         .collect();
     for agent in stale {
@@ -2173,11 +2376,17 @@ pub fn coordination_cleanup(
     }
 
     // 2. Mark stale swarm agents as dead and reclaim their in-progress tasks.
-    let dead: Vec<SwarmAgent> = ctx.db.swarm_agent().iter()
+    let dead: Vec<SwarmAgent> = ctx
+        .db
+        .swarm_agent()
+        .iter()
         .filter(|a| a.status == "stale" && a.last_heartbeat < cutoff)
         .collect();
     for agent in dead {
-        let orphaned: Vec<SwarmTask> = ctx.db.swarm_task().iter()
+        let orphaned: Vec<SwarmTask> = ctx
+            .db
+            .swarm_task()
+            .iter()
             .filter(|t| t.agent_id == agent.id && t.status == "in_progress")
             .collect();
         for task in orphaned {
@@ -2198,7 +2407,10 @@ pub fn coordination_cleanup(
     // 3. Also mark hex_agent entries as stale (unified agent registry).
     //    Normalize Z → +00:00 for consistent RFC3339 string comparison.
     let cutoff_normalized = cutoff.replace('Z', "+00:00");
-    let hex_agents: Vec<HexAgent> = ctx.db.hex_agent().iter()
+    let hex_agents: Vec<HexAgent> = ctx
+        .db
+        .hex_agent()
+        .iter()
         .filter(|a| a.status == "online" || a.status == "idle" || a.status == "stale")
         .collect();
     for agent in hex_agents {
@@ -2213,11 +2425,12 @@ pub fn coordination_cleanup(
     }
 
     // 4. Expire unacknowledged inbox notifications older than the cutoff.
-    let expired: Vec<AgentInbox> = ctx.db.agent_inbox().iter()
+    let expired: Vec<AgentInbox> = ctx
+        .db
+        .agent_inbox()
+        .iter()
         .filter(|n| {
-            n.acknowledged_at.is_empty()
-                && n.expired_at.is_empty()
-                && n.created_at < cutoff
+            n.acknowledged_at.is_empty() && n.expired_at.is_empty() && n.created_at < cutoff
         })
         .collect();
     for notif in expired {
@@ -2240,7 +2453,10 @@ pub fn coordination_cleanup(
         });
         log::info!(
             "coordination_cleanup: stale={}, dead={}, reclaimed={}, expired_notifs={}",
-            stale_count, dead_count, reclaimed_tasks, expired_notifications
+            stale_count,
+            dead_count,
+            reclaimed_tasks,
+            expired_notifications
         );
     }
 
@@ -2253,10 +2469,7 @@ pub fn coordination_cleanup(
 /// Only removes agents with status "dead" — active/stale agents are preserved.
 /// Absorbed from hexflo-cleanup's `remove_dead_agent` reducer.
 #[reducer]
-pub fn remove_dead_swarm_agent(
-    ctx: &ReducerContext,
-    agent_id: String,
-) -> Result<(), String> {
+pub fn remove_dead_swarm_agent(ctx: &ReducerContext, agent_id: String) -> Result<(), String> {
     if let Some(agent) = ctx.db.swarm_agent().id().find(&agent_id) {
         if agent.status == "dead" {
             ctx.db.swarm_agent().id().delete(&agent_id);
@@ -2276,10 +2489,7 @@ pub fn remove_dead_swarm_agent(
 /// Absorbed from hexflo-cleanup's `trigger_cleanup` reducer for use by
 /// the hex-nexus REST API (POST /api/hexflo/cleanup).
 #[reducer]
-pub fn trigger_cleanup(
-    ctx: &ReducerContext,
-    cutoff: String,
-) -> Result<(), String> {
+pub fn trigger_cleanup(ctx: &ReducerContext, cutoff: String) -> Result<(), String> {
     coordination_cleanup(ctx, cutoff)
 }
 
@@ -2344,7 +2554,13 @@ pub fn upsert_fingerprint(
         fingerprint_tokens,
         generated_at,
     };
-    if ctx.db.architecture_fingerprint().project_id().find(&project_id).is_some() {
+    if ctx
+        .db
+        .architecture_fingerprint()
+        .project_id()
+        .find(&project_id)
+        .is_some()
+    {
         ctx.db.architecture_fingerprint().project_id().update(fp);
     } else {
         ctx.db.architecture_fingerprint().insert(fp);
@@ -2354,12 +2570,18 @@ pub fn upsert_fingerprint(
 
 /// Remove a fingerprint when a project is deleted or reset.
 #[reducer]
-pub fn delete_fingerprint(
-    ctx: &ReducerContext,
-    project_id: String,
-) -> Result<(), String> {
-    if ctx.db.architecture_fingerprint().project_id().find(&project_id).is_some() {
-        ctx.db.architecture_fingerprint().project_id().delete(&project_id);
+pub fn delete_fingerprint(ctx: &ReducerContext, project_id: String) -> Result<(), String> {
+    if ctx
+        .db
+        .architecture_fingerprint()
+        .project_id()
+        .find(&project_id)
+        .is_some()
+    {
+        ctx.db
+            .architecture_fingerprint()
+            .project_id()
+            .delete(&project_id);
         Ok(())
     } else {
         Err(format!("No fingerprint found for project '{}'", project_id))
@@ -2408,11 +2630,7 @@ pub fn register_node(
 }
 
 #[reducer]
-pub fn update_node_health(
-    ctx: &ReducerContext,
-    id: String,
-    status: String,
-) -> Result<(), String> {
+pub fn update_node_health(ctx: &ReducerContext, id: String, status: String) -> Result<(), String> {
     match ctx.db.compute_node().id().find(&id) {
         Some(old) => {
             let updated = ComputeNode {
@@ -2498,11 +2716,11 @@ pub struct SwarmLifecycle {
     #[primary_key]
     pub swarm_id: String,
     pub name: String,
-    pub phase: String,       // "specs", "plan", "code", "validate", "integrate", "complete"
-    pub phase_index: u32,    // 0-5
+    pub phase: String, // "specs", "plan", "code", "validate", "integrate", "complete"
+    pub phase_index: u32, // 0-5
     pub total_tasks: u32,
     pub completed_tasks: u32,
-    pub status: String,      // "active", "completed", "failed"
+    pub status: String, // "active", "completed", "failed"
     pub updated_at: String,
 }
 
@@ -2513,9 +2731,9 @@ pub struct LifecycleTask {
     #[primary_key]
     pub task_id: String,
     pub swarm_id: String,
-    pub tier: u32,           // 0-5, maps to phase
-    pub status: String,      // "pending", "in_progress", "completed", "failed"
-    pub depends_on: String,  // comma-separated task IDs
+    pub tier: u32,          // 0-5, maps to phase
+    pub status: String,     // "pending", "in_progress", "completed", "failed"
+    pub depends_on: String, // comma-separated task IDs
     pub updated_at: String,
 }
 
@@ -2586,7 +2804,12 @@ pub fn lifecycle_register_task(
 /// the swarm advances to the next phase, and tasks in the next tier
 /// become unblocked.
 #[reducer]
-pub fn lifecycle_on_task_complete(ctx: &ReducerContext, task_id: String, swarm_id: String, timestamp: String) {
+pub fn lifecycle_on_task_complete(
+    ctx: &ReducerContext,
+    task_id: String,
+    swarm_id: String,
+    timestamp: String,
+) {
     // Update the task status
     if let Some(mut task) = ctx.db.lifecycle_task().task_id().find(&task_id) {
         task.status = "completed".to_string();
@@ -2617,8 +2840,7 @@ pub fn lifecycle_on_task_complete(ctx: &ReducerContext, task_id: String, swarm_i
         .filter(|t| t.tier == current_tier)
         .collect();
 
-    let tier_done = !tier_tasks.is_empty()
-        && tier_tasks.iter().all(|t| t.status == "completed");
+    let tier_done = !tier_tasks.is_empty() && tier_tasks.iter().all(|t| t.status == "completed");
 
     if tier_done && (current_tier as usize) < LIFECYCLE_PHASES.len() - 1 {
         // Advance to next phase
@@ -2661,7 +2883,12 @@ pub fn lifecycle_on_task_complete(ctx: &ReducerContext, task_id: String, swarm_i
 
 /// Called when a task fails. Marks swarm as failed if critical.
 #[reducer]
-pub fn lifecycle_on_task_fail(ctx: &ReducerContext, task_id: String, swarm_id: String, timestamp: String) {
+pub fn lifecycle_on_task_fail(
+    ctx: &ReducerContext,
+    task_id: String,
+    swarm_id: String,
+    timestamp: String,
+) {
     if let Some(mut task) = ctx.db.lifecycle_task().task_id().find(&task_id) {
         task.status = "failed".to_string();
         task.updated_at = timestamp.clone();
@@ -2761,7 +2988,13 @@ pub fn surface_decision(
     deadline_at: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let valid_types = ["taste", "dependency", "architecture", "escalation", "budget"];
+    let valid_types = [
+        "taste",
+        "dependency",
+        "architecture",
+        "escalation",
+        "budget",
+    ];
     if !valid_types.contains(&decision_type.as_str()) {
         return Err(format!(
             "Invalid decision_type '{}'. Must be one of: {}",
@@ -2799,7 +3032,11 @@ pub fn resolve_decision(
     resolved_by: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let entry = ctx.db.developer_inbox().id().find(id)
+    let entry = ctx
+        .db
+        .developer_inbox()
+        .id()
+        .find(id)
         .ok_or_else(|| format!("Decision '{}' not found", id))?;
 
     if !entry.resolved_action.is_empty() {
@@ -2818,11 +3055,11 @@ pub fn resolve_decision(
 
 /// Auto-resolve all decisions past their deadline with their default_action.
 #[reducer]
-pub fn expire_decisions(
-    ctx: &ReducerContext,
-    current_time: String,
-) -> Result<(), String> {
-    let expired: Vec<DeveloperInbox> = ctx.db.developer_inbox().iter()
+pub fn expire_decisions(ctx: &ReducerContext, current_time: String) -> Result<(), String> {
+    let expired: Vec<DeveloperInbox> = ctx
+        .db
+        .developer_inbox()
+        .iter()
         .filter(|d| {
             d.resolved_action.is_empty()
                 && !d.deadline_at.is_empty()
@@ -2886,7 +3123,10 @@ pub fn set_trust(
     }
 
     // Find existing entry for this project_id + scope
-    let existing: Option<DelegationTrust> = ctx.db.delegation_trust().iter()
+    let existing: Option<DelegationTrust> = ctx
+        .db
+        .delegation_trust()
+        .iter()
         .find(|t| t.project_id == project_id && t.scope == scope);
 
     if let Some(old) = existing {
@@ -2917,9 +3157,17 @@ pub fn decay_trust(
     reason: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let entry = ctx.db.delegation_trust().iter()
+    let entry = ctx
+        .db
+        .delegation_trust()
+        .iter()
         .find(|t| t.project_id == project_id && t.scope == scope)
-        .ok_or_else(|| format!("No trust entry for project '{}' scope '{}'", project_id, scope))?;
+        .ok_or_else(|| {
+            format!(
+                "No trust entry for project '{}' scope '{}'",
+                project_id, scope
+            )
+        })?;
 
     if entry.pinned {
         return Ok(()); // Pinned — no decay
@@ -2945,14 +3193,18 @@ pub fn decay_trust(
 
 /// Pin a trust scope so it cannot be auto-decayed.
 #[reducer]
-pub fn pin_trust(
-    ctx: &ReducerContext,
-    project_id: String,
-    scope: String,
-) -> Result<(), String> {
-    let entry = ctx.db.delegation_trust().iter()
+pub fn pin_trust(ctx: &ReducerContext, project_id: String, scope: String) -> Result<(), String> {
+    let entry = ctx
+        .db
+        .delegation_trust()
+        .iter()
         .find(|t| t.project_id == project_id && t.scope == scope)
-        .ok_or_else(|| format!("No trust entry for project '{}' scope '{}'", project_id, scope))?;
+        .ok_or_else(|| {
+            format!(
+                "No trust entry for project '{}' scope '{}'",
+                project_id, scope
+            )
+        })?;
 
     if entry.pinned {
         return Ok(()); // Already pinned — idempotent
@@ -2984,7 +3236,10 @@ pub fn init_project_trust(
 
     for scope in &default_scopes {
         // Skip if already exists
-        let exists = ctx.db.delegation_trust().iter()
+        let exists = ctx
+            .db
+            .delegation_trust()
+            .iter()
             .any(|t| t.project_id == project_id && t.scope == *scope);
         if exists {
             continue;
@@ -3078,11 +3333,12 @@ pub fn log_briefing_event(
 
 /// Mark a briefing event as seen.
 #[reducer]
-pub fn mark_briefing_seen(
-    ctx: &ReducerContext,
-    id: u64,
-) -> Result<(), String> {
-    let entry = ctx.db.briefing_buffer().id().find(id)
+pub fn mark_briefing_seen(ctx: &ReducerContext, id: u64) -> Result<(), String> {
+    let entry = ctx
+        .db
+        .briefing_buffer()
+        .id()
+        .find(id)
         .ok_or_else(|| format!("Briefing event '{}' not found", id))?;
 
     if entry.seen {
@@ -3099,11 +3355,11 @@ pub fn mark_briefing_seen(
 
 /// Archive (delete) old briefing events that have been seen.
 #[reducer]
-pub fn archive_old_briefings(
-    ctx: &ReducerContext,
-    cutoff_time: String,
-) -> Result<(), String> {
-    let to_delete: Vec<u64> = ctx.db.briefing_buffer().iter()
+pub fn archive_old_briefings(ctx: &ReducerContext, cutoff_time: String) -> Result<(), String> {
+    let to_delete: Vec<u64> = ctx
+        .db
+        .briefing_buffer()
+        .iter()
         .filter(|b| b.seen && b.created_at < cutoff_time)
         .map(|b| b.id)
         .collect();
@@ -3113,6 +3369,314 @@ pub fn archive_old_briefings(
     }
 
     Ok(())
+}
+
+// ============================================================
+//  Substrate — swap-ticket + shadow-sample (ADR-2604261500 P6, wp-substrate-shadow-promotion P1)
+// ============================================================
+//
+// `swap_ticket` records every proposed swap of a port -> adapter binding in
+// the runtime composition. `shadow_sample` records the per-call comparison
+// between incumbent and candidate while a ticket is in `shadow` state. The
+// promotion judge (hex-nexus, wp-substrate-shadow-promotion P4) reads
+// `shadow_sample` rows for a ticket and transitions it to `shadow_green` /
+// `shadow_red`. STDB-only — no SQLite path.
+//
+// State machine (enforced in `swap_ticket_transition`):
+//   candidate     -> shadow
+//   shadow        -> shadow_green | shadow_red
+//   shadow_green  -> promoted
+//   promoted      -> rolled_back
+// All other transitions are rejected. Terminal states (shadow_red,
+// rolled_back) cannot be re-opened.
+
+/// A proposed swap of an adapter binding for a port. One row per ticket.
+/// Fields that the substrate models as `Option<String>` (incumbent for the
+/// first adapter on a port; shadow_started_at before shadow begins) are
+/// stored as `""` and treated as absent — STDB favours flat scalars.
+#[table(name = swap_ticket, public)]
+#[derive(Clone, Debug)]
+pub struct SwapTicket {
+    #[primary_key]
+    pub id: String,
+    pub project_id: String,
+    pub port_id: String,
+    /// Empty string when there is no prior binding (first adapter on the port).
+    pub incumbent_adapter_id: String,
+    pub candidate_adapter_id: String,
+    /// Serialized `AdapterManifest` from hex-core (JSON).
+    pub candidate_manifest_json: String,
+    /// One of: "candidate" | "shadow" | "shadow_green" | "shadow_red"
+    /// | "promoted" | "rolled_back".
+    pub state: String,
+    pub shadow_traffic_fraction: f32,
+    pub shadow_window_seconds: u64,
+    /// RFC3339; empty string until `swap_ticket_set_shadow_started` is called.
+    pub shadow_started_at: String,
+    /// Serialized `Vec<SuccessCriterion>` from hex-core (JSON).
+    pub success_criteria_json: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One incumbent-vs-candidate comparison recorded by the shadow router.
+#[table(name = shadow_sample, public)]
+#[derive(Clone, Debug)]
+pub struct ShadowSample {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub ticket_id: String,
+    /// Monotonic per-ticket call sequence assigned by the router.
+    pub call_seq: u64,
+    pub incumbent_adapter_id: String,
+    pub candidate_adapter_id: String,
+    /// Serialized `PortTelemetry::Metrics` for the incumbent's call (JSON).
+    pub incumbent_metrics_json: String,
+    /// Serialized `PortTelemetry::Metrics` for the candidate's call (JSON).
+    pub candidate_metrics_json: String,
+    /// Judge's call on response equivalence for this pair.
+    pub agreed: bool,
+    /// Populated when `agreed=false`; empty string otherwise.
+    pub reason: String,
+    pub recorded_at: String,
+}
+
+const SWAP_STATE_CANDIDATE: &str = "candidate";
+const SWAP_STATE_SHADOW: &str = "shadow";
+const SWAP_STATE_SHADOW_GREEN: &str = "shadow_green";
+const SWAP_STATE_SHADOW_RED: &str = "shadow_red";
+const SWAP_STATE_PROMOTED: &str = "promoted";
+const SWAP_STATE_ROLLED_BACK: &str = "rolled_back";
+
+fn swap_state_transition_allowed(from: &str, to: &str) -> bool {
+    matches!(
+        (from, to),
+        (SWAP_STATE_CANDIDATE, SWAP_STATE_SHADOW)
+            | (SWAP_STATE_SHADOW, SWAP_STATE_SHADOW_GREEN)
+            | (SWAP_STATE_SHADOW, SWAP_STATE_SHADOW_RED)
+            | (SWAP_STATE_SHADOW_GREEN, SWAP_STATE_PROMOTED)
+            | (SWAP_STATE_PROMOTED, SWAP_STATE_ROLLED_BACK)
+    )
+}
+
+/// Create a new swap ticket in `candidate` state. Caller supplies the UUID
+/// (STDB reducers don't return values cleanly; the caller already needs the
+/// id to subscribe to the row).
+#[reducer]
+pub fn swap_ticket_create(
+    ctx: &ReducerContext,
+    id: String,
+    project_id: String,
+    port_id: String,
+    incumbent_adapter_id: String,
+    candidate_adapter_id: String,
+    candidate_manifest_json: String,
+    shadow_traffic_fraction: f32,
+    shadow_window_seconds: u64,
+    success_criteria_json: String,
+    timestamp: String,
+) -> Result<(), String> {
+    if ctx.db.swap_ticket().id().find(&id).is_some() {
+        return Err(format!("swap_ticket {} already exists", id));
+    }
+    if !(0.0..=1.0).contains(&shadow_traffic_fraction) {
+        return Err(format!(
+            "shadow_traffic_fraction {} out of range [0.0, 1.0]",
+            shadow_traffic_fraction
+        ));
+    }
+    ctx.db.swap_ticket().insert(SwapTicket {
+        id,
+        project_id,
+        port_id,
+        incumbent_adapter_id,
+        candidate_adapter_id,
+        candidate_manifest_json,
+        state: SWAP_STATE_CANDIDATE.to_string(),
+        shadow_traffic_fraction,
+        shadow_window_seconds,
+        shadow_started_at: String::new(),
+        success_criteria_json,
+        created_at: timestamp.clone(),
+        updated_at: timestamp,
+    });
+    Ok(())
+}
+
+/// Move a ticket to a new state. Rejects transitions not in the allowed set.
+#[reducer]
+pub fn swap_ticket_transition(
+    ctx: &ReducerContext,
+    id: String,
+    new_state: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let existing = ctx
+        .db
+        .swap_ticket()
+        .id()
+        .find(&id)
+        .ok_or_else(|| format!("swap_ticket {} not found", id))?;
+    if !swap_state_transition_allowed(&existing.state, &new_state) {
+        return Err(format!(
+            "swap_ticket {}: transition {} -> {} not allowed",
+            id, existing.state, new_state
+        ));
+    }
+    ctx.db.swap_ticket().id().update(SwapTicket {
+        state: new_state,
+        updated_at: timestamp,
+        ..existing
+    });
+    Ok(())
+}
+
+/// Update the operator-configurable fields (success_criteria, traffic
+/// fraction, window) on a non-terminal ticket. Allowed in candidate or
+/// shadow state — operator may adjust mid-shadow before the judge ticks.
+/// Rejected for terminal states (shadow_green/shadow_red/promoted/rolled_back).
+#[reducer]
+pub fn swap_ticket_set_config(
+    ctx: &ReducerContext,
+    id: String,
+    success_criteria_json: String,
+    shadow_traffic_fraction: f32,
+    shadow_window_seconds: u64,
+    timestamp: String,
+) -> Result<(), String> {
+    let existing = ctx
+        .db
+        .swap_ticket()
+        .id()
+        .find(&id)
+        .ok_or_else(|| format!("swap_ticket {} not found", id))?;
+    if !matches!(existing.state.as_str(), SWAP_STATE_CANDIDATE | SWAP_STATE_SHADOW) {
+        return Err(format!(
+            "swap_ticket {}: cannot update config in state {}",
+            id, existing.state
+        ));
+    }
+    if !(0.0..=1.0).contains(&shadow_traffic_fraction) {
+        return Err(format!(
+            "shadow_traffic_fraction {} out of range [0.0, 1.0]",
+            shadow_traffic_fraction
+        ));
+    }
+    ctx.db.swap_ticket().id().update(SwapTicket {
+        success_criteria_json,
+        shadow_traffic_fraction,
+        shadow_window_seconds,
+        updated_at: timestamp,
+        ..existing
+    });
+    Ok(())
+}
+
+/// Stamp `shadow_started_at` on a ticket. Called when the shadow router
+/// begins routing mirrored traffic — separate from the state transition so
+/// the judge can compute "time in shadow" deterministically.
+#[reducer]
+pub fn swap_ticket_set_shadow_started(
+    ctx: &ReducerContext,
+    id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let existing = ctx
+        .db
+        .swap_ticket()
+        .id()
+        .find(&id)
+        .ok_or_else(|| format!("swap_ticket {} not found", id))?;
+    if existing.state != SWAP_STATE_SHADOW {
+        return Err(format!(
+            "swap_ticket {}: cannot set shadow_started_at in state {}",
+            id, existing.state
+        ));
+    }
+    ctx.db.swap_ticket().id().update(SwapTicket {
+        shadow_started_at: timestamp.clone(),
+        updated_at: timestamp,
+        ..existing
+    });
+    Ok(())
+}
+
+/// Record one incumbent-vs-candidate comparison for a shadow ticket.
+#[reducer]
+pub fn shadow_sample_record(
+    ctx: &ReducerContext,
+    ticket_id: String,
+    call_seq: u64,
+    incumbent_adapter_id: String,
+    candidate_adapter_id: String,
+    incumbent_metrics_json: String,
+    candidate_metrics_json: String,
+    agreed: bool,
+    reason: String,
+    timestamp: String,
+) -> Result<(), String> {
+    if ctx.db.swap_ticket().id().find(&ticket_id).is_none() {
+        return Err(format!(
+            "shadow_sample_record: ticket {} not found",
+            ticket_id
+        ));
+    }
+    ctx.db.shadow_sample().insert(ShadowSample {
+        id: 0, // auto_inc
+        ticket_id,
+        call_seq,
+        incumbent_adapter_id,
+        candidate_adapter_id,
+        incumbent_metrics_json,
+        candidate_metrics_json,
+        agreed,
+        reason,
+        recorded_at: timestamp,
+    });
+    Ok(())
+}
+
+#[cfg(test)]
+mod swap_ticket_state_tests {
+    use super::*;
+
+    #[test]
+    fn allowed_transitions_form_the_state_machine() {
+        for (from, to) in [
+            (SWAP_STATE_CANDIDATE, SWAP_STATE_SHADOW),
+            (SWAP_STATE_SHADOW, SWAP_STATE_SHADOW_GREEN),
+            (SWAP_STATE_SHADOW, SWAP_STATE_SHADOW_RED),
+            (SWAP_STATE_SHADOW_GREEN, SWAP_STATE_PROMOTED),
+            (SWAP_STATE_PROMOTED, SWAP_STATE_ROLLED_BACK),
+        ] {
+            assert!(
+                swap_state_transition_allowed(from, to),
+                "{} -> {} should be allowed",
+                from,
+                to
+            );
+        }
+    }
+
+    #[test]
+    fn forbidden_transitions_are_rejected() {
+        for (from, to) in [
+            (SWAP_STATE_CANDIDATE, SWAP_STATE_PROMOTED),       // skip shadow
+            (SWAP_STATE_SHADOW, SWAP_STATE_PROMOTED),          // skip judge
+            (SWAP_STATE_SHADOW_RED, SWAP_STATE_PROMOTED),      // can't promote a red
+            (SWAP_STATE_PROMOTED, SWAP_STATE_SHADOW),          // no going back
+            (SWAP_STATE_ROLLED_BACK, SWAP_STATE_CANDIDATE),    // terminal
+            (SWAP_STATE_SHADOW_GREEN, SWAP_STATE_SHADOW_RED),  // judge is monotonic
+        ] {
+            assert!(
+                !swap_state_transition_allowed(from, to),
+                "{} -> {} should NOT be allowed",
+                from,
+                to
+            );
+        }
+    }
 }
 
 // ============================================================

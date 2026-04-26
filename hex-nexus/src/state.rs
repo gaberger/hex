@@ -13,7 +13,7 @@ use crate::orchestration::context_pressure::ContextPressureTracker;
 use crate::orchestration::workplan_executor::WorkplanExecutor;
 use crate::ports::live_context::ILiveContextPort;
 use crate::ports::session::ISessionPort;
-use crate::ports::state::IStatePort;
+use crate::ports::state::{IStatePort, ISwapTicketStatePort};
 use crate::rate_limiter::RateLimitManager;
 use crate::remote::fleet::FleetManager;
 // ── App State ───────────────────────────────────────────
@@ -45,12 +45,42 @@ pub struct AppState {
     pub hexflo: Option<Arc<HexFlo>>,
     // Unified state port (ADR-025 + ADR-042) — single source of truth for all persistent state
     pub state_port: Option<Arc<dyn IStatePort>>,
+    // Substrate swap-ticket read/write surface (ADR-2604261500). Held
+    // separately from `state_port` because the substrate ADR is about
+    // port-by-port modular swapping; expanding the IStatePort super-trait
+    // would contradict the motivation. SpacetimeStateAdapter impls both
+    // independently — composition_root constructs a second adapter pointed
+    // at the same STDB.
+    pub swap_ticket_port: Option<Arc<dyn ISwapTicketStatePort>>,
+    // Substrate runtime composition for the inference port (ADR-2604261500
+    // P5). The InMemoryComposition is pre-bound with the live inference
+    // adapter as adapter id "default-inference"; STDB is the durable audit
+    // log via swap_ticket_port. None when there is no live inference
+    // adapter to bind (e.g. Claude-Code session mode where the harness
+    // owns inference dispatch).
+    pub inference_runtime_composition:
+        Option<Arc<crate::adapters::spacetime_composition::SpacetimeRuntimeComposition>>,
+    // ShadowRouter wrapping `inference_runtime_composition`. Consumers that
+    // want substrate-mediated inference should call
+    // `shadow_router.route(PortId::new("inference"), req)` instead of
+    // `inference_port.complete(req)` directly. With no swap in flight,
+    // ShadowRouter delegates to the live adapter — opt-in is zero-cost.
+    pub inference_shadow_router: Option<Arc<crate::orchestration::shadow_router::ShadowRouter>>,
+    // Substrate runtime composition for the SECRET port (ADR-2604261500
+    // P10 second-port migration; ADR-2604262100 cookbook). Per-port
+    // composition mirroring the inference one — see those ADRs for why
+    // each substrate port gets its own RuntimeComposition+Router pair
+    // today (until polymorphic dispatch lands when a third port arrives).
+    pub secret_runtime_composition:
+        Option<Arc<crate::adapters::spacetime_composition::SpacetimeRuntimeComposition>>,
+    pub secret_shadow_router:
+        Option<Arc<crate::orchestration::secret_shadow_router::SecretShadowRouter>>,
     // SpacetimeDB inference-gateway client (ADR-035)
     pub inference_stdb: Option<Arc<SpacetimeInferenceClient>>,
     // SpacetimeDB chat-relay client
     pub chat_stdb: Option<Arc<SpacetimeChatClient>>,
     // Session persistence (ADR-036 / ADR-042 P2.5) — chat conversation history
-    // SpacetimeDB primary, SQLite fallback
+    // SpacetimeDB only.
     pub session_port: Option<Arc<dyn ISessionPort>>,
     // Live context enrichment port (P9.5) — enriches task prompts before dispatch
     pub live_context: Option<Arc<dyn ILiveContextPort>>,
@@ -116,6 +146,11 @@ impl AppState {
             spacetime_secrets: None,
             hexflo: None,
             state_port: None,
+            swap_ticket_port: None,
+            inference_runtime_composition: None,
+            inference_shadow_router: None,
+            secret_runtime_composition: None,
+            secret_shadow_router: None,
             inference_stdb: None,
             chat_stdb: None,
             session_port: None,

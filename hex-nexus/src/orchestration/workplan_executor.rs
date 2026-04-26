@@ -992,6 +992,12 @@ impl WorkplanExecutor {
             // Routes directly through the inference adapter (local or remote Ollama)
             // without spawning an agent process. Faster and cheaper than Path A.
             let inference_port = shared_state.inference_port.clone();
+            // Substrate opt-in (ADR-2604261800 P2). When the substrate's
+            // inference shadow_router is wired, route Path C dispatch
+            // through it — with no swap in flight, the router delegates
+            // straight to the live binding (which IS this same
+            // inference_port), so behaviour is identical.
+            let inference_router_substrate = shared_state.inference_shadow_router.clone();
             let use_path_c = !crate::orchestration::is_claude_code_session()
                 && task_tier != TaskTier::T3
                 && inference_port.is_some();
@@ -1014,7 +1020,20 @@ impl WorkplanExecutor {
                     // Path C (ADR-2604120202 P5.1): headless inference dispatch.
                     // Route prompt directly through inference adapter → compile gate.
                     // No agent process spawned — faster and works with remote Ollama.
-                    let inference = inference_port.unwrap(); // safe: use_path_c checks is_some()
+                    let inference_raw = inference_port.unwrap(); // safe: use_path_c checks is_some()
+                    // Substrate opt-in: wrap inference handle so .complete()
+                    // calls flow through ShadowRouter when wired. Falls
+                    // back to the raw adapter when substrate is absent.
+                    let inference: std::sync::Arc<dyn hex_core::ports::inference::IInferencePort> =
+                        match inference_router_substrate.as_ref() {
+                            Some(router) => std::sync::Arc::new(
+                                crate::orchestration::shadow_router::ShadowRouterInferenceAdapter::new(
+                                    router.clone(),
+                                    inference_raw,
+                                ),
+                            ),
+                            None => inference_raw,
+                        };
                     let grammar = crate::orchestration::grammars::grammar_for_role(
                         config.agent_name.as_deref().unwrap_or("hex-coder"),
                     ).map(String::from);
@@ -1057,8 +1076,16 @@ impl WorkplanExecutor {
                         compile_checker,
                     );
 
-                    match scaffolded.dispatch(&req, task_tier).await {
-                        Ok(ScaffoldResult::Success { response, attempt, total_attempts }) => {
+                    // ADR-2604241700: Graceful timeout for local models.
+                    // Local Ollama can be slow (especially first call after idle).
+                    // Use 5min timeout for Path C scaffolded dispatch.
+                    let dispatch_result = tokio::time::timeout(
+                        std::time::Duration::from_secs(300),
+                        scaffolded.dispatch(&req, task_tier),
+                    ).await;
+
+                    match dispatch_result {
+                        Ok(Ok(ScaffoldResult::Success { response, attempt, total_attempts })) => {
                             tracing::info!(
                                 task_id = %task_id,
                                 tokens = response.output_tokens,
@@ -1086,7 +1113,7 @@ impl WorkplanExecutor {
                                 role: Some("hex-coder".to_string()),
                             })
                         }
-                        Ok(ScaffoldResult::CompileGateFailed { total_attempts, best_error }) => {
+                        Ok(Ok(ScaffoldResult::CompileGateFailed { total_attempts, best_error })) => {
                             tracing::warn!(
                                 task_id = %task_id,
                                 total_attempts,
@@ -1098,7 +1125,22 @@ impl WorkplanExecutor {
                                 best_error.chars().take(200).collect::<String>()
                             ))
                         }
-                        Err(e) => Err(format!("Path C inference failed: {}", e)),
+                        Ok(Err(e)) => Err(format!("Path C inference failed: {}", e)),
+                        Err(_elapsed) => {
+                            // ADR-2604241700: Timeout handling for slow local models.
+                            // Return a clear error instead of hanging indefinitely.
+                            tracing::error!(
+                                task_id = %task_id,
+                                tier = %task_tier,
+                                timeout_secs = 300,
+                                "Path C: inference timeout after 5 minutes"
+                            );
+                            Err(format!(
+                                "Path C timeout: inference for task '{}' exceeded 5 minute timeout. \
+                                Consider using a faster model or check Ollama availability.",
+                                task_id
+                            ))
+                        }
                     }
                 } else if use_path_b {
                     // Path B: store queue entry in HexFlo memory, broadcast inbox

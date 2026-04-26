@@ -1,6 +1,6 @@
 //! Agent notification inbox operations for HexFlo (ADR-060).
 //!
-//! Delegates to IStatePort — works with both SQLite and SpacetimeDB backends.
+//! Delegates to IStatePort — backed by SpacetimeDB.
 
 use serde::{Deserialize, Serialize};
 

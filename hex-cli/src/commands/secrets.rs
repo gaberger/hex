@@ -4,7 +4,7 @@
 //!
 //! `has` and `status` work locally (env vars).
 //! `list`, `grant`, `revoke`, `set`, `get` talk to the hex-nexus daemon.
-//! `set` stores secret values via HexFlo memory (persisted to SQLite).
+//! `set` stores secret values via HexFlo memory (persisted in SpacetimeDB).
 //! `grant` + `set` together = agent can claim the key.
 
 use clap::Subcommand;

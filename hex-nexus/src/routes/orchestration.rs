@@ -233,7 +233,7 @@ pub async fn connect_agent(
         }
     }
 
-    // Register via state_port (SpacetimeDB primary, SQLite fallback)
+    // Register via state_port (SpacetimeDB).
     if let Some(sp) = state.state_port.as_ref() {
         let info = crate::ports::state::AgentInfo {
             id: agent_id.clone(),

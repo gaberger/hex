@@ -772,6 +772,120 @@ pub trait INeuralLabStatePort: Send + Sync {
     async fn neural_lab_strategies_list(&self) -> Result<Vec<serde_json::Value>, StateError>;
 }
 
+// ── Substrate swap-ticket port (ADR-2604261500 P6 / wp-substrate-shadow-promotion P2) ──
+//
+// Deliberately *not* added to the `IStatePort` super-trait. The substrate
+// ADR is about port-by-port modular swapping; expanding the god-trait would
+// undermine the very motivation. Consumers (`SpacetimeRuntimeComposition`)
+// take `Arc<dyn ISwapTicketStatePort>` directly.
+//
+// Backed by the `swap_ticket` + `shadow_sample` tables in the
+// `hexflo-coordination` STDB module (wp-substrate-shadow-promotion P1).
+#[async_trait]
+pub trait ISwapTicketStatePort: Send + Sync {
+    #[allow(clippy::too_many_arguments)]
+    async fn swap_ticket_create(
+        &self,
+        id: &str,
+        project_id: &str,
+        port_id: &str,
+        incumbent_adapter_id: &str,
+        candidate_adapter_id: &str,
+        candidate_manifest_json: &str,
+        shadow_traffic_fraction: f32,
+        shadow_window_seconds: u64,
+        success_criteria_json: &str,
+        timestamp: &str,
+    ) -> Result<(), StateError>;
+
+    async fn swap_ticket_transition(
+        &self,
+        id: &str,
+        new_state: &str,
+        timestamp: &str,
+    ) -> Result<(), StateError>;
+
+    async fn swap_ticket_set_shadow_started(
+        &self,
+        id: &str,
+        timestamp: &str,
+    ) -> Result<(), StateError>;
+
+    /// Update the operator-configurable fields on a non-terminal ticket
+    /// (success_criteria_json, shadow_traffic_fraction, shadow_window_seconds).
+    /// Called by the propose endpoint after `swap_ticket_create` so the
+    /// operator's choices override the propose-time defaults.
+    async fn swap_ticket_set_config(
+        &self,
+        id: &str,
+        success_criteria_json: &str,
+        shadow_traffic_fraction: f32,
+        shadow_window_seconds: u64,
+        timestamp: &str,
+    ) -> Result<(), StateError>;
+
+    #[allow(clippy::too_many_arguments)]
+    async fn shadow_sample_record(
+        &self,
+        ticket_id: &str,
+        call_seq: u64,
+        incumbent_adapter_id: &str,
+        candidate_adapter_id: &str,
+        incumbent_metrics_json: &str,
+        candidate_metrics_json: &str,
+        agreed: bool,
+        reason: &str,
+        timestamp: &str,
+    ) -> Result<(), StateError>;
+
+    /// Read all swap_tickets currently in `state="shadow"` whose
+    /// `shadow_started_at + shadow_window_seconds <= now`. The promotion
+    /// judge polls this on its tick.
+    async fn shadow_tickets_due(&self, now: &str) -> Result<Vec<SwapTicketRecord>, StateError>;
+
+    /// Read all shadow_samples for a ticket. Used by the promotion judge
+    /// to evaluate the success criteria.
+    async fn shadow_samples_for(&self, ticket_id: &str) -> Result<Vec<ShadowSampleRecord>, StateError>;
+
+    /// Read all swap_tickets currently in `state="shadow_green"` — i.e.
+    /// the judge has decided they're eligible for promotion. The promote
+    /// orchestrator polls this on its tick and flips the live binding.
+    async fn shadow_green_tickets(&self) -> Result<Vec<SwapTicketRecord>, StateError>;
+}
+
+/// Read shape of a `swap_ticket` row.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SwapTicketRecord {
+    pub id: String,
+    pub project_id: String,
+    pub port_id: String,
+    pub incumbent_adapter_id: String,
+    pub candidate_adapter_id: String,
+    pub candidate_manifest_json: String,
+    pub state: String,
+    pub shadow_traffic_fraction: f32,
+    pub shadow_window_seconds: u64,
+    pub shadow_started_at: String,
+    pub success_criteria_json: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Read shape of a `shadow_sample` row.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ShadowSampleRecord {
+    pub id: u64,
+    pub ticket_id: String,
+    pub call_seq: u64,
+    pub incumbent_adapter_id: String,
+    pub candidate_adapter_id: String,
+    pub incumbent_metrics_json: String,
+    pub candidate_metrics_json: String,
+    pub agreed: bool,
+    pub reason: String,
+    pub recorded_at: String,
+}
+
 // ── The Unified Super-Trait ─────────────────────────────
 //
 // Existing code that takes `Arc<dyn IStatePort>` continues to work.
@@ -779,9 +893,9 @@ pub trait INeuralLabStatePort: Send + Sync {
 
 /// Unified state port — extends all focused sub-traits.
 ///
-/// Two implementations:
-/// 1. SqliteStateAdapter (default) — wraps existing RL, orchestration, fleet SQLite code
-/// 2. SpacetimeStateAdapter (opt-in) — connects to SpacetimeDB with real-time subscriptions
+/// Implementation: `SpacetimeStateAdapter` (the only implementation —
+/// SQLite was removed per the STDB-only directive). Real-time subscriptions
+/// are delivered via STDB's reactive channel.
 #[async_trait]
 pub trait IStatePort:
     IRlStatePort

@@ -154,6 +154,29 @@ pub mod futures_stream {
     }
 }
 
+/// PortTelemetry surface for `IInferencePort` implementations (substrate
+/// C3, ADR-2604261500). Adapter authors call
+/// `InferencePortTelemetry::emit(adapter_id, sample)` after each
+/// `complete` / `stream` call. The substrate routes samples to the
+/// registered sink (`telemetry::register_sink`); unconfigured callers pay
+/// nothing.
+pub struct InferencePortTelemetry;
+
+/// Per-call telemetry sample for an inference adapter.
+#[derive(Debug, Clone)]
+pub struct InferenceMetrics {
+    pub model_used: String,
+    pub latency_ms: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    /// `true` if the call returned an `InferenceError`.
+    pub error: bool,
+}
+
+impl crate::telemetry::PortTelemetry for InferencePortTelemetry {
+    type Metrics = InferenceMetrics;
+}
+
 /// Errors from inference operations.
 #[derive(Debug, thiserror::Error)]
 pub enum InferenceError {

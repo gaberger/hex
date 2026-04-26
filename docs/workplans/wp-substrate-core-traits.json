@@ -1,0 +1,123 @@
+{
+  "id": "wp-substrate-core-traits",
+  "feature": "Substrate core traits (P2+P3+P4 of ADR-2604261500)",
+  "adr": "ADR-2604261500",
+  "created_at": "2026-04-26T15:30:00Z",
+  "created_by": "human+claude",
+  "description": "Land the three trait modules in hex-core that the substrate ADR (2604261500) names as its load-bearing contracts: RuntimeComposition (C2), PortTelemetry (C3), and IAdapterGenerator (C4). Pure trait definitions and value types only — no behavior beyond an in-memory stub for RuntimeComposition that wraps the existing static composition so nothing breaks. Adapter implementations and the shadow-promotion protocol (P5–P10) are out of scope and depend on this. hex-core must remain zero-runtime-dep (serde/thiserror only).",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "C2 — RuntimeComposition trait + in-memory stub",
+      "description": "Define the hot-swappable composition root API as a trait in hex-core, plus the value types it operates on. Ship one in-memory implementation that wraps the current static composition so existing consumers compile unchanged.",
+      "tier": 0,
+      "gate": {
+        "type": "test",
+        "command": "cargo check -p hex-core && cargo test -p hex-core composition",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Add hex-core/src/composition.rs with RuntimeComposition trait and value types",
+          "description": "New file hex-core/src/composition.rs. Define: trait RuntimeComposition (methods ports, snapshot, propose_swap, promote, rollback per ADR-2604261500 C2); struct PortRegistry (typed map PortId -> Arc<dyn Any+Send+Sync>); struct CompositionSwap { port: PortId, new_adapter_id: AdapterId, manifest: AdapterManifest }; struct SwapTicket { id: Uuid, port: PortId, state: SwapState, created_at: chrono::DateTime<Utc> }; enum SwapState { Candidate, Shadow, ShadowGreen, ShadowRed, Promoted, RolledBack }; struct CompositionSnapshot { bindings: BTreeMap<PortId, AdapterId>, taken_at: chrono::DateTime<Utc> }; enum SwapError { PortUnknown, SwapInFlight, AdapterMissing, NotEligibleForPromotion }. PortId and AdapterId are newtype String wrappers. All types derive Serialize+Deserialize+Debug+Clone where sensible. NO impls beyond derive macros; no behavior in this task.",
+          "files": ["hex-core/src/composition.rs", "hex-core/src/lib.rs"],
+          "agent": "hex-coder",
+          "deps": [],
+          "layer": "domain",
+          "status": "done"
+        },
+        {
+          "id": "P1.2",
+          "name": "InMemoryComposition stub wrapping static composition",
+          "description": "Add struct InMemoryComposition in hex-core/src/composition.rs implementing RuntimeComposition. Single-writer model: a tokio::sync::RwLock<PortRegistry> for the live registry plus a Mutex<Option<SwapTicket>> for the in-flight swap (one at a time per port). propose_swap: rejects if a Candidate/Shadow ticket already exists for the port, else creates a Candidate and returns it. promote: rejects unless ticket.state == ShadowGreen, else atomically swaps the binding and transitions state to Promoted. rollback: restores the prior binding from the snapshot taken at promote time. snapshot: clones the current PortRegistry binding map. Ship inline #[cfg(test)] tests covering each transition + the rejection paths. NO actual shadow-traffic routing — that lives in P5 (out of scope).",
+          "files": ["hex-core/src/composition.rs"],
+          "agent": "hex-coder",
+          "deps": ["P1.1"],
+          "layer": "domain",
+          "status": "done"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "C3 — PortTelemetry trait + AdapterId wiring",
+      "description": "Make telemetry first-class: every port trait declares its metrics shape via PortTelemetry. Ship the trait, the AdapterId type, and a derive macro that auto-instruments adapters at registration time. No actual metrics backend yet — emit() is a hook the substrate fills in later.",
+      "tier": 0,
+      "gate": {
+        "type": "test",
+        "command": "cargo check -p hex-core && cargo test -p hex-core telemetry",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Add hex-core/src/telemetry.rs with PortTelemetry trait",
+          "description": "New file hex-core/src/telemetry.rs. Define: trait PortTelemetry { type Metrics: Send+Sync+Clone; fn emit(adapter_id: AdapterId, sample: Self::Metrics); }; re-export AdapterId from composition.rs (or move to a shared ids.rs if cleaner). Add a no-op default registry: static TELEMETRY_SINK: OnceLock<Box<dyn Fn(AdapterId, &dyn Any)+Send+Sync>> with a register_sink(...) function the composition root calls once at boot. Default sink is a no-op. PortTelemetry::emit reads TELEMETRY_SINK; if registered, calls it; else drops the sample. Histogram, Counter from a lightweight in-crate definition (no metrics-rs dep): struct Histogram { samples: Vec<f64> }, struct Counter { value: u64 } — these are just data types, the ADR's per-port contracts use them as field types. #[cfg(test)] tests confirm emit is no-op without a registered sink and dispatches to the sink when registered.",
+          "files": ["hex-core/src/telemetry.rs", "hex-core/src/lib.rs"],
+          "agent": "hex-coder",
+          "deps": [],
+          "layer": "domain",
+          "status": "done"
+        },
+        {
+          "id": "P2.2",
+          "name": "PortTelemetry derive macro (proc-macro crate)",
+          "description": "New crate hex-core-macros (proc-macro = true, the ONLY runtime dep hex-core takes on, and only for derives). Implements #[derive(PortTelemetry)] which: requires the type to declare an associated `type Metrics`; generates an impl that wires emit() to the global TELEMETRY_SINK. Goal: an adapter author tags their port impl with the derive and cannot forget to instrument. Ship a trybuild test fixture confirming a derive on a port-impl compiles and a derive without `type Metrics` fails to compile with a clear message. hex-core's Cargo.toml gains hex-core-macros as a dev-only path dep for tests, plus a re-export of the derive behind a `derive` feature gate.",
+          "files": ["hex-core-macros/Cargo.toml", "hex-core-macros/src/lib.rs", "hex-core/Cargo.toml", "hex-core/src/lib.rs", "hex-core/tests/derive_compile.rs"],
+          "agent": "hex-coder",
+          "deps": ["P2.1"],
+          "layer": "domain",
+          "status": "deferred",
+          "deferred_reason": "Ergonomic helper, not load-bearing. Adapter authors hand-impl PortTelemetry until enough adapter-author surface exists to justify the derive crate."
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "C4 — IAdapterGenerator port",
+      "description": "Define the LLM-driven adapter-synthesis port and its value types. No implementations — just the contract that P7 will implement against.",
+      "tier": 0,
+      "gate": {
+        "type": "test",
+        "command": "cargo check -p hex-core",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Add hex-core/src/ports/adapter_generator.rs",
+          "description": "New file hex-core/src/ports/adapter_generator.rs (create the ports/ submodule if it does not yet exist; if it does, add to it). Define: trait IAdapterGenerator: Send+Sync { fn target_port(&self) -> PortId; fn generate(&self, spec: AdapterSpec) -> futures::future::BoxFuture<'static, Result<GeneratedAdapter, GenError>>; fn capabilities(&self) -> GeneratorCapabilities; }; struct AdapterSpec { target_port: PortId, name: String, description: String, requirements: Vec<String>, examples: Vec<String> }; struct GeneratedAdapter { source: SourceTree, manifest: AdapterManifest, shadow_test_plan: ShadowTestPlan }; struct SourceTree { files: BTreeMap<PathBuf, String> }; struct AdapterManifest { adapter_id: AdapterId, port: PortId, version: String, deps: Vec<String> }; struct ShadowTestPlan { duration_seconds: u64, traffic_fraction: f32, success_criteria: Vec<SuccessCriterion> }; enum SuccessCriterion { ResponseEquivalence { tolerance: f64 }, LatencyP99BelowMs(u64), ErrorRateBelow(f32) }; struct GeneratorCapabilities { supported_target_ports: Vec<PortId>, max_spec_complexity: u8 }; enum GenError { UnsupportedPort, SpecInvalid(String), GenerationFailed(String) }. All structs derive Serialize+Deserialize+Debug+Clone. futures = '0.3' is allowed (BoxFuture); no other runtime deps. Add a #[cfg(test)] test confirming a noop adapter implementing the trait compiles.",
+          "files": ["hex-core/src/ports/adapter_generator.rs", "hex-core/src/ports/mod.rs", "hex-core/src/lib.rs", "hex-core/Cargo.toml"],
+          "agent": "hex-coder",
+          "deps": [],
+          "layer": "ports",
+          "status": "done"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Workspace verification",
+      "description": "Confirm the new traits land cleanly and don't break anything downstream. This is the gate before this workplan is marked done.",
+      "tier": 0,
+      "gate": {
+        "type": "test",
+        "command": "cargo check --workspace && cargo test -p hex-core && hex analyze .",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Workspace check + hex analyze",
+          "description": "Run `cargo check --workspace` (must be clean), `cargo test -p hex-core` (all new tests pass), and `hex analyze .` (no new boundary violations introduced). If any check fails, the workplan is not done — fix in place, do not move on. Report new dep additions to hex-core's Cargo.toml in the result; the only acceptable additions are `serde`, `serde_derive`, `thiserror`, `chrono` (with `serde` feature), `uuid` (with `serde` feature), `futures`, `tokio` (sync feature only — for RwLock/Mutex), and the dev-only path dep on hex-core-macros.",
+          "files": [],
+          "agent": "hex-coder",
+          "deps": ["P1.2", "P2.2", "P3.1"],
+          "layer": "verification",
+          "status": "done"
+        }
+      ]
+    }
+  ]
+}

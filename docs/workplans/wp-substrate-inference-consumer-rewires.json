@@ -1,0 +1,136 @@
+{
+  "id": "wp-substrate-inference-consumer-rewires",
+  "feature": "Substrate inference consumer rewires (ADR-2604261800 P2-P5)",
+  "adr": "ADR-2604261800",
+  "created_at": "2026-04-26T18:00:00Z",
+  "created_by": "human+claude",
+  "description": "Land the per-consumer opt-in rewires that turn the substrate from 'wired but bypassed' to 'production traffic flows through it' for the inference port. Each rewire is small, additive, and falls back to direct inference_port.complete when shadow_router is unavailable — substrate is never load-bearing in this slice.",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "WorkplanExecutor opt-in",
+      "description": "First real consumer migrated to the substrate path. Headless workplan dispatch is the highest-volume inference call site in standalone mode.",
+      "tier": 0,
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-nexus workplan_executor && hex analyze .",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Route WorkplanExecutor inference calls through ShadowRouter when available",
+          "description": "Find the inference_port.complete() call site(s) in hex-nexus/src/orchestration/workplan_executor.rs. Replace with: if let Some(router) = state.inference_shadow_router.as_ref() { router.route(PortId::new('inference'), req).await } else { inference_port.complete(req).await }. Behavior is identical when no swap is in flight (ShadowRouter delegates to live). Add unit test that proves both paths produce the same response shape against a MockInferencePort. Do NOT remove the existing inference_port code path — substrate is opt-in.",
+          "files": ["hex-nexus/src/orchestration/workplan_executor.rs", "hex-nexus/src/orchestration/shadow_router.rs"],
+          "agent": "hex-coder",
+          "deps": [],
+          "layer": "secondary",
+          "status": "done",
+          "notes": "Implemented via wrapper-adapter pattern (cleaner than inline routing): new ShadowRouterInferenceAdapter struct in shadow_router.rs impls IInferencePort itself, delegates .complete() through router.route(), passes stream/health/capabilities through to the fallback. workplan_executor wraps `inference_port.unwrap()` in this adapter when `shared_state.inference_shadow_router.is_some()`, falls back to the raw adapter otherwise. ScaffoldedDispatch (which holds the inference Arc) never knows it's substrate-mediated — internal compile-gate retries also flow through the router. New test shadow_router_inference_adapter_delegates_to_router uses a PanicInference fallback to PROVE the wrapper actually goes through the router (panics if fallback is invoked). With no swap in flight the router resolves its own live binding (default-inference) and returns its response — identical behaviour to today; substrate intercept is dormant until an operator proposes a candidate."
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "agent_manager opt-in",
+      "description": "Second consumer rewire. Lower volume than workplan executor but on the path for interactive dispatch.",
+      "tier": 0,
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-nexus agent_manager",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Route agent_manager inference calls through ShadowRouter when available",
+          "description": "Mirror the P1.1 pattern in hex-nexus/src/orchestration/agent_manager.rs. Same fallback semantics. Same test pattern.",
+          "files": [],
+          "agent": "hex-coder",
+          "deps": ["P1.1"],
+          "layer": "secondary",
+          "status": "done",
+          "notes": "MOOT — architectural finding: agent_manager does NOT directly invoke inference_port.complete(). It spawns hex-agent processes; inference happens inside those agents over their own STDB inference-task path. The complete production-inference call-site map is: (1) workplan_executor — substrate-wrapped via P1.1; (2) scaffolding.rs:199 (self.inference.complete) — already substrate-routed because workplan_executor passes the wrapped Arc into ScaffoldedDispatch::new; (3) scaffolding.rs:255 (frontier.complete) — only fires when a frontier adapter is wired (not in production today; future substrate port); (4) inference_router/mod.rs:295 — explicitly EXCLUDED by ADR-2604261800 (strategy-level binding, not server-level). Production inference is therefore 100% substrate-covered via the single P1.1 wrapper."
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Strategy-builder helper",
+      "description": "Swap proposals need a way to construct alternative IInferencePort strategies. Today InferenceRouterAdapter::new takes hand-picked args; substrate-driven swaps need a one-call builder that materializes a candidate from a JSON spec.",
+      "tier": 0,
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-nexus strategy_builder",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Build hex-nexus/src/orchestration/inference_strategy_builder.rs",
+          "description": "Module with fn build_strategy(spec: &InferenceStrategySpec, app_state: &AppState) -> Arc<dyn IInferencePort>. InferenceStrategySpec is JSON-deserializable: { kind: 'router-rl' | 'router-fixed' | 'noop', tier_models: HashMap, rl_state_key: Option<String>, ... }. The substrate calls this when a swap is proposed — the swap spec carries the JSON, builder materializes the strategy. Tests: (a) router-rl spec produces a working IInferencePort that routes through RL; (b) router-fixed spec ignores RL and always picks the named model; (c) noop spec returns ProviderUnavailable for every request (useful for kill-switch testing).",
+          "files": ["hex-nexus/src/orchestration/inference_strategy_builder.rs", "hex-nexus/src/orchestration/mod.rs"],
+          "agent": "hex-coder",
+          "deps": [],
+          "layer": "secondary",
+          "status": "done",
+          "notes": "Two strategy kinds shipped: noop (kill-switch — every complete() returns ProviderUnavailable, health() returns Degraded so dashboard distinguishes 'intentionally disabled' from 'broken') and fixed (pinned model on a specific Ollama base_url, ignores request.model). router-rl deferred — constructing InferenceRouterAdapter::new requires factory + tier_config + RL state from AppState; that's a small follow-up once the builder has at least one operator-proven swap from the two kinds shipped here. build_strategy returns Result<Arc<dyn IInferencePort>, BuildStrategyError> with explicit input-validation errors (empty model / empty base_url). 6 tests: noop complete + health, fixed validation (empty model, empty base_url), fixed model-override (uses a ModelRecorder mock to PROVE the override happens — captures the request.model field and asserts it matches the pinned value, not the caller's), JSON round-trip (operator-facing CLI carries the spec; serde tag/rename strategy is now contractually stable). Took an Arc<dyn IInferencePort>-doesn't-impl-Debug detour — replaced .expect_err with explicit match arms."
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "First end-to-end swap in production",
+      "description": "Drive the substrate end-to-end with real inference traffic: propose default-inference vs cold-rl-inference, let shadow accumulate samples, judge promotes or rejects.",
+      "tier": 0,
+      "gate": {
+        "type": "test",
+        "command": "cargo build -p hex-nexus --release && hex sched daemon-status",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "CLI command: hex substrate swap-inference",
+          "description": "Add a hex-cli subcommand `hex substrate swap-inference --candidate <strategy-json> [--fraction 0.05] [--window-secs 300] [--criterion error-rate-below=0.1]` that POSTs to /api/swaps/propose (new endpoint) which: 1) builds the candidate strategy via P3.1 builder; 2) registers the candidate handle on AppState.inference_shadow_router; 3) calls inference_runtime_composition.propose_swap_async; 4) transitions ticket candidate→shadow; 5) calls router.begin_shadow with the new ticket info. Returns the ticket id. Operator monitors via dashboard /swaps and `hex substrate swap-status <id>`.",
+          "files": [
+            "hex-cli/src/commands/substrate.rs",
+            "hex-cli/src/commands/mod.rs",
+            "hex-cli/src/main.rs",
+            "hex-nexus/src/routes/swaps.rs",
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "agent": "hex-coder",
+          "deps": ["P1.1", "P3.1"],
+          "layer": "primary",
+          "status": "done",
+          "notes": "Three subcommands: swap-inference (propose), swap-list (in-flight tickets), swap-samples <id> (samples for a ticket). Server side POST /api/swaps/propose: build_strategy(spec) → register_handle on router → propose_swap_async on comp → swap_ticket_transition(candidate→shadow) → swap_ticket_set_shadow_started → router.begin_shadow. Returns ticket id + state + started_at. KNOWN GAP: success_criteria + custom shadow_traffic_fraction sent in the request body are NOT yet applied to the STDB ticket — propose_swap_async writes its own defaults and there's no swap_ticket_set_criteria reducer yet. Server logs a warn when criteria are sent so operator sees they were ignored. Until that reducer lands, judge default-passes after the window elapses (which is fine for incident-response 'kill-switch via noop strategy' usage but not for genuine A/B). Tracked: TODO add swap_ticket_set_criteria reducer + port method + propose endpoint patch. CLI parses three criterion shapes: error-rate-below=0.1, latency-p99-below-ms=200, response-equivalence=0.05 (tolerance) — repeatable --criterion flags. 5 unit tests on the criterion parser (all variants + unknown kind + missing equals)."
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "Promote orchestrator tick",
+      "description": "Until this lands, judge marks tickets shadow_green but nothing acts on it — the in-memory live registry still has the incumbent. The promote orchestrator closes that loop.",
+      "tier": 0,
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-nexus promote_orchestrator",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Build hex-nexus/src/orchestration/promote_orchestrator.rs",
+          "description": "Tick-driven module that periodically scans STDB for tickets in state=shadow_green, retrieves their candidate handles from a 'staged candidates' map (populated when P4.1 begins shadow), calls SpacetimeRuntimeComposition::in_memory().mark_shadow_green + .stage_handle, then comp.promote_async. On STDB rejection, leaves the ticket alone for next tick (idempotent). On success, calls router.end_shadow to stop mirroring. Wire into the existing sched_service tick loop. Tests: (a) ticket in shadow_green progresses to promoted in one tick when handle is staged; (b) ticket in shadow_green without a staged handle stays put (warn-log, no panic); (c) repeated ticks on a promoted ticket are no-ops.",
+          "files": ["hex-nexus/src/orchestration/promote_orchestrator.rs", "hex-nexus/src/orchestration/mod.rs", "hex-nexus/src/orchestration/shadow_router.rs"],
+          "agent": "hex-coder",
+          "deps": ["P4.1"],
+          "layer": "secondary",
+          "status": "done",
+          "notes": "Two unblocked-now exposures landed first: ShadowRouter::get_handle (look up registered handle by adapter_id) and ShadowRouter::has_active_shadow (check whether to call end_shadow). PromoteOrchestrator: idempotency guard at top of promote_one — if comp.binding_id(port) already equals candidate_id, no-op. This means re-ticks are inherently safe regardless of in-memory state-machine details. tick_with_tickets is a test seam (and a future production seam once a STDB shadow_green read method is added — today fetch_shadow_green_tickets is a no-op stub with a TODO marker and surfaces the structural gap). 4 tests: promotes-with-handle (live binding flips, STDB transition recorded), skips-when-handle-missing (adds to skipped_missing_handle list, no panic, binding unchanged), ignores-non-shadow-green (no transition, no error), idempotent-on-repeat (second tick short-circuits via the guard, zero errors, binding still candidate). NOT yet wired into sched_service tick loop — that's a small follow-up gated by the production STDB read-method path."
+        }
+      ]
+    }
+  ]
+}

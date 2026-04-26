@@ -110,11 +110,109 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             app_state.agent_manager = Some(agent_mgr);
             app_state.state_port = Some(state_port);
 
+            // Substrate swap-ticket port (ADR-2604261500). Construct a
+            // second SpacetimeStateAdapter pointed at the same STDB —
+            // SpacetimeStateAdapter impls both IStatePort and
+            // ISwapTicketStatePort independently. Two HTTP clients, one
+            // backend; cheap and keeps the port abstractions orthogonal.
+            {
+                use crate::adapters::spacetime_state::{SpacetimeConfig, SpacetimeStateAdapter};
+                let cfg = state_config::resolve_config();
+                let stdb_cfg = SpacetimeConfig {
+                    host: cfg.host.clone(),
+                    database: cfg.database.clone(),
+                    auth_token: cfg.auth_token.clone(),
+                };
+                app_state.swap_ticket_port = Some(Arc::new(SpacetimeStateAdapter::new(stdb_cfg)));
+            }
+
             // Wire inference port for Path C headless dispatch (ADR-2604120202 P5.1).
             // In standalone mode, this is OllamaInferenceAdapter pointed at OLLAMA_HOST.
             if !orchestration::is_claude_code_session() {
                 app_state.inference_port = Some(composition::standalone::default_inference_adapter());
                 tracing::info!("Path C inference port wired (standalone Ollama)");
+            }
+
+            // Substrate runtime composition + shadow router for the
+            // inference port (ADR-2604261500). Built only when both an
+            // inference port and a swap_ticket_port are available — the
+            // substrate is opt-in for now, consumers route through it
+            // instead of calling inference_port.complete() directly.
+            if let (Some(inference_port), Some(swap_port)) = (
+                app_state.inference_port.clone(),
+                app_state.swap_ticket_port.clone(),
+            ) {
+                use hex_core::composition::{
+                    AdapterId, InMemoryComposition, PortId, PortRegistry,
+                };
+                use std::any::Any;
+                let mut reg = PortRegistry::new();
+                reg.bind(
+                    PortId::new("inference"),
+                    AdapterId::new("default-inference"),
+                    Arc::new(()) as Arc<dyn Any + Send + Sync>,
+                );
+                let project_id = std::env::var("HEX_PROJECT_ID").unwrap_or_else(|_| "default".into());
+                let comp = Arc::new(adapters::spacetime_composition::SpacetimeRuntimeComposition::new(
+                    InMemoryComposition::new(reg),
+                    swap_port.clone(),
+                    project_id,
+                ));
+                let router =
+                    Arc::new(orchestration::shadow_router::ShadowRouter::new(
+                        comp.clone(),
+                        swap_port,
+                    ));
+                router
+                    .register_handle(AdapterId::new("default-inference"), inference_port)
+                    .await;
+                app_state.inference_runtime_composition = Some(comp);
+                app_state.inference_shadow_router = Some(router);
+                tracing::info!(
+                    "Substrate inference shadow_router wired (adapter id: default-inference)"
+                );
+            }
+
+            // Substrate SECRET port wiring (ADR-2604261500 P10 +
+            // ADR-2604262100 cookbook). Bind EnvSecretAdapter as the
+            // default-secret live binding. Operator can shadow-test
+            // alternative ISecretPort impls (vault, OS keychain) against
+            // it via the same hex substrate swap-inference flow once
+            // those impls land. Optional prefix from HEX_SECRET_PREFIX
+            // env so operators can isolate substrate-managed secrets
+            // from incidentally-set env vars.
+            if let Some(swap_port) = app_state.swap_ticket_port.clone() {
+                use hex_core::composition::{
+                    AdapterId, InMemoryComposition, PortId, PortRegistry,
+                };
+                use std::any::Any;
+                let prefix = std::env::var("HEX_SECRET_PREFIX").unwrap_or_default();
+                let env_secret: Arc<dyn hex_core::ports::secret::ISecretPort> =
+                    Arc::new(adapters::env_secret::EnvSecretAdapter::with_prefix(prefix));
+                let mut reg = PortRegistry::new();
+                reg.bind(
+                    PortId::new("secret"),
+                    AdapterId::new("default-secret"),
+                    Arc::new(()) as Arc<dyn Any + Send + Sync>,
+                );
+                let project_id = std::env::var("HEX_PROJECT_ID").unwrap_or_else(|_| "default".into());
+                let comp = Arc::new(adapters::spacetime_composition::SpacetimeRuntimeComposition::new(
+                    InMemoryComposition::new(reg),
+                    swap_port.clone(),
+                    project_id,
+                ));
+                let router = Arc::new(orchestration::secret_shadow_router::SecretShadowRouter::new(
+                    comp.clone(),
+                    swap_port,
+                ));
+                router
+                    .register_handle(AdapterId::new("default-secret"), env_secret)
+                    .await;
+                app_state.secret_runtime_composition = Some(comp);
+                app_state.secret_shadow_router = Some(router);
+                tracing::info!(
+                    "Substrate secret shadow_router wired (adapter id: default-secret)"
+                );
             }
 
             tracing::info!("IStatePort wired — agent_manager + state_port ready");
@@ -444,7 +542,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
     }
 
     // Initialize session persistence (ADR-036 / ADR-042 P2.5)
-    // Try SpacetimeDB first (chat-relay module), fall back to SQLite
+    // SpacetimeDB chat-relay module — no fallback.
     {
         let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
             .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());

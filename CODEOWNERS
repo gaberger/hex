@@ -1,0 +1,5 @@
+# Per ADR-2604261500 (Hex as a continuously self-modifying application substrate),
+# `founding-goals.md` is the only repository artifact agents may not author or amend.
+# Edits require a human commit and human CODEOWNERS approval.
+
+founding-goals.md @gary

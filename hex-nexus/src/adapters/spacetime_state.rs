@@ -1654,6 +1654,163 @@ mod real {
             self.event_tx.subscribe()
         }
     }
+
+    // ── Substrate swap-ticket port ─────────────────────
+    // Calls into the hexflo-coordination module's swap_ticket / shadow_sample
+    // reducers (added by wp-substrate-shadow-promotion P1.1 / P1.2).
+
+    #[async_trait]
+    impl ISwapTicketStatePort for SpacetimeStateAdapter {
+        async fn swap_ticket_create(
+            &self,
+            id: &str,
+            project_id: &str,
+            port_id: &str,
+            incumbent_adapter_id: &str,
+            candidate_adapter_id: &str,
+            candidate_manifest_json: &str,
+            shadow_traffic_fraction: f32,
+            shadow_window_seconds: u64,
+            success_criteria_json: &str,
+            timestamp: &str,
+        ) -> Result<(), StateError> {
+            self.call_reducer(
+                "swap_ticket_create",
+                serde_json::json!([
+                    id,
+                    project_id,
+                    port_id,
+                    incumbent_adapter_id,
+                    candidate_adapter_id,
+                    candidate_manifest_json,
+                    shadow_traffic_fraction,
+                    shadow_window_seconds,
+                    success_criteria_json,
+                    timestamp,
+                ]),
+            )
+            .await
+            .map(|_| ())
+        }
+
+        async fn swap_ticket_transition(
+            &self,
+            id: &str,
+            new_state: &str,
+            timestamp: &str,
+        ) -> Result<(), StateError> {
+            self.call_reducer(
+                "swap_ticket_transition",
+                serde_json::json!([id, new_state, timestamp]),
+            )
+            .await
+            .map(|_| ())
+        }
+
+        async fn swap_ticket_set_shadow_started(
+            &self,
+            id: &str,
+            timestamp: &str,
+        ) -> Result<(), StateError> {
+            self.call_reducer(
+                "swap_ticket_set_shadow_started",
+                serde_json::json!([id, timestamp]),
+            )
+            .await
+            .map(|_| ())
+        }
+
+        async fn swap_ticket_set_config(
+            &self,
+            id: &str,
+            success_criteria_json: &str,
+            shadow_traffic_fraction: f32,
+            shadow_window_seconds: u64,
+            timestamp: &str,
+        ) -> Result<(), StateError> {
+            self.call_reducer(
+                "swap_ticket_set_config",
+                serde_json::json!([
+                    id,
+                    success_criteria_json,
+                    shadow_traffic_fraction,
+                    shadow_window_seconds,
+                    timestamp,
+                ]),
+            )
+            .await
+            .map(|_| ())
+        }
+
+        async fn shadow_sample_record(
+            &self,
+            ticket_id: &str,
+            call_seq: u64,
+            incumbent_adapter_id: &str,
+            candidate_adapter_id: &str,
+            incumbent_metrics_json: &str,
+            candidate_metrics_json: &str,
+            agreed: bool,
+            reason: &str,
+            timestamp: &str,
+        ) -> Result<(), StateError> {
+            self.call_reducer(
+                "shadow_sample_record",
+                serde_json::json!([
+                    ticket_id,
+                    call_seq,
+                    incumbent_adapter_id,
+                    candidate_adapter_id,
+                    incumbent_metrics_json,
+                    candidate_metrics_json,
+                    agreed,
+                    reason,
+                    timestamp,
+                ]),
+            )
+            .await
+            .map(|_| ())
+        }
+
+        async fn shadow_tickets_due(&self, _now: &str) -> Result<Vec<SwapTicketRecord>, StateError> {
+            // STDB SQL doesn't support timestamp arithmetic in a portable way
+            // for our string-typed `shadow_started_at` column, so we filter
+            // server-side by state and let the judge do the window check
+            // client-side. Cheap — the in-flight ticket set is small (one
+            // per port).
+            let rows = self
+                .query_table("SELECT * FROM swap_ticket WHERE state = 'shadow'")
+                .await?;
+            Ok(rows
+                .into_iter()
+                .filter_map(|v| serde_json::from_value(v).ok())
+                .collect())
+        }
+
+        async fn shadow_samples_for(&self, ticket_id: &str) -> Result<Vec<ShadowSampleRecord>, StateError> {
+            // SQL string interpolation with single-quote escaping. Ticket
+            // IDs are UUIDs in our system, so the escape is belt-and-braces
+            // rather than load-bearing — but never trust an externally-
+            // sourced id on a SQL boundary.
+            let escaped = ticket_id.replace('\'', "''");
+            let sql = format!("SELECT * FROM shadow_sample WHERE ticket_id = '{}'", escaped);
+            let rows = self.query_table(&sql).await?;
+            Ok(rows
+                .into_iter()
+                .filter_map(|v| serde_json::from_value(v).ok())
+                .collect())
+        }
+
+        async fn shadow_green_tickets(&self) -> Result<Vec<SwapTicketRecord>, StateError> {
+            let rows = self
+                .query_table("SELECT * FROM swap_ticket WHERE state = 'shadow_green'")
+                .await?;
+            Ok(rows
+                .into_iter()
+                .filter_map(|v| serde_json::from_value(v).ok())
+                .collect())
+        }
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1862,6 +2019,18 @@ mod stub {
     #[async_trait]
     impl IStatePort for SpacetimeStateAdapter {
         fn subscribe(&self) -> broadcast::Receiver<StateEvent> { self.event_tx.subscribe() }
+    }
+
+    #[async_trait]
+    impl ISwapTicketStatePort for SpacetimeStateAdapter {
+        async fn swap_ticket_create(&self, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str, _: f32, _: u64, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swap_ticket_transition(&self, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swap_ticket_set_shadow_started(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swap_ticket_set_config(&self, _: &str, _: &str, _: f32, _: u64, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn shadow_sample_record(&self, _: &str, _: u64, _: &str, _: &str, _: &str, _: &str, _: bool, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn shadow_tickets_due(&self, _: &str) -> Result<Vec<SwapTicketRecord>, StateError> { Err(Self::err()) }
+        async fn shadow_samples_for(&self, _: &str) -> Result<Vec<ShadowSampleRecord>, StateError> { Err(Self::err()) }
+        async fn shadow_green_tickets(&self) -> Result<Vec<SwapTicketRecord>, StateError> { Err(Self::err()) }
     }
 }
 
