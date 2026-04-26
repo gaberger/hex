@@ -136,6 +136,32 @@ pub enum AgentAction {
         #[arg(long)]
         once: bool,
     },
+    /// Spawn a worker in the background (detached); survives CLI exit.
+    ///
+    /// Example: `hex agent spawn-worker --role hex-coder`
+    /// The worker polls nexus for tasks, executes them, and heartbeats
+    /// every 30s. Verify with `hex swarm status`.
+    SpawnWorker {
+        /// Agent role (hex-coder, hex-tester, hex-reviewer, hex-documenter, hex-ux, hex-fixer)
+        #[arg(long)]
+        role: String,
+
+        /// Swarm ID to join (worker only processes tasks from this swarm)
+        #[arg(long)]
+        swarm_id: Option<String>,
+
+        /// Agent ID to poll under (defaults to auto-registered)
+        #[arg(long)]
+        agent_id: Option<String>,
+
+        /// Poll interval in seconds (default 5)
+        #[arg(long, default_value_t = 5)]
+        poll_interval: u64,
+
+        /// Log file path (default: ~/.hex/logs/worker-<role>-<timestamp>.log)
+        #[arg(long)]
+        log_file: Option<String>,
+    },
 }
 
 // ── Tabled row types ───────────────────────────────────────────────────
@@ -212,6 +238,13 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
             poll_interval,
             ..
         } => worker(&role, swarm_id, agent_id, poll_interval).await,
+        AgentAction::SpawnWorker {
+            role,
+            swarm_id,
+            agent_id,
+            poll_interval,
+            log_file,
+        } => spawn_worker(&role, swarm_id, agent_id, poll_interval, log_file).await,
     }
 }
 
@@ -2365,5 +2398,156 @@ async fn cancel_workplan(id: &str) -> anyhow::Result<()> {
     let body = serde_json::json!({ "id": id });
     let resp = nexus.post("/api/workplan/fail", &body).await?;
     println!("{}", resp);
+    Ok(())
+}
+
+/// Spawn a worker as a detached background process.
+///
+/// Implements P4-2: re-execs the current `hex` binary with `agent worker
+/// --role <role>` (plus passthrough flags), redirects stdio to a log file, and
+/// returns immediately. The child becomes a session leader via `setsid(2)` on
+/// Unix so it survives the parent's exit.
+///
+/// On success prints the PID and log path; writes a PID file under
+/// `~/.hex/workers/` for later inspection. Verify via `hex swarm status` —
+/// the spawned worker will register with nexus and heartbeat every 30s.
+async fn spawn_worker(
+    role: &str,
+    swarm_id: Option<String>,
+    agent_id: Option<String>,
+    poll_interval: u64,
+    log_file: Option<String>,
+) -> anyhow::Result<()> {
+    use std::process::{Command, Stdio};
+
+    // Validate role early — same set the Worker subcommand accepts.
+    const VALID_ROLES: &[&str] = &[
+        "hex-coder", "hex-tester", "hex-reviewer",
+        "hex-documenter", "hex-ux", "hex-fixer",
+    ];
+    if !VALID_ROLES.contains(&role) {
+        anyhow::bail!(
+            "invalid role '{}' (expected one of: {})",
+            role,
+            VALID_ROLES.join(", ")
+        );
+    }
+
+    // Resolve our own binary so the child is the same `hex` build.
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("cannot resolve current exe path: {}", e))?;
+
+    // Resolve log path — default ~/.hex/logs/worker-<role>-<timestamp>.log
+    let hex_home = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".hex");
+    let logs_dir = hex_home.join("logs");
+    let workers_dir = hex_home.join("workers");
+    std::fs::create_dir_all(&logs_dir)
+        .map_err(|e| anyhow::anyhow!("create logs dir {}: {}", logs_dir.display(), e))?;
+    std::fs::create_dir_all(&workers_dir)
+        .map_err(|e| anyhow::anyhow!("create workers dir {}: {}", workers_dir.display(), e))?;
+
+    let log_path: PathBuf = match log_file {
+        Some(p) => PathBuf::from(p),
+        None => {
+            let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+            logs_dir.join(format!("worker-{}-{}.log", role, ts))
+        }
+    };
+
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|e| anyhow::anyhow!("open log {}: {}", log_path.display(), e))?;
+    let log_err = log.try_clone()
+        .map_err(|e| anyhow::anyhow!("clone log handle: {}", e))?;
+
+    // Build child argv mirroring the Worker subcommand surface.
+    let mut cmd = Command::new(&exe);
+    cmd.arg("agent")
+        .arg("worker")
+        .arg("--role")
+        .arg(role)
+        .arg("--poll-interval")
+        .arg(poll_interval.to_string());
+    if let Some(ref sid) = swarm_id {
+        cmd.arg("--swarm-id").arg(sid);
+    }
+    if let Some(ref aid) = agent_id {
+        cmd.arg("--agent-id").arg(aid);
+    }
+
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(log_err));
+
+    // Detach from controlling terminal so the worker survives CLI exit.
+    // setsid(2) makes the child a new session leader; without this it would
+    // receive SIGHUP when the parent shell closes.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+
+    let child = cmd.spawn()
+        .map_err(|e| anyhow::anyhow!("spawn worker: {}", e))?;
+    let pid = child.id();
+    // Drop child without waiting — the worker runs detached.
+    std::mem::forget(child);
+
+    // Persist a PID file for later `hex agent evict` / inspection.
+    let pid_file = workers_dir.join(format!("worker-{}-{}.pid", role, pid));
+    let pid_meta = json!({
+        "pid": pid,
+        "role": role,
+        "swarm_id": swarm_id,
+        "agent_id": agent_id,
+        "poll_interval": poll_interval,
+        "log_file": log_path.to_string_lossy(),
+        "spawned_at": chrono::Utc::now().to_rfc3339(),
+        "exe": exe.to_string_lossy(),
+    });
+    if let Err(e) = std::fs::write(&pid_file, serde_json::to_string_pretty(&pid_meta)?) {
+        debug!("failed to write pid file {}: {}", pid_file.display(), e);
+    }
+
+    println!(
+        "{} Worker spawned (detached): pid={} role={}",
+        "\u{2b21}".green(),
+        pid.to_string().bold(),
+        role.cyan()
+    );
+    println!("  Log:      {}", log_path.display());
+    println!("  PID file: {}", pid_file.display());
+    println!(
+        "  Swarm:    {}",
+        swarm_id.as_deref().unwrap_or("any").to_string().dimmed()
+    );
+    println!("  Poll:     {}s", poll_interval);
+    println!();
+    println!(
+        "  {} verify with: {}",
+        "\u{2192}".dimmed(),
+        "hex swarm status".bold()
+    );
+    println!(
+        "  {} tail logs:   {}",
+        "\u{2192}".dimmed(),
+        format!("tail -f {}", log_path.display()).bold()
+    );
+
+    // The Worker child registers with nexus on startup; the parent does not
+    // wait. `hex swarm status` will show the new agent + heartbeats once it
+    // has connected (typically <1s).
     Ok(())
 }

@@ -12,6 +12,8 @@
 //! ADR-050: Hook-Enforced Agent Lifecycle Pipeline
 //! Every hook validates participation in: ADR → WorkPlan → HexFlo Memory → Swarm
 
+pub mod punch_list;
+
 use anyhow::Result;
 use clap::Subcommand;
 use colored::Colorize;
