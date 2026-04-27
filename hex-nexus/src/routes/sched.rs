@@ -207,7 +207,7 @@ pub async fn test(
     Json(_req): Json<SchedTestRequest>,
 ) -> Json<SchedTestResponse> {
     // Run a test cycle synchronously
-    let result = match sched_service::run_improvement_cycle(&state).await {
+    let result = match sched_service::run_improvement_cycle(&state, None).await {
         Ok(outcome) => SchedTestResponse {
             outcome: outcome.outcome,
             reward: outcome.reward,

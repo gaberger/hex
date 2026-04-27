@@ -104,6 +104,19 @@ pub struct AppState {
     // Timestamp (RFC3339) of last successful sched test run. `None` = never.
     // Written by POST /api/sched/test, read by GET /api/sched/status.
     pub sched_last_test: RwLock<Option<String>>,
+    // 2026-04-27 fix: per-loop tick timestamps the sched_service writes on
+    // every cycle. Read by GET /api/sched/status for "last alive at" display.
+    // Previously referenced from sched_service.rs but never declared on
+    // AppState — clean build of nexus failed with E0609 on each.
+    pub last_improvement_tick: RwLock<Option<String>>,
+    pub last_autopilot_tick: RwLock<Option<String>>,
+    pub last_shrinkage_tick: RwLock<Option<String>>,
+    pub last_promote_tick: RwLock<Option<String>>,
+    // RL routing leader and last-changed timestamp (substrate ADR-2604261311
+    // L4 surface). Updated by the sched RL cycle when a new model overtakes
+    // the incumbent in the Q-table.
+    pub rl_leader: RwLock<Option<String>>,
+    pub rl_leader_changed_at: RwLock<Option<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -163,6 +176,12 @@ impl AppState {
             agent_instructions: RwLock::new(HashMap::new()),
             inference_port: None,
             sched_last_test: RwLock::new(None),
+            last_improvement_tick: RwLock::new(None),
+            last_autopilot_tick: RwLock::new(None),
+            last_shrinkage_tick: RwLock::new(None),
+            last_promote_tick: RwLock::new(None),
+            rl_leader: RwLock::new(None),
+            rl_leader_changed_at: RwLock::new(None),
         }
     }
 
