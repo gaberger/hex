@@ -50,3 +50,99 @@ description = "Tiers escalating repeatedly to the frontier (ADR-2604120202)"
 source = "punch_list"
 cmd = "hex insight punch-list --json"
 description = "Self-acknowledged punch-list items in agent transcripts"
+
+[[detector]]
+source = "rl_loop_health"
+cmd = "hex sched scores --json --window=24h"
+description = "RL self-improvement loops with flatlined reward variance, periodic timeouts, or selection skew. Catches the failure mode observed 2026-04-27 16:40 where hex_nexus::sched_service ran 83 nemotron-mini cycles with reward range tightening to ~0.01 in the final hour and 30s timeouts every ~80min. A loop that doesn't change the world is still burning cycles — a healthy improver proposes either a tuner-redesign, a target swap (different model/dimension), or a kill-switch."
+allow_nonzero_exit = true
+
+# ─── Architectural-health detectors (ADR-2604271200) ───────────────
+# Each row interrogates the hexagon (domain → port → adapter) for
+# design coherence and operational efficiency. Maps existing primitives
+# (`hex analyze`, `PortTelemetry`, `swap_ticket` STDB) into the improver's
+# discovery surface — no new analysis engines.
+
+# A. Static design
+
+[[detector]]
+source = "domain_leak"
+cmd = "hex analyze . --boundary-violations --json"
+description = "Domain types referenced from adapters without going through a port (anti-corruption leak). Existing hex analyze surface."
+allow_nonzero_exit = true
+
+[[detector]]
+source = "port_cohesion"
+cmd = "hex analyze . --port-cohesion --json"
+description = "Ports with >7 methods or mixed-concern method clusters. Hypothesis: split the port. Flag is new — ships in wp-architectural-health-detectors P1.2."
+allow_nonzero_exit = true
+
+[[detector]]
+source = "adapter_orphan"
+cmd = "hex analyze . --orphan-adapters --json"
+description = "Adapter implements a port but is not registered in composition root. Either wire it or delete it."
+allow_nonzero_exit = true
+
+[[detector]]
+source = "port_orphan"
+cmd = "hex analyze . --orphan-ports --json"
+description = "Port with no adapter implementing it. Dead contract — propose stub adapter or remove port."
+allow_nonzero_exit = true
+
+[[detector]]
+source = "adapter_duplication"
+cmd = "hex analyze . --adapter-duplication --json"
+description = "Two adapters sharing >60% logic — the use case can hoist it. Reuses dead-code-analyzer similarity heuristic."
+allow_nonzero_exit = true
+
+[[detector]]
+source = "god_domain_type"
+cmd = "hex analyze . --god-types --json"
+description = "Domain type with >300 LOC or >10 public methods. Propose decomposition."
+allow_nonzero_exit = true
+
+# B. Operational efficiency (substrate PortTelemetry rollup)
+
+[[detector]]
+source = "port_latency_drift"
+cmd = "hex substrate telemetry --port-latency --window=7d --json"
+description = "p99 latency through a port rose >25% week-over-week. Propose adapter swap, caching layer, or shadow-test."
+allow_nonzero_exit = true
+
+[[detector]]
+source = "adapter_skew"
+cmd = "hex substrate telemetry --adapter-skew --json"
+description = "Same port, two adapters bound to different operators show >2x latency or success-rate variance. Propose swap via shadow-promote (ADR-2604261311 Layer 5)."
+allow_nonzero_exit = true
+
+[[detector]]
+source = "port_traffic_concentration"
+cmd = "hex substrate telemetry --traffic-concentration --json"
+description = "One port handles >70% of total traffic. Propose split, batching layer, or dedicated adapter pool."
+allow_nonzero_exit = true
+
+[[detector]]
+source = "adapter_unused"
+cmd = "hex substrate telemetry --adapter-idle --window=7d --json"
+description = "Adapter wired but zero calls in 7 days. Propose remove or document the future-use case."
+allow_nonzero_exit = true
+
+# C. Composition coherence
+
+[[detector]]
+source = "composition_drift"
+cmd = "hex analyze . --composition-churn --window=30d --json"
+description = "Composition-root churn rate exceeds ADR acceptance rate over 30 days. Wiring is changing faster than its written justification."
+allow_nonzero_exit = true
+
+[[detector]]
+source = "substrate_swap_starvation"
+cmd = "hex substrate swaps --since=30d --json"
+description = "Zero swap_ticket entries promoted in 30 days. The substrate's hot-swap value is unused — first-swap experiment or scope-down ADR-2604261500."
+allow_nonzero_exit = true
+
+[[detector]]
+source = "dead_layer"
+cmd = "hex analyze . --dead-layers --json"
+description = "An entire layer dir (e.g. usecases/) with no inbound edges from primary adapters. Propose layer collapse or restore the missing edge."
+allow_nonzero_exit = true
