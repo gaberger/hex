@@ -9,17 +9,19 @@
 //! mapping it to an [`AutoFixTier`] and a [`Severity`]. Adding a new check
 //! requires picking both — there is no implicit default.
 //!
-//! The skeleton in this file (P1.1) defines the types, the rule table, and
-//! the `run` scaffold. Detector implementations land in P1.2; CLI/MCP wiring
-//! in P1.3.
+//! P1.2 fills in the seven detectors (`detect_*`) backed by fixture tests.
 //!
 //! Exit-code contract (used by [`exit_code`]):
 //!   - `0` clean
 //!   - `1` warnings only
 //!   - `2` any error (or any finding when `--strict`)
 
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
+use chrono::NaiveDate;
+use regex::Regex;
 use serde::Serialize;
 
 use super::{collect_adrs, find_adr_dir};
@@ -127,70 +129,401 @@ pub fn finding(adr_id: impl Into<String>, file_path: PathBuf, kind: FindingKind,
     }
 }
 
-// ── Run scaffold (detectors land in P1.2) ────────────────────────────────
+// ── Run scaffold ──────────────────────────────────────────────────────────
 
 /// Scan `docs/adrs/`, parse each file, and return all findings.
-///
-/// Detection is split into per-rule functions invoked here. P1.1 lays the
-/// scaffold; P1.2 implements each detector against fixtures.
 pub async fn run() -> anyhow::Result<Vec<Finding>> {
     let adr_dir = find_adr_dir()
         .ok_or_else(|| anyhow::anyhow!("No docs/adrs/ directory found"))?;
     let adrs = collect_adrs(&adr_dir).await?;
+    let now = chrono::Local::now().date_naive();
+    Ok(scan(&adrs, now))
+}
 
+/// Pure detection over a pre-loaded ADR corpus. Split out from [`run`] so tests
+/// (and the sched tick handler in P3) can drive it without touching the FS or
+/// the system clock.
+pub fn scan(adrs: &[(PathBuf, String)], now: NaiveDate) -> Vec<Finding> {
     let mut findings = Vec::new();
 
-    // Per-file detectors (P1.2 fills these in).
-    for (path, content) in &adrs {
+    // Per-file detectors.
+    for (path, content) in adrs {
         findings.extend(detect_unparseable_status(path, content));
         findings.extend(detect_id_format_mismatch(path, content));
         findings.extend(detect_missing_required_field(path, content));
-        findings.extend(detect_stale_proposed(path, content));
+        findings.extend(detect_stale_proposed(path, content, now));
         findings.extend(detect_superseded_unlinked(path, content));
     }
 
-    // Cross-file detectors (P1.2 fills these in).
-    findings.extend(detect_duplicate_ids(&adrs));
-    findings.extend(detect_dangling_dependencies(&adrs));
+    // Cross-file detectors.
+    findings.extend(detect_duplicate_ids(adrs));
+    findings.extend(detect_dangling_dependencies(adrs));
 
-    Ok(findings)
+    findings
 }
 
-// Per-file detector stubs. P1.2 replaces each body with the real check.
+// ── Field extraction helpers ─────────────────────────────────────────────
 
-#[allow(unused_variables)]
-fn detect_unparseable_status(path: &std::path::Path, content: &str) -> Vec<Finding> {
-    Vec::new()
+fn adr_id_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"ADR-\d+").unwrap())
 }
 
-#[allow(unused_variables)]
-fn detect_id_format_mismatch(path: &std::path::Path, content: &str) -> Vec<Finding> {
-    Vec::new()
+/// Strict canonical-format extraction. Mirrors the parent module's
+/// `parse_adr_status`: accepts `**Status:** value`, `status: value`, or
+/// `## Status\nvalue`. Buggy variants (`**Status**:`, `- **Status**:`) are
+/// rejected so the caller can flag them as `UnparseableStatus`.
+fn strict_extract_status_value(content: &str) -> Option<String> {
+    let lines: Vec<&str> = content.lines().collect();
+    for (i, raw) in lines.iter().enumerate() {
+        let trimmed = raw.trim();
+        let lower = trimmed.to_lowercase();
+
+        let val = if lower.starts_with("**status:**") {
+            trimmed["**Status:**".len()..].trim().to_string()
+        } else if lower.starts_with("status:") && !lower.starts_with("status_") {
+            trimmed["status:".len()..].trim().to_string()
+        } else if lower == "## status" || lower == "## status:" {
+            let mut j = i + 1;
+            while j < lines.len() && lines[j].trim().is_empty() {
+                j += 1;
+            }
+            if j >= lines.len() {
+                continue;
+            }
+            lines[j].trim().trim_matches('*').trim().to_string()
+        } else {
+            continue;
+        };
+        return Some(val);
+    }
+    None
 }
 
-#[allow(unused_variables)]
-fn detect_missing_required_field(path: &std::path::Path, content: &str) -> Vec<Finding> {
-    Vec::new()
+/// Lenient: returns true if any line *looks like* a Status field, including
+/// the buggy `**Status**:` and `- **Status**:` variants. Used to distinguish
+/// `UnparseableStatus` (field present, value bad) from `MissingRequiredField`
+/// (field absent entirely).
+fn lenient_has_status_line(content: &str) -> bool {
+    for line in content.lines() {
+        let stripped = line.trim().trim_start_matches("- ").trim_start();
+        let lower = stripped.to_lowercase();
+        if lower.starts_with("**status:**")
+            || lower.starts_with("**status**:")
+            || (lower.starts_with("status:") && !lower.starts_with("status_"))
+            || lower == "## status"
+            || lower == "## status:"
+        {
+            return true;
+        }
+    }
+    false
 }
 
-#[allow(unused_variables)]
-fn detect_stale_proposed(path: &std::path::Path, content: &str) -> Vec<Finding> {
-    Vec::new()
+/// Classify a raw status value against the lifecycle enum. Returns `None` for
+/// unrecognized values OR multi-status enum listings (e.g.
+/// `**Status:** Proposed | Accepted`).
+fn classify_status(value: &str) -> Option<&'static str> {
+    let lower = value.to_lowercase();
+    let cleaned: String = lower
+        .chars()
+        .map(|c| if c.is_alphabetic() || c == ' ' { c } else { ' ' })
+        .collect();
+    let words: Vec<&str> = cleaned.split_whitespace().collect();
+
+    let known = ["proposed", "accepted", "deprecated", "superseded", "abandoned"];
+    let matches: Vec<&'static str> = known
+        .iter()
+        .copied()
+        .filter(|k| words.iter().any(|w| *w == *k))
+        .collect();
+
+    match matches.len() {
+        1 => Some(matches[0]),
+        _ => None, // 0 = invalid; 2+ = enum listing
+    }
 }
 
-#[allow(unused_variables)]
-fn detect_superseded_unlinked(path: &std::path::Path, content: &str) -> Vec<Finding> {
-    Vec::new()
+fn extract_date(content: &str) -> Option<NaiveDate> {
+    for line in content.lines() {
+        let stripped = line.trim().trim_start_matches("- ").trim_start();
+        let lower = stripped.to_lowercase();
+        let value: Option<&str> = if lower.starts_with("**date:**") {
+            Some(stripped["**Date:**".len()..].trim())
+        } else if lower.starts_with("**date**:") {
+            Some(stripped["**Date**:".len()..].trim())
+        } else if lower.starts_with("date:") {
+            Some(stripped["date:".len()..].trim())
+        } else {
+            None
+        };
+        if let Some(v) = value {
+            if let Some(token) = v.split_whitespace().next() {
+                if let Ok(date) = NaiveDate::parse_from_str(token, "%Y-%m-%d") {
+                    return Some(date);
+                }
+            }
+        }
+    }
+    None
 }
 
-#[allow(unused_variables)]
+fn lenient_has_date_line(content: &str) -> bool {
+    for line in content.lines() {
+        let stripped = line.trim().trim_start_matches("- ").trim_start();
+        let lower = stripped.to_lowercase();
+        if lower.starts_with("**date:**")
+            || lower.starts_with("**date**:")
+            || lower.starts_with("date:")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn has_h1_title(content: &str) -> bool {
+    content.lines().any(|l| l.trim_start().starts_with("# "))
+}
+
+fn extract_h1_adr_id(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(title) = trimmed.strip_prefix("# ") {
+            return adr_id_re().find(title).map(|m| m.as_str().to_string());
+        }
+    }
+    None
+}
+
+fn extract_filename_adr_id(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_str()?;
+    adr_id_re().find(stem).map(|m| m.as_str().to_string())
+}
+
+fn has_superseded_by(content: &str) -> bool {
+    for line in content.lines() {
+        let stripped = line.trim().trim_start_matches("- ").trim_start();
+        let lower = stripped.to_lowercase();
+        // Accept canonical `**Superseded by:**`, the buggy `**Superseded by**:`,
+        // and the YAML-style `superseded by:` / `superseded-by:`.
+        if lower.starts_with("**superseded by:**")
+            || lower.starts_with("**superseded by**:")
+            || lower.starts_with("superseded by:")
+            || lower.starts_with("superseded-by:")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn extract_dependencies(content: &str) -> Vec<String> {
+    let mut deps = Vec::new();
+    for line in content.lines() {
+        let stripped = line.trim().trim_start_matches("- ").trim_start();
+        let lower = stripped.to_lowercase();
+        let value: Option<&str> = if lower.starts_with("**depends on:**") {
+            Some(&stripped["**Depends on:**".len()..])
+        } else if lower.starts_with("**depends on**:") {
+            Some(&stripped["**Depends on**:".len()..])
+        } else if lower.starts_with("depends on:") {
+            Some(&stripped["depends on:".len()..])
+        } else if lower.starts_with("depends-on:") {
+            Some(&stripped["depends-on:".len()..])
+        } else {
+            None
+        };
+        if let Some(v) = value {
+            for m in adr_id_re().find_iter(v) {
+                deps.push(m.as_str().to_string());
+            }
+        }
+    }
+    deps
+}
+
+// ── Per-file detectors ───────────────────────────────────────────────────
+
+fn detect_unparseable_status(path: &Path, content: &str) -> Vec<Finding> {
+    if !lenient_has_status_line(content) {
+        // No status line at all → MissingRequiredField, not UnparseableStatus.
+        return Vec::new();
+    }
+    let parseable = strict_extract_status_value(content)
+        .as_deref()
+        .and_then(classify_status)
+        .is_some();
+    if parseable {
+        return Vec::new();
+    }
+    let adr_id = extract_filename_adr_id(path).unwrap_or_default();
+    let detail = match strict_extract_status_value(content) {
+        // Strict parse succeeded but value didn't classify (e.g. "Banana" or
+        // "Proposed | Accepted").
+        Some(v) => format!("Status value `{}` is not a recognized lifecycle state", v.trim()),
+        // Strict parse failed — buggy frontmatter form (`**Status**:`, `- **Status**:`).
+        None => "Status field uses non-canonical format (expected `**Status:** <value>`)".to_string(),
+    };
+    vec![finding(adr_id, path.to_path_buf(), FindingKind::UnparseableStatus, detail)]
+}
+
+fn detect_id_format_mismatch(path: &Path, content: &str) -> Vec<Finding> {
+    let filename_id = match extract_filename_adr_id(path) {
+        Some(id) => id,
+        None => return Vec::new(),
+    };
+    let h1_id = match extract_h1_adr_id(content) {
+        Some(id) => id,
+        // No ADR-ID in H1 → can't compare. (Missing H1 entirely is caught by
+        // MissingRequiredField; an H1 without an ADR-ID is just a stylistic
+        // choice we don't flag.)
+        None => return Vec::new(),
+    };
+    if filename_id == h1_id {
+        return Vec::new();
+    }
+    vec![finding(
+        filename_id.clone(),
+        path.to_path_buf(),
+        FindingKind::IdFormatMismatch,
+        format!("filename ID {} but H1 title says {}", filename_id, h1_id),
+    )]
+}
+
+fn detect_missing_required_field(path: &Path, content: &str) -> Vec<Finding> {
+    let adr_id = extract_filename_adr_id(path).unwrap_or_default();
+    let mut findings = Vec::new();
+    if !lenient_has_status_line(content) {
+        findings.push(finding(
+            adr_id.clone(),
+            path.to_path_buf(),
+            FindingKind::MissingRequiredField,
+            "missing required field: Status",
+        ));
+    }
+    if !lenient_has_date_line(content) {
+        findings.push(finding(
+            adr_id.clone(),
+            path.to_path_buf(),
+            FindingKind::MissingRequiredField,
+            "missing required field: Date",
+        ));
+    }
+    if !has_h1_title(content) {
+        findings.push(finding(
+            adr_id,
+            path.to_path_buf(),
+            FindingKind::MissingRequiredField,
+            "missing required field: H1 title",
+        ));
+    }
+    findings
+}
+
+fn detect_stale_proposed(path: &Path, content: &str, now: NaiveDate) -> Vec<Finding> {
+    let status = strict_extract_status_value(content)
+        .as_deref()
+        .and_then(classify_status);
+    if status != Some("proposed") {
+        return Vec::new();
+    }
+    let date = match extract_date(content) {
+        Some(d) => d,
+        None => return Vec::new(),
+    };
+    let age = now.signed_duration_since(date).num_days();
+    if age <= 30 {
+        return Vec::new();
+    }
+    let adr_id = extract_filename_adr_id(path).unwrap_or_default();
+    vec![finding(
+        adr_id,
+        path.to_path_buf(),
+        FindingKind::StaleProposed,
+        format!("Proposed since {} ({} days ago, threshold 30)", date, age),
+    )]
+}
+
+fn detect_superseded_unlinked(path: &Path, content: &str) -> Vec<Finding> {
+    let status = strict_extract_status_value(content)
+        .as_deref()
+        .and_then(classify_status);
+    if status != Some("superseded") {
+        return Vec::new();
+    }
+    if has_superseded_by(content) {
+        return Vec::new();
+    }
+    let adr_id = extract_filename_adr_id(path).unwrap_or_default();
+    vec![finding(
+        adr_id,
+        path.to_path_buf(),
+        FindingKind::SupersededUnlinked,
+        "Status is Superseded but no `Superseded by:` field found",
+    )]
+}
+
+// ── Cross-file detectors ─────────────────────────────────────────────────
+
 fn detect_duplicate_ids(adrs: &[(PathBuf, String)]) -> Vec<Finding> {
-    Vec::new()
+    let mut groups: HashMap<String, Vec<&PathBuf>> = HashMap::new();
+    for (path, _) in adrs {
+        if let Some(id) = extract_filename_adr_id(path) {
+            groups.entry(id).or_default().push(path);
+        }
+    }
+    let mut findings = Vec::new();
+    for (id, paths) in &groups {
+        if paths.len() > 1 {
+            let other_names: Vec<String> = paths
+                .iter()
+                .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
+                .collect();
+            for path in paths {
+                findings.push(finding(
+                    id.clone(),
+                    path.to_path_buf(),
+                    FindingKind::DuplicateId,
+                    format!(
+                        "ADR ID {} appears in {} files: {}",
+                        id,
+                        paths.len(),
+                        other_names.join(", ")
+                    ),
+                ));
+            }
+        }
+    }
+    findings.sort_by(|a, b| a.file_path.cmp(&b.file_path));
+    findings
 }
 
-#[allow(unused_variables)]
 fn detect_dangling_dependencies(adrs: &[(PathBuf, String)]) -> Vec<Finding> {
-    Vec::new()
+    let known: HashSet<String> = adrs
+        .iter()
+        .filter_map(|(p, _)| extract_filename_adr_id(p))
+        .collect();
+    let mut findings = Vec::new();
+    for (path, content) in adrs {
+        let mut seen_in_this_file: HashSet<String> = HashSet::new();
+        for dep in extract_dependencies(content) {
+            if known.contains(&dep) {
+                continue;
+            }
+            if !seen_in_this_file.insert(dep.clone()) {
+                continue;
+            }
+            let adr_id = extract_filename_adr_id(path).unwrap_or_default();
+            findings.push(finding(
+                adr_id,
+                path.clone(),
+                FindingKind::DanglingDependency,
+                format!("Depends on {} which is not present in docs/adrs/", dep),
+            ));
+        }
+    }
+    findings
 }
 
 // ── Output + exit code ───────────────────────────────────────────────────
@@ -235,10 +568,10 @@ pub fn exit_code(findings: &[Finding], strict: bool) -> i32 {
 mod tests {
     use super::*;
 
+    // ── Rule-table tests (P1.1) ──────────────────────────────────────────
+
     #[test]
     fn rule_table_covers_every_kind() {
-        // Every variant must appear exactly once. If a new kind is added
-        // without a rule-table row, `rule_for` will panic — catch that here.
         let all = [
             FindingKind::UnparseableStatus,
             FindingKind::DuplicateId,
@@ -249,14 +582,13 @@ mod tests {
             FindingKind::SupersededUnlinked,
         ];
         for k in all {
-            let _ = rule_for(k); // Panics if missing.
+            let _ = rule_for(k);
         }
         assert_eq!(RULE_TABLE.len(), all.len(), "rule table cardinality drifted from FindingKind");
     }
 
     #[test]
     fn rule_table_matches_adr_severity_column() {
-        // Locks in the severity column from ADR-2604270800 §1.
         assert_eq!(rule_for(FindingKind::UnparseableStatus).1,    Severity::Error);
         assert_eq!(rule_for(FindingKind::DuplicateId).1,          Severity::Error);
         assert_eq!(rule_for(FindingKind::IdFormatMismatch).1,     Severity::Error);
@@ -268,8 +600,6 @@ mod tests {
 
     #[test]
     fn rule_table_matches_adr_tier_column() {
-        // Locks in the tier column from ADR-2604270800 §1a (and the documented
-        // defaults for variants the ADR didn't tabulate explicitly).
         assert_eq!(rule_for(FindingKind::UnparseableStatus).0,    AutoFixTier::A);
         assert_eq!(rule_for(FindingKind::SupersededUnlinked).0,   AutoFixTier::B);
         assert_eq!(rule_for(FindingKind::StaleProposed).0,        AutoFixTier::B);
@@ -327,16 +657,356 @@ mod tests {
         assert_eq!(v["findings"].as_array().unwrap().len(), 2);
     }
 
+    // ── Helper-function tests (P1.2) ─────────────────────────────────────
+
     #[test]
-    fn run_skeleton_returns_empty_until_p1_2() {
-        // P1.1 ships a scaffold; detectors are stubs returning Vec::new().
-        // This test will be replaced in P1.2 once real detection lands.
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(run());
-        // We don't assert success — `find_adr_dir` may fail in some test
-        // environments — only that, when it succeeds, the stubs return clean.
-        if let Ok(findings) = result {
-            assert!(findings.is_empty(), "stub detectors must not emit findings");
+    fn classify_status_single_keyword() {
+        assert_eq!(classify_status("Proposed"), Some("proposed"));
+        assert_eq!(classify_status("Accepted"), Some("accepted"));
+        assert_eq!(classify_status("**Accepted** — 2026-04-10"), Some("accepted"));
+    }
+
+    #[test]
+    fn classify_status_rejects_enum_listing() {
+        assert_eq!(classify_status("Proposed | Accepted"), None);
+        assert_eq!(classify_status("Proposed | Accepted | Deprecated"), None);
+    }
+
+    #[test]
+    fn classify_status_rejects_unknown_value() {
+        assert_eq!(classify_status("Banana"), None);
+        assert_eq!(classify_status(""), None);
+    }
+
+    #[test]
+    fn lenient_has_status_catches_buggy_forms() {
+        assert!(lenient_has_status_line("- **Status**: Proposed"));
+        assert!(lenient_has_status_line("**Status**: Accepted"));
+        assert!(lenient_has_status_line("**Status:** Accepted"));
+        assert!(lenient_has_status_line("status: Accepted"));
+        assert!(lenient_has_status_line("## Status\nAccepted"));
+        assert!(!lenient_has_status_line("# ADR-001\n\nNo status here"));
+    }
+
+    #[test]
+    fn extract_date_handles_canonical_form() {
+        let d = extract_date("**Date:** 2026-04-27\n").unwrap();
+        assert_eq!(d, NaiveDate::from_ymd_opt(2026, 4, 27).unwrap());
+    }
+
+    #[test]
+    fn extract_date_handles_buggy_bold_colon_form() {
+        let d = extract_date("**Date**: 2026-04-27\n").unwrap();
+        assert_eq!(d, NaiveDate::from_ymd_opt(2026, 4, 27).unwrap());
+    }
+
+    #[test]
+    fn extract_dependencies_parses_canonical_line() {
+        let deps = extract_dependencies("**Depends on:** ADR-2604101600 (one), ADR-027 (two)\n");
+        assert_eq!(deps, vec!["ADR-2604101600".to_string(), "ADR-027".to_string()]);
+    }
+
+    #[test]
+    fn extract_dependencies_ignores_other_adr_mentions() {
+        let content = "## Context\n\nReferences ADR-001 in prose.\n\n**Depends on:** ADR-002\n";
+        let deps = extract_dependencies(content);
+        assert_eq!(deps, vec!["ADR-002".to_string()]);
+    }
+
+    #[test]
+    fn extract_h1_adr_id_finds_canonical_title() {
+        let content = "# ADR-2604270800: My Title\n";
+        assert_eq!(extract_h1_adr_id(content), Some("ADR-2604270800".to_string()));
+    }
+
+    #[test]
+    fn extract_h1_adr_id_returns_none_when_no_id() {
+        let content = "# A plain title\n";
+        assert_eq!(extract_h1_adr_id(content), None);
+    }
+
+    // ── Detector tests against fixtures (P1.2) ───────────────────────────
+
+    fn fixture_dir() -> PathBuf {
+        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        p.push("tests/fixtures/adr-doctor");
+        p
+    }
+
+    fn read_fixture(name: &str) -> (PathBuf, String) {
+        let path = fixture_dir().join(name);
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read fixture {}: {}", path.display(), e));
+        (path, content)
+    }
+
+    fn kinds(findings: &[Finding]) -> Vec<FindingKind> {
+        findings.iter().map(|f| f.kind).collect()
+    }
+
+    // UnparseableStatus ─────────────────────────────────────────────────
+
+    const FX_CLEAN: &str = "ADR-2604010001-clean.md";
+    const FX_UNPARSE_BULLET: &str = "ADR-2604010002-unparseable-status-bullet-bold.md";
+    const FX_UNPARSE_BOLD_OUT: &str = "ADR-2604010003-unparseable-status-bold-colon-outside.md";
+    const FX_UNPARSE_ENUM: &str = "ADR-2604010004-unparseable-status-enum-listing.md";
+    const FX_UNPARSE_INVALID: &str = "ADR-2604010005-unparseable-status-invalid-value.md";
+    const FX_ID_MISMATCH: &str = "ADR-2604010006-id-mismatch.md";
+    const FX_MISSING_STATUS: &str = "ADR-2604010007-missing-status.md";
+    const FX_MISSING_DATE: &str = "ADR-2604010008-missing-date.md";
+    const FX_MISSING_H1: &str = "ADR-2604010009-missing-h1.md";
+    const FX_STALE: &str = "ADR-2604010010-stale-proposed.md";
+    const FX_RECENT: &str = "ADR-2604010011-recent-proposed.md";
+    const FX_SUPER_NO_LINK: &str = "ADR-2604010012-superseded-no-link.md";
+    const FX_SUPER_LINKED: &str = "ADR-2604010013-superseded-with-link.md";
+    const FX_DEP_TARGET: &str = "ADR-2604010014-dep-target.md";
+    const FX_DEP_GOOD: &str = "ADR-2604010015-dep-good.md";
+    const FX_DEP_DANGLING: &str = "ADR-2604010016-dep-dangling.md";
+    const FX_DUP_A: &str = "ADR-2604010099-a.md";
+    const FX_DUP_B: &str = "ADR-2604010099-b.md";
+
+    #[test]
+    fn unparseable_status_flags_bullet_bold_form() {
+        // `- **Status**: Proposed` — colon outside bold, bullet-prefixed.
+        let (path, content) = read_fixture(FX_UNPARSE_BULLET);
+        let findings = detect_unparseable_status(&path, &content);
+        assert_eq!(kinds(&findings), vec![FindingKind::UnparseableStatus]);
+        assert!(findings[0].detail.contains("non-canonical"));
+    }
+
+    #[test]
+    fn unparseable_status_flags_bold_colon_outside() {
+        // `**Status**: Proposed` — colon outside bold.
+        let (path, content) = read_fixture(FX_UNPARSE_BOLD_OUT);
+        let findings = detect_unparseable_status(&path, &content);
+        assert_eq!(kinds(&findings), vec![FindingKind::UnparseableStatus]);
+    }
+
+    #[test]
+    fn unparseable_status_flags_enum_listing() {
+        // `**Status:** Proposed | Accepted | Deprecated` — multi-value enum.
+        let (path, content) = read_fixture(FX_UNPARSE_ENUM);
+        let findings = detect_unparseable_status(&path, &content);
+        assert_eq!(kinds(&findings), vec![FindingKind::UnparseableStatus]);
+        assert!(findings[0].detail.contains("not a recognized lifecycle"));
+    }
+
+    #[test]
+    fn unparseable_status_flags_invalid_value() {
+        // `**Status:** Banana` — unknown value.
+        let (path, content) = read_fixture(FX_UNPARSE_INVALID);
+        let findings = detect_unparseable_status(&path, &content);
+        assert_eq!(kinds(&findings), vec![FindingKind::UnparseableStatus]);
+    }
+
+    #[test]
+    fn unparseable_status_clean_returns_nothing() {
+        let (path, content) = read_fixture(FX_CLEAN);
+        let findings = detect_unparseable_status(&path, &content);
+        assert!(findings.is_empty(), "clean fixture must not flag UnparseableStatus");
+    }
+
+    #[test]
+    fn unparseable_status_silent_when_no_status_line() {
+        // No Status line → not UnparseableStatus (that's MissingRequiredField).
+        let (path, content) = read_fixture(FX_MISSING_STATUS);
+        let findings = detect_unparseable_status(&path, &content);
+        assert!(findings.is_empty());
+    }
+
+    // IdFormatMismatch ──────────────────────────────────────────────────
+
+    #[test]
+    fn id_format_mismatch_flags_h1_filename_divergence() {
+        let (path, content) = read_fixture(FX_ID_MISMATCH);
+        let findings = detect_id_format_mismatch(&path, &content);
+        assert_eq!(kinds(&findings), vec![FindingKind::IdFormatMismatch]);
+        assert_eq!(findings[0].adr_id, "ADR-2604010006");
+        assert!(findings[0].detail.contains("ADR-2604010006"));
+        assert!(findings[0].detail.contains("ADR-9999999999"));
+    }
+
+    #[test]
+    fn id_format_mismatch_clean_returns_nothing() {
+        let (path, content) = read_fixture(FX_CLEAN);
+        let findings = detect_id_format_mismatch(&path, &content);
+        assert!(findings.is_empty());
+    }
+
+    // MissingRequiredField ──────────────────────────────────────────────
+
+    #[test]
+    fn missing_required_field_flags_absent_status() {
+        let (path, content) = read_fixture(FX_MISSING_STATUS);
+        let findings = detect_missing_required_field(&path, &content);
+        assert_eq!(kinds(&findings), vec![FindingKind::MissingRequiredField]);
+        assert!(findings[0].detail.contains("Status"));
+    }
+
+    #[test]
+    fn missing_required_field_flags_absent_date() {
+        let (path, content) = read_fixture(FX_MISSING_DATE);
+        let findings = detect_missing_required_field(&path, &content);
+        assert_eq!(kinds(&findings), vec![FindingKind::MissingRequiredField]);
+        assert!(findings[0].detail.contains("Date"));
+    }
+
+    #[test]
+    fn missing_required_field_flags_absent_h1_title() {
+        let (path, content) = read_fixture(FX_MISSING_H1);
+        let findings = detect_missing_required_field(&path, &content);
+        assert_eq!(kinds(&findings), vec![FindingKind::MissingRequiredField]);
+        assert!(findings[0].detail.contains("H1"));
+    }
+
+    #[test]
+    fn missing_required_field_clean_returns_nothing() {
+        let (path, content) = read_fixture(FX_CLEAN);
+        let findings = detect_missing_required_field(&path, &content);
+        assert!(findings.is_empty());
+    }
+
+    // StaleProposed ─────────────────────────────────────────────────────
+
+    #[test]
+    fn stale_proposed_flags_old_date() {
+        let (path, content) = read_fixture(FX_STALE);
+        // The fixture has Date: 2025-01-01; now = 2026-04-27 → 481 days old.
+        let now = NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
+        let findings = detect_stale_proposed(&path, &content, now);
+        assert_eq!(kinds(&findings), vec![FindingKind::StaleProposed]);
+        assert!(findings[0].detail.contains("days ago"));
+    }
+
+    #[test]
+    fn stale_proposed_does_not_flag_recent() {
+        let (path, content) = read_fixture(FX_RECENT);
+        // The fixture has Date: 2026-04-25; now = 2026-04-27 → 2 days old.
+        let now = NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
+        let findings = detect_stale_proposed(&path, &content, now);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn stale_proposed_does_not_flag_accepted_status() {
+        let (path, content) = read_fixture(FX_CLEAN);
+        let now = NaiveDate::from_ymd_opt(2030, 1, 1).unwrap();
+        let findings = detect_stale_proposed(&path, &content, now);
+        assert!(findings.is_empty(), "Accepted ADR must not trigger StaleProposed");
+    }
+
+    #[test]
+    fn stale_proposed_threshold_is_30_days_inclusive() {
+        let (path, content) = read_fixture(FX_STALE);
+        // Exactly 30 days after Date: 2025-01-01 → 2025-01-31. Should NOT fire (≤ 30).
+        let now = NaiveDate::from_ymd_opt(2025, 1, 31).unwrap();
+        assert!(detect_stale_proposed(&path, &content, now).is_empty());
+        // 31 days → fires.
+        let now = NaiveDate::from_ymd_opt(2025, 2, 1).unwrap();
+        assert_eq!(kinds(&detect_stale_proposed(&path, &content, now)),
+                   vec![FindingKind::StaleProposed]);
+    }
+
+    // SupersededUnlinked ────────────────────────────────────────────────
+
+    #[test]
+    fn superseded_unlinked_flags_missing_link() {
+        let (path, content) = read_fixture(FX_SUPER_NO_LINK);
+        let findings = detect_superseded_unlinked(&path, &content);
+        assert_eq!(kinds(&findings), vec![FindingKind::SupersededUnlinked]);
+    }
+
+    #[test]
+    fn superseded_with_link_returns_nothing() {
+        let (path, content) = read_fixture(FX_SUPER_LINKED);
+        let findings = detect_superseded_unlinked(&path, &content);
+        assert!(findings.is_empty(), "Superseded with link must not flag");
+    }
+
+    #[test]
+    fn superseded_unlinked_does_not_flag_other_statuses() {
+        let (path, content) = read_fixture(FX_CLEAN);
+        let findings = detect_superseded_unlinked(&path, &content);
+        assert!(findings.is_empty());
+    }
+
+    // DuplicateId (cross-file) ──────────────────────────────────────────
+
+    #[test]
+    fn duplicate_id_flags_collision() {
+        let (path_a, content_a) = read_fixture(FX_DUP_A);
+        let (path_b, content_b) = read_fixture(FX_DUP_B);
+        let corpus = vec![
+            (path_a.clone(), content_a),
+            (path_b.clone(), content_b),
+        ];
+        let findings = detect_duplicate_ids(&corpus);
+        assert_eq!(findings.len(), 2, "both colliding files should be flagged");
+        for f in &findings {
+            assert_eq!(f.kind, FindingKind::DuplicateId);
+            assert_eq!(f.adr_id, "ADR-2604010099");
         }
+        let paths: HashSet<&PathBuf> = findings.iter().map(|f| &f.file_path).collect();
+        assert!(paths.contains(&path_a));
+        assert!(paths.contains(&path_b));
+    }
+
+    #[test]
+    fn duplicate_id_clean_corpus_returns_nothing() {
+        let (path_a, content_a) = read_fixture(FX_CLEAN);
+        let (path_b, content_b) = read_fixture(FX_RECENT);
+        let corpus = vec![(path_a, content_a), (path_b, content_b)];
+        let findings = detect_duplicate_ids(&corpus);
+        assert!(findings.is_empty());
+    }
+
+    // DanglingDependency (cross-file) ───────────────────────────────────
+
+    #[test]
+    fn dangling_dependency_flags_missing_target() {
+        let (path, content) = read_fixture(FX_DEP_DANGLING);
+        // Corpus contains only this one file → its dep on ADR-9999999999 is dangling.
+        let corpus = vec![(path.clone(), content)];
+        let findings = detect_dangling_dependencies(&corpus);
+        assert_eq!(kinds(&findings), vec![FindingKind::DanglingDependency]);
+        assert!(findings[0].detail.contains("ADR-9999999999"));
+    }
+
+    #[test]
+    fn dangling_dependency_satisfied_when_target_present() {
+        let (path_a, content_a) = read_fixture(FX_DEP_TARGET);
+        let (path_b, content_b) = read_fixture(FX_DEP_GOOD);
+        let corpus = vec![(path_a, content_a), (path_b, content_b)];
+        let findings = detect_dangling_dependencies(&corpus);
+        assert!(findings.is_empty(), "dep target is in corpus, no flag");
+    }
+
+    #[test]
+    fn dangling_dependency_dedupes_within_file() {
+        // If a file lists the same missing ID twice on the Depends on line,
+        // we emit one finding, not two.
+        let path = PathBuf::from("ADR-1111111111-synthetic.md");
+        let content = "**Depends on:** ADR-9999999999 (one), ADR-9999999999 (dup)\n";
+        let corpus = vec![(path.clone(), content.to_string())];
+        let findings = detect_dangling_dependencies(&corpus);
+        assert_eq!(findings.len(), 1);
+    }
+
+    // Integration: scan() composes all detectors over a corpus ──────────
+
+    #[test]
+    fn scan_combines_per_file_and_cross_file_findings() {
+        let (p_dup_a, c_dup_a) = read_fixture(FX_DUP_A);
+        let (p_dup_b, c_dup_b) = read_fixture(FX_DUP_B);
+        let (p_clean, c_clean) = read_fixture(FX_CLEAN);
+        let corpus = vec![
+            (p_dup_a, c_dup_a),
+            (p_dup_b, c_dup_b),
+            (p_clean, c_clean),
+        ];
+        let now = NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
+        let findings = scan(&corpus, now);
+        let dup = findings.iter().filter(|f| f.kind == FindingKind::DuplicateId).count();
+        assert_eq!(dup, 2, "two duplicate-id findings expected, got {:?}", findings);
     }
 }
