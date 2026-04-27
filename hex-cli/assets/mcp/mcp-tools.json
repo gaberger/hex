@@ -253,6 +253,22 @@
       }
     },
     {
+      "name": "hex_adr_doctor",
+      "category": "adr",
+      "cli": "hex adr doctor [--fix] [--json] [--strict]",
+      "description": "ADR registry self-consistency checker (ADR-2604270800). Detects unparseable status, duplicate IDs, dangling Depends-on links, stale-Proposed, unlinked Superseded, etc. Each finding is tagged with an auto-fix tier (A/B/C) the sched daemon dispatches. Exit 0 clean, 1 warnings only, 2 any error (or any finding under --strict). --fix is reserved for P2 (Tier-A auto-fix) and currently stub-warns.",
+      "route": { "method": "LOCAL", "path": "docs/adrs/" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fix": { "type": "boolean", "description": "Auto-apply Tier-A fixes. Reserved for P2; currently emits a stub warning to stderr and runs detection only." },
+          "json": { "type": "boolean", "description": "Emit findings as a structured JSON envelope on stdout: { findings: [...], summary: { total, errors, warnings, tier_a, tier_b, tier_c } }. Preferred for agents." },
+          "strict": { "type": "boolean", "description": "Promote warnings to errors — exit code 2 on any finding (use as a CI gate)." }
+        },
+        "required": []
+      }
+    },
+    {
       "name": "hex_plan_list",
       "category": "workplan",
       "cli": "hex plan list",

@@ -37,6 +37,26 @@ pub enum AdrAction {
         /// ADR identifier (e.g. ADR-2603240130 or partial match like 2603240130)
         adr_id: String,
     },
+    /// Self-consistency checker over docs/adrs/ (ADR-2604270800).
+    ///
+    /// Detects unparseable status, duplicate IDs, dangling Depends-on links,
+    /// stale Proposed ADRs, unlinked Superseded, and so on. Each finding is
+    /// tagged with an auto-fix tier (A/B/C) so the sched daemon can dispatch
+    /// the appropriate self-fix path. Exit 0 clean, 1 warnings only, 2 any
+    /// error (or any finding under `--strict`).
+    Doctor {
+        /// Auto-fix Tier-A findings. Reserved for P2 — currently emits a
+        /// stub warning and runs detection only.
+        #[arg(long)]
+        fix: bool,
+        /// Emit findings as a structured JSON envelope on stdout. Schema:
+        /// `{ findings: [...], summary: { total, errors, warnings, tier_a/b/c } }`.
+        #[arg(long)]
+        json: bool,
+        /// Promote warnings to errors — exit 2 on any finding (CI gate).
+        #[arg(long)]
+        strict: bool,
+    },
 }
 
 pub async fn run(action: AdrAction) -> anyhow::Result<()> {
@@ -48,7 +68,82 @@ pub async fn run(action: AdrAction) -> anyhow::Result<()> {
         AdrAction::Review { adr_id, strict } => super::adr_review::run(adr_id, strict).await,
         AdrAction::Schema => schema().await,
         AdrAction::Specs { adr_id } => specs_for_adr(&adr_id).await,
+        AdrAction::Doctor { fix, json, strict } => doctor_run(fix, json, strict).await,
     }
+}
+
+/// Drive the doctor subcommand: detection → output → exit code.
+///
+/// Detection is shared with the sched daemon (ADR-2604270800 §1) via
+/// `doctor::run`; CLI/MCP only owns rendering and exit-code mapping. The
+/// `--fix` flag is reserved for P2 — emits a stub warning to stderr so it
+/// neither silently no-ops nor pollutes JSON-on-stdout consumers.
+async fn doctor_run(fix: bool, json: bool, strict: bool) -> anyhow::Result<()> {
+    if fix {
+        eprintln!(
+            "{} Tier-A auto-fix lands in P2 — running detection only.",
+            "\u{26a0}".yellow()
+        );
+    }
+
+    let findings = doctor::run().await?;
+
+    if json {
+        println!("{}", doctor::to_json(&findings)?);
+    } else {
+        print_doctor_human(&findings);
+    }
+
+    let code = doctor::exit_code(&findings, strict);
+    if code != 0 {
+        std::process::exit(code);
+    }
+    Ok(())
+}
+
+/// Human-readable rendering of a `doctor::run` finding set. JSON mode bypasses
+/// this and uses [`doctor::to_json`] so the schema stays the daemon's contract.
+fn print_doctor_human(findings: &[doctor::Finding]) {
+    use doctor::{AutoFixTier, Severity};
+
+    println!("{} ADR Doctor — registry self-consistency", "\u{2b21}".cyan());
+    println!();
+
+    if findings.is_empty() {
+        println!("  {}", "No findings — registry is consistent.".green());
+        return;
+    }
+
+    for f in findings {
+        let sev = match f.severity {
+            Severity::Error => "ERROR".red().to_string(),
+            Severity::Warning => "WARN".yellow().to_string(),
+        };
+        let tier = match f.tier {
+            AutoFixTier::A => "A".green().to_string(),
+            AutoFixTier::B => "B".yellow().to_string(),
+            AutoFixTier::C => "C".dimmed().to_string(),
+        };
+        println!(
+            "  [{}] {} {} ({:?}) — {}",
+            tier,
+            sev,
+            f.adr_id.bold(),
+            f.kind,
+            f.detail
+        );
+    }
+    println!();
+
+    let errors = findings.iter().filter(|f| f.severity == Severity::Error).count();
+    let warnings = findings.iter().filter(|f| f.severity == Severity::Warning).count();
+    let tier_a = findings.iter().filter(|f| f.tier == AutoFixTier::A).count();
+    let tier_b = findings.iter().filter(|f| f.tier == AutoFixTier::B).count();
+    let tier_c = findings.iter().filter(|f| f.tier == AutoFixTier::C).count();
+    println!(
+        "  {} error(s), {} warning(s) · tier A:{} B:{} C:{}",
+        errors, warnings, tier_a, tier_b, tier_c
+    );
 }
 
 /// Discover the ADR directory, searching from the current directory upward.
