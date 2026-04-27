@@ -8,6 +8,8 @@ use clap::Parser;
 use serde_json::Value;
 
 use hex_analyzer::analyzers::cohesion;
+use hex_analyzer::analyzers::dead_layer;
+use hex_analyzer::analyzers::duplication;
 use hex_analyzer::analyzers::god_types::{self, GodTypeThresholds};
 use hex_analyzer::analyzers::orphan::{self, OrphanOptions};
 
@@ -46,6 +48,18 @@ struct Cli {
     #[arg(long = "god-types")]
     god_types: bool,
 
+    /// Report pairs of `impl Port for Adapter` blocks whose token
+    /// bodies overlap by ≥ 0.6 (multiset Jaccard on tree-sitter leaf
+    /// tokens). Two adapters doing the same thing behind one contract.
+    #[arg(long = "adapter-duplication")]
+    adapter_duplication: bool,
+
+    /// Report layer directories (`domain/`, `ports/`, `usecases/`,
+    /// `adapters/secondary/`) that have zero inbound `use` references
+    /// from elsewhere in the workspace — code that nothing calls.
+    #[arg(long = "dead-layers")]
+    dead_layers: bool,
+
     /// Emit JSON instead of human-readable output. The schema is
     /// `{findings: [{kind, ...}]}` — fields after `kind` vary per detector.
     #[arg(long)]
@@ -58,11 +72,17 @@ fn main() -> anyhow::Result<()> {
 
     // No detector flag → run everything (humans calling directly want
     // the full picture; the improver always passes a specific flag).
-    let any_flag =
-        cli.orphan_adapters || cli.orphan_ports || cli.port_cohesion || cli.god_types;
+    let any_flag = cli.orphan_adapters
+        || cli.orphan_ports
+        || cli.port_cohesion
+        || cli.god_types
+        || cli.adapter_duplication
+        || cli.dead_layers;
     let want_orphans = cli.orphan_adapters || cli.orphan_ports || !any_flag;
     let want_cohesion = cli.port_cohesion || !any_flag;
     let want_god_types = cli.god_types || !any_flag;
+    let want_duplication = cli.adapter_duplication || !any_flag;
+    let want_dead_layers = cli.dead_layers || !any_flag;
 
     let mut findings: Vec<Value> = Vec::new();
 
@@ -87,6 +107,20 @@ fn main() -> anyhow::Result<()> {
     if want_god_types {
         let thresholds = GodTypeThresholds::from_project_root(&root);
         let report = god_types::analyze(&root, thresholds)?;
+        for f in report.findings {
+            findings.push(serde_json::to_value(f)?);
+        }
+    }
+
+    if want_duplication {
+        let report = duplication::analyze(&root)?;
+        for f in report.findings {
+            findings.push(serde_json::to_value(f)?);
+        }
+    }
+
+    if want_dead_layers {
+        let report = dead_layer::analyze(&root)?;
         for f in report.findings {
             findings.push(serde_json::to_value(f)?);
         }
@@ -141,6 +175,24 @@ fn print_findings_human(findings: &[Value]) {
                 println!(
                     "  [{kind}] {type_name} ({file}) — {lines} LOC, {methods} public method(s)"
                 );
+            }
+            "adapter_duplication" => {
+                let port = f.get("port").and_then(Value::as_str).unwrap_or("?");
+                let adapter_a = f.get("adapter_a").and_then(Value::as_str).unwrap_or("?");
+                let adapter_b = f.get("adapter_b").and_then(Value::as_str).unwrap_or("?");
+                let file_a = f.get("file_a").and_then(Value::as_str).unwrap_or("?");
+                let line_a = f.get("line_a").and_then(Value::as_u64).unwrap_or(0);
+                let file_b = f.get("file_b").and_then(Value::as_str).unwrap_or("?");
+                let line_b = f.get("line_b").and_then(Value::as_u64).unwrap_or(0);
+                let sim = f.get("similarity").and_then(Value::as_f64).unwrap_or(0.0);
+                println!(
+                    "  [{kind}] {port}: {adapter_a} ({file_a}:{line_a}) ≈ {adapter_b} ({file_b}:{line_b}) — Jaccard {sim:.2}"
+                );
+            }
+            "dead_layer" => {
+                let layer = f.get("layer").and_then(Value::as_str).unwrap_or("?");
+                let layer_kind = f.get("layer_kind").and_then(Value::as_str).unwrap_or("?");
+                println!("  [{kind}] {layer_kind} — {layer} (zero inbound references)");
             }
             _ => {
                 let port = f.get("port").and_then(Value::as_str).unwrap_or("?");
