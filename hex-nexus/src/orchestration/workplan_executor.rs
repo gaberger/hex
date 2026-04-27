@@ -418,6 +418,29 @@ fn compute_file_scope_batches(tasks: &[WorkplanTask]) -> Vec<Vec<usize>> {
     batches
 }
 
+/// Build the `git commit -m "..."` line embedded in the agent prompt.
+///
+/// When `workplan.id` is non-empty the subject becomes
+/// `{layer}({task_id_lower}): {workplan_id} — {name}` so commits are
+/// locatable via `git log --grep wp-...`. Falls back to the legacy
+/// `{layer}({task_id_lower}): {name}` form when the workplan has no id
+/// (freshly-drafted unnamed plans, ad-hoc executions).
+fn build_commit_command(task: &WorkplanTask, workplan: &Workplan) -> String {
+    let layer = task.layer.as_deref().unwrap_or("feat");
+    let task_id_lower = task.id.to_lowercase();
+    if !workplan.id.is_empty() {
+        format!(
+            "git commit -m \"{layer}({task_id_lower}): {} — {}\"",
+            workplan.id, task.name
+        )
+    } else {
+        format!(
+            "git commit -m \"{layer}({task_id_lower}): {}\"",
+            task.name
+        )
+    }
+}
+
 // ── Workplan Executor ──────────────────────────────────
 
 pub struct WorkplanExecutor {
@@ -935,12 +958,8 @@ impl WorkplanExecutor {
                 } else {
                     p.push_str("git add -p\n");
                 }
-                let layer = task.layer.as_deref().unwrap_or("feat");
-                let task_id_lower = task.id.to_lowercase();
-                p.push_str(&format!(
-                    "git commit -m \"{layer}({task_id_lower}): {}\"\n",
-                    task.name
-                ));
+                p.push_str(&build_commit_command(task, workplan));
+                p.push('\n');
                 p.push_str("```\n");
                 p
             };
@@ -1958,6 +1977,46 @@ mod workplan_schema_tests {
         let j = r#"{"phases":[{"id":"P1","name":"phase","tasks":[{"id":"P1.1","title":"a-task"}]}]}"#;
         let wp: Workplan = serde_json::from_str(j).expect("title-only task must deserialize");
         assert_eq!(wp.phases[0].tasks[0].name, "a-task");
+    }
+}
+
+#[cfg(test)]
+mod commit_subject_tests {
+    //! Lock the commit-subject format the executor injects into agent prompts.
+    //! Without `workplan.id` in the subject, `git log --grep wp-foo` can't
+    //! locate the commits a workplan produced. Pin both the workplan-id-present
+    //! case and the empty-id fallback so neither path silently regresses.
+    use super::*;
+
+    fn fixture_task() -> WorkplanTask {
+        let j = r#"{"id":"P1.1","name":"do the thing","layer":"primary"}"#;
+        serde_json::from_str(j).expect("fixture task must deserialize")
+    }
+
+    fn workplan_with_id(id: &str) -> Workplan {
+        let j = format!(r#"{{"id":"{}","phases":[]}}"#, id);
+        serde_json::from_str(&j).expect("fixture workplan must deserialize")
+    }
+
+    #[test]
+    fn subject_includes_workplan_id() {
+        let task = fixture_task();
+        let workplan = workplan_with_id("wp-foo");
+        let line = build_commit_command(&task, &workplan);
+        assert!(line.contains("(p1.1)"), "missing lowercased task id in: {line}");
+        assert!(line.contains("wp-foo"), "missing workplan id in: {line}");
+    }
+
+    #[test]
+    fn subject_omits_workplan_id_when_empty() {
+        let task = fixture_task();
+        let workplan = workplan_with_id("");
+        let line = build_commit_command(&task, &workplan);
+        assert!(line.contains("(p1.1)"), "missing lowercased task id in: {line}");
+        // Fallback path uses the legacy `layer(id): name` form — no em-dash separator
+        // and no `wp-` substring should leak through.
+        assert!(!line.contains(" — "), "fallback must not include em-dash separator: {line}");
+        assert!(!line.contains("wp-"), "fallback must not embed any workplan id: {line}");
     }
 }
 
