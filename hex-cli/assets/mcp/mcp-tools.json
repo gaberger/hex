@@ -269,6 +269,22 @@
       }
     },
     {
+      "name": "hex_sched_improver_discover",
+      "category": "sched",
+      "cli": "hex sched improver discover [--once] [--json] [--interval <secs>]",
+      "description": "Self-improvement discovery surface (ADR-2604271100 P1). Runs every detector in assets/improver/detectors.toml against the repo, emits a deduped Hypothesis list — operator preview of what the autonomous loop would propose. JSON envelope: { count, hypotheses: [{ id, source, scope, severity, evidence, generated_at }] }. --once exits after one sweep; default polls at the daemon's improver-tick cadence (240s).",
+      "route": { "method": "LOCAL", "path": "docs/adrs/,docs/workplans/" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "once": { "type": "boolean", "description": "Run a single discovery sweep and exit. Without this flag the command polls indefinitely on the daemon cadence." },
+          "json": { "type": "boolean", "description": "Emit hypotheses as a JSON envelope on stdout instead of a table. Preferred for agents and gate commands." },
+          "interval": { "type": "integer", "minimum": 1, "description": "Polling interval in seconds when --once is not set. Defaults to 240 (matches the improver tick at P5)." }
+        },
+        "required": []
+      }
+    },
+    {
       "name": "hex_plan_list",
       "category": "workplan",
       "cli": "hex plan list",

@@ -225,6 +225,13 @@ pub enum BrainAction {
         #[arg(long, default_value = "10")]
         interval: u64,
     },
+    /// Self-improvement loop (ADR-2604271100) — discovery, judging, act.
+    /// Operator-facing preview surface for what the autonomous loop would
+    /// propose; later phases plug in variant generation and act().
+    Improver {
+        #[command(subcommand)]
+        action: improver::ImproverAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -290,6 +297,7 @@ pub async fn run(action: BrainAction) -> anyhow::Result<()> {
         },
         BrainAction::Prime { interval } => prime(interval).await,
         BrainAction::Watch { since } => watch(since).await,
+        BrainAction::Improver { action } => improver::run(action).await,
     }
 }
 
