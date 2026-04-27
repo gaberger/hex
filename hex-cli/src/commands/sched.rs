@@ -1855,6 +1855,194 @@ async fn record_sched_event(event_type: &str, payload: serde_json::Value) {
         .await;
 }
 
+/// Sched event emitted by `tick_adr_health_actions`. Holds the same payload
+/// shape that the live tick handler POSTs to `/api/events`; surfaced as data
+/// so tests can assert on it without standing up a fake HTTP server.
+#[derive(Debug, Clone)]
+pub struct TickEvent {
+    pub event_type: &'static str,
+    pub payload: serde_json::Value,
+}
+
+/// Inbox notification queued by `tick_adr_health_actions`. Mirrors the
+/// arguments [`notify_operator`] would have been called with — `kind` is the
+/// dotted notification key (e.g. `adr.doctor.applied`), `body` is the JSON
+/// payload, `priority` is the inbox priority (1=interrupt, 2=normal,
+/// 3=informational).
+#[derive(Debug, Clone)]
+pub struct TickNotification {
+    pub kind: &'static str,
+    pub body: serde_json::Value,
+    pub priority: u8,
+}
+
+/// Outcome of one `tick_adr_health` orchestration pass. Returned by
+/// [`tick_adr_health_actions`] so callers (the live wrapper, P3.2 tests) can
+/// inspect what *would* be dispatched without coupling to HTTP I/O.
+#[derive(Debug, Clone)]
+pub struct TickAdrHealthResult {
+    pub event: TickEvent,
+    pub notifications: Vec<TickNotification>,
+}
+
+/// Hermetic core of [`tick_adr_health`]: takes pre-collected findings + an
+/// optional shadow-promote config, runs the Tier-A/B/C dispatch in order,
+/// and returns the (event, notifications) pair the live wrapper would
+/// otherwise have POSTed to nexus.
+///
+/// File-system side effects of Tier-A shadow-promotion and Tier-B drafter
+/// commits *do* happen inside this function — that's the auto-fix itself —
+/// but no HTTP is performed. Callers who want HTTP dispatch wrap the result
+/// (see [`tick_adr_health`]). Tests assert against the returned result and
+/// the resulting filesystem state directly.
+pub async fn tick_adr_health_actions(
+    findings: &[doctor::Finding],
+    cfg: Option<&doctor::ShadowPromoteConfig>,
+) -> TickAdrHealthResult {
+    let total = findings.len();
+    let tier_a = findings.iter().filter(|f| f.tier == doctor::AutoFixTier::A).count();
+    let tier_b = findings.iter().filter(|f| f.tier == doctor::AutoFixTier::B).count();
+    let tier_c = findings.iter().filter(|f| f.tier == doctor::AutoFixTier::C).count();
+    let errors = findings.iter().filter(|f| f.severity == doctor::Severity::Error).count();
+    let warnings = findings.iter().filter(|f| f.severity == doctor::Severity::Warning).count();
+
+    let event = TickEvent {
+        event_type: "adr_doctor_tick",
+        payload: json!({
+            "total": total,
+            "tier_a": tier_a,
+            "tier_b": tier_b,
+            "tier_c": tier_c,
+            "errors": errors,
+            "warnings": warnings,
+        }),
+    };
+
+    let mut notifications = Vec::new();
+    for finding in findings {
+        match finding.tier {
+            doctor::AutoFixTier::A => {
+                let Some(cfg) = cfg else {
+                    notifications.push(TickNotification {
+                        kind: "adr.doctor.aborted",
+                        body: json!({
+                            "adr_id": finding.adr_id,
+                            "kind": format!("{:?}", finding.kind),
+                            "tier": "A",
+                            "reason": "shadow_promote config unavailable",
+                            "detail": finding.detail,
+                        }),
+                        priority: 2,
+                    });
+                    continue;
+                };
+                let outcome = doctor::shadow_promote_with_policy(
+                    finding,
+                    cfg,
+                    doctor::MergePolicy::Merge,
+                )
+                .unwrap_or_else(|e| doctor::Outcome::Aborted {
+                    reason: format!("shadow_promote raised: {}", e),
+                });
+                match outcome {
+                    doctor::Outcome::Applied { branch, commit } => {
+                        notifications.push(TickNotification {
+                            kind: "adr.doctor.applied",
+                            body: json!({
+                                "adr_id": finding.adr_id,
+                                "kind": format!("{:?}", finding.kind),
+                                "tier": "A",
+                                "branch": branch,
+                                "commit": commit,
+                                "detail": finding.detail,
+                            }),
+                            priority: 3,
+                        });
+                    }
+                    doctor::Outcome::Aborted { reason } => {
+                        notifications.push(TickNotification {
+                            kind: "adr.doctor.aborted",
+                            body: json!({
+                                "adr_id": finding.adr_id,
+                                "kind": format!("{:?}", finding.kind),
+                                "tier": "A",
+                                "reason": reason,
+                                "detail": finding.detail,
+                            }),
+                            priority: 2,
+                        });
+                    }
+                }
+            }
+            doctor::AutoFixTier::B => {
+                let Some(cfg) = cfg else {
+                    notifications.push(TickNotification {
+                        kind: "adr.doctor.aborted",
+                        body: json!({
+                            "adr_id": finding.adr_id,
+                            "kind": format!("{:?}", finding.kind),
+                            "tier": "B",
+                            "reason": "tier_b_draft config unavailable",
+                            "detail": finding.detail,
+                        }),
+                        priority: 2,
+                    });
+                    continue;
+                };
+                let outcome = doctor::tier_b_draft_with_config(finding, cfg).unwrap_or_else(
+                    |e| doctor::Outcome::Aborted {
+                        reason: format!("tier_b_draft raised: {}", e),
+                    },
+                );
+                match outcome {
+                    doctor::Outcome::Applied { branch, commit } => {
+                        notifications.push(TickNotification {
+                            kind: "adr.doctor.draft",
+                            body: json!({
+                                "adr_id": finding.adr_id,
+                                "kind": format!("{:?}", finding.kind),
+                                "tier": "B",
+                                "branch": branch,
+                                "commit": commit,
+                                "detail": finding.detail,
+                            }),
+                            priority: 2,
+                        });
+                    }
+                    doctor::Outcome::Aborted { reason } => {
+                        notifications.push(TickNotification {
+                            kind: "adr.doctor.aborted",
+                            body: json!({
+                                "adr_id": finding.adr_id,
+                                "kind": format!("{:?}", finding.kind),
+                                "tier": "B",
+                                "reason": reason,
+                                "detail": finding.detail,
+                            }),
+                            priority: 2,
+                        });
+                    }
+                }
+            }
+            doctor::AutoFixTier::C => {
+                notifications.push(TickNotification {
+                    kind: "adr.doctor.notify",
+                    body: json!({
+                        "adr_id": finding.adr_id,
+                        "kind": format!("{:?}", finding.kind),
+                        "tier": "C",
+                        "severity": format!("{:?}", finding.severity),
+                        "detail": finding.detail,
+                    }),
+                    priority: 1,
+                });
+            }
+        }
+    }
+
+    TickAdrHealthResult { event, notifications }
+}
+
 /// Run `hex adr doctor` once and route findings per ADR-2604270800 §1a.
 ///
 ///   - Tier-A → [`doctor::shadow_promote`] (with [`doctor::MergePolicy::Merge`]).
@@ -1874,6 +2062,10 @@ async fn record_sched_event(event_type: &str, payload: serde_json::Value) {
 /// — including clean ones — for trend analysis. The `_state` parameter is
 /// reserved for future tick-state coordination (e.g. cross-tick rate-limiting
 /// of the doctor scan); the doctor itself is stateless across ticks.
+///
+/// Thin wrapper around [`tick_adr_health_actions`]: that's where the
+/// orchestration lives, here we add scan + HTTP dispatch. Tests drive the
+/// hermetic path directly.
 pub async fn tick_adr_health(_state: &SchedState) {
     let findings = match doctor::run().await {
         Ok(f) => f,
@@ -1887,54 +2079,6 @@ pub async fn tick_adr_health(_state: &SchedState) {
             return;
         }
     };
-
-    let total = findings.len();
-    let tier_a = findings
-        .iter()
-        .filter(|f| f.tier == doctor::AutoFixTier::A)
-        .count();
-    let tier_b = findings
-        .iter()
-        .filter(|f| f.tier == doctor::AutoFixTier::B)
-        .count();
-    let tier_c = findings
-        .iter()
-        .filter(|f| f.tier == doctor::AutoFixTier::C)
-        .count();
-    let errors = findings
-        .iter()
-        .filter(|f| f.severity == doctor::Severity::Error)
-        .count();
-    let warnings = findings
-        .iter()
-        .filter(|f| f.severity == doctor::Severity::Warning)
-        .count();
-
-    record_sched_event(
-        "adr_doctor_tick",
-        json!({
-            "total": total,
-            "tier_a": tier_a,
-            "tier_b": tier_b,
-            "tier_c": tier_c,
-            "errors": errors,
-            "warnings": warnings,
-        }),
-    )
-    .await;
-
-    if findings.is_empty() {
-        return;
-    }
-
-    println!(
-        "  {} adr doctor: {} finding(s) (A:{} B:{} C:{})",
-        "⬡".cyan(),
-        total,
-        tier_a,
-        tier_b,
-        tier_c
-    );
 
     // Live config for shadow-promote / tier-b drafter. If the daemon isn't
     // running inside a git repo (rare — examples/test envs) we log + bail
@@ -1952,132 +2096,30 @@ pub async fn tick_adr_health(_state: &SchedState) {
         }
     };
 
-    for finding in &findings {
-        match finding.tier {
-            doctor::AutoFixTier::A => {
-                let Some(cfg) = cfg.as_ref() else {
-                    notify_operator(
-                        "adr.doctor.aborted",
-                        json!({
-                            "adr_id": finding.adr_id,
-                            "kind": format!("{:?}", finding.kind),
-                            "tier": "A",
-                            "reason": "shadow_promote config unavailable",
-                            "detail": finding.detail,
-                        }),
-                        2,
-                    )
-                    .await;
-                    continue;
-                };
-                let outcome = doctor::shadow_promote_with_policy(
-                    finding,
-                    cfg,
-                    doctor::MergePolicy::Merge,
-                )
-                .unwrap_or_else(|e| doctor::Outcome::Aborted {
-                    reason: format!("shadow_promote raised: {}", e),
-                });
-                match outcome {
-                    doctor::Outcome::Applied { branch, commit } => {
-                        notify_operator(
-                            "adr.doctor.applied",
-                            json!({
-                                "adr_id": finding.adr_id,
-                                "kind": format!("{:?}", finding.kind),
-                                "tier": "A",
-                                "branch": branch,
-                                "commit": commit,
-                                "detail": finding.detail,
-                            }),
-                            3,
-                        )
-                        .await;
-                    }
-                    doctor::Outcome::Aborted { reason } => {
-                        notify_operator(
-                            "adr.doctor.aborted",
-                            json!({
-                                "adr_id": finding.adr_id,
-                                "kind": format!("{:?}", finding.kind),
-                                "tier": "A",
-                                "reason": reason,
-                                "detail": finding.detail,
-                            }),
-                            2,
-                        )
-                        .await;
-                    }
-                }
-            }
-            doctor::AutoFixTier::B => {
-                let Some(cfg) = cfg.as_ref() else {
-                    notify_operator(
-                        "adr.doctor.aborted",
-                        json!({
-                            "adr_id": finding.adr_id,
-                            "kind": format!("{:?}", finding.kind),
-                            "tier": "B",
-                            "reason": "tier_b_draft config unavailable",
-                            "detail": finding.detail,
-                        }),
-                        2,
-                    )
-                    .await;
-                    continue;
-                };
-                let outcome = doctor::tier_b_draft_with_config(finding, cfg).unwrap_or_else(
-                    |e| doctor::Outcome::Aborted {
-                        reason: format!("tier_b_draft raised: {}", e),
-                    },
-                );
-                match outcome {
-                    doctor::Outcome::Applied { branch, commit } => {
-                        notify_operator(
-                            "adr.doctor.draft",
-                            json!({
-                                "adr_id": finding.adr_id,
-                                "kind": format!("{:?}", finding.kind),
-                                "tier": "B",
-                                "branch": branch,
-                                "commit": commit,
-                                "detail": finding.detail,
-                            }),
-                            2,
-                        )
-                        .await;
-                    }
-                    doctor::Outcome::Aborted { reason } => {
-                        notify_operator(
-                            "adr.doctor.aborted",
-                            json!({
-                                "adr_id": finding.adr_id,
-                                "kind": format!("{:?}", finding.kind),
-                                "tier": "B",
-                                "reason": reason,
-                                "detail": finding.detail,
-                            }),
-                            2,
-                        )
-                        .await;
-                    }
-                }
-            }
-            doctor::AutoFixTier::C => {
-                notify_operator(
-                    "adr.doctor.notify",
-                    json!({
-                        "adr_id": finding.adr_id,
-                        "kind": format!("{:?}", finding.kind),
-                        "tier": "C",
-                        "severity": format!("{:?}", finding.severity),
-                        "detail": finding.detail,
-                    }),
-                    1,
-                )
-                .await;
-            }
-        }
+    let total = findings.len();
+    let tier_a = findings.iter().filter(|f| f.tier == doctor::AutoFixTier::A).count();
+    let tier_b = findings.iter().filter(|f| f.tier == doctor::AutoFixTier::B).count();
+    let tier_c = findings.iter().filter(|f| f.tier == doctor::AutoFixTier::C).count();
+
+    let result = tick_adr_health_actions(&findings, cfg.as_ref()).await;
+
+    record_sched_event(result.event.event_type, result.event.payload).await;
+
+    if total == 0 {
+        return;
+    }
+
+    println!(
+        "  {} adr doctor: {} finding(s) (A:{} B:{} C:{})",
+        "⬡".cyan(),
+        total,
+        tier_a,
+        tier_b,
+        tier_c
+    );
+
+    for n in result.notifications {
+        notify_operator(n.kind, n.body, n.priority).await;
     }
 }
 
@@ -2366,6 +2408,13 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                 state.last_analysis_summary = summary.current.clone();
             }
         }
+
+        // ── ADR registry health (ADR-2604270800 §1a, wp-adr-doctor-self-fix P3.2)
+        // After workplan reconcile, before swarm cleanup. Cheap when the
+        // registry is clean (a single `docs/adrs/` scan). Routes Tier-A
+        // findings through shadow-promotion and emits P1 inbox entries for
+        // Tier-C judgment calls — the rest of the loop is unaffected.
+        tick_adr_health(&state).await;
 
         // Sweep stuck in_progress tasks (ADR-2604142155 P2.2).
         match sweep_stuck_tasks().await {
@@ -4233,6 +4282,107 @@ async fn queue_drain() -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+// ─── ADR-doctor tick orchestrator (ADR-2604270800 §1a, P3.2) ────────────
+//
+// Pure data-shape unit tests for `tick_adr_health_actions`. Lives in a
+// module named `tick_adr_health` directly under `sched` so the workplan
+// gate (`cargo test -p hex-cli sched::tick_adr_health`) substring-matches
+// the full test path `commands::sched::tick_adr_health::*` and runs
+// exactly this set.
+//
+// Filesystem + git side effects of shadow-promote are covered by the
+// integration test `tests/sched_adr_health_tick.rs`; here we lock in the
+// pure routing rules by passing `cfg=None` (every Tier-A/B finding then
+// routes through the cfg-unavailable abort path; every Tier-C still
+// notifies).
+#[cfg(test)]
+mod tick_adr_health {
+    use super::tick_adr_health_actions;
+    use crate::commands::adr::doctor::{finding, AutoFixTier, FindingKind};
+    use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn emits_event_with_finding_counts() {
+        let findings = vec![
+            finding("ADR-1", PathBuf::from("a.md"), FindingKind::UnparseableStatus, "buggy"),
+            finding("ADR-2", PathBuf::from("b.md"), FindingKind::DuplicateId, "dup"),
+            finding("ADR-3", PathBuf::from("c.md"), FindingKind::MissingRequiredField, "miss"),
+            finding("ADR-4", PathBuf::from("d.md"), FindingKind::StaleProposed, "old"),
+        ];
+        // Sanity: the rule table puts these in the tiers we expect.
+        assert_eq!(findings[0].tier, AutoFixTier::A);
+        assert_eq!(findings[1].tier, AutoFixTier::C);
+        assert_eq!(findings[2].tier, AutoFixTier::C);
+        assert_eq!(findings[3].tier, AutoFixTier::B);
+
+        // cfg=None forces the "config unavailable" path for Tier-A/B (we
+        // don't want a real worktree/git here). Tier-C still notifies.
+        let result = tick_adr_health_actions(&findings, None).await;
+
+        assert_eq!(result.event.event_type, "adr_doctor_tick");
+        assert_eq!(result.event.payload["total"], 4);
+        assert_eq!(result.event.payload["tier_a"], 1);
+        assert_eq!(result.event.payload["tier_b"], 1);
+        assert_eq!(result.event.payload["tier_c"], 2);
+    }
+
+    #[tokio::test]
+    async fn routes_tier_c_findings_to_p1_inbox_notifications() {
+        let f = finding(
+            "ADR-2604270800",
+            PathBuf::from("docs/adrs/ADR-2604270800-x.md"),
+            FindingKind::DuplicateId,
+            "duplicate id detected",
+        );
+        assert_eq!(f.tier, AutoFixTier::C);
+
+        let result = tick_adr_health_actions(&[f], None).await;
+
+        assert_eq!(result.notifications.len(), 1);
+        let n = &result.notifications[0];
+        assert_eq!(n.kind, "adr.doctor.notify");
+        assert_eq!(n.priority, 1, "Tier-C must be priority=1 (operator interrupt)");
+        assert_eq!(n.body["tier"], "C");
+        assert_eq!(n.body["adr_id"], "ADR-2604270800");
+        assert_eq!(n.body["kind"], "DuplicateId");
+    }
+
+    #[tokio::test]
+    async fn aborts_tier_a_when_config_unavailable_with_p2_notification() {
+        let f = finding(
+            "ADR-2604270800",
+            PathBuf::from("docs/adrs/ADR-2604270800-x.md"),
+            FindingKind::UnparseableStatus,
+            "buggy frontmatter",
+        );
+        assert_eq!(f.tier, AutoFixTier::A);
+
+        let result = tick_adr_health_actions(&[f], None).await;
+
+        assert_eq!(result.notifications.len(), 1);
+        let n = &result.notifications[0];
+        assert_eq!(n.kind, "adr.doctor.aborted");
+        assert_eq!(n.priority, 2, "Aborted Tier-A must downgrade to priority=2");
+        assert_eq!(n.body["tier"], "A");
+        assert!(
+            n.body["reason"].as_str().unwrap().contains("config unavailable"),
+            "reason should cite missing cfg, got: {}",
+            n.body["reason"],
+        );
+    }
+
+    #[tokio::test]
+    async fn emits_event_even_when_findings_empty() {
+        let result = tick_adr_health_actions(&[], None).await;
+
+        // Empty findings is the daemon's clean-registry case: still emit
+        // the event so trend graphs see a clean tick, no notifications.
+        assert_eq!(result.event.event_type, "adr_doctor_tick");
+        assert_eq!(result.event.payload["total"], 0);
+        assert!(result.notifications.is_empty());
+    }
 }
 
 #[cfg(test)]
