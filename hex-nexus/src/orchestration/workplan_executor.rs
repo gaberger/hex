@@ -714,17 +714,28 @@ impl WorkplanExecutor {
         execution_id: String,
         workplan: Workplan,
     ) {
-        // ADR-2604010000 P3.1: Initialize a HexFlo swarm for this workplan execution.
-        // The swarm_id tracks all per-task HexFlo tasks created in P3.2.
-        // Use the workplan id as the swarm name; fall back to execution_id if empty.
-        let swarm_name = if !workplan.id.is_empty() {
+        // ADR-2604010000 P3.1 + 2026-04-27 fix: initialize a HexFlo swarm for this
+        // workplan execution. Two earlier bugs combined to break this entirely:
+        //
+        //   (a) swarm_init used a fresh UUID as swarm_id while per-task
+        //       swarm_task_create at line ~1010 used workplan.id — the swarm
+        //       was registered under one key and looked up under another.
+        //   (b) swarm_init's owner was the literal "workplan-executor", so per
+        //       ADR-2603241900 (one-agent-one-active-swarm) the second execution
+        //       was rejected with "Agent ... already owns an active swarm".
+        //
+        // Fix: swarm_id is workplan.id (or execution_id when empty) so init and
+        // task_create agree. Owner is suffixed with execution_id so each run is
+        // a distinct owner and the singleton constraint never trips.
+        let swarm_id = if !workplan.id.is_empty() {
             workplan.id.clone()
         } else {
             execution_id.clone()
         };
-        let swarm_id = Uuid::new_v4().to_string();
+        let swarm_name = swarm_id.clone();
+        let owner = format!("workplan-executor:{}", execution_id);
         match state_port
-            .swarm_init(&swarm_id, &swarm_name, "hex-pipeline", "", "workplan-executor")
+            .swarm_init(&swarm_id, &swarm_name, "hex-pipeline", "", &owner)
             .await
         {
             Ok(()) => {
