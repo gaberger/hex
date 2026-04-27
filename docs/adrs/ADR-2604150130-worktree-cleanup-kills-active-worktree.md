@@ -2,10 +2,10 @@
 
 <!-- ID format: YYMMDDHHMM — 2604150130 = 2026-04-15 01:30 local -->
 
-- **Status**: Proposed
-- **Date**: 2026-04-15
-- **Depends on**: ADR-2604150100 (related worktree-merge drop-commits bug)
-- **Relates to**: `feedback_enforce_worktrees.md`, `feedback_use_hex_worktree_merge.md`
+**Status:** Proposed
+**Date:** 2026-04-15
+**Depends on:** ADR-2604150100 (related worktree-merge drop-commits bug)
+**Relates to:** `feedback_enforce_worktrees.md`, `feedback_use_hex_worktree_merge.md`
 
 ## Context
 
