@@ -23,6 +23,10 @@ use crate::fmt::{pretty_table, truncate};
 
 use super::adr::doctor;
 
+/// Self-improvement loop (ADR-2604271100). P1.1 lands the discovery surface;
+/// later tasks plug in variant generation, judging, and the tick handler.
+pub mod improver;
+
 /// Daemon-local state persisted across ticks (wp-brain-updates P1.2).
 /// Tracks issue counts from the previous validate tick so regressions can
 /// be detected — a count that increases tick-over-tick is a regression.

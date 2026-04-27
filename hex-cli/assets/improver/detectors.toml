@@ -1,0 +1,52 @@
+# Improver discovery rule table — ADR-2604271100 P1.1
+#
+# Detectors-as-data per ADR-2604142243 (rules-as-data, not control flow).
+# One entry per `Source` variant in
+# hex-cli/src/commands/sched/improver/discover.rs.
+#
+# Contract for each `cmd`:
+#   - runs as a subprocess (sh -c) with cwd = repo root
+#   - emits JSON on stdout
+#   - either a top-level `findings` array, or a top-level array, or an
+#     object addressable via `findings_pointer` (RFC 6901)
+#   - each finding becomes a Hypothesis tagged with this entry's `source`
+#   - non-zero exit codes are tolerated by default (diagnostic tools commonly
+#     signal "findings present" via exit code); set `allow_nonzero_exit = false`
+#     when zero-exit is a hard contract.
+#
+# Scope-field discovery is per-source — see `extract_scope` in discover.rs.
+
+[[detector]]
+source = "adr_doctor"
+cmd = "hex adr doctor --json"
+description = "ADR registry self-consistency (ADR-2604270800)"
+
+[[detector]]
+source = "reconcile_strict"
+cmd = "hex plan reconcile --all --strict --json"
+description = "Workplan declared state diverging from git evidence (ADR-2604142200)"
+
+[[detector]]
+source = "git_drift"
+cmd = "hex worktree list --stale --json"
+description = "Worktrees and branches out of sync with main"
+
+[[detector]]
+source = "inbox_stale"
+cmd = "hex inbox list --stale --json"
+description = "Inbox notifications past their P1/P2 SLA (ADR-060)"
+
+[[detector]]
+source = "adr_lifecycle"
+cmd = "hex adr status --json"
+description = "Stale Proposed / unlinked Superseded / abandoned ADRs (ADR-012)"
+
+[[detector]]
+source = "escalation_report"
+cmd = "hex inference escalation-report --json"
+description = "Tiers escalating repeatedly to the frontier (ADR-2604120202)"
+
+[[detector]]
+source = "punch_list"
+cmd = "hex insight punch-list --json"
+description = "Self-acknowledged punch-list items in agent transcripts"
