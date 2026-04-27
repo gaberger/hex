@@ -650,14 +650,35 @@ use std::process::Command;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum Outcome {
-    /// Patch landed on `main` via merge commit. `branch` is the auto-fix
-    /// branch that produced the change; `commit` is the sha of the
-    /// fix commit (parent of the merge commit).
+    /// Patch committed on the auto-fix branch. With [`MergePolicy::Merge`]
+    /// the branch is also merged back to `main` via `--no-ff` (worktree
+    /// removed, branch ref retained for audit). With
+    /// [`MergePolicy::LeaveForReview`] no merge is attempted — both the
+    /// worktree directory and the branch ref are kept for human review.
+    /// `commit` is always the sha of the fix commit produced inside the
+    /// worktree (parent of any subsequent merge commit).
     Applied { branch: String, commit: String },
     /// Aborted before mutating `main`. Worktree (if created) was removed.
     /// `reason` is a human-readable diagnostic — also written to the
     /// daemon event log so we can audit how often each abort path fires.
     Aborted { reason: String },
+}
+
+/// What the dispatcher should do with the auto-fix branch after the patch
+/// (or Tier-B draft) has been committed in the worktree.
+///
+/// - [`Merge`]: `--fix-and-merge` — apply, commit, `git merge --no-ff`
+///   back to `main`, remove the worktree dir. Branch ref stays for audit.
+///   This is the existing P2.2 behavior.
+/// - [`LeaveForReview`]: `--fix` — apply, commit on the branch, then
+///   stop. Both the worktree directory and the branch ref are left in
+///   place so a human can `cd .hex/auto-fix-worktrees/<name>`, review,
+///   and either merge or discard. This is the only safe Tier-B mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergePolicy {
+    Merge,
+    LeaveForReview,
 }
 
 impl Outcome {
@@ -709,9 +730,29 @@ pub fn shadow_promote(finding: &Finding) -> anyhow::Result<Outcome> {
 /// Returns `Outcome::Applied { .. }` only after `git merge --no-ff` lands
 /// the fix commit on the repo's main branch. Any earlier failure returns
 /// `Outcome::Aborted { reason: .. }` after attempting worktree cleanup.
+///
+/// Equivalent to `shadow_promote_with_policy(finding, cfg, MergePolicy::Merge)`.
 pub fn shadow_promote_with_config(
     finding: &Finding,
     cfg: &ShadowPromoteConfig,
+) -> anyhow::Result<Outcome> {
+    shadow_promote_with_policy(finding, cfg, MergePolicy::Merge)
+}
+
+/// Variant of [`shadow_promote_with_config`] that lets the caller choose
+/// whether to merge the auto-fix branch back to `main` or leave it for
+/// human review. Used by the P2.3 dispatcher to implement `--fix` (no
+/// merge) vs `--fix-and-merge` (merge).
+///
+/// With [`MergePolicy::LeaveForReview`] the post-commit merge phase
+/// (steps 6–7 in the body) is skipped entirely: the fix commit lives on
+/// the auto-fix branch, the worktree directory stays in place, and
+/// `main` is never touched. The returned [`Outcome::Applied`] still
+/// carries the branch + fix-commit sha so the caller can surface them.
+pub fn shadow_promote_with_policy(
+    finding: &Finding,
+    cfg: &ShadowPromoteConfig,
+    policy: MergePolicy,
 ) -> anyhow::Result<Outcome> {
     // Step 0: tier + patch availability gate.
     if finding.tier != AutoFixTier::A {
@@ -826,40 +867,277 @@ pub fn shadow_promote_with_config(
         )));
     }
 
-    // Step 6: commit + merge. We use `git merge --no-ff` (always a true
-    // merge commit) rather than fast-forward to side-step the
-    // ADR-2604150100 dropped-commits failure mode.
+    // Step 6: commit. Always done — a fix commit exists on the auto-fix
+    // branch regardless of merge policy.
     let commit_sha = match commit_in_worktree(&worktree_dir, &rel_file, finding) {
         Ok(s) => s,
         Err(e) => return Ok(cleanup(format!("commit in worktree failed: {}", e))),
     };
-    let pre_merge_head = match rev_parse_head(&cfg.repo_root) {
-        Ok(s) => s,
-        Err(e) => return Ok(cleanup(format!("rev-parse HEAD failed: {}", e))),
-    };
-    if let Err(e) = merge_no_ff(&cfg.repo_root, &branch, finding) {
-        return Ok(cleanup(format!("merge --no-ff failed: {}", e)));
-    }
-    // Post-merge integrity check: the pre-merge HEAD must still be an
-    // ancestor of the new HEAD. `--no-ff` guarantees this, but we assert
-    // it anyway because that's the whole point of the self-fix loop.
-    if let Err(e) = assert_ancestor(&cfg.repo_root, &pre_merge_head) {
-        // If this ever fires, we've already mutated main — surface as a
-        // hard error rather than Aborted, because cleanup can't undo it.
-        anyhow::bail!(
-            "post-merge integrity check failed (commits may have been dropped): {}",
-            e
-        );
-    }
 
-    // Step 7: cleanup the secondary worktree. Branch ref is intentionally
-    // kept so operators can `git log <branch>` to audit the fix.
-    let _ = remove_auto_fix_worktree_only(&cfg.repo_root, &worktree_dir);
+    // Step 7: optionally merge back to main and tear down the worktree.
+    // With LeaveForReview we stop here — branch + worktree stay so a
+    // human can review the fix commit before merging.
+    match policy {
+        MergePolicy::Merge => {
+            // 7a: merge --no-ff (always a true merge commit) rather than
+            // fast-forward to side-step the ADR-2604150100 dropped-commits
+            // failure mode.
+            let pre_merge_head = match rev_parse_head(&cfg.repo_root) {
+                Ok(s) => s,
+                Err(e) => return Ok(cleanup(format!("rev-parse HEAD failed: {}", e))),
+            };
+            if let Err(e) = merge_no_ff(&cfg.repo_root, &branch, finding) {
+                return Ok(cleanup(format!("merge --no-ff failed: {}", e)));
+            }
+            // 7b: post-merge integrity check — pre_merge_head must remain
+            // reachable from HEAD. `--no-ff` guarantees this, but we
+            // assert it anyway because that's the whole point of the
+            // self-fix loop.
+            if let Err(e) = assert_ancestor(&cfg.repo_root, &pre_merge_head) {
+                // If this ever fires, we've already mutated main — surface
+                // as a hard error rather than Aborted, because cleanup
+                // can't undo it.
+                anyhow::bail!(
+                    "post-merge integrity check failed (commits may have been dropped): {}",
+                    e
+                );
+            }
+            // 7c: drop the worktree dir (branch ref intentionally kept
+            // so operators can `git log <branch>` to audit the fix).
+            let _ = remove_auto_fix_worktree_only(&cfg.repo_root, &worktree_dir);
+        }
+        MergePolicy::LeaveForReview => {
+            // No merge. Both the worktree directory and the branch ref
+            // are left in place so a human can review the patch (e.g.
+            // `git diff main..<branch>` or `cd <worktree_dir>`).
+        }
+    }
 
     Ok(Outcome::Applied {
         branch,
         commit: commit_sha,
     })
+}
+
+// ── Tier-B drafting (P2.3, ADR-2604270800 §1a) ──────────────────────────
+//
+// Tier-B findings (StaleProposed, SupersededUnlinked, IdFormatMismatch)
+// can't be auto-applied — they're per-finding judgment calls — but they
+// *can* be auto-drafted: we open a sched-owned worktree on a fresh
+// branch, write a notes file describing the finding, commit, and stop.
+// The branch + worktree are left for human review; merging is never
+// attempted regardless of the dispatcher's `MergePolicy`.
+//
+// The notes file is the minimal "diff written to the worktree" required
+// by P2.3. Future phases can replace it with kind-specific drafters
+// (e.g. a stub `Superseded by:` line for SupersededUnlinked) — the
+// dispatcher contract is the same.
+
+/// Stable filename slug for a [`FindingKind`]. Used to compose branch
+/// names and notes filenames so they round-trip cleanly through git
+/// (no spaces, no `/`, no shell-meta).
+fn kind_slug(kind: FindingKind) -> &'static str {
+    match kind {
+        FindingKind::UnparseableStatus => "unparseable-status",
+        FindingKind::DuplicateId => "duplicate-id",
+        FindingKind::IdFormatMismatch => "id-format-mismatch",
+        FindingKind::MissingRequiredField => "missing-required-field",
+        FindingKind::DanglingDependency => "dangling-dependency",
+        FindingKind::StaleProposed => "stale-proposed",
+        FindingKind::SupersededUnlinked => "superseded-unlinked",
+    }
+}
+
+/// Open a sched-owned auto-fix worktree, write a notes file describing
+/// the Tier-B finding, commit, and leave it for human review.
+///
+/// Refuses anything that isn't Tier B. `Outcome::Applied` carries the
+/// branch + commit sha — main is never modified, so the caller knows the
+/// branch ref must be inspected/merged manually.
+pub fn tier_b_draft_with_config(
+    finding: &Finding,
+    cfg: &ShadowPromoteConfig,
+) -> anyhow::Result<Outcome> {
+    if finding.tier != AutoFixTier::B {
+        return Ok(Outcome::Aborted {
+            reason: format!("not a Tier-B finding (tier={:?})", finding.tier),
+        });
+    }
+
+    let branch = format!(
+        "sched/auto-fix/adr-doctor/tier-b/{}-{}",
+        finding.adr_id,
+        kind_slug(finding.kind)
+    );
+    let worktree_dir = match create_auto_fix_worktree(&cfg.repo_root, &branch) {
+        Ok(p) => p,
+        Err(e) => {
+            return Ok(Outcome::Aborted {
+                reason: format!("worktree create failed: {}", e),
+            })
+        }
+    };
+
+    let cleanup = |reason: String| -> Outcome {
+        let _ = remove_auto_fix_worktree(&cfg.repo_root, &worktree_dir, &branch);
+        Outcome::Aborted { reason }
+    };
+
+    // Write the notes file inside the worktree at a deterministic path.
+    let notes_rel = PathBuf::from(format!(
+        ".hex/adr-doctor-drafts/{}-{}.md",
+        finding.adr_id,
+        kind_slug(finding.kind)
+    ));
+    let notes_abs = worktree_dir.join(&notes_rel);
+    if let Some(parent) = notes_abs.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return Ok(cleanup(format!(
+                "create_dir_all {} failed: {}",
+                parent.display(),
+                e
+            )));
+        }
+    }
+    let notes = format!(
+        "# Tier-B doctor draft: {} ({:?})\n\
+         \n\
+         **Source ADR:** {}\n\
+         **Finding kind:** {:?}\n\
+         **Detail:** {}\n\
+         \n\
+         This file is an auto-generated placeholder for a Tier-B finding\n\
+         (per ADR-2604270800 §1a). The doctor cannot mechanically resolve\n\
+         this kind of issue; a human must review the source ADR, decide\n\
+         the right fix, and either merge this branch (after editing) or\n\
+         delete it.\n\
+         \n\
+         To review:\n\
+         ```\n\
+         cd {}\n\
+         # edit the source ADR, then:\n\
+         git commit --amend --no-edit\n\
+         hex worktree merge {}\n\
+         ```\n\
+         \n\
+         To discard:\n\
+         ```\n\
+         git worktree remove --force {}\n\
+         git branch -D {}\n\
+         ```\n",
+        finding.adr_id,
+        finding.kind,
+        finding.adr_id,
+        finding.kind,
+        finding.detail,
+        worktree_dir.display(),
+        branch,
+        worktree_dir.display(),
+        branch,
+    );
+    if let Err(e) = std::fs::write(&notes_abs, notes) {
+        return Ok(cleanup(format!(
+            "write notes {} failed: {}",
+            notes_abs.display(),
+            e
+        )));
+    }
+
+    let commit_sha = match commit_in_worktree(&worktree_dir, &notes_rel, finding) {
+        Ok(s) => s,
+        Err(e) => return Ok(cleanup(format!("commit notes failed: {}", e))),
+    };
+
+    // Leave both the worktree dir and the branch in place. Caller is
+    // responsible for inboxing the human.
+    Ok(Outcome::Applied {
+        branch,
+        commit: commit_sha,
+    })
+}
+
+// ── Tier dispatcher (P2.3) ───────────────────────────────────────────────
+
+/// Per-finding result emitted by [`dispatch_fix`]. One variant per tier
+/// so callers (CLI renderer, sched daemon) can route to the right inbox
+/// priority and report format without re-deriving the tier from the
+/// finding.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "tier", rename_all = "lowercase")]
+pub enum DispatchResult {
+    /// Tier-A: shadow-promotion attempted. The embedded `Outcome`
+    /// distinguishes Applied (patch landed on the branch — and on `main`
+    /// too if `fix_and_merge` was true) vs Aborted (any safety check
+    /// failed; main unmodified).
+    A { outcome: Outcome },
+    /// Tier-B: auto-draft attempted in a sched worktree. Always
+    /// `LeaveForReview` semantics — `Outcome::Applied` here means the
+    /// notes file was committed on the branch, not merged.
+    B { outcome: Outcome },
+    /// Tier-C: no mutation attempted. Surfaced in the report so operators
+    /// know the doctor saw the finding and chose not to act.
+    C,
+}
+
+impl DispatchResult {
+    /// True iff the tier-dispatcher actually wrote a commit to a branch
+    /// (Tier A applied, or Tier B drafted). Used for summary counts.
+    pub fn was_applied(&self) -> bool {
+        match self {
+            DispatchResult::A { outcome } | DispatchResult::B { outcome } => outcome.is_applied(),
+            DispatchResult::C => false,
+        }
+    }
+    /// True iff the tier-dispatcher considered acting but bailed.
+    pub fn was_aborted(&self) -> bool {
+        match self {
+            DispatchResult::A { outcome } | DispatchResult::B { outcome } => outcome.is_aborted(),
+            DispatchResult::C => false,
+        }
+    }
+}
+
+/// Apply the tier-aware fix policy to a slice of findings:
+///   - Tier A → [`shadow_promote_with_policy`]. `fix_and_merge` controls
+///     whether the auto-fix branch is merged to `main`
+///     ([`MergePolicy::Merge`]) or left for human review
+///     ([`MergePolicy::LeaveForReview`]).
+///   - Tier B → [`tier_b_draft_with_config`]. Always
+///     `LeaveForReview` — Tier B is never merged automatically, even
+///     when `fix_and_merge` is true.
+///   - Tier C → no mutation. Returns [`DispatchResult::C`] so the
+///     caller can still account for the finding in summary output.
+///
+/// Errors from the underlying shadow-promote / drafter are folded into
+/// [`Outcome::Aborted`] so the dispatcher always returns one result per
+/// input finding (callers don't need to special-case errors).
+pub fn dispatch_fix(
+    findings: &[Finding],
+    cfg: &ShadowPromoteConfig,
+    fix_and_merge: bool,
+) -> Vec<DispatchResult> {
+    let policy = if fix_and_merge {
+        MergePolicy::Merge
+    } else {
+        MergePolicy::LeaveForReview
+    };
+    findings
+        .iter()
+        .map(|f| match f.tier {
+            AutoFixTier::A => DispatchResult::A {
+                outcome: shadow_promote_with_policy(f, cfg, policy)
+                    .unwrap_or_else(|e| Outcome::Aborted {
+                        reason: format!("shadow_promote raised: {}", e),
+                    }),
+            },
+            AutoFixTier::B => DispatchResult::B {
+                outcome: tier_b_draft_with_config(f, cfg).unwrap_or_else(|e| Outcome::Aborted {
+                    reason: format!("tier_b_draft raised: {}", e),
+                }),
+            },
+            AutoFixTier::C => DispatchResult::C,
+        })
+        .collect()
 }
 
 // ── git primitives ───────────────────────────────────────────────────────
@@ -1188,7 +1466,18 @@ fn assert_ancestor(repo: &StdPath, pre_head: &str) -> anyhow::Result<()> {
 /// Serialize findings to a stable JSON envelope. Used by `--json` and by
 /// the sched daemon when recording `adr_doctor_tick` event payloads.
 pub fn to_json(findings: &[Finding]) -> anyhow::Result<String> {
-    let envelope = serde_json::json!({
+    to_json_with_dispatch(findings, None)
+}
+
+/// Serialize findings + (optionally) dispatch results to a stable JSON
+/// envelope. `--fix` / `--fix-and-merge` runs include the dispatch
+/// section so daemon consumers can correlate findings with their
+/// auto-fix outcomes in a single payload.
+pub fn to_json_with_dispatch(
+    findings: &[Finding],
+    dispatch: Option<&[DispatchResult]>,
+) -> anyhow::Result<String> {
+    let mut envelope = serde_json::json!({
         "findings": findings,
         "summary": {
             "total":    findings.len(),
@@ -1199,6 +1488,22 @@ pub fn to_json(findings: &[Finding]) -> anyhow::Result<String> {
             "tier_c":   findings.iter().filter(|f| f.tier == AutoFixTier::C).count(),
         },
     });
+    if let Some(results) = dispatch {
+        let applied = results.iter().filter(|r| r.was_applied()).count();
+        let aborted = results.iter().filter(|r| r.was_aborted()).count();
+        let notified = results
+            .iter()
+            .filter(|r| matches!(r, DispatchResult::C))
+            .count();
+        envelope["dispatch"] = serde_json::json!({
+            "results": results,
+            "summary": {
+                "applied":  applied,
+                "aborted":  aborted,
+                "notified": notified,
+            },
+        });
+    }
     Ok(serde_json::to_string_pretty(&envelope)?)
 }
 
@@ -1826,5 +2131,186 @@ rewritten because it isn't at the start of a line as a bullet.
         let findings = scan(&corpus, now);
         let dup = findings.iter().filter(|f| f.kind == FindingKind::DuplicateId).count();
         assert_eq!(dup, 2, "two duplicate-id findings expected, got {:?}", findings);
+    }
+
+    // ── Tier dispatcher tests (P2.3) ─────────────────────────────────────
+    //
+    // Routing-only tests — they don't exercise the git plumbing (that's
+    // covered by the integration tests in `tests/adr_doctor_shadow_promote.rs`).
+    // The point here is: every finding produces exactly one
+    // `DispatchResult` of the right tier variant, in the same order.
+
+    /// A `ShadowPromoteConfig` rooted at a guaranteed-non-existent path.
+    /// shadow_promote / tier_b_draft will fail their git invocations
+    /// against this path, but they fold those failures into
+    /// `Outcome::Aborted` rather than panicking — which is exactly what
+    /// the dispatcher contract requires.
+    fn cfg_for_routing_test() -> ShadowPromoteConfig {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "hex-doctor-dispatch-routing-{}-{}",
+            std::process::id(),
+            chrono::Local::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        ShadowPromoteConfig {
+            repo_root: p,
+            sessions_dir: None,
+            now: NaiveDate::from_ymd_opt(2026, 4, 27).unwrap(),
+        }
+    }
+
+    #[test]
+    fn dispatch_fix_routes_each_tier_to_the_right_variant() {
+        let tier_a = finding(
+            "ADR-A",
+            PathBuf::from("a.md"),
+            FindingKind::UnparseableStatus,
+            "",
+        );
+        let tier_b = finding(
+            "ADR-B",
+            PathBuf::from("b.md"),
+            FindingKind::StaleProposed,
+            "",
+        );
+        let tier_c = finding(
+            "ADR-C",
+            PathBuf::from("c.md"),
+            FindingKind::DuplicateId,
+            "",
+        );
+        // Sanity: rule table puts each kind on its expected tier.
+        assert_eq!(tier_a.tier, AutoFixTier::A);
+        assert_eq!(tier_b.tier, AutoFixTier::B);
+        assert_eq!(tier_c.tier, AutoFixTier::C);
+
+        let cfg = cfg_for_routing_test();
+        let results = dispatch_fix(&[tier_a, tier_b, tier_c], &cfg, false);
+        assert_eq!(results.len(), 3, "one result per finding, in input order");
+        assert!(matches!(results[0], DispatchResult::A { .. }));
+        assert!(matches!(results[1], DispatchResult::B { .. }));
+        assert!(matches!(results[2], DispatchResult::C));
+    }
+
+    #[test]
+    fn dispatch_fix_tier_c_is_always_no_mutation() {
+        // Tier C must be DispatchResult::C regardless of fix_and_merge flag.
+        let f = finding(
+            "ADR-001",
+            PathBuf::from("x.md"),
+            FindingKind::DuplicateId,
+            "",
+        );
+        let cfg = cfg_for_routing_test();
+        for fix_and_merge in [false, true] {
+            let r = dispatch_fix(&[f.clone()], &cfg, fix_and_merge);
+            assert_eq!(r.len(), 1);
+            assert!(
+                matches!(r[0], DispatchResult::C),
+                "fix_and_merge={fix_and_merge} must still leave Tier C as no-op"
+            );
+            assert!(!r[0].was_applied());
+            assert!(!r[0].was_aborted());
+        }
+    }
+
+    #[test]
+    fn dispatch_result_serializes_with_tier_tag() {
+        // The JSON envelope keys results by tier so the daemon /
+        // dashboard can filter without re-deriving from the finding.
+        let r_c = DispatchResult::C;
+        let s_c = serde_json::to_string(&r_c).unwrap();
+        assert!(s_c.contains("\"tier\":\"c\""), "got: {}", s_c);
+
+        let r_a = DispatchResult::A {
+            outcome: Outcome::Aborted {
+                reason: "test".into(),
+            },
+        };
+        let s_a = serde_json::to_string(&r_a).unwrap();
+        assert!(s_a.contains("\"tier\":\"a\""), "got: {}", s_a);
+        assert!(s_a.contains("\"outcome\":\"aborted\""), "got: {}", s_a);
+    }
+
+    #[test]
+    fn dispatch_result_was_applied_was_aborted_helpers() {
+        let applied = DispatchResult::A {
+            outcome: Outcome::Applied {
+                branch: "b".into(),
+                commit: "c".into(),
+            },
+        };
+        assert!(applied.was_applied() && !applied.was_aborted());
+
+        let aborted = DispatchResult::B {
+            outcome: Outcome::Aborted { reason: "r".into() },
+        };
+        assert!(!aborted.was_applied() && aborted.was_aborted());
+
+        let notified = DispatchResult::C;
+        assert!(!notified.was_applied() && !notified.was_aborted());
+    }
+
+    #[test]
+    fn to_json_with_dispatch_includes_dispatch_section() {
+        let f = finding("ADR-001", PathBuf::from("x.md"), FindingKind::DuplicateId, "");
+        let dispatch = vec![DispatchResult::C];
+        let json = to_json_with_dispatch(&[f], Some(&dispatch)).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["dispatch"]["summary"]["notified"], 1);
+        assert_eq!(v["dispatch"]["summary"]["applied"], 0);
+        assert_eq!(v["dispatch"]["summary"]["aborted"], 0);
+        assert_eq!(v["dispatch"]["results"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn to_json_omits_dispatch_section_when_none() {
+        // Detection-only runs (no `--fix`) keep the legacy schema —
+        // no `dispatch` key in the envelope.
+        let f = finding("ADR-001", PathBuf::from("x.md"), FindingKind::DuplicateId, "");
+        let json = to_json(&[f]).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v.get("dispatch").is_none(), "dispatch must be omitted, got: {}", json);
+    }
+
+    #[test]
+    fn shadow_promote_with_policy_rejects_non_tier_a() {
+        // Defense-in-depth: the new policy variant must keep the same
+        // Tier-A guard as `shadow_promote_with_config`.
+        let f = finding(
+            "ADR-001",
+            PathBuf::from("x.md"),
+            FindingKind::StaleProposed, // Tier B
+            "",
+        );
+        let cfg = cfg_for_routing_test();
+        for policy in [MergePolicy::Merge, MergePolicy::LeaveForReview] {
+            let outcome = shadow_promote_with_policy(&f, &cfg, policy).unwrap();
+            match outcome {
+                Outcome::Aborted { reason } => {
+                    assert!(reason.contains("Tier-A"), "expected Tier-A guard, got: {}", reason);
+                }
+                Outcome::Applied { .. } => panic!("must abort on non-Tier-A"),
+            }
+        }
+    }
+
+    #[test]
+    fn tier_b_draft_rejects_non_tier_b() {
+        // Symmetric guard for Tier-B drafter.
+        let tier_a = finding(
+            "ADR-001",
+            PathBuf::from("x.md"),
+            FindingKind::UnparseableStatus,
+            "",
+        );
+        let cfg = cfg_for_routing_test();
+        let outcome = tier_b_draft_with_config(&tier_a, &cfg).unwrap();
+        match outcome {
+            Outcome::Aborted { reason } => {
+                assert!(reason.contains("Tier-B"), "expected Tier-B guard, got: {}", reason);
+            }
+            Outcome::Applied { .. } => panic!("must abort on non-Tier-B"),
+        }
     }
 }

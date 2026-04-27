@@ -45,10 +45,19 @@ pub enum AdrAction {
     /// the appropriate self-fix path. Exit 0 clean, 1 warnings only, 2 any
     /// error (or any finding under `--strict`).
     Doctor {
-        /// Auto-fix Tier-A findings. Reserved for P2 — currently emits a
-        /// stub warning and runs detection only.
+        /// Apply tier-aware auto-fixes (ADR-2604270800 §1a). Tier-A
+        /// findings get shadow-promoted onto a `sched/auto-fix/...`
+        /// branch; Tier-B findings get a draft notes file committed on
+        /// a sibling branch for human review. The branches are *not*
+        /// merged to `main` — pass `--fix-and-merge` for that. Tier-C
+        /// findings are never mutated.
         #[arg(long)]
         fix: bool,
+        /// Like `--fix`, but also merge the Tier-A auto-fix branch back
+        /// to `main` via `git merge --no-ff`. Tier-B findings are still
+        /// left for human review. Implies `--fix`.
+        #[arg(long = "fix-and-merge")]
+        fix_and_merge: bool,
         /// Emit findings as a structured JSON envelope on stdout. Schema:
         /// `{ findings: [...], summary: { total, errors, warnings, tier_a/b/c } }`.
         #[arg(long)]
@@ -68,30 +77,52 @@ pub async fn run(action: AdrAction) -> anyhow::Result<()> {
         AdrAction::Review { adr_id, strict } => super::adr_review::run(adr_id, strict).await,
         AdrAction::Schema => schema().await,
         AdrAction::Specs { adr_id } => specs_for_adr(&adr_id).await,
-        AdrAction::Doctor { fix, json, strict } => doctor_run(fix, json, strict).await,
+        AdrAction::Doctor {
+            fix,
+            fix_and_merge,
+            json,
+            strict,
+        } => doctor_run(fix, fix_and_merge, json, strict).await,
     }
 }
 
-/// Drive the doctor subcommand: detection → output → exit code.
+/// Drive the doctor subcommand: detection → optional tier-aware fix →
+/// output → exit code.
 ///
 /// Detection is shared with the sched daemon (ADR-2604270800 §1) via
-/// `doctor::run`; CLI/MCP only owns rendering and exit-code mapping. The
-/// `--fix` flag is reserved for P2 — emits a stub warning to stderr so it
-/// neither silently no-ops nor pollutes JSON-on-stdout consumers.
-async fn doctor_run(fix: bool, json: bool, strict: bool) -> anyhow::Result<()> {
-    if fix {
-        eprintln!(
-            "{} Tier-A auto-fix lands in P2 — running detection only.",
-            "\u{26a0}".yellow()
-        );
-    }
-
+/// `doctor::run`; the dispatch + rendering live here.
+///
+///   - `--fix`           → Tier A shadow-promote (no merge),
+///                          Tier B draft on a worktree branch,
+///                          Tier C no-op.
+///   - `--fix-and-merge` → as above but Tier A also `git merge --no-ff`s
+///                          the auto-fix branch back to main. Tier B is
+///                          still left for human review (per §1a).
+///
+/// `--fix-and-merge` implies `--fix`. Without either, doctor stays in
+/// detection-only mode and the dispatcher is never invoked.
+async fn doctor_run(
+    fix: bool,
+    fix_and_merge: bool,
+    json: bool,
+    strict: bool,
+) -> anyhow::Result<()> {
     let findings = doctor::run().await?;
 
+    let dispatch: Option<Vec<doctor::DispatchResult>> = if fix || fix_and_merge {
+        let cfg = doctor::ShadowPromoteConfig::live()?;
+        Some(doctor::dispatch_fix(&findings, &cfg, fix_and_merge))
+    } else {
+        None
+    };
+
     if json {
-        println!("{}", doctor::to_json(&findings)?);
+        println!("{}", doctor::to_json_with_dispatch(&findings, dispatch.as_deref())?);
     } else {
         print_doctor_human(&findings);
+        if let Some(results) = &dispatch {
+            print_dispatch_human(results);
+        }
     }
 
     let code = doctor::exit_code(&findings, strict);
@@ -99,6 +130,54 @@ async fn doctor_run(fix: bool, json: bool, strict: bool) -> anyhow::Result<()> {
         std::process::exit(code);
     }
     Ok(())
+}
+
+/// Human-readable rendering of a `doctor::dispatch_fix` result set. JSON
+/// mode bypasses this and uses [`doctor::to_json_with_dispatch`] so the
+/// schema stays the daemon's contract.
+fn print_dispatch_human(results: &[doctor::DispatchResult]) {
+    use doctor::{DispatchResult, Outcome};
+
+    let applied = results.iter().filter(|r| r.was_applied()).count();
+    let aborted = results.iter().filter(|r| r.was_aborted()).count();
+    let notified = results.iter().filter(|r| matches!(r, DispatchResult::C)).count();
+
+    println!();
+    println!("{} Auto-fix dispatch results", "\u{2b21}".cyan());
+    for r in results {
+        match r {
+            DispatchResult::A { outcome } => match outcome {
+                Outcome::Applied { branch, commit } => println!(
+                    "  [A] {} branch={} commit={}",
+                    "applied".green(),
+                    branch,
+                    &commit[..commit.len().min(8)],
+                ),
+                Outcome::Aborted { reason } => {
+                    println!("  [A] {} {}", "aborted".yellow(), reason)
+                }
+            },
+            DispatchResult::B { outcome } => match outcome {
+                Outcome::Applied { branch, commit } => println!(
+                    "  [B] {} branch={} commit={} (left for review)",
+                    "drafted".green(),
+                    branch,
+                    &commit[..commit.len().min(8)],
+                ),
+                Outcome::Aborted { reason } => {
+                    println!("  [B] {} {}", "aborted".yellow(), reason)
+                }
+            },
+            DispatchResult::C => {
+                println!("  [C] {} (notify-only)", "skipped".dimmed());
+            }
+        }
+    }
+    println!();
+    println!(
+        "  {} applied, {} aborted, {} notify-only",
+        applied, aborted, notified
+    );
 }
 
 /// Human-readable rendering of a `doctor::run` finding set. JSON mode bypasses
