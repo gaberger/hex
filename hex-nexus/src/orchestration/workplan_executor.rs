@@ -1014,6 +1014,9 @@ impl WorkplanExecutor {
             // ADR-2604061100: capture done_command for post-completion verification
             let task_done_command = task.done_command.clone();
             let task_done_condition = task.done_condition.clone();
+            // ADR-2604270800 P0.1: capture for the file-evidence gate.
+            let task_files_for_evidence = task.files.clone();
+            let task_project_dir = task.project_dir.clone();
 
             handles.push(tokio::spawn(async move {
                 let spawn_result = if use_path_c {
@@ -1243,6 +1246,45 @@ impl WorkplanExecutor {
                                 ));
                             }
                         }
+
+                        // ADR-2604270800 P0.1: file-evidence gate. The agent claiming completion
+                        // is not enough — verify files exist OR a commit references the task.
+                        // Without this, an agent that exits 0 doing nothing is marked done.
+                        let evidence_project_dir = task_project_dir
+                            .clone()
+                            .unwrap_or_else(|| {
+                                std::env::current_dir()
+                                    .map(|p| p.to_string_lossy().to_string())
+                                    .unwrap_or_else(|_| ".".to_string())
+                            });
+                        if let Err(reason) = Self::check_evidence_gate(
+                            &task_id,
+                            &workplan_id,
+                            &task_files_for_evidence,
+                            &evidence_project_dir,
+                            &task_start,
+                        ).await {
+                            let _ = sp.workplan_update_task(WorkplanTaskUpdate {
+                                task_id: task_id.clone(),
+                                status: "failed".to_string(),
+                                agent_id: Some(agent.id.clone()),
+                                result: Some(format!("evidence_gate_failed: {}", reason)),
+                            }).await;
+                            // ADR-060: P1 inbox notification — don't let evidence failures
+                            // sit silent. The operator should see this immediately.
+                            let payload = serde_json::json!({
+                                "title": "workplan_executor: task failed evidence gate",
+                                "task_id": task_id,
+                                "workplan_id": workplan_id,
+                                "reason": reason,
+                            }).to_string();
+                            let _ = sp.inbox_notify_all("", 1, "evidence_gate_failed", &payload).await;
+                            return Err(format!(
+                                "Task '{}': evidence gate failed\n  reason: {}",
+                                task_label, reason
+                            ));
+                        }
+
                         let _ = sp.workplan_update_task(WorkplanTaskUpdate {
                             task_id: task_id.clone(),
                             status: "completed".to_string(),
@@ -1558,6 +1600,89 @@ impl WorkplanExecutor {
         }
     }
 
+    /// ADR-2604270800 P0.1 / ADR-2604142200 actual: file-evidence gate.
+    /// Before marking a task `completed`, verify the agent actually produced the
+    /// listed files OR a commit since dispatch references the task. Returns
+    /// `Ok(())` on green, `Err(reason)` on red. An empty `task_files` list with
+    /// no commit since dispatch is treated as red — the agent did nothing.
+    async fn check_evidence_gate(
+        task_id: &str,
+        workplan_id: &str,
+        task_files: &[String],
+        project_dir: &str,
+        dispatch_start_rfc3339: &str,
+    ) -> Result<(), String> {
+        let mut missing_files: Vec<String> = Vec::new();
+        let mut found_files: Vec<String> = Vec::new();
+        for f in task_files {
+            // Treat trailing "/" entries (directories) as required-to-exist.
+            let p = std::path::Path::new(project_dir).join(f);
+            if p.exists() {
+                found_files.push(f.clone());
+            } else {
+                missing_files.push(f.clone());
+            }
+        }
+
+        // Look for a commit since dispatch_start that references this task or workplan.
+        let task_id_lc = task_id.to_lowercase();
+        let workplan_id_lc = workplan_id.to_lowercase();
+        let since_arg = format!("--since={}", dispatch_start_rfc3339);
+        let log_out = tokio::process::Command::new("git")
+            .args([
+                "log",
+                &since_arg,
+                "--pretty=format:%H%n%s%n%b%n--END--",
+            ])
+            .current_dir(project_dir)
+            .output()
+            .await;
+
+        let mut commit_match: Option<String> = None;
+        if let Ok(out) = log_out {
+            if out.status.success() {
+                let text = String::from_utf8_lossy(&out.stdout).to_string().to_lowercase();
+                for entry in text.split("--end--") {
+                    let entry_trim = entry.trim();
+                    if entry_trim.is_empty() {
+                        continue;
+                    }
+                    if (!task_id_lc.is_empty() && entry_trim.contains(&task_id_lc))
+                        || (!workplan_id_lc.is_empty() && entry_trim.contains(&workplan_id_lc))
+                    {
+                        let first_line = entry_trim.lines().next().unwrap_or("").to_string();
+                        commit_match = Some(first_line);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Decision: green if (every listed file exists) OR (a referencing commit exists since dispatch).
+        // Red if neither — that's the "agent exited without doing anything" case the executor was missing.
+        let files_complete = !task_files.is_empty() && missing_files.is_empty();
+        if files_complete || commit_match.is_some() {
+            return Ok(());
+        }
+        let reason = if task_files.is_empty() {
+            format!(
+                "no_evidence: task lists no files and no commit since {} mentions task {} or workplan {}",
+                dispatch_start_rfc3339, task_id, workplan_id
+            )
+        } else {
+            format!(
+                "no_file_evidence: missing {} of {} listed files ({}); no commit since {} mentions task {} or workplan {}",
+                missing_files.len(),
+                task_files.len(),
+                missing_files.join(", "),
+                dispatch_start_rfc3339,
+                task_id,
+                workplan_id
+            )
+        };
+        Err(reason)
+    }
+
     /// ADR-2604051700 Gate 2: Pre-deletion consumer scan.
     /// Before a phase that deletes files/modules, grep the workspace for references.
     /// Returns a list of files that reference the deleted artifacts.
@@ -1833,6 +1958,113 @@ mod workplan_schema_tests {
         let j = r#"{"phases":[{"id":"P1","name":"phase","tasks":[{"id":"P1.1","title":"a-task"}]}]}"#;
         let wp: Workplan = serde_json::from_str(j).expect("title-only task must deserialize");
         assert_eq!(wp.phases[0].tasks[0].name, "a-task");
+    }
+}
+
+#[cfg(test)]
+mod evidence_gate_tests {
+    //! ADR-2604270800 P0.1 regression tests for `check_evidence_gate`.
+    //! Reproduces the 2026-04-27 false-done scenario: an agent exits 0
+    //! without creating the listed files and without committing — the gate
+    //! must reject (`Err(reason)`), not pass.
+    use super::*;
+
+    fn mktemp() -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "hex-evidence-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git failed");
+    }
+
+    #[tokio::test]
+    async fn rejects_when_agent_did_nothing() {
+        let dir = mktemp();
+        git(&dir, &["init", "-q"]);
+        git(&dir, &["config", "user.email", "t@t"]);
+        git(&dir, &["config", "user.name", "t"]);
+        std::fs::write(dir.join("seed.txt"), "x").unwrap();
+        git(&dir, &["add", "seed.txt"]);
+        git(&dir, &["commit", "-q", "-m", "seed"]);
+
+        let dispatch_start = chrono::Utc::now().to_rfc3339();
+        let result = WorkplanExecutor::check_evidence_gate(
+            "P0.1",
+            "wp-adr-doctor-self-fix",
+            &["src/foo.rs".to_string()],
+            dir.to_str().unwrap(),
+            &dispatch_start,
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "evidence gate must fail when no files exist and no commit references the task"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn passes_when_files_exist() {
+        let dir = mktemp();
+        git(&dir, &["init", "-q"]);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/foo.rs"), "// real").unwrap();
+
+        let dispatch_start = chrono::Utc::now().to_rfc3339();
+        let result = WorkplanExecutor::check_evidence_gate(
+            "P0.1",
+            "wp-x",
+            &["src/foo.rs".to_string()],
+            dir.to_str().unwrap(),
+            &dispatch_start,
+        )
+        .await;
+        assert!(result.is_ok(), "should pass when listed files exist on disk");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn passes_when_commit_since_dispatch_references_task() {
+        let dir = mktemp();
+        git(&dir, &["init", "-q"]);
+        git(&dir, &["config", "user.email", "t@t"]);
+        git(&dir, &["config", "user.name", "t"]);
+        std::fs::write(dir.join("seed.txt"), "x").unwrap();
+        git(&dir, &["add", "seed.txt"]);
+        git(&dir, &["commit", "-q", "-m", "seed"]);
+
+        // Capture dispatch start, then commit something that references the task id.
+        let dispatch_start = chrono::Utc::now().to_rfc3339();
+        // Sleep briefly so --since filter doesn't drop the commit by 1-second resolution.
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        std::fs::write(dir.join("seed.txt"), "y").unwrap();
+        git(&dir, &["add", "seed.txt"]);
+        git(&dir, &["commit", "-q", "-m", "feat(p0.1): wp-x evidence gate"]);
+
+        let result = WorkplanExecutor::check_evidence_gate(
+            "P0.1",
+            "wp-x",
+            &[], // no files listed — falls back to commit check
+            dir.to_str().unwrap(),
+            &dispatch_start,
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "should pass when a commit since dispatch mentions the task"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
