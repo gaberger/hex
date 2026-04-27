@@ -8,6 +8,7 @@ use clap::Parser;
 use serde_json::Value;
 
 use hex_analyzer::analyzers::cohesion;
+use hex_analyzer::analyzers::god_types::{self, GodTypeThresholds};
 use hex_analyzer::analyzers::orphan::{self, OrphanOptions};
 
 #[derive(Parser, Debug)]
@@ -38,6 +39,13 @@ struct Cli {
     #[arg(long = "port-cohesion")]
     port_cohesion: bool,
 
+    /// Report struct/enum types under `domain/` whose total declaration
+    /// + impl LOC exceeds 300 OR whose impl blocks expose more than 10
+    /// public methods. Override defaults via `.hex/project.json` →
+    /// `analyzer.god_type` (`loc_threshold`, `public_methods_threshold`).
+    #[arg(long = "god-types")]
+    god_types: bool,
+
     /// Emit JSON instead of human-readable output. The schema is
     /// `{findings: [{kind, ...}]}` — fields after `kind` vary per detector.
     #[arg(long)]
@@ -50,9 +58,11 @@ fn main() -> anyhow::Result<()> {
 
     // No detector flag → run everything (humans calling directly want
     // the full picture; the improver always passes a specific flag).
-    let any_flag = cli.orphan_adapters || cli.orphan_ports || cli.port_cohesion;
+    let any_flag =
+        cli.orphan_adapters || cli.orphan_ports || cli.port_cohesion || cli.god_types;
     let want_orphans = cli.orphan_adapters || cli.orphan_ports || !any_flag;
     let want_cohesion = cli.port_cohesion || !any_flag;
+    let want_god_types = cli.god_types || !any_flag;
 
     let mut findings: Vec<Value> = Vec::new();
 
@@ -69,6 +79,14 @@ fn main() -> anyhow::Result<()> {
 
     if want_cohesion {
         let report = cohesion::analyze(&root)?;
+        for f in report.findings {
+            findings.push(serde_json::to_value(f)?);
+        }
+    }
+
+    if want_god_types {
+        let thresholds = GodTypeThresholds::from_project_root(&root);
+        let report = god_types::analyze(&root, thresholds)?;
         for f in report.findings {
             findings.push(serde_json::to_value(f)?);
         }
@@ -92,15 +110,17 @@ fn print_findings_human(findings: &[Value]) {
     println!("{} finding(s):", findings.len());
     for f in findings {
         let kind = f.get("kind").and_then(Value::as_str).unwrap_or("?");
-        let port = f.get("port").and_then(Value::as_str).unwrap_or("?");
         let file = f.get("file").and_then(Value::as_str).unwrap_or("?");
-        let line = f.get("line").and_then(Value::as_u64).unwrap_or(0);
         match kind {
             "orphan_adapter" => {
+                let port = f.get("port").and_then(Value::as_str).unwrap_or("?");
                 let adapter = f.get("adapter").and_then(Value::as_str).unwrap_or("?");
+                let line = f.get("line").and_then(Value::as_u64).unwrap_or(0);
                 println!("  [{kind}] {port} → {adapter} ({file}:{line})");
             }
             "port_cohesion" => {
+                let port = f.get("port").and_then(Value::as_str).unwrap_or("?");
+                let line = f.get("line").and_then(Value::as_u64).unwrap_or(0);
                 let count = f.get("method_count").and_then(Value::as_u64).unwrap_or(0);
                 let n_clusters = f
                     .get("clusters")
@@ -111,7 +131,20 @@ fn print_findings_human(findings: &[Value]) {
                     "  [{kind}] {port} ({file}:{line}) — {count} method(s) in {n_clusters} cluster(s)"
                 );
             }
+            "god_type" => {
+                let type_name = f.get("type").and_then(Value::as_str).unwrap_or("?");
+                let lines = f.get("lines").and_then(Value::as_u64).unwrap_or(0);
+                let methods = f
+                    .get("public_methods")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                println!(
+                    "  [{kind}] {type_name} ({file}) — {lines} LOC, {methods} public method(s)"
+                );
+            }
             _ => {
+                let port = f.get("port").and_then(Value::as_str).unwrap_or("?");
+                let line = f.get("line").and_then(Value::as_u64).unwrap_or(0);
                 println!("  [{kind}] {port} ({file}:{line})");
             }
         }

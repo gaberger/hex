@@ -3,4 +3,5 @@
 //! findings into a shared `{findings: [...]}` envelope.
 
 pub mod cohesion;
+pub mod god_types;
 pub mod orphan;
