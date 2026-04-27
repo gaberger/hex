@@ -1,11 +1,11 @@
-//! Brain commands (ADR-2604102200).
+//! Sched commands (ADR-2604102200).
 //!
-//! `hex brain status|test|scores|models|validate`
+//! `hex sched status|test|scores|models|validate`
 //!
-//! status   - Show brain service status and configuration
+//! status   - Show sched service status and configuration
 //! test     - Run a manual test of a model
 //! scores   - Show learned method scores
-//! models   - List available models for brain selection
+//! models   - List available models for sched selection
 //! validate - Run self-diagnostics (CLI wiring, etc.)
 
 use std::collections::HashMap;
@@ -21,6 +21,8 @@ use tracing::debug;
 
 use crate::fmt::{pretty_table, truncate};
 
+use super::adr::doctor;
+
 /// Daemon-local state persisted across ticks (wp-brain-updates P1.2).
 /// Tracks issue counts from the previous validate tick so regressions can
 /// be detected — a count that increases tick-over-tick is a regression.
@@ -28,7 +30,7 @@ use crate::fmt::{pretty_table, truncate};
 /// restarts (otherwise every restart would silently hide cross-restart
 /// regressions by re-seeding from the current tick).
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct DaemonState {
+pub struct DaemonState {
     /// Last tick's issue counts keyed by check name
     /// (e.g. "cli_wiring" → 2, "mcp_parity" → 0, "workplans_stale" → 1).
     #[serde(default)]
@@ -57,6 +59,12 @@ struct DaemonState {
     #[serde(default)]
     sweep_date: String,
 }
+
+/// Per-tick state passed to sched daemon tick handlers (e.g. [`tick_adr_health`]).
+/// Aliases [`DaemonState`] so the daemon's persisted state and the per-tick
+/// handler signatures share a single type — adding a tick handler doesn't
+/// require a parallel state struct.
+pub type SchedState = DaemonState;
 
 /// Default idle-tick threshold — after this many consecutive fully-idle
 /// `queue_drain` calls the scheduler is "quiet". Override per-project in
@@ -152,7 +160,7 @@ pub(crate) struct StaleWorktree {
 
 #[derive(Subcommand)]
 pub enum BrainAction {
-    /// Show brain service status and configuration
+    /// Show sched service status and configuration
     Status,
     /// Run a test with a specific model
     Test {
@@ -162,11 +170,11 @@ pub enum BrainAction {
     },
     /// Show learned method scores from RL engine
     Scores,
-    /// List models available for brain selection
+    /// List models available for sched selection
     Models,
     /// Run self-diagnostics (CLI wiring check, etc.)
     Validate,
-    /// Run the brain supervisor loop — validates + auto-fixes every interval (ADR-2604132300)
+    /// Run the sched supervisor loop — validates + auto-fixes every interval (ADR-2604132300)
     Daemon {
         /// Tick interval in seconds (default 10)
         #[arg(long, default_value = "10")]
@@ -178,14 +186,14 @@ pub enum BrainAction {
         #[arg(long)]
         background: bool,
     },
-    /// Stop the background brain daemon
+    /// Stop the background sched daemon
     DaemonStop,
     /// Restart the background daemon (stop + start with current interval).
     /// Use this after rebuilding hex-cli to pick up new code.
     DaemonRestart,
-    /// Show brain daemon status (running/stopped)
+    /// Show sched daemon status (running/stopped)
     DaemonStatus,
-    /// Enqueue a task for the brain daemon (ADR-2604132330)
+    /// Enqueue a task for the sched daemon (ADR-2604132330)
     Enqueue {
         /// Task kind (hex-command, workplan, shell)
         kind: String,
@@ -206,7 +214,7 @@ pub enum BrainAction {
         #[arg(long)]
         since: Option<String>,
     },
-    /// Prime brain for this project: start daemon if needed, discover active
+    /// Prime sched for this project: start daemon if needed, discover active
     /// workplans in docs/workplans/, and seed the queue in one shot.
     Prime {
         /// Tick interval when starting the daemon (default 10s)
@@ -300,7 +308,7 @@ async fn status() -> anyhow::Result<()> {
     let resp = client.get(&url).send().await?;
     
     if resp.status() == 404 {
-        println!("{}", "Brain service not configured. Run hex-nexus with brain service enabled.".yellow());
+        println!("{}", "Sched service not configured. Run hex-nexus with sched service enabled.".yellow());
         return Ok(());
     }
     
@@ -310,7 +318,7 @@ async fn status() -> anyhow::Result<()> {
     }
     
     let body: serde_json::Value = resp.json().await?;
-    println!("{}", "Brain Service Status".green().bold());
+    println!("{}", "Sched Service Status".green().bold());
     println!("  Service: {}", body.get("service_enabled").unwrap_or(&json!(false)));
     println!("  Test Model: {}", body.get("test_model").unwrap_or(&json!("nemotron-mini")));
     println!("  Interval: {} seconds", body.get("interval_secs").unwrap_or(&json!(10)));
@@ -391,7 +399,7 @@ async fn scores() -> anyhow::Result<()> {
     let resp = client.get(&url).send().await?;
     
     if resp.status() == 404 {
-        println!("{}", "No scores yet. Brain service is learning.".yellow());
+        println!("{}", "No scores yet. Sched service is learning.".yellow());
         return Ok(());
     }
     
@@ -655,7 +663,7 @@ pub(crate) fn check_workplan_status() -> anyhow::Result<Vec<WorkplanSummary>> {
                         match task_status {
                             "done" => done_tasks += 1,
                             _ => {
-                                    // Check if git log mentions this task id (case-insensitive)
+                                // Check if git log mentions this task id (case-insensitive)
                                 let needle_lower = task_id.to_lowercase();
                                 if !task_id.is_empty()
                                     && git_log.to_lowercase().contains(&needle_lower)
@@ -682,6 +690,48 @@ pub(crate) fn check_workplan_status() -> anyhow::Result<Vec<WorkplanSummary>> {
 
     summaries.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(summaries)
+}
+
+/// Record the daemon validate outcome as an RL reward to SpacetimeDB.
+///
+/// +0.5 for a clean validate pass, +0.1 for passing with regressions
+/// (still better than a crash), -0.5 for a validate failure.
+/// This closes the daemon self-improvement loop: each tick is a training step.
+async fn record_daemon_reward(validate_ok: bool, has_regressions: bool) {
+    let reward = if validate_ok && !has_regressions {
+        0.5 // clean pass — reward the daemon for doing nothing wrong
+    } else if validate_ok && has_regressions {
+        0.1 // regressions found — slight reward for still running
+    } else {
+        -0.5 // validate crashed or errored — penalize
+    };
+
+    let body = serde_json::json!({
+        "state_key": "daemon:validate",
+        "action": "daemon:tick",
+        "reward": reward,
+        "next_state_key": "daemon:validate",
+        "rate_limited": false,
+        "openrouter_cost_usd": 0.0,
+        "task_type": "daemon",
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+    });
+
+    let port = std::env::var("HEX_NEXUS_PORT")
+        .unwrap_or_else(|_| "5555".to_string())
+        .parse::<u16>()
+        .unwrap_or(5555);
+    let url = format!("http://127.0.0.1:{}/api/rl/reward", port);
+
+    if let Err(e) = reqwest::Client::new()
+        .post(&url)
+        .json(&body)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+    {
+        eprintln!("  {} daemon RL reward POST failed: {}", "✗".red(), e);
+    }
 }
 
 /// Detect git worktrees that have had no commits for over 24 hours.
@@ -817,7 +867,7 @@ fn autofix_worktree(wt: &StaleWorktree) -> bool {
 }
 
 async fn validate(dry_run: bool) -> anyhow::Result<()> {
-    println!("{}", "⬡ hex brain validate".bold());
+    println!("{}", "⬡ hex sched validate".bold());
 
     // CLI wiring check
     let cli_src = concat!(env!("CARGO_MANIFEST_DIR"), "/src/commands");
@@ -1110,10 +1160,10 @@ async fn validate(dry_run: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Prime brain for this project in one shot: ensure the daemon is running,
+/// Prime sched for this project in one shot: ensure the daemon is running,
 /// discover active workplans, and seed the queue. Idempotent — safe to re-run.
 async fn prime(interval: u64) -> anyhow::Result<()> {
-    println!("{}", "⬡ hex brain prime".bold());
+    println!("{}", "⬡ hex sched prime".bold());
 
     // 1. Daemon — start if not running
     match read_pid_file() {
@@ -1441,6 +1491,16 @@ async fn models() -> anyhow::Result<()> {
     Ok(())
 }fn pid_file_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".hex").join("sched-daemon.pid")
+}
+
+/// Legacy path from before the brain→sched rename. Read-only fallback so an
+/// in-flight daemon started by the old binary still gets picked up by
+/// `daemon-status` / `daemon-stop` in the new binary; new writes always go to
+/// the new path. Safe to delete the legacy file once no operator runs the
+/// pre-rename binary.
+fn legacy_pid_file_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join(".hex").join("brain-daemon.pid")
 }
 
@@ -1455,12 +1515,15 @@ fn write_pid_file(pid: u32) -> anyhow::Result<()> {
 
 fn read_pid_file() -> Option<i32> {
     let path = pid_file_path();
-    let contents = std::fs::read_to_string(&path).ok()?;
+    let contents = std::fs::read_to_string(&path)
+        .or_else(|_| std::fs::read_to_string(legacy_pid_file_path()))
+        .ok()?;
     contents.trim().parse::<i32>().ok()
 }
 
 fn remove_pid_file() {
     let _ = std::fs::remove_file(pid_file_path());
+    let _ = std::fs::remove_file(legacy_pid_file_path());
 }
 
 fn process_alive(pid: i32) -> bool {
@@ -1767,6 +1830,257 @@ async fn notify_validate_regression(
     notify_operator("brain.validate.regression", body, 2).await;
 }
 
+/// Fire-and-forget POST to `/api/events` recording a structured sched-daemon
+/// event. Mirrors the inline `brain_tick` POST in [`daemon`] but exposes a
+/// `payload` field so per-handler counts can travel alongside the kind.
+/// Errors are swallowed — event recording must never abort a tick.
+async fn record_sched_event(event_type: &str, payload: serde_json::Value) {
+    let port = std::env::var("HEX_NEXUS_PORT")
+        .unwrap_or_else(|_| "5555".to_string())
+        .parse::<u16>()
+        .unwrap_or(5555);
+    let event_url = format!("http://127.0.0.1:{}/api/events", port);
+    let session_id = std::env::var("CLAUDE_SESSION_ID")
+        .unwrap_or_else(|_| format!("sched-daemon-{}", std::process::id()));
+    let body = serde_json::json!({
+        "session_id": session_id,
+        "event_type": event_type,
+        "payload": payload,
+    });
+    let _ = reqwest::Client::new()
+        .post(&event_url)
+        .json(&body)
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await;
+}
+
+/// Run `hex adr doctor` once and route findings per ADR-2604270800 §1a.
+///
+///   - Tier-A → [`doctor::shadow_promote`] (with [`doctor::MergePolicy::Merge`]).
+///     On `Outcome::Applied`, fire a P3 inbox entry summarizing the fix
+///     (informational; no operator interrupt). On `Outcome::Aborted`, downgrade
+///     to a P2 notification so the operator can decide whether to retry.
+///   - Tier-B → [`doctor::tier_b_draft_with_config`]. The drafter writes a
+///     placeholder notes file on a `sched/auto-fix/adr-doctor/tier-b/...`
+///     branch (worktree left in place); we file a P2 inbox entry with the
+///     branch + commit so the operator can review the diff and decide.
+///   - Tier-C → P1 inbox notification, no mutation. Tier-C kinds are judgment
+///     calls (`DuplicateId`, `MissingRequiredField`, `DanglingDependency`) that
+///     the doctor can detect but never resolve mechanically.
+///
+/// Records a `sched_event` of kind `adr_doctor_tick` with finding counts
+/// keyed by tier and severity so the daemon's event log captures every scan
+/// — including clean ones — for trend analysis. The `_state` parameter is
+/// reserved for future tick-state coordination (e.g. cross-tick rate-limiting
+/// of the doctor scan); the doctor itself is stateless across ticks.
+pub async fn tick_adr_health(_state: &SchedState) {
+    let findings = match doctor::run().await {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("  {} adr doctor scan failed: {}", "✗".red(), e);
+            record_sched_event(
+                "adr_doctor_tick",
+                json!({ "error": e.to_string() }),
+            )
+            .await;
+            return;
+        }
+    };
+
+    let total = findings.len();
+    let tier_a = findings
+        .iter()
+        .filter(|f| f.tier == doctor::AutoFixTier::A)
+        .count();
+    let tier_b = findings
+        .iter()
+        .filter(|f| f.tier == doctor::AutoFixTier::B)
+        .count();
+    let tier_c = findings
+        .iter()
+        .filter(|f| f.tier == doctor::AutoFixTier::C)
+        .count();
+    let errors = findings
+        .iter()
+        .filter(|f| f.severity == doctor::Severity::Error)
+        .count();
+    let warnings = findings
+        .iter()
+        .filter(|f| f.severity == doctor::Severity::Warning)
+        .count();
+
+    record_sched_event(
+        "adr_doctor_tick",
+        json!({
+            "total": total,
+            "tier_a": tier_a,
+            "tier_b": tier_b,
+            "tier_c": tier_c,
+            "errors": errors,
+            "warnings": warnings,
+        }),
+    )
+    .await;
+
+    if findings.is_empty() {
+        return;
+    }
+
+    println!(
+        "  {} adr doctor: {} finding(s) (A:{} B:{} C:{})",
+        "⬡".cyan(),
+        total,
+        tier_a,
+        tier_b,
+        tier_c
+    );
+
+    // Live config for shadow-promote / tier-b drafter. If the daemon isn't
+    // running inside a git repo (rare — examples/test envs) we log + bail
+    // rather than crashing the tick. The Tier-C P1 notifications still go
+    // through, so operators don't lose visibility of judgment-call findings.
+    let cfg = match doctor::ShadowPromoteConfig::live() {
+        Ok(c) => Some(c),
+        Err(e) => {
+            eprintln!(
+                "  {} adr doctor: shadow-promote config unavailable: {} (Tier-C notify only)",
+                "⚠".yellow(),
+                e
+            );
+            None
+        }
+    };
+
+    for finding in &findings {
+        match finding.tier {
+            doctor::AutoFixTier::A => {
+                let Some(cfg) = cfg.as_ref() else {
+                    notify_operator(
+                        "adr.doctor.aborted",
+                        json!({
+                            "adr_id": finding.adr_id,
+                            "kind": format!("{:?}", finding.kind),
+                            "tier": "A",
+                            "reason": "shadow_promote config unavailable",
+                            "detail": finding.detail,
+                        }),
+                        2,
+                    )
+                    .await;
+                    continue;
+                };
+                let outcome = doctor::shadow_promote_with_policy(
+                    finding,
+                    cfg,
+                    doctor::MergePolicy::Merge,
+                )
+                .unwrap_or_else(|e| doctor::Outcome::Aborted {
+                    reason: format!("shadow_promote raised: {}", e),
+                });
+                match outcome {
+                    doctor::Outcome::Applied { branch, commit } => {
+                        notify_operator(
+                            "adr.doctor.applied",
+                            json!({
+                                "adr_id": finding.adr_id,
+                                "kind": format!("{:?}", finding.kind),
+                                "tier": "A",
+                                "branch": branch,
+                                "commit": commit,
+                                "detail": finding.detail,
+                            }),
+                            3,
+                        )
+                        .await;
+                    }
+                    doctor::Outcome::Aborted { reason } => {
+                        notify_operator(
+                            "adr.doctor.aborted",
+                            json!({
+                                "adr_id": finding.adr_id,
+                                "kind": format!("{:?}", finding.kind),
+                                "tier": "A",
+                                "reason": reason,
+                                "detail": finding.detail,
+                            }),
+                            2,
+                        )
+                        .await;
+                    }
+                }
+            }
+            doctor::AutoFixTier::B => {
+                let Some(cfg) = cfg.as_ref() else {
+                    notify_operator(
+                        "adr.doctor.aborted",
+                        json!({
+                            "adr_id": finding.adr_id,
+                            "kind": format!("{:?}", finding.kind),
+                            "tier": "B",
+                            "reason": "tier_b_draft config unavailable",
+                            "detail": finding.detail,
+                        }),
+                        2,
+                    )
+                    .await;
+                    continue;
+                };
+                let outcome = doctor::tier_b_draft_with_config(finding, cfg).unwrap_or_else(
+                    |e| doctor::Outcome::Aborted {
+                        reason: format!("tier_b_draft raised: {}", e),
+                    },
+                );
+                match outcome {
+                    doctor::Outcome::Applied { branch, commit } => {
+                        notify_operator(
+                            "adr.doctor.draft",
+                            json!({
+                                "adr_id": finding.adr_id,
+                                "kind": format!("{:?}", finding.kind),
+                                "tier": "B",
+                                "branch": branch,
+                                "commit": commit,
+                                "detail": finding.detail,
+                            }),
+                            2,
+                        )
+                        .await;
+                    }
+                    doctor::Outcome::Aborted { reason } => {
+                        notify_operator(
+                            "adr.doctor.aborted",
+                            json!({
+                                "adr_id": finding.adr_id,
+                                "kind": format!("{:?}", finding.kind),
+                                "tier": "B",
+                                "reason": reason,
+                                "detail": finding.detail,
+                            }),
+                            2,
+                        )
+                        .await;
+                    }
+                }
+            }
+            doctor::AutoFixTier::C => {
+                notify_operator(
+                    "adr.doctor.notify",
+                    json!({
+                        "adr_id": finding.adr_id,
+                        "kind": format!("{:?}", finding.kind),
+                        "tier": "C",
+                        "severity": format!("{:?}", finding.severity),
+                        "detail": finding.detail,
+                    }),
+                    1,
+                )
+                .await;
+            }
+        }
+    }
+}
+
 /// Foreground supervisor loop. Validates every `interval` seconds; after
 /// `max_failures` consecutive failures, pauses for 5x interval before retrying.
 /// Exits cleanly on ctrl-C.
@@ -1797,7 +2111,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
 
     println!(
         "{} interval={}s max_failures={} pid={}",
-        "⬡ brain daemon starting".green().bold(),
+        "⬡ sched daemon starting".green().bold(),
         interval,
         max_failures,
         pid
@@ -1819,7 +2133,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(interval)) => continue,
                 _ = tokio::signal::ctrl_c() => {
-                    println!("\n{}", "⬡ brain daemon shutting down".yellow());
+                    println!("\n{}", "⬡ sched daemon shutting down".yellow());
                     remove_pid_file();
                     return Ok(());
                 }
@@ -1847,6 +2161,8 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         // Diff issue counts tick-over-tick (wp-brain-updates P2.1).
         // First tick seeds the baseline; no notification until we have a prior.
         let current_counts = collect_issue_counts();
+        // Track has_regressions for RL reward before the seeded guard.
+        let mut has_regressions = false;
         if state.seeded {
             let mut regressions: Vec<(String, usize, usize)> = Vec::new();
             let mut improvements: Vec<(String, usize, usize)> = Vec::new();
@@ -1858,6 +2174,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                     improvements.push((key.clone(), prev, curr));
                 }
             }
+            has_regressions = !regressions.is_empty();
             if !regressions.is_empty() {
                 regressions.sort_by(|a, b| a.0.cmp(&b.0));
                 let summary: Vec<String> = regressions
@@ -1889,6 +2206,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         save_daemon_state(&state);
 
         // ── Validate result ────────────────────────────────────────────────
+        let validate_ok = validate_result.is_ok();
         match validate_result {
             Ok(()) => {
                 if consecutive_failures > 0 {
@@ -2090,6 +2408,11 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             eprintln!("  {} brain_tick event POST failed: {}", "✗".red(), e);
         }
 
+        // ADR-2604241820: Record validate outcome as RL reward.
+        // +0.5 if validate passed with no regressions, -0.3 if regressions found.
+        // This closes the RL loop: daemon behavior improves based on project health.
+        record_daemon_reward(validate_ok, has_regressions).await;
+
         // Auto-sweep old terminal (failed/completed) tasks — keep history for 7 days.
         // Deletes records older than 7 days to prevent unbounded SpacetimeDB growth.
         // Runs every tick but only actually deletes on the first tick of each day.
@@ -2112,7 +2435,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(sleep_secs)) => {}
             _ = tokio::signal::ctrl_c() => {
-                println!("\n{}", "⬡ brain daemon received ctrl-C, shutting down".yellow());
+                println!("\n{}", "⬡ sched daemon received ctrl-C, shutting down".yellow());
                 remove_pid_file();
                 return Ok(());
             }
@@ -2120,7 +2443,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
     }
 }
 
-/// Background mode: re-exec `hex brain daemon` (without `--background`) as a
+/// Background mode: re-exec `hex sched daemon` (without `--background`) as a
 /// detached child process, write its PID, and exit the parent.
 fn daemon_background(interval: u64, max_failures: u32) -> anyhow::Result<()> {
     // Already running?
@@ -2128,7 +2451,7 @@ fn daemon_background(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         if process_alive(pid) {
             println!(
                 "{} pid={} (pid file: {})",
-                "brain daemon already running".yellow(),
+                "sched daemon already running".yellow(),
                 pid,
                 pid_file_path().display()
             );
@@ -2141,7 +2464,7 @@ fn daemon_background(interval: u64, max_failures: u32) -> anyhow::Result<()> {
 
     let exe = std::env::current_exe()?;
     let child = std::process::Command::new(exe)
-        .arg("brain")
+        .arg("sched")
         .arg("daemon")
         .arg("--interval")
         .arg(interval.to_string())
@@ -2158,12 +2481,12 @@ fn daemon_background(interval: u64, max_failures: u32) -> anyhow::Result<()> {
 
     println!(
         "{} pid={} interval={}s",
-        "⬡ brain daemon started in background".green().bold(),
+        "⬡ sched daemon started in background".green().bold(),
         pid,
         interval
     );
     println!("  pid file: {}", pid_file_path().display());
-    println!("  stop with: hex brain daemon-stop");
+    println!("  stop with: hex sched daemon-stop");
     Ok(())
 }
 
@@ -2174,7 +2497,7 @@ fn daemon_stop() -> anyhow::Result<()> {
         None => {
             println!(
                 "{} (no pid file at {})",
-                "brain daemon not running".yellow(),
+                "sched daemon not running".yellow(),
                 pid_file_path().display()
             );
             return Ok(());
@@ -2184,7 +2507,7 @@ fn daemon_stop() -> anyhow::Result<()> {
     if !process_alive(pid) {
         println!(
             "{} pid={} not alive — removing stale pid file",
-            "brain daemon".yellow(),
+            "sched daemon".yellow(),
             pid
         );
         remove_pid_file();
@@ -2203,7 +2526,7 @@ fn daemon_stop() -> anyhow::Result<()> {
     while Instant::now() < deadline {
         if !process_alive(pid) {
             remove_pid_file();
-            println!("{} pid={}", "⬡ brain daemon stopped".green().bold(), pid);
+            println!("{} pid={}", "⬡ sched daemon stopped".green().bold(), pid);
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(200));
@@ -2242,14 +2565,14 @@ fn daemon_restart() -> anyhow::Result<()> {
     daemon_background(interval, max_failures)
 }
 
-/// Show whether the brain daemon is running.
+/// Show whether the sched daemon is running.
 /// Also warns if the daemon binary appears stale (rebuilt since daemon started).
 fn daemon_status() -> anyhow::Result<()> {
     match read_pid_file() {
         Some(pid) if process_alive(pid) => {
             println!(
                 "{} pid={}",
-                "⬡ brain daemon running".green().bold(),
+                "⬡ sched daemon running".green().bold(),
                 pid
             );
             println!("  pid file: {}", pid_file_path().display());
@@ -2264,13 +2587,13 @@ fn daemon_status() -> anyhow::Result<()> {
         Some(pid) => {
             println!(
                 "{} pid={} (stale pid file)",
-                "brain daemon not running".yellow(),
+                "sched daemon not running".yellow(),
                 pid
             );
             println!("  pid file: {}", pid_file_path().display());
         }
         None => {
-            println!("{}", "brain daemon not running".yellow());
+            println!("{}", "sched daemon not running".yellow());
         }
     }
     Ok(())
@@ -2698,7 +3021,7 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
             anyhow::bail!(
                 "refusing to enqueue shell stub: `echo FIXME/TODO/NOTE ...` is audit theater, \
                  not work. If it needs design → write an ADR. If it needs execution → write a \
-                 workplan and enqueue it with `hex brain enqueue workplan <path>`. If it's a \
+                 workplan and enqueue it with `hex sched enqueue workplan <path>`. If it's a \
                  breadcrumb → put it in a TODO comment at the code site."
             );
         }
@@ -2711,7 +3034,7 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
     // Dedup: if an active (pending/in_progress) task with the same
     // (kind, payload, project_id) triplet already exists, return its id
     // rather than creating a duplicate. Multiple enqueue sites
-    // (hex brain prime, hex brain enqueue, other agents) would otherwise
+    // (hex sched prime, hex sched enqueue, other agents) would otherwise
     // stack up redundant work.
     if let Ok(existing) = list_brain_tasks(None).await {
         for task in &existing {
@@ -3670,9 +3993,9 @@ async fn queue_list(include: &str, since: Option<&str>) -> anyhow::Result<()> {
     }
 
     let heading = if show_all {
-        "Brain Tasks (all)".to_string()
+        "Sched Tasks (all)".to_string()
     } else {
-        format!("Brain Tasks ({})", include)
+        format!("Sched Tasks ({})", include)
     };
     println!("{}", heading.green().bold());
 
@@ -3746,8 +4069,8 @@ async fn queue_history(status: Option<String>, limit: u32) -> anyhow::Result<()>
     }
 
     let heading = match status.as_deref() {
-        Some(s) => format!("Brain Task History — status={}", s),
-        None => "Brain Task History".to_string(),
+        Some(s) => format!("Sched Task History — status={}", s),
+        None => "Sched Task History".to_string(),
     };
     println!("{}", heading.green().bold());
 
