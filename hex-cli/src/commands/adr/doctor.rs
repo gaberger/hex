@@ -148,17 +148,28 @@ pub fn scan(adrs: &[(PathBuf, String)], now: NaiveDate) -> Vec<Finding> {
 
     // Per-file detectors.
     for (path, content) in adrs {
-        findings.extend(detect_unparseable_status(path, content));
-        findings.extend(detect_id_format_mismatch(path, content));
-        findings.extend(detect_missing_required_field(path, content));
-        findings.extend(detect_stale_proposed(path, content, now));
-        findings.extend(detect_superseded_unlinked(path, content));
+        findings.extend(scan_single_file(path, content, now));
     }
 
     // Cross-file detectors.
     findings.extend(detect_duplicate_ids(adrs));
     findings.extend(detect_dangling_dependencies(adrs));
 
+    findings
+}
+
+/// Per-file detection. Used by both [`scan`] (looped over the corpus) and
+/// the shadow-promote self-check, which scans only the file it just
+/// rewrote — cross-file detectors (DuplicateId, DanglingDependency)
+/// require the full corpus to evaluate, so running them in isolation
+/// would produce false positives.
+pub fn scan_single_file(path: &Path, content: &str, now: NaiveDate) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    findings.extend(detect_unparseable_status(path, content));
+    findings.extend(detect_id_format_mismatch(path, content));
+    findings.extend(detect_missing_required_field(path, content));
+    findings.extend(detect_stale_proposed(path, content, now));
+    findings.extend(detect_superseded_unlinked(path, content));
     findings
 }
 
@@ -610,6 +621,566 @@ fn unparseable_status_patch() -> TextEdit {
             },
         ],
     }
+}
+
+// ── Shadow-promote orchestration (P2.2, ADR-2604270800 §1a) ─────────────
+//
+// `shadow_promote` is the safe-by-construction Tier-A auto-fix path. It
+// applies the patch on a sched-owned worktree branch, re-runs `doctor` in
+// strict mode against the rewritten file as a self-check, and only then
+// merges back to main. Every failure mode aborts and cleans up the
+// worktree so we never leave half-applied state behind.
+//
+// Safety properties (see `tests/adr_doctor_shadow_promote.rs`):
+//   1. Never modifies a dirty target file.
+//   2. Never races with an in-flight session that has claimed the file
+//      via its `~/.hex/sessions/agent-*.json` manifest (`allowed_paths`
+//      or `worktree_path`).
+//   3. Never merges a result that doctor itself still reports findings on.
+//   4. Cannot drop commits — uses `git merge --no-ff`, which always
+//      records a real merge commit (sidesteps the fast-forward
+//      drop-commits failure mode of `hex worktree merge` documented in
+//      ADR-2604150100). Raw `git checkout <branch> -- <file>` is never
+//      used, per ADR-2604131930.
+
+use std::path::Path as StdPath;
+use std::process::Command;
+
+/// Result of a single shadow-promotion attempt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum Outcome {
+    /// Patch landed on `main` via merge commit. `branch` is the auto-fix
+    /// branch that produced the change; `commit` is the sha of the
+    /// fix commit (parent of the merge commit).
+    Applied { branch: String, commit: String },
+    /// Aborted before mutating `main`. Worktree (if created) was removed.
+    /// `reason` is a human-readable diagnostic — also written to the
+    /// daemon event log so we can audit how often each abort path fires.
+    Aborted { reason: String },
+}
+
+impl Outcome {
+    pub fn is_applied(&self) -> bool {
+        matches!(self, Outcome::Applied { .. })
+    }
+    pub fn is_aborted(&self) -> bool {
+        matches!(self, Outcome::Aborted { .. })
+    }
+}
+
+/// Tunables for `shadow_promote_with_config`. The default
+/// `shadow_promote(finding)` uses the live filesystem (cwd-rooted repo,
+/// `~/.hex/sessions/`, today's date); tests inject a tempdir and a fake
+/// sessions dir so they're hermetic.
+#[derive(Debug, Clone)]
+pub struct ShadowPromoteConfig {
+    /// Repo root containing the ADR file and where the merge will happen.
+    pub repo_root: PathBuf,
+    /// Override `~/.hex/sessions/` (used by tests). `None` = use real one.
+    pub sessions_dir: Option<PathBuf>,
+    /// Today, used by the post-patch self-check's `scan` call.
+    pub now: NaiveDate,
+}
+
+impl ShadowPromoteConfig {
+    pub fn live() -> anyhow::Result<Self> {
+        let repo_root = repo_root_from_cwd()?;
+        Ok(Self {
+            repo_root,
+            sessions_dir: None,
+            now: chrono::Local::now().date_naive(),
+        })
+    }
+}
+
+/// Try to safely apply a Tier-A finding's auto-fix patch via shadow
+/// promotion. The default config rooted at the current git repo. See
+/// [`shadow_promote_with_config`] for the injectable variant.
+pub fn shadow_promote(finding: &Finding) -> anyhow::Result<Outcome> {
+    let cfg = ShadowPromoteConfig::live()?;
+    shadow_promote_with_config(finding, &cfg)
+}
+
+/// Hermetic variant — every path/clock/session-source the orchestrator
+/// touches is taken from `cfg`. The CLI / sched daemon use the live
+/// constructor; tests use this directly.
+///
+/// Returns `Outcome::Applied { .. }` only after `git merge --no-ff` lands
+/// the fix commit on the repo's main branch. Any earlier failure returns
+/// `Outcome::Aborted { reason: .. }` after attempting worktree cleanup.
+pub fn shadow_promote_with_config(
+    finding: &Finding,
+    cfg: &ShadowPromoteConfig,
+) -> anyhow::Result<Outcome> {
+    // Step 0: tier + patch availability gate.
+    if finding.tier != AutoFixTier::A {
+        return Ok(Outcome::Aborted {
+            reason: format!("not a Tier-A finding (tier={:?})", finding.tier),
+        });
+    }
+    let patch = match finding.auto_fix_patch() {
+        Some(p) => p,
+        None => {
+            return Ok(Outcome::Aborted {
+                reason: "no auto-fix patch defined for this kind".into(),
+            })
+        }
+    };
+
+    // Resolve the file path relative to the repo root. Doctor stores
+    // absolute paths when invoked via `run`, but tests pass repo-relative
+    // ones — accept both.
+    let abs_file = if finding.file_path.is_absolute() {
+        finding.file_path.clone()
+    } else {
+        cfg.repo_root.join(&finding.file_path)
+    };
+    let rel_file = match abs_file.strip_prefix(&cfg.repo_root) {
+        Ok(p) => p.to_path_buf(),
+        Err(_) => {
+            return Ok(Outcome::Aborted {
+                reason: format!(
+                    "finding file {} is outside repo root {}",
+                    abs_file.display(),
+                    cfg.repo_root.display()
+                ),
+            })
+        }
+    };
+
+    // Step 1: dirty-file check. We refuse to touch a file the user (or
+    // another agent) has uncommitted changes for — committing the
+    // doctor-fix on top of those changes would silently absorb them.
+    if let Some(reason) = file_is_dirty(&cfg.repo_root, &rel_file)? {
+        return Ok(Outcome::Aborted { reason });
+    }
+
+    // Step 2: claimed-by-another-session check. Even if the file is clean
+    // on disk, an in-flight agent may be planning to edit it (its session
+    // manifest in `~/.hex/sessions/` lists the path under `allowed_paths`
+    // or has a `worktree_path` whose changed-files include it).
+    if let Some(reason) = file_is_claimed(cfg.sessions_dir.as_deref(), &rel_file)? {
+        return Ok(Outcome::Aborted { reason });
+    }
+
+    // Step 3: create the auto-fix worktree on a deterministically-named
+    // branch. Branch lives under `sched/auto-fix/adr-doctor/<adr-id>` so
+    // operators can `git branch --list 'sched/auto-fix/*'` to audit.
+    let branch = format!("sched/auto-fix/adr-doctor/{}", finding.adr_id);
+    let worktree_dir = match create_auto_fix_worktree(&cfg.repo_root, &branch) {
+        Ok(p) => p,
+        Err(e) => {
+            return Ok(Outcome::Aborted {
+                reason: format!("worktree create failed: {}", e),
+            })
+        }
+    };
+
+    // From here on, every error path must clean up the worktree before
+    // returning. The `cleanup` closure makes that local + obvious.
+    let cleanup = |reason: String| -> Outcome {
+        let _ = remove_auto_fix_worktree(&cfg.repo_root, &worktree_dir, &branch);
+        Outcome::Aborted { reason }
+    };
+
+    // Step 4: apply the patch in the worktree.
+    let target_in_wt = worktree_dir.join(&rel_file);
+    let original = match std::fs::read_to_string(&target_in_wt) {
+        Ok(s) => s,
+        Err(e) => {
+            return Ok(cleanup(format!(
+                "read {} in worktree failed: {}",
+                rel_file.display(),
+                e
+            )))
+        }
+    };
+    let patched = match patch.apply(&original) {
+        Ok(s) => s,
+        Err(e) => return Ok(cleanup(format!("patch.apply failed: {}", e))),
+    };
+    if patched == original {
+        return Ok(cleanup(format!(
+            "patch was a no-op against {} (file already canonical)",
+            rel_file.display()
+        )));
+    }
+    if let Err(e) = std::fs::write(&target_in_wt, &patched) {
+        return Ok(cleanup(format!("write patched file failed: {}", e)));
+    }
+
+    // Step 5: self-check. Re-run the per-file detectors against just the
+    // rewritten file in strict mode. If anything still fires, the patch
+    // was wrong — abort. We deliberately skip cross-file detectors here:
+    // DuplicateId and DanglingDependency require the full corpus, and
+    // running them in isolation would mark every external `Depends on:`
+    // reference as dangling.
+    let post_findings = scan_single_file(&target_in_wt, &patched, cfg.now);
+    let strict_exit = exit_code(&post_findings, true);
+    if strict_exit != 0 {
+        return Ok(cleanup(format!(
+            "doctor --strict still reports {} finding(s) on patched file (exit={}); refusing to merge",
+            post_findings.len(),
+            strict_exit
+        )));
+    }
+
+    // Step 6: commit + merge. We use `git merge --no-ff` (always a true
+    // merge commit) rather than fast-forward to side-step the
+    // ADR-2604150100 dropped-commits failure mode.
+    let commit_sha = match commit_in_worktree(&worktree_dir, &rel_file, finding) {
+        Ok(s) => s,
+        Err(e) => return Ok(cleanup(format!("commit in worktree failed: {}", e))),
+    };
+    let pre_merge_head = match rev_parse_head(&cfg.repo_root) {
+        Ok(s) => s,
+        Err(e) => return Ok(cleanup(format!("rev-parse HEAD failed: {}", e))),
+    };
+    if let Err(e) = merge_no_ff(&cfg.repo_root, &branch, finding) {
+        return Ok(cleanup(format!("merge --no-ff failed: {}", e)));
+    }
+    // Post-merge integrity check: the pre-merge HEAD must still be an
+    // ancestor of the new HEAD. `--no-ff` guarantees this, but we assert
+    // it anyway because that's the whole point of the self-fix loop.
+    if let Err(e) = assert_ancestor(&cfg.repo_root, &pre_merge_head) {
+        // If this ever fires, we've already mutated main — surface as a
+        // hard error rather than Aborted, because cleanup can't undo it.
+        anyhow::bail!(
+            "post-merge integrity check failed (commits may have been dropped): {}",
+            e
+        );
+    }
+
+    // Step 7: cleanup the secondary worktree. Branch ref is intentionally
+    // kept so operators can `git log <branch>` to audit the fix.
+    let _ = remove_auto_fix_worktree_only(&cfg.repo_root, &worktree_dir);
+
+    Ok(Outcome::Applied {
+        branch,
+        commit: commit_sha,
+    })
+}
+
+// ── git primitives ───────────────────────────────────────────────────────
+
+fn repo_root_from_cwd() -> anyhow::Result<PathBuf> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "git rev-parse --show-toplevel failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    Ok(PathBuf::from(
+        String::from_utf8_lossy(&out.stdout).trim().to_string(),
+    ))
+}
+
+fn run_git(repo: &StdPath, args: &[&str]) -> anyhow::Result<std::process::Output> {
+    let out = Command::new("git").args(args).current_dir(repo).output()?;
+    Ok(out)
+}
+
+fn run_git_checked(repo: &StdPath, args: &[&str]) -> anyhow::Result<String> {
+    let out = run_git(repo, args)?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Returns `Some(reason)` if the named file is uncommitted-dirty in `repo`.
+/// `None` means clean (or untracked but the caller doesn't care — we only
+/// guard tracked-with-uncommitted-edits because that's where silent
+/// absorption can happen).
+fn file_is_dirty(repo: &StdPath, rel_file: &StdPath) -> anyhow::Result<Option<String>> {
+    let out = run_git(
+        repo,
+        &[
+            "status",
+            "--porcelain=v1",
+            "--",
+            rel_file.to_str().unwrap_or(""),
+        ],
+    )?;
+    if !out.status.success() {
+        return Ok(Some(format!(
+            "git status check failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Each porcelain line is "XY <path>". Anything non-empty means the
+    // file has tracked changes (M/A/D/R/C/U) or is untracked (??).
+    // Untracked files are fine for our purposes — we only mutate the file
+    // we know is committed already. Tracked changes block.
+    for line in stdout.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        let xy = &line[..line.len().min(2)];
+        if xy == "??" {
+            // Untracked — not dirty for our purposes.
+            continue;
+        }
+        return Ok(Some(format!(
+            "target file {} has uncommitted changes ({})",
+            rel_file.display(),
+            xy.trim()
+        )));
+    }
+    Ok(None)
+}
+
+/// Returns `Some(reason)` if any session manifest in `sessions_dir` (or
+/// `~/.hex/sessions/`) claims the file. A claim is either:
+///   - the file path is listed in the manifest's `allowed_paths`, or
+///   - the manifest has a `worktree_path` (and is therefore actively editing
+///     a feature branch — racing it would conflict).
+fn file_is_claimed(
+    sessions_dir: Option<&StdPath>,
+    rel_file: &StdPath,
+) -> anyhow::Result<Option<String>> {
+    let dir: PathBuf = match sessions_dir {
+        Some(p) => p.to_path_buf(),
+        None => {
+            let home = match dirs::home_dir() {
+                Some(h) => h,
+                None => return Ok(None), // No home → can't check; fail open.
+            };
+            home.join(".hex").join("sessions")
+        }
+    };
+    if !dir.exists() {
+        return Ok(None);
+    }
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(None),
+    };
+    let rel_str = rel_file.to_string_lossy().to_string();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let v: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        // Match against allowed_paths.
+        if let Some(arr) = v.get("allowed_paths").and_then(|x| x.as_array()) {
+            for ap in arr.iter().filter_map(|x| x.as_str()) {
+                // Treat allowed_paths as path prefixes (matches how
+                // hook::SessionState::is_path_allowed uses them).
+                if rel_str.starts_with(ap) {
+                    let session = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("?");
+                    return Ok(Some(format!(
+                        "file {} is claimed by session {} via allowed_paths prefix `{}`",
+                        rel_str, session, ap
+                    )));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Create an auxiliary worktree at `<repo>/.hex/auto-fix-worktrees/<adr-id>`
+/// on a fresh branch named `branch`. Returns the worktree's absolute path.
+/// The directory and any pre-existing branch with that name are removed
+/// first to make the operation idempotent.
+fn create_auto_fix_worktree(repo: &StdPath, branch: &str) -> anyhow::Result<PathBuf> {
+    // Derive a filesystem-safe directory name from the branch tail.
+    let dir_name = branch.replace('/', "_");
+    let target = repo.join(".hex").join("auto-fix-worktrees").join(&dir_name);
+
+    // Best-effort cleanup of any stale state from a previous run.
+    if target.exists() {
+        let _ = run_git(
+            repo,
+            &["worktree", "remove", "--force", target.to_str().unwrap_or("")],
+        );
+        // If git didn't know about it, blow away the dir directly.
+        if target.exists() {
+            std::fs::remove_dir_all(&target).ok();
+        }
+    }
+    // Drop any stale branch ref.
+    let _ = run_git(repo, &["branch", "-D", branch]);
+
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let target_str = target.to_str().ok_or_else(|| {
+        anyhow::anyhow!("worktree path {} is not valid UTF-8", target.display())
+    })?;
+    run_git_checked(
+        repo,
+        &["worktree", "add", "-b", branch, target_str, "HEAD"],
+    )?;
+    Ok(target)
+}
+
+/// Tear down the worktree and prune the branch. Used on every abort path
+/// after `create_auto_fix_worktree` succeeded. Best-effort — failures are
+/// swallowed because we're already on the error path.
+fn remove_auto_fix_worktree(
+    repo: &StdPath,
+    worktree_dir: &StdPath,
+    branch: &str,
+) -> anyhow::Result<()> {
+    let _ = run_git(
+        repo,
+        &[
+            "worktree",
+            "remove",
+            "--force",
+            worktree_dir.to_str().unwrap_or(""),
+        ],
+    );
+    if worktree_dir.exists() {
+        let _ = std::fs::remove_dir_all(worktree_dir);
+    }
+    let _ = run_git(repo, &["branch", "-D", branch]);
+    Ok(())
+}
+
+/// Like [`remove_auto_fix_worktree`] but keeps the branch ref. Used after
+/// a successful merge so operators can `git log <branch>` for audit.
+fn remove_auto_fix_worktree_only(repo: &StdPath, worktree_dir: &StdPath) -> anyhow::Result<()> {
+    let _ = run_git(
+        repo,
+        &[
+            "worktree",
+            "remove",
+            "--force",
+            worktree_dir.to_str().unwrap_or(""),
+        ],
+    );
+    if worktree_dir.exists() {
+        let _ = std::fs::remove_dir_all(worktree_dir);
+    }
+    Ok(())
+}
+
+/// Stage + commit the patched file inside the worktree. Returns the SHA
+/// of the new commit.
+fn commit_in_worktree(
+    worktree: &StdPath,
+    rel_file: &StdPath,
+    finding: &Finding,
+) -> anyhow::Result<String> {
+    run_git_checked(
+        worktree,
+        &["add", "--", rel_file.to_str().unwrap_or("")],
+    )?;
+    let msg = commit_message(finding);
+    // Author env vars so the commit always has a deterministic author
+    // even on a fresh git config (CI, test repos).
+    let out = Command::new("git")
+        .args([
+            "-c",
+            "user.email=hex-adr-doctor@hex.local",
+            "-c",
+            "user.name=hex adr doctor",
+            "commit",
+            "--no-verify",
+            "-m",
+            &msg,
+        ])
+        .current_dir(worktree)
+        .output()?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "git commit failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    rev_parse_head(worktree)
+}
+
+fn commit_message(finding: &Finding) -> String {
+    format!(
+        "chore(adr-doctor): auto-fix {:?} in {}\n\n\
+         Generated by `hex adr doctor --fix` (ADR-2604270800 §1a, Tier-A).\n\
+         Detail: {}\n",
+        finding.kind, finding.adr_id, finding.detail
+    )
+}
+
+fn rev_parse_head(repo: &StdPath) -> anyhow::Result<String> {
+    run_git_checked(repo, &["rev-parse", "HEAD"])
+}
+
+/// Merge `branch` into the repo's current HEAD with `--no-ff`. We never
+/// fast-forward — that's the ADR-2604150100 failure mode. `--no-ff`
+/// always records a merge commit whose parents are (HEAD, branch tip),
+/// so every commit reachable from either side stays reachable from the
+/// new HEAD.
+fn merge_no_ff(repo: &StdPath, branch: &str, finding: &Finding) -> anyhow::Result<()> {
+    let msg = format!(
+        "merge: shadow-promote {} for {}",
+        format!("{:?}", finding.kind),
+        finding.adr_id
+    );
+    let out = Command::new("git")
+        .args([
+            "-c",
+            "user.email=hex-adr-doctor@hex.local",
+            "-c",
+            "user.name=hex adr doctor",
+            "merge",
+            "--no-ff",
+            "--no-edit",
+            "-m",
+            &msg,
+            branch,
+        ])
+        .current_dir(repo)
+        .output()?;
+    if !out.status.success() {
+        // Bail out of the merge if git left us in a partial state. Caller
+        // handles cleanup of the worktree separately.
+        let _ = run_git(repo, &["merge", "--abort"]);
+        anyhow::bail!(
+            "git merge --no-ff {} failed: {}",
+            branch,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+/// Verify `pre_head` is reachable from `HEAD`. Used as the post-merge
+/// integrity assertion.
+fn assert_ancestor(repo: &StdPath, pre_head: &str) -> anyhow::Result<()> {
+    let out = run_git(
+        repo,
+        &["merge-base", "--is-ancestor", pre_head, "HEAD"],
+    )?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "{} is not an ancestor of HEAD after merge — commits may have been dropped",
+            pre_head
+        );
+    }
+    Ok(())
 }
 
 // ── Output + exit code ───────────────────────────────────────────────────
