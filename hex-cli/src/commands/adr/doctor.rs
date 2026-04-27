@@ -526,6 +526,92 @@ fn detect_dangling_dependencies(adrs: &[(PathBuf, String)]) -> Vec<Finding> {
     findings
 }
 
+// ── Auto-fix patch generation (P2.1, ADR-2604270800 §1a) ─────────────────
+
+/// A regex-based text transformation emitted by [`Finding::auto_fix_patch`]
+/// for Tier-A findings. The shadow-promotion orchestrator in P2.2 calls
+/// [`TextEdit::apply`] inside the auto-fix worktree, then re-runs `doctor
+/// --strict` against the rewritten file as a self-check.
+///
+/// Modeled as an ordered list of regex `(pattern, replacement)` pairs rather
+/// than absolute byte spans because a single Tier-A finding can target
+/// multiple lines (e.g. `UnparseableStatus` normalizes Status + Date +
+/// Depends on + Relates to in one shot — all four fields tend to be wrong
+/// together when the bullet-prefixed bold-outside-colon form was used).
+#[derive(Debug, Clone)]
+pub struct TextEdit {
+    pub replacements: Vec<Replacement>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Replacement {
+    pub pattern: String,
+    pub replacement: String,
+}
+
+impl TextEdit {
+    /// Apply every replacement in order, returning the rewritten content.
+    /// Idempotent: re-applying an already-canonical document is a no-op.
+    pub fn apply(&self, content: &str) -> anyhow::Result<String> {
+        let mut out = content.to_string();
+        for r in &self.replacements {
+            let re = Regex::new(&r.pattern)
+                .map_err(|e| anyhow::anyhow!("invalid auto-fix regex `{}`: {}", r.pattern, e))?;
+            out = re.replace_all(&out, r.replacement.as_str()).into_owned();
+        }
+        Ok(out)
+    }
+}
+
+impl Finding {
+    /// Return the auto-fix patch for this finding, or `None` if the kind is
+    /// Tier B/C (drafted-only or notify-only per ADR-2604270800 §1a).
+    ///
+    /// Today, only [`FindingKind::UnparseableStatus`] yields a patch — it
+    /// normalizes the bullet-prefixed bold-outside-colon frontmatter form
+    /// (`- **Status**: …`) to the canonical `**Status:** …`. Date,
+    /// Depends-on, and Relates-to lines are normalized in the same pass
+    /// because they tend to drift together (verified against the three real
+    /// ADRs hand-normalized in this session).
+    pub fn auto_fix_patch(&self) -> Option<TextEdit> {
+        if self.tier != AutoFixTier::A {
+            return None;
+        }
+        match self.kind {
+            FindingKind::UnparseableStatus => Some(unparseable_status_patch()),
+            // No other Tier-A kinds in the rule table today. Adding a kind to
+            // Tier A without giving it a patch here is a programmer error
+            // caught by `auto_fix_patch_present_for_every_tier_a` below.
+            _ => None,
+        }
+    }
+}
+
+/// The four-line frontmatter normalization shared by every Tier-A finding.
+/// Each pattern uses `(?m)` so `^`/`$` match line boundaries.
+fn unparseable_status_patch() -> TextEdit {
+    TextEdit {
+        replacements: vec![
+            Replacement {
+                pattern: r"(?m)^- \*\*Status\*\*: (.+)$".to_string(),
+                replacement: "**Status:** $1".to_string(),
+            },
+            Replacement {
+                pattern: r"(?m)^- \*\*Date\*\*: (.+)$".to_string(),
+                replacement: "**Date:** $1".to_string(),
+            },
+            Replacement {
+                pattern: r"(?m)^- \*\*Depends on\*\*: (.+)$".to_string(),
+                replacement: "**Depends on:** $1".to_string(),
+            },
+            Replacement {
+                pattern: r"(?m)^- \*\*Relates to\*\*: (.+)$".to_string(),
+                replacement: "**Relates to:** $1".to_string(),
+            },
+        ],
+    }
+}
+
 // ── Output + exit code ───────────────────────────────────────────────────
 
 /// Serialize findings to a stable JSON envelope. Used by `--json` and by
@@ -990,6 +1076,167 @@ mod tests {
         let corpus = vec![(path.clone(), content.to_string())];
         let findings = detect_dangling_dependencies(&corpus);
         assert_eq!(findings.len(), 1);
+    }
+
+    // ── Auto-fix patch tests (P2.1) ──────────────────────────────────────
+    //
+    // Three positive cases mirror real ADR frontmatter that was hand-normalized
+    // earlier in this session (ADR-2604141400, ADR-2604150100, ADR-2604150130).
+    // The "before" text in each case is the exact buggy form pulled from the
+    // pre-normalization commit; "after" is the canonical form post-fix.
+
+    fn unparseable_finding() -> Finding {
+        finding(
+            "ADR-2604010002",
+            PathBuf::from("ADR-2604010002.md"),
+            FindingKind::UnparseableStatus,
+            "buggy frontmatter form",
+        )
+    }
+
+    #[test]
+    fn auto_fix_patch_normalizes_brain_queue_swarm_lease_frontmatter() {
+        // Real pre-normalization frontmatter from
+        // docs/adrs/ADR-2604141400-brain-queue-swarm-lease.md.
+        let before = "\
+- **Status**: §1 Accepted 2026-04-14 (P1 scope complete — git-evidence guard, inline fallback, queue history); §2 (swarm-lease + task states) Proposed
+- **Date**: 2026-04-14
+- **Depends on**: ADR-2604132330 (brain queue), ADR-2604150000 (brain→sched rename), ADR-027 (HexFlo)
+- **Relates to**: feedback_verify_before_done, feedback_use_hexflo_hex_agent
+";
+        let expected = "\
+**Status:** §1 Accepted 2026-04-14 (P1 scope complete — git-evidence guard, inline fallback, queue history); §2 (swarm-lease + task states) Proposed
+**Date:** 2026-04-14
+**Depends on:** ADR-2604132330 (brain queue), ADR-2604150000 (brain→sched rename), ADR-027 (HexFlo)
+**Relates to:** feedback_verify_before_done, feedback_use_hexflo_hex_agent
+";
+        let patch = unparseable_finding().auto_fix_patch().expect("Tier-A finding must have a patch");
+        assert_eq!(patch.apply(before).unwrap(), expected);
+    }
+
+    #[test]
+    fn auto_fix_patch_normalizes_worktree_merge_drop_commits_frontmatter() {
+        // Real pre-normalization frontmatter from
+        // docs/adrs/ADR-2604150100-worktree-merge-fast-forward-drops-commits.md.
+        let before = "\
+- **Status**: Proposed
+- **Date**: 2026-04-15
+- **Depends on**: ADR-2604131930 (original worktree-merge integrity claim)
+- **Relates to**: `feedback_use_hex_worktree_merge.md`
+";
+        let expected = "\
+**Status:** Proposed
+**Date:** 2026-04-15
+**Depends on:** ADR-2604131930 (original worktree-merge integrity claim)
+**Relates to:** `feedback_use_hex_worktree_merge.md`
+";
+        let patch = unparseable_finding().auto_fix_patch().unwrap();
+        assert_eq!(patch.apply(before).unwrap(), expected);
+    }
+
+    #[test]
+    fn auto_fix_patch_normalizes_worktree_cleanup_frontmatter() {
+        // Real pre-normalization frontmatter from
+        // docs/adrs/ADR-2604150130-worktree-cleanup-kills-active-worktree.md.
+        let before = "\
+- **Status**: Proposed
+- **Date**: 2026-04-15
+- **Depends on**: ADR-2604150100 (related worktree-merge drop-commits bug)
+- **Relates to**: `feedback_enforce_worktrees.md`, `feedback_use_hex_worktree_merge.md`
+";
+        let expected = "\
+**Status:** Proposed
+**Date:** 2026-04-15
+**Depends on:** ADR-2604150100 (related worktree-merge drop-commits bug)
+**Relates to:** `feedback_enforce_worktrees.md`, `feedback_use_hex_worktree_merge.md`
+";
+        let patch = unparseable_finding().auto_fix_patch().unwrap();
+        assert_eq!(patch.apply(before).unwrap(), expected);
+    }
+
+    // Negative case 1 — Tier B finding has no auto-fix patch (StaleProposed
+    // requires drafting in a worktree, not a mechanical rewrite).
+    #[test]
+    fn auto_fix_patch_returns_none_for_tier_b_finding() {
+        let f = finding(
+            "ADR-001",
+            PathBuf::from("x.md"),
+            FindingKind::StaleProposed,
+            "",
+        );
+        assert_eq!(f.tier, AutoFixTier::B, "preconditions: StaleProposed must be Tier B");
+        assert!(f.auto_fix_patch().is_none());
+    }
+
+    // Negative case 2 — Tier C finding has no auto-fix patch (DuplicateId
+    // requires human judgment about which ADR-ID to renumber).
+    #[test]
+    fn auto_fix_patch_returns_none_for_tier_c_finding() {
+        let f = finding(
+            "ADR-001",
+            PathBuf::from("x.md"),
+            FindingKind::DuplicateId,
+            "",
+        );
+        assert_eq!(f.tier, AutoFixTier::C, "preconditions: DuplicateId must be Tier C");
+        assert!(f.auto_fix_patch().is_none());
+    }
+
+    // Negative case 3 — applying the patch to already-canonical content is a
+    // no-op. This is what makes the shadow-promotion safety check work: the
+    // P2.2 orchestrator re-runs doctor in --strict mode after applying, and
+    // would catch any spurious mutation that re-introduced a finding.
+    #[test]
+    fn auto_fix_patch_is_idempotent_on_canonical_content() {
+        let canonical = "\
+# ADR-2604010001: Clean
+
+**Status:** Accepted
+**Date:** 2026-04-15
+**Depends on:** ADR-027
+**Relates to:** feedback_x
+
+## Context
+Body that mentions `**Status**: foo` inside a code span — must NOT be
+rewritten because it isn't at the start of a line as a bullet.
+";
+        let patch = unparseable_finding().auto_fix_patch().unwrap();
+        let after = patch.apply(canonical).unwrap();
+        assert_eq!(after, canonical, "canonical input must round-trip unchanged");
+    }
+
+    // Bonus: re-applying the patch to its own output is also a no-op (proves
+    // the regex doesn't accidentally match the canonical form it produces).
+    #[test]
+    fn auto_fix_patch_double_apply_is_stable() {
+        let buggy = "\
+- **Status**: Proposed
+- **Date**: 2026-04-15
+";
+        let patch = unparseable_finding().auto_fix_patch().unwrap();
+        let once = patch.apply(buggy).unwrap();
+        let twice = patch.apply(&once).unwrap();
+        assert_eq!(once, twice);
+    }
+
+    // Defense-in-depth: every Tier-A kind in the rule table must produce a
+    // patch (otherwise shadow-promotion would silently no-op on real
+    // findings). Today there's exactly one Tier-A kind, but this test will
+    // catch the mistake of adding a second kind to Tier A without wiring up
+    // its patch.
+    #[test]
+    fn auto_fix_patch_present_for_every_tier_a() {
+        for (kind, tier, _) in RULE_TABLE {
+            if *tier != AutoFixTier::A {
+                continue;
+            }
+            let f = finding("ADR-X", PathBuf::from("x.md"), *kind, "");
+            assert!(
+                f.auto_fix_patch().is_some(),
+                "Tier-A kind {:?} has no auto_fix_patch — shadow-promotion would no-op",
+                kind,
+            );
+        }
     }
 
     // Integration: scan() composes all detectors over a corpus ──────────
