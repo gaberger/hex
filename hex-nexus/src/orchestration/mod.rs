@@ -13,6 +13,7 @@ pub mod promote_orchestrator;
 pub mod promotion_judge;
 pub mod scaffolding;
 pub mod secret_shadow_router;
+pub mod substrate_autopilot;
 pub mod shadow_decision;
 pub mod shadow_router;
 pub mod shrinkage_daemon;
@@ -39,9 +40,14 @@ use crate::ports::state::IHexFloMemoryStatePort;
 pub fn build_role_preamble(role: &str) -> String {
     match role {
         "hex-coder" | "coder" => {
+            // ADR-2604270800 P0.2: Path-A agents that author the commit message themselves
+            // must produce the same subject shape strict reconcile accepts; otherwise valid
+            // work is demoted because the subject never names the workplan it came from.
             "You are a hex-coder agent operating inside the hex AIOS framework. \
 Your role is to implement production-quality code within a single adapter boundary, \
-following hexagonal architecture rules and a strict TDD workflow.\n\n"
+following hexagonal architecture rules and a strict TDD workflow. \
+When you commit, the subject MUST be `<layer>(<task_id_lower>): wp-<workplan_id> — <name>` \
+(emoji-free, lowercase task id in parens, em-dash separator).\n\n"
                 .to_string()
         }
         "hex-planner" | "planner" => {
