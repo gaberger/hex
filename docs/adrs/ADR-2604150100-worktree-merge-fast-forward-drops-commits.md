@@ -2,10 +2,10 @@
 
 <!-- ID format: YYMMDDHHMM — 2604150100 = 2026-04-15 01:00 local -->
 
-- **Status**: Proposed
-- **Date**: 2026-04-15
-- **Depends on**: ADR-2604131930 (original worktree-merge integrity claim)
-- **Relates to**: `feedback_use_hex_worktree_merge.md`
+**Status:** Proposed
+**Date:** 2026-04-15
+**Depends on:** ADR-2604131930 (original worktree-merge integrity claim)
+**Relates to:** `feedback_use_hex_worktree_merge.md`
 
 ## Context
 
