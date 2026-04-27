@@ -93,6 +93,45 @@ pub struct WorkplanTaskUpdate {
     pub result: Option<String>,
 }
 
+// ── Workplan Event Log (ADR-2604271000) ──────────────────
+//
+// The append-only event log that replaces mutable JSON `status` fields as
+// the source of truth for workplan progress. The executor emits events at
+// every transition; `hex plan project` folds them into a derived view.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WorkplanEventKind {
+    Dispatched,
+    AgentStopped,
+    EvidenceChecked,
+    GateRun,
+    Demoted,
+    ManualMark,
+    Migrated,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkplanEventInput {
+    pub workplan_id: String,
+    pub task_id: String,
+    pub kind: WorkplanEventKind,
+    /// RFC3339 timestamp of when the transition occurred.
+    pub occurred_at: String,
+    pub actor: String,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkplanEvent {
+    pub id: String,
+    pub workplan_id: String,
+    pub task_id: String,
+    pub kind: WorkplanEventKind,
+    pub occurred_at: String,
+    pub actor: String,
+    pub payload: serde_json::Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub id: String,
@@ -505,6 +544,32 @@ pub trait IWorkplanStatePort: Send + Sync {
         &self,
         workplan_id: &str,
     ) -> Result<Vec<WorkplanTaskUpdate>, StateError>;
+
+    /// Append a workplan transition event (ADR-2604271000 §2).
+    ///
+    /// Default impl is a no-op so adapters that haven't yet wired the STDB
+    /// `workplan_event` reducer (P1.1) keep compiling. The executor still
+    /// records every event in an in-process shadow store
+    /// (`orchestration::workplan_executor::workplan_event_shadow`) so the
+    /// projector and tests can read the sequence without a live STDB.
+    async fn workplan_event_append(
+        &self,
+        input: WorkplanEventInput,
+    ) -> Result<String, StateError> {
+        let _ = input;
+        Ok(String::new())
+    }
+
+    /// Read events for a workplan from the underlying STDB log. Default
+    /// returns empty so callers fall back to the shadow store until the
+    /// reducer + query are wired.
+    async fn workplan_events_for(
+        &self,
+        workplan_id: &str,
+    ) -> Result<Vec<WorkplanEvent>, StateError> {
+        let _ = workplan_id;
+        Ok(Vec::new())
+    }
 }
 
 /// Chat message send/history.

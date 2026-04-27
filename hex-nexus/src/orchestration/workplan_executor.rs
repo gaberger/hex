@@ -5,9 +5,106 @@ use uuid::Uuid;
 
 use crate::orchestration::agent_manager::SpawnConfig;
 use crate::orchestration::scaffolding::{ScaffoldedDispatch, ShellCompileChecker, ScaffoldResult};
-use crate::ports::state::{IStatePort, WorkplanTaskUpdate};
+use crate::ports::state::{
+    IStatePort, WorkplanEventInput, WorkplanEventKind, WorkplanTaskUpdate,
+};
 use crate::remote::transport::TaskTier;
 use crate::state::{AgentInstruction, InstructionType, SharedState};
+
+/// In-process shadow store for workplan transition events
+/// (ADR-2604271000 §2 — v2 shadow mode).
+///
+/// Until the STDB `workplan_event` reducer (wp-workplan-state-model-v2 P1.1)
+/// is wired, this module is the source of truth callers query for the event
+/// stream. The executor mirrors every emit into both the state-port (which
+/// becomes a real STDB write once the reducer lands) and this in-process
+/// vector, so tests and the projection rebuild can read the sequence without
+/// a live STDB. Once the reducer is in place this stays as a same-process
+/// fast-path / observability tap; callers preferring durable history should
+/// read via `IWorkplanStatePort::workplan_events_for`.
+pub mod workplan_event_shadow {
+    use crate::ports::state::WorkplanEventInput;
+    use std::sync::OnceLock;
+    use tokio::sync::Mutex;
+
+    static STORE: OnceLock<Mutex<Vec<WorkplanEventInput>>> = OnceLock::new();
+
+    fn store() -> &'static Mutex<Vec<WorkplanEventInput>> {
+        STORE.get_or_init(|| Mutex::new(Vec::new()))
+    }
+
+    /// Append an event. Always succeeds; the lock is uncontended in the
+    /// hot path because event emission is one-per-transition.
+    pub async fn append(input: WorkplanEventInput) {
+        store().lock().await.push(input);
+    }
+
+    /// All events for a given workplan, in insert order.
+    pub async fn for_workplan(workplan_id: &str) -> Vec<WorkplanEventInput> {
+        store()
+            .lock()
+            .await
+            .iter()
+            .filter(|e| e.workplan_id == workplan_id)
+            .cloned()
+            .collect()
+    }
+
+    /// All events for a (workplan_id, task_id) pair, in insert order.
+    pub async fn for_task(
+        workplan_id: &str,
+        task_id: &str,
+    ) -> Vec<WorkplanEventInput> {
+        store()
+            .lock()
+            .await
+            .iter()
+            .filter(|e| e.workplan_id == workplan_id && e.task_id == task_id)
+            .cloned()
+            .collect()
+    }
+
+    /// Drop all events. Test-only helper — production callers must use the
+    /// projector to derive views, not mutate the log.
+    pub async fn clear() {
+        store().lock().await.clear();
+    }
+}
+
+/// Emit a workplan event through the shadow store and the state port.
+///
+/// Both writes are best-effort: the shadow store is in-memory and cannot
+/// fail; the state port may legitimately return Err while the STDB reducer
+/// is not yet wired (P1.1 in-flight). Errors from the state-port path are
+/// logged at debug, never propagated, because emission must not block
+/// dispatch progress.
+pub async fn emit_workplan_event(
+    state_port: &dyn IStatePort,
+    workplan_id: &str,
+    task_id: &str,
+    kind: WorkplanEventKind,
+    actor: &str,
+    payload: serde_json::Value,
+) {
+    let input = WorkplanEventInput {
+        workplan_id: workplan_id.to_string(),
+        task_id: task_id.to_string(),
+        kind,
+        occurred_at: chrono::Utc::now().to_rfc3339(),
+        actor: actor.to_string(),
+        payload,
+    };
+    workplan_event_shadow::append(input.clone()).await;
+    if let Err(e) = state_port.workplan_event_append(input).await {
+        tracing::debug!(
+            workplan_id,
+            task_id,
+            ?kind,
+            error = %e,
+            "workplan_event_append: state port returned err — shadow store still recorded"
+        );
+    }
+}
 
 /// Find the most recently active Claude Code agent ID by reading
 /// ~/.hex/sessions/agent-*.json and returning the agentId from the
@@ -679,11 +776,24 @@ impl WorkplanExecutor {
             for task in &phase.tasks {
                 let task_id = if !task.id.is_empty() { task.id.clone() } else { task.name.clone() };
                 let _ = state_port.workplan_update_task(WorkplanTaskUpdate {
-                    task_id,
+                    task_id: task_id.clone(),
                     status: "running".to_string(),
                     agent_id: None,
                     result: None,
                 }).await;
+                // ADR-2604271000 v2 shadow mode: every transition that
+                // mutates v1 JSON also appends to the v2 event log.
+                emit_workplan_event(
+                    state_port.as_ref(),
+                    &workplan.id,
+                    &task_id,
+                    WorkplanEventKind::Dispatched,
+                    "executor",
+                    serde_json::json!({
+                        "phase": phase.name,
+                        "agent_id": serde_json::Value::Null,
+                    }),
+                ).await;
             }
 
             // ADR-2604051700 Gate 2: Pre-deletion consumer scan before phase execution.
@@ -1243,9 +1353,35 @@ impl WorkplanExecutor {
                 };
                 match spawn_result {
                     Ok(agent) => {
+                        // ADR-2604271000 v2 shadow mode: agent has stopped successfully.
+                        emit_workplan_event(
+                            sp.as_ref(),
+                            &workplan_id,
+                            &task_id,
+                            WorkplanEventKind::AgentStopped,
+                            "executor",
+                            serde_json::json!({
+                                "agent_id": agent.id,
+                                "exit_code": 0,
+                            }),
+                        ).await;
+
                         // ADR-2604061100: verify done_command before marking completed
                         if let Some(ref cmd) = task_done_command {
                             let gate = Self::run_gate(cmd, &task_id).await;
+                            // Always emit GateRun — the gate ran regardless of outcome.
+                            emit_workplan_event(
+                                sp.as_ref(),
+                                &workplan_id,
+                                &task_id,
+                                WorkplanEventKind::GateRun,
+                                "executor",
+                                serde_json::json!({
+                                    "command": cmd,
+                                    "passed": gate.passed,
+                                    "output_excerpt": gate.output.chars().take(500).collect::<String>(),
+                                }),
+                            ).await;
                             if !gate.passed {
                                 let condition_text = task_done_condition
                                     .as_deref()
@@ -1276,13 +1412,34 @@ impl WorkplanExecutor {
                                     .map(|p| p.to_string_lossy().to_string())
                                     .unwrap_or_else(|_| ".".to_string())
                             });
-                        if let Err(reason) = Self::check_evidence_gate(
+                        let evidence_result = Self::check_evidence_gate(
                             &task_id,
                             &workplan_id,
                             &task_files_for_evidence,
                             &evidence_project_dir,
                             &task_start,
-                        ).await {
+                        ).await;
+                        // Emit EvidenceChecked for both success and failure — the
+                        // projector needs the negative signal to know the gate ran.
+                        emit_workplan_event(
+                            sp.as_ref(),
+                            &workplan_id,
+                            &task_id,
+                            WorkplanEventKind::EvidenceChecked,
+                            "executor",
+                            match &evidence_result {
+                                Ok(()) => serde_json::json!({
+                                    "passed": true,
+                                    "files": task_files_for_evidence,
+                                }),
+                                Err(reason) => serde_json::json!({
+                                    "passed": false,
+                                    "reason": reason,
+                                    "files": task_files_for_evidence,
+                                }),
+                            },
+                        ).await;
+                        if let Err(reason) = evidence_result {
                             let _ = sp.workplan_update_task(WorkplanTaskUpdate {
                                 task_id: task_id.clone(),
                                 status: "failed".to_string(),
@@ -1333,6 +1490,20 @@ impl WorkplanExecutor {
                         Ok((task_id, agent.id))
                     }
                     Err(e) => {
+                        // ADR-2604271000 v2 shadow mode: agent failed to start /
+                        // exited non-zero — record AgentStopped with the error.
+                        emit_workplan_event(
+                            sp.as_ref(),
+                            &workplan_id,
+                            &task_id,
+                            WorkplanEventKind::AgentStopped,
+                            "executor",
+                            serde_json::json!({
+                                "agent_id": serde_json::Value::Null,
+                                "exit_code": 1,
+                                "error": e,
+                            }),
+                        ).await;
                         let _ = sp.workplan_update_task(WorkplanTaskUpdate {
                             task_id: task_id.clone(),
                             status: "failed".to_string(),
