@@ -1568,6 +1568,101 @@ pub fn inference_task_fail(
 }
 
 // ============================================================
+//  Workplan event log — ADR-2604271000 §2 (state-model-v2)
+// ============================================================
+//
+// Append-only event log for workplan task state transitions. Replaces the
+// mutable `status` field on workplan tasks: every transition becomes a row
+// here, and current state is a fold over the log. The JSON workplan file
+// becomes a projection rebuildable from this table (see `hex plan project`,
+// `hex plan replay`).
+//
+// Caller-supplied `id` (UUID v4 string) follows the pattern set by
+// `inference_task` — SpacetimeDB reducers can only return Result<(), String>,
+// so the caller already knows the id it submitted. `kind` is a string keyed
+// to the accepted-set defined below; validated by the reducer rather than a
+// Rust enum to keep the WASM boundary text-only.
+
+/// Workplan-event kind: Dispatched | AgentStopped | EvidenceChecked |
+/// GateRun | Demoted | ManualMark | Migrated.
+pub const WORKPLAN_EVENT_KINDS: &[&str] = &[
+    "Dispatched",
+    "AgentStopped",
+    "EvidenceChecked",
+    "GateRun",
+    "Demoted",
+    "ManualMark",
+    "Migrated",
+];
+
+/// Append-only event row for workplan task state transitions.
+/// One row per transition — current `is_done(task)` is a fold over rows
+/// matching (workplan_id, task_id) plus on-disk evidence.
+#[table(name = workplan_event, public)]
+#[derive(Clone, Debug)]
+pub struct WorkplanEvent {
+    /// Caller-supplied UUID (v4 recommended). Unique across the table.
+    #[primary_key]
+    pub id: String,
+    pub workplan_id: String,
+    pub task_id: String,
+    /// One of WORKPLAN_EVENT_KINDS — validated on append.
+    pub kind: String,
+    /// RFC3339 timestamp string, matching the rest of this module.
+    pub occurred_at: String,
+    /// Writer identity, e.g. "executor:nexus@host", "reconcile:cli",
+    /// "human:gary", "migrate:v1-snapshot".
+    pub actor: String,
+    /// Kind-specific JSON payload, serialized as a string at the WASM
+    /// boundary (SpacetimeDB has no native jsonb type). Empty string is
+    /// treated as "no payload".
+    pub payload: String,
+}
+
+/// Append a workplan event. Validates `id` is non-empty and unique, and
+/// `kind` is in the accepted set. Returns `Ok(())` — caller already holds
+/// the id it submitted.
+#[reducer]
+pub fn workplan_event_append(
+    ctx: &ReducerContext,
+    id: String,
+    workplan_id: String,
+    task_id: String,
+    kind: String,
+    occurred_at: String,
+    actor: String,
+    payload: String,
+) -> Result<(), String> {
+    if id.trim().is_empty() {
+        return Err("workplan_event id must be non-empty".to_string());
+    }
+    if workplan_id.trim().is_empty() {
+        return Err("workplan_event workplan_id must be non-empty".to_string());
+    }
+    if !WORKPLAN_EVENT_KINDS.iter().any(|k| *k == kind) {
+        return Err(format!(
+            "workplan_event kind '{}' not in accepted set: {:?}",
+            kind, WORKPLAN_EVENT_KINDS
+        ));
+    }
+    if ctx.db.workplan_event().id().find(&id).is_some() {
+        return Err(format!("WorkplanEvent '{}' already exists", id));
+    }
+
+    ctx.db.workplan_event().insert(WorkplanEvent {
+        id,
+        workplan_id,
+        task_id,
+        kind,
+        occurred_at,
+        actor,
+        payload,
+    });
+
+    Ok(())
+}
+
+// ============================================================
 //  Agent Lifecycle Reducers
 // ============================================================
 
