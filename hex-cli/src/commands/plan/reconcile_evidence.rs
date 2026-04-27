@@ -40,6 +40,21 @@ pub enum VerifyResult {
 /// `repo_root` — absolute path to the repository root.
 /// `branch`    — the branch to search git log on (pass `""` for current HEAD).
 pub fn collect_evidence(task: &WorkplanTask, repo_root: &Path, branch: &str) -> TaskEvidence {
+    collect_evidence_strict(task, repo_root, branch, None)
+}
+
+/// ADR-2604270800 P0.2: workplan-aware variant.
+///
+/// When `require_workplan_id` is `Some(id)`, a commit only counts as evidence
+/// if its message references that workplan id in addition to a task pattern.
+/// This closes the cross-workplan false-match (`(p0.2)` from a different
+/// workplan satisfying this workplan's P0.2).
+pub fn collect_evidence_strict(
+    task: &WorkplanTask,
+    repo_root: &Path,
+    branch: &str,
+    require_workplan_id: Option<&str>,
+) -> TaskEvidence {
     let files_exist = check_files_exist(&task.files, repo_root);
     let declared_symbols = extract_declared_symbols(&task.description);
     let existing_files: Vec<&Path> = files_exist
@@ -48,7 +63,13 @@ pub fn collect_evidence(task: &WorkplanTask, repo_root: &Path, branch: &str) -> 
         .map(|(p, _)| p.as_path())
         .collect();
     let symbol_hits = find_symbol_hits(&declared_symbols, &existing_files, repo_root);
-    let matching_commits = find_matching_commits(&task.files, repo_root, branch);
+    let matching_commits = find_matching_commits_scoped(
+        &task.id,
+        &task.files,
+        repo_root,
+        branch,
+        require_workplan_id,
+    );
 
     TaskEvidence {
         files_exist,
@@ -170,13 +191,29 @@ fn find_matching_commits(
     repo_root: &Path,
     branch: &str,
 ) -> Vec<String> {
+    find_matching_commits_scoped("", files, repo_root, branch, None)
+}
+
+/// Workplan-scoped variant. When `require_workplan_id` is `Some(id)`, the
+/// commit body (we use `--pretty=format:%H %s%n%b`) must reference that id;
+/// otherwise we accept any commit matching the task-id convention. When
+/// `task_id` is non-empty, commits are required to match THIS task's id —
+/// no more "any P*.* in any commit" false matches across tasks.
+fn find_matching_commits_scoped(
+    task_id: &str,
+    files: &[String],
+    repo_root: &Path,
+    branch: &str,
+    require_workplan_id: Option<&str>,
+) -> Vec<String> {
     if files.is_empty() {
         return Vec::new();
     }
 
+    // Use full subject+body so we can match Task-Id: footers and workplan refs.
     let mut git_args = vec![
         "log".to_string(),
-        "--oneline".to_string(),
+        "--pretty=format:%H %s%n%b%n--END--".to_string(),
     ];
     if !branch.is_empty() {
         git_args.push(branch.to_string());
@@ -196,14 +233,45 @@ fn find_matching_commits(
         Err(_) => return Vec::new(),
     };
 
-    let pattern = r"\(p[0-9]+(\.[0-9]+)*\)|P[0-9]+(\.[0-9]+)*|Task-Id:\s*P[0-9]+(\.[0-9]+)*";
-    let re = regex::Regex::new(pattern).unwrap();
+    let task_pattern = if !task_id.is_empty() {
+        // Match THIS task only: (p1.2), P1.2, or Task-Id: P1.2 — exact id.
+        let escaped = regex::escape(task_id);
+        let escaped_lower = regex::escape(&task_id.to_lowercase());
+        format!(
+            r"\({}\)|(?:^|[\s,;:.\-]){}(?:[\s,;:.\-]|$)|Task-Id:\s*{}",
+            escaped_lower, escaped, escaped
+        )
+    } else {
+        r"\(p[0-9]+(\.[0-9]+)*\)|P[0-9]+(\.[0-9]+)*|Task-Id:\s*P[0-9]+(\.[0-9]+)*".to_string()
+    };
+    let task_re = match regex::Regex::new(&task_pattern) {
+        Ok(re) => re,
+        Err(_) => return Vec::new(),
+    };
+    let workplan_re = require_workplan_id.and_then(|id| {
+        let escaped = regex::escape(id);
+        regex::Regex::new(&escaped).ok()
+    });
 
-    log_text
-        .lines()
-        .filter(|line| re.is_match(line))
-        .map(|line| line.to_string())
-        .collect()
+    let mut hits = Vec::new();
+    for entry in log_text.split("--END--") {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        if !task_re.is_match(entry) {
+            continue;
+        }
+        if let Some(ref wp_re) = workplan_re {
+            if !wp_re.is_match(entry) {
+                continue;
+            }
+        }
+        // Keep only the first line (subject) for the report column.
+        let first = entry.lines().next().unwrap_or("").to_string();
+        hits.push(first);
+    }
+    hits
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -306,5 +374,100 @@ mod tests {
             matching_commits: vec!["abc1234 (p2.1) refactor".into()],
         };
         assert!(matches!(verify(&ev), VerifyResult::Promote));
+    }
+
+    /// ADR-2604270800 P0.2 regression: a fresh git repo with one commit whose
+    /// subject contains `(p0.2)` from an UNRELATED workplan must not satisfy
+    /// this workplan's P0.2. Reproduces the 2026-04-27 false-match.
+    #[test]
+    fn strict_mode_rejects_cross_workplan_task_id_match() {
+        let tmp = std::env::temp_dir().join(format!("hex-recon-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&tmp)
+                .output()
+                .expect("git failed");
+        };
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "t@t"]);
+        run(&["config", "user.name", "t"]);
+        std::fs::write(tmp.join("ci.rs"), "// step 1\n").unwrap();
+        run(&["add", "ci.rs"]);
+        // Commit subject mentions (p0.2) but is from an unrelated workplan.
+        run(&["commit", "-q", "-m", "feat(p0.2): unrelated TLC daemon work"]);
+        std::fs::write(tmp.join("ci.rs"), "// step 2\n").unwrap();
+        run(&["add", "ci.rs"]);
+        run(&["commit", "-q", "-m", "another change"]);
+
+        let task = WorkplanTask {
+            id: "P0.2".into(),
+            description: "tighten reconcile evidence rule".into(),
+            files: vec!["ci.rs".into()],
+            done_command: String::new(),
+            created_at: "2026-04-27T07:55:00Z".into(),
+            adr_scope: "ADR-2604270800".into(),
+        };
+
+        // Loose mode: cross-workplan match incorrectly counts as evidence.
+        let loose = collect_evidence_strict(&task, &tmp, "", None);
+        assert!(
+            !loose.matching_commits.is_empty(),
+            "loose mode is expected to false-match (the bug we're closing)"
+        );
+
+        // Strict mode: same task with workplan_id requirement → no match.
+        let strict = collect_evidence_strict(&task, &tmp, "", Some("wp-adr-doctor-self-fix"));
+        assert!(
+            strict.matching_commits.is_empty(),
+            "strict mode must reject commits that don't reference the workplan id; got {:?}",
+            strict.matching_commits
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn strict_mode_accepts_commit_referencing_workplan_id() {
+        let tmp = std::env::temp_dir().join(format!("hex-recon-ok-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&tmp)
+                .output()
+                .expect("git failed");
+        };
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "t@t"]);
+        run(&["config", "user.name", "t"]);
+        std::fs::write(tmp.join("ci.rs"), "// real impl\n").unwrap();
+        run(&["add", "ci.rs"]);
+        // Subject names BOTH the task id and the workplan id.
+        run(&[
+            "commit",
+            "-q",
+            "-m",
+            "feat(p0.2): wp-adr-doctor-self-fix — reconcile evidence rule",
+        ]);
+
+        let task = WorkplanTask {
+            id: "P0.2".into(),
+            description: "tighten reconcile evidence rule".into(),
+            files: vec!["ci.rs".into()],
+            done_command: String::new(),
+            created_at: "2026-04-27T07:55:00Z".into(),
+            adr_scope: "ADR-2604270800".into(),
+        };
+        let strict = collect_evidence_strict(&task, &tmp, "", Some("wp-adr-doctor-self-fix"));
+        assert!(
+            !strict.matching_commits.is_empty(),
+            "strict mode should accept commits that reference the workplan id"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

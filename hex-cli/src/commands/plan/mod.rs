@@ -73,6 +73,12 @@ pub enum PlanAction {
         /// loop. Combine with `--update` to persist demotions.
         #[arg(long, default_value_t = false)]
         audit: bool,
+        /// ADR-2604270800 P0.2: tighter evidence rule. Implies --audit.
+        /// Requires every commit match to also reference workplan_id (not
+        /// just task_id), so a `(p0.2)` commit from another workplan can't
+        /// satisfy this workplan's P0.2.
+        #[arg(long, default_value_t = false)]
+        strict: bool,
         /// Print per-task verdict and reasons without mutating the workplan
         #[arg(long, default_value_t = false)]
         dry_run: bool,
@@ -188,6 +194,8 @@ pub(super) struct Step {
 /// A workplan document — supports both legacy (steps) and current (phases/tasks) formats.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(super) struct Workplan {
+    #[serde(default)]
+    pub(super) id: String,
     #[serde(default)]
     pub(super) title: String,
     #[serde(default)]
@@ -346,8 +354,8 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::History => show_execution_history().await,
         PlanAction::Report { id } => show_execution_report(&id).await,
         PlanAction::Schema => show_schema().await,
-        PlanAction::Reconcile { file, update, audit, dry_run, why, force } => {
-            reconcile::run(&file, update, audit, dry_run, why.as_deref(), force.as_deref()).await
+        PlanAction::Reconcile { file, update, audit, strict, dry_run, why, force } => {
+            reconcile::run(&file, update, audit || strict, strict, dry_run, why.as_deref(), force.as_deref()).await
         }
         PlanAction::Draft { prompt, background } => draft_plan(&prompt, background).await,
         PlanAction::Drafts { action } => drafts_dispatch(action).await,
@@ -1133,6 +1141,7 @@ async fn create_plan(requirements: &[String], lang: &str, adr: Option<&str>, no_
         let path = workplans_dir.join(&filename);
 
         let plan = Workplan {
+            id: String::new(),
             title: format!("Plan: {}", requirements.join(", ")),
             feature: String::new(),
             language: lang.to_string(),
