@@ -10,24 +10,59 @@
 </p>
 
 <p align="center">
-  <strong>The substrate that hosts AI coding agents — hexagonal architecture, evidence-gated state, adversarial governance, and a self-improvement loop that interrogates its own design every tick.</strong>
+  <strong>A self-adaptive runtime substrate for AI coding agents — hexagonal architecture, evidence-gated state, adversarial governance, and a closed-loop control system that observes, plans, judges, and applies changes to itself within a bounded autonomy envelope.</strong>
 </p>
 
 ---
 
 ## What hex is
 
-Most AI coding tools are interactive assistants. hex is a **runtime substrate** that *hosts* those tools (Claude Code, Aider, Cursor, local Ollama agents) inside a governed execution model. The model — frontier API, local Ollama, or anything else with an inference port — is hot-swappable. The architecture, audit trail, trust loop, and self-improvement machinery stay constant.
+Most AI coding tools are interactive assistants. hex is a **self-adaptive runtime substrate** that *hosts* those tools (Claude Code, Aider, Cursor, local Ollama agents) inside a governed execution model. The model — frontier API, local Ollama, or anything else with an inference port — is hot-swappable. The architecture, audit trail, trust loop, and self-improvement machinery stay constant. The runtime watches itself work, decides when its own design needs to change, and applies those changes through the same gates it uses for application code.
 
 Three claims define hex:
 
-1. **Architecture is enforced, not encouraged.** Tree-sitter parses every commit; cross-layer imports fail the build. `hex-core` (zero external deps), `ports/`, `adapters/`, `usecases/` — the seams are named, machine-checked, and runtime-swappable through a substrate composition root.
+1. **Architecture is enforced, not encouraged.** Tree-sitter parses every commit; cross-layer imports fail the build. `hex-core` (zero external deps), `ports/`, `adapters/`, `usecases/` — the seams are named, machine-checked, and runtime-swappable through a substrate composition root (ADR-2604261303, ADR-2604261500).
 
-2. **Completion is derived from evidence, not self-reported.** Agents claim done; hex doesn't believe them. Every task has a file-evidence gate (`hex-nexus/src/orchestration/workplan_executor.rs::check_evidence_gate`) and a workplan-scoped commit-subject reconciler (`hex plan reconcile --strict`). Lying agents get marked `failed`; a P1 inbox notification fires.
+2. **Completion is derived from evidence, not self-reported.** Agents claim done; hex doesn't believe them. Every task has a file-evidence gate (`hex-nexus/src/orchestration/workplan_executor.rs::check_evidence_gate`) and a workplan-scoped commit-subject reconciler (`hex plan reconcile --strict`). Lying agents get marked `failed`; a P1 inbox notification fires (ADR-2604270800, ADR-2604271000).
 
-3. **The system improves itself within a bounded autonomy envelope.** The sched daemon ticks every 30s and runs reconcile, swarm-cleanup, ADR-doctor, and the improver. The improver discovers drift across three classes — workplan integrity, RL-loop health, and architectural design — generates 3 adversarial variants per hypothesis, scores them on a 5-axis rubric, and ships the winner. Tier-A actions auto-apply via shadow-promotion; Tier-C requires human review.
+3. **The system adapts itself within a bounded autonomy envelope.** A control loop ticks every 30s observing the running system, plans changes through adversarial competition, judges them against a structured rubric, and applies them via shadow-promotion. Tier-A changes auto-merge; Tier-C halts at the operator. The loop's targets include hex's own ADRs, workplans, port telemetry, and architectural design (ADR-2604261311, ADR-2604271100, ADR-2604271200).
 
-Work is tracked as **workplan JSON** (phases, tasks, adapter boundaries, gates). Architecture decisions are tracked as **ADRs** (189 in tree). State lives in **SpacetimeDB**. Every coupling has a name, every mutation has a record.
+Work is tracked as **workplan JSON** (phases, tasks, adapter boundaries, gates). Architecture decisions are tracked as **ADRs** (189 in tree). State lives in **SpacetimeDB** as an append-only event log. Every coupling has a name, every mutation has a record.
+
+---
+
+## The self-adaptive substrate (MAPE-K, made concrete)
+
+The substrate ADRs (2604261500, 2604261311, 2604261800, 2604262100) describe hex as "the runtime substrate that hosts applications which rewrite themselves under LLM supervision." That isn't marketing — it's a working **MAPE-K** control loop with concrete code paths for each phase:
+
+| MAPE-K phase | What it does | Where it lives | Status |
+|---|---|---|---|
+| **M**onitor | Read telemetry, ADR registry, workplan state, git, inbox, RL scores, port latency. ~20 detectors as TOML rules. | `hex-cli/assets/improver/detectors.toml`; `hex analyze`; `PortTelemetry` STDB rollups | detector vocabulary scaffolded, telemetry rollup in flight |
+| **A**nalyze | Each detector emits `Hypothesis { id, source, scope, severity, evidence }`; deduped by `(source, scope)`. | `hex-cli/src/commands/sched/improver/discover.rs` | scaffolded; full detector wiring in `wp-architectural-health-detectors` |
+| **P**lan | Adversarial-swarm spawns N=3 strategic variants per hypothesis at T2.5 (devstral-small-2): "conservative refactor," "aggressive redesign," "minimum viable patch." | `hex-nexus/src/orchestration/adversarial_swarm.rs::propose_strategic` | propose_strategic in `wp-sched-improver` P2 |
+| **E**xecute | Structured judge scores variants on 5 axes (alignment, blast-radius, dependency-satisfaction, reversibility, historical-reject-rate); winner is applied via shadow-promotion on a `sched/improver/<id>` worktree branch; losers archived to `docs/workplans/rejected/`. | `hex-nexus/src/orchestration/improver_judge.rs` + `improver_act.rs` | `wp-sched-improver` P3+P4 |
+| **K**nowledge | All transitions append to `improver_event` STDB rows: hypothesis text, variants, verdict, action taken, outcome. The judge consults this history (`historical_reject_rate` axis) so the system learns which variant patterns the operator tends to overrule. | STDB `improver_event` table | `wp-sched-improver` P5 |
+
+The autonomy envelope (ADR-2604270800 §1a) is a three-tier table that names exactly which actions the loop may apply without operator consent:
+
+| Tier | Examples | Auto? | Rollback envelope |
+|---|---|---|---|
+| **A** | Status-frontmatter regex rewrite; trailing whitespace; missing newline; new ADR/workplan in `docs/`; enqueue workplan | yes — shadow-promote → `hex worktree merge` | dedicated branch, single `git revert` |
+| **B** | Mutate existing accepted ADR's status; restore broken cross-link | draft only — diff written, P2 inbox for human merge | branch persists until human acts |
+| **C** | Modify code outside `docs/`; delete files; mutate two-or-more accepted ADRs at once | never auto — P1 inbox notification | manual review only |
+
+This is the structural answer to "agents wreck repos when given autonomy." hex doesn't trust autonomy; it bounds it.
+
+### What the loop's targets actually are
+
+The improver doesn't only watch application code. It watches **itself**:
+
+- **`hex adr doctor`** scans the ADR registry every tick. Unparseable status → Tier-A auto-fix. Duplicate ID → Tier-C operator review. Stale-Proposed ADR → Tier-B drafted demotion. (ADR-2604270800)
+- **`hex plan reconcile --strict`** demotes any task whose stored `done` doesn't match the event log. Removes the multi-writer race that produces false-completes. (ADR-2604271000)
+- **`hex substrate telemetry`** rollups detect port latency drift, adapter skew, traffic concentration, idle adapters, swap starvation — the substrate auditing whether its own hot-swap machinery is paying its way. (ADR-2604271200)
+- **Architectural detectors** find god-domain-types, kitchen-sink ports, orphan adapters, dead layers, composition drift — design-quality findings, not just compile errors.
+
+The composition root (ADR-2604261303 + cookbook ADR-2604262100) is itself a runtime artifact that the loop can rewrite — adapter swaps go through the same shadow-promotion pipeline application code does.
 
 ---
 
