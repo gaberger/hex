@@ -3,6 +3,7 @@
 //! findings into a shared `{findings: [...]}` envelope.
 
 pub mod cohesion;
+pub mod composition_churn;
 pub mod dead_layer;
 pub mod duplication;
 pub mod god_types;

@@ -8,6 +8,7 @@ use clap::Parser;
 use serde_json::Value;
 
 use hex_analyzer::analyzers::cohesion;
+use hex_analyzer::analyzers::composition_churn;
 use hex_analyzer::analyzers::dead_layer;
 use hex_analyzer::analyzers::duplication;
 use hex_analyzer::analyzers::god_types::{self, GodTypeThresholds};
@@ -60,6 +61,21 @@ struct Cli {
     #[arg(long = "dead-layers")]
     dead_layers: bool,
 
+    /// Report composition drift: ratio of commits touching wiring
+    /// (`*composition-root*`, `*compose*.rs`, `*lib.rs`) to ADRs
+    /// accepted in the same window. Flags when the ratio exceeds
+    /// 1.5 — wiring is being rewritten faster than decisions are
+    /// being recorded. Window is controlled by `--window`.
+    #[arg(long = "composition-churn")]
+    composition_churn: bool,
+
+    /// Window for the `--composition-churn` detector. Accepts
+    /// `Nh` / `Nd` / `Nw` (e.g. `24h`, `30d`, `2w`). Forwarded to
+    /// `git log --since="N <unit> ago"` and used for the ADR-date
+    /// cutoff.
+    #[arg(long = "window", default_value = composition_churn::DEFAULT_WINDOW)]
+    window: String,
+
     /// Emit JSON instead of human-readable output. The schema is
     /// `{findings: [{kind, ...}]}` — fields after `kind` vary per detector.
     #[arg(long)]
@@ -77,12 +93,14 @@ fn main() -> anyhow::Result<()> {
         || cli.port_cohesion
         || cli.god_types
         || cli.adapter_duplication
-        || cli.dead_layers;
+        || cli.dead_layers
+        || cli.composition_churn;
     let want_orphans = cli.orphan_adapters || cli.orphan_ports || !any_flag;
     let want_cohesion = cli.port_cohesion || !any_flag;
     let want_god_types = cli.god_types || !any_flag;
     let want_duplication = cli.adapter_duplication || !any_flag;
     let want_dead_layers = cli.dead_layers || !any_flag;
+    let want_composition_churn = cli.composition_churn || !any_flag;
 
     let mut findings: Vec<Value> = Vec::new();
 
@@ -121,6 +139,13 @@ fn main() -> anyhow::Result<()> {
 
     if want_dead_layers {
         let report = dead_layer::analyze(&root)?;
+        for f in report.findings {
+            findings.push(serde_json::to_value(f)?);
+        }
+    }
+
+    if want_composition_churn {
+        let report = composition_churn::analyze(&root, &cli.window)?;
         for f in report.findings {
             findings.push(serde_json::to_value(f)?);
         }
@@ -193,6 +218,29 @@ fn print_findings_human(findings: &[Value]) {
                 let layer = f.get("layer").and_then(Value::as_str).unwrap_or("?");
                 let layer_kind = f.get("layer_kind").and_then(Value::as_str).unwrap_or("?");
                 println!("  [{kind}] {layer_kind} — {layer} (zero inbound references)");
+            }
+            "composition_churn" => {
+                let window = f.get("window").and_then(Value::as_str).unwrap_or("?");
+                let commits = f
+                    .get("commits_touching_wiring")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                let adrs = f
+                    .get("accepted_adrs_in_window")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                let ratio = f
+                    .get("ratio")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(f64::NAN);
+                let touched = f
+                    .get("files_touched")
+                    .and_then(Value::as_array)
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                println!(
+                    "  [{kind}] window={window} — {commits} wiring commit(s) vs {adrs} accepted ADR(s) (ratio {ratio:.2}, {touched} file(s) touched)"
+                );
             }
             _ => {
                 let port = f.get("port").and_then(Value::as_str).unwrap_or("?");
