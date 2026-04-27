@@ -1,3 +1,5 @@
+pub mod doctor;
+
 use std::path::{Path, PathBuf};
 
 use clap::Subcommand;
