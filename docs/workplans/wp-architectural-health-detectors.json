@@ -2,10 +2,12 @@
   "adr": "ADR-2604271200",
   "created_at": "2026-04-27T14:25:00Z",
   "created_by": "human+claude",
+  "depends_on": [
+    "wp-sched-improver"
+  ],
   "description": "Wire architectural-health interrogation into the improver's detector surface. The detector rows already exist in hex-cli/assets/improver/detectors.toml as scaffolding; this workplan ships the underlying CLI flags + STDB rollups they call. After this, the improver's tick walks the hexagon end-to-end (domain → port → adapter), surfaces design and operational findings as hypotheses, and the existing P2/P3 pipeline (adversarial variants + judge) routes them to ADR + workplan drafts.",
   "feature": "Architectural-health detectors — domain → port → adapter interrogation",
   "id": "wp-architectural-health-detectors",
-  "depends_on": ["wp-sched-improver"],
   "phases": [
     {
       "description": "Static design detector flags on `hex analyze`. AST-only, no runtime telemetry. Each --flag produces JSON the improver can parse.",
@@ -21,6 +23,17 @@
           "agent": "hex-coder",
           "deps": [],
           "description": "Add `--orphan-adapters` and `--orphan-ports` flags to hex analyze. Implementation: walk all `impl Port for Adapter` blocks via tree-sitter, build a set of (port_id, adapter_id) pairs; cross-reference against composition-root binding map. orphan-adapters = bound nowhere; orphan-ports = no adapter impls anywhere. Each emits JSON `{findings: [{kind, port, adapter?, file, line}]}`. Existing `hex analyze . --json` schema gains a new top-level array per kind. Tests in hex-analyzer's existing test harness against fixture workspaces.",
+          "evidence": {
+            "files_found": [
+              "hex-analyzer/src/analyzers/orphan.rs",
+              "hex-analyzer/src/main.rs",
+              "hex-analyzer/tests/orphan.rs"
+            ],
+            "matching_commits": [
+              "82d57d9d9d1ec731c23e65e6dda93a21c1116fb4 primary(p1.1): wp-architectural-health-detectors — Orphan-adapter / orphan-port detectors"
+            ],
+            "symbols_matched": []
+          },
           "files": [
             "hex-analyzer/src/analyzers/orphan.rs",
             "hex-analyzer/src/main.rs",
@@ -29,12 +42,23 @@
           "id": "P1.1",
           "layer": "primary",
           "name": "Orphan-adapter / orphan-port detectors",
-          "status": "pending"
+          "status": "done"
         },
         {
           "agent": "hex-coder",
           "deps": [],
           "description": "Add `--port-cohesion` flag. Implementation: for each Port trait, count public methods, cluster by name-prefix and parameter-type overlap, emit a finding when method count > 7 OR cluster count >= 2 with low cross-cluster similarity. Threshold + cluster algorithm declared as constants in the source — keep the heuristic legible. JSON output: `{findings: [{kind: 'port_cohesion', port, file, line, method_count, clusters: [[...], [...]]}]}`. Tests against fixtures: a single-concern port with 4 methods should not flag; a kitchen-sink port with 12 methods across 3 concerns should flag with all 3 clusters listed.",
+          "evidence": {
+            "files_found": [
+              "hex-analyzer/src/analyzers/cohesion.rs",
+              "hex-analyzer/src/main.rs",
+              "hex-analyzer/tests/cohesion.rs"
+            ],
+            "matching_commits": [
+              "555d9d950130c74bfa443bba52906e94ce715858 primary(p1.2): wp-architectural-health-detectors — Port-cohesion heuristic detector"
+            ],
+            "symbols_matched": []
+          },
           "files": [
             "hex-analyzer/src/analyzers/cohesion.rs",
             "hex-analyzer/src/main.rs",
@@ -43,12 +67,23 @@
           "id": "P1.2",
           "layer": "primary",
           "name": "Port-cohesion heuristic detector",
-          "status": "pending"
+          "status": "done"
         },
         {
           "agent": "hex-coder",
           "deps": [],
           "description": "Add `--god-types --json`. Walks domain/ tree-sitter and flags any struct/enum with >300 LOC or >10 public methods. Configurable thresholds via `[[analyzer.god_type]]` in `.hex/project.json`. Output: `{findings: [{kind, type, file, lines, public_methods}]}`.",
+          "evidence": {
+            "files_found": [
+              "hex-analyzer/src/analyzers/god_types.rs",
+              "hex-analyzer/src/main.rs",
+              "hex-analyzer/tests/god_types.rs"
+            ],
+            "matching_commits": [
+              "d29a81462ec021c084531c49aa8f8ad43267a391 primary(p1.3): wp-architectural-health-detectors — God-domain-type detector"
+            ],
+            "symbols_matched": []
+          },
           "files": [
             "hex-analyzer/src/analyzers/god_types.rs",
             "hex-analyzer/src/main.rs",
@@ -57,12 +92,25 @@
           "id": "P1.3",
           "layer": "primary",
           "name": "God-domain-type detector",
-          "status": "pending"
+          "status": "done"
         },
         {
           "agent": "hex-coder",
           "deps": [],
           "description": "Add `--adapter-duplication --json` and `--dead-layers --json`. Adapter-duplication uses tree-sitter token similarity (Jaccard on AST node bag) across adapter implementations of any pair sharing a port; threshold 0.6. Dead-layers walks the call graph from primary adapters and emits a finding for any layer dir with zero inbound edges. Output schemas mirror the others.",
+          "evidence": {
+            "files_found": [
+              "hex-analyzer/src/analyzers/duplication.rs",
+              "hex-analyzer/src/analyzers/dead_layer.rs",
+              "hex-analyzer/src/main.rs",
+              "hex-analyzer/tests/duplication.rs",
+              "hex-analyzer/tests/dead_layer.rs"
+            ],
+            "matching_commits": [
+              "d3b51647461010dae578e3e8d86c49be9fc99681 primary(p1.4): wp-architectural-health-detectors — Adapter-duplication + dead-layer detectors"
+            ],
+            "symbols_matched": []
+          },
           "files": [
             "hex-analyzer/src/analyzers/duplication.rs",
             "hex-analyzer/src/analyzers/dead_layer.rs",
@@ -73,12 +121,28 @@
           "id": "P1.4",
           "layer": "primary",
           "name": "Adapter-duplication + dead-layer detectors",
-          "status": "pending"
+          "status": "done"
         },
         {
           "agent": "hex-coder",
-          "deps": ["P1.1", "P1.2", "P1.3", "P1.4"],
+          "deps": [
+            "P1.1",
+            "P1.2",
+            "P1.3",
+            "P1.4"
+          ],
           "description": "Add `--composition-churn --window=<duration>` flag. Implementation: walk `git log --since=<window> -- '*composition-root*' '*compose*.rs' '*lib.rs'` and count distinct commits touching wiring; cross-reference with ADRs accepted in the same window. Emits a finding when churn / accepted-adr-count > 1.5. Output: `{findings: [{commits_touching_wiring, accepted_adrs_in_window, ratio, files_touched}]}`.",
+          "evidence": {
+            "files_found": [
+              "hex-analyzer/src/analyzers/composition_churn.rs",
+              "hex-analyzer/src/main.rs",
+              "hex-analyzer/tests/composition_churn.rs"
+            ],
+            "matching_commits": [
+              "70dae40fec8c0d92941f6d91ddebba2db395142c primary(p1.5): wp-architectural-health-detectors — Composition-drift detector"
+            ],
+            "symbols_matched": []
+          },
           "files": [
             "hex-analyzer/src/analyzers/composition_churn.rs",
             "hex-analyzer/src/main.rs",
@@ -87,7 +151,7 @@
           "id": "P1.5",
           "layer": "primary",
           "name": "Composition-drift detector",
-          "status": "pending"
+          "status": "done"
         }
       ],
       "tier": 2
@@ -118,7 +182,9 @@
         },
         {
           "agent": "hex-coder",
-          "deps": ["P2.1"],
+          "deps": [
+            "P2.1"
+          ],
           "description": "New CLI subcommand tree `hex substrate telemetry` with flags `--port-latency`, `--adapter-skew`, `--traffic-concentration`, `--adapter-idle`, `--window=<duration>`, all with `--json`. Each reads the rollup STDB rows from P2.1 and emits a `{findings: [...]}` envelope. Drift-detection logic: latency uses week-over-week delta >25%, skew uses 2x ratio between any two adapters on same port, concentration is single-port share >0.7, idle is zero calls in window. MCP parity per ADR-019.",
           "files": [
             "hex-cli/src/commands/substrate.rs",
@@ -158,7 +224,11 @@
       "tasks": [
         {
           "agent": "hex-coder",
-          "deps": ["P1.5", "P2.2", "P2.3"],
+          "deps": [
+            "P1.5",
+            "P2.2",
+            "P2.3"
+          ],
           "description": "Build a fixture workspace under hex-cli/tests/fixtures/architectural-health/ containing: (a) a god-domain-type (350 LOC, 12 methods); (b) an orphan adapter (impl block but no composition-root binding); (c) a kitchen-sink port (10 methods, 3 prefix clusters); (d) two adapters duplicating logic; (e) synthetic PortTelemetry rows showing latency drift and adapter skew. Test: run `hex sched improver discover --once --json --repo=<fixture>`; assert ≥1 hypothesis from class A (static), ≥1 from class B (operational), ≥1 from class C (composition). Then run the judge against those hypotheses and assert each gets a winner with confidence >=0.6 OR a RejectAll with `human_review_requested`.",
           "files": [
             "hex-cli/tests/fixtures/architectural-health/",
@@ -171,7 +241,9 @@
         },
         {
           "agent": "hex-coder",
-          "deps": ["P3.1"],
+          "deps": [
+            "P3.1"
+          ],
           "description": "Run the new detectors against THIS workspace (hex-intf itself, dogfooding per ADR-008). Capture output to docs/analysis/architectural-health-baseline-2026-04-27.json. Operator reviews by hand once before this lands; the file becomes the regression baseline so future runs can flag deltas. No code change in this task — just running the analyzer and committing the JSON snapshot.",
           "files": [
             "docs/analysis/architectural-health-baseline-2026-04-27.json"
