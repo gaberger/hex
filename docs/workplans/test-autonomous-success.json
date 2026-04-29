@@ -1,0 +1,39 @@
+{
+  "id": "test-autonomous-success",
+  "title": "Test Autonomous Success with New Files",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Create new documentation",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "Create docs/guides/ollama-setup.md documenting how to install and configure Ollama for hex autonomous execution",
+          "status": "failed",
+          "strategy_hint": "codegen",
+          "files": [
+            "docs/guides/ollama-setup.md"
+          ],
+          "evidence": [
+            "test -f docs/guides/ollama-setup.md",
+            "grep -q 'qwen2.5-coder:32b' docs/guides/ollama-setup.md"
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Create docs/guides/inference-tiers.md explaining T1/T2/T2.5 tier routing and when to use each tier",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "docs/guides/inference-tiers.md"
+          ],
+          "evidence": [
+            "test -f docs/guides/inference-tiers.md",
+            "grep -q 'T1.*scaffold' docs/guides/inference-tiers.md",
+            "grep -q 'T2.*codegen' docs/guides/inference-tiers.md"
+          ]
+        }
+      ]
+    }
+  ]
+}
