@@ -228,7 +228,7 @@
         {
           "id": "P5.1",
           "title": "Implement cleanup job: DELETE /api/memory/cleanup — deletes entries with archived:true AND created_at older than archive_after_days config. Returns count of deleted entries.",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/routes/memory_health.rs",
