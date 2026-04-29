@@ -98,7 +98,7 @@
             "hex-cli/src/commands/inference.rs"
           ],
           "id": "P2.4",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "JSON + YAML renderers: pass-through serde_json::to_string_pretty / serde_yaml::to_string of the Vec<QReportEntry>."
         },

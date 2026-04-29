@@ -192,11 +192,18 @@ async fn execute_task(
         }
     }
 
-    // P4: Compile gate (simplified - just check cargo/tsc existence)
+    // P4: Compile gate - only check if we generated compilable files
+    let has_rust_files = generated_files.iter().any(|(path, _)| {
+        path.ends_with(".rs") || path.contains("/src/")
+    });
+    let has_ts_files = generated_files.iter().any(|(path, _)| {
+        path.ends_with(".ts") || path.ends_with(".tsx")
+    });
+
     let has_cargo = project_dir.join("Cargo.toml").exists();
     let has_ts = project_dir.join("tsconfig.json").exists();
 
-    if has_cargo {
+    if has_cargo && has_rust_files {
         if !background {
             eprintln!("    running cargo check...");
         }
@@ -217,7 +224,7 @@ async fn execute_task(
                 .context("Failed to rollback after compile error")?;
             anyhow::bail!("Cargo check failed:\n{}", stderr);
         }
-    } else if has_ts {
+    } else if has_ts && has_ts_files {
         if !background {
             eprintln!("    running tsc --noEmit...");
         }
@@ -236,6 +243,8 @@ async fn execute_task(
                 .context("Failed to rollback after compile error")?;
             anyhow::bail!("TypeScript check failed:\n{}", stderr);
         }
+    } else if !background {
+        eprintln!("    skipping compile check (no compilable files)");
     }
 
     // P6: Validation judge - verify the work before committing

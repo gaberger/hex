@@ -95,7 +95,7 @@
             "hex-cli/tests/sched_parallel_drain.rs"
           ],
           "id": "P2.4",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Integration test: enqueue 2 disjoint workplans into a tmpdir git repo, drive 4 daemon ticks, assert both worktrees were created, both subprocesses ran, both merged back to main, both worktrees were cleaned up."
         }
