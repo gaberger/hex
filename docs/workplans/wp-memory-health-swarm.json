@@ -192,7 +192,7 @@
         {
           "id": "P4.2",
           "title": "Add CLI command `hex memory health [--dry-run] [--json]` — calls GET /api/memory/health, prints report, optionally calls /execute. Dry-run mode logs actions without executing.",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-cli/src/commands/memory.rs",
