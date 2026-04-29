@@ -19,7 +19,7 @@
           "adapter": "docs",
           "evidence": "counterexample trace pasted in task result",
           "id": "P0.2",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "script",
           "title": "Run TLC against current-daemon model (DispatchVacuous enabled, no TimeoutSweep fairness): confirm TerminalReachable FAILS"
         },

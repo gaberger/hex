@@ -178,7 +178,7 @@
           "id": "P2.1",
           "layer": "primary",
           "name": "PortTelemetry daily/weekly rollup",
-          "status": "pending"
+          "status": "done"
         },
         {
           "agent": "hex-coder",
@@ -194,7 +194,7 @@
           "id": "P2.2",
           "layer": "primary",
           "name": "hex substrate telemetry CLI + MCP",
-          "status": "pending"
+          "status": "done"
         },
         {
           "agent": "hex-coder",
@@ -207,7 +207,7 @@
           "id": "P2.3",
           "layer": "primary",
           "name": "hex substrate swaps detector",
-          "status": "pending"
+          "status": "done"
         }
       ],
       "tier": 3
@@ -237,7 +237,7 @@
           "id": "P3.1",
           "layer": "primary",
           "name": "Fixture workspace + improver e2e",
-          "status": "pending"
+          "status": "done"
         },
         {
           "agent": "hex-coder",
@@ -251,12 +251,12 @@
           "id": "P3.2",
           "layer": "primary",
           "name": "Dogfood baseline against hex-intf",
-          "status": "pending"
+          "status": "done"
         }
       ],
       "tier": 3
     }
   ],
-  "status": "pending",
+  "status": "done",
   "updated_at": "2026-04-27T14:25:00Z"
 }

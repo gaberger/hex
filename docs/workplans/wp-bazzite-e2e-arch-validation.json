@@ -34,6 +34,7 @@
             "hex-nexus/assets/"
           ],
           "id": "P1-3",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Verify nexus dashboard accessible"
         },
@@ -60,6 +61,7 @@
             "examples/hex-task-tracker/"
           ],
           "id": "P2-1",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Clone hex-task-tracker on Bazzite"
         },
@@ -157,6 +159,7 @@
             "hex-nexus/src/coordination/mod.rs"
           ],
           "id": "P4-4",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Check agent heartbeats and stale detection"
         }

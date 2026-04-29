@@ -3027,6 +3027,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hex-analyzer"
+version = "26.4.31"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tree-sitter",
+ "tree-sitter-rust",
+ "walkdir",
+]
+
+[[package]]
 name = "hex-cli"
 version = "26.4.31"
 dependencies = [
