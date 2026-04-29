@@ -175,7 +175,7 @@
           ],
           "files": [],
           "id": "P4.2",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "script",
           "title": "Workspace build gate + binary rebuild: cargo check --workspace, cargo test --workspace --no-fail-fast, then cargo build -p hex-cli --release && cargo build -p hex-nexus --release. Smoke: `hex inference q-report --limit 5` returns within 2s without panic on a clean install with no Q-data (empty table is a valid state, must render gracefully)."
         },
@@ -187,7 +187,7 @@
             "hex-nexus/src/research/performance_analyst.rs"
           ],
           "id": "P4.3",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Wire the Q-report endpoint into the idle-research swarm performance analyst (ADR-2604151200 P3.1) as one of its inputs — flag any model with trend ↓ AND visits ≥ 5 as a Finding with severity=med, suggested_action=adr."
         }

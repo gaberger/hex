@@ -107,7 +107,7 @@
           ],
           "files": [],
           "id": "P4.2",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "script",
           "title": "Rebuild release binaries (per CLAUDE.md autonomous-rebuild rule): `cargo build -p hex-cli --release && cargo build -p hex-nexus --release`. Smoke-verify: `hex sched enqueue shell -- 'true'` output contains 'sched task' and not 'brain task'."
         }

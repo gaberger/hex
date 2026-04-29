@@ -146,7 +146,7 @@
             "hex-nexus/src/research/ux_analyst.rs"
           ],
           "id": "P3.3",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "inference",
           "title": "UX analyst: walk hex-nexus/assets/ dashboard routes, run accessibility/consistency checks (color tokens, font usage, error states), T2.5 synthesizes top findings."
         }
@@ -203,7 +203,7 @@
             "hex-nexus/src/research/coordinator.rs"
           ],
           "id": "P4.4",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Preemption: if queue_drain finds a non-research task while a sweep is in-flight, signal-abort the sweep cleanly and re-enqueue research-sweep for the next idle window."
         }
@@ -244,5 +244,6 @@
       ],
       "title": "Dashboard + status visibility"
     }
-  ]
+  ],
+  "status": "done"
 }

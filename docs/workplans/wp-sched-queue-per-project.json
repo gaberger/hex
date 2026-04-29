@@ -117,7 +117,7 @@
             "hex-cli/src/commands/sched.rs"
           ],
           "id": "P3.3",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Migration unit test: seed ~/.hex/brain-state.json with 3 tasks (one for project-A, one for project-B, one shell task), run migration in project-A's tmpdir, assert only the project-A task is in the new queue, the global file is unchanged, the marker file exists."
         }

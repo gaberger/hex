@@ -164,7 +164,7 @@
           "id": "P3.3",
           "layer": "secondary",
           "name": "WebSearchBroker with fallback chain",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -224,7 +224,7 @@
           "id": "P4.2",
           "layer": "secondary",
           "name": "SerpApiSearchAdapter",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         }
       ],

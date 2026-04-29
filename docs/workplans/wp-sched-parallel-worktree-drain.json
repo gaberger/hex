@@ -139,7 +139,7 @@
             "hex-cli/src/commands/sched.rs"
           ],
           "id": "P3.3",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Test: workplan A claims [src/a.rs], workplan B claims [src/b.rs] → both promote concurrently. Workplan C claims [src/a.rs] while A is running → C waits. Workplan D with empty files[] → waits until all slots empty."
         }
@@ -170,7 +170,7 @@
             "hex-cli/src/commands/sched.rs"
           ],
           "id": "P4.2",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Per-tier slot caps in .hex/project.json: sched.max_parallel_drains_t25 (default 1), sched.max_parallel_drains_t3 (default 1). drain_step counts running slots by tier; if promoting candidate would exceed its tier's cap, skip."
         },
@@ -183,7 +183,7 @@
             "hex-cli/src/commands/sched.rs"
           ],
           "id": "P4.3",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Test: with t25 cap=1, two T2.5 workplans queued → only one promotes. Once first completes, second promotes. Mixed T1+T2.5 with disjoint files → both promote (different tier buckets)."
         }

@@ -70,6 +70,7 @@
           "cmd": "hex inference escalation-report",
           "evidence": "tier escalation rates",
           "id": "P4.2",
+          "status": "done",
           "title": "Show escalation report"
         }
       ],
