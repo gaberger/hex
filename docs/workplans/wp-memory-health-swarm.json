@@ -37,7 +37,7 @@
         {
           "id": "P1.3",
           "title": "Implement workplan-memory drift detection: query workplan:*:outcome entries, load workplan JSON from disk, flag entries where memory shows failed/in_progress but JSON shows done.",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/memory/drift_detector.rs"
