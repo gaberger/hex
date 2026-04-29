@@ -221,6 +221,116 @@ fn write_last_research_sweep(ts: chrono::DateTime<chrono::Utc>) {
     }
 }
 
+/// Minimal projection of `docs/analysis/idle-sweep-*.yaml` — only the fields
+/// needed to format the operator-facing summary line. The full coordinator
+/// document carries `analysts_run`, `analyst_errors`, etc.; we deserialize
+/// just `sweep_at`, `findings_total`, and the `findings` array (so we can
+/// count which ones produce drafts).
+#[derive(serde::Deserialize)]
+struct SweepDocSummary {
+    sweep_at: String,
+    #[serde(default)]
+    findings_total: usize,
+    #[serde(default)]
+    findings: Vec<hex_core::Finding>,
+}
+
+/// Format a duration as a compact age — "12s", "5m", "3h", "2d". Mirrors
+/// the convention `agent_audit::format_age` uses so the status panels read
+/// uniformly. Negative or zero durations clamp to "0s" (clock skew between
+/// sweep_at and now should never produce negative output).
+fn format_sweep_age(elapsed: chrono::Duration) -> String {
+    let secs = elapsed.num_seconds().max(0);
+    if secs < 60 {
+        format!("{}s", secs)
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h", secs / 3600)
+    } else {
+        format!("{}d", secs / 86_400)
+    }
+}
+
+/// Pure: count findings whose `suggested_action.kind` produces an on-disk
+/// draft. ADR / DraftWorkplan / AmendWorkplan all write a file under
+/// `docs/{adrs,workplans}/drafts/`; Memory and Informational do not. Keep
+/// this enum match exhaustive — adding a new draft-producing kind without
+/// updating it would silently undercount the operator-facing draft total.
+fn count_drafts(findings: &[hex_core::Finding]) -> usize {
+    findings
+        .iter()
+        .filter(|f| {
+            matches!(
+                f.suggested_action.kind,
+                hex_core::ActionKind::DraftWorkplan
+                    | hex_core::ActionKind::AmendWorkplan
+                    | hex_core::ActionKind::DraftAdr
+            )
+        })
+        .count()
+}
+
+/// Pure: format the `last_sweep:` line body — `"<age> (<n> findings, <m> drafts)"` —
+/// from a parsed sweep document. Returns `None` when `sweep_at` is unparseable
+/// (treat a malformed YAML as "no last sweep" rather than crash the status
+/// panel).
+fn format_last_sweep_line(
+    doc: &SweepDocSummary,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<String> {
+    let sweep_at = chrono::DateTime::parse_from_rfc3339(&doc.sweep_at)
+        .ok()?
+        .with_timezone(&chrono::Utc);
+    let age = format_sweep_age(now.signed_duration_since(sweep_at));
+    // Operators care about what the sweep *found*; `findings_total` is the
+    // pre-cap count, `findings.len()` is what actually got serialized. Pre-cap
+    // is the more honest "n findings" — a low cap shouldn't make a noisy repo
+    // look quiet. Fall back to `findings.len()` when `findings_total` is
+    // missing or smaller (older YAMLs without the field).
+    let n_findings = doc.findings_total.max(doc.findings.len());
+    let n_drafts = count_drafts(&doc.findings);
+    Some(format!(
+        "{} ago ({} findings, {} drafts)",
+        age, n_findings, n_drafts
+    ))
+}
+
+/// Locate the newest `idle-sweep-*.yaml` under `<repo_root>/docs/analysis/`.
+/// Filename stem is `idle-sweep-YYYYMMDD-HHMM`, so lexicographic ordering
+/// matches chronological ordering — no need to stat each file. Returns
+/// `None` when the directory or any matching file is missing.
+fn find_latest_sweep_yaml(repo_root: &std::path::Path) -> Option<PathBuf> {
+    let analysis_dir = repo_root.join("docs").join("analysis");
+    let entries = std::fs::read_dir(&analysis_dir).ok()?;
+    let mut latest: Option<(String, PathBuf)> = None;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with("idle-sweep-") || !name_str.ends_with(".yaml") {
+            continue;
+        }
+        let owned = name_str.into_owned();
+        match &latest {
+            Some((cur, _)) if cur >= &owned => {}
+            _ => latest = Some((owned, entry.path())),
+        }
+    }
+    latest.map(|(_, p)| p)
+}
+
+/// Read & summarize the most recent idle-sweep YAML under `repo_root` for
+/// the operator status surfaces (`hex sched daemon status`, `hex` no-arg
+/// panel — wp-idle-research-swarm P5.1). Returns `None` when no sweep has
+/// run yet or the YAML can't be parsed; callers omit the line entirely in
+/// that case rather than printing a placeholder.
+pub(crate) fn last_sweep_summary_line(repo_root: &std::path::Path) -> Option<String> {
+    let path = find_latest_sweep_yaml(repo_root)?;
+    let body = std::fs::read_to_string(&path).ok()?;
+    let doc: SweepDocSummary = serde_yaml::from_str(&body).ok()?;
+    format_last_sweep_line(&doc, chrono::Utc::now())
+}
+
 /// Pure: has at least `interval_h` hours elapsed since `last_sweep`?
 /// `None` (never swept) is treated as eligible — the first sweep should
 /// fire as soon as the idle threshold is reached.
@@ -2830,6 +2940,14 @@ fn daemon_status() -> anyhow::Result<()> {
         }
         None => {
             println!("{}", "sched daemon not running".yellow());
+        }
+    }
+    // wp-idle-research-swarm P5.1: surface the most recent idle-sweep so
+    // operators can see at a glance whether the autonomous research loop has
+    // run lately and how productive it was. Silent when no sweep YAML exists.
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(line) = last_sweep_summary_line(&cwd) {
+            println!("  last_sweep: {}", line);
         }
     }
     Ok(())
@@ -5646,6 +5764,214 @@ min_priority = 2
                         "kind `{kind}` should trigger preemption"
                     );
                 }
+            }
+        }
+
+        // ─── last_sweep summary line (wp-idle-research-swarm P5.1) ──────
+        //
+        // Locks the operator-facing `last_sweep:` formatter used by both
+        // `hex sched daemon status` and the no-arg `hex` status panel.
+        // The two surfaces share `last_sweep_summary_line`, which composes
+        // these pure helpers — testing the helpers covers both surfaces.
+        mod last_sweep_summary {
+            use super::super::super::{
+                count_drafts, find_latest_sweep_yaml, format_last_sweep_line, format_sweep_age,
+                SweepDocSummary,
+            };
+            use chrono::{Duration, TimeZone, Utc};
+            use hex_core::{ActionKind, Domain, Finding, Severity, SuggestedAction};
+
+            fn finding(id: &str, kind: ActionKind) -> Finding {
+                Finding {
+                    id: id.into(),
+                    domain: Domain::Architecture,
+                    severity: Severity::Medium,
+                    title: "t".into(),
+                    evidence: vec![],
+                    suggested_action: SuggestedAction {
+                        kind,
+                        draft_ref: None,
+                    },
+                }
+            }
+
+            #[test]
+            fn format_age_buckets_at_minute_hour_day_boundaries() {
+                // Each bucket boundary is a separate code path — drift here
+                // would silently flip "59m" to "0h" or "23h" to "0d".
+                assert_eq!(format_sweep_age(Duration::seconds(0)), "0s");
+                assert_eq!(format_sweep_age(Duration::seconds(59)), "59s");
+                assert_eq!(format_sweep_age(Duration::seconds(60)), "1m");
+                assert_eq!(format_sweep_age(Duration::minutes(59)), "59m");
+                assert_eq!(format_sweep_age(Duration::minutes(60)), "1h");
+                assert_eq!(format_sweep_age(Duration::hours(23)), "23h");
+                assert_eq!(format_sweep_age(Duration::hours(24)), "1d");
+                assert_eq!(format_sweep_age(Duration::days(7)), "7d");
+            }
+
+            #[test]
+            fn format_age_clamps_negative_to_zero() {
+                // Clock skew between sweep_at (set by nexus) and `now` (set
+                // by cli) could produce a negative duration. The status
+                // panel must never print "-3s ago".
+                assert_eq!(format_sweep_age(Duration::seconds(-42)), "0s");
+            }
+
+            #[test]
+            fn count_drafts_includes_workplan_amend_and_adr_only() {
+                // The contract for "drafts" is "findings that produce an
+                // on-disk artifact" — Memory + Informational don't, so
+                // they must NOT count even though they're real findings.
+                let xs = vec![
+                    finding("w", ActionKind::DraftWorkplan),
+                    finding("a", ActionKind::DraftAdr),
+                    finding("m", ActionKind::AmendWorkplan),
+                    finding("mem", ActionKind::Memory),
+                    finding("info", ActionKind::Informational),
+                ];
+                assert_eq!(count_drafts(&xs), 3);
+            }
+
+            #[test]
+            fn count_drafts_zero_when_empty() {
+                // A sweep with zero findings (clean repo) must report 0
+                // drafts, not panic and not fall through to "1".
+                assert_eq!(count_drafts(&[]), 0);
+            }
+
+            #[test]
+            fn format_last_sweep_line_renders_canonical_output() {
+                // Locks the exact wire format the workplan calls out:
+                //   "<age> ago (<n> findings, <m> drafts)"
+                // The age side is formatted by `format_sweep_age` (locked
+                // separately); the counts side is the contract this test
+                // owns. Drift here would either rename the columns or
+                // change the parens/comma layout dashboards may grep for.
+                let sweep_at = Utc.with_ymd_and_hms(2026, 4, 29, 10, 0, 0).unwrap();
+                let now = sweep_at + Duration::hours(5);
+                let doc = SweepDocSummary {
+                    sweep_at: sweep_at.to_rfc3339(),
+                    findings_total: 12,
+                    findings: vec![
+                        finding("w1", ActionKind::DraftWorkplan),
+                        finding("w2", ActionKind::DraftWorkplan),
+                        finding("a1", ActionKind::DraftAdr),
+                        finding("mem", ActionKind::Memory),
+                    ],
+                };
+                assert_eq!(
+                    format_last_sweep_line(&doc, now).as_deref(),
+                    Some("5h ago (12 findings, 3 drafts)")
+                );
+            }
+
+            #[test]
+            fn format_last_sweep_line_uses_findings_total_over_emitted() {
+                // `findings_total` is pre-cap; `findings.len()` is post-cap.
+                // The honest "n findings" is the pre-cap count — a low cap
+                // shouldn't make a noisy repo look quiet on the status
+                // line. The fallback only kicks in when total is missing.
+                let sweep_at = Utc.with_ymd_and_hms(2026, 4, 29, 10, 0, 0).unwrap();
+                let now = sweep_at + Duration::minutes(30);
+                let doc = SweepDocSummary {
+                    sweep_at: sweep_at.to_rfc3339(),
+                    findings_total: 25,
+                    findings: vec![finding("w1", ActionKind::DraftWorkplan)],
+                };
+                assert_eq!(
+                    format_last_sweep_line(&doc, now).as_deref(),
+                    Some("30m ago (25 findings, 1 drafts)")
+                );
+            }
+
+            #[test]
+            fn format_last_sweep_line_falls_back_to_emitted_when_total_missing() {
+                // Older YAMLs (pre-`findings_total`) deserialize with the
+                // default 0. Without the fallback the panel would say
+                // "0 findings, 2 drafts" — internally inconsistent.
+                let sweep_at = Utc.with_ymd_and_hms(2026, 4, 29, 10, 0, 0).unwrap();
+                let now = sweep_at + Duration::hours(2);
+                let doc = SweepDocSummary {
+                    sweep_at: sweep_at.to_rfc3339(),
+                    findings_total: 0,
+                    findings: vec![
+                        finding("w1", ActionKind::DraftWorkplan),
+                        finding("a1", ActionKind::DraftAdr),
+                    ],
+                };
+                assert_eq!(
+                    format_last_sweep_line(&doc, now).as_deref(),
+                    Some("2h ago (2 findings, 2 drafts)")
+                );
+            }
+
+            #[test]
+            fn format_last_sweep_line_returns_none_for_unparseable_timestamp() {
+                // A malformed `sweep_at` must not crash the status panel —
+                // returning `None` causes the caller to omit the line, which
+                // is the right behavior (no signal beats wrong signal).
+                let doc = SweepDocSummary {
+                    sweep_at: "not-a-timestamp".into(),
+                    findings_total: 1,
+                    findings: vec![finding("w1", ActionKind::DraftWorkplan)],
+                };
+                assert!(format_last_sweep_line(&doc, Utc::now()).is_none());
+            }
+
+            #[test]
+            fn find_latest_sweep_yaml_picks_lexicographically_newest() {
+                // The filename stem `idle-sweep-YYYYMMDD-HHMM` makes
+                // lexicographic == chronological — locks the assumption
+                // so a future stem refactor (e.g. seconds, or an ID
+                // suffix) doesn't silently break "newest first".
+                let dir = tempfile::tempdir().expect("tempdir");
+                let analysis = dir.path().join("docs").join("analysis");
+                std::fs::create_dir_all(&analysis).unwrap();
+                std::fs::write(
+                    analysis.join("idle-sweep-20260101-1200.yaml"),
+                    "sweep_at: 2026-01-01T12:00:00Z\nfindings: []\n",
+                )
+                .unwrap();
+                std::fs::write(
+                    analysis.join("idle-sweep-20260429-0900.yaml"),
+                    "sweep_at: 2026-04-29T09:00:00Z\nfindings: []\n",
+                )
+                .unwrap();
+                std::fs::write(
+                    analysis.join("idle-sweep-20260315-2359.yaml"),
+                    "sweep_at: 2026-03-15T23:59:00Z\nfindings: []\n",
+                )
+                .unwrap();
+                // Decoy files that must NOT be selected.
+                std::fs::write(analysis.join("idle-sweep-20270101-0000.txt"), "").unwrap();
+                std::fs::write(analysis.join("brain-string-audit.md"), "").unwrap();
+
+                let path = find_latest_sweep_yaml(dir.path()).expect("found newest");
+                assert!(
+                    path.ends_with("idle-sweep-20260429-0900.yaml"),
+                    "got {:?}",
+                    path
+                );
+            }
+
+            #[test]
+            fn find_latest_sweep_yaml_returns_none_when_no_analysis_dir() {
+                // Fresh repos have no `docs/analysis/`. The lookup must
+                // degrade silently to `None`, not bubble an io::Error.
+                let dir = tempfile::tempdir().expect("tempdir");
+                assert!(find_latest_sweep_yaml(dir.path()).is_none());
+            }
+
+            #[test]
+            fn find_latest_sweep_yaml_returns_none_when_no_matching_files() {
+                // `docs/analysis/` exists but holds only unrelated files.
+                // The function must filter strictly on the stem prefix.
+                let dir = tempfile::tempdir().expect("tempdir");
+                let analysis = dir.path().join("docs").join("analysis");
+                std::fs::create_dir_all(&analysis).unwrap();
+                std::fs::write(analysis.join("session-2604141400-insights.yaml"), "").unwrap();
+                std::fs::write(analysis.join("brain-string-audit.md"), "").unwrap();
+                assert!(find_latest_sweep_yaml(dir.path()).is_none());
             }
         }
     }
