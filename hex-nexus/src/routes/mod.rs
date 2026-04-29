@@ -14,6 +14,7 @@ pub mod hex_agents;
 pub mod hexflo;
 pub mod inference;
 pub mod metrics;
+pub mod monitor;
 pub mod orchestration;
 pub mod projects;
 pub mod push;
@@ -494,6 +495,8 @@ pub fn build_router(state: SharedState) -> Router {
         // STATELESS COMPUTE — these routes stay (filesystem + process mgmt)
         // ═══════════════════════════════════════════════════════════
 
+        // Monitor snapshot (observability)
+        .route("/api/monitor", get(monitor::get_monitor_snapshot))
         // Architecture analysis (ADR-034) — on-demand, native tree-sitter
         .route("/api/analyze", get(analysis::analyze_current_project)
             .post(analysis::analyze_path)
