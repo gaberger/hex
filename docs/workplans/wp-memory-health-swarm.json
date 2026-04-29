@@ -207,7 +207,7 @@
         {
           "id": "P4.3",
           "title": "Add MCP tool hex_memory_health to mcp-tools.json (read-only, observability category) wrapping GET /api/memory/health. Add to READ_ONLY_TOOLS in mcp.rs.",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "scaffold",
           "files": [
             "hex-cli/assets/schemas/mcp-tools.json",
