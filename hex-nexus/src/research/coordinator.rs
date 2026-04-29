@@ -36,6 +36,25 @@ use super::{
 /// — mitigation: hard cap of `max_drafts_per_sweep: 5`").
 pub const DEFAULT_MAX_DRAFTS_PER_SWEEP: usize = 5;
 
+/// Coordination filename written by the coordinator while a sweep is
+/// running. The sched daemon (`hex-cli/src/commands/sched.rs::queue_drain`)
+/// reads this to decide whether preemption is needed (wp-idle-research-swarm
+/// P4.4).
+pub const SWEEP_IN_FLIGHT_FILENAME: &str = "sweep_in_flight";
+
+/// Coordination filename written by the sched daemon when a non-research
+/// task arrives mid-sweep. The coordinator polls for this between analysts
+/// and bails with [`SweepError::Aborted`] when present.
+pub const SWEEP_ABORT_FILENAME: &str = "sweep_abort";
+
+/// Default signal directory — production sweeps coordinate via
+/// `~/.hex/sched/`. Tests pass an explicit tempdir via
+/// [`SweepOptions::signal_dir`] so parallel tests can't collide on `$HOME`.
+pub fn default_signal_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".hex").join("sched")
+}
+
 /// Which analysts the sweep should invoke. Default = all enabled.
 ///
 /// Exposed as a public struct (rather than bitflags) so tests and CLI
@@ -92,6 +111,10 @@ pub struct SweepOptions {
     /// Wall-clock used for the output filename and the YAML `sweep_at`
     /// header. Injected so tests can produce stable output.
     pub now: DateTime<Utc>,
+    /// Directory holding sweep coordination signal files (in-flight marker,
+    /// abort signal). Production = `~/.hex/sched/`; tests pass an explicit
+    /// tempdir so parallel tests don't race on `$HOME`. (P4.4)
+    pub signal_dir: PathBuf,
 }
 
 impl SweepOptions {
@@ -102,6 +125,7 @@ impl SweepOptions {
             enabled: AnalystSet::default(),
             max_drafts_per_sweep: load_max_drafts_per_sweep(repo_root),
             now: Utc::now(),
+            signal_dir: default_signal_dir(),
         }
     }
 }
@@ -152,6 +176,19 @@ pub enum SweepError {
     /// unreachable — every type involved derives `Serialize` — but is kept
     /// in the error enum so the caller can surface it without a panic.
     Yaml(serde_yaml::Error),
+    /// Sweep was preempted between analysts because the sched daemon
+    /// signaled an abort (a non-research task became pending while the
+    /// sweep was in-flight — wp-idle-research-swarm P4.4). The coordinator
+    /// stopped cleanly without writing any artifacts; the in-flight marker
+    /// and abort signal are both cleared before returning so the next
+    /// idle-window re-enqueue can re-fire without leftover state.
+    Aborted {
+        /// How many analysts had already produced findings before the
+        /// abort was honored. Surfaced for observability — a sched-side
+        /// log line can show "preempted after N analysts" without parsing
+        /// stderr.
+        analysts_completed: usize,
+    },
 }
 
 impl std::fmt::Display for SweepError {
@@ -164,6 +201,10 @@ impl std::fmt::Display for SweepError {
                 write!(f, "failed to write {}: {}", path.display(), source)
             }
             SweepError::Yaml(e) => write!(f, "failed to encode sweep YAML: {e}"),
+            SweepError::Aborted { analysts_completed } => write!(
+                f,
+                "sweep aborted by sched preemption after {analysts_completed} analyst(s)"
+            ),
         }
     }
 }
@@ -184,72 +225,109 @@ pub fn run_sweep(repo_root: &Path) -> Result<SweepReport, SweepError> {
 /// the post-cap sort by severity makes the absolute order user-visible
 /// regardless, but a stable invocation order keeps the analyst_errors list
 /// readable when multiple analysts fail.
+///
+/// The coordinator writes the [`SWEEP_IN_FLIGHT_FILENAME`] marker before
+/// invoking any analyst and removes it before returning (success, error, or
+/// preemption). Between each analyst it polls for [`SWEEP_ABORT_FILENAME`]
+/// and, when present, clears both files and returns
+/// [`SweepError::Aborted`] without writing any sweep artifacts
+/// (wp-idle-research-swarm P4.4).
 pub fn run_sweep_with(
+    repo_root: &Path,
+    opts: SweepOptions,
+) -> Result<SweepReport, SweepError> {
+    // Establish coordination state before any analyst fires. Stale abort
+    // signals from a prior run are cleared here so the new sweep starts
+    // with a clean slate; a fresh abort written *after* this point will
+    // still be honored by the per-analyst poll below.
+    mark_sweep_in_flight(&opts.signal_dir);
+    clear_sweep_abort(&opts.signal_dir);
+
+    // Inner closure ensures the in-flight marker is cleared on every exit
+    // path (Ok, Err, Aborted). Without this guard a panic-free error in
+    // `render_yaml` / `create_dir_all` / write would leave a stale marker,
+    // and the next queue_drain tick would falsely conclude a sweep is
+    // running and start firing aborts at nothing.
+    let signal_dir = opts.signal_dir.clone();
+    let result = run_sweep_inner(repo_root, opts);
+    clear_sweep_in_flight(&signal_dir);
+    if matches!(result, Err(SweepError::Aborted { .. })) {
+        // The Aborted path already cleared the abort signal at the
+        // detection site so a stale signal can't bleed into the *next*
+        // sweep. Clearing again here is a no-op but keeps the contract
+        // explicit in one place.
+        clear_sweep_abort(&signal_dir);
+    }
+    result
+}
+
+fn run_sweep_inner(
     repo_root: &Path,
     opts: SweepOptions,
 ) -> Result<SweepReport, SweepError> {
     let mut findings: Vec<Finding> = Vec::new();
     let mut errors: Vec<AnalystFailure> = Vec::new();
+    let mut analysts_completed: usize = 0;
 
-    if opts.enabled.architecture {
-        match architecture_analyst::analyze_architecture(repo_root) {
-            Ok(mut f) => findings.append(&mut f),
-            Err(e) => errors.push(AnalystFailure {
-                analyst: "architecture".into(),
-                message: e.to_string(),
-            }),
-        }
+    macro_rules! run_analyst {
+        ($enabled:expr, $name:literal, $expr:expr) => {{
+            // Check before invocation so an abort that arrived during the
+            // *previous* analyst still bails before we burn another one.
+            if is_sweep_abort_requested(&opts.signal_dir) {
+                clear_sweep_abort(&opts.signal_dir);
+                return Err(SweepError::Aborted { analysts_completed });
+            }
+            if $enabled {
+                match $expr {
+                    Ok(mut f) => findings.append(&mut f),
+                    Err(e) => errors.push(AnalystFailure {
+                        analyst: $name.into(),
+                        message: e.to_string(),
+                    }),
+                }
+                analysts_completed += 1;
+            }
+        }};
     }
 
-    if opts.enabled.code_quality {
-        match code_quality_analyst::analyze_code_quality(repo_root) {
-            Ok(mut f) => findings.append(&mut f),
-            Err(e) => errors.push(AnalystFailure {
-                analyst: "code_quality".into(),
-                message: e.to_string(),
-            }),
-        }
-    }
-
-    if opts.enabled.drift {
-        match drift_analyst::analyze_drift(repo_root) {
-            Ok(mut f) => findings.append(&mut f),
-            Err(e) => errors.push(AnalystFailure {
-                analyst: "drift".into(),
-                message: e.to_string(),
-            }),
-        }
-    }
-
-    if opts.enabled.naming {
-        match naming_analyst::analyze_naming(repo_root) {
-            Ok(mut f) => findings.append(&mut f),
-            Err(e) => errors.push(AnalystFailure {
-                analyst: "naming".into(),
-                message: e.to_string(),
-            }),
-        }
-    }
-
-    if opts.enabled.performance {
-        match performance_analyst::analyze_performance(repo_root) {
-            Ok(mut f) => findings.append(&mut f),
-            Err(e) => errors.push(AnalystFailure {
-                analyst: "performance".into(),
-                message: e.to_string(),
-            }),
-        }
-    }
-
-    if opts.enabled.ux {
+    run_analyst!(
+        opts.enabled.architecture,
+        "architecture",
+        architecture_analyst::analyze_architecture(repo_root)
+    );
+    run_analyst!(
+        opts.enabled.code_quality,
+        "code_quality",
+        code_quality_analyst::analyze_code_quality(repo_root)
+    );
+    run_analyst!(
+        opts.enabled.drift,
+        "drift",
+        drift_analyst::analyze_drift(repo_root)
+    );
+    run_analyst!(
+        opts.enabled.naming,
+        "naming",
+        naming_analyst::analyze_naming(repo_root)
+    );
+    run_analyst!(
+        opts.enabled.performance,
+        "performance",
+        performance_analyst::analyze_performance(repo_root)
+    );
+    run_analyst!(opts.enabled.ux, "ux", {
         let assets_root = repo_root.join("hex-nexus").join("assets");
-        match ux_analyst::analyze_ux(&assets_root) {
-            Ok(mut f) => findings.append(&mut f),
-            Err(e) => errors.push(AnalystFailure {
-                analyst: "ux".into(),
-                message: e.to_string(),
-            }),
-        }
+        ux_analyst::analyze_ux(&assets_root)
+    });
+
+    // Final abort check before we commit artifacts to disk. If an abort
+    // arrived while the last analyst was running, honor it — the sched
+    // daemon can re-enqueue and a fresh sweep will produce a complete
+    // record, which is more useful than a partial one with the last
+    // analyst's findings present and the rest missing.
+    if is_sweep_abort_requested(&opts.signal_dir) {
+        clear_sweep_abort(&opts.signal_dir);
+        return Err(SweepError::Aborted { analysts_completed });
     }
 
     let findings_total = findings.len();
@@ -300,6 +378,81 @@ pub fn run_sweep_with(
         analyst_errors: errors,
         generated_at: opts.now,
     })
+}
+
+// ─── Sweep coordination signal helpers (P4.4) ──────────────────────────
+//
+// Two on-disk markers coordinate sched ↔ coordinator across processes:
+//
+// * `<signal_dir>/sweep_in_flight` — written by the coordinator at sweep
+//   start and removed when the sweep returns. The sched daemon checks
+//   this in `queue_drain` to decide whether preemption is even possible.
+// * `<signal_dir>/sweep_abort` — written by the sched daemon when a
+//   non-research task lands while the sweep is in flight. The coordinator
+//   polls this between analysts and bails with `SweepError::Aborted` when
+//   it appears.
+//
+// Best-effort throughout: a failed write here must never crash the sweep
+// or the daemon. Worst case is a missed preemption tick — the next tick
+// will retry. None of these paths are public; the on-disk wire format
+// (filenames + parent dir) is the contract, not the helpers themselves.
+
+/// Path to the in-flight marker under `signal_dir`.
+pub fn sweep_in_flight_path(signal_dir: &Path) -> PathBuf {
+    signal_dir.join(SWEEP_IN_FLIGHT_FILENAME)
+}
+
+/// Path to the abort signal under `signal_dir`.
+pub fn sweep_abort_path(signal_dir: &Path) -> PathBuf {
+    signal_dir.join(SWEEP_ABORT_FILENAME)
+}
+
+fn ensure_signal_dir(signal_dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(signal_dir)
+}
+
+fn mark_sweep_in_flight(signal_dir: &Path) {
+    if ensure_signal_dir(signal_dir).is_err() {
+        return;
+    }
+    let _ = std::fs::write(sweep_in_flight_path(signal_dir), Utc::now().to_rfc3339());
+}
+
+fn clear_sweep_in_flight(signal_dir: &Path) {
+    let path = sweep_in_flight_path(signal_dir);
+    if path.exists() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// True iff the abort signal file is present. Public so the sched daemon's
+/// observability path (e.g. `hex sched status`) can surface "preempt
+/// pending" without re-implementing the file check.
+pub fn is_sweep_abort_requested(signal_dir: &Path) -> bool {
+    sweep_abort_path(signal_dir).exists()
+}
+
+fn clear_sweep_abort(signal_dir: &Path) {
+    let path = sweep_abort_path(signal_dir);
+    if path.exists() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Public entry point for sched: write the abort signal so the next
+/// per-analyst poll inside the coordinator returns
+/// [`SweepError::Aborted`]. Idempotent — repeated requests in the same
+/// tick collapse to a single file.
+pub fn request_sweep_abort(signal_dir: &Path) -> std::io::Result<()> {
+    ensure_signal_dir(signal_dir)?;
+    std::fs::write(sweep_abort_path(signal_dir), Utc::now().to_rfc3339())
+}
+
+/// True iff the in-flight marker is present. Used by the sched daemon
+/// (`queue_drain`) to decide whether preemption is even possible — there's
+/// nothing to preempt if no sweep is running.
+pub fn is_sweep_in_flight(signal_dir: &Path) -> bool {
+    sweep_in_flight_path(signal_dir).exists()
 }
 
 /// Sort severity-desc, then id-asc, then truncate to `max`. `max == 0` is
@@ -475,6 +628,7 @@ fn action_label(a: &hex_core::ActionKind) -> &'static str {
         DraftWorkplan => "draft_workplan",
         AmendWorkplan => "amend_workplan",
         DraftAdr => "draft_adr",
+        Memory => "memory",
         Informational => "informational",
     }
 }
@@ -696,6 +850,7 @@ mod sweep_coordinator_tests {
         // analysts (drift/naming/performance/ux) all gracefully return empty
         // sets when their input directories don't exist.
         let dir = tempfile::tempdir().expect("tempdir");
+        let signal_dir = tempfile::tempdir().expect("signal tempdir");
         let opts = SweepOptions {
             enabled: AnalystSet {
                 architecture: false,
@@ -707,9 +862,18 @@ mod sweep_coordinator_tests {
             },
             max_drafts_per_sweep: 5,
             now: fixed_now(),
+            signal_dir: signal_dir.path().to_path_buf(),
         };
 
         let report = run_sweep_with(dir.path(), opts).expect("sweep ok");
+
+        // Marker hygiene: a clean sweep must clear the in-flight file before
+        // returning. Otherwise the next queue_drain tick would falsely conclude
+        // a sweep is running and start firing aborts at nothing.
+        assert!(
+            !is_sweep_in_flight(signal_dir.path()),
+            "in-flight marker must be cleared after a successful sweep"
+        );
 
         assert_eq!(report.findings_total, 0);
         assert!(report.findings.is_empty());
@@ -729,6 +893,149 @@ mod sweep_coordinator_tests {
 
         let md = std::fs::read_to_string(&expected_md).unwrap();
         assert!(md.contains("_No findings._"), "md = {md}");
+    }
+
+    #[test]
+    fn sweep_marks_in_flight_during_run_and_clears_on_completion() {
+        // The in-flight marker is the sched daemon's only signal that a
+        // sweep is alive — it's what gates the preemption check in
+        // queue_drain. If a successful sweep ever forgot to clear it, the
+        // next non-research task would trigger a phantom abort.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let signal_dir = tempfile::tempdir().expect("signal tempdir");
+        // Pre-seed a stale abort signal — simulates a prior aborted sweep
+        // whose abort signal was never consumed. The fresh sweep must
+        // sweep its own state clean rather than honoring leftover signals.
+        request_sweep_abort(signal_dir.path()).expect("seed stale abort");
+        assert!(is_sweep_abort_requested(signal_dir.path()));
+
+        let opts = SweepOptions {
+            enabled: AnalystSet::NONE,
+            max_drafts_per_sweep: 5,
+            now: fixed_now(),
+            signal_dir: signal_dir.path().to_path_buf(),
+        };
+        run_sweep_with(dir.path(), opts).expect("sweep ok");
+
+        assert!(
+            !is_sweep_in_flight(signal_dir.path()),
+            "in-flight marker leaked past sweep completion"
+        );
+        assert!(
+            !is_sweep_abort_requested(signal_dir.path()),
+            "stale abort signal must be cleared at sweep start"
+        );
+    }
+
+    #[test]
+    fn sweep_aborts_cleanly_when_abort_signal_present_at_start() {
+        // The fastest preemption case: the abort signal arrives between
+        // ticks, so it's already on disk by the time `run_sweep_with`
+        // starts. The first per-analyst poll fires before any analyst
+        // runs, no artifacts are written, and the abort signal is cleared
+        // so it can't bleed into the next sweep.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let signal_dir = tempfile::tempdir().expect("signal tempdir");
+
+        // Mark in-flight + write abort BEFORE starting. run_sweep_with
+        // would normally clear the abort at start, so we need a separate
+        // hook — call the inner path via the public wire format. The
+        // contract is: abort signals written *after* the sweep has cleared
+        // its initial state are honored. We reproduce that by writing the
+        // abort *during* the run via a NONE analyst set (no analysts to
+        // race against) plus a manual write between mark and inner.
+        //
+        // Easiest: enable a single analyst and pre-seed abort, but the
+        // "clear stale at start" logic would consume it. So we test the
+        // narrow contract: write abort between `mark_sweep_in_flight` and
+        // the first analyst poll by enabling all analysts AND writing
+        // abort *after* `run_sweep_with` clears the initial state. We do
+        // that here with a tiny custom path that mirrors `run_sweep_with`
+        // but writes the abort after the initial clear.
+        mark_sweep_in_flight(signal_dir.path());
+        clear_sweep_abort(signal_dir.path());
+        request_sweep_abort(signal_dir.path()).unwrap();
+
+        let opts = SweepOptions {
+            enabled: AnalystSet::ALL,
+            max_drafts_per_sweep: 5,
+            now: fixed_now(),
+            signal_dir: signal_dir.path().to_path_buf(),
+        };
+        // The public entry point clears the abort at start, so to actually
+        // observe the abort path we route through the inner directly. The
+        // inner doesn't write the in-flight marker (the wrapper does that
+        // and the cleanup), so we must mark it ourselves above.
+        let result = run_sweep_inner(dir.path(), opts);
+        clear_sweep_in_flight(signal_dir.path());
+
+        match result {
+            Err(SweepError::Aborted { analysts_completed }) => {
+                assert_eq!(
+                    analysts_completed, 0,
+                    "abort at start must bail before any analyst runs"
+                );
+            }
+            other => panic!("expected Aborted, got {other:?}"),
+        }
+
+        // Aborted path must clear the abort signal so the next sweep
+        // starts clean.
+        assert!(
+            !is_sweep_abort_requested(signal_dir.path()),
+            "abort signal must be cleared after an aborted sweep"
+        );
+
+        // No artifacts should have been written.
+        let analysis_dir = dir.path().join("docs").join("analysis");
+        if analysis_dir.exists() {
+            let entries: Vec<_> = std::fs::read_dir(&analysis_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .collect();
+            assert!(
+                entries.is_empty(),
+                "aborted sweep must not write any sweep artifacts; found {entries:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn signal_helpers_round_trip_through_filesystem() {
+        // Locks the public wire format for the cross-process contract:
+        // sched-side `request_sweep_abort` + coordinator-side
+        // `is_sweep_abort_requested` must agree on filename + parent dir.
+        // Mirror tests live in `hex-cli/src/commands/sched.rs` — both
+        // sides drift in lockstep or the on-disk channel breaks silently.
+        let signal_dir = tempfile::tempdir().expect("tempdir");
+
+        // Initially clean.
+        assert!(!is_sweep_in_flight(signal_dir.path()));
+        assert!(!is_sweep_abort_requested(signal_dir.path()));
+
+        // Mark + clear in-flight.
+        mark_sweep_in_flight(signal_dir.path());
+        assert!(is_sweep_in_flight(signal_dir.path()));
+        clear_sweep_in_flight(signal_dir.path());
+        assert!(!is_sweep_in_flight(signal_dir.path()));
+
+        // Mark + clear abort.
+        request_sweep_abort(signal_dir.path()).expect("write abort");
+        assert!(is_sweep_abort_requested(signal_dir.path()));
+        clear_sweep_abort(signal_dir.path());
+        assert!(!is_sweep_abort_requested(signal_dir.path()));
+
+        // Filenames are exactly what hex-cli expects.
+        assert_eq!(
+            sweep_in_flight_path(signal_dir.path())
+                .file_name()
+                .unwrap(),
+            SWEEP_IN_FLIGHT_FILENAME
+        );
+        assert_eq!(
+            sweep_abort_path(signal_dir.path()).file_name().unwrap(),
+            SWEEP_ABORT_FILENAME
+        );
     }
 
     #[test]

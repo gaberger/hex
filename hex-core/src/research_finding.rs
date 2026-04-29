@@ -50,6 +50,10 @@ pub enum ActionKind {
     AmendWorkplan,
     /// File an ADR proposing a decision.
     DraftAdr,
+    /// Persist the finding into the cross-session memory store under the
+    /// `idle-sweep` namespace. Used for low-urgency observations that should
+    /// stay searchable but don't justify a workplan or ADR.
+    Memory,
     /// No action required beyond surfacing the finding to a human.
     Informational,
 }
