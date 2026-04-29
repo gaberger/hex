@@ -1,0 +1,1 @@
+// TODO: implement Implement staleness detection: brain-tasks with status=in_progress AND leased_until > 2h ago OR status=failed → return stale task IDs + category (transient, superseded, compile_blocker, inference_stall, duplicate, unknown).

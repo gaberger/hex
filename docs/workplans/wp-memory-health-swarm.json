@@ -1,7 +1,6 @@
 {
-  "adr": "ADR-2604291320",
-  "description": "Implement the memory-health swarm per ADR-2604291320. P1 adds memory query/categorization logic to hex-nexus. P2 implements action handlers (retry, archive, escalate). P3 wires the health-check task into sched daemon. P4 adds dashboard panel + CLI command. P5 adds cleanup logic for old archived entries.",
   "id": "wp-memory-health-swarm",
+  "title": "Memory Health Swarm",
   "phases": [
     {
       "id": "P1",
@@ -10,6 +9,7 @@
         {
           "id": "P1.1",
           "title": "Add memory query endpoint GET /api/memory/health returning JSON with total_entries, categories breakdown, stale_count, failed_brain_tasks grouped by error pattern.",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/routes/memory_health.rs",
@@ -18,12 +18,12 @@
           "evidence": [
             "curl -s http://localhost:5555/api/memory/health | jq '.total_entries'",
             "cargo test -p hex-nexus memory_health"
-          ],
-          "status": "pending"
+          ]
         },
         {
           "id": "P1.2",
           "title": "Implement staleness detection: brain-tasks with status=in_progress AND leased_until > 2h ago OR status=failed → return stale task IDs + category (transient, superseded, compile_blocker, inference_stall, duplicate, unknown).",
+          "status": "pending",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/memory/categorizer.rs",
@@ -32,12 +32,12 @@
           "evidence": [
             "grep -n 'fn categorize_failure' hex-nexus/src/memory/categorizer.rs",
             "cargo test -p hex-nexus categorize_failure"
-          ],
-          "status": "pending"
+          ]
         },
         {
           "id": "P1.3",
           "title": "Implement workplan-memory drift detection: query workplan:*:outcome entries, load workplan JSON from disk, flag entries where memory shows failed/in_progress but JSON shows done.",
+          "status": "pending",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/memory/drift_detector.rs"
@@ -45,12 +45,12 @@
           "evidence": [
             "grep -n 'fn detect_workplan_drift' hex-nexus/src/memory/drift_detector.rs",
             "cargo test -p hex-nexus detect_workplan_drift"
-          ],
-          "status": "pending"
+          ]
         },
         {
           "id": "P1.4",
           "title": "Add growth metrics calculation: entries added in last 24h, last 7d, failure rate (failed / completed brain-tasks in 7d window). Store in memory-health response.",
+          "status": "pending",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/memory/metrics.rs"
@@ -58,8 +58,7 @@
           "evidence": [
             "curl -s http://localhost:5555/api/memory/health | jq '.growth_metrics'",
             "cargo test -p hex-nexus memory_metrics"
-          ],
-          "status": "pending"
+          ]
         }
       ]
     },
@@ -70,6 +69,7 @@
         {
           "id": "P2.1",
           "title": "Implement archive action: POST /api/memory/archive with task_id — adds archived:true field to memory entry, preserves original data. Returns success/error.",
+          "status": "pending",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/routes/memory_health.rs"
@@ -77,12 +77,12 @@
           "evidence": [
             "curl -X POST http://localhost:5555/api/memory/archive -d '{\"task_id\":\"test-id\"}' -H 'Content-Type: application/json'",
             "cargo test -p hex-nexus memory_archive"
-          ],
-          "status": "pending"
+          ]
         },
         {
           "id": "P2.2",
           "title": "Implement retry action: POST /api/memory/retry with task_id — extracts payload from old brain-task, self-enqueues new task with note 'retry of <old-id>', respects max_retries config (default 2).",
+          "status": "pending",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/routes/memory_health.rs",
@@ -92,12 +92,12 @@
             "curl -X POST http://localhost:5555/api/memory/retry -d '{\"task_id\":\"test-id\"}' -H 'Content-Type: application/json'",
             "hex sched queue list | grep 'retry of'",
             "cargo test -p hex-nexus memory_retry"
-          ],
-          "status": "pending"
+          ]
         },
         {
           "id": "P2.3",
           "title": "Implement escalate action: POST /api/memory/escalate with task_id — writes ADR draft under docs/adrs/drafts/ADR-<timestamp>-<category>.md with failure details, suggested fix. Returns draft path.",
+          "status": "pending",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/memory/escalate.rs"
@@ -106,12 +106,12 @@
             "curl -X POST http://localhost:5555/api/memory/escalate -d '{\"task_id\":\"test-id\",\"category\":\"compile_blocker\"}' -H 'Content-Type: application/json'",
             "ls docs/adrs/drafts/ | grep compile_blocker",
             "cargo test -p hex-nexus memory_escalate"
-          ],
-          "status": "pending"
+          ]
         },
         {
           "id": "P2.4",
           "title": "Add batch action endpoint POST /api/memory/health/execute — accepts {\"actions\": [{\"task_id\": \"...\", \"action\": \"retry|archive|escalate\"}]} and executes all, returns summary {\"retried\": N, \"archived\": N, \"escalated\": N}.",
+          "status": "pending",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/routes/memory_health.rs"
@@ -119,8 +119,7 @@
           "evidence": [
             "curl -X POST http://localhost:5555/api/memory/health/execute -d '{\"actions\":[{\"task_id\":\"t1\",\"action\":\"archive\"}]}' -H 'Content-Type: application/json' | jq '.archived'",
             "cargo test -p hex-nexus memory_batch_execute"
-          ],
-          "status": "pending"
+          ]
         }
       ]
     },
@@ -131,6 +130,7 @@
         {
           "id": "P3.1",
           "title": "Add memory-health task kind to sched daemon: auto-enqueue every health_check_interval_h (default 1h, configurable via .hex/project.json → memory.health_check_interval_h). Persist last_health_check timestamp at ~/.hex/sched/last_memory_health_check.",
+          "status": "pending",
           "strategy_hint": "codegen",
           "files": [
             "hex-cli/src/commands/sched.rs"
@@ -139,12 +139,12 @@
             "grep -n 'memory-health\\|last_memory_health_check' hex-cli/src/commands/sched.rs",
             "hex sched queue list | grep memory-health",
             "cargo test -p hex-cli memory_health_trigger"
-          ],
-          "status": "pending"
+          ]
         },
         {
           "id": "P3.2",
           "title": "Implement memory-health task executor: calls GET /api/memory/health, categorizes failures, generates actions list, calls POST /api/memory/health/execute, writes report to docs/analysis/memory-health-YYYYMMDD-HHMM.yaml + .md summary.",
+          "status": "pending",
           "strategy_hint": "codegen",
           "files": [
             "hex-cli/src/commands/sched.rs"
@@ -153,12 +153,12 @@
             "ls docs/analysis/ | grep memory-health",
             "cat docs/analysis/memory-health-*.yaml | grep actions_taken",
             "cargo test -p hex-cli memory_health_executor"
-          ],
-          "status": "pending"
+          ]
         },
         {
           "id": "P3.3",
           "title": "Add config schema to .hex/project.json: memory.health_check_interval_h (default 1), memory.cleanup.archive_after_days (default 90), memory.cleanup.max_retries (default 2). Load in daemon.",
+          "status": "pending",
           "strategy_hint": "scaffold",
           "files": [
             ".hex/project.json",
@@ -167,8 +167,7 @@
           "evidence": [
             "jq '.memory' .hex/project.json",
             "cargo check -p hex-core"
-          ],
-          "status": "pending"
+          ]
         }
       ]
     },
@@ -179,6 +178,7 @@
         {
           "id": "P4.1",
           "title": "Add dashboard panel at /memory-health showing: total entries, stale %, failure rate (7d), recent actions (last 24h), chart of growth over 7d. Fetches from GET /api/memory/health.",
+          "status": "pending",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/assets/src/pages/MemoryHealth.tsx",
@@ -187,12 +187,12 @@
           "evidence": [
             "grep -n 'MemoryHealth' hex-nexus/assets/src/App.tsx",
             "curl -s http://localhost:5555/ | grep 'memory-health'"
-          ],
-          "status": "pending"
+          ]
         },
         {
           "id": "P4.2",
           "title": "Add CLI command `hex memory health [--dry-run] [--json]` — calls GET /api/memory/health, prints report, optionally calls /execute. Dry-run mode logs actions without executing.",
+          "status": "pending",
           "strategy_hint": "codegen",
           "files": [
             "hex-cli/src/commands/memory.rs",
@@ -202,12 +202,12 @@
             "hex memory health --dry-run | grep 'Would retry'",
             "hex memory health --json | jq '.total_entries'",
             "cargo test -p hex-cli memory_health_cli"
-          ],
-          "status": "pending"
+          ]
         },
         {
           "id": "P4.3",
           "title": "Add MCP tool hex_memory_health to mcp-tools.json (read-only, observability category) wrapping GET /api/memory/health. Add to READ_ONLY_TOOLS in mcp.rs.",
+          "status": "pending",
           "strategy_hint": "scaffold",
           "files": [
             "hex-cli/assets/schemas/mcp-tools.json",
@@ -217,8 +217,7 @@
           "evidence": [
             "grep 'hex_memory_health' hex-cli/assets/schemas/mcp-tools.json",
             "grep 'hex_memory_health' hex-cli/src/commands/mcp.rs"
-          ],
-          "status": "pending"
+          ]
         }
       ]
     },
@@ -229,6 +228,7 @@
         {
           "id": "P5.1",
           "title": "Implement cleanup job: DELETE /api/memory/cleanup — deletes entries with archived:true AND created_at older than archive_after_days config. Returns count of deleted entries.",
+          "status": "pending",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/routes/memory_health.rs",
@@ -237,12 +237,12 @@
           "evidence": [
             "curl -X DELETE http://localhost:5555/api/memory/cleanup | jq '.deleted_count'",
             "cargo test -p hex-nexus memory_cleanup"
-          ],
-          "status": "pending"
+          ]
         },
         {
           "id": "P5.2",
           "title": "Wire cleanup into memory-health task: after executing actions, check if cleanup is due (last_cleanup > 24h ago), call DELETE /api/memory/cleanup, log result in report.",
+          "status": "pending",
           "strategy_hint": "codegen",
           "files": [
             "hex-cli/src/commands/sched.rs"
@@ -250,23 +250,21 @@
           "evidence": [
             "grep -n 'memory.*cleanup' docs/analysis/memory-health-*.yaml",
             "cargo test -p hex-cli memory_health_cleanup_trigger"
-          ],
-          "status": "pending"
+          ]
         },
         {
           "id": "P5.3",
           "title": "Add unit tests for categorizer edge cases: duplicate detection across 7d window, superseded detection when workplan file missing vs marked complete, exponential backoff calculation for retries.",
+          "status": "pending",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/memory/categorizer.rs"
           ],
           "evidence": [
             "cargo test -p hex-nexus categorizer_edge_cases"
-          ],
-          "status": "pending"
+          ]
         }
       ]
     }
-  ],
-  "title": "Memory Health Swarm"
+  ]
 }
