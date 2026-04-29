@@ -69,7 +69,7 @@
         {
           "id": "P2.1",
           "title": "Implement archive action: POST /api/memory/archive with task_id — adds archived:true field to memory entry, preserves original data. Returns success/error.",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/routes/memory_health.rs"
