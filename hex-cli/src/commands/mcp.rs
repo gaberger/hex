@@ -125,7 +125,7 @@ use hex_core::ports::enforcement::{EnforcementContext, EnforcementMode, Enforcem
 
 /// Tools that are read-only — no enforcement needed.
 const READ_ONLY_TOOLS: &[&str] = &[
-    "hex_analyze", "hex_analyze_json", "hex_status", "hex_hexflo_swarm_status", "hex_hexflo_task_list",
+    "hex_analyze", "hex_analyze_json", "hex_status", "hex_monitor", "hex_hexflo_swarm_status", "hex_hexflo_task_list",
     "hex_hexflo_memory_retrieve", "hex_hexflo_memory_search",
     "hex_adr_list", "hex_adr_search", "hex_adr_status", "hex_adr_abandoned",
     "hex_plan_list", "hex_plan_status", "hex_plan_history", "hex_plan_report",
