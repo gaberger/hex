@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use crate::inference_client::{InferenceClient, InferenceTier};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Workplan {
@@ -141,74 +142,123 @@ async fn execute_task(
     project_dir: &Path,
     background: bool,
 ) -> Result<()> {
-    // For now, just run the evidence commands as a smoke test
-    // Full implementation would:
-    // 1. Map strategy_hint to inference tier
-    // 2. Build prompt from task title + evidence
-    // 3. Call inference backend
-    // 4. Parse response and write files
-    // 5. Run compile gate
-    // 6. Commit on success, rollback on failure
+    // P3: Inference tier routing
+    let tier = InferenceTier::from_strategy_hint(task.strategy_hint.as_deref());
 
-    if let Some(evidence) = &task.evidence {
-        for cmd in evidence {
-            if !background {
-                eprintln!("    evidence: {}", cmd);
-            }
+    if !background {
+        eprintln!("    tier: {:?} ({})", tier, tier.model_name());
+    }
 
-            // Run evidence command to verify task completion
-            let output = Command::new("sh")
-                .arg("-c")
-                .arg(cmd)
-                .output()
-                .with_context(|| format!("Failed to run evidence command: {}", cmd))?;
+    let files_list = task.files.as_ref().map(|f| f.as_slice()).unwrap_or(&[]);
+    let evidence_list = task.evidence.as_ref().map(|e| e.as_slice()).unwrap_or(&[]);
 
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                // Don't fail on evidence errors for now — just log
-                if !background {
-                    eprintln!("    ⚠ evidence check failed: {}", stderr.trim());
-                }
-            }
+    // Build prompt
+    let prompt = InferenceClient::build_task_prompt(
+        &task.title,
+        files_list,
+        evidence_list,
+    );
+
+    if !background {
+        eprintln!("    calling inference...");
+    }
+
+    // Call inference
+    let client = InferenceClient::new();
+    let response = client.generate(tier, prompt).await
+        .context("Inference generation failed")?;
+
+    // Parse response to extract files
+    let generated_files = InferenceClient::parse_response(&response)
+        .context("Failed to parse LLM response")?;
+
+    if !background {
+        eprintln!("    generated {} files", generated_files.len());
+    }
+
+    // Write generated files
+    for (path, content) in &generated_files {
+        let file_path = project_dir.join(path);
+        if let Some(parent) = file_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+        }
+        std::fs::write(&file_path, content)
+            .with_context(|| format!("Failed to write file: {}", path))?;
+
+        if !background {
+            eprintln!("    wrote: {}", path);
         }
     }
 
-    // Minimal implementation: create placeholder commits for file changes
-    if let Some(files) = &task.files {
-        for file in files {
-            if !background {
-                eprintln!("    file: {}", file);
-            }
-            // TODO: Actually generate/modify the file via inference
-            // For now, just touch it if it doesn't exist
-            let file_path = project_dir.join(file);
-            if !file_path.exists() {
-                if let Some(parent) = file_path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                std::fs::write(&file_path, format!("// TODO: implement {}\n", task.title))?;
-            }
+    // P4: Compile gate (simplified - just check cargo/tsc existence)
+    let has_cargo = project_dir.join("Cargo.toml").exists();
+    let has_ts = project_dir.join("tsconfig.json").exists();
+
+    if has_cargo {
+        if !background {
+            eprintln!("    running cargo check...");
         }
-
-        // Git add + commit
-        let commit_msg = format!("feat({}): {}", task.id, task.title);
-
-        Command::new("git")
-            .args(["add", "-A"])
+        let check_output = Command::new("cargo")
+            .arg("check")
+            .arg("--workspace")
             .current_dir(project_dir)
             .output()
-            .context("Failed to git add")?;
+            .context("Failed to run cargo check")?;
 
-        let commit_output = Command::new("git")
-            .args(["commit", "-m", &commit_msg, "--allow-empty"])
+        if !check_output.status.success() {
+            let stderr = String::from_utf8_lossy(&check_output.stderr);
+            // Rollback: git reset --hard HEAD
+            Command::new("git")
+                .args(["reset", "--hard", "HEAD"])
+                .current_dir(project_dir)
+                .output()
+                .context("Failed to rollback after compile error")?;
+            anyhow::bail!("Cargo check failed:\n{}", stderr);
+        }
+    } else if has_ts {
+        if !background {
+            eprintln!("    running tsc --noEmit...");
+        }
+        let check_output = Command::new("tsc")
+            .arg("--noEmit")
             .current_dir(project_dir)
             .output()
-            .context("Failed to git commit")?;
+            .context("Failed to run tsc")?;
 
-        if !commit_output.status.success() {
-            let stderr = String::from_utf8_lossy(&commit_output.stderr);
-            anyhow::bail!("Git commit failed: {}", stderr);
+        if !check_output.status.success() {
+            let stderr = String::from_utf8_lossy(&check_output.stderr);
+            Command::new("git")
+                .args(["reset", "--hard", "HEAD"])
+                .current_dir(project_dir)
+                .output()
+                .context("Failed to rollback after compile error")?;
+            anyhow::bail!("TypeScript check failed:\n{}", stderr);
         }
+    }
+
+    // Git add + commit
+    let commit_msg = format!("feat({}): {}", task.id, task.title);
+
+    Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(project_dir)
+        .output()
+        .context("Failed to git add")?;
+
+    let commit_output = Command::new("git")
+        .args(["commit", "-m", &commit_msg, "--allow-empty"])
+        .current_dir(project_dir)
+        .output()
+        .context("Failed to git commit")?;
+
+    if !commit_output.status.success() {
+        let stderr = String::from_utf8_lossy(&commit_output.stderr);
+        anyhow::bail!("Git commit failed: {}", stderr);
+    }
+
+    if !background {
+        eprintln!("    ✓ committed");
     }
 
     Ok(())

@@ -5,3 +5,4 @@ pub mod adapters;
 pub mod usecases;
 pub mod worker;
 pub mod workplan_executor;
+pub mod inference_client;
