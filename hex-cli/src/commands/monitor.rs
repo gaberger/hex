@@ -157,28 +157,56 @@ fn get_queue_status() -> Result<QueueStatus> {
 }
 
 fn get_recent_activity() -> Result<Vec<TaskSummary>> {
-    let output = Command::new("hex")
-        .args(["sched", "queue", "history"])
+    // Query memory directly for recent brain-tasks
+    let output = Command::new("curl")
+        .args([
+            "-s",
+            "http://localhost:5555/api/hexflo/memory/search?q=brain-task:",
+        ])
         .output()?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut tasks = Vec::new();
-
-    for line in stdout.lines().skip(3).take(5) {
-        if line.contains('│') && !line.contains("──") {
-            let parts: Vec<&str> = line.split('│').collect();
-            if parts.len() >= 5 {
-                tasks.push(TaskSummary {
-                    id: parts[1].trim().to_string(),
-                    kind: parts[2].trim().to_string(),
-                    status: parts[3].trim().to_string(),
-                    payload: parts[4].trim().chars().take(40).collect(),
-                });
-            }
-        }
+    if !output.status.success() {
+        return Ok(Vec::new());
     }
 
-    Ok(tasks)
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = match serde_json::from_str(&stdout) {
+        Ok(j) => j,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    let results = match json.get("results").and_then(|r| r.as_array()) {
+        Some(r) => r,
+        None => return Ok(Vec::new()),
+    };
+
+    // Parse, sort by completed_at, take last 5
+    let mut tasks: Vec<(String, TaskSummary)> = results
+        .iter()
+        .filter_map(|entry| {
+            let value_str = entry.get("value")?.as_str()?;
+            let task_json: serde_json::Value = serde_json::from_str(value_str).ok()?;
+
+            let id = task_json.get("id")?.as_str()?.to_string();
+            let kind = task_json.get("kind")?.as_str()?.to_string();
+            let status = task_json.get("status")?.as_str()?.to_string();
+            let payload = task_json.get("payload")?.as_str()?.to_string();
+            let completed_at = task_json.get("completed_at")?.as_str()?.to_string();
+
+            Some((
+                completed_at,
+                TaskSummary {
+                    id,
+                    kind,
+                    status,
+                    payload: payload.chars().take(40).collect(),
+                },
+            ))
+        })
+        .collect();
+
+    tasks.sort_by(|a, b| b.0.cmp(&a.0)); // Sort descending by completed_at
+    Ok(tasks.into_iter().take(5).map(|(_, t)| t).collect())
 }
 
 fn get_recent_commits() -> Result<Vec<CommitSummary>> {
