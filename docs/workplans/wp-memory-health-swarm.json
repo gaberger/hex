@@ -130,7 +130,7 @@
         {
           "id": "P3.1",
           "title": "Add memory-health task kind to sched daemon: auto-enqueue every health_check_interval_h (default 1h, configurable via .hex/project.json → memory.health_check_interval_h). Persist last_health_check timestamp at ~/.hex/sched/last_memory_health_check.",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-cli/src/commands/sched.rs"
