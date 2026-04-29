@@ -97,7 +97,7 @@
         {
           "id": "P2.3",
           "title": "Implement escalate action: POST /api/memory/escalate with task_id — writes ADR draft under docs/adrs/drafts/ADR-<timestamp>-<category>.md with failure details, suggested fix. Returns draft path.",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/memory/escalate.rs"
