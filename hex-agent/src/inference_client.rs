@@ -44,6 +44,7 @@ struct OllamaOptions {
 #[derive(Debug, Deserialize)]
 struct OllamaResponse {
     response: String,
+    thinking: Option<String>,
 }
 
 pub struct InferenceClient {
@@ -87,12 +88,19 @@ impl InferenceClient {
             anyhow::bail!("Ollama request failed ({}): {}", status, body);
         }
 
-        let ollama_response: OllamaResponse = response
-            .json()
-            .await
-            .context("Failed to parse Ollama response")?;
+        let body_text = response.text().await.context("Failed to read response body")?;
 
-        Ok(ollama_response.response)
+        let ollama_response: OllamaResponse = serde_json::from_str(&body_text)
+            .context("Failed to parse Ollama JSON response")?;
+
+        // qwen3 and other thinking models put output in "thinking" field, not "response"
+        let content = if ollama_response.response.is_empty() {
+            ollama_response.thinking.unwrap_or_default()
+        } else {
+            ollama_response.response
+        };
+
+        Ok(content)
     }
 
     pub fn build_task_prompt(
