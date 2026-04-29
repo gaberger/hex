@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use crate::inference_client::{InferenceClient, InferenceTier};
+use crate::validation_judge::{ValidationJudge, ValidationResult};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Workplan {
@@ -234,6 +235,44 @@ async fn execute_task(
                 .output()
                 .context("Failed to rollback after compile error")?;
             anyhow::bail!("TypeScript check failed:\n{}", stderr);
+        }
+    }
+
+    // P6: Validation judge - verify the work before committing
+    let validation = ValidationJudge::validate_task(
+        &task.id,
+        files_list,
+        evidence_list,
+        project_dir,
+        background,
+    )?;
+
+    match validation {
+        ValidationResult::Pass => {
+            // Validation passed - proceed with commit
+            if !background {
+                eprintln!("    ✓ validation passed");
+            }
+        }
+        ValidationResult::Fail { reason } => {
+            // Validation failed - rollback and fail the task
+            if !background {
+                eprintln!("    ✗ validation failed: {}", reason);
+            }
+            Command::new("git")
+                .args(["reset", "--hard", "HEAD"])
+                .current_dir(project_dir)
+                .output()
+                .context("Failed to rollback after validation failure")?;
+            anyhow::bail!("Validation failed: {}", reason);
+        }
+        ValidationResult::NeedsHumanReview { reason } => {
+            // Quality concern - commit but flag for review
+            if !background {
+                eprintln!("    ⚠ needs human review: {}", reason);
+            }
+            // TODO: Create ADR draft or flag in memory for human review
+            // For now, proceed with commit but log the concern
         }
     }
 

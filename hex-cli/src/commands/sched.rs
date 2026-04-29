@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
+use anyhow::Context;
 use clap::Subcommand;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
@@ -115,6 +116,42 @@ fn load_min_sweep_interval_h() -> u64 {
 /// want to rotate the throttle independently (e.g. `rm` to force a sweep).
 fn last_research_sweep_path() -> PathBuf {
     sched_signal_dir().join("last_research_sweep")
+}
+
+/// Path to the persisted "last memory-health check" timestamp.
+fn last_memory_health_check_path() -> PathBuf {
+    sched_signal_dir().join("last_memory_health_check")
+}
+
+fn read_last_memory_health_check() -> Option<chrono::DateTime<chrono::Utc>> {
+    let raw = std::fs::read_to_string(last_memory_health_check_path()).ok()?;
+    chrono::DateTime::parse_from_rfc3339(raw.trim())
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+}
+
+fn write_last_memory_health_check(ts: chrono::DateTime<chrono::Utc>) {
+    let path = last_memory_health_check_path();
+    if let Err(e) = std::fs::create_dir_all(path.parent().unwrap()) {
+        eprintln!("  {} last_memory_health_check dir: {}", "warn".yellow(), e);
+    }
+    if let Err(e) = std::fs::write(&path, ts.to_rfc3339()) {
+        eprintln!("  {} last_memory_health_check write: {}", "warn".yellow(), e)
+    }
+}
+
+fn should_enqueue_memory_health(
+    last: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+    interval_h: u64,
+) -> bool {
+    match last {
+        None => true, // Never run before
+        Some(last_ts) => {
+            let elapsed = now.signed_duration_since(last_ts);
+            elapsed.num_hours() >= interval_h as i64
+        }
+    }
 }
 
 /// Sched coordination directory. Mirrors `default_signal_dir()` in
@@ -4175,6 +4212,94 @@ fn check_evidence(
     (exit_ok && has_evidence, snippet)
 }
 
+/// P6: Validate workplan task evidence after execution.
+/// Reads workplan JSON, finds completed tasks, runs their evidence commands.
+/// Returns validation summary for logging.
+async fn validate_workplan_evidence(workplan_path: &str) -> anyhow::Result<String> {
+    let content = tokio::fs::read_to_string(workplan_path).await
+        .context("Failed to read workplan JSON")?;
+
+    let workplan: serde_json::Value = serde_json::from_str(&content)
+        .context("Failed to parse workplan JSON")?;
+
+    let mut validation_log = Vec::new();
+    let mut failed_count = 0;
+    let mut passed_count = 0;
+    let mut stub_count = 0;
+
+    // Find all tasks marked "done" and validate them
+    if let Some(phases) = workplan.get("phases").and_then(|p| p.as_array()) {
+        for phase in phases {
+            if let Some(tasks) = phase.get("tasks").and_then(|t| t.as_array()) {
+                for task in tasks {
+                    let status = task.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                    if status != "done" {
+                        continue;
+                    }
+
+                    let task_id = task.get("id").and_then(|i| i.as_str()).unwrap_or("unknown");
+                    let files = task.get("files").and_then(|f| f.as_array());
+                    let evidence = task.get("evidence").and_then(|e| e.as_array());
+
+                    // Check for TODO stubs in files
+                    if let Some(files_arr) = files {
+                        for file in files_arr {
+                            if let Some(file_path) = file.as_str() {
+                                if let Ok(content) = std::fs::read_to_string(file_path) {
+                                    if content.contains("TODO: implement") || content.contains("// TODO") {
+                                        validation_log.push(format!("Task {} STUB: {} contains TODO", task_id, file_path));
+                                        stub_count += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Run evidence commands
+                    if let Some(evidence_arr) = evidence {
+                        for ev in evidence_arr {
+                            if let Some(cmd) = ev.as_str() {
+                                let output = std::process::Command::new("sh")
+                                    .arg("-c")
+                                    .arg(cmd)
+                                    .output();
+
+                                match output {
+                                    Ok(out) if out.status.success() => {
+                                        passed_count += 1;
+                                    }
+                                    Ok(out) => {
+                                        let stderr = String::from_utf8_lossy(&out.stderr);
+                                        validation_log.push(format!("Task {} FAIL: {} ({})", task_id, cmd, stderr.trim()));
+                                        failed_count += 1;
+                                    }
+                                    Err(e) => {
+                                        validation_log.push(format!("Task {} ERROR: {} ({})", task_id, cmd, e));
+                                        failed_count += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut summary = String::new();
+    if stub_count > 0 || failed_count > 0 {
+        summary.push_str("VALIDATION FAILED\n");
+        summary.push_str(&format!("Stubs: {}, Failed: {}, Passed: {}\n", stub_count, failed_count, passed_count));
+        for log in &validation_log {
+            summary.push_str(&format!("{}\n", log));
+        }
+    } else {
+        summary.push_str(&format!("VALIDATION PASSED ({})", passed_count));
+    }
+
+    Ok(summary)
+}
+
 pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, String) {
     debug!(kind = %kind, payload_len = payload.len(), "drain-path: execute-start");
     // ADR-2604141400 §1 P1: capture pre-HEAD only for workplan tasks; the
@@ -4262,7 +4387,24 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
                     post_head.as_deref(),
                 );
                 snippet.push_str(&guard_snippet);
-                (guarded_success, snippet)
+
+                // P6: Validation judge - verify workplan task evidence after execution
+                if guarded_success {
+                    match validate_workplan_evidence(payload).await {
+                        Ok(validation_result) => {
+                            snippet.push_str(&format!("\n--- validation ---\n{}", validation_result));
+                            // If validation failed, override success even if git evidence exists
+                            let final_success = !validation_result.contains("VALIDATION FAILED");
+                            (final_success, snippet)
+                        }
+                        Err(e) => {
+                            snippet.push_str(&format!("\n--- validation ---\nValidation error: {}", e));
+                            (guarded_success, snippet)
+                        }
+                    }
+                } else {
+                    (guarded_success, snippet)
+                }
             } else {
                 (out.status.success(), snippet)
             }
@@ -4600,6 +4742,38 @@ async fn queue_drain() -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     eprintln!("  {} enqueue research-sweep: {}", "✗".red(), e);
+                }
+            }
+        }
+    }
+
+    // ── Memory-health trigger (wp-memory-health-swarm P3.1 / ADR-2604291320) ──
+    // Run memory-health check every hour (not idle-gated like research-sweep).
+    // This ensures stale task cleanup happens regularly even when queue is busy.
+    {
+        let now = chrono::Utc::now();
+        let last = read_last_memory_health_check();
+        let interval_h = 1; // TODO: load from config
+
+        if should_enqueue_memory_health(last, now, interval_h) {
+            let payload = json!({
+                "trigger": "scheduled",
+                "interval_h": interval_h,
+                "enqueued_at": now.to_rfc3339(),
+            })
+            .to_string();
+
+            match enqueue_brain_task("memory-health", &payload).await {
+                Ok(id) => {
+                    println!(
+                        "  ⬡ enqueued memory-health check {} (last check {})",
+                        id,
+                        last.map(|t| t.to_rfc3339()).unwrap_or_else(|| "never".to_string()),
+                    );
+                    write_last_memory_health_check(now);
+                }
+                Err(e) => {
+                    eprintln!("  {} enqueue memory-health: {}", "✗".red(), e);
                 }
             }
         }
