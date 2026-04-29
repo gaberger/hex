@@ -5356,5 +5356,118 @@ min_priority = 2
                 assert_eq!(round.timeout_s, Some(1800));
             }
         }
+
+        // ─── Idle-research trigger gate (wp-idle-research-swarm P1.4 / ADR-2604151200) ──
+        //
+        // Locks the predicate `should_self_enqueue_research_sweep` and its
+        // dependency `sweep_throttle_elapsed`. The trigger is the only
+        // mechanism that turns a quiet repo into self-directed research, so
+        // both gates (idle-tick threshold AND min-interval throttle) must
+        // hold or autonomy regresses to operator-driven prompting.
+        //
+        // Runs under `cargo test -p hex-cli brain::idle_research_trigger`.
+
+        mod idle_research_trigger {
+            use super::super::super::{
+                should_self_enqueue_research_sweep, sweep_throttle_elapsed,
+                DEFAULT_IDLE_THRESHOLD_TICKS, DEFAULT_MIN_SWEEP_INTERVAL_H,
+            };
+
+            #[test]
+            fn defaults_match_workplan_contract() {
+                // wp-idle-research-swarm P1.2 specifies N=4 ticks and a 6h
+                // throttle. If either default drifts the integration tests
+                // below would still pass on stale numbers — anchor the
+                // contract here.
+                assert_eq!(DEFAULT_IDLE_THRESHOLD_TICKS, 4);
+                assert_eq!(DEFAULT_MIN_SWEEP_INTERVAL_H, 6);
+            }
+
+            #[test]
+            fn fires_after_four_consecutive_empty_ticks() {
+                // Exactly the threshold (N=4) is enough; first sweep has no
+                // prior `last_sweep`, so the throttle gate is open.
+                let now = chrono::Utc::now();
+                assert!(
+                    should_self_enqueue_research_sweep(4, 4, None, now, 6),
+                    "idle_ticks=threshold with no prior sweep must fire"
+                );
+                // Three idle ticks is one short of the threshold — the
+                // trigger must stay quiet, otherwise we'd self-enqueue on
+                // every short lull.
+                assert!(
+                    !should_self_enqueue_research_sweep(3, 4, None, now, 6),
+                    "idle_ticks below threshold must not fire"
+                );
+            }
+
+            #[test]
+            fn does_not_fire_when_last_sweep_under_six_hours_ago() {
+                // Fresh sweep (5h ago) with the idle gate satisfied: throttle
+                // wins. Without this gate, a quiet repo would re-enqueue
+                // research-sweep on every drain tick.
+                let now = chrono::Utc::now();
+                let last = now - chrono::Duration::hours(5);
+                assert!(
+                    !should_self_enqueue_research_sweep(4, 4, Some(last), now, 6),
+                    "throttle must block fire when last sweep < interval"
+                );
+                // A 1-second gap after a fresh sweep is the worst case — the
+                // gate must hold even with idle_ticks vastly exceeding N.
+                let just_now = now - chrono::Duration::seconds(1);
+                assert!(
+                    !should_self_enqueue_research_sweep(99, 4, Some(just_now), now, 6),
+                    "high idle count cannot bypass the throttle"
+                );
+            }
+
+            #[test]
+            fn fires_when_last_sweep_at_least_six_hours_ago() {
+                // Boundary: exactly `interval_h` hours elapsed is eligible.
+                // The predicate is `>=`, not strict-`>` — locking that here
+                // prevents a future refactor from silently shrinking the
+                // window by a tick.
+                let now = chrono::Utc::now();
+                let exactly_six = now - chrono::Duration::hours(6);
+                assert!(
+                    should_self_enqueue_research_sweep(4, 4, Some(exactly_six), now, 6),
+                    "elapsed == interval must fire (>=, not strict >)"
+                );
+                // Well past the throttle: idle gate satisfied → fire.
+                let long_ago = now - chrono::Duration::hours(24);
+                assert!(
+                    should_self_enqueue_research_sweep(4, 4, Some(long_ago), now, 6),
+                    "elapsed >> interval must fire"
+                );
+            }
+
+            #[test]
+            fn idle_gate_required_even_when_throttle_is_open() {
+                // Symmetry check: throttle alone (last_sweep stale) must NOT
+                // fire if the queue is still busy. Both gates required —
+                // dropping either turns the trigger into noise.
+                let now = chrono::Utc::now();
+                let long_ago = now - chrono::Duration::hours(48);
+                assert!(
+                    !should_self_enqueue_research_sweep(0, 4, Some(long_ago), now, 6),
+                    "busy queue (idle=0) must block fire even with stale throttle"
+                );
+                assert!(
+                    !should_self_enqueue_research_sweep(3, 4, Some(long_ago), now, 6),
+                    "below-threshold idle must block fire even with stale throttle"
+                );
+            }
+
+            #[test]
+            fn sweep_throttle_treats_none_as_eligible() {
+                // `None` = never swept. The first sweep should fire as soon
+                // as the idle gate is satisfied, otherwise a brand-new
+                // install would never trigger research until an operator
+                // manually seeded `~/.hex/sched/last_research_sweep`.
+                let now = chrono::Utc::now();
+                assert!(sweep_throttle_elapsed(None, now, 6));
+                assert!(sweep_throttle_elapsed(None, now, 0));
+            }
+        }
     }
 }
