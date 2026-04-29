@@ -9,3 +9,4 @@ pub mod code_quality_analyst;
 pub mod drift_analyst;
 pub mod naming_analyst;
 pub mod performance_analyst;
+pub mod ux_analyst;
