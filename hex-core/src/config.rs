@@ -1,0 +1,1 @@
+// TODO: implement Add config schema to .hex/project.json: memory.health_check_interval_h (default 1), memory.cleanup.archive_after_days (default 90), memory.cleanup.max_retries (default 2). Load in daemon.

@@ -144,7 +144,7 @@
         {
           "id": "P3.2",
           "title": "Implement memory-health task executor: calls GET /api/memory/health, categorizes failures, generates actions list, calls POST /api/memory/health/execute, writes report to docs/analysis/memory-health-YYYYMMDD-HHMM.yaml + .md summary.",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-cli/src/commands/sched.rs"
