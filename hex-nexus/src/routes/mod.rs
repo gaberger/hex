@@ -19,6 +19,7 @@ pub mod projects;
 pub mod push;
 pub mod quality;
 pub mod query;
+pub mod research;
 pub mod rl;
 pub mod secrets;
 pub mod sessions;
@@ -465,6 +466,8 @@ pub fn build_router(state: SharedState) -> Router {
         // never registered. Wired here so `hex sched queue history` and the
         // sched_daemon_terminal_state.rs tests have an endpoint to call.
         .route("/api/sched/queue/history", get(sched::queue_history))
+        // Idle-research swarm dashboard surface (wp-idle-research-swarm P5.2)
+        .route("/api/research/sweeps", get(research::list_sweeps))
         // AIOS Experience (ADR-2604131500) — pulse, steer, taste, trust
         .route("/api/pulse", get(pulse::get_pulse))
         .route("/api/steer", post(steer::handle_steer))

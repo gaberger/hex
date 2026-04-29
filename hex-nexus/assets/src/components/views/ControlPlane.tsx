@@ -5,6 +5,8 @@
  * swarm/agent counts, and global activity summary.
  */
 import { Component, For, Show, createMemo, createSignal } from "solid-js";
+// @ts-expect-error — SweepsPanel.jsx (no .d.ts), wp-idle-research-swarm P5.2
+import SweepsPanel from "../SweepsPanel.jsx";
 import {
   swarms,
   swarmTasks,
@@ -415,6 +417,9 @@ const ControlPlane: Component = () => {
               </span>
             </div>
           </div>
+
+          {/* Idle-research sweep summaries (wp-idle-research-swarm P5.2) */}
+          <SweepsPanel />
         </Show>
       </div>
     </div>
