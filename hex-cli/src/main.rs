@@ -294,6 +294,8 @@ enum Commands {
         #[command(subcommand)]
         action: MemoryAction,
     },
+    /// Real-time system monitor (daemon, queue, activity, commits)
+    Monitor(commands::monitor::MonitorArgs),
     /// Neural architecture lab (experiment, mutate, evaluate model configs)
     #[command(name = "neural-lab")]
     NeuralLab {
@@ -627,6 +629,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Task { action } => commands::task::run(action).await,
         Commands::Inbox { action } => commands::inbox::run(action).await,
         Commands::Memory { action } => commands::memory::run(action).await,
+        Commands::Monitor(args) => commands::monitor::run(args).await,
         Commands::NeuralLab { action } => commands::neural_lab::run(action).await,
         Commands::Adr { action } => commands::adr::run(action).await,
         Commands::Spec { action } => commands::spec::run(action).await,
