@@ -32,6 +32,7 @@ pub mod middleware;
 pub mod orchestration;
 pub mod ports;
 pub mod remote;
+pub mod research;
 pub mod routes;
 pub mod state;
 pub mod usecases;
