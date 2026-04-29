@@ -78,6 +78,108 @@ const DEFAULT_IDLE_THRESHOLD_TICKS: u32 = 4;
 /// Default interval between periodic analyze tasks (1 hour).
 const DEFAULT_ANALYZE_INTERVAL_SECS: u64 = 3600;
 
+/// Default minimum interval between idle-triggered research sweeps, in hours
+/// (wp-idle-research-swarm P1.2 / ADR-2604151200). The throttle keeps the
+/// idle-trigger from re-firing every queue_drain tick once the queue settles
+/// — without it a quiet repo would self-enqueue research sweeps continuously.
+const DEFAULT_MIN_SWEEP_INTERVAL_H: u64 = 6;
+
+/// Read the minimum sweep-interval (in hours) from `.hex/project.json`
+/// (`sched.min_sweep_interval_h`). Falls back to
+/// [`DEFAULT_MIN_SWEEP_INTERVAL_H`] on any read/parse failure or when the key
+/// is absent. Mirrors [`load_idle_threshold_ticks`] — the throttle should
+/// degrade to its default rather than erroring on a missing config.
+fn load_min_sweep_interval_h() -> u64 {
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(_) => return DEFAULT_MIN_SWEEP_INTERVAL_H,
+    };
+    let content = match std::fs::read_to_string(cwd.join(".hex/project.json")) {
+        Ok(c) => c,
+        Err(_) => return DEFAULT_MIN_SWEEP_INTERVAL_H,
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(p) => p,
+        Err(_) => return DEFAULT_MIN_SWEEP_INTERVAL_H,
+    };
+    parsed
+        .get("sched")
+        .and_then(|s| s.get("min_sweep_interval_h"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(DEFAULT_MIN_SWEEP_INTERVAL_H)
+}
+
+/// Path to the persisted "last research-sweep" timestamp.
+/// `~/.hex/sched/last_research_sweep` is a simple single-line RFC3339
+/// timestamp file. Lives outside `brain-state.json` because operators may
+/// want to rotate the throttle independently (e.g. `rm` to force a sweep).
+fn last_research_sweep_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home)
+        .join(".hex")
+        .join("sched")
+        .join("last_research_sweep")
+}
+
+/// Read the last research-sweep timestamp. Missing file or malformed
+/// content returns `None` — both mean "never swept", so the throttle gate
+/// allows the next sweep to fire.
+fn read_last_research_sweep() -> Option<chrono::DateTime<chrono::Utc>> {
+    let raw = std::fs::read_to_string(last_research_sweep_path()).ok()?;
+    let trimmed = raw.trim();
+    chrono::DateTime::parse_from_rfc3339(trimmed)
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+}
+
+/// Persist the last research-sweep timestamp. Best-effort — a failed write
+/// is logged but does not abort the caller; we'd rather double-fire a sweep
+/// than crash the drain loop.
+fn write_last_research_sweep(ts: chrono::DateTime<chrono::Utc>) {
+    let path = last_research_sweep_path();
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("  {} last_research_sweep dir: {}", "warn".yellow(), e);
+            return;
+        }
+    }
+    if let Err(e) = std::fs::write(&path, ts.to_rfc3339()) {
+        eprintln!("  {} last_research_sweep write: {}", "warn".yellow(), e);
+    }
+}
+
+/// Pure: has at least `interval_h` hours elapsed since `last_sweep`?
+/// `None` (never swept) is treated as eligible — the first sweep should
+/// fire as soon as the idle threshold is reached.
+fn sweep_throttle_elapsed(
+    last_sweep: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+    interval_h: u64,
+) -> bool {
+    match last_sweep {
+        None => true,
+        Some(last) => {
+            let elapsed = now.signed_duration_since(last);
+            elapsed.num_seconds() >= (interval_h as i64) * 3600
+        }
+    }
+}
+
+/// Pure: combined gate for the idle-research trigger
+/// (wp-idle-research-swarm P1.2). Fires only when the queue has been idle
+/// for at least `threshold` ticks AND the last sweep is older than
+/// `interval_h` hours. Both gates are required — idleness alone would spam
+/// the queue, throttle alone would never fire on a busy repo.
+fn should_self_enqueue_research_sweep(
+    idle_ticks: u32,
+    threshold: u32,
+    last_sweep: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+    interval_h: u64,
+) -> bool {
+    idle_ticks >= threshold && sweep_throttle_elapsed(last_sweep, now, interval_h)
+}
+
 /// Read the idle-tick threshold from `.hex/project.json` (key
 /// `sched.idle_threshold_ticks`). Falls back to [`DEFAULT_IDLE_THRESHOLD_TICKS`]
 /// on any read/parse failure or when the key is absent — the feature degrades
@@ -4240,6 +4342,43 @@ async fn queue_drain() -> anyhow::Result<()> {
     }
     let idle_ticks = state.idle_tick_count;
     save_daemon_state(&state);
+
+    // ── Idle-research trigger (wp-idle-research-swarm P1.2 / ADR-2604151200) ──
+    // When the queue has been idle for `threshold` ticks AND no sweep has
+    // run for `min_sweep_interval_h` hours, self-enqueue a research-sweep.
+    // The actual analyst dispatch lands in P4.1 (hex-nexus); for now we
+    // just put the work item on the queue with the trigger metadata so a
+    // downstream worker (or `hex sched queue history`) can pick it up.
+    if is_idle && idle_ticks >= threshold {
+        let interval_h = load_min_sweep_interval_h();
+        let now = chrono::Utc::now();
+        let last = read_last_research_sweep();
+        if should_self_enqueue_research_sweep(idle_ticks, threshold, last, now, interval_h) {
+            let payload = json!({
+                "trigger": "idle",
+                "idle_ticks": idle_ticks,
+                "threshold": threshold,
+                "min_sweep_interval_h": interval_h,
+                "enqueued_at": now.to_rfc3339(),
+            })
+            .to_string();
+            match enqueue_brain_task("research-sweep", &payload).await {
+                Ok(id) => {
+                    println!(
+                        "  ⬡ enqueued idle research-sweep {} (idle {}/{} ticks, last sweep {})",
+                        id,
+                        idle_ticks,
+                        threshold,
+                        last.map(|t| t.to_rfc3339()).unwrap_or_else(|| "never".to_string()),
+                    );
+                    write_last_research_sweep(now);
+                }
+                Err(e) => {
+                    eprintln!("  {} enqueue research-sweep: {}", "✗".red(), e);
+                }
+            }
+        }
+    }
 
     if pending.is_empty() {
         if idle_ticks >= threshold {
