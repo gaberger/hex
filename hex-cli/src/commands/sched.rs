@@ -114,11 +114,84 @@ fn load_min_sweep_interval_h() -> u64 {
 /// timestamp file. Lives outside `brain-state.json` because operators may
 /// want to rotate the throttle independently (e.g. `rm` to force a sweep).
 fn last_research_sweep_path() -> PathBuf {
+    sched_signal_dir().join("last_research_sweep")
+}
+
+/// Sched coordination directory. Mirrors `default_signal_dir()` in
+/// `hex-nexus/src/research/coordinator.rs` — both processes coordinate via
+/// flat files under this directory (in-flight marker, abort signal, last
+/// sweep). `hex-cli` doesn't depend on `hex-nexus`, so the wire format
+/// (filenames + parent dir) is the contract; the matching constants below
+/// must stay in lockstep with their nexus-side counterparts.
+fn sched_signal_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
-        .join(".hex")
-        .join("sched")
-        .join("last_research_sweep")
+    PathBuf::from(home).join(".hex").join("sched")
+}
+
+/// Filename of the sweep in-flight marker. Must equal
+/// `hex_nexus::research::coordinator::SWEEP_IN_FLIGHT_FILENAME`.
+const SWEEP_IN_FLIGHT_FILENAME: &str = "sweep_in_flight";
+
+/// Filename of the sweep abort signal. Must equal
+/// `hex_nexus::research::coordinator::SWEEP_ABORT_FILENAME`.
+const SWEEP_ABORT_FILENAME: &str = "sweep_abort";
+
+fn sweep_in_flight_path() -> PathBuf {
+    sched_signal_dir().join(SWEEP_IN_FLIGHT_FILENAME)
+}
+
+fn sweep_abort_path() -> PathBuf {
+    sched_signal_dir().join(SWEEP_ABORT_FILENAME)
+}
+
+/// True iff the coordinator currently has a sweep in flight.
+/// `hex-cli` reads this only — the marker is owned by the coordinator.
+fn is_sweep_in_flight() -> bool {
+    sweep_in_flight_path().exists()
+}
+
+/// Write the abort signal so the coordinator's per-analyst poll bails
+/// cleanly at the next checkpoint (wp-idle-research-swarm P4.4).
+/// Best-effort — a failed write logs and returns; worst case the next
+/// drain tick re-tries. Idempotent: re-writing the same file is a no-op
+/// from the coordinator's perspective.
+fn request_sweep_abort() {
+    let dir = sched_signal_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("  {} sweep-abort dir: {}", "warn".yellow(), e);
+        return;
+    }
+    if let Err(e) = std::fs::write(sweep_abort_path(), chrono::Utc::now().to_rfc3339()) {
+        eprintln!("  {} sweep-abort write: {}", "warn".yellow(), e);
+    }
+}
+
+/// Delete the persisted "last research-sweep" timestamp so the throttle
+/// gate (`sweep_throttle_elapsed`) returns true on the next idle window.
+/// Used by the preemption path: when we abort an in-flight sweep we want
+/// the next idle window to re-fire it, not wait six more hours.
+fn clear_last_research_sweep() {
+    let path = last_research_sweep_path();
+    if path.exists() {
+        if let Err(e) = std::fs::remove_file(&path) {
+            eprintln!("  {} clear last_research_sweep: {}", "warn".yellow(), e);
+        }
+    }
+}
+
+/// Pure: should the daemon preempt the in-flight sweep?
+///
+/// Preemption fires iff a sweep is currently in-flight AND at least one
+/// pending task has a kind other than `research-sweep`. Both gates are
+/// required:
+/// * Without the in-flight check we'd write an abort signal that would
+///   sit on disk forever (no coordinator to consume it) and could
+///   spuriously cancel the *next* sweep.
+/// * Without the kind check, queueing a second research-sweep behind an
+///   in-flight one would self-cancel — but we want concurrent sweeps to
+///   coalesce via the throttle, not to abort each other.
+fn should_preempt_sweep(pending_kinds: &[&str], sweep_in_flight: bool) -> bool {
+    sweep_in_flight && pending_kinds.iter().any(|k| *k != "research-sweep")
 }
 
 /// Read the last research-sweep timestamp. Missing file or malformed
@@ -4333,6 +4406,28 @@ async fn queue_drain() -> anyhow::Result<()> {
     let in_flight = list_brain_tasks(Some("in_progress")).await.unwrap_or_default();
     let is_idle = pending.is_empty() && in_flight.is_empty();
 
+    // ── Sweep preemption (wp-idle-research-swarm P4.4) ──────────────────
+    // If a research sweep is currently in-flight (the coordinator's
+    // marker file is present) AND a non-research task has landed in
+    // pending, signal-abort the sweep so the higher-priority work runs
+    // first. We also clear the throttle so the next idle window re-fires
+    // the sweep — otherwise the 6h gate would block a re-enqueue and the
+    // half-finished research never gets resumed.
+    let pending_kinds: Vec<&str> = pending
+        .iter()
+        .map(|t| t.get("kind").and_then(|v| v.as_str()).unwrap_or(""))
+        .collect();
+    if should_preempt_sweep(&pending_kinds, is_sweep_in_flight()) {
+        let non_research_count = pending_kinds.iter().filter(|k| **k != "research-sweep").count();
+        request_sweep_abort();
+        clear_last_research_sweep();
+        println!(
+            "  {} preempting in-flight research-sweep for {} non-research task(s); will re-enqueue at next idle window",
+            "⚠".yellow(),
+            non_research_count,
+        );
+    }
+
     let mut state = load_daemon_state();
     let threshold = load_idle_threshold_ticks();
     if is_idle {
@@ -5467,6 +5562,90 @@ min_priority = 2
                 let now = chrono::Utc::now();
                 assert!(sweep_throttle_elapsed(None, now, 6));
                 assert!(sweep_throttle_elapsed(None, now, 0));
+            }
+        }
+
+        // ─── Sweep preemption (wp-idle-research-swarm P4.4) ─────────────
+        //
+        // Locks the predicate `should_preempt_sweep`. The pure-logic gate
+        // is what queue_drain uses to decide whether to write the abort
+        // signal; getting it wrong either spams aborts at no sweep (and
+        // leaves a stale signal that cancels the *next* sweep) or fails
+        // to preempt when real work arrives (and a low-priority research
+        // sweep blocks user-driven tasks).
+        mod sweep_preemption_predicate {
+            use super::super::super::should_preempt_sweep;
+
+            #[test]
+            fn fires_when_sweep_in_flight_and_non_research_pending() {
+                // Canonical preemption case: a workplan task arrives mid-sweep.
+                let pending = vec!["workplan", "research-sweep"];
+                assert!(
+                    should_preempt_sweep(&pending, true),
+                    "non-research pending + sweep in flight must preempt"
+                );
+            }
+
+            #[test]
+            fn does_not_fire_when_no_sweep_in_flight() {
+                // Without an active sweep there's nothing to abort. Writing
+                // the abort signal anyway would leave a stale signal on
+                // disk that the *next* sweep would honor — so the next
+                // idle window's research would self-cancel before doing
+                // any work.
+                let pending = vec!["workplan", "shell"];
+                assert!(
+                    !should_preempt_sweep(&pending, false),
+                    "must not fire abort when no sweep is running"
+                );
+            }
+
+            #[test]
+            fn does_not_fire_when_only_research_pending() {
+                // A second research-sweep queued behind an in-flight one
+                // should be coalesced by the throttle, not preempted.
+                // Preempting here would force-abort a sweep just to
+                // re-enqueue the same kind of work — pure churn.
+                let pending = vec!["research-sweep", "research-sweep"];
+                assert!(
+                    !should_preempt_sweep(&pending, true),
+                    "research-only pending must not preempt"
+                );
+            }
+
+            #[test]
+            fn does_not_fire_when_pending_empty() {
+                // Empty queue = nothing to prioritize over the sweep.
+                assert!(
+                    !should_preempt_sweep(&[], true),
+                    "empty pending must not preempt"
+                );
+                assert!(
+                    !should_preempt_sweep(&[], false),
+                    "empty pending without sweep must not preempt"
+                );
+            }
+
+            #[test]
+            fn fires_for_any_non_research_kind() {
+                // The kind check is a single negative match — every
+                // currently-defined kind except `research-sweep` is a
+                // valid preemption trigger. Pin a representative set so a
+                // future "low-priority" kind doesn't silently bypass the
+                // gate.
+                for kind in [
+                    "workplan",
+                    "hex-command",
+                    "shell",
+                    "analyze",
+                    "remote-shell",
+                    "unknown-future-kind",
+                ] {
+                    assert!(
+                        should_preempt_sweep(&[kind], true),
+                        "kind `{kind}` should trigger preemption"
+                    );
+                }
             }
         }
     }
