@@ -17,7 +17,7 @@ struct Phase {
     tasks: Vec<Task>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Task {
     id: String,
     title: String,
@@ -68,8 +68,14 @@ pub async fn execute_workplan_autonomous(
         .context("Failed to change to project directory")?;
 
     // Iterate phases and tasks
-    for phase in &mut workplan.phases {
-        for task in &mut phase.tasks {
+    let total_phases = workplan.phases.len();
+    for phase_idx in 0..total_phases {
+        let task_count = workplan.phases[phase_idx].tasks.len();
+
+        for task_idx in 0..task_count {
+            // Clone task data to avoid borrow conflicts
+            let task = workplan.phases[phase_idx].tasks[task_idx].clone();
+
             // Skip non-pending tasks
             if task.status != "pending" {
                 skipped += 1;
@@ -81,28 +87,33 @@ pub async fn execute_workplan_autonomous(
             }
 
             // Execute task
-            match execute_task(task, project_dir, background).await {
+            let task_result = execute_task(&task, project_dir, background).await;
+
+            // Now we can mutate the workplan
+            match task_result {
                 Ok(_) => {
-                    task.status = "done".to_string();
+                    workplan.phases[phase_idx].tasks[task_idx].status = "done".to_string();
                     completed += 1;
                     if !background {
                         eprintln!("  ✓ completed");
                     }
                 }
                 Err(e) => {
-                    task.status = "failed".to_string();
+                    workplan.phases[phase_idx].tasks[task_idx].status = "failed".to_string();
                     failed += 1;
                     let error_msg = format!("{}: {}", task.id, e);
                     failures.push(error_msg.clone());
                     if !background {
                         eprintln!("  ✗ failed: {}", e);
                     }
+                    // Save before stopping
+                    save_workplan(&workplan, workplan_path)?;
                     // Stop on first failure
                     break;
                 }
             }
 
-            // Save progress after each task
+            // Save progress after each successful task
             save_workplan(&workplan, workplan_path)?;
         }
 
