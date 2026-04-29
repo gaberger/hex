@@ -111,7 +111,7 @@
         {
           "id": "P2.4",
           "title": "Add batch action endpoint POST /api/memory/health/execute — accepts {\"actions\": [{\"task_id\": \"...\", \"action\": \"retry|archive|escalate\"}]} and executes all, returns summary {\"retried\": N, \"archived\": N, \"escalated\": N}.",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/routes/memory_health.rs"
