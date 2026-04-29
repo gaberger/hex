@@ -1,0 +1,1 @@
+// TODO: implement Implement escalate action: POST /api/memory/escalate with task_id — writes ADR draft under docs/adrs/drafts/ADR-<timestamp>-<category>.md with failure details, suggested fix. Returns draft path.
