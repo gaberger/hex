@@ -41,6 +41,19 @@
       }
     },
     {
+      "name": "hex_monitor",
+      "category": "observability",
+      "description": "Real-time system monitor: daemon status, queue, recent activity, commits, focus objective. Returns timestamped snapshot.",
+      "route": { "method": "GET", "path": "/api/monitor" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "json": { "type": "boolean", "description": "Return raw JSON instead of formatted text", "default": true }
+        },
+        "required": []
+      }
+    },
+    {
       "name": "hex_hexflo_swarm_init",
       "category": "swarm",
       "description": "Initialize a new swarm for coordinated multi-agent work",
