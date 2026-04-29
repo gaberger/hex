@@ -4191,9 +4191,21 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
         "analyze" => std::process::Command::new("hex")
             .args(["analyze", ".", "--json"])
             .output(),
-        "workplan" => std::process::Command::new("hex")
-            .args(["plan", "execute", payload])
-            .output(),
+        "workplan" => {
+            // Path C (ADR-2604291354): when no active Claude session, spawn
+            // autonomous hex-agent instead of dispatching to nexus
+            if std::env::var("CLAUDE_SESSION_ID").is_err() {
+                eprintln!("⬡ spawned autonomous agent for workplan {}", payload);
+                std::process::Command::new("hex-agent")
+                    .args(["workplan", payload, "--background"])
+                    .output()
+            } else {
+                // Path B: dispatch to active Claude session via nexus
+                std::process::Command::new("hex")
+                    .args(["plan", "execute", payload])
+                    .output()
+            }
+        }
         "shell" => {
             // Whitelist: only cargo, git, ls, echo
             let mut parts = payload.split_whitespace();

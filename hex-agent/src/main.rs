@@ -1,4 +1,4 @@
-use hex_agent::{domain, ports, adapters, usecases, worker};
+use hex_agent::{domain, ports, adapters, usecases, worker, workplan_executor::execute_workplan_autonomous};
 
 use clap::Parser;
 use std::path::PathBuf;
@@ -134,6 +134,14 @@ enum Command {
         /// hex-nexus port (overrides NEXUS_PORT env var, default: 5555)
         #[arg(long)]
         nexus_port: Option<String>,
+    },
+    /// Execute a workplan autonomously (for daemon-spawned background agents)
+    Workplan {
+        /// Path to workplan JSON file
+        workplan: PathBuf,
+        /// Run in background mode (suppress interactive prompts)
+        #[arg(long)]
+        background: bool,
     },
 }
 
@@ -304,6 +312,20 @@ async fn main() -> anyhow::Result<()> {
             }
             Err(e) => {
                 eprintln!("\x1b[31mMigration failed: {}\x1b[0m", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if let Some(Command::Workplan { workplan, background }) = &args.command {
+        let result = execute_workplan_autonomous(workplan, *background, &project_dir).await;
+        match result {
+            Ok(summary) => {
+                println!("{}", summary);
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("{}", e);
                 std::process::exit(1);
             }
         }
