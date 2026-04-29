@@ -255,7 +255,7 @@
         {
           "id": "P5.3",
           "title": "Add unit tests for categorizer edge cases: duplicate detection across 7d window, superseded detection when workplan file missing vs marked complete, exponential backoff calculation for retries.",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/memory/categorizer.rs"
