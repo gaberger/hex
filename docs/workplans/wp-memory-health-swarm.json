@@ -242,7 +242,7 @@
         {
           "id": "P5.2",
           "title": "Wire cleanup into memory-health task: after executing actions, check if cleanup is due (last_cleanup > 24h ago), call DELETE /api/memory/cleanup, log result in report.",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-cli/src/commands/sched.rs"
