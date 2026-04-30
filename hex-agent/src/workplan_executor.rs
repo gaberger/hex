@@ -47,7 +47,7 @@ pub struct InferenceAttempt {
     pub cost_estimate: f64,
 }
 
-fn validate_code_output(code: &str) -> Result<(), String> {
+fn validate_code_output(code: &str, file_path: Option<&str>) -> Result<(), String> {
     if code.contains("...") || code.contains("TODO") || code.contains("FIXME") || code.contains("placeholder") {
         return Err(String::from("Code contains stub patterns"));
     }
@@ -61,12 +61,17 @@ fn validate_code_output(code: &str) -> Result<(), String> {
         return Err(String::from("Code is less than 5 lines"));
     }
 
-    if code.contains("unresolved import") {
-        return Err(String::from("Missing or incorrect imports"));
-    }
+    // Only validate Rust syntax for .rs files
+    if let Some(path) = file_path {
+        if path.ends_with(".rs") {
+            if code.contains("unresolved import") {
+                return Err(String::from("Missing or incorrect imports"));
+            }
 
-    if let Err(e) = syn::parse_file(code) {
-        return Err(format!("Invalid syntax: {}", e));
+            if let Err(e) = syn::parse_file(code) {
+                return Err(format!("Invalid syntax: {}", e));
+            }
+        }
     }
 
     Ok(())
@@ -77,7 +82,7 @@ async fn try_with_escalation(
     files: &[String],
     evidence: &[String],
     background: bool,
-) -> Result<(String, InferenceAttempt)> {
+) -> Result<(Vec<(String, String)>, InferenceAttempt)> {
     let prompt = InferenceClient::build_task_prompt(task_title, files, evidence);
 
     // Tier 1: Local model
@@ -93,19 +98,38 @@ async fn try_with_escalation(
     let local_duration = start.elapsed().as_millis() as u64;
 
     if let Ok(response) = local_result {
-        if validate_code_output(&response).is_ok() {
-            if !background {
-                eprintln!("    ✓ Local model succeeded");
+        match InferenceClient::parse_response(&response) {
+            Ok(parsed_files) => {
+                // Validate each file
+                let mut all_valid = true;
+                for (path, content) in &parsed_files {
+                    if let Err(e) = validate_code_output(content, Some(path)) {
+                        if !background {
+                            eprintln!("    ✗ Local validation failed for {}: {}", path, e);
+                        }
+                        all_valid = false;
+                        break;
+                    }
+                }
+
+                if all_valid {
+                    if !background {
+                        eprintln!("    ✓ Local model succeeded");
+                    }
+                    return Ok((parsed_files, InferenceAttempt {
+                        tier_used: "Local".to_string(),
+                        model_name: tier.model_name().to_string(),
+                        validation_passed: true,
+                        duration_ms: local_duration,
+                        cost_estimate: 0.0,
+                    }));
+                }
             }
-            return Ok((response, InferenceAttempt {
-                tier_used: "Local".to_string(),
-                model_name: tier.model_name().to_string(),
-                validation_passed: true,
-                duration_ms: local_duration,
-                cost_estimate: 0.0,
-            }));
-        } else if !background {
-            eprintln!("    ✗ Local validation failed");
+            Err(e) => {
+                if !background {
+                    eprintln!("    ✗ Local parse failed: {}", e);
+                }
+            }
         }
     } else if !background {
         eprintln!("    ✗ Local inference failed");
@@ -121,23 +145,52 @@ async fn try_with_escalation(
         let openrouter_result = openrouter.generate(prompt.clone()).await;
         let openrouter_duration = start.elapsed().as_millis() as u64;
 
-        if let Ok(response) = openrouter_result {
-            if validate_code_output(&response).is_ok() {
+        match openrouter_result {
+            Ok(response) => {
                 if !background {
-                    eprintln!("    ✓ OpenRouter succeeded");
+                    eprintln!("    OpenRouter response length: {} bytes", response.len());
                 }
-                return Ok((response, InferenceAttempt {
-                    tier_used: "OpenRouter".to_string(),
-                    model_name: "deepseek/deepseek-coder".to_string(),
-                    validation_passed: true,
-                    duration_ms: openrouter_duration,
-                    cost_estimate: 0.0005,
-                }));
-            } else if !background {
-                eprintln!("    ✗ OpenRouter validation failed");
+                match InferenceClient::parse_response(&response) {
+                    Ok(parsed_files) => {
+                        let mut all_valid = true;
+                        for (path, content) in &parsed_files {
+                            match validate_code_output(content, Some(path)) {
+                                Ok(_) => {},
+                                Err(e) => {
+                                    if !background {
+                                        eprintln!("    ✗ OpenRouter validation failed for {}: {}", path, e);
+                                    }
+                                    all_valid = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if all_valid {
+                            if !background {
+                                eprintln!("    ✓ OpenRouter succeeded");
+                            }
+                            return Ok((parsed_files, InferenceAttempt {
+                                tier_used: "OpenRouter".to_string(),
+                                model_name: "deepseek/deepseek-chat".to_string(),
+                                validation_passed: true,
+                                duration_ms: openrouter_duration,
+                                cost_estimate: 0.0005,
+                            }));
+                        }
+                    }
+                    Err(e) => {
+                        if !background {
+                            eprintln!("    ✗ OpenRouter parse failed: {}", e);
+                        }
+                    }
+                }
             }
-        } else if !background {
-            eprintln!("    ✗ OpenRouter inference failed");
+            Err(e) => {
+                if !background {
+                    eprintln!("    ✗ OpenRouter inference failed: {}", e);
+                }
+            }
         }
     }
 
@@ -151,23 +204,49 @@ async fn try_with_escalation(
         let claude_result = claude.generate(prompt.clone()).await;
         let claude_duration = start.elapsed().as_millis() as u64;
 
-        if let Ok(response) = claude_result {
-            if validate_code_output(&response).is_ok() {
-                if !background {
-                    eprintln!("    ✓ Claude succeeded");
+        match claude_result {
+            Ok(response) => {
+                match InferenceClient::parse_response(&response) {
+                    Ok(parsed_files) => {
+                        let mut all_valid = true;
+                        for (path, content) in &parsed_files {
+                            match validate_code_output(content, Some(path)) {
+                                Ok(_) => {},
+                                Err(e) => {
+                                    if !background {
+                                        eprintln!("    ✗ Claude validation failed for {}: {}", path, e);
+                                    }
+                                    all_valid = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if all_valid {
+                            if !background {
+                                eprintln!("    ✓ Claude succeeded");
+                            }
+                            return Ok((parsed_files, InferenceAttempt {
+                                tier_used: "Claude".to_string(),
+                                model_name: "claude-sonnet-4".to_string(),
+                                validation_passed: true,
+                                duration_ms: claude_duration,
+                                cost_estimate: 0.15,
+                            }));
+                        }
+                    }
+                    Err(e) => {
+                        if !background {
+                            eprintln!("    ✗ Claude parse failed: {}", e);
+                        }
+                    }
                 }
-                return Ok((response, InferenceAttempt {
-                    tier_used: "Claude".to_string(),
-                    model_name: "claude-sonnet-4".to_string(),
-                    validation_passed: true,
-                    duration_ms: claude_duration,
-                    cost_estimate: 0.15,
-                }));
-            } else if !background {
-                eprintln!("    ✗ Claude validation failed");
             }
-        } else if !background {
-            eprintln!("    ✗ Claude inference failed");
+            Err(e) => {
+                if !background {
+                    eprintln!("    ✗ Claude inference failed: {}", e);
+                }
+            }
         }
     }
 
@@ -230,57 +309,48 @@ pub async fn execute_workplan_autonomous(
             ).await;
 
             match generation_result {
-                Ok((response, attempt)) => {
+                Ok((file_contents, attempt)) => {
                     if !background {
                         eprintln!("    Succeeded with: {} ({}) in {}ms, cost ~${:.4}",
                             attempt.tier_used, attempt.model_name, attempt.duration_ms, attempt.cost_estimate);
                     }
 
-                    // Parse and write files
-                    match InferenceClient::parse_response(&response) {
-                        Ok(file_contents) => {
-                            for (file_path, content) in file_contents {
-                                let full_path = project_dir.join(&file_path);
-                                if let Some(parent) = full_path.parent() {
-                                    std::fs::create_dir_all(parent).ok();
+                    // Write files
+                    for (file_path, content) in file_contents {
+                        let full_path = project_dir.join(&file_path);
+                        if let Some(parent) = full_path.parent() {
+                            std::fs::create_dir_all(parent).ok();
+                        }
+                        std::fs::write(&full_path, &content).ok();
+                    }
+
+                    // Run evidence commands
+                    let mut evidence_passed = true;
+                    for cmd in evidence {
+                        let output = Command::new("sh")
+                            .arg("-c")
+                            .arg(cmd)
+                            .current_dir(project_dir)
+                            .output();
+
+                        if let Ok(result) = output {
+                            if !result.status.success() {
+                                evidence_passed = false;
+                                if !background {
+                                    eprintln!("    ✗ Evidence failed: {}", cmd);
                                 }
-                                std::fs::write(&full_path, &content).ok();
-                            }
-
-                            // Run evidence commands
-                            let mut evidence_passed = true;
-                            for cmd in evidence {
-                                let output = Command::new("sh")
-                                    .arg("-c")
-                                    .arg(cmd)
-                                    .current_dir(project_dir)
-                                    .output();
-
-                                if let Ok(result) = output {
-                                    if !result.status.success() {
-                                        evidence_passed = false;
-                                        if !background {
-                                            eprintln!("    ✗ Evidence failed: {}", cmd);
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if evidence_passed {
-                                task.status = "done".to_string();
-                                summary.completed += 1;
-                            } else {
-                                task.status = "failed".to_string();
-                                summary.failed += 1;
-                                summary.failures.push(format!("{}: evidence validation failed", task.id));
+                                break;
                             }
                         }
-                        Err(e) => {
-                            task.status = "failed".to_string();
-                            summary.failed += 1;
-                            summary.failures.push(format!("{}: {}", task.id, e));
-                        }
+                    }
+
+                    if evidence_passed {
+                        task.status = "done".to_string();
+                        summary.completed += 1;
+                    } else {
+                        task.status = "failed".to_string();
+                        summary.failed += 1;
+                        summary.failures.push(format!("{}: evidence validation failed", task.id));
                     }
                 }
                 Err(e) => {

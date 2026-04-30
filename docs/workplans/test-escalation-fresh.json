@@ -9,7 +9,7 @@
         {
           "id": "P1.1",
           "title": "Create docs/guides/escalation-strategy.md explaining Local → OpenRouter → Claude routing with cost analysis",
-          "status": "failed",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "docs/guides/escalation-strategy.md"

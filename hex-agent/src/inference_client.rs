@@ -264,18 +264,27 @@ impl OpenRouterClient {
     }
 
     fn get_from_vault(key: &str) -> Option<String> {
-        std::process::Command::new("hex")
-            .args(["secrets", "get", key])
+        // Call hex-nexus API via curl (synchronous, no async runtime needed)
+        let nexus_url = std::env::var("HEX_NEXUS_URL")
+            .unwrap_or_else(|_| "http://localhost:5555".to_string());
+
+        let url = format!("{}/api/secrets/vault/{}", nexus_url, key);
+
+        let output = std::process::Command::new("curl")
+            .args(["-s", &url])
             .output()
             .ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim().to_string())
+            .filter(|o| o.status.success())?;
+
+        let json_str = String::from_utf8(output.stdout).ok()?;
+        let json: serde_json::Value = serde_json::from_str(&json_str).ok()?;
+
+        json.get("value")?.as_str().map(|s| s.to_string())
     }
 
     pub async fn generate(&self, prompt: String) -> Result<String> {
         let request = OpenRouterRequest {
-            model: "deepseek/deepseek-coder".to_string(),
+            model: "deepseek/deepseek-chat".to_string(),  // deepseek-coder not available, using chat
             messages: vec![Message {
                 role: "user".to_string(),
                 content: prompt,
@@ -289,6 +298,8 @@ impl OpenRouterClient {
         let response = client
             .post("https://openrouter.ai/api/v1/chat/completions")
             .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("HTTP-Referer", "https://hex.run")
+            .header("X-Title", "hex-agent")
             .json(&request)
             .send()
             .await
@@ -322,13 +333,22 @@ impl ClaudeClient {
     }
 
     fn get_from_vault(key: &str) -> Option<String> {
-        std::process::Command::new("hex")
-            .args(["secrets", "get", key])
+        // Call hex-nexus API via curl (synchronous, no async runtime needed)
+        let nexus_url = std::env::var("HEX_NEXUS_URL")
+            .unwrap_or_else(|_| "http://localhost:5555".to_string());
+
+        let url = format!("{}/api/secrets/vault/{}", nexus_url, key);
+
+        let output = std::process::Command::new("curl")
+            .args(["-s", &url])
             .output()
             .ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim().to_string())
+            .filter(|o| o.status.success())?;
+
+        let json_str = String::from_utf8(output.stdout).ok()?;
+        let json: serde_json::Value = serde_json::from_str(&json_str).ok()?;
+
+        json.get("value")?.as_str().map(|s| s.to_string())
     }
 
     pub async fn generate(&self, prompt: String) -> Result<String> {
