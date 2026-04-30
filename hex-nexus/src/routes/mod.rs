@@ -46,7 +46,7 @@ pub mod steer;
 pub mod classifier;
 pub mod taste;
 pub mod trust;
-pub mod workplan;
+// pub mod workplan; // removed stub module
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
 use axum::response::{IntoResponse, Redirect};
@@ -640,9 +640,6 @@ pub fn build_router(state: SharedState) -> Router {
         // Workplan execution
         .route("/api/workplan/execute", post(orchestration::execute_workplan)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
-        // Path B (P1.1): poll terminal-state for a specific execution id.
-        // MUST come before /api/workplan/{id} to avoid the {id} catch-all matching "execute".
-        .route("/api/workplan/execute/{id}/status", get(workplan::get_execution_status))
         .route("/api/workplan/status", get(orchestration::workplan_status))
         .route("/api/workplan/fail", post(orchestration::fail_workplan))
         .route("/api/workplan/pause", post(orchestration::pause_workplan))

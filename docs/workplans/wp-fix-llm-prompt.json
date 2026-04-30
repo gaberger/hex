@@ -1,38 +1,38 @@
 {
   "id": "wp-fix-llm-prompt",
-  "title": "Fix LLM prompt to prevent markdown wrapping and file replacement",
   "phases": [
     {
       "id": "P1",
-      "title": "Strengthen prompt instructions",
       "tasks": [
         {
-          "id": "P1.1",
-          "title": "Update build_task_prompt in hex-agent/src/inference_client.rs to add explicit NO MARKDOWN instruction: 'CRITICAL: Do NOT wrap output in markdown code blocks (no ```rust). Output raw file content only.'",
-          "status": "pending",
-          "strategy_hint": "transform",
-          "files": [
-            "hex-agent/src/inference_client.rs"
-          ],
           "evidence": [
             "grep -q 'NO MARKDOWN\\|no ```' hex-agent/src/inference_client.rs",
             "cargo check -p hex-agent"
-          ]
-        },
-        {
-          "id": "P1.2",
-          "title": "Add validation in parse_response to detect and strip markdown code fences if LLM adds them anyway",
-          "status": "pending",
-          "strategy_hint": "codegen",
+          ],
           "files": [
             "hex-agent/src/inference_client.rs"
           ],
+          "id": "P1.1",
+          "status": "done",
+          "strategy_hint": "transform",
+          "title": "Update build_task_prompt in hex-agent/src/inference_client.rs to add explicit NO MARKDOWN instruction: 'CRITICAL: Do NOT wrap output in markdown code blocks (no ```rust). Output raw file content only.'"
+        },
+        {
           "evidence": [
             "grep -q 'strip.*markdown\\|code.*fence' hex-agent/src/inference_client.rs",
             "cargo check -p hex-agent"
-          ]
+          ],
+          "files": [
+            "hex-agent/src/inference_client.rs"
+          ],
+          "id": "P1.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add validation in parse_response to detect and strip markdown code fences if LLM adds them anyway"
         }
-      ]
+      ],
+      "title": "Strengthen prompt instructions"
     }
-  ]
+  ],
+  "title": "Fix LLM prompt to prevent markdown wrapping and file replacement"
 }

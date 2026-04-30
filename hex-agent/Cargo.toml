@@ -38,6 +38,7 @@ async-trait = "0.1"
 anyhow = "1"
 lru = "0.12"
 notify = "6"
+syn = { version = "2", features = ["full"] }
 
 # Markdown frontmatter parsing
 gray_matter = "0.2"

@@ -47,8 +47,60 @@ struct OllamaResponse {
     thinking: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct OpenRouterRequest {
+    model: String,
+    messages: Vec<Message>,
+}
+
+#[derive(Debug, Serialize)]
+struct ClaudeRequest {
+    model: String,
+    messages: Vec<Message>,
+    max_tokens: u32,
+}
+
+#[derive(Debug, Serialize)]
+struct Message {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenRouterResponse {
+    choices: Vec<Choice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaudeResponse {
+    content: Vec<ContentBlock>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Choice {
+    message: MessageResponse,
+}
+
+#[derive(Debug, Deserialize)]
+struct MessageResponse {
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContentBlock {
+    text: String,
+}
+
 pub struct InferenceClient {
     base_url: String,
+}
+
+pub struct OpenRouterClient {
+    api_key: String,
+}
+
+pub struct ClaudeClient {
+    api_key: String,
 }
 
 impl InferenceClient {
@@ -200,5 +252,101 @@ impl InferenceClient {
 impl Default for InferenceClient {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl OpenRouterClient {
+    pub fn new() -> Option<Self> {
+        std::env::var("OPENROUTER_API_KEY")
+            .ok()
+            .map(|api_key| Self { api_key })
+    }
+
+    pub async fn generate(&self, prompt: String) -> Result<String> {
+        let request = OpenRouterRequest {
+            model: "deepseek/deepseek-coder".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: prompt,
+            }],
+        };
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .build()?;
+
+        let response = client
+            .post("https://openrouter.ai/api/v1/chat/completions")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to call OpenRouter API")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("OpenRouter request failed ({}): {}", status, body);
+        }
+
+        let api_response: OpenRouterResponse = response
+            .json()
+            .await
+            .context("Failed to parse OpenRouter response")?;
+
+        Ok(api_response
+            .choices
+            .first()
+            .map(|c| c.message.content.clone())
+            .unwrap_or_default())
+    }
+}
+
+impl ClaudeClient {
+    pub fn new() -> Option<Self> {
+        std::env::var("ANTHROPIC_API_KEY")
+            .ok()
+            .map(|api_key| Self { api_key })
+    }
+
+    pub async fn generate(&self, prompt: String) -> Result<String> {
+        let request = ClaudeRequest {
+            model: "claude-sonnet-4".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: prompt,
+            }],
+            max_tokens: 4096,
+        };
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .build()?;
+
+        let response = client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to call Claude API")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Claude request failed ({}): {}", status, body);
+        }
+
+        let api_response: ClaudeResponse = response
+            .json()
+            .await
+            .context("Failed to parse Claude response")?;
+
+        Ok(api_response
+            .content
+            .first()
+            .map(|c| c.text.clone())
+            .unwrap_or_default())
     }
 }

@@ -1,38 +1,38 @@
 {
   "id": "wp-stub-code-detection",
-  "title": "Add stub code detection and rejection in workplan executor",
   "phases": [
     {
       "id": "P1",
-      "title": "Detect and reject stub code",
       "tasks": [
         {
-          "id": "P1.1",
-          "title": "Add validate_generated_code() function to hex-agent/src/workplan_executor.rs that checks for stub patterns: '// ... existing code ...', '// TODO', '// FIXME', 'placeholder', lines < 10 in a .rs file, and rejects if found",
-          "status": "failed",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-agent/src/workplan_executor.rs"
-          ],
           "evidence": [
             "grep -q 'validate_generated_code\\|stub.*pattern' hex-agent/src/workplan_executor.rs",
             "cargo check -p hex-agent"
-          ]
-        },
-        {
-          "id": "P1.2",
-          "title": "Call validate_generated_code() before writing files in workplan executor, fail task with clear error if validation fails",
-          "status": "failed",
-          "strategy_hint": "codegen",
+          ],
           "files": [
             "hex-agent/src/workplan_executor.rs"
           ],
+          "id": "P1.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add validate_generated_code() function to hex-agent/src/workplan_executor.rs that checks for stub patterns: '// ... existing code ...', '// TODO', '// FIXME', 'placeholder', lines < 10 in a .rs file, and rejects if found"
+        },
+        {
           "evidence": [
             "grep -B 5 'validate_generated_code' hex-agent/src/workplan_executor.rs | grep -q 'write\\|apply'",
             "cargo check -p hex-agent"
-          ]
+          ],
+          "files": [
+            "hex-agent/src/workplan_executor.rs"
+          ],
+          "id": "P1.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Call validate_generated_code() before writing files in workplan executor, fail task with clear error if validation fails"
         }
-      ]
+      ],
+      "title": "Detect and reject stub code"
     }
-  ]
+  ],
+  "title": "Add stub code detection and rejection in workplan executor"
 }

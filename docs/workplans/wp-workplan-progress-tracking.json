@@ -1,70 +1,70 @@
 {
   "id": "wp-workplan-progress-tracking",
-  "title": "Add real-time workplan progress tracking to monitor",
   "phases": [
     {
       "id": "P1",
-      "title": "Add progress tracking to hex-nexus API",
       "tasks": [
         {
-          "id": "P1.1",
-          "title": "Add GET /api/workplan/{id}/status endpoint in hex-nexus/src/routes/workplan.rs that returns current phase, task, progress (completed/total), and last update timestamp",
-          "status": "failed",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-nexus/src/routes/workplan.rs"
-          ],
           "evidence": [
             "grep -q 'workplan.*status\\|progress' hex-nexus/src/routes/workplan.rs",
             "cargo check -p hex-nexus"
-          ]
+          ],
+          "files": [
+            "hex-nexus/src/routes/workplan.rs"
+          ],
+          "id": "P1.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add GET /api/workplan/{id}/status endpoint in hex-nexus/src/routes/workplan.rs that returns current phase, task, progress (completed/total), and last update timestamp"
         },
         {
-          "id": "P1.2",
-          "title": "Update sched task result field to include workplan progress JSON with phase_id, task_id, completed_count, total_count fields when status is in_progress",
-          "status": "pending",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-nexus/src/routes/sched.rs"
-          ],
           "evidence": [
             "grep -q 'phase_id\\|progress.*json' hex-nexus/src/routes/sched.rs",
             "cargo check -p hex-nexus"
-          ]
+          ],
+          "files": [
+            "hex-nexus/src/routes/sched.rs"
+          ],
+          "id": "P1.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Update sched task result field to include workplan progress JSON with phase_id, task_id, completed_count, total_count fields when status is in_progress"
         }
-      ]
+      ],
+      "title": "Add progress tracking to hex-nexus API"
     },
     {
       "id": "P2",
-      "title": "Update hex monitor to show progress",
       "tasks": [
         {
-          "id": "P2.1",
-          "title": "Add In Progress section to hex monitor that shows running workplans with 'task X/Y: <current task title>' and progress bar (e.g., [====>    ] 40%)",
-          "status": "pending",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-cli/src/commands/monitor.rs"
-          ],
           "evidence": [
             "grep -q 'In Progress\\|progress.*bar' hex-cli/src/commands/monitor.rs",
             "cargo check -p hex-cli"
-          ]
+          ],
+          "files": [
+            "hex-cli/src/commands/monitor.rs"
+          ],
+          "id": "P2.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add In Progress section to hex monitor that shows running workplans with 'task X/Y: <current task title>' and progress bar (e.g., [====>    ] 40%)"
         },
         {
-          "id": "P2.2",
-          "title": "Add hex workplan status <id> command that shows detailed progress: phase, task, elapsed time, estimated remaining (based on avg task time)",
-          "status": "pending",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-cli/src/commands/workplan.rs"
-          ],
           "evidence": [
             "grep -q 'workplan.*status\\|elapsed.*time' hex-cli/src/commands/workplan.rs",
             "cargo check -p hex-cli"
-          ]
+          ],
+          "files": [
+            "hex-cli/src/commands/workplan.rs"
+          ],
+          "id": "P2.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add hex workplan status <id> command that shows detailed progress: phase, task, elapsed time, estimated remaining (based on avg task time)"
         }
-      ]
+      ],
+      "title": "Update hex monitor to show progress"
     }
-  ]
+  ],
+  "title": "Add real-time workplan progress tracking to monitor"
 }

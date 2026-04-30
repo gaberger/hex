@@ -1,59 +1,59 @@
 {
   "id": "wp-tiered-routing-with-openrouter",
-  "title": "Implement smart tiered routing: Local → OpenRouter → Claude API",
   "phases": [
     {
       "id": "P1",
-      "title": "Add OpenRouter client",
       "tasks": [
         {
-          "id": "P1.1",
-          "title": "Add OpenRouterClient to hex-agent/src/inference_client.rs that uses OPENROUTER_API_KEY env var and calls api.openrouter.ai with model selection based on task complexity",
-          "status": "pending",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-agent/src/inference_client.rs"
-          ],
           "evidence": [
             "grep -q 'OpenRouterClient\\|openrouter' hex-agent/src/inference_client.rs",
             "cargo check -p hex-agent"
-          ]
+          ],
+          "files": [
+            "hex-agent/src/inference_client.rs"
+          ],
+          "id": "P1.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add OpenRouterClient to hex-agent/src/inference_client.rs that uses OPENROUTER_API_KEY env var and calls api.openrouter.ai with model selection based on task complexity"
         }
-      ]
+      ],
+      "title": "Add OpenRouter client"
     },
     {
       "id": "P2",
-      "title": "Implement smart fallback ladder",
       "tasks": [
         {
-          "id": "P2.1",
-          "title": "Update inference routing to: T1 (scaffold/transform/script) → local qwen3:4b only, T2 (codegen) → local qwen2.5-coder:32b with validation → OpenRouter deepseek-coder on validation failure → Claude API as last resort, T2.5/T3 (inference/complex) → OpenRouter deepseek-v3 or Claude",
-          "status": "pending",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-agent/src/inference_client.rs",
-            "hex-agent/src/workplan_executor.rs"
-          ],
           "evidence": [
             "grep -q 'openrouter\\|deepseek' hex-agent/src/inference_client.rs",
             "grep -q 'fallback\\|validation.*retry' hex-agent/src/workplan_executor.rs",
             "cargo check -p hex-agent"
-          ]
-        },
-        {
-          "id": "P2.2",
-          "title": "Add metrics tracking to log which tier succeeded: local_success, openrouter_success, claude_success, all_failed so we can optimize routing over time",
-          "status": "pending",
-          "strategy_hint": "codegen",
+          ],
           "files": [
+            "hex-agent/src/inference_client.rs",
             "hex-agent/src/workplan_executor.rs"
           ],
+          "id": "P2.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Update inference routing to: T1 (scaffold/transform/script) → local qwen3:4b only, T2 (codegen) → local qwen2.5-coder:32b with validation → OpenRouter deepseek-coder on validation failure → Claude API as last resort, T2.5/T3 (inference/complex) → OpenRouter deepseek-v3 or Claude"
+        },
+        {
           "evidence": [
             "grep -q 'local_success\\|metrics' hex-agent/src/workplan_executor.rs",
             "cargo check -p hex-agent"
-          ]
+          ],
+          "files": [
+            "hex-agent/src/workplan_executor.rs"
+          ],
+          "id": "P2.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add metrics tracking to log which tier succeeded: local_success, openrouter_success, claude_success, all_failed so we can optimize routing over time"
         }
-      ]
+      ],
+      "title": "Implement smart fallback ladder"
     }
-  ]
+  ],
+  "title": "Implement smart tiered routing: Local → OpenRouter → Claude API"
 }

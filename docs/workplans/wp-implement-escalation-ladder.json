@@ -1,0 +1,70 @@
+{
+  "id": "wp-implement-escalation-ladder",
+  "phases": [
+    {
+      "id": "P1",
+      "tasks": [
+        {
+          "evidence": [
+            "grep -q 'try_with_escalation\\|escalation.*ladder' hex-agent/src/workplan_executor.rs",
+            "cargo check -p hex-agent"
+          ],
+          "files": [
+            "hex-agent/src/workplan_executor.rs"
+          ],
+          "id": "P1.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Update hex-agent/src/workplan_executor.rs to implement try_with_escalation() that: (1) tries local model, (2) validates output, (3) on validation failure tries OpenRouter if OPENROUTER_API_KEY set, (4) on failure tries Claude if ANTHROPIC_API_KEY set, (5) returns best result with metrics on which tier succeeded"
+        },
+        {
+          "evidence": [
+            "grep -q 'InferenceAttempt\\|tier_used' hex-agent/src/workplan_executor.rs",
+            "cargo check -p hex-agent"
+          ],
+          "files": [
+            "hex-agent/src/workplan_executor.rs"
+          ],
+          "id": "P1.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add InferenceAttempt struct to track: tier_used (Local/OpenRouter/Claude), model_name, validation_passed, duration_ms, cost_estimate so we can log which tier actually worked"
+        }
+      ],
+      "title": "Add escalation logic to workplan executor"
+    },
+    {
+      "id": "P2",
+      "tasks": [
+        {
+          "evidence": [
+            "grep -q 'OpenRouterClient\\|api.openrouter.ai' hex-agent/src/inference_client.rs",
+            "cargo check -p hex-agent"
+          ],
+          "files": [
+            "hex-agent/src/inference_client.rs"
+          ],
+          "id": "P2.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add OpenRouterClient::generate() to hex-agent/src/inference_client.rs that calls api.openrouter.ai/api/v1/chat/completions with model deepseek/deepseek-coder for T2 tasks"
+        },
+        {
+          "evidence": [
+            "grep -q 'ClaudeClient\\|api.anthropic.com' hex-agent/src/inference_client.rs",
+            "cargo check -p hex-agent"
+          ],
+          "files": [
+            "hex-agent/src/inference_client.rs"
+          ],
+          "id": "P2.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add ClaudeClient::generate() to hex-agent/src/inference_client.rs that calls api.anthropic.com/v1/messages with claude-sonnet-4 as final fallback tier"
+        }
+      ],
+      "title": "Integrate OpenRouter and Claude clients"
+    }
+  ],
+  "title": "Implement automatic escalation: Local → OpenRouter → Claude on validation failure"
+}
