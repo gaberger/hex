@@ -1,117 +1,117 @@
 {
   "id": "wp-arch-analysis-loop",
-  "title": "Implement Architecture Analysis Self-Improvement Loop",
   "phases": [
     {
       "id": "P1",
-      "title": "Domain analysis",
       "tasks": [
         {
-          "id": "P1.1",
-          "title": "Create hex-nexus REST endpoint /api/analysis/domain that scans domain/ for pure functions vs side effects, returns JSON report",
-          "status": "failed",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-nexus/src/analysis/domain_analyzer.rs"
-          ],
           "evidence": [
             "grep -n 'pub fn analyze_domain' hex-nexus/src/analysis/domain_analyzer.rs",
             "cargo check -p hex-nexus"
-          ]
+          ],
+          "files": [
+            "hex-nexus/src/analysis/domain_analyzer.rs"
+          ],
+          "id": "P1.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Create hex-nexus REST endpoint /api/analysis/domain that scans domain/ for pure functions vs side effects, returns JSON report"
         },
         {
-          "id": "P1.2",
-          "title": "Create hex-nexus REST endpoint /api/analysis/ports that checks port traits for proper abstraction (no concrete types leaking), returns JSON report",
-          "status": "failed",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-nexus/src/analysis/port_analyzer.rs"
-          ],
           "evidence": [
             "grep -n 'pub fn analyze_ports' hex-nexus/src/analysis/port_analyzer.rs",
             "cargo check -p hex-nexus"
-          ]
+          ],
+          "files": [
+            "hex-nexus/src/analysis/port_analyzer.rs"
+          ],
+          "id": "P1.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Create hex-nexus REST endpoint /api/analysis/ports that checks port traits for proper abstraction (no concrete types leaking), returns JSON report"
         },
         {
-          "id": "P1.3",
-          "title": "Create hex-nexus REST endpoint /api/analysis/adapters that detects cross-adapter imports and coupling violations, returns JSON report",
-          "status": "failed",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-nexus/src/analysis/adapter_analyzer.rs"
-          ],
           "evidence": [
             "grep -n 'pub fn analyze_adapters' hex-nexus/src/analysis/adapter_analyzer.rs",
             "cargo check -p hex-nexus"
-          ]
+          ],
+          "files": [
+            "hex-nexus/src/analysis/adapter_analyzer.rs"
+          ],
+          "id": "P1.3",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Create hex-nexus REST endpoint /api/analysis/adapters that detects cross-adapter imports and coupling violations, returns JSON report"
         }
-      ]
+      ],
+      "title": "Domain analysis"
     },
     {
       "id": "P2",
-      "title": "Analysis scheduler",
       "tasks": [
         {
-          "id": "P2.1",
-          "title": "Add auto-enqueue logic to hex-cli/src/commands/sched.rs queue_drain() that triggers arch-analysis every 2 hours when queue is idle",
-          "status": "failed",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-cli/src/commands/sched.rs"
-          ],
           "evidence": [
             "grep -n 'arch-analysis' hex-cli/src/commands/sched.rs",
             "grep -n 'last_arch_analysis_check' hex-cli/src/commands/sched.rs",
             "cargo check -p hex-cli"
-          ]
-        },
-        {
-          "id": "P2.2",
-          "title": "Add execute_arch_analysis() to hex-cli/src/commands/sched.rs that calls /api/analysis/* endpoints, aggregates findings, stores in memory as arch-findings:<timestamp>",
-          "status": "failed",
-          "strategy_hint": "codegen",
+          ],
           "files": [
             "hex-cli/src/commands/sched.rs"
           ],
+          "id": "P2.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add auto-enqueue logic to hex-cli/src/commands/sched.rs queue_drain() that triggers arch-analysis every 2 hours when queue is idle"
+        },
+        {
           "evidence": [
             "grep -n 'async fn execute_arch_analysis' hex-cli/src/commands/sched.rs",
             "grep -n 'arch-findings:' hex-cli/src/commands/sched.rs",
             "cargo check -p hex-cli"
-          ]
-        },
-        {
-          "id": "P2.3",
-          "title": "Wire arch-analysis kind into execute_brain_task() match statement in sched.rs",
-          "status": "failed",
-          "strategy_hint": "codegen",
+          ],
           "files": [
             "hex-cli/src/commands/sched.rs"
           ],
+          "id": "P2.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add execute_arch_analysis() to hex-cli/src/commands/sched.rs that calls /api/analysis/* endpoints, aggregates findings, stores in memory as arch-findings:<timestamp>"
+        },
+        {
           "evidence": [
             "grep -n '\"arch-analysis\"' hex-cli/src/commands/sched.rs",
             "cargo check -p hex-cli"
-          ]
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P2.3",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Wire arch-analysis kind into execute_brain_task() match statement in sched.rs"
         }
-      ]
+      ],
+      "title": "Analysis scheduler"
     },
     {
       "id": "P3",
-      "title": "Documentation",
       "tasks": [
         {
-          "id": "P3.1",
-          "title": "Create docs/guides/architecture-analysis-loop.md explaining how the 2-hour idle analysis works, what it checks, and how findings are stored",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "files": [
-            "docs/guides/architecture-analysis-loop.md"
-          ],
           "evidence": [
             "test -f docs/guides/architecture-analysis-loop.md",
             "grep -q 'domain.*ports.*adapters' docs/guides/architecture-analysis-loop.md"
-          ]
+          ],
+          "files": [
+            "docs/guides/architecture-analysis-loop.md"
+          ],
+          "id": "P3.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Create docs/guides/architecture-analysis-loop.md explaining how the 2-hour idle analysis works, what it checks, and how findings are stored"
         }
-      ]
+      ],
+      "title": "Documentation"
     }
-  ]
+  ],
+  "title": "Implement Architecture Analysis Self-Improvement Loop"
 }

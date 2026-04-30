@@ -1,0 +1,25 @@
+{
+  "id": "wp-monitor-show-failures",
+  "title": "Add failure reason display to hex monitor",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Parse and display failure reasons",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "Update get_recent_activity() in hex-cli/src/commands/monitor.rs to fetch task results from API and extract failure reasons from result field, truncate to 80 chars for display",
+          "status": "failed",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/monitor.rs"
+          ],
+          "evidence": [
+            "grep -q 'result\\|failure' hex-cli/src/commands/monitor.rs",
+            "cargo check -p hex-cli"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -136,7 +136,8 @@ impl InferenceClient {
         prompt.push_str("4. Follow the task requirements exactly\n");
         prompt.push_str("5. Output ONLY the file contents, no explanations\n");
         prompt.push_str("6. Prefer small additions over complete rewrites\n");
-        prompt.push_str("7. Use this format:\n\n");
+        prompt.push_str("7. CRITICAL: Do NOT wrap output in markdown code blocks (no ```rust or ``` fences)\n");
+        prompt.push_str("8. Use this format:\n\n");
         prompt.push_str("=== FILE: path/to/file.rs ===\n");
         prompt.push_str("<file contents here>\n");
         prompt.push_str("=== END FILE ===\n\n");
@@ -146,11 +147,18 @@ impl InferenceClient {
     }
 
     pub fn parse_response(response: &str) -> Result<Vec<(String, String)>> {
+        // Strip markdown code fences if LLM added them despite instructions
+        let cleaned_response = response
+            .trim_start_matches("```rust")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
+
         let mut files = Vec::new();
         let mut current_file = None;
         let mut current_content = String::new();
 
-        for line in response.lines() {
+        for line in cleaned_response.lines() {
             if line.starts_with("=== FILE:") {
                 // Save previous file if exists
                 if let Some(path) = current_file.take() {
