@@ -1,0 +1,83 @@
+{
+  "id": "wp-better-monitor-layout",
+  "title": "Enhance hex monitor visual layout with colors and failure details",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Add color coding and icons",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "Update hex monitor output to show: green ✓ for completed, red ✗ for failed, yellow ⚠ for running, with colored status text",
+          "status": "failed",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/monitor.rs"
+          ],
+          "evidence": [
+            "grep -q 'colored\\|Color' hex-cli/src/commands/monitor.rs",
+            "cargo check -p hex-cli"
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Add failure_reason column to Recent Activity table showing first 80 chars of error for failed tasks",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/monitor.rs"
+          ],
+          "evidence": [
+            "grep -q 'failure_reason\\|Reason' hex-cli/src/commands/monitor.rs",
+            "cargo check -p hex-cli"
+          ]
+        },
+        {
+          "id": "P1.3",
+          "title": "Add duration column showing task execution time in seconds",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/monitor.rs"
+          ],
+          "evidence": [
+            "grep -q 'duration\\|Duration' hex-cli/src/commands/monitor.rs",
+            "cargo check -p hex-cli"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "Enhanced formatting",
+      "tasks": [
+        {
+          "id": "P2.1",
+          "title": "Add progress bar for running tasks showing elapsed time / timeout",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/monitor.rs"
+          ],
+          "evidence": [
+            "grep -q 'progress\\|elapsed' hex-cli/src/commands/monitor.rs",
+            "cargo check -p hex-cli"
+          ]
+        },
+        {
+          "id": "P2.2",
+          "title": "Add summary stats line: Total tasks today: X (✓Y ✗Z ○W)",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/monitor.rs"
+          ],
+          "evidence": [
+            "grep -q 'Total tasks\\|summary' hex-cli/src/commands/monitor.rs",
+            "cargo check -p hex-cli"
+          ]
+        }
+      ]
+    }
+  ]
+}

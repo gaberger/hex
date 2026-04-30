@@ -1,0 +1,59 @@
+{
+  "id": "wp-implement-auto-trigger",
+  "title": "Implement Architecture Analysis Auto-Trigger",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Add timestamp tracking",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "Create ~/.hex/sched/last_arch_analysis file with current timestamp",
+          "status": "failed",
+          "strategy_hint": "shell",
+          "files": [],
+          "evidence": [
+            "test -f ~/.hex/sched/last_arch_analysis",
+            "cat ~/.hex/sched/last_arch_analysis | grep -E '^[0-9]{4}-'"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "Create trigger script",
+      "tasks": [
+        {
+          "id": "P2.1",
+          "title": "Create scripts/auto-arch-analysis.sh that checks if 2 hours elapsed since last run, and if so enqueues hex analyze, updates timestamp",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "scripts/auto-arch-analysis.sh"
+          ],
+          "evidence": [
+            "test -x scripts/auto-arch-analysis.sh",
+            "grep -q 'last_arch_analysis' scripts/auto-arch-analysis.sh",
+            "grep -q '7200' scripts/auto-arch-analysis.sh"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "Test the trigger",
+      "tasks": [
+        {
+          "id": "P3.1",
+          "title": "Run scripts/auto-arch-analysis.sh and verify it enqueues a task",
+          "status": "pending",
+          "strategy_hint": "shell",
+          "files": [],
+          "evidence": [
+            "bash scripts/auto-arch-analysis.sh 2>&1 | grep -q 'enqueued'"
+          ]
+        }
+      ]
+    }
+  ]
+}
