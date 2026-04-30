@@ -101,7 +101,7 @@
         {
           "id": "P3.1",
           "title": "Create docs/guides/architecture-analysis-loop.md explaining how the 2-hour idle analysis works, what it checks, and how findings are stored",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "docs/guides/architecture-analysis-loop.md"
