@@ -1,0 +1,27 @@
+{
+  "id": "test-escalation-fresh",
+  "title": "Test escalation ladder with fresh documentation",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Generate escalation documentation",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "Create docs/guides/escalation-strategy.md explaining Local → OpenRouter → Claude routing with cost analysis",
+          "status": "failed",
+          "strategy_hint": "codegen",
+          "files": [
+            "docs/guides/escalation-strategy.md"
+          ],
+          "evidence": [
+            "test -f docs/guides/escalation-strategy.md",
+            "grep -q 'OpenRouter' docs/guides/escalation-strategy.md",
+            "grep -q 'Claude' docs/guides/escalation-strategy.md",
+            "test $(wc -l < docs/guides/escalation-strategy.md) -gt 20"
+          ]
+        }
+      ]
+    }
+  ]
+}

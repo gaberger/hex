@@ -257,9 +257,20 @@ impl Default for InferenceClient {
 
 impl OpenRouterClient {
     pub fn new() -> Option<Self> {
-        std::env::var("OPENROUTER_API_KEY")
+        // Try env first, then hex secrets vault
+        let api_key = std::env::var("OPENROUTER_API_KEY").ok()
+            .or_else(|| Self::get_from_vault("OPENROUTER_API_KEY"))?;
+        Some(Self { api_key })
+    }
+
+    fn get_from_vault(key: &str) -> Option<String> {
+        std::process::Command::new("hex")
+            .args(["secrets", "get", key])
+            .output()
             .ok()
-            .map(|api_key| Self { api_key })
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
     }
 
     pub async fn generate(&self, prompt: String) -> Result<String> {
@@ -304,9 +315,20 @@ impl OpenRouterClient {
 
 impl ClaudeClient {
     pub fn new() -> Option<Self> {
-        std::env::var("ANTHROPIC_API_KEY")
+        // Try env first, then hex secrets vault
+        let api_key = std::env::var("ANTHROPIC_API_KEY").ok()
+            .or_else(|| Self::get_from_vault("ANTHROPIC_API_KEY"))?;
+        Some(Self { api_key })
+    }
+
+    fn get_from_vault(key: &str) -> Option<String> {
+        std::process::Command::new("hex")
+            .args(["secrets", "get", key])
+            .output()
             .ok()
-            .map(|api_key| Self { api_key })
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
     }
 
     pub async fn generate(&self, prompt: String) -> Result<String> {

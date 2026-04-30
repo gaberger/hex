@@ -1,25 +1,25 @@
 {
   "id": "test-autonomous-inference",
+  "title": "Test Autonomous Inference",
   "phases": [
     {
       "id": "P1",
+      "title": "Test code generation",
       "tasks": [
         {
-          "evidence": [
-            "grep -n 'fn add' test-output/add.rs",
-            "grep -n 'a + b' test-output/add.rs"
-          ],
+          "id": "P1.1",
+          "title": "Create a simple Rust function that adds two numbers",
+          "status": "done",
+          "strategy_hint": "codegen",
           "files": [
             "test-output/add.rs"
           ],
-          "id": "P1.1",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Create a simple Rust function that adds two numbers"
+          "evidence": [
+            "grep -n 'fn add' test-output/add.rs",
+            "grep -n 'a + b' test-output/add.rs"
+          ]
         }
-      ],
-      "title": "Test code generation"
+      ]
     }
-  ],
-  "title": "Test Autonomous Inference"
+  ]
 }

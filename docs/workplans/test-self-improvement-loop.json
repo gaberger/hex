@@ -1,37 +1,37 @@
 {
   "id": "test-self-improvement-loop",
+  "title": "Test Self-Improvement Loop",
   "phases": [
     {
       "id": "P1",
+      "title": "Documentation improvements",
       "tasks": [
         {
-          "evidence": [
-            "grep -n 'Query memory directly' hex-cli/src/commands/monitor.rs"
-          ],
+          "id": "P1.1",
+          "title": "Add a comment to hex-cli/src/commands/monitor.rs explaining the memory search query",
+          "status": "done",
+          "strategy_hint": "codegen",
           "files": [
             "hex-cli/src/commands/monitor.rs"
           ],
-          "id": "P1.1",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Add a comment to hex-cli/src/commands/monitor.rs explaining the memory search query"
+          "evidence": [
+            "grep -n 'Query memory directly' hex-cli/src/commands/monitor.rs"
+          ]
         },
         {
-          "evidence": [
-            "grep -n 'execute_memory_health_check' hex-cli/src/commands/sched.rs",
-            "cargo check -p hex-cli"
-          ],
+          "id": "P1.2",
+          "title": "Add a doc comment to execute_memory_health_check explaining what stale/failed categorization means",
+          "status": "done",
+          "strategy_hint": "codegen",
           "files": [
             "hex-cli/src/commands/sched.rs"
           ],
-          "id": "P1.2",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Add a doc comment to execute_memory_health_check explaining what stale/failed categorization means"
+          "evidence": [
+            "grep -n 'execute_memory_health_check' hex-cli/src/commands/sched.rs",
+            "cargo check -p hex-cli"
+          ]
         }
-      ],
-      "title": "Documentation improvements"
+      ]
     }
-  ],
-  "title": "Test Self-Improvement Loop"
+  ]
 }

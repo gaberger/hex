@@ -1,38 +1,38 @@
 {
   "id": "wp-preflight-validation",
+  "title": "Add preflight validation to workplan executor",
   "phases": [
     {
       "id": "P1",
+      "title": "Add validation before execution",
       "tasks": [
         {
+          "id": "P1.1",
+          "title": "Add validate_workplan_preflight() to hex-agent/src/workplan_executor.rs that checks: (1) all task files exist or parent dirs exist, (2) evidence commands are valid shell, (3) strategy_hint is supported, (4) model is available",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-agent/src/workplan_executor.rs"
+          ],
           "evidence": [
             "grep -q 'validate_workplan_preflight' hex-agent/src/workplan_executor.rs",
             "cargo check -p hex-agent"
-          ],
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Call validate_workplan_preflight() at start of execute_workplan() and fail fast with clear error if validation fails",
+          "status": "done",
+          "strategy_hint": "codegen",
           "files": [
             "hex-agent/src/workplan_executor.rs"
           ],
-          "id": "P1.1",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Add validate_workplan_preflight() to hex-agent/src/workplan_executor.rs that checks: (1) all task files exist or parent dirs exist, (2) evidence commands are valid shell, (3) strategy_hint is supported, (4) model is available"
-        },
-        {
           "evidence": [
             "grep -B 3 'validate_workplan_preflight' hex-agent/src/workplan_executor.rs | grep -q 'execute_workplan'",
             "cargo check -p hex-agent"
-          ],
-          "files": [
-            "hex-agent/src/workplan_executor.rs"
-          ],
-          "id": "P1.2",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Call validate_workplan_preflight() at start of execute_workplan() and fail fast with clear error if validation fails"
+          ]
         }
-      ],
-      "title": "Add validation before execution"
+      ]
     }
-  ],
-  "title": "Add preflight validation to workplan executor"
+  ]
 }

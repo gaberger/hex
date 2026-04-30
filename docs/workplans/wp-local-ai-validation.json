@@ -1,57 +1,57 @@
 {
   "id": "wp-local-ai-validation",
+  "title": "Add validation layer for local AI output with Claude fallback only",
   "phases": [
     {
       "id": "P1",
+      "title": "Multi-attempt local AI with validation",
       "tasks": [
         {
+          "id": "P1.1",
+          "title": "Add validate_code_output() to hex-agent/src/workplan_executor.rs that rejects: stub patterns ('...', 'TODO', 'FIXME', 'placeholder'), markdown fences, files < 5 lines, missing imports, invalid syntax",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-agent/src/workplan_executor.rs"
+          ],
           "evidence": [
             "grep -q 'validate_code_output' hex-agent/src/workplan_executor.rs",
             "cargo check -p hex-agent"
-          ],
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Update workplan executor to: (1) try local model 3 times with validation, (2) on validation failure, regenerate with error feedback, (3) only use Claude API if all 3 local attempts fail validation",
+          "status": "done",
+          "strategy_hint": "codegen",
           "files": [
             "hex-agent/src/workplan_executor.rs"
           ],
-          "id": "P1.1",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Add validate_code_output() to hex-agent/src/workplan_executor.rs that rejects: stub patterns ('...', 'TODO', 'FIXME', 'placeholder'), markdown fences, files < 5 lines, missing imports, invalid syntax"
-        },
-        {
           "evidence": [
             "grep -A 10 'validate_code_output' hex-agent/src/workplan_executor.rs | grep -q 'retry\\|attempt'",
             "cargo check -p hex-agent"
-          ],
-          "files": [
-            "hex-agent/src/workplan_executor.rs"
-          ],
-          "id": "P1.2",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Update workplan executor to: (1) try local model 3 times with validation, (2) on validation failure, regenerate with error feedback, (3) only use Claude API if all 3 local attempts fail validation"
+          ]
         }
-      ],
-      "title": "Multi-attempt local AI with validation"
+      ]
     },
     {
       "id": "P2",
+      "title": "Add feedback loop for local models",
       "tasks": [
         {
-          "evidence": [
-            "grep -q 'PREVIOUS ATTEMPT FAILED' hex-agent/src/workplan_executor.rs",
-            "cargo check -p hex-agent"
-          ],
+          "id": "P2.1",
+          "title": "When validation fails, append to prompt: 'PREVIOUS ATTEMPT FAILED: <validation_error>. Fix the issue and generate valid code.'",
+          "status": "done",
+          "strategy_hint": "transform",
           "files": [
             "hex-agent/src/workplan_executor.rs"
           ],
-          "id": "P2.1",
-          "status": "done",
-          "strategy_hint": "transform",
-          "title": "When validation fails, append to prompt: 'PREVIOUS ATTEMPT FAILED: <validation_error>. Fix the issue and generate valid code.'"
+          "evidence": [
+            "grep -q 'PREVIOUS ATTEMPT FAILED' hex-agent/src/workplan_executor.rs",
+            "cargo check -p hex-agent"
+          ]
         }
-      ],
-      "title": "Add feedback loop for local models"
+      ]
     }
-  ],
-  "title": "Add validation layer for local AI output with Claude fallback only"
+  ]
 }

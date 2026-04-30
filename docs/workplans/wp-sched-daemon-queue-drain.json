@@ -1,26 +1,26 @@
 {
   "id": "wp-sched-daemon-queue-drain",
+  "title": "Fix sched daemon to actually drain the queue",
   "phases": [
     {
       "id": "P1",
+      "title": "Implement queue drain logic",
       "tasks": [
         {
-          "evidence": [
-            "grep -r 'queue.*drain\\|process.*pending\\|dequeue' hex-cli/src hex-nexus/src --include='*.rs' | grep -v '//' | head -5",
-            "cargo check --workspace"
-          ],
+          "id": "P1.1",
+          "title": "Find hex sched daemon implementation and add queue drain logic that: (1) fetches pending tasks from queue, (2) executes workplans via hex-agent, (3) updates task status to completed/failed, (4) writes detailed failure reasons to task result field",
+          "status": "done",
+          "strategy_hint": "inference",
           "files": [
             "hex-cli/src/commands/sched/**/*.rs",
             "hex-nexus/src/routes/sched.rs"
           ],
-          "id": "P1.1",
-          "status": "done",
-          "strategy_hint": "inference",
-          "title": "Find hex sched daemon implementation and add queue drain logic that: (1) fetches pending tasks from queue, (2) executes workplans via hex-agent, (3) updates task status to completed/failed, (4) writes detailed failure reasons to task result field"
+          "evidence": [
+            "grep -r 'queue.*drain\\|process.*pending\\|dequeue' hex-cli/src hex-nexus/src --include='*.rs' | grep -v '//' | head -5",
+            "cargo check --workspace"
+          ]
         }
-      ],
-      "title": "Implement queue drain logic"
+      ]
     }
-  ],
-  "title": "Fix sched daemon to actually drain the queue"
+  ]
 }

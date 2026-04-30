@@ -1,84 +1,84 @@
 {
   "id": "wp-nexus-driven-monitor",
+  "title": "Move monitor enhancements into hex-nexus routes",
   "phases": [
     {
       "id": "P1",
+      "title": "Enhance monitor route",
       "tasks": [
         {
+          "id": "P1.1",
+          "title": "Update MonitorSnapshot struct in hex-nexus/src/routes/monitor.rs to include failure summaries in TaskSummary (already has failure_reason field from earlier work)",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/src/routes/monitor.rs"
+          ],
           "evidence": [
             "grep -q 'failure_reason' hex-nexus/src/routes/monitor.rs",
             "cargo check -p hex-nexus"
-          ],
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Add /api/monitor/detailed endpoint in hex-nexus/src/routes/monitor.rs that returns full failure details for each recent task",
+          "status": "done",
+          "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/routes/monitor.rs"
           ],
-          "id": "P1.1",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Update MonitorSnapshot struct in hex-nexus/src/routes/monitor.rs to include failure summaries in TaskSummary (already has failure_reason field from earlier work)"
-        },
-        {
           "evidence": [
             "grep -q 'monitor/detailed' hex-nexus/src/routes/monitor.rs",
             "cargo check -p hex-nexus"
-          ],
-          "files": [
-            "hex-nexus/src/routes/monitor.rs"
-          ],
-          "id": "P1.2",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Add /api/monitor/detailed endpoint in hex-nexus/src/routes/monitor.rs that returns full failure details for each recent task"
+          ]
         },
         {
-          "evidence": [
-            "grep -q 'monitor.*detailed' hex-nexus/src/routes/mod.rs",
-            "cargo check -p hex-nexus"
-          ],
+          "id": "P1.3",
+          "title": "Wire /api/monitor/detailed route in hex-nexus/src/routes/mod.rs",
+          "status": "done",
+          "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/routes/mod.rs"
           ],
-          "id": "P1.3",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Wire /api/monitor/detailed route in hex-nexus/src/routes/mod.rs"
+          "evidence": [
+            "grep -q 'monitor.*detailed' hex-nexus/src/routes/mod.rs",
+            "cargo check -p hex-nexus"
+          ]
         }
-      ],
-      "title": "Enhance monitor route"
+      ]
     },
     {
       "id": "P2",
+      "title": "Integrate auto-triggers into sched_service",
       "tasks": [
         {
+          "id": "P2.1",
+          "title": "Add arch_analysis_trigger to hex-nexus/src/sched_service.rs that checks last_arch_analysis timestamp and enqueues hex analyze every 2 hours",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/src/sched_service.rs"
+          ],
           "evidence": [
             "grep -q 'arch_analysis' hex-nexus/src/sched_service.rs",
             "grep -q '7200' hex-nexus/src/sched_service.rs",
             "cargo check -p hex-nexus"
-          ],
+          ]
+        },
+        {
+          "id": "P2.2",
+          "title": "Call arch_analysis_trigger from sched_service main loop every iteration",
+          "status": "done",
+          "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/sched_service.rs"
           ],
-          "id": "P2.1",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Add arch_analysis_trigger to hex-nexus/src/sched_service.rs that checks last_arch_analysis timestamp and enqueues hex analyze every 2 hours"
-        },
-        {
           "evidence": [
             "grep -B 5 -A 5 'arch_analysis_trigger' hex-nexus/src/sched_service.rs | grep -q 'loop\\|tick'",
             "cargo check -p hex-nexus"
-          ],
-          "files": [
-            "hex-nexus/src/sched_service.rs"
-          ],
-          "id": "P2.2",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Call arch_analysis_trigger from sched_service main loop every iteration"
+          ]
         }
-      ],
-      "title": "Integrate auto-triggers into sched_service"
+      ]
     }
-  ],
-  "title": "Move monitor enhancements into hex-nexus routes"
+  ]
 }

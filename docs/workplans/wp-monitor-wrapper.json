@@ -1,39 +1,39 @@
 {
   "id": "wp-monitor-wrapper",
+  "title": "Create enhanced monitor wrapper script",
   "phases": [
     {
       "id": "P1",
+      "title": "Create wrapper",
       "tasks": [
         {
+          "id": "P1.1",
+          "title": "Create scripts/monitor-enhanced.sh that calls hex monitor --json, parses with jq, and displays with colors: green ✓ for completed, red ✗ for failed, yellow ⚠ for running",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "scripts/monitor-enhanced.sh"
+          ],
           "evidence": [
             "test -x scripts/monitor-enhanced.sh",
             "grep -q 'hex monitor --json' scripts/monitor-enhanced.sh",
             "grep -q 'jq' scripts/monitor-enhanced.sh"
-          ],
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Add failure reason extraction to monitor-enhanced.sh using curl to query memory for failed tasks and show first 100 chars of error",
+          "status": "done",
+          "strategy_hint": "codegen",
           "files": [
             "scripts/monitor-enhanced.sh"
           ],
-          "id": "P1.1",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Create scripts/monitor-enhanced.sh that calls hex monitor --json, parses with jq, and displays with colors: green ✓ for completed, red ✗ for failed, yellow ⚠ for running"
-        },
-        {
           "evidence": [
             "grep -q 'failure.*reason\\|curl.*memory' scripts/monitor-enhanced.sh",
             "bash scripts/monitor-enhanced.sh 2>&1 | head -30"
-          ],
-          "files": [
-            "scripts/monitor-enhanced.sh"
-          ],
-          "id": "P1.2",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Add failure reason extraction to monitor-enhanced.sh using curl to query memory for failed tasks and show first 100 chars of error"
+          ]
         }
-      ],
-      "title": "Create wrapper"
+      ]
     }
-  ],
-  "title": "Create enhanced monitor wrapper script"
+  ]
 }

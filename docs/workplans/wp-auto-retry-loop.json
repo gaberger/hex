@@ -1,58 +1,58 @@
 {
   "id": "wp-auto-retry-loop",
+  "title": "Implement Automatic Retry Loop for Failed Tasks",
   "phases": [
     {
       "id": "P1",
+      "title": "Add retry logic to memory-health",
       "tasks": [
         {
+          "id": "P1.1",
+          "title": "Update execute_memory_health_check in hex-cli/src/commands/sched.rs to retry failed tasks < 24h old with retry_count < 3",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
           "evidence": [
             "grep -q 'retry_count' hex-cli/src/commands/sched.rs",
             "grep -q 're.*enqueue.*failed' hex-cli/src/commands/sched.rs",
             "cargo check -p hex-cli"
-          ],
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Add retry_count field to brain-task JSON schema, increment on each retry",
+          "status": "done",
+          "strategy_hint": "codegen",
           "files": [
             "hex-cli/src/commands/sched.rs"
           ],
-          "id": "P1.1",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Update execute_memory_health_check in hex-cli/src/commands/sched.rs to retry failed tasks < 24h old with retry_count < 3"
-        },
-        {
           "evidence": [
             "grep -A 5 'retry_count' hex-cli/src/commands/sched.rs | grep -q 'serde'",
             "cargo check -p hex-cli"
-          ],
-          "files": [
-            "hex-cli/src/commands/sched.rs"
-          ],
-          "id": "P1.2",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Add retry_count field to brain-task JSON schema, increment on each retry"
+          ]
         }
-      ],
-      "title": "Add retry logic to memory-health"
+      ]
     },
     {
       "id": "P2",
+      "title": "Documentation",
       "tasks": [
         {
-          "evidence": [
-            "test -f docs/guides/auto-retry-loop.md",
-            "grep -q 'retry.*3.*times' docs/guides/auto-retry-loop.md"
-          ],
+          "id": "P2.1",
+          "title": "Create docs/guides/auto-retry-loop.md explaining how failed tasks are automatically retried up to 3 times within 24 hours",
+          "status": "done",
+          "strategy_hint": "codegen",
           "files": [
             "docs/guides/auto-retry-loop.md"
           ],
-          "id": "P2.1",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Create docs/guides/auto-retry-loop.md explaining how failed tasks are automatically retried up to 3 times within 24 hours"
+          "evidence": [
+            "test -f docs/guides/auto-retry-loop.md",
+            "grep -q 'retry.*3.*times' docs/guides/auto-retry-loop.md"
+          ]
         }
-      ],
-      "title": "Documentation"
+      ]
     }
-  ],
-  "title": "Implement Automatic Retry Loop for Failed Tasks"
+  ]
 }

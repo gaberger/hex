@@ -1,23 +1,23 @@
 {
   "id": "wp-test-daemon-drain",
+  "title": "Simple test workplan to verify daemon auto-drain",
   "phases": [
     {
       "id": "P1",
+      "title": "Create test file",
       "tasks": [
         {
+          "id": "P1.1",
+          "title": "Create /tmp/hex-daemon-drain-test.txt with content 'daemon auto-drain works'",
+          "status": "done",
+          "strategy_hint": "script",
+          "files": [],
           "evidence": [
             "test -f /tmp/hex-daemon-drain-test.txt",
             "grep -q 'daemon auto-drain works' /tmp/hex-daemon-drain-test.txt"
-          ],
-          "files": [],
-          "id": "P1.1",
-          "status": "done",
-          "strategy_hint": "script",
-          "title": "Create /tmp/hex-daemon-drain-test.txt with content 'daemon auto-drain works'"
+          ]
         }
-      ],
-      "title": "Create test file"
+      ]
     }
-  ],
-  "title": "Simple test workplan to verify daemon auto-drain"
+  ]
 }
