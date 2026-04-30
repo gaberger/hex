@@ -130,11 +130,13 @@ impl InferenceClient {
         }
 
         prompt.push_str("INSTRUCTIONS:\n");
-        prompt.push_str("1. Generate working code for each file\n");
-        prompt.push_str("2. Use proper syntax and imports\n");
-        prompt.push_str("3. Follow the task requirements exactly\n");
-        prompt.push_str("4. Output ONLY the file contents, no explanations\n");
-        prompt.push_str("5. Use this format:\n\n");
+        prompt.push_str("1. If file exists, ADD to it (append/insert) - do NOT replace entire file\n");
+        prompt.push_str("2. For new files, generate complete working code\n");
+        prompt.push_str("3. Use proper syntax and imports\n");
+        prompt.push_str("4. Follow the task requirements exactly\n");
+        prompt.push_str("5. Output ONLY the file contents, no explanations\n");
+        prompt.push_str("6. Prefer small additions over complete rewrites\n");
+        prompt.push_str("7. Use this format:\n\n");
         prompt.push_str("=== FILE: path/to/file.rs ===\n");
         prompt.push_str("<file contents here>\n");
         prompt.push_str("=== END FILE ===\n\n");
