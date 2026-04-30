@@ -159,11 +159,11 @@ fn get_queue_status() -> Result<QueueStatus> {
 }
 
 fn get_recent_activity() -> Result<Vec<TaskSummary>> {
-    // Use curl to query sched API directly for recent tasks
+    // Query memory for brain-tasks
     let output = Command::new("curl")
         .args([
             "-s",
-            "http://localhost:5555/api/sched/tasks?limit=5",
+            "http://localhost:5555/api/hexflo/memory/search?q=brain-task:",
         ])
         .output()?;
 
@@ -172,50 +172,53 @@ fn get_recent_activity() -> Result<Vec<TaskSummary>> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let tasks_json: Vec<serde_json::Value> = match serde_json::from_str(&stdout) {
+    let json: serde_json::Value = match serde_json::from_str(&stdout) {
         Ok(j) => j,
         Err(_) => return Ok(Vec::new()),
     };
 
-    // Parse tasks directly from API response
-    let tasks: Vec<TaskSummary> = tasks_json
+    let results = match json.get("results").and_then(|r| r.as_array()) {
+        Some(r) => r,
+        None => return Ok(Vec::new()),
+    };
+
+    // Parse tasks from memory results
+    let mut tasks: Vec<(String, TaskSummary)> = results
         .iter()
-        .filter_map(|task_json| {
+        .filter_map(|entry| {
+            let value_str = entry.get("value")?.as_str()?;
+            let task_json: serde_json::Value = serde_json::from_str(value_str).ok()?;
 
             let id = task_json.get("id")?.as_str()?.to_string();
             let kind = task_json.get("kind")?.as_str()?.to_string();
             let status = task_json.get("status")?.as_str()?.to_string();
             let payload = task_json.get("payload")?.as_str()?.to_string();
+            let completed_at = task_json.get("completed_at")?.as_str()?.to_string();
 
-            // Extract failure reason from result field for failed tasks
+            // Extract failure reason from result field (it's a plain string)
             let failure_reason = if status == "failed" {
                 task_json.get("result")
                     .and_then(|r| r.as_str())
-                    .and_then(|r_str| {
-                        serde_json::from_str::<serde_json::Value>(r_str).ok()
-                    })
-                    .and_then(|r_json| {
-                        r_json.get("failures")
-                            .and_then(|f| f.as_array())
-                            .and_then(|arr| arr.first())
-                            .and_then(|f| f.as_str())
-                            .map(|s| s.to_string())
-                    })
+                    .map(|s| s.to_string())
             } else {
                 None
             };
 
-            Some(TaskSummary {
-                id,
-                kind,
-                status,
-                payload: payload.chars().take(40).collect(),
-                failure_reason,
-            })
+            Some((
+                completed_at,
+                TaskSummary {
+                    id,
+                    kind,
+                    status,
+                    payload: payload.chars().take(40).collect(),
+                    failure_reason,
+                },
+            ))
         })
         .collect();
 
-    Ok(tasks)
+    tasks.sort_by(|a, b| b.0.cmp(&a.0));
+    Ok(tasks.into_iter().take(5).map(|(_, t)| t).collect())
 }
 
 fn get_recent_commits() -> Result<Vec<CommitSummary>> {
