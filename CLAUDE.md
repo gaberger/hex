@@ -279,3 +279,20 @@ Agent + swarm behavior is declared in YAML, not hardcoded. The supervisor reads 
 - API keys loaded only in `composition-root.ts` from env.
 - Never commit `.env` — use `.env.example`.
 - Primary adapters MUST NOT use `innerHTML`/`outerHTML`/`insertAdjacentHTML` with non-domain data. Use `textContent` or `createElement`.
+
+## HARD RULE: No Runtime Scripts
+
+**NEVER create runtime functionality as shell scripts** (except build/dev tooling in scripts/).
+
+All runtime functionality MUST flow through the hex architecture:
+- hex-nexus REST API endpoints
+- hex-nexus sched_service background tasks
+- hex-cli commands that call nexus
+- SpacetimeDB WASM modules
+
+Scripts are ONLY for:
+- Build tooling (scripts/build-*.sh, scripts/release.sh)
+- Development utilities (scripts/benchmark-*.sh)
+- CI/CD automation (scripts/test-*.sh)
+
+If you catch yourself creating a script for monitor enhancements, auto-triggers, retry logic, or ANY runtime feature → STOP and implement it in hex-nexus instead.
