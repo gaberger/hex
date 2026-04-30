@@ -72,7 +72,7 @@ impl InferenceClient {
         };
 
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
+            .timeout(std::time::Duration::from_secs(300))
             .build()?;
 
         let response = client
