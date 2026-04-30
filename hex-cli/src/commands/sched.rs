@@ -2719,6 +2719,37 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             }
         }
 
+        // ── Auto-retry failed tasks (wp-auto-retry-loop) ─────────────────
+        // Re-enqueue failed tasks < 24h old with retry_count < 3
+        if let Ok(failed_tasks) = list_brain_tasks(Some("failed")).await {
+            for task in failed_tasks {
+                let task_id = task.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let created_at = task.get("created_at").and_then(|v| v.as_str());
+                let retry_count = task.get("retry_count").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                if let Some(created_str) = created_at {
+                    if let Ok(created) = chrono::DateTime::parse_from_rfc3339(created_str) {
+                        let age = chrono::Utc::now().signed_duration_since(created.with_timezone(&chrono::Utc));
+                        if age.num_hours() < 24 && retry_count < 3 {
+                            let kind = task.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                            let payload = task.get("payload").and_then(|v| v.as_str()).unwrap_or("");
+                            println!("  ⬡ auto-retry {} (attempt {}/3, age {}h)", task_id, retry_count + 1, age.num_hours());
+                            // Re-enqueue with incremented retry_count
+                            let updated_payload = if let Ok(mut p) = serde_json::from_str::<serde_json::Value>(payload) {
+                                p["retry_count"] = serde_json::json!(retry_count + 1);
+                                p.to_string()
+                            } else {
+                                payload.to_string()
+                            };
+                            let _ = enqueue_brain_task(kind, &updated_payload).await;
+                            // Mark original as retried (delete it)
+                            let _ = delete_brain_task(task_id).await;
+                        }
+                    }
+                }
+            }
+        }
+
         // ── Analyze regression detection (ADR-2604241800) ────────────────
         // After each tick, check if a completed analyze task has more violations
         // than last time. Notify operator on regression.
