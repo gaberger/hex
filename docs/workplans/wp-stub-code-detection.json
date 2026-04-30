@@ -9,7 +9,7 @@
         {
           "id": "P1.1",
           "title": "Add validate_generated_code() function to hex-agent/src/workplan_executor.rs that checks for stub patterns: '// ... existing code ...', '// TODO', '// FIXME', 'placeholder', lines < 10 in a .rs file, and rejects if found",
-          "status": "pending",
+          "status": "failed",
           "strategy_hint": "codegen",
           "files": [
             "hex-agent/src/workplan_executor.rs"
@@ -22,7 +22,7 @@
         {
           "id": "P1.2",
           "title": "Call validate_generated_code() before writing files in workplan executor, fail task with clear error if validation fails",
-          "status": "pending",
+          "status": "failed",
           "strategy_hint": "codegen",
           "files": [
             "hex-agent/src/workplan_executor.rs"

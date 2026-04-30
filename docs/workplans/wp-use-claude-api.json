@@ -1,0 +1,38 @@
+{
+  "id": "wp-use-claude-api",
+  "title": "Switch workplan execution to Claude API for code generation",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Add Claude API support",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "Add ClaudeClient struct to hex-agent/src/inference_client.rs with generate() method that calls Claude API (sonnet-4) via ANTHROPIC_API_KEY env var",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-agent/src/inference_client.rs"
+          ],
+          "evidence": [
+            "grep -q 'ClaudeClient\\|anthropic' hex-agent/src/inference_client.rs",
+            "cargo check -p hex-agent"
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Update InferenceTier::from_strategy_hint() to route 'codegen' and 'inference' to Claude API if ANTHROPIC_API_KEY is set, fallback to Ollama if not",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-agent/src/inference_client.rs"
+          ],
+          "evidence": [
+            "grep -A 10 'from_strategy_hint' hex-agent/src/inference_client.rs | grep -q 'ANTHROPIC_API_KEY\\|claude'",
+            "cargo check -p hex-agent"
+          ]
+        }
+      ]
+    }
+  ]
+}
