@@ -9,7 +9,7 @@
         {
           "id": "P1.1",
           "title": "Add validate_code_output() to hex-agent/src/workplan_executor.rs that rejects: stub patterns ('...', 'TODO', 'FIXME', 'placeholder'), markdown fences, files < 5 lines, missing imports, invalid syntax",
-          "status": "pending",
+          "status": "failed",
           "strategy_hint": "codegen",
           "files": [
             "hex-agent/src/workplan_executor.rs"

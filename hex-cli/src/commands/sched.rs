@@ -2610,7 +2610,10 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         // that lives in execute_brain_task. Until §2 ships fully, fall
         // back to inline execution whenever dispatch reports no live
         // worker. The guard runs on the fallback path.
-        match drain_brain_tasks(1).await {
+        let drain_result = drain_brain_tasks(1).await;
+        eprintln!("  ⬡ drain_brain_tasks returned: {} tasks",
+            drain_result.as_ref().map(|t| t.len()).unwrap_or(0));
+        match drain_result {
             Ok(tasks) if !tasks.is_empty() => {
                 for task in tasks {
                     let id = task
