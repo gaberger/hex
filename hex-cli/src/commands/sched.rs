@@ -2733,7 +2733,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                         if age.num_hours() < 24 && retry_count < 3 {
                             let kind = task.get("kind").and_then(|v| v.as_str()).unwrap_or("");
                             let payload = task.get("payload").and_then(|v| v.as_str()).unwrap_or("");
-                            println!("  ⬡ auto-retry {} (attempt {}/3, age {}h)", task_id, retry_count + 1, age.num_hours());
+                            eprintln!("  ⬡ auto-retry {} (attempt {}/3, age {}h)", task_id, retry_count + 1, age.num_hours());
                             // Re-enqueue with incremented retry_count
                             let updated_payload = if let Ok(mut p) = serde_json::from_str::<serde_json::Value>(payload) {
                                 p["retry_count"] = serde_json::json!(retry_count + 1);
@@ -2742,8 +2742,8 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                                 payload.to_string()
                             };
                             let _ = enqueue_brain_task(kind, &updated_payload).await;
-                            // Mark original as retried (delete it)
-                            let _ = delete_brain_task(task_id).await;
+                            // Mark original as completed to prevent re-retry
+                            let _ = update_brain_task(task_id, BrainTaskStatus::Completed, "auto-retried").await;
                         }
                     }
                 }
