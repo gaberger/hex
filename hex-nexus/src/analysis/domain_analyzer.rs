@@ -1,86 +1,70 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use serde::Serialize;
+use syn::{File, ItemFn, visit::Visit};
 
-#[derive(Serialize)]
-struct FunctionAnalysis {
-    name: String,
-    is_pure: bool,
-    side_effects: Vec<String>,
+#[derive(Debug, serde::Serialize)]
+pub struct FunctionAnalysis {
+    pub name: String,
+    pub is_pure: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub struct DomainAnalysisReport {
-    domain_path: String,
+    pub domain: String,
+    pub functions: Vec<FunctionAnalysis>,
+}
+
+struct FunctionVisitor {
     functions: Vec<FunctionAnalysis>,
 }
 
-pub fn analyze_domain(domain_path: &str) -> DomainAnalysisReport {
-    let mut report = DomainAnalysisReport {
-        domain_path: domain_path.to_string(),
-        functions: Vec::new(),
-    };
+impl FunctionVisitor {
+    fn new() -> Self {
+        Self {
+            functions: Vec::new(),
+        }
+    }
+}
 
-    if let Ok(entries) = fs::read_dir(domain_path) {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.is_file() {
-                    if let Ok(contents) = fs::read_to_string(&path) {
-                        let function_analysis = analyze_file_contents(&contents);
-                        report.functions.extend(function_analysis);
-                    }
-                }
+impl<'ast> Visit<'ast> for FunctionVisitor {
+    fn visit_item_fn(&mut self, node: &'ast ItemFn) {
+        let mut is_pure = true;
+        
+        // Simple heuristic: Functions with side effects often have extern blocks or unsafe
+        if node.sig.unsafety.is_some() {
+            is_pure = false;
+        }
+        
+        self.functions.push(FunctionAnalysis {
+            name: node.sig.ident.to_string(),
+            is_pure,
+        });
+        
+        syn::visit::visit_item_fn(self, node);
+    }
+}
+
+pub fn analyze_domain(domain_path: &str) -> DomainAnalysisReport {
+    let mut functions = Vec::new();
+    let path = Path::new(domain_path);
+
+    if path.is_dir() {
+        for entry in fs::read_dir(path).expect("Failed to read domain directory") {
+            let entry = entry.expect("Failed to read directory entry");
+            if entry.path().is_file() && entry.path().extension().map_or(false, |ext| ext == "rs") {
+                let content = fs::read_to_string(entry.path()).expect("Failed to read file");
+                let syntax: File = syn::parse_str(&content).expect("Failed to parse Rust file");
+                
+                let mut visitor = FunctionVisitor::new();
+                visitor.visit_file(&syntax);
+                functions.extend(visitor.functions);
             }
         }
     }
 
-    report
-}
-
-fn analyze_file_contents(contents: &str) -> Vec<FunctionAnalysis> {
-    let mut functions = Vec::new();
-    let lines: Vec<&str> = contents.lines().collect();
-
-    for (i, line) in lines.iter().enumerate() {
-        if line.trim().starts_with("fn ") {
-            let name = extract_function_name(line);
-            let (is_pure, side_effects) = check_function_purity(&lines, i);
-            functions.push(FunctionAnalysis {
-                name,
-                is_pure,
-                side_effects,
-            });
-        }
+    DomainAnalysisReport {
+        domain: domain_path.to_string(),
+        functions,
     }
-
-    functions
-}
-
-fn extract_function_name(line: &str) -> String {
-    line.trim()
-        .split_whitespace()
-        .nth(1)
-        .unwrap_or("")
-        .trim_end_matches('{')
-        .trim()
-        .to_string()
-}
-
-fn check_function_purity(lines: &[&str], start_idx: usize) -> (bool, Vec<String>) {
-    let mut is_pure = true;
-    let mut side_effects = Vec::new();
-
-    for line in &lines[start_idx..] {
-        if line.contains("mut ") || line.contains("unwrap()") || line.contains("expect(") {
-            is_pure = false;
-            side_effects.push(line.to_string());
-        }
-        if line.trim().ends_with("}") {
-            break;
-        }
-    }
-
-    (is_pure, side_effects)
 }
