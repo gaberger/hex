@@ -349,11 +349,14 @@ pub async fn execute_workplan_autonomous(
                     }
 
                     // If any files were blocked, fail the task
+                    // Note: This is a fallback - workplans should be rejected at enqueue time
+                    // by hex-cli's pre-flight validation (hex sched enqueue)
                     if !blocked_files.is_empty() {
                         task.status = "failed".to_string();
                         summary.failed += 1;
                         summary.failures.push(format!(
-                            "{}: Cannot modify critical infrastructure files: {}",
+                            "{}: Cannot modify critical infrastructure files: {} \
+                             (this workplan bypassed pre-flight validation)",
                             task.id,
                             blocked_files.join(", ")
                         ));

@@ -20,6 +20,24 @@ pub fn is_critical_path(path: &str) -> bool {
     })
 }
 
+/// Validate that workplan task files don't target critical infrastructure
+/// Returns Err with list of blocked files if any critical paths detected
+pub fn validate_workplan_task_safety(files: &[String]) -> Result<(), Vec<String>> {
+    let mut blocked = Vec::new();
+
+    for file in files {
+        if is_critical_path(file) {
+            blocked.push(file.clone());
+        }
+    }
+
+    if blocked.is_empty() {
+        Ok(())
+    } else {
+        Err(blocked)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -31,5 +49,30 @@ mod tests {
         assert!(is_critical_path("hex-agent/src/workplan_executor.rs"));
         assert!(!is_critical_path("hex-agent/src/test_utils.rs"));
         assert!(!is_critical_path("docs/guides/example.md"));
+    }
+
+    #[test]
+    fn test_workplan_task_safety_validation() {
+        // Should pass for safe files
+        let safe_files = vec![
+            "docs/test.md".to_string(),
+            "hex-agent/src/test_utils.rs".to_string(),
+        ];
+        assert!(validate_workplan_task_safety(&safe_files).is_ok());
+
+        // Should fail for critical files
+        let critical_files = vec![
+            "hex-cli/src/commands/sched.rs".to_string(),
+        ];
+        assert!(validate_workplan_task_safety(&critical_files).is_err());
+
+        // Should fail if mixed
+        let mixed_files = vec![
+            "docs/test.md".to_string(),
+            "hex-agent/src/workplan_executor.rs".to_string(),
+        ];
+        let result = validate_workplan_task_safety(&mixed_files);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().len(), 1);
     }
 }

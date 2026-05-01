@@ -3482,9 +3482,42 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
     // default lease_for() duration when the field is absent or the file
     // can't be read (e.g. the payload is a workplan ID, not a path).
     let timeout: u64 = if kind == "workplan" {
-        std::fs::read_to_string(payload)
+        let workplan_content = std::fs::read_to_string(payload)
             .ok()
-            .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
+            .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok());
+
+        // Validate critical path safety before enqueueing
+        if let Some(ref wp) = workplan_content {
+            if let Some(phases) = wp.get("phases").and_then(|v| v.as_array()) {
+                for phase in phases {
+                    if let Some(tasks) = phase.get("tasks").and_then(|v| v.as_array()) {
+                        for task in tasks {
+                            if let Some(files) = task.get("files").and_then(|v| v.as_array()) {
+                                let file_paths: Vec<String> = files
+                                    .iter()
+                                    .filter_map(|f| f.as_str().map(String::from))
+                                    .collect();
+
+                                if let Err(blocked) = hex_core::validation::validate_workplan_task_safety(&file_paths) {
+                                    let task_id = task.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                    eprintln!("⚠ Workplan rejected: task {} targets protected files:", task_id);
+                                    for file in &blocked {
+                                        eprintln!("  - {}", file);
+                                    }
+                                    anyhow::bail!(
+                                        "Cannot enqueue workplan targeting critical infrastructure. \
+                                         Protected files: {}",
+                                        blocked.join(", ")
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        workplan_content
             .and_then(|wp| wp.get("timeout_s")?.as_u64())
             .unwrap_or_else(|| lease_for(kind).as_secs())
     } else {
