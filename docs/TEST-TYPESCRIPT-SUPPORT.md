@@ -17,12 +17,16 @@ This test will:
 
 ## Test Project: Food Delivery Service
 
+**Location**: `examples/food-delivery-ts/`
+
 A hexagonal TypeScript application following hex architecture rules:
 
 ```
-food-delivery/
+examples/food-delivery-ts/
 ├── package.json          # Triggers TypeScript detection
 ├── tsconfig.json         # TypeScript configuration
+├── README.md             # Example documentation
+├── workplan-order-domain.json
 ├── src/
 │   ├── core/
 │   │   ├── domain/       # Pure business logic (Order, OrderStatus)
@@ -31,72 +35,31 @@ food-delivery/
 │   └── adapters/
 │       ├── primary/      # HTTP, CLI adapters
 │       └── secondary/    # Database, external service adapters
-└── workplan-order-domain.json
 ```
 
 ---
 
 ## Setup Instructions
 
-### 1. Create Test Project
+### 1. Use Example Project
 
 ```bash
-# Create directory structure
-mkdir -p food-delivery/src/core/{domain,ports,usecases}
-mkdir -p food-delivery/src/adapters/{primary,secondary}
-cd food-delivery
-
-# Create package.json
-cat > package.json << 'EOF'
-{
-  "name": "food-delivery-service",
-  "version": "0.1.0",
-  "type": "module",
-  "scripts": {
-    "build": "tsc",
-    "test": "vitest",
-    "typecheck": "tsc --noEmit"
-  },
-  "devDependencies": {
-    "typescript": "^5.3.0",
-    "vitest": "^1.0.0",
-    "@types/node": "^20.0.0"
-  }
-}
-EOF
-
-# Create tsconfig.json
-cat > tsconfig.json << 'EOF'
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ES2022",
-    "moduleResolution": "node",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "outDir": "./dist",
-    "rootDir": "./src"
-  },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
-}
-EOF
-
-# Initialize git
-git init
-git add -A
-git commit -m "Initial TypeScript food delivery project"
+# Navigate to example
+cd examples/food-delivery-ts
 
 # Install dependencies
 npm install
+
+# Verify TypeScript setup
+npm run typecheck  # Should pass (no files yet)
 ```
 
-### 2. Copy Test Workplan
-
-```bash
-cp /var/home/gary/hex-intf/docs/workplans/test-typescript-food-delivery.json ./
-```
+The example includes:
+- ✅ `package.json` with TypeScript dependencies
+- ✅ `tsconfig.json` with strict settings
+- ✅ Hexagonal directory structure
+- ✅ `workplan-order-domain.json` test workplan
+- ✅ README with full documentation
 
 ---
 
@@ -129,8 +92,8 @@ hex analyze .  # Should detect TypeScript project
 **Expected**: Execution fails because workplan_executor.rs hardcodes `cargo check`.
 
 ```bash
-cd /tmp/food-delivery
-hex plan execute test-typescript-food-delivery.json
+cd examples/food-delivery-ts
+hex plan execute workplan-order-domain.json
 ```
 
 **Expected Error**:
@@ -236,12 +199,12 @@ cd hex-nexus
 cargo test build_adapter::tests::detect_typescript
 
 # Test evidence commands manually
-cd /tmp/food-delivery
-npx tsc --noEmit  # Should pass with valid TS
+cd examples/food-delivery-ts
+npm install
+npx tsc --noEmit  # Should pass (no files yet)
 
 # Test tree-sitter analysis
-cd /var/home/gary/hex-intf
-hex analyze /tmp/food-delivery  # Boundary checking works language-agnostic
+hex analyze examples/food-delivery-ts  # Boundary checking works language-agnostic
 ```
 
 ---

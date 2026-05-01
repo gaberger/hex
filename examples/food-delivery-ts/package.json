@@ -1,0 +1,25 @@
+{
+  "name": "@hex-examples/food-delivery-ts",
+  "version": "0.1.0",
+  "description": "TypeScript food delivery service demonstrating hex hexagonal architecture",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx watch src/main.ts"
+  },
+  "keywords": [
+    "hex",
+    "hexagonal-architecture",
+    "typescript",
+    "food-delivery",
+    "example"
+  ],
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0",
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0"
+  }
+}
