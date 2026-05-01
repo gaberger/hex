@@ -22,7 +22,7 @@
         {
           "id": "P1.2",
           "title": "Create docs/guides/inference-tiers.md explaining T1/T2/T2.5 tier routing and when to use each tier",
-          "status": "failed",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "docs/guides/inference-tiers.md"

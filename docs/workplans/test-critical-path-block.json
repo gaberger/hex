@@ -1,24 +1,12 @@
 {
-  "id": "test-critical-path-block",
-  "title": "Test that critical path protection blocks sched.rs modification",
-  "phases": [
+  "test_name": "critical_path_block_test",
+  "description": "Test to verify that modifying critical infrastructure files fails with 'Cannot modify critical infrastructure' error.",
+  "steps": [
     {
-      "id": "P1",
-      "title": "Attempt to modify critical file",
-      "tasks": [
-        {
-          "id": "P1.1",
-          "title": "Try to add comment to hex-cli/src/commands/sched.rs (should be blocked)",
-          "status": "failed",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-cli/src/commands/sched.rs"
-          ],
-          "evidence": [
-            "echo 'This should never run because file write should be blocked'"
-          ]
-        }
-      ]
+      "action": "modify_file",
+      "file_path": "hex-cli/src/commands/sched.rs",
+      "content": "// This is a test modification",
+      "expected_error": "Cannot modify critical infrastructure"
     }
   ]
 }

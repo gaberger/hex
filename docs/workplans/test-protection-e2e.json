@@ -1,43 +1,43 @@
 {
   "id": "test-protection-e2e",
-  "title": "End-to-end test of critical path protection",
   "phases": [
     {
       "id": "P1",
-      "title": "Test blocking critical file modification",
       "tasks": [
         {
-          "id": "P1.1",
-          "title": "Attempt to add function to hex-cli/src/commands/sched.rs (SHOULD BE BLOCKED)",
-          "status": "failed",
-          "strategy_hint": "codegen",
+          "evidence": [
+            "echo 'This evidence should never run because write will be blocked'"
+          ],
           "files": [
             "hex-cli/src/commands/sched.rs"
           ],
-          "evidence": [
-            "echo 'This evidence should never run because write will be blocked'"
-          ]
+          "id": "P1.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Attempt to add function to hex-cli/src/commands/sched.rs (SHOULD BE BLOCKED)"
         }
-      ]
+      ],
+      "title": "Test blocking critical file modification"
     },
     {
       "id": "P2",
-      "title": "Test allowing non-critical file modification",
       "tasks": [
         {
-          "id": "P2.1",
-          "title": "Create test file docs/test/protection-verification.md documenting that protection works (SHOULD SUCCEED)",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "files": [
-            "docs/test/protection-verification.md"
-          ],
           "evidence": [
             "test -f docs/test/protection-verification.md",
             "grep -q 'protection' docs/test/protection-verification.md"
-          ]
+          ],
+          "files": [
+            "docs/test/protection-verification.md"
+          ],
+          "id": "P2.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Create test file docs/test/protection-verification.md documenting that protection works (SHOULD SUCCEED)"
         }
-      ]
+      ],
+      "title": "Test allowing non-critical file modification"
     }
-  ]
+  ],
+  "title": "End-to-end test of critical path protection"
 }

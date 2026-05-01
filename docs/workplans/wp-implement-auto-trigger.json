@@ -9,7 +9,7 @@
         {
           "id": "P1.1",
           "title": "Create ~/.hex/sched/last_arch_analysis file with current timestamp",
-          "status": "failed",
+          "status": "done",
           "strategy_hint": "shell",
           "files": [],
           "evidence": [
@@ -26,7 +26,7 @@
         {
           "id": "P2.1",
           "title": "Create scripts/auto-arch-analysis.sh that checks if 2 hours elapsed since last run, and if so enqueues hex analyze, updates timestamp",
-          "status": "failed",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "scripts/auto-arch-analysis.sh"

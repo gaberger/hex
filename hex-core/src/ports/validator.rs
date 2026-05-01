@@ -1,4 +1,4 @@
-use crate::validation::ValidationRule;
+use crate::domain::validation::ValidationRule;
 
 /// IValidator port defines the contract for validation services.
 /// Adapters can register multiple ValidationRule implementations and

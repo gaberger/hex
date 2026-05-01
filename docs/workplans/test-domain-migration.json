@@ -1,123 +1,122 @@
 {
   "id": "test-domain-migration",
+  "title": "Test architectural migration: Add extensible validation rule system",
   "phases": [
     {
       "id": "P1",
+      "title": "Domain: Add new validation rule abstraction",
       "tasks": [
         {
+          "id": "P1.1",
+          "title": "Add ValidationRule trait to hex-core/src/validation.rs with fn validate(&self, path: &str, content: &str) -> Result<(), String> signature",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-core/src/validation.rs"
+          ],
           "evidence": [
             "grep -q 'pub trait ValidationRule' hex-core/src/validation.rs",
             "grep -q 'fn validate' hex-core/src/validation.rs",
             "cargo check -p hex-core"
-          ],
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Add CriticalPathRule struct in hex-core/src/validation.rs implementing ValidationRule trait, encapsulating existing is_critical_path logic",
+          "status": "done",
+          "strategy_hint": "codegen",
           "files": [
             "hex-core/src/validation.rs"
           ],
-          "id": "P1.1",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Add ValidationRule trait to hex-core/src/validation.rs with fn validate(&self, path: &str, content: &str) -> Result<(), String> signature"
-        },
-        {
           "evidence": [
             "grep -q 'struct CriticalPathRule' hex-core/src/validation.rs",
             "grep -q 'impl ValidationRule for CriticalPathRule' hex-core/src/validation.rs",
             "cargo check -p hex-core"
-          ],
-          "files": [
-            "hex-core/src/validation.rs"
-          ],
-          "id": "P1.2",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Add CriticalPathRule struct in hex-core/src/validation.rs implementing ValidationRule trait, encapsulating existing is_critical_path logic"
+          ]
         }
-      ],
-      "title": "Domain: Add new validation rule abstraction"
+      ]
     },
     {
       "id": "P2",
+      "title": "Port: Define validation port interface",
       "tasks": [
         {
-          "evidence": [
-            "grep -q 'pub trait IValidator' hex-core/src/ports/validator.rs",
-            "grep -q 'fn add_rule' hex-core/src/ports/validator.rs",
-            "cargo check -p hex-core"
-          ],
+          "id": "P2.1",
+          "title": "Create hex-core/src/ports/validator.rs with IValidator trait: fn add_rule(&mut self, rule: Box<dyn ValidationRule>) and fn validate_all(&self, path: &str, content: &str) -> Result<(), Vec<String>>",
+          "status": "done",
+          "strategy_hint": "codegen",
           "files": [
             "hex-core/src/ports/validator.rs",
             "hex-core/src/ports/mod.rs"
           ],
-          "id": "P2.1",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Create hex-core/src/ports/validator.rs with IValidator trait: fn add_rule(&mut self, rule: Box<dyn ValidationRule>) and fn validate_all(&self, path: &str, content: &str) -> Result<(), Vec<String>>"
+          "evidence": [
+            "grep -q 'pub trait IValidator' hex-core/src/ports/validator.rs",
+            "grep -q 'fn add_rule' hex-core/src/ports/validator.rs",
+            "cargo check -p hex-core"
+          ]
         }
-      ],
-      "title": "Port: Define validation port interface"
+      ]
     },
     {
       "id": "P3",
+      "title": "Adapter: Implement validator adapter",
       "tasks": [
         {
-          "evidence": [
-            "grep -q 'impl IValidator' hex-agent/src/adapters/validator.rs",
-            "grep -q 'Vec<Box<dyn ValidationRule>>' hex-agent/src/adapters/validator.rs",
-            "cargo check -p hex-agent"
-          ],
+          "id": "P3.1",
+          "title": "Create hex-agent/src/adapters/validator.rs implementing IValidator, stores Vec<Box<dyn ValidationRule>>, validate_all runs all rules and collects errors",
+          "status": "done",
+          "strategy_hint": "codegen",
           "files": [
             "hex-agent/src/adapters/validator.rs",
             "hex-agent/src/adapters/mod.rs"
           ],
-          "id": "P3.1",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Create hex-agent/src/adapters/validator.rs implementing IValidator, stores Vec<Box<dyn ValidationRule>>, validate_all runs all rules and collects errors"
+          "evidence": [
+            "grep -q 'impl IValidator' hex-agent/src/adapters/validator.rs",
+            "grep -q 'Vec<Box<dyn ValidationRule>>' hex-agent/src/adapters/validator.rs",
+            "cargo check -p hex-agent"
+          ]
         }
-      ],
-      "title": "Adapter: Implement validator adapter"
+      ]
     },
     {
       "id": "P4",
+      "title": "Test: Verify new validation system works alongside old",
       "tasks": [
         {
+          "id": "P4.1",
+          "title": "Create test in hex-agent/src/adapters/validator.rs that instantiates validator, adds CriticalPathRule, validates both critical and non-critical paths, asserts correct behavior",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-agent/src/adapters/validator.rs"
+          ],
           "evidence": [
             "grep -q '#\\[cfg(test)\\]' hex-agent/src/adapters/validator.rs",
             "grep -q 'CriticalPathRule' hex-agent/src/adapters/validator.rs",
             "cargo test -p hex-agent validator"
-          ],
-          "files": [
-            "hex-agent/src/adapters/validator.rs"
-          ],
-          "id": "P4.1",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Create test in hex-agent/src/adapters/validator.rs that instantiates validator, adds CriticalPathRule, validates both critical and non-critical paths, asserts correct behavior"
+          ]
         }
-      ],
-      "title": "Test: Verify new validation system works alongside old"
+      ]
     },
     {
       "id": "P5",
+      "title": "Documentation: Record architectural decision",
       "tasks": [
         {
+          "id": "P5.1",
+          "title": "Create docs/adrs/adr-extensible-validation.md documenting migration from hardcoded is_critical_path to ValidationRule trait, showing both old and new implementations coexist during transition",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "docs/adrs/adr-extensible-validation.md"
+          ],
           "evidence": [
             "test -f docs/adrs/adr-extensible-validation.md",
             "grep -q 'ValidationRule' docs/adrs/adr-extensible-validation.md",
             "grep -q 'migration' docs/adrs/adr-extensible-validation.md"
-          ],
-          "files": [
-            "docs/adrs/adr-extensible-validation.md"
-          ],
-          "id": "P5.1",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Create docs/adrs/adr-extensible-validation.md documenting migration from hardcoded is_critical_path to ValidationRule trait, showing both old and new implementations coexist during transition"
+          ]
         }
-      ],
-      "title": "Documentation: Record architectural decision"
+      ]
     }
-  ],
-  "status": "done",
-  "title": "Test architectural migration: Add extensible validation rule system"
+  ]
 }

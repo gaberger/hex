@@ -9,7 +9,7 @@
         {
           "id": "P1.1",
           "title": "Add CRITICAL_FILES const to hex-core/src/domain/validation.rs listing infrastructure files that autonomous agents cannot modify (sched.rs, monitor.rs, workplan_executor.rs, main.rs)",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-core/src/domain/validation.rs"
@@ -23,7 +23,7 @@
         {
           "id": "P1.2",
           "title": "Add is_critical_path(path: &str) -> bool function to hex-core/src/domain/validation.rs that checks if path matches any CRITICAL_FILES pattern",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-core/src/domain/validation.rs"
@@ -42,7 +42,7 @@
         {
           "id": "P2.1",
           "title": "Create hex-core/src/ports/file_writer.rs with IFileWriter trait: fn write_file(&self, path: &Path, content: &str) -> Result<(), String> that returns error if path is critical",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-core/src/ports/file_writer.rs",
@@ -63,7 +63,7 @@
         {
           "id": "P3.1",
           "title": "Create hex-agent/src/adapters/safe_file_writer.rs implementing IFileWriter that calls is_critical_path() before std::fs::write, returns Err if critical",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-agent/src/adapters/safe_file_writer.rs",
@@ -84,7 +84,7 @@
         {
           "id": "P4.1",
           "title": "Update hex-agent/src/workplan_executor.rs execute_workplan_autonomous() to accept IFileWriter trait object, replace direct std::fs::write calls with writer.write_file()",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-agent/src/workplan_executor.rs"
@@ -98,7 +98,7 @@
         {
           "id": "P4.2",
           "title": "Update hex-agent/src/main.rs workplan command handler to instantiate SafeFileWriter and pass to execute_workplan_autonomous()",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-agent/src/main.rs"
@@ -117,7 +117,7 @@
         {
           "id": "P5.1",
           "title": "Create test workplan docs/workplans/test-critical-path-block.json that tries to modify hex-cli/src/commands/sched.rs, verify it fails with 'Cannot modify critical infrastructure' error",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "docs/workplans/test-critical-path-block.json"

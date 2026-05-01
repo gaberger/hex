@@ -26,10 +26,3 @@ fn default_max_concurrent_agents() -> u32 {
 fn default_rollback_on_failure() -> bool {
     true
 }
-
-impl Config {
-    pub fn load() -> Result<Self, serde_json::Error> {
-        let config_str = std::fs::read_to_string(".hex/project.json")?;
-        serde_json::from_str(&config_str)
-    }
-}

@@ -1,5 +1,5 @@
+use hex_core::domain::validation::ValidationRule;
 use hex_core::ports::validator::IValidator;
-use hex_core::validation::ValidationRule;
 
 /// Validator adapter that aggregates multiple validation rules.
 /// Implements the IValidator port by maintaining a collection of
@@ -38,7 +38,7 @@ impl IValidator for Validator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hex_core::validation::CriticalPathRule;
+    use hex_core::domain::validation::CriticalPathRule;
 
     struct AlwaysFailRule(String);
     impl ValidationRule for AlwaysFailRule {

@@ -21,7 +21,7 @@
         {
           "id": "P1.2",
           "title": "Add a doc comment to execute_memory_health_check explaining what stale/failed categorization means",
-          "status": "failed",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-cli/src/commands/sched.rs"

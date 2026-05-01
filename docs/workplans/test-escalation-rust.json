@@ -1,26 +1,26 @@
 {
   "id": "test-escalation-rust",
-  "title": "Test escalation with Rust code generation",
   "phases": [
     {
       "id": "P1",
-      "title": "Generate test utilities",
       "tasks": [
         {
-          "id": "P1.1",
-          "title": "Create hex-agent/src/test_utils.rs with helper functions for validation testing",
-          "status": "failed",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-agent/src/test_utils.rs"
-          ],
           "evidence": [
             "test -f hex-agent/src/test_utils.rs",
             "grep -q 'pub fn' hex-agent/src/test_utils.rs",
             "cargo check -p hex-agent"
-          ]
+          ],
+          "files": [
+            "hex-agent/src/test_utils.rs"
+          ],
+          "id": "P1.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Create hex-agent/src/test_utils.rs with helper functions for validation testing"
         }
-      ]
+      ],
+      "title": "Generate test utilities"
     }
-  ]
+  ],
+  "title": "Test escalation with Rust code generation"
 }

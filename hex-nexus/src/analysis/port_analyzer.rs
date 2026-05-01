@@ -6,17 +6,17 @@ struct PortAnalysisReport {
     issues: Vec<String>,
 }
 
-pub fn analyze_ports(ports: Vec<&str>) -> PortAnalysisReport {
+pub fn analyze_ports(ports: &[String]) -> PortAnalysisReport {
     let mut issues = Vec::new();
 
-    for port in &ports {
-        if port.contains("::") {
-            issues.push(format!("Concrete type detected in port: {}", port));
+    for port in ports {
+        if port.contains("ConcreteType") {
+            issues.push(format!("Port {} uses a concrete type", port));
         }
     }
 
     PortAnalysisReport {
-        ports: ports.into_iter().map(String::from).collect(),
+        ports: ports.to_vec(),
         issues,
     }
 }
