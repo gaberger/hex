@@ -283,8 +283,12 @@ impl OpenRouterClient {
     }
 
     pub async fn generate(&self, prompt: String) -> Result<String> {
+        self.generate_with_model(prompt, "deepseek/deepseek-chat").await
+    }
+
+    pub async fn generate_with_model(&self, prompt: String, model: &str) -> Result<String> {
         let request = OpenRouterRequest {
-            model: "deepseek/deepseek-chat".to_string(),  // deepseek-coder not available, using chat
+            model: model.to_string(),
             messages: vec![Message {
                 role: "user".to_string(),
                 content: prompt,

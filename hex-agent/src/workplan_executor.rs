@@ -205,12 +205,63 @@ async fn try_with_escalation(
                     }
                 }
             }
+        } else if let Some(openrouter) = OpenRouterClient::new() {
+            // Try Claude via OpenRouter
+            if !background {
+                eprintln!("  ⬡ Tier 2.5 (OpenRouter): anthropic/claude-3.5-sonnet");
+            }
+
+            let start = std::time::Instant::now();
+            let claude_result = openrouter.generate_with_model(prompt.clone(), "anthropic/claude-3.5-sonnet").await;
+            let claude_duration = start.elapsed().as_millis() as u64;
+
+            match claude_result {
+                Ok(response) => {
+                    match InferenceClient::parse_response(&response) {
+                        Ok(parsed_files) => {
+                            let mut all_valid = true;
+                            for (path, content) in &parsed_files {
+                                if let Err(e) = validate_code_output(content, Some(path)) {
+                                    if !background {
+                                        eprintln!("    ✗ Claude (OpenRouter) validation failed for {}: {}", path, e);
+                                    }
+                                    all_valid = false;
+                                    break;
+                                }
+                            }
+
+                            if all_valid {
+                                if !background {
+                                    eprintln!("    ✓ Claude (OpenRouter) succeeded");
+                                }
+                                return Ok((parsed_files, InferenceAttempt {
+                                    tier_used: "OpenRouter".to_string(),
+                                    model_name: "anthropic/claude-3.5-sonnet".to_string(),
+                                    validation_passed: true,
+                                    duration_ms: claude_duration,
+                                    cost_estimate: 0.01,  // OpenRouter Claude is cheaper
+                                }));
+                            }
+                        }
+                        Err(e) => {
+                            if !background {
+                                eprintln!("    ✗ Claude (OpenRouter) parse failed: {}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    if !background {
+                        eprintln!("    ✗ Claude (OpenRouter) inference failed: {}", e);
+                    }
+                }
+            }
         } else {
-            // No Claude API key available - warn about degraded quality
+            // No frontier model access at all
             if !background {
                 eprintln!("    ⚠ WARNING: Abstraction task without frontier model access");
-                eprintln!("    ⚠ Set ANTHROPIC_API_KEY for higher quality trait/interface definitions");
-                eprintln!("    ⚠ Falling back to local/OpenRouter models (lower quality for abstractions)");
+                eprintln!("    ⚠ Set OPENROUTER_API_KEY or ANTHROPIC_API_KEY for trait/interface definitions");
+                eprintln!("    ⚠ Falling back to local models (low quality for abstractions)");
             }
             // Fall through to standard escalation ladder
         }
