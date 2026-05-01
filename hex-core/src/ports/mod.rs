@@ -12,4 +12,5 @@ pub mod file_system;
 pub mod inference;
 pub mod sandbox;
 pub mod secret;
+pub mod validator;
 pub mod web;
