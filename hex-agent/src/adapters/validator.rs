@@ -117,7 +117,7 @@ mod tests {
         assert!(validator.validate_all("src/adapters/foo.rs", "").is_ok());
 
         // Critical path should fail
-        let result = validator.validate_all("src/composition-root.ts", "");
+        let result = validator.validate_all("/etc/passwd", "");
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert_eq!(errors.len(), 1);

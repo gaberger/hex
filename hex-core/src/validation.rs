@@ -1,6 +1,6 @@
-use crate::domain::validation::is_critical_path;
+pub use crate::domain::validation::is_critical_path;
 
-pub trait ValidationRule {
+pub trait ValidationRule: Send + Sync {
     fn validate(&self, path: &str, content: &str) -> Result<(), String>;
 }
 
