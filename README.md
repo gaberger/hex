@@ -284,88 +284,28 @@ This fix enables **autonomous workplan execution** without indefinite hangs.
 
 ## How a Task Flows Through hex
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  OPERATOR PROMPT  or  IMPROVER-EMITTED HYPOTHESIS                   │
-│  "Add auth" or "Fix god-type in domain/user.rs"                     │
-└────────────────────────────┬────────────────────────────────────────┘
-                             │
-                             ▼
-                  ┌──────────────────────┐
-                  │ classify_work_intent │  ◄── ADR-2604110227
-                  │  (hook on submit)    │      T1/T2/T3 routing
-                  └──────────┬───────────┘
-                             │
-                             ▼
-              ┌──────────────────────────────┐
-              │ spec → workplan (JSON)       │  ◄── Behavioral specs
-              │ Phases, tasks, evidence req  │      Machine-checked
-              └──────────┬───────────────────┘
-                         │
-                         ▼
-              ┌──────────────────────────────┐
-              │   hex plan execute           │  ◄── HexFlo swarm
-              │   Dispatch per adapter       │      Parallel worktrees
-              └──────────┬───────────────────┘
-                         │
-                         ├──────┬──────┬──────┐
-                         ▼      ▼      ▼      ▼
-                    ┌────────────────────────────┐
-                    │ Agent in isolated worktree │  ◄── feat/<wp>/<layer>
-                    │ (domain, port, or adapter) │      No cross-contamination
-                    └──────────┬─────────────────┘
-                               │
-                               ▼
-                    ┌──────────────────────────────┐
-                    │ Best-of-N inference          │  ◄── T1: 4B, T2: 32B
-                    │ + compile gate (blocking)    │      T2.5: 24B, T3: Claude
-                    │ cargo check / tsc --noEmit   │      Failed = retry different N
-                    └──────────┬───────────────────┘
-                               │
-                               ▼
-                    ┌──────────────────────────────┐
-                    │ Evidence gate (blocking)     │  ◄── ADR-2604270800
-                    │ • task.files exist?          │      No self-reported "done"
-                    │ • commit subject has task ID?│      Status = derived
-                    └──────────┬───────────────────┘
-                               │
-                               ▼
-                    ┌──────────────────────────────┐
-                    │ Judge: behavioral spec check │  ◄── ADR-2604261311
-                    │ + rubric scores ≥ threshold  │      5-axis structured eval
-                    └──────────┬───────────────────┘
-                               │
-                               ▼
-                    ┌──────────────────────────────┐
-                    │ hex worktree merge           │  ◄── NEVER raw git checkout
-                    │ (safe cross-worktree merge)  │      ADR-2604131930
-                    └──────────┬───────────────────┘
-                               │
-                               ▼
-                    ┌──────────────────────────────┐
-                    │ hex plan reconcile --strict  │  ◄── Append-only event log
-                    │ Verify status vs git evidence│      Status = derived, not stored
-                    └──────────┬───────────────────┘
-                               │
-                               ▼
-              ┌────────────────────────────────────────┐
-              │ Sched tick loops (every 30s)           │
-              │ • hex adr doctor (registry health)     │  ◄── Tier-A auto-fix
-              │ • improver detectors (arch violations) │      Tier-B draft
-              │ • swarm cleanup (stale agents)         │      Tier-C notify
-              └────────────────┬───────────────────────┘
-                               │
-                               ▼
-              ┌────────────────────────────────────────┐
-              │ Improver discovers next hypothesis     │  ◄── MAPE-K loop
-              │ Adversarial variants compete           │      System improves itself
-              └────────────────┬───────────────────────┘
-                               │
-                               └──────► (back to top)
+<p align="center">
+  <img src=".github/assets/task-flow.svg" alt="Task Flow Through hex" width="800">
+</p>
 
-Every arrow is an event row. Every state transition is recorded.
-Operator's role: kill-switch + rubric tuning, not per-decision approval.
-```
+**Key stages:**
+
+1. **Operator prompt** or improver-emitted hypothesis
+2. **Intent classification** → tier routing (T1: scaffold, T2: codegen, T2.5: reasoning, T3: frontier)
+3. **Spec generation** → workplan JSON with phases, tasks, evidence requirements
+4. **HexFlo dispatch** → parallel worktrees per adapter (feat/\<wp\>/\<layer\>)
+5. **Best-of-N inference** → compile gate blocks failed attempts (cargo check / tsc --noEmit)
+6. **Evidence gate** → status derived from git, not self-reported (ADR-2604270800)
+7. **Judge evaluation** → behavioral spec + 5-axis rubric (ADR-2604261311)
+8. **Safe merge** → `hex worktree merge`, never raw checkout (ADR-2604131930)
+9. **Reconciliation** → append-only event log, status derived from evidence
+10. **Sched loops** → ADR doctor, improver detectors, swarm cleanup (every 30s)
+11. **Improver** → discovers next hypothesis, adversarial variants compete (MAPE-K)
+12. **Loop back** → system improves itself continuously
+
+**Every arrow is an event row. Every state transition is recorded.**
+
+Operator's role: **kill-switch + rubric tuning**, not per-decision approval.
 
 ---
 

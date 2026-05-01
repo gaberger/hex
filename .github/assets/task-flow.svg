@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1400" style="background: #0d1117;">
+  <defs>
+    <style>
+      .box { fill: #161b22; stroke: #30363d; stroke-width: 2; }
+      .box-highlight { fill: #1c2128; stroke: #58a6ff; stroke-width: 2; }
+      .box-gate { fill: #1a1f29; stroke: #f85149; stroke-width: 2; }
+      .box-loop { fill: #1a2b1f; stroke: #3fb950; stroke-width: 2; }
+      .text { fill: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; }
+      .text-small { fill: #8b949e; font-size: 11px; }
+      .text-title { fill: #58a6ff; font-size: 16px; font-weight: 600; }
+      .text-gate { fill: #f85149; font-size: 13px; font-weight: 600; }
+      .text-loop { fill: #3fb950; font-size: 13px; font-weight: 600; }
+      .arrow { stroke: #58a6ff; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+      .arrow-parallel { stroke: #8b949e; stroke-width: 1.5; fill: none; marker-end: url(#arrowhead-small); }
+      .arrow-loop { stroke: #3fb950; stroke-width: 2; fill: none; marker-end: url(#arrowhead-loop); stroke-dasharray: 5,5; }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#58a6ff" />
+    </marker>
+    <marker id="arrowhead-small" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#8b949e" />
+    </marker>
+    <marker id="arrowhead-loop" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#3fb950" />
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="400" y="30" class="text-title" text-anchor="middle">Task Flow Through hex</text>
+  <text x="400" y="50" class="text-small" text-anchor="middle">Every arrow is an event row • Every state transition is recorded</text>
+
+  <!-- 1. Operator Input -->
+  <rect x="250" y="70" width="300" height="50" class="box-highlight" rx="5"/>
+  <text x="400" y="92" class="text" text-anchor="middle" font-weight="600">OPERATOR PROMPT</text>
+  <text x="400" y="110" class="text-small" text-anchor="middle">or improver-emitted hypothesis</text>
+
+  <!-- Arrow -->
+  <path d="M 400 120 L 400 150" class="arrow"/>
+
+  <!-- 2. Intent Classification -->
+  <rect x="200" y="150" width="400" height="60" class="box" rx="5"/>
+  <text x="400" y="175" class="text" text-anchor="middle" font-weight="600">classify_work_intent</text>
+  <text x="400" y="192" class="text-small" text-anchor="middle">T1: scaffold • T2: codegen • T2.5: reasoning • T3: frontier</text>
+  <text x="580" y="180" class="text-small">ADR-2604110227</text>
+
+  <!-- Arrow -->
+  <path d="M 400 210 L 400 240" class="arrow"/>
+
+  <!-- 3. Spec Generation -->
+  <rect x="200" y="240" width="400" height="60" class="box" rx="5"/>
+  <text x="400" y="265" class="text" text-anchor="middle" font-weight="600">spec → workplan (JSON)</text>
+  <text x="400" y="282" class="text-small" text-anchor="middle">Phases, tasks, evidence requirements • Behavioral specs</text>
+
+  <!-- Arrow -->
+  <path d="M 400 300 L 400 330" class="arrow"/>
+
+  <!-- 4. HexFlo Dispatch -->
+  <rect x="200" y="330" width="400" height="60" class="box-highlight" rx="5"/>
+  <text x="400" y="355" class="text" text-anchor="middle" font-weight="600">hex plan execute</text>
+  <text x="400" y="372" class="text-small" text-anchor="middle">HexFlo swarm • Parallel worktrees per adapter</text>
+
+  <!-- Parallel arrows -->
+  <path d="M 400 390 L 250 420" class="arrow-parallel"/>
+  <path d="M 400 390 L 350 420" class="arrow-parallel"/>
+  <path d="M 400 390 L 450 420" class="arrow-parallel"/>
+  <path d="M 400 390 L 550 420" class="arrow-parallel"/>
+
+  <!-- 5. Agent Worktrees -->
+  <rect x="150" y="420" width="500" height="50" class="box" rx="5"/>
+  <text x="400" y="442" class="text" text-anchor="middle" font-weight="600">Agent in isolated worktree</text>
+  <text x="400" y="458" class="text-small" text-anchor="middle">feat/&lt;workplan&gt;/&lt;domain|port|adapter&gt; • No cross-contamination</text>
+
+  <!-- Arrow -->
+  <path d="M 400 470 L 400 500" class="arrow"/>
+
+  <!-- 6. Best-of-N + Compile Gate -->
+  <rect x="200" y="500" width="400" height="70" class="box-gate" rx="5"/>
+  <text x="400" y="522" class="text-gate" text-anchor="middle">COMPILE GATE (blocking)</text>
+  <text x="400" y="540" class="text" text-anchor="middle">Best-of-N inference</text>
+  <text x="400" y="556" class="text-small" text-anchor="middle">cargo check / tsc --noEmit • Failed = retry different N</text>
+
+  <!-- Arrow -->
+  <path d="M 400 570 L 400 600" class="arrow"/>
+
+  <!-- 7. Evidence Gate -->
+  <rect x="200" y="600" width="400" height="70" class="box-gate" rx="5"/>
+  <text x="400" y="622" class="text-gate" text-anchor="middle">EVIDENCE GATE (blocking)</text>
+  <text x="400" y="640" class="text" text-anchor="middle">• task.files exist?</text>
+  <text x="400" y="656" class="text" text-anchor="middle">• commit subject has task ID?</text>
+  <text x="580" y="635" class="text-small">ADR-2604270800</text>
+
+  <!-- Arrow -->
+  <path d="M 400 670 L 400 700" class="arrow"/>
+
+  <!-- 8. Judge -->
+  <rect x="200" y="700" width="400" height="60" class="box" rx="5"/>
+  <text x="400" y="725" class="text" text-anchor="middle" font-weight="600">Judge: behavioral spec check</text>
+  <text x="400" y="742" class="text-small" text-anchor="middle">5-axis rubric • Scores ≥ confidence threshold</text>
+  <text x="580" y="730" class="text-small">ADR-2604261311</text>
+
+  <!-- Arrow -->
+  <path d="M 400 760 L 400 790" class="arrow"/>
+
+  <!-- 9. Worktree Merge -->
+  <rect x="200" y="790" width="400" height="60" class="box" rx="5"/>
+  <text x="400" y="815" class="text" text-anchor="middle" font-weight="600">hex worktree merge</text>
+  <text x="400" y="832" class="text-small" text-anchor="middle">Safe cross-worktree merge • NEVER raw git checkout</text>
+  <text x="580" y="820" class="text-small">ADR-2604131930</text>
+
+  <!-- Arrow -->
+  <path d="M 400 850 L 400 880" class="arrow"/>
+
+  <!-- 10. Reconciliation -->
+  <rect x="200" y="880" width="400" height="60" class="box" rx="5"/>
+  <text x="400" y="905" class="text" text-anchor="middle" font-weight="600">hex plan reconcile --strict</text>
+  <text x="400" y="922" class="text-small" text-anchor="middle">Append-only event log • Status derived from evidence</text>
+
+  <!-- Arrow -->
+  <path d="M 400 940 L 400 970" class="arrow"/>
+
+  <!-- 11. Sched Loops -->
+  <rect x="200" y="970" width="400" height="90" class="box-loop" rx="5"/>
+  <text x="400" y="992" class="text-loop" text-anchor="middle">SCHED TICK LOOPS (every 30s)</text>
+  <text x="400" y="1012" class="text" text-anchor="middle">• hex adr doctor (registry health)</text>
+  <text x="400" y="1030" class="text" text-anchor="middle">• improver detectors (arch violations)</text>
+  <text x="400" y="1048" class="text" text-anchor="middle">• swarm cleanup (stale agents)</text>
+
+  <!-- Arrow -->
+  <path d="M 400 1060 L 400 1090" class="arrow"/>
+
+  <!-- 12. Improver -->
+  <rect x="200" y="1090" width="400" height="70" class="box-loop" rx="5"/>
+  <text x="400" y="1112" class="text-loop" text-anchor="middle">IMPROVER DISCOVERS NEXT HYPOTHESIS</text>
+  <text x="400" y="1130" class="text" text-anchor="middle">Adversarial variants compete</text>
+  <text x="400" y="1146" class="text-small" text-anchor="middle">MAPE-K control loop • System improves itself</text>
+
+  <!-- Loop back arrow -->
+  <path d="M 400 1160 L 400 1200 L 720 1200 L 720 100 L 550 100" class="arrow-loop"/>
+  <text x="730" y="650" class="text-small" transform="rotate(90 730 650)">SELF-IMPROVEMENT LOOP</text>
+
+  <!-- Footer -->
+  <text x="400" y="1330" class="text-small" text-anchor="middle">Operator role: kill-switch + rubric tuning</text>
+  <text x="400" y="1350" class="text-small" text-anchor="middle">NOT per-decision approval</text>
+
+  <!-- Legend -->
+  <rect x="50" y="1270" width="20" height="20" class="box-highlight" rx="2"/>
+  <text x="80" y="1285" class="text-small">Dispatch/Orchestration</text>
+
+  <rect x="250" y="1270" width="20" height="20" class="box-gate" rx="2"/>
+  <text x="280" y="1285" class="text-small">Blocking Gates</text>
+
+  <rect x="450" y="1270" width="20" height="20" class="box-loop" rx="2"/>
+  <text x="480" y="1285" class="text-small">Self-Improvement</text>
+</svg>
