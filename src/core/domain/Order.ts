@@ -44,19 +44,20 @@ export interface OrderItem {
 }
 
 export interface Order {
-  readonly OrderId: OrderId;
-  readonly CustomerId: CustomerId;
-  readonly RestaurantId: RestaurantId;
-  readonly Items: readonly OrderItem[];
-  readonly OrderStatus: OrderStatus;
+  readonly orderId: OrderId;
+  readonly customerId: CustomerId;
+  readonly restaurantId: RestaurantId;
+  readonly items: readonly OrderItem[];
+  readonly status: OrderStatus;
   readonly totalAmount: Money;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
 
 export interface CreateOrderParams {
-  readonly customerId: CustomerId;
-  readonly restaurantId: RestaurantId;
+  readonly orderId: string;
+  readonly customerId: string;
+  readonly restaurantId: string;
   readonly items: readonly OrderItem[];
 }
 
@@ -64,7 +65,18 @@ export interface CreateOrderParams {
  * Factory method to create a new Order
  */
 export function createOrder(params: CreateOrderParams): Order {
-  const { customerId, restaurantId, items } = params;
+  const { orderId, customerId, restaurantId, items } = params;
+
+  // Validate IDs
+  if (!orderId || orderId.trim().length === 0) {
+    throw new Error('Order ID is required');
+  }
+  if (!customerId || customerId.trim().length === 0) {
+    throw new Error('Customer ID is required');
+  }
+  if (!restaurantId || restaurantId.trim().length === 0) {
+    throw new Error('Restaurant ID is required');
+  }
 
   if (!items || items.length === 0) {
     throw new Error('Order must contain at least one item');
@@ -95,11 +107,11 @@ export function createOrder(params: CreateOrderParams): Order {
   const now = new Date();
 
   return {
-    OrderId: createOrderId(crypto.randomUUID()),
-    CustomerId: customerId,
-    RestaurantId: restaurantId,
-    Items: items,
-    OrderStatus: OrderStatus.Pending,
+    orderId: createOrderId(orderId),
+    customerId: createCustomerId(customerId),
+    restaurantId: createRestaurantId(restaurantId),
+    items: items,
+    status: OrderStatus.Pending,
     totalAmount,
     createdAt: now,
     updatedAt: now,
@@ -136,15 +148,15 @@ export function transitionOrderStatus(
   order: Order,
   newStatus: OrderStatus
 ): Order {
-  if (!isValidStatusTransition(order.OrderStatus, newStatus)) {
+  if (!isValidStatusTransition(order.status, newStatus)) {
     throw new Error(
-      `Invalid status transition from ${order.OrderStatus} to ${newStatus}`
+      `Invalid status transition from ${order.status} to ${newStatus}`
     );
   }
 
   return {
     ...order,
-    OrderStatus: newStatus,
+    status: newStatus,
     updatedAt: new Date(),
   };
 }
@@ -154,19 +166,19 @@ export function transitionOrderStatus(
  */
 export function updateOrder(
   order: Order,
-  updates: Partial<Pick<Order, 'Items' | 'OrderStatus'>>
+  updates: Partial<Pick<Order, 'items' | 'status'>>
 ): Order {
   const updatedOrder = { ...order, ...updates, updatedAt: new Date() };
 
   // Recalculate total if items changed
-  if (updates.Items && updates.Items.length > 0) {
-    const totalAmount = updates.Items.reduce((total, item) => {
+  if (updates.items && updates.items.length > 0) {
+    const totalAmount = updates.items.reduce((total, item) => {
       const itemTotal = createMoney(
         item.unitPrice.amount * item.quantity,
         item.unitPrice.currency
       );
       return addMoney(total, itemTotal);
-    }, createMoney(0, updates.Items[0].unitPrice.currency));
+    }, createMoney(0, updates.items[0].unitPrice.currency));
 
     return { ...updatedOrder, totalAmount };
   }
