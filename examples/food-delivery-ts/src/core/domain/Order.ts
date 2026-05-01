@@ -1,109 +1,108 @@
 import { OrderStatus } from './OrderStatus.js';
 
-export interface OrderId {
-  readonly value: string;
-}
-
-export interface CustomerId {
-  readonly value: string;
-}
-
-export interface RestaurantId {
-  readonly value: string;
-}
+export type OrderId = string;
+export type CustomerId = string;
+export type RestaurantId = string;
 
 export interface Money {
-  readonly amount: number;
-  readonly currency: string;
+  amount: number;
+  currency: string;
 }
 
 export interface OrderItem {
-  readonly itemId: string;
-  readonly name: string;
-  readonly price: Money;
-  readonly quantity: number;
+  itemId: string;
+  name: string;
+  quantity: number;
+  price: Money;
 }
 
 export interface Order {
-  readonly orderId: OrderId;
-  readonly customerId: CustomerId;
-  readonly restaurantId: RestaurantId;
-  readonly items: readonly OrderItem[];
-  readonly status: OrderStatus;
-  readonly totalAmount: Money;
-  readonly createdAt: Date;
-  readonly updatedAt: Date;
+  orderId: OrderId;
+  customerId: CustomerId;
+  restaurantId: RestaurantId;
+  items: OrderItem[];
+  status: OrderStatus;
+  totalAmount: Money;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-export class InvalidStatusTransitionError extends Error {
-  constructor(from: OrderStatus, to: OrderStatus) {
-    super(`Invalid status transition from ${from} to ${to}`);
-    this.name = 'InvalidStatusTransitionError';
-  }
+export interface CreateOrderParams {
+  orderId: OrderId;
+  customerId: CustomerId;
+  restaurantId: RestaurantId;
+  items: OrderItem[];
 }
 
-const validTransitions: Record<OrderStatus, OrderStatus[]> = {
+const VALID_STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.Pending]: [OrderStatus.Confirmed, OrderStatus.Cancelled],
   [OrderStatus.Confirmed]: [OrderStatus.Preparing, OrderStatus.Cancelled],
   [OrderStatus.Preparing]: [OrderStatus.OutForDelivery, OrderStatus.Cancelled],
-  [OrderStatus.OutForDelivery]: [OrderStatus.Delivered],
+  [OrderStatus.OutForDelivery]: [OrderStatus.Delivered, OrderStatus.Cancelled],
   [OrderStatus.Delivered]: [],
-  [OrderStatus.Cancelled]: [],
+  [OrderStatus.Cancelled]: []
 };
 
-export function canTransitionTo(from: OrderStatus, to: OrderStatus): boolean {
-  return validTransitions[from].includes(to);
-}
-
-export function transitionStatus(order: Order, newStatus: OrderStatus): Order {
-  if (!canTransitionTo(order.status, newStatus)) {
-    throw new InvalidStatusTransitionError(order.status, newStatus);
+export function createOrder(params: CreateOrderParams): Order {
+  if (!params.orderId || params.orderId.trim() === '') {
+    throw new Error('OrderId is required');
+  }
+  if (!params.customerId || params.customerId.trim() === '') {
+    throw new Error('CustomerId is required');
+  }
+  if (!params.restaurantId || params.restaurantId.trim() === '') {
+    throw new Error('RestaurantId is required');
+  }
+  if (!params.items || params.items.length === 0) {
+    throw new Error('Order must have at least one item');
   }
 
+  const totalAmount = calculateTotalAmount(params.items);
+  const now = new Date();
+
   return {
-    ...order,
-    status: newStatus,
-    updatedAt: new Date(),
+    orderId: params.orderId,
+    customerId: params.customerId,
+    restaurantId: params.restaurantId,
+    items: params.items,
+    status: OrderStatus.Pending,
+    totalAmount,
+    createdAt: now,
+    updatedAt: now
   };
 }
 
-function calculateTotal(items: readonly OrderItem[]): Money {
+export function calculateTotalAmount(items: OrderItem[]): Money {
   if (items.length === 0) {
     return { amount: 0, currency: 'USD' };
   }
 
   const currency = items[0].price.currency;
-  const totalAmount = items.reduce((sum, item) => {
+  const total = items.reduce((sum, item) => {
     if (item.price.currency !== currency) {
       throw new Error('All items must have the same currency');
     }
-    return sum + item.price.amount * item.quantity;
+    return sum + (item.price.amount * item.quantity);
   }, 0);
 
-  return { amount: totalAmount, currency };
+  return { amount: total, currency };
 }
 
-export function createOrder(
-  orderId: OrderId,
-  customerId: CustomerId,
-  restaurantId: RestaurantId,
-  items: readonly OrderItem[]
-): Order {
-  if (items.length === 0) {
-    throw new Error('Order must have at least one item');
+export function canTransitionTo(currentStatus: OrderStatus, newStatus: OrderStatus): boolean {
+  const allowedTransitions = VALID_STATUS_TRANSITIONS[currentStatus];
+  return allowedTransitions.includes(newStatus);
+}
+
+export function transitionStatus(order: Order, newStatus: OrderStatus): Order {
+  if (!canTransitionTo(order.status, newStatus)) {
+    throw new Error(
+      `Invalid status transition from ${order.status} to ${newStatus}`
+    );
   }
 
-  const now = new Date();
-  const totalAmount = calculateTotal(items);
-
   return {
-    orderId,
-    customerId,
-    restaurantId,
-    items,
-    status: OrderStatus.Pending,
-    totalAmount,
-    createdAt: now,
-    updatedAt: now,
+    ...order,
+    status: newStatus,
+    updatedAt: new Date()
   };
 }
