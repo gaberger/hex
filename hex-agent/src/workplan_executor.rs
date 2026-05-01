@@ -135,11 +135,12 @@ async fn try_with_escalation(
             })
     };
 
+    if !background && is_abstraction_task {
+        eprintln!("  ⬡ Detected abstraction task - routing to Tier 3 (Claude)");
+    }
+
     // Skip T1/T2 for abstractions - go straight to T3 (Claude)
     if is_abstraction_task {
-        if !background {
-            eprintln!("  ⬡ Detected abstraction task - routing to Tier 3 (Claude)");
-        }
 
         if let Some(claude) = ClaudeClient::new() {
             let start = std::time::Instant::now();
@@ -187,9 +188,21 @@ async fn try_with_escalation(
                     }
                 }
             }
+        } else {
+            // No Claude API key available - warn about degraded quality
+            if !background {
+                eprintln!("    ⚠ WARNING: Abstraction task without frontier model access");
+                eprintln!("    ⚠ Set ANTHROPIC_API_KEY for higher quality trait/interface definitions");
+                eprintln!("    ⚠ Falling back to local/OpenRouter models (lower quality for abstractions)");
+            }
+            // Fall through to standard escalation ladder
         }
 
-        anyhow::bail!("Abstraction task failed - Claude tier unavailable or failed validation")
+        // If Claude failed or unavailable, bail only if Claude was attempted
+        if ClaudeClient::new().is_some() {
+            anyhow::bail!("Abstraction task failed - Claude validation failed")
+        }
+        // Otherwise fall through to standard ladder with warning already shown
     }
 
     // Standard escalation ladder for non-abstraction tasks
