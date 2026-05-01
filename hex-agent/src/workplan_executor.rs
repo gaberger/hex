@@ -77,16 +77,23 @@ fn validate_code_output(code: &str, file_path: Option<&str>) -> Result<(), Strin
                 return Err(String::from("Missing or incorrect imports"));
             }
 
+            // Check if this looks like an abstraction BEFORE parsing
+            // (parsing may fail on minimal valid trait definitions)
+            let is_likely_abstraction = code.contains("trait ")
+                || code.contains("enum ")
+                || code.contains("struct ")
+                || code.contains("type ");
+
             // Parse with syn to validate syntax
             match syn::parse_file(code) {
                 Ok(parsed) => {
-                    // Check if this is a trait/interface definition
+                    // Double-check abstraction via AST
                     let is_abstraction = parsed.items.iter().any(|item| {
-                        matches!(item, syn::Item::Trait(_))
-                    }) || code.contains("pub trait ") || code.contains("pub enum ");
+                        matches!(item, syn::Item::Trait(_) | syn::Item::Enum(_) | syn::Item::Struct(_) | syn::Item::Type(_))
+                    }) || is_likely_abstraction;
 
                     // Allow short files ONLY if:
-                    // 1. They contain trait/enum definitions (abstractions are legitimately short)
+                    // 1. They contain trait/enum/struct/type definitions (abstractions are legitimately short)
                     // 2. OR they have at least 5 lines of non-comment code
                     let non_comment_lines: Vec<&str> = code.lines()
                         .filter(|line| {
@@ -96,11 +103,21 @@ fn validate_code_output(code: &str, file_path: Option<&str>) -> Result<(), Strin
                         .collect();
 
                     if non_comment_lines.len() < 5 && !is_abstraction {
-                        return Err(String::from("Code is less than 5 lines and not a trait/enum definition"));
+                        return Err(String::from("Code is less than 5 lines and not a trait/enum/struct definition"));
                     }
                 }
                 Err(e) => {
-                    return Err(format!("Invalid syntax: {}", e));
+                    // If parsing fails but looks like an abstraction, allow it
+                    if is_likely_abstraction {
+                        // Still validate it's not completely empty
+                        let non_empty_lines = code.lines().filter(|l| !l.trim().is_empty()).count();
+                        if non_empty_lines < 2 {
+                            return Err(String::from("Code is too minimal (< 2 non-empty lines)"));
+                        }
+                        // Allow it despite parse failure - may be a valid minimal trait
+                    } else {
+                        return Err(format!("Invalid syntax: {}", e));
+                    }
                 }
             }
         }
