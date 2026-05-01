@@ -268,33 +268,6 @@ This fix enables **autonomous workplan execution** without indefinite hangs.
 
 ---
 
-## How a Task Flows Through hex
-
-<p align="center">
-  <img src=".github/assets/task-flow.svg" alt="Task Flow Through hex" width="800">
-</p>
-
-**Key stages:**
-
-1. **Operator prompt** or improver-emitted hypothesis
-2. **Intent classification** → tier routing (T1: scaffold, T2: codegen, T2.5: reasoning, T3: frontier)
-3. **Spec generation** → workplan JSON with phases, tasks, evidence requirements
-4. **HexFlo dispatch** → parallel worktrees per adapter (feat/\<wp\>/\<layer\>)
-5. **Best-of-N inference** → compile gate blocks failed attempts (Rust: cargo check, TS: tsc --noEmit, Go: go build)
-6. **Evidence gate** → status derived from git, not self-reported (ADR-2604270800)
-7. **Judge evaluation** → behavioral spec + 5-axis rubric (ADR-2604261311)
-8. **Safe merge** → `hex worktree merge`, never raw checkout (ADR-2604131930)
-9. **Reconciliation** → append-only event log, status derived from evidence
-10. **Sched loops** → ADR doctor, improver detectors, swarm cleanup (every 30s)
-11. **Improver** → discovers next hypothesis, adversarial variants compete (MAPE-K)
-12. **Loop back** → system improves itself continuously
-
-**Every arrow is an event row. Every state transition is recorded.**
-
-Operator's role: **kill-switch + rubric tuning**, not per-decision approval.
-
----
-
 ## Why Hexagonal + Autonomous AI = Self-Healing Systems
 
 **The breakthrough**: Autonomous AI without architecture guardrails produces code that compiles but violates design boundaries. Hexagonal architecture without enforcement is just documentation. **hex combines both** — the architecture provides machine-readable boundaries the AI can analyze, and the AI uses those boundaries to detect and repair its own mistakes.
