@@ -1,59 +1,57 @@
 # Ollama Setup Guide for Hex Autonomous Execution
 
-This guide will walk you through the process of installing and configuring Ollama to work with hex for autonomous execution.
+## Installation
 
-## Prerequisites
+1. **Download and Install Docker**:
+   Ensure Docker is installed on your system. You can download it from [Docker's official website](https://www.docker.com/products/docker-desktop).
 
-- Docker installed on your machine.
-- Basic understanding of command line operations.
-
-## Installation Steps
-
-1. **Pull the Ollama Docker Image**
-
-   First, pull the Ollama Docker image from Docker Hub. We will use the `qwen2.5-coder:32b` model for this setup.
-
+2. **Pull the Ollama Image**:
+   Open a terminal and pull the Ollama image using Docker.
    ```bash
-   docker pull ollama/qwen2.5-coder:32b
+   docker pull ollama/ollama:latest
    ```
 
-2. **Run the Ollama Container**
-
-   Run the Ollama container with the necessary configurations. You can map a local directory to the container to persist data or for configuration files.
-
+3. **Run the Ollama Container**:
+   Start the Ollama container with the necessary configurations.
    ```bash
-   docker run -d --name ollama-container -p 11434:11434 -v /path/to/local/data:/data ollama/qwen2.5-coder:32b
+   docker run -d --name ollama-container -p 11434:11434 ollama/ollama:latest
    ```
 
-   Replace `/path/to/local/data` with the path to your local directory where you want to store data.
+## Configuration
 
-## Configuration Steps
-
-1. **Accessing Ollama**
-
-   You can access the Ollama API by navigating to `http://localhost:11434` in your web browser or using tools like `curl`.
-
-2. **Setting Up Hex Autonomous Execution**
-
-   To configure Ollama for hex autonomous execution, you need to set up a configuration file. Create a file named `config.yaml` in the mapped directory with the following content:
-
-   ```yaml
-   model: qwen2.5-coder:32b
-   api_key: your_api_key_here
-   tasks:
-     - name: hex_execution
-       command: "hex run autonomous"
-       schedule: "0 * * * *"  # Runs every hour
+1. **Access the Ollama Container**:
+   Enter the running container to configure it.
+   ```bash
+   docker exec -it ollama-container /bin/bash
    ```
 
-   Replace `your_api_key_here` with your actual API key.
+2. **Set Up Hex Autonomous Execution**:
+   Configure Ollama for hex autonomous execution by setting up the necessary environment variables and configurations.
 
-3. **Applying Configuration**
+3. **Download the Model**:
+   Download the `qwen2.5-coder:32b` model.
+   ```bash
+   ollama pull qwen2.5-coder:32b
+   ```
 
-   Ensure that the configuration file is correctly placed in the mapped directory and accessible by the Ollama container. The container will automatically pick up the configuration and start executing tasks as per the schedule.
+4. **Configure Execution Parameters**:
+   Set up any additional parameters required for hex autonomous execution in the Ollama configuration file.
 
-## Conclusion
+5. **Start Hex Autonomous Execution**:
+   Begin the autonomous execution process using the configured model.
+   ```bash
+   ollama run qwen2.5-coder:32b --autonomous-execution
+   ```
 
-You have now successfully installed and configured Ollama for hex autonomous execution. You can monitor the execution logs and manage tasks through the Ollama API.
+## Verification
 
-For more advanced configurations and options, refer to the [Ollama Documentation](https://ollama.com/docs).
+1. **Check Logs**:
+   Verify that Ollama is running correctly by checking the logs.
+   ```bash
+   docker logs ollama-container
+   ```
+
+2. **Test Execution**:
+   Test the hex autonomous execution to ensure it is functioning as expected.
+
+This guide provides a step-by-step process for installing and configuring Ollama for hex autonomous execution using Docker.

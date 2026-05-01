@@ -1,32 +1,44 @@
-# Inference Tiers Guide
+# Inference Tiers: T1, T2, and T2.5
 
-Inference tiers are designed to provide different levels of performance and cost-efficiency for various use cases. The available tiers are T1, T2, and T2.5. Each tier is optimized for specific types of tasks.
+Inference tiers are used to categorize and route different types of tasks based on their complexity and resource requirements. Below is an explanation of each tier and when to use them.
 
 ## T1 Tier
 
-The T1 tier is ideal for basic inference tasks that require a balance between cost and performance. It is suitable for applications where response time can be slightly longer, but cost optimization is crucial. The T1 tier is often used for scaffolding projects or initial testing phases.
+**Use Case:** Basic inference tasks with lightweight models.  
+**Example:** Scaffolding tasks, such as generating simple templates or boilerplate code.  
+**Characteristics:** 
+- Low latency 
+- Minimal computational resources 
+- Simple model architectures
 
-### Use Cases:
-- Scaffolding new projects
-- Initial testing of models
-- Non-time-sensitive inference tasks
+Use T1 tier for tasks that require quick responses and do not involve complex computations.
 
 ## T2 Tier
 
-The T2 tier offers a good balance between performance and cost. It is designed for applications that require faster response times than the T1 tier but do not need the highest level of performance offered by the T2.5 tier. The T2 tier is commonly used for code generation tasks where speed is important but does not have to be the absolute fastest.
+**Use Case:** Moderate inference tasks with medium complexity.  
+**Example:** Code generation tasks, such as generating function implementations or snippets.  
+**Characteristics:** 
+- Moderate latency 
+- Mid-range computational resources 
+- Moderately complex model architectures
 
-### Use Cases:
-- Code generation
-- General-purpose inference tasks
-- Applications requiring faster response times than T1
+Use T2 tier for tasks that require more computational resources than T1 but are not as resource-intensive as T2.5.
 
 ## T2.5 Tier
 
-The T2.5 tier provides the highest level of performance among the tiers. It is designed for applications that require the fastest possible inference times, such as real-time applications or those with strict latency requirements. The T2.5 tier is typically used in production environments where performance is critical.
+**Use Case:** Advanced inference tasks with high complexity.  
+**Example:** Complex code generation, such as generating entire modules or architectures.  
+**Characteristics:** 
+- Higher latency 
+- Significant computational resources 
+- Highly complex model architectures
 
-### Use Cases:
-- Real-time applications
-- Production environments requiring high performance
-- Applications with strict latency requirements
+Use T2.5 tier for tasks that demand substantial computational power and involve complex model predictions.
 
-By choosing the appropriate inference tier, you can optimize both the cost and performance of your application based on its specific needs.
+## When to Use Each Tier
+
+- **T1:** Use for quick, lightweight tasks where speed and simplicity are key.
+- **T2:** Use for moderate tasks that require a balance between speed and computational resources.
+- **T2.5:** Use for complex tasks where accuracy and detail are prioritized over speed.
+
+By selecting the appropriate inference tier, you can optimize resource usage and ensure efficient task execution.

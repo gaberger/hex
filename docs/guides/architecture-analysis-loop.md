@@ -1,30 +1,24 @@
 # Architecture Analysis Loop
 
-The 2-hour idle analysis is a scheduled process designed to periodically assess and analyze the architecture of a system. This loop ensures that any deviations or issues are detected early, allowing for timely corrective actions.
+The 2-hour idle analysis is a scheduled process designed to periodically assess and analyze the architecture of a system. This loop ensures that any deviations from the expected architectural patterns or potential issues are identified and documented.
 
 ## What It Checks
 
-During each cycle, the 2-hour idle analysis performs several checks:
+The 2-hour idle analysis performs several checks to ensure the integrity and adherence to the architectural guidelines:
 
-1. **Code Quality**: Evaluates the codebase for adherence to coding standards, best practices, and potential bugs.
-2. **Dependency Health**: Checks the health of all dependencies, including outdated packages and known vulnerabilities.
-3. **Performance Metrics**: Analyzes performance metrics to identify bottlenecks or inefficiencies in the system.
-4. **Security Vulnerabilities**: Scans the codebase for security vulnerabilities using static analysis tools.
-
-## Domain, Ports, and Adapters
-
-The architecture analysis loop is structured around the domain-driven design (DDD) principles of domains, ports, and adapters:
-
-- **Domain**: Represents the core business logic and rules of the system.
-- **Ports**: Define interfaces through which the domain interacts with external systems or users.
-- **Adapters**: Implement the ports to allow communication between the domain and external systems.
+1. **Domain Model Validation**: Ensures that all domain models are correctly defined and consistent with the business logic.
+2. **Ports and Adapters Compliance**: Verifies that the system adheres to the Hexagonal Architecture principles, ensuring that ports and adapters are properly implemented.
+3. **Code Quality Metrics**: Analyzes code quality metrics such as cyclomatic complexity, maintainability index, and code duplication.
+4. **Dependency Management**: Checks for any unauthorized or outdated dependencies that could pose security risks or compatibility issues.
 
 ## How Findings Are Stored
 
-Findings from the 2-hour idle analysis are stored in a structured format within a dedicated database. The storage includes:
+Findings from the 2-hour idle analysis are stored in a centralized database for further review and action. The storage includes:
 
-- **Timestamp**: The exact time when the analysis was performed.
-- **Results**: Detailed results of each check, including any issues found.
-- **Recommendations**: Suggestions for improving or fixing identified issues.
+- **Timestamp of Analysis**: Records when the analysis was performed.
+- **Detailed Reports**: Contains comprehensive reports highlighting any deviations, issues found, and recommendations for improvement.
+- **Status Flags**: Indicates whether the findings have been reviewed or require immediate attention.
 
-This structured approach ensures that all findings are easily accessible and can be reviewed by the development team to maintain and improve the system's architecture.
+This structured approach ensures that architectural integrity is maintained over time, and any necessary adjustments can be made promptly.
+
+domain ports adapters
