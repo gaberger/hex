@@ -1,0 +1,68 @@
+{
+  "id": "wp-inference-calibrate-endpoint",
+  "title": "Nexus-side calibration endpoint for inference providers",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Calibration endpoint",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "Add `POST /api/inference/calibrate/{id}` in hex-nexus/src/routes/inference.rs that runs a 2-prompt probe (identity + short reasoning) through the same in-process inference pipeline used by inference_complete (NOT a fresh outbound HTTP call) so vault-only secrets resolve. Compute quality_score = (0.70 + latency_bonus + sanity_bonus).clamp(0,1) using the same formula as the existing inference.rs:1088 path. PATCH the endpoint record with the new quality_score and healthCheckedAt. Return JSON {id, latency_ms, quality_score, sanity_ok, model, sample_reply}.",
+          "status": "failed",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/src/routes/inference.rs"
+          ],
+          "evidence": [
+            "grep -n 'fn calibrate_endpoint' hex-nexus/src/routes/inference.rs",
+            "cargo check -p hex-nexus"
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Add `POST /api/inference/calibrate-all` that lists all registered endpoints, calls calibrate_endpoint serially with a 5s gap between calls (rate-limit safety), skips entries with status=disabled, and returns a JSON array of summaries.",
+          "status": "failed",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/src/routes/inference.rs"
+          ],
+          "evidence": [
+            "grep -n 'fn calibrate_all' hex-nexus/src/routes/inference.rs",
+            "cargo check -p hex-nexus"
+          ]
+        },
+        {
+          "id": "P1.3",
+          "title": "Register both routes in the axum router builder (the same module that already registers /api/inference/complete and /api/inference/health).",
+          "status": "failed",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/src/routes/inference.rs"
+          ],
+          "evidence": [
+            "grep -n 'calibrate' hex-nexus/src/routes/inference.rs | grep route",
+            "cargo build -p hex-nexus --release"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "Manual smoke test (after build + nexus restart)",
+      "tasks": [
+        {
+          "id": "P2.1",
+          "title": "Restart hex-nexus, then `curl -X POST http://127.0.0.1:5555/api/inference/calibrate/openrouter-kimi-k2-6` and confirm non-zero quality_score in the response body and in `hex inference list`.",
+          "status": "done",
+          "strategy_hint": "script",
+          "files": null,
+          "evidence": [
+            "curl -s -X POST http://127.0.0.1:5555/api/inference/calibrate/openrouter-kimi-k2-6 | jq '.quality_score'",
+            "hex inference list | grep openrouter-kimi-k2-6"
+          ]
+        }
+      ]
+    }
+  ]
+}

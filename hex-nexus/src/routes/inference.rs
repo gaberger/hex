@@ -1650,3 +1650,178 @@ fn infer_tier_from_model(model: &str) -> String {
         "unknown".into()
     }
 }
+
+// ─── Calibration ──────────────────────────────────────────────────────────────
+//
+// Sends a 1-prompt probe through this same in-process pipeline so vault-only
+// secrets (e.g. OPENROUTER_API_KEY) resolve. The CLI-side `hex inference test`
+// can't do this — it makes its own outbound call without vault access — which
+// is why every OpenRouter provider sits at q=0.00.
+
+const CALIBRATION_PROMPT: &str = "Reply with one word: ok";
+const CALIBRATION_TIMEOUT_SECS: u64 = 60;
+
+fn compute_quality_score(latency_ms: u64, sanity_ok: bool) -> f32 {
+    let latency_bonus = if latency_ms <= 800 {
+        0.15
+    } else if latency_ms >= 5_000 {
+        0.0
+    } else {
+        let span = (5_000 - 800) as f32;
+        0.15 * ((5_000 - latency_ms) as f32 / span)
+    };
+    let sanity_bonus = if sanity_ok { 0.15 } else { -0.30 };
+    (0.70_f32 + latency_bonus + sanity_bonus).clamp(0.0, 1.0)
+}
+
+#[derive(Debug, Serialize)]
+pub struct CalibrationResult {
+    pub id: String,
+    pub model: String,
+    pub latency_ms: u64,
+    pub quality_score: f32,
+    pub sanity_ok: bool,
+    pub sample_reply: String,
+    pub error: Option<String>,
+}
+
+/// POST /api/inference/calibrate/{id} — probe one provider, score it, persist.
+pub async fn calibrate_endpoint(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let result = run_calibration(&state, &id).await;
+    let status = if result.error.is_some() {
+        StatusCode::BAD_GATEWAY
+    } else {
+        StatusCode::OK
+    };
+    (
+        status,
+        Json(serde_json::to_value(result).unwrap_or_else(|_| json!({}))),
+    )
+}
+
+/// POST /api/inference/calibrate-all — probe every provider; best-effort.
+pub async fn calibrate_all(
+    State(state): State<SharedState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(ref stdb_client) = state.inference_stdb else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "SpacetimeDB not connected" })),
+        );
+    };
+    let providers = match stdb_client.list_providers().await {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+    };
+    let mut results: Vec<CalibrationResult> = Vec::with_capacity(providers.len());
+    for (i, p) in providers.iter().enumerate() {
+        if i > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+        results.push(run_calibration(&state, &p.provider_id).await);
+    }
+    let count = results.len();
+    (
+        StatusCode::OK,
+        Json(json!({ "results": results, "count": count })),
+    )
+}
+
+async fn run_calibration(state: &SharedState, id: &str) -> CalibrationResult {
+    let mut result = CalibrationResult {
+        id: id.to_string(),
+        model: String::new(),
+        latency_ms: 0,
+        quality_score: 0.0,
+        sanity_ok: false,
+        sample_reply: String::new(),
+        error: None,
+    };
+
+    let Some(ref stdb_client) = state.inference_stdb else {
+        result.error = Some("SpacetimeDB not connected".into());
+        return result;
+    };
+    let providers = match stdb_client.list_providers().await {
+        Ok(p) => p,
+        Err(e) => {
+            result.error = Some(format!("list_providers: {}", e));
+            return result;
+        }
+    };
+    let Some(provider) = providers.into_iter().find(|p| p.provider_id == id) else {
+        result.error = Some(format!("provider '{}' not found", id));
+        return result;
+    };
+    let primary_model = serde_json::from_str::<Vec<String>>(&provider.models_json)
+        .ok()
+        .and_then(|v| v.into_iter().next())
+        .unwrap_or_else(|| provider.models_json.clone());
+    result.model = primary_model.clone();
+
+    let req = InferenceCompleteRequest {
+        model: Some(primary_model.clone()),
+        messages: vec![json!({ "role": "user", "content": CALIBRATION_PROMPT })],
+        system: None,
+        max_tokens: 16,
+        tools: None,
+    };
+    let started = std::time::Instant::now();
+    let probe = tokio::time::timeout(
+        std::time::Duration::from_secs(CALIBRATION_TIMEOUT_SECS),
+        inference_complete(State(state.clone()), axum::http::HeaderMap::new(), Json(req)),
+    )
+    .await;
+    let latency_ms = started.elapsed().as_millis() as u64;
+    result.latency_ms = latency_ms;
+
+    let (status, body) = match probe {
+        Ok(pair) => pair,
+        Err(_) => {
+            result.error = Some(format!("timeout after {}s", CALIBRATION_TIMEOUT_SECS));
+            return result;
+        }
+    };
+    if !status.is_success() {
+        result.error = Some(
+            body.0
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("upstream error")
+                .to_string(),
+        );
+        return result;
+    }
+    let content = body
+        .0
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    result.sample_reply = content.chars().take(120).collect();
+    result.sanity_ok = !content.trim().is_empty();
+    result.quality_score = compute_quality_score(latency_ms, result.sanity_ok);
+
+    if let Err(e) = stdb_client
+        .register_provider(
+            &provider.provider_id,
+            &provider.provider_type,
+            &provider.base_url,
+            &provider.api_key_ref,
+            &provider.models_json,
+            provider.rate_limit_rpm,
+            provider.rate_limit_tpm,
+            &provider.quantization_level,
+            provider.context_window,
+            result.quality_score,
+        )
+        .await
+    {
+        result.error = Some(format!("persist: {}", e));
+    }
+
+    result
+}

@@ -704,6 +704,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/inference/endpoints/{id}", delete(secrets::remove_inference)
             .patch(secrets::calibrate_inference))
         .route("/api/inference/health", post(secrets::check_inference_health))
+        // Periodic calibration — probes via the in-process pipeline so vault
+        // secrets resolve, then PATCHes quality_score (wp-inference-calibrate-endpoint).
+        .route("/api/inference/calibrate/{id}", post(inference::calibrate_endpoint))
+        .route("/api/inference/calibrate-all", post(inference::calibrate_all))
         // Synchronous inference completion (hex-agent HTTP bridge)
         .route("/api/inference/complete", post(inference::inference_complete)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
