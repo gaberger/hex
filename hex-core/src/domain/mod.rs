@@ -11,6 +11,7 @@ pub mod skills;
 pub mod swarm_task;
 pub mod tokens;
 pub mod tools;
+pub mod validation;
 pub mod web;
 pub mod workplan;
 

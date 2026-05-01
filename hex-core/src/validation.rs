@@ -1,25 +1,19 @@
-use super::ValidationResult;
-use crate::model::Path;
+use crate::domain::validation::is_critical_path;
 
 pub trait ValidationRule {
     fn validate(&self, path: &str, content: &str) -> Result<(), String>;
 }
 
-// Existing is_critical_path logic
-fn is_critical_path(path: &Path) -> bool {
-    // Example implementation
-    path.to_string().contains("critical")
-}
-
+/// CriticalPathRule encapsulates the existing is_critical_path logic
+/// from domain::validation, checking if a path matches system-critical files.
 pub struct CriticalPathRule;
 
 impl ValidationRule for CriticalPathRule {
     fn validate(&self, path: &str, _content: &str) -> Result<(), String> {
-        let path_obj = Path::from(path);
-        if is_critical_path(&path_obj) {
-            Ok(())
+        if is_critical_path(path) {
+            Err(format!("Cannot modify critical system file: {}", path))
         } else {
-            Err("Path is not a critical path".to_string())
+            Ok(())
         }
     }
 }
