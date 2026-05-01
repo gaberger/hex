@@ -1,18 +1,42 @@
 use serde::Serialize;
+use std::collections::HashMap;
 
 #[derive(Serialize)]
-struct AnalysisReport {
-    cross_adapter_imports: Vec<String>,
-    coupling_violations: Vec<String>,
+pub struct CrossAdapterImport {
+    pub source: String,
+    pub target: String,
+    pub file: String,
+    pub line: usize,
 }
 
-pub fn analyze_adapters() -> Result<AnalysisReport, String> {
-    // Placeholder logic for detecting cross-adapter imports and coupling violations
-    let cross_adapter_imports = vec!["module1::import_from_module2".to_string()];
-    let coupling_violations = vec!["module1 tightly coupled with module2".to_string()];
+#[derive(Serialize)]
+pub struct AdapterAnalysisReport {
+    pub cross_adapter_imports: Vec<CrossAdapterImport>,
+    pub coupling_violations: Vec<(String, String)>,
+}
 
-    Ok(AnalysisReport {
+pub fn analyze_adapters(module_tree: &HashMap<String, Vec<String>>) -> AdapterAnalysisReport {
+    let mut cross_adapter_imports = Vec::new();
+    let mut coupling_violations = Vec::new();
+
+    for (source_module, imports) in module_tree {
+        for target_module in imports {
+            if source_module.starts_with("adapters::") && target_module.starts_with("adapters::") {
+                if !source_module.split("::").nth(1).unwrap()
+                    .eq(target_module.split("::").nth(1).unwrap())
+                {
+                    let violation = (
+                        source_module.clone(),
+                        target_module.clone(),
+                    );
+                    coupling_violations.push(violation);
+                }
+            }
+        }
+    }
+
+    AdapterAnalysisReport {
         cross_adapter_imports,
         coupling_violations,
-    })
+    }
 }

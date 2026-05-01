@@ -9,7 +9,7 @@
         {
           "id": "P1.1",
           "title": "Create a simple Rust function that adds two numbers",
-          "status": "done",
+          "status": "failed",
           "strategy_hint": "codegen",
           "files": [
             "test-output/add.rs"

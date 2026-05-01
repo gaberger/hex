@@ -1,0 +1,133 @@
+{
+  "id": "wp-safe-file-writer-adapter",
+  "title": "Add SafeFileWriter adapter with critical path protection",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Domain: Define critical file validation rule",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "Add CRITICAL_FILES const to hex-core/src/domain/validation.rs listing infrastructure files that autonomous agents cannot modify (sched.rs, monitor.rs, workplan_executor.rs, main.rs)",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-core/src/domain/validation.rs"
+          ],
+          "evidence": [
+            "grep -q 'const CRITICAL_FILES' hex-core/src/domain/validation.rs",
+            "grep -q 'sched.rs' hex-core/src/domain/validation.rs",
+            "cargo check -p hex-core"
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Add is_critical_path(path: &str) -> bool function to hex-core/src/domain/validation.rs that checks if path matches any CRITICAL_FILES pattern",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-core/src/domain/validation.rs"
+          ],
+          "evidence": [
+            "grep -q 'pub fn is_critical_path' hex-core/src/domain/validation.rs",
+            "cargo check -p hex-core"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "Port: Define file writer trait",
+      "tasks": [
+        {
+          "id": "P2.1",
+          "title": "Create hex-core/src/ports/file_writer.rs with IFileWriter trait: fn write_file(&self, path: &Path, content: &str) -> Result<(), String> that returns error if path is critical",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-core/src/ports/file_writer.rs",
+            "hex-core/src/ports/mod.rs"
+          ],
+          "evidence": [
+            "grep -q 'pub trait IFileWriter' hex-core/src/ports/file_writer.rs",
+            "grep -q 'fn write_file' hex-core/src/ports/file_writer.rs",
+            "cargo check -p hex-core"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "Adapter: Implement SafeFileWriter",
+      "tasks": [
+        {
+          "id": "P3.1",
+          "title": "Create hex-agent/src/adapters/safe_file_writer.rs implementing IFileWriter that calls is_critical_path() before std::fs::write, returns Err if critical",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-agent/src/adapters/safe_file_writer.rs",
+            "hex-agent/src/adapters/mod.rs"
+          ],
+          "evidence": [
+            "grep -q 'impl IFileWriter for SafeFileWriter' hex-agent/src/adapters/safe_file_writer.rs",
+            "grep -q 'is_critical_path' hex-agent/src/adapters/safe_file_writer.rs",
+            "cargo check -p hex-agent"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "title": "Use case: Rewire workplan executor",
+      "tasks": [
+        {
+          "id": "P4.1",
+          "title": "Update hex-agent/src/workplan_executor.rs execute_workplan_autonomous() to accept IFileWriter trait object, replace direct std::fs::write calls with writer.write_file()",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-agent/src/workplan_executor.rs"
+          ],
+          "evidence": [
+            "grep -q 'writer: &dyn IFileWriter' hex-agent/src/workplan_executor.rs",
+            "grep -q 'writer.write_file' hex-agent/src/workplan_executor.rs",
+            "cargo check -p hex-agent"
+          ]
+        },
+        {
+          "id": "P4.2",
+          "title": "Update hex-agent/src/main.rs workplan command handler to instantiate SafeFileWriter and pass to execute_workplan_autonomous()",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-agent/src/main.rs"
+          ],
+          "evidence": [
+            "grep -q 'SafeFileWriter' hex-agent/src/main.rs",
+            "cargo check -p hex-agent"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "title": "Test: Verify critical path protection",
+      "tasks": [
+        {
+          "id": "P5.1",
+          "title": "Create test workplan docs/workplans/test-critical-path-block.json that tries to modify hex-cli/src/commands/sched.rs, verify it fails with 'Cannot modify critical infrastructure' error",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "docs/workplans/test-critical-path-block.json"
+          ],
+          "evidence": [
+            "test -f docs/workplans/test-critical-path-block.json",
+            "grep -q 'sched.rs' docs/workplans/test-critical-path-block.json"
+          ]
+        }
+      ]
+    }
+  ]
+}

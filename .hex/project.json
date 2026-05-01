@@ -1,13 +1,7 @@
 {
-  "inference": {
-    "tier_models": {
-      "t1": "local-codellama",
-      "t2": "local-gemma4",
-      "t2_5": "local-llama3"
-    }
-  },
-  "brain": {
-    "analyze_enabled": true,
-    "analyze_interval_secs": 3600
+  "autonomous": {
+    "enabled": true,
+    "max_concurrent_agents": 3,
+    "rollback_on_failure": true
   }
 }
