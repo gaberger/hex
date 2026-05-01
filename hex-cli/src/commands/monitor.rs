@@ -310,6 +310,18 @@ fn print_snapshot(snapshot: &MonitorSnapshot) {
                 } else {
                     task.payload.clone()
                 }
+            } else if task.status == "completed" && task.kind == "workplan" {
+                // For completed workplans, show summary from result field
+                if let Some(reason) = &task.failure_reason {
+                    let truncated = if reason.len() > 80 {
+                        format!("{}...", &reason[..80])
+                    } else {
+                        reason.clone()
+                    };
+                    format!("✓ {}", truncated)
+                } else {
+                    task.payload.clone()
+                }
             } else {
                 task.payload.clone()
             };

@@ -1,0 +1,38 @@
+{
+  "id": "wp-fix-monitor-visibility",
+  "title": "Fix hex monitor to show workplan execution details",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Update monitor to show real-time workplan progress",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "Update hex-cli/src/commands/monitor.rs get_recent_activity() to query /api/sched/queue/history instead of /api/hexflo/memory/search, parse workplan summaries from result JSON showing completed/failed task counts",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/monitor.rs"
+          ],
+          "evidence": [
+            "grep -q '/api/sched/queue/history' hex-cli/src/commands/monitor.rs",
+            "cargo check -p hex-cli"
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Add /api/sched/queue/history endpoint to hex-nexus that returns last 20 sched tasks with id, kind, status, payload, result, completed_at fields",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "evidence": [
+            "grep -q '/api/sched/queue/history' hex-nexus/src/routes/mod.rs",
+            "cargo check -p hex-nexus"
+          ]
+        }
+      ]
+    }
+  ]
+}
