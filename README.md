@@ -434,7 +434,7 @@ Two operating modes:
 
 Alpha — but a different kind of alpha than most. Every mechanical claim above has a reproducer in [EVIDENCE.md](docs/EVIDENCE.md): exact command, prerequisites, expected output. The substrate (ADR-2604261500), six-layer governance (ADR-2604261311), evidence gate (ADR-2604270800), workplan state model (ADR-2604271000), self-improvement loop (ADR-2604271100), and architectural-health detectors (ADR-2604271200) are all named and most are partially landed; the chain that closes the operator-asks-nothing loop is the active development frontier. ADR drift, false-done propagation, and detector blind spots are themselves visible in the system as findings the improver will surface — not hidden.
 
-**Language support**: The `BuildAdapter` (ADR-018) detects project language from manifest files (`Cargo.toml`, `package.json`, `go.mod`) and dispatches to the appropriate toolchain. Rust workplan execution is production-ready; TypeScript and Go support exists in the build adapter but workplan integration is in progress (currently hardcoded to `cargo check` in `workplan_executor.rs` — migration tracked in roadmap).
+**Language support**: The `BuildAdapter` (ADR-018) detects project language from manifest files (`Cargo.toml`, `package.json`, `go.mod`) and dispatches to the appropriate toolchain. Rust workplan execution is production-ready (see `examples/task-board/`); TypeScript and Go support exists in the build adapter but workplan integration is in progress (currently hardcoded to `cargo check` in `workplan_executor.rs` — test case in `examples/food-delivery-ts/`, integration tracked in roadmap).
 
 Formal specs live in `docs/algebra/` (TLA+, TLC-model-checked). Benchmarks in [INFERENCE.md](docs/INFERENCE.md) measured on Strix Halo + Vulkan-Ollama; reproducer ships with the doc.
 
@@ -453,6 +453,16 @@ Formal specs live in `docs/algebra/` (TLA+, TLC-model-checked). Benchmarks in [I
 | [Formal Verification](docs/FORMAL-VERIFICATION.md) | TLA+ models and TLC workflow |
 | [Self-improvement](docs/SELF-IMPROVEMENT.md) | Improver loop, detectors, judge rubric, autonomy envelope |
 | [ADRs](docs/adrs/) | 189 decision records — the `why` behind each mechanism |
+| [TypeScript Test](docs/TEST-TYPESCRIPT-SUPPORT.md) | Food delivery example, BuildAdapter validation, integration roadmap |
+
+---
+
+## Examples
+
+| Example | Language | Description | Status |
+|---------|----------|-------------|--------|
+| [task-board](examples/task-board/) | Rust | Task board with hexagonal architecture | ✅ Production-ready |
+| [food-delivery-ts](examples/food-delivery-ts/) | TypeScript | Food delivery service domain + workplan | ⚠️ BuildAdapter ready, workplan integration pending |
 
 ---
 
