@@ -1,40 +1,35 @@
-import { Order, OrderId, CustomerId } from '../../core/domain/Order.js';
+import { Order, OrderId, CustomerId, transitionStatus } from '../../core/domain/Order.js';
 import { OrderStatus } from '../../core/domain/OrderStatus.js';
 import { IOrderRepository } from '../../core/ports/IOrderRepository.js';
 
 export class InMemoryOrderRepository implements IOrderRepository {
-  private orders: Map<string, Order>;
+  private storage: Map<string, Order>;
 
   constructor() {
-    this.orders = new Map<string, Order>();
-  }
-
-  async findById(orderId: OrderId): Promise<Order | null> {
-    return this.orders.get(orderId) ?? null;
+    this.storage = new Map<string, Order>();
   }
 
   async save(order: Order): Promise<void> {
-    this.orders.set(order.id, order);
+    this.storage.set(order.orderId.value, order);
+  }
+
+  async findById(orderId: OrderId): Promise<Order | null> {
+    return this.storage.get(orderId.value) || null;
   }
 
   async findByCustomerId(customerId: CustomerId): Promise<Order[]> {
-    return Array.from(this.orders.values()).filter(
-      order => order.customerId === customerId
+    return Array.from(this.storage.values()).filter(
+      order => order.customerId.value === customerId.value
     );
   }
 
   async updateStatus(orderId: OrderId, status: OrderStatus): Promise<void> {
-    const order = this.orders.get(orderId);
+    const order = await this.findById(orderId);
     if (!order) {
-      throw new Error(`Order with id ${orderId} not found`);
+      throw new Error(`Order with id ${orderId.value} not found`);
     }
 
-    const updatedOrder: Order = {
-      ...order,
-      status,
-      updatedAt: new Date(),
-    };
-
-    this.orders.set(orderId, updatedOrder);
+    const updatedOrder = transitionStatus(order, status);
+    await this.save(updatedOrder);
   }
 }
