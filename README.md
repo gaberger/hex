@@ -282,6 +282,93 @@ This fix enables **autonomous workplan execution** without indefinite hangs.
 
 ---
 
+## How a Task Flows Through hex
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  OPERATOR PROMPT  or  IMPROVER-EMITTED HYPOTHESIS                   │
+│  "Add auth" or "Fix god-type in domain/user.rs"                     │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+                             ▼
+                  ┌──────────────────────┐
+                  │ classify_work_intent │  ◄── ADR-2604110227
+                  │  (hook on submit)    │      T1/T2/T3 routing
+                  └──────────┬───────────┘
+                             │
+                             ▼
+              ┌──────────────────────────────┐
+              │ spec → workplan (JSON)       │  ◄── Behavioral specs
+              │ Phases, tasks, evidence req  │      Machine-checked
+              └──────────┬───────────────────┘
+                         │
+                         ▼
+              ┌──────────────────────────────┐
+              │   hex plan execute           │  ◄── HexFlo swarm
+              │   Dispatch per adapter       │      Parallel worktrees
+              └──────────┬───────────────────┘
+                         │
+                         ├──────┬──────┬──────┐
+                         ▼      ▼      ▼      ▼
+                    ┌────────────────────────────┐
+                    │ Agent in isolated worktree │  ◄── feat/<wp>/<layer>
+                    │ (domain, port, or adapter) │      No cross-contamination
+                    └──────────┬─────────────────┘
+                               │
+                               ▼
+                    ┌──────────────────────────────┐
+                    │ Best-of-N inference          │  ◄── T1: 4B, T2: 32B
+                    │ + compile gate (blocking)    │      T2.5: 24B, T3: Claude
+                    │ cargo check / tsc --noEmit   │      Failed = retry different N
+                    └──────────┬───────────────────┘
+                               │
+                               ▼
+                    ┌──────────────────────────────┐
+                    │ Evidence gate (blocking)     │  ◄── ADR-2604270800
+                    │ • task.files exist?          │      No self-reported "done"
+                    │ • commit subject has task ID?│      Status = derived
+                    └──────────┬───────────────────┘
+                               │
+                               ▼
+                    ┌──────────────────────────────┐
+                    │ Judge: behavioral spec check │  ◄── ADR-2604261311
+                    │ + rubric scores ≥ threshold  │      5-axis structured eval
+                    └──────────┬───────────────────┘
+                               │
+                               ▼
+                    ┌──────────────────────────────┐
+                    │ hex worktree merge           │  ◄── NEVER raw git checkout
+                    │ (safe cross-worktree merge)  │      ADR-2604131930
+                    └──────────┬───────────────────┘
+                               │
+                               ▼
+                    ┌──────────────────────────────┐
+                    │ hex plan reconcile --strict  │  ◄── Append-only event log
+                    │ Verify status vs git evidence│      Status = derived, not stored
+                    └──────────┬───────────────────┘
+                               │
+                               ▼
+              ┌────────────────────────────────────────┐
+              │ Sched tick loops (every 30s)           │
+              │ • hex adr doctor (registry health)     │  ◄── Tier-A auto-fix
+              │ • improver detectors (arch violations) │      Tier-B draft
+              │ • swarm cleanup (stale agents)         │      Tier-C notify
+              └────────────────┬───────────────────────┘
+                               │
+                               ▼
+              ┌────────────────────────────────────────┐
+              │ Improver discovers next hypothesis     │  ◄── MAPE-K loop
+              │ Adversarial variants compete           │      System improves itself
+              └────────────────┬───────────────────────┘
+                               │
+                               └──────► (back to top)
+
+Every arrow is an event row. Every state transition is recorded.
+Operator's role: kill-switch + rubric tuning, not per-decision approval.
+```
+
+---
+
 ## Why Hexagonal + Autonomous AI = Self-Healing Systems
 
 **The breakthrough**: Autonomous AI without architecture guardrails produces code that compiles but violates design boundaries. Hexagonal architecture without enforcement is just documentation. **hex combines both** — the architecture provides machine-readable boundaries the AI can analyze, and the AI uses those boundaries to detect and repair its own mistakes.
