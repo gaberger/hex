@@ -70,11 +70,6 @@ fn validate_code_output(code: &str, file_path: Option<&str>) -> Result<(), Strin
         return Err(String::from("Unmatched markdown fences found"));
     }
 
-    let lines: Vec<&str> = code.lines().collect();
-    if lines.len() < 5 {
-        return Err(String::from("Code is less than 5 lines"));
-    }
-
     // Only validate Rust syntax for .rs files
     if let Some(path) = file_path {
         if path.ends_with(".rs") {
@@ -82,9 +77,38 @@ fn validate_code_output(code: &str, file_path: Option<&str>) -> Result<(), Strin
                 return Err(String::from("Missing or incorrect imports"));
             }
 
-            if let Err(e) = syn::parse_file(code) {
-                return Err(format!("Invalid syntax: {}", e));
+            // Parse with syn to validate syntax
+            match syn::parse_file(code) {
+                Ok(parsed) => {
+                    // Check if this is a trait/interface definition
+                    let is_abstraction = parsed.items.iter().any(|item| {
+                        matches!(item, syn::Item::Trait(_))
+                    }) || code.contains("pub trait ") || code.contains("pub enum ");
+
+                    // Allow short files ONLY if:
+                    // 1. They contain trait/enum definitions (abstractions are legitimately short)
+                    // 2. OR they have at least 5 lines of non-comment code
+                    let non_comment_lines: Vec<&str> = code.lines()
+                        .filter(|line| {
+                            let trimmed = line.trim();
+                            !trimmed.is_empty() && !trimmed.starts_with("//")
+                        })
+                        .collect();
+
+                    if non_comment_lines.len() < 5 && !is_abstraction {
+                        return Err(String::from("Code is less than 5 lines and not a trait/enum definition"));
+                    }
+                }
+                Err(e) => {
+                    return Err(format!("Invalid syntax: {}", e));
+                }
             }
+        }
+    } else {
+        // Non-Rust files still need minimum length check
+        let lines: Vec<&str> = code.lines().collect();
+        if lines.len() < 5 {
+            return Err(String::from("Code is less than 5 lines"));
         }
     }
 
@@ -99,6 +123,76 @@ async fn try_with_escalation(
 ) -> Result<(Vec<(String, String)>, InferenceAttempt)> {
     let prompt = InferenceClient::build_task_prompt(task_title, files, evidence);
 
+    // Detect abstraction creation tasks - route to higher tiers
+    let is_abstraction_task = {
+        let title_lower = task_title.to_lowercase();
+        title_lower.contains("trait")
+            || title_lower.contains("interface")
+            || title_lower.contains("port")
+            || title_lower.contains("abstraction")
+            || files.iter().any(|f| {
+                f.contains("/ports/") || f.contains("/domain/")
+            })
+    };
+
+    // Skip T1/T2 for abstractions - go straight to T3 (Claude)
+    if is_abstraction_task {
+        if !background {
+            eprintln!("  ⬡ Detected abstraction task - routing to Tier 3 (Claude)");
+        }
+
+        if let Some(claude) = ClaudeClient::new() {
+            let start = std::time::Instant::now();
+            let claude_result = claude.generate(prompt.clone()).await;
+            let claude_duration = start.elapsed().as_millis() as u64;
+
+            match claude_result {
+                Ok(response) => {
+                    match InferenceClient::parse_response(&response) {
+                        Ok(parsed_files) => {
+                            let mut all_valid = true;
+                            for (path, content) in &parsed_files {
+                                if let Err(e) = validate_code_output(content, Some(path)) {
+                                    if !background {
+                                        eprintln!("    ✗ Claude validation failed for {}: {}", path, e);
+                                    }
+                                    all_valid = false;
+                                    break;
+                                }
+                            }
+
+                            if all_valid {
+                                if !background {
+                                    eprintln!("    ✓ Claude succeeded");
+                                }
+                                return Ok((parsed_files, InferenceAttempt {
+                                    tier_used: "Claude".to_string(),
+                                    model_name: "claude-sonnet-4".to_string(),
+                                    validation_passed: true,
+                                    duration_ms: claude_duration,
+                                    cost_estimate: 0.15,
+                                }));
+                            }
+                        }
+                        Err(e) => {
+                            if !background {
+                                eprintln!("    ✗ Claude parse failed: {}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    if !background {
+                        eprintln!("    ✗ Claude inference failed: {}", e);
+                    }
+                }
+            }
+        }
+
+        anyhow::bail!("Abstraction task failed - Claude tier unavailable or failed validation")
+    }
+
+    // Standard escalation ladder for non-abstraction tasks
     // Tier 1: Local model
     let start = std::time::Instant::now();
     let local_client = InferenceClient::new();
