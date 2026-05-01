@@ -22,6 +22,7 @@ pub mod research_finding;
 pub mod rules;
 pub mod telemetry;
 pub mod types;
+pub mod validation;
 
 // ── Infrastructure Constants ──────────────────────────────
 // Shared across hex-cli, hex-nexus, and hex-agent to prevent string drift.

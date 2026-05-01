@@ -329,13 +329,35 @@ pub async fn execute_workplan_autonomous(
                             attempt.tier_used, attempt.model_name, attempt.duration_ms, attempt.cost_estimate);
                     }
 
-                    // Write files
+                    // Write files (with critical path protection)
+                    let mut blocked_files = Vec::new();
                     for (file_path, content) in file_contents {
+                        // Check if file is critical infrastructure
+                        if hex_core::validation::is_critical_path(&file_path) {
+                            if !background {
+                                eprintln!("    ⚠ Blocked write to critical file: {}", file_path);
+                            }
+                            blocked_files.push(file_path.clone());
+                            continue;
+                        }
+
                         let full_path = project_dir.join(&file_path);
                         if let Some(parent) = full_path.parent() {
                             std::fs::create_dir_all(parent).ok();
                         }
                         std::fs::write(&full_path, &content).ok();
+                    }
+
+                    // If any files were blocked, fail the task
+                    if !blocked_files.is_empty() {
+                        task.status = "failed".to_string();
+                        summary.failed += 1;
+                        summary.failures.push(format!(
+                            "{}: Cannot modify critical infrastructure files: {}",
+                            task.id,
+                            blocked_files.join(", ")
+                        ));
+                        continue;
                     }
 
                     // Run evidence commands
