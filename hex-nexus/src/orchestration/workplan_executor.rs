@@ -3,8 +3,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::adapters::build::BuildAdapter;
 use crate::orchestration::agent_manager::SpawnConfig;
 use crate::orchestration::scaffolding::{ScaffoldedDispatch, ShellCompileChecker, ScaffoldResult};
+use hex_core::ports::build::IBuildPort;
 use crate::ports::state::{
     IStatePort, WorkplanEventInput, WorkplanEventKind, WorkplanTaskUpdate,
 };
@@ -714,6 +716,29 @@ impl WorkplanExecutor {
         execution_id: String,
         workplan: Workplan,
     ) {
+        // Detect project language at workplan start (ADR-018).
+        // This enables language-specific compile gates and agent prompt injection.
+        let build_adapter = BuildAdapter::new();
+        let project_root = std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .to_string_lossy()
+            .to_string();
+        let project_language = build_adapter
+            .detect_toolchain(&project_root)
+            .map(|t| t.language.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        let compile_command = build_adapter
+            .detect_toolchain(&project_root)
+            .map(|t| t.compile_cmd.clone())
+            .unwrap_or_else(|| "cargo check".to_string());
+
+        tracing::info!(
+            execution_id = %execution_id,
+            language = %project_language,
+            compile_cmd = %compile_command,
+            "Detected project language for workplan execution"
+        );
+
         // ADR-2604010000 P3.1 + 2026-04-27 fix: initialize a HexFlo swarm for this
         // workplan execution. Two earlier bugs combined to break this entirely:
         //
@@ -828,7 +853,7 @@ impl WorkplanExecutor {
                 );
             }
 
-            match Self::execute_phase(&state_port, &shared_state, &workplan, phase).await {
+            match Self::execute_phase(&state_port, &shared_state, &workplan, phase, &project_language, &compile_command).await {
                 Ok(result) => {
                     all_agent_ids.extend(result.agent_ids.clone());
 
@@ -929,6 +954,8 @@ impl WorkplanExecutor {
         shared_state: &SharedState,
         workplan: &Workplan,
         phase: &WorkplanPhase,
+        project_language: &str,
+        compile_command: &str,
     ) -> Result<PhaseResult, String> {
         // P3: Pre-flight check — verify AgentManager is wired and state port is responsive
         // before committing to spawning any agents. Fail fast with a clear message rather
@@ -1047,6 +1074,23 @@ impl WorkplanExecutor {
                 if !hexflo_task_id.is_empty() {
                     p.push_str(&format!("HEXFLO_TASK:{}\n", hexflo_task_id));
                 }
+
+                // Inject project language context so agent knows what language to write.
+                // This prevents agents from generating Rust code in TypeScript files, etc.
+                p.push_str(&format!("PROJECT_LANGUAGE:{}\n\n", project_language));
+                match project_language {
+                    "rust" => {
+                        p.push_str("IMPORTANT: This is a Rust project. Write Rust code with proper syntax (fn, impl, etc.).\n\n");
+                    }
+                    "typescript" => {
+                        p.push_str("IMPORTANT: This is a TypeScript project. Write TypeScript code with proper syntax (interface, class, export, etc.). Use .ts file extensions. Do NOT write Rust code.\n\n");
+                    }
+                    "go" => {
+                        p.push_str("IMPORTANT: This is a Go project. Write Go code with proper syntax (func, type, package, etc.).\n\n");
+                    }
+                    _ => {}
+                }
+
                 // P6.1: Inject role-specific preamble so spawned agents know their
                 // role, core responsibilities, and behavioural constraints before
                 // reading the task body. Delegates to build_role_preamble() in mod.rs.
@@ -1165,6 +1209,8 @@ impl WorkplanExecutor {
             // ADR-2604270800 P0.1: capture for the file-evidence gate.
             let task_files_for_evidence = task.files.clone();
             let task_project_dir = task.project_dir.clone();
+            // Clone compile_command for the async move block
+            let task_compile_command = compile_command.to_string();
 
             handles.push(tokio::spawn(async move {
                 let spawn_result = if use_path_c {
@@ -1219,8 +1265,9 @@ impl WorkplanExecutor {
                     // T1/T2/T2.5 tasks. The scaffolding layer adds Best-of-N generation,
                     // compile-gate validation, and error-feedback retries — transparent
                     // to the executor. T3 tasks never reach Path C (filtered above).
+                    // Use language-specific compile command detected at workplan start.
                     let compile_checker = Box::new(ShellCompileChecker {
-                        command: "cargo check".to_string(),
+                        command: task_compile_command.clone(),
                     });
                     let scaffolded = ScaffoldedDispatch::new(
                         inference.clone(),
@@ -1712,6 +1759,21 @@ impl WorkplanExecutor {
         let already_completed = exec.completed_task_ids.clone();
 
         tokio::spawn(async move {
+            // Detect project language at resume (same as at workplan start).
+            let build_adapter = BuildAdapter::new();
+            let project_root = std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .to_string_lossy()
+                .to_string();
+            let project_language = build_adapter
+                .detect_toolchain(&project_root)
+                .map(|t| t.language.clone())
+                .unwrap_or_else(|| "unknown".to_string());
+            let compile_command = build_adapter
+                .detect_toolchain(&project_root)
+                .map(|t| t.compile_cmd.clone())
+                .unwrap_or_else(|| "cargo check".to_string());
+
             // Find the phase to resume from and continue
             let mut found = false;
             for phase in &workplan.phases {
@@ -1764,7 +1826,7 @@ impl WorkplanExecutor {
                     phase
                 };
 
-                match Self::execute_phase(&state_port, &shared_state, &workplan, phase_to_run).await {
+                match Self::execute_phase(&state_port, &shared_state, &workplan, phase_to_run, &project_language, &compile_command).await {
                     Ok(result) if result.status == "failed" => {
                         Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Failed, Some(&result.errors)).await.ok();
                         return;
