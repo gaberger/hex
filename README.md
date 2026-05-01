@@ -102,44 +102,28 @@ The positioning that makes everything click: **hex is a Linux kernel for coding 
 
 ## How a task flows through hex
 
-```
-operator prompt or improver-emitted hypothesis
-        │
-        ▼
-classify_work_intent ──► tier routing
-        │
-        ▼
-spec → workplan (JSON, behavioral, machine-checked)
-        │
-        ▼
-hex plan execute  ──► HexFlo swarm dispatches per adapter
-        │
-        ▼
-agent in worktree feat/<wp>/<layer>
-        │
-        ▼
-best-of-N inference  ──► cargo check / tsc --noEmit (blocking)
-        │
-        ▼
-evidence gate: every task.file exists OR commit subject mentions task+wp
-        │
-        ▼
-judge: behavioral spec passes; rubric scores ≥ confidence threshold
-        │
-        ▼
-hex worktree merge (NEVER raw checkout — ADR-2604131930)
-        │
-        ▼
-hex plan reconcile --strict  ──► append-only event log; status derived
-        │
-        ▼
-sched tick loops: ADR-doctor, improver detectors, swarm-cleanup
-        │
-        ▼
-improver discovers next hypothesis ──► back to top
-```
+<p align="center">
+  <img src=".github/assets/task-flow.svg" alt="Task Flow Through hex" width="800">
+</p>
 
-Every arrow is an event row. Every state transition is recorded. Operator's role becomes kill-switch + judge-rubric tuning, not per-decision approval.
+**The complete execution pipeline** from operator prompt to self-improvement:
+
+1. **Operator prompt** or improver-emitted hypothesis
+2. **classify_work_intent** → tier routing (T1/T2/T2.5/T3)
+3. **spec → workplan** (JSON, behavioral, machine-checked)
+4. **hex plan execute** → HexFlo swarm dispatches per adapter
+5. **Agent in worktree** feat/\<wp\>/\<layer\> (isolated, parallel)
+6. **Best-of-N inference** → cargo check / tsc --noEmit (blocking compile gate)
+7. **Evidence gate** → every task.file exists OR commit subject mentions task+wp
+8. **Judge** → behavioral spec passes; rubric scores ≥ confidence threshold
+9. **hex worktree merge** → NEVER raw checkout (ADR-2604131930)
+10. **hex plan reconcile --strict** → append-only event log; status derived
+11. **Sched tick loops** → ADR-doctor, improver detectors, swarm-cleanup
+12. **Improver discovers next hypothesis** → back to top (MAPE-K loop)
+
+**Every arrow is an event row. Every state transition is recorded.**
+
+Operator's role: **kill-switch + judge-rubric tuning**, not per-decision approval.
 
 ---
 
