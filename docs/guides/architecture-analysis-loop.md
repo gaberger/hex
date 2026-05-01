@@ -1,45 +1,30 @@
 # Architecture Analysis Loop
 
-The 2-hour idle analysis loop is a scheduled process designed to periodically assess and analyze the architecture of a system. This loop ensures that the system adheres to best practices, identifies potential issues, and provides insights for improvement.
+The 2-hour idle analysis is a scheduled process designed to periodically assess and analyze the architecture of a system. This loop ensures that any deviations or issues are detected early, allowing for timely corrective actions.
 
-## Overview
+## What It Checks
 
-The analysis loop operates on a fixed schedule, running every two hours. During each execution, it performs a comprehensive check of various architectural components, focusing on key areas such as domain models, ports, and adapters.
+During each cycle, the 2-hour idle analysis performs several checks:
 
-## Components Checked
+1. **Code Quality**: Evaluates the codebase for adherence to coding standards, best practices, and potential bugs.
+2. **Dependency Health**: Checks the health of all dependencies, including outdated packages and known vulnerabilities.
+3. **Performance Metrics**: Analyzes performance metrics to identify bottlenecks or inefficiencies in the system.
+4. **Security Vulnerabilities**: Scans the codebase for security vulnerabilities using static analysis tools.
 
-### Domain Models
-- **Entities**: The loop examines the entities within the domain to ensure they are well-defined and encapsulate business logic appropriately.
-- **Value Objects**: It checks value objects for immutability and correctness in representing simple data structures.
-- **Aggregates**: Aggregates are reviewed to ensure that their boundaries are correctly defined and that they maintain consistency.
+## Domain, Ports, and Adapters
 
-### Ports
-- **Primary Ports (Drivers)**: These are analyzed to ensure they accurately represent the system's interaction points with external actors, such as user interfaces or other systems.
-- **Secondary Ports (Driven Adapters)**: The loop checks secondary ports to verify that they abstract external dependencies effectively and provide a stable interface for the domain.
+The architecture analysis loop is structured around the domain-driven design (DDD) principles of domains, ports, and adapters:
 
-### Adapters
-- **Database Adapters**: These are evaluated to ensure they correctly implement data access patterns and maintain data integrity.
-- **API Adapters**: API adapters are reviewed to confirm that they properly expose system capabilities through well-defined interfaces.
-- **Third-party Service Adapters**: The loop checks these adapters for correct integration with external services, ensuring reliability and security.
+- **Domain**: Represents the core business logic and rules of the system.
+- **Ports**: Define interfaces through which the domain interacts with external systems or users.
+- **Adapters**: Implement the ports to allow communication between the domain and external systems.
 
-## Analysis Process
+## How Findings Are Stored
 
-1. **Initialization**: The analysis process begins by initializing the necessary tools and configurations required for the checks.
-2. **Component Scanning**: It scans the codebase to identify all relevant architectural components (domains, ports, adapters).
-3. **Rule Evaluation**: Each component is evaluated against a set of predefined rules and best practices.
-4. **Finding Generation**: Based on the evaluation results, findings are generated, highlighting any issues or areas for improvement.
-
-## Storing Findings
-
-Findings from each analysis run are stored in a centralized repository. This allows for historical tracking and comparison across different runs. The storage format typically includes:
+Findings from the 2-hour idle analysis are stored in a structured format within a dedicated database. The storage includes:
 
 - **Timestamp**: The exact time when the analysis was performed.
-- **Component Details**: Information about the components that were analyzed.
-- **Issues Identified**: A detailed description of any issues found during the analysis.
-- **Recommendations**: Suggestions for improving the identified areas.
+- **Results**: Detailed results of each check, including any issues found.
+- **Recommendations**: Suggestions for improving or fixing identified issues.
 
-The stored findings can be accessed through a reporting interface, enabling stakeholders to review and act on the insights provided by the architecture analysis loop.
-
-## Conclusion
-
-The 2-hour idle analysis loop plays a crucial role in maintaining the health and quality of the system's architecture. By regularly checking key components such as domain models, ports, and adapters, it helps ensure that the system remains robust, scalable, and maintainable over time.
+This structured approach ensures that all findings are easily accessible and can be reviewed by the development team to maintain and improve the system's architecture.

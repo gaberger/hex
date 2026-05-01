@@ -48,8 +48,22 @@ pub struct InferenceAttempt {
 }
 
 fn validate_code_output(code: &str, file_path: Option<&str>) -> Result<(), String> {
-    if code.contains("...") || code.contains("TODO") || code.contains("FIXME") || code.contains("placeholder") {
-        return Err(String::from("Code contains stub patterns"));
+    // Detect stub patterns
+    let stub_patterns = [
+        "...", "TODO", "FIXME", "placeholder",
+        "demonstration purposes", "Placeholder",
+        "stub", "not implemented", "unimplemented"
+    ];
+
+    for pattern in &stub_patterns {
+        if code.contains(pattern) {
+            return Err(format!("Code contains stub pattern: {}", pattern));
+        }
+    }
+
+    // Detect trivial implementations (hardcoded empty returns)
+    if code.contains("vec![]") && code.matches("vec![]").count() > 2 {
+        return Err(String::from("Code contains multiple empty vec![] - likely placeholder"));
     }
 
     if code.matches("```").count() % 2 != 0 {

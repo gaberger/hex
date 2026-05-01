@@ -9,7 +9,7 @@
         {
           "id": "P1.1",
           "title": "Create hex-nexus REST endpoint /api/analysis/domain that scans domain/ for pure functions vs side effects, returns JSON report",
-          "status": "done",
+          "status": "failed",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/analysis/domain_analyzer.rs"
@@ -22,7 +22,7 @@
         {
           "id": "P1.2",
           "title": "Create hex-nexus REST endpoint /api/analysis/ports that checks port traits for proper abstraction (no concrete types leaking), returns JSON report",
-          "status": "done",
+          "status": "failed",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/analysis/port_analyzer.rs"
@@ -35,7 +35,7 @@
         {
           "id": "P1.3",
           "title": "Create hex-nexus REST endpoint /api/analysis/adapters that detects cross-adapter imports and coupling violations, returns JSON report",
-          "status": "done",
+          "status": "failed",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/analysis/adapter_analyzer.rs"
@@ -54,7 +54,7 @@
         {
           "id": "P2.1",
           "title": "Add auto-enqueue logic to hex-cli/src/commands/sched.rs queue_drain() that triggers arch-analysis every 2 hours when queue is idle",
-          "status": "done",
+          "status": "failed",
           "strategy_hint": "codegen",
           "files": [
             "hex-cli/src/commands/sched.rs"
@@ -68,7 +68,7 @@
         {
           "id": "P2.2",
           "title": "Add execute_arch_analysis() to hex-cli/src/commands/sched.rs that calls /api/analysis/* endpoints, aggregates findings, stores in memory as arch-findings:<timestamp>",
-          "status": "done",
+          "status": "failed",
           "strategy_hint": "codegen",
           "files": [
             "hex-cli/src/commands/sched.rs"
@@ -82,7 +82,7 @@
         {
           "id": "P2.3",
           "title": "Wire arch-analysis kind into execute_brain_task() match statement in sched.rs",
-          "status": "done",
+          "status": "failed",
           "strategy_hint": "codegen",
           "files": [
             "hex-cli/src/commands/sched.rs"
