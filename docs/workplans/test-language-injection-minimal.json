@@ -1,0 +1,33 @@
+{
+  "adr": "ADR-018",
+  "feature": "Minimal language injection smoke test",
+  "id": "test-language-injection-minimal",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Test TypeScript Detection",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Create a Status enum in src/core/domain/Status.ts with values: Active, Inactive.",
+          "evidence": [
+            "test -f src/core/domain/Status.ts",
+            "grep -q 'export enum Status' src/core/domain/Status.ts",
+            "grep -q 'Active' src/core/domain/Status.ts",
+            "npx tsc --noEmit"
+          ],
+          "files": [
+            "src/core/domain/Status.ts"
+          ],
+          "id": "P1.1",
+          "name": "Create simple TypeScript enum",
+          "project_dir": "/home/gary/hex-intf/examples/food-delivery-ts",
+          "status": "done",
+          "strategy_hint": "scaffold"
+        }
+      ]
+    }
+  ],
+  "specs": ""
+}

@@ -1,132 +1,132 @@
 {
-  "id": "test-typescript-food-delivery",
-  "title": "Test TypeScript Support: Food Delivery Service Domain",
   "description": "Validates hex's TypeScript autonomous execution by building a food delivery domain with hexagonal architecture",
-  "phases": [
-    {
-      "id": "P1",
-      "title": "Domain Layer: Order entity and value objects",
-      "tasks": [
-        {
-          "id": "P1.1",
-          "title": "Create OrderStatus enum in src/core/domain/OrderStatus.ts with values: Pending, Confirmed, Preparing, OutForDelivery, Delivered, Cancelled",
-          "status": "pending",
-          "strategy_hint": "codegen",
-          "files": [
-            "src/core/domain/OrderStatus.ts"
-          ],
-          "evidence": [
-            "test -f src/core/domain/OrderStatus.ts",
-            "grep -q 'export enum OrderStatus' src/core/domain/OrderStatus.ts",
-            "grep -q 'Delivered' src/core/domain/OrderStatus.ts",
-            "npx tsc --noEmit"
-          ]
-        },
-        {
-          "id": "P1.2",
-          "title": "Create Order domain entity in src/core/domain/Order.ts with OrderId, CustomerId, RestaurantId, Items[], OrderStatus, totalAmount (Money type), createdAt, updatedAt. Include factory method createOrder() and status transition validation.",
-          "status": "pending",
-          "strategy_hint": "codegen",
-          "files": [
-            "src/core/domain/Order.ts"
-          ],
-          "evidence": [
-            "test -f src/core/domain/Order.ts",
-            "grep -q 'export.*class Order\\|export.*interface Order' src/core/domain/Order.ts",
-            "grep -q 'createOrder\\|OrderStatus' src/core/domain/Order.ts",
-            "npx tsc --noEmit"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "P2",
-      "title": "Port Layer: Repository interface",
-      "tasks": [
-        {
-          "id": "P2.1",
-          "title": "Create IOrderRepository port in src/core/ports/IOrderRepository.ts with async methods: findById(orderId): Promise<Order | null>, save(order): Promise<void>, findByCustomerId(customerId): Promise<Order[]>, updateStatus(orderId, status): Promise<void>",
-          "status": "pending",
-          "strategy_hint": "codegen",
-          "files": [
-            "src/core/ports/IOrderRepository.ts"
-          ],
-          "evidence": [
-            "test -f src/core/ports/IOrderRepository.ts",
-            "grep -q 'export interface IOrderRepository' src/core/ports/IOrderRepository.ts",
-            "grep -q 'findById' src/core/ports/IOrderRepository.ts",
-            "grep -q 'Promise' src/core/ports/IOrderRepository.ts",
-            "npx tsc --noEmit"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "P3",
-      "title": "Adapter Layer: In-memory repository",
-      "tasks": [
-        {
-          "id": "P3.1",
-          "title": "Create InMemoryOrderRepository in src/adapters/secondary/InMemoryOrderRepository.ts implementing IOrderRepository with Map<string, Order> storage. Import Order from domain, IOrderRepository from ports.",
-          "status": "pending",
-          "strategy_hint": "codegen",
-          "files": [
-            "src/adapters/secondary/InMemoryOrderRepository.ts"
-          ],
-          "evidence": [
-            "test -f src/adapters/secondary/InMemoryOrderRepository.ts",
-            "grep -q 'export class InMemoryOrderRepository implements IOrderRepository' src/adapters/secondary/InMemoryOrderRepository.ts",
-            "grep -q 'Map.*Order' src/adapters/secondary/InMemoryOrderRepository.ts",
-            "npx tsc --noEmit"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "P4",
-      "title": "Test Layer: Domain and adapter tests",
-      "tasks": [
-        {
-          "id": "P4.1",
-          "title": "Create Order.test.ts in src/core/domain/ using vitest. Test: order creation, status transitions (Pending→Confirmed→Preparing), validation rules, totalAmount calculation.",
-          "status": "pending",
-          "strategy_hint": "codegen",
-          "files": [
-            "src/core/domain/Order.test.ts"
-          ],
-          "evidence": [
-            "test -f src/core/domain/Order.test.ts",
-            "grep -q 'describe.*Order\\|test.*Order' src/core/domain/Order.test.ts",
-            "grep -q 'expect' src/core/domain/Order.test.ts"
-          ]
-        },
-        {
-          "id": "P4.2",
-          "title": "Create InMemoryOrderRepository.test.ts in src/adapters/secondary/ using vitest. Test: save/retrieve order, findByCustomerId returns correct orders, updateStatus persists changes.",
-          "status": "pending",
-          "strategy_hint": "codegen",
-          "files": [
-            "src/adapters/secondary/InMemoryOrderRepository.test.ts"
-          ],
-          "evidence": [
-            "test -f src/adapters/secondary/InMemoryOrderRepository.test.ts",
-            "grep -q 'describe.*InMemoryOrderRepository' src/adapters/secondary/InMemoryOrderRepository.test.ts",
-            "grep -q 'expect' src/adapters/secondary/InMemoryOrderRepository.test.ts"
-          ]
-        }
-      ]
-    }
-  ],
+  "id": "test-typescript-food-delivery",
   "metadata": {
-    "language": "typescript",
-    "test_objective": "Validate hex autonomous execution on TypeScript project",
     "expected_outcome": "Demonstrates language-agnostic workplan execution with proper TypeScript compilation gates",
+    "language": "typescript",
     "success_criteria": [
       "BuildAdapter detects TypeScript from package.json/tsconfig.json",
       "Compile gate uses 'npx tsc --noEmit' instead of 'cargo check'",
       "All evidence requirements pass with TypeScript-specific commands",
       "Hexagonal boundaries respected (domain → port → adapter)",
       "Tests use vitest (TypeScript test framework)"
-    ]
-  }
+    ],
+    "test_objective": "Validate hex autonomous execution on TypeScript project"
+  },
+  "phases": [
+    {
+      "id": "P1",
+      "tasks": [
+        {
+          "evidence": [
+            "test -f src/core/domain/OrderStatus.ts",
+            "grep -q 'export enum OrderStatus' src/core/domain/OrderStatus.ts",
+            "grep -q 'Delivered' src/core/domain/OrderStatus.ts",
+            "npx tsc --noEmit"
+          ],
+          "files": [
+            "src/core/domain/OrderStatus.ts"
+          ],
+          "id": "P1.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Create OrderStatus enum in src/core/domain/OrderStatus.ts with values: Pending, Confirmed, Preparing, OutForDelivery, Delivered, Cancelled"
+        },
+        {
+          "evidence": [
+            "test -f src/core/domain/Order.ts",
+            "grep -q 'export.*class Order\\|export.*interface Order' src/core/domain/Order.ts",
+            "grep -q 'createOrder\\|OrderStatus' src/core/domain/Order.ts",
+            "npx tsc --noEmit"
+          ],
+          "files": [
+            "src/core/domain/Order.ts"
+          ],
+          "id": "P1.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Create Order domain entity in src/core/domain/Order.ts with OrderId, CustomerId, RestaurantId, Items[], OrderStatus, totalAmount (Money type), createdAt, updatedAt. Include factory method createOrder() and status transition validation."
+        }
+      ],
+      "title": "Domain Layer: Order entity and value objects"
+    },
+    {
+      "id": "P2",
+      "tasks": [
+        {
+          "evidence": [
+            "test -f src/core/ports/IOrderRepository.ts",
+            "grep -q 'export interface IOrderRepository' src/core/ports/IOrderRepository.ts",
+            "grep -q 'findById' src/core/ports/IOrderRepository.ts",
+            "grep -q 'Promise' src/core/ports/IOrderRepository.ts",
+            "npx tsc --noEmit"
+          ],
+          "files": [
+            "src/core/ports/IOrderRepository.ts"
+          ],
+          "id": "P2.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Create IOrderRepository port in src/core/ports/IOrderRepository.ts with async methods: findById(orderId): Promise<Order | null>, save(order): Promise<void>, findByCustomerId(customerId): Promise<Order[]>, updateStatus(orderId, status): Promise<void>"
+        }
+      ],
+      "title": "Port Layer: Repository interface"
+    },
+    {
+      "id": "P3",
+      "tasks": [
+        {
+          "evidence": [
+            "test -f src/adapters/secondary/InMemoryOrderRepository.ts",
+            "grep -q 'export class InMemoryOrderRepository implements IOrderRepository' src/adapters/secondary/InMemoryOrderRepository.ts",
+            "grep -q 'Map.*Order' src/adapters/secondary/InMemoryOrderRepository.ts",
+            "npx tsc --noEmit"
+          ],
+          "files": [
+            "src/adapters/secondary/InMemoryOrderRepository.ts"
+          ],
+          "id": "P3.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Create InMemoryOrderRepository in src/adapters/secondary/InMemoryOrderRepository.ts implementing IOrderRepository with Map<string, Order> storage. Import Order from domain, IOrderRepository from ports."
+        }
+      ],
+      "title": "Adapter Layer: In-memory repository"
+    },
+    {
+      "id": "P4",
+      "tasks": [
+        {
+          "evidence": [
+            "test -f src/core/domain/Order.test.ts",
+            "grep -q 'describe.*Order\\|test.*Order' src/core/domain/Order.test.ts",
+            "grep -q 'expect' src/core/domain/Order.test.ts"
+          ],
+          "files": [
+            "src/core/domain/Order.test.ts"
+          ],
+          "id": "P4.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Create Order.test.ts in src/core/domain/ using vitest. Test: order creation, status transitions (Pending→Confirmed→Preparing), validation rules, totalAmount calculation."
+        },
+        {
+          "evidence": [
+            "test -f src/adapters/secondary/InMemoryOrderRepository.test.ts",
+            "grep -q 'describe.*InMemoryOrderRepository' src/adapters/secondary/InMemoryOrderRepository.test.ts",
+            "grep -q 'expect' src/adapters/secondary/InMemoryOrderRepository.test.ts"
+          ],
+          "files": [
+            "src/adapters/secondary/InMemoryOrderRepository.test.ts"
+          ],
+          "id": "P4.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Create InMemoryOrderRepository.test.ts in src/adapters/secondary/ using vitest. Test: save/retrieve order, findByCustomerId returns correct orders, updateStatus persists changes."
+        }
+      ],
+      "title": "Test Layer: Domain and adapter tests"
+    }
+  ],
+  "title": "Test TypeScript Support: Food Delivery Service Domain"
 }
