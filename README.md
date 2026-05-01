@@ -4,6 +4,8 @@
 
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.75+-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.0+-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"></a>
+  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.21+-00add8?style=flat-square&logo=go&logoColor=white" alt="Go"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
   <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-189-bc8cff?style=flat-square" alt="ADRs"></a>
   <a href="#status"><img src="https://img.shields.io/badge/Release-Alpha-bc8cff?style=flat-square" alt="Alpha"></a>
@@ -87,7 +89,7 @@ The positioning that makes everything click: **hex is a Linux kernel for coding 
 
 | Capability | Owned mechanism | Why nothing else has it |
 |---|---|---|
-| Compile gate on agent output | best-of-N + `cargo check` / `tsc --noEmit`; failed candidates feed back into the next attempt | Most agents trust the model. hex doesn't. |
+| Compile gate on agent output | best-of-N + language-specific validation (Rust: `cargo check`, TS: `tsc --noEmit`, Go: `go build`); failed candidates feed back into the next attempt | Most agents trust the model. hex doesn't. |
 | Layer-boundary enforcement at commit | tree-sitter scan in `hex analyze`; pre-commit hook; CI gate | Hexagonal rules without enforcement aren't rules. |
 | Evidence-gated `done` | files-exist + workplan-scoped commit-subject match (ADR-2604270800 P0) | Other systems store `status: "done"` and trust the writer. hex demotes any task without git evidence. |
 | Adversarial governance for changes | adversarial-swarm proposes 3 variants; structured judge with 5-axis rubric; shadow-promote (ADR-2604261311) | Single-shot LLM proposals are biased. hex makes them compete. |
@@ -113,7 +115,7 @@ The positioning that makes everything click: **hex is a Linux kernel for coding 
 3. **spec → workplan** (JSON, behavioral, machine-checked)
 4. **hex plan execute** → HexFlo swarm dispatches per adapter
 5. **Agent in worktree** feat/\<wp\>/\<layer\> (isolated, parallel)
-6. **Best-of-N inference** → cargo check / tsc --noEmit (blocking compile gate)
+6. **Best-of-N inference** → compile gate blocks failed attempts (Rust: cargo check, TS: tsc --noEmit, Go: go build)
 7. **Evidence gate** → every task.file exists OR commit subject mentions task+wp
 8. **Judge** → behavioral spec passes; rubric scores ≥ confidence threshold
 9. **hex worktree merge** → NEVER raw checkout (ADR-2604131930)
@@ -278,7 +280,7 @@ This fix enables **autonomous workplan execution** without indefinite hangs.
 2. **Intent classification** → tier routing (T1: scaffold, T2: codegen, T2.5: reasoning, T3: frontier)
 3. **Spec generation** → workplan JSON with phases, tasks, evidence requirements
 4. **HexFlo dispatch** → parallel worktrees per adapter (feat/\<wp\>/\<layer\>)
-5. **Best-of-N inference** → compile gate blocks failed attempts (cargo check / tsc --noEmit)
+5. **Best-of-N inference** → compile gate blocks failed attempts (Rust: cargo check, TS: tsc --noEmit, Go: go build)
 6. **Evidence gate** → status derived from git, not self-reported (ADR-2604270800)
 7. **Judge evaluation** → behavioral spec + 5-axis rubric (ADR-2604261311)
 8. **Safe merge** → `hex worktree merge`, never raw checkout (ADR-2604131930)
