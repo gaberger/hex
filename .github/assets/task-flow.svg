@@ -77,7 +77,7 @@
   <rect x="200" y="500" width="400" height="70" class="box-gate" rx="5"/>
   <text x="400" y="522" class="text-gate" text-anchor="middle">COMPILE GATE (blocking)</text>
   <text x="400" y="540" class="text" text-anchor="middle">Best-of-N inference</text>
-  <text x="400" y="556" class="text-small" text-anchor="middle">Rust: cargo check • TS: tsc --noEmit • Go: go build</text>
+  <text x="400" y="556" class="text-small" text-anchor="middle">Language-specific validation (auto-detected from manifest)</text>
 
   <!-- Arrow -->
   <path d="M 400 570 L 400 600" class="arrow"/>

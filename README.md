@@ -89,7 +89,7 @@ The positioning that makes everything click: **hex is a Linux kernel for coding 
 
 | Capability | Owned mechanism | Why nothing else has it |
 |---|---|---|
-| Compile gate on agent output | best-of-N + language-specific validation (Rust: `cargo check`, TS: `tsc --noEmit`, Go: `go build`); failed candidates feed back into the next attempt | Most agents trust the model. hex doesn't. |
+| Compile gate on agent output | best-of-N + language-specific validation (auto-detected: Rust → `cargo check`, TS → `tsc --noEmit`, Go → `go build`); failed candidates feed back into the next attempt | Most agents trust the model. hex doesn't. |
 | Layer-boundary enforcement at commit | tree-sitter scan in `hex analyze`; pre-commit hook; CI gate | Hexagonal rules without enforcement aren't rules. |
 | Evidence-gated `done` | files-exist + workplan-scoped commit-subject match (ADR-2604270800 P0) | Other systems store `status: "done"` and trust the writer. hex demotes any task without git evidence. |
 | Adversarial governance for changes | adversarial-swarm proposes 3 variants; structured judge with 5-axis rubric; shadow-promote (ADR-2604261311) | Single-shot LLM proposals are biased. hex makes them compete. |
@@ -115,7 +115,7 @@ The positioning that makes everything click: **hex is a Linux kernel for coding 
 3. **spec → workplan** (JSON, behavioral, machine-checked)
 4. **hex plan execute** → HexFlo swarm dispatches per adapter
 5. **Agent in worktree** feat/\<wp\>/\<layer\> (isolated, parallel)
-6. **Best-of-N inference** → compile gate blocks failed attempts (Rust: cargo check, TS: tsc --noEmit, Go: go build)
+6. **Best-of-N inference** → compile gate blocks failed attempts (language auto-detected from project manifest)
 7. **Evidence gate** → every task.file exists OR commit subject mentions task+wp
 8. **Judge** → behavioral spec passes; rubric scores ≥ confidence threshold
 9. **hex worktree merge** → NEVER raw checkout (ADR-2604131930)
@@ -460,6 +460,8 @@ Two operating modes:
 ## Status
 
 Alpha — but a different kind of alpha than most. Every mechanical claim above has a reproducer in [EVIDENCE.md](docs/EVIDENCE.md): exact command, prerequisites, expected output. The substrate (ADR-2604261500), six-layer governance (ADR-2604261311), evidence gate (ADR-2604270800), workplan state model (ADR-2604271000), self-improvement loop (ADR-2604271100), and architectural-health detectors (ADR-2604271200) are all named and most are partially landed; the chain that closes the operator-asks-nothing loop is the active development frontier. ADR drift, false-done propagation, and detector blind spots are themselves visible in the system as findings the improver will surface — not hidden.
+
+**Language support**: The `BuildAdapter` (ADR-018) detects project language from manifest files (`Cargo.toml`, `package.json`, `go.mod`) and dispatches to the appropriate toolchain. Rust workplan execution is production-ready; TypeScript and Go support exists in the build adapter but workplan integration is in progress (currently hardcoded to `cargo check` in `workplan_executor.rs` — migration tracked in roadmap).
 
 Formal specs live in `docs/algebra/` (TLA+, TLC-model-checked). Benchmarks in [INFERENCE.md](docs/INFERENCE.md) measured on Strix Halo + Vulkan-Ollama; reproducer ships with the doc.
 
