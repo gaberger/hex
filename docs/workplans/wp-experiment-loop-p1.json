@@ -26,7 +26,7 @@
           "id": "P1.1",
           "layer": "domain",
           "name": "Add Objective + supporting enums",
-          "status": "pending"
+          "status": "done"
         },
         {
           "agent": "hex-coder",
@@ -40,7 +40,7 @@
           "id": "P1.2",
           "layer": "domain",
           "name": "Add Hypothesis + HypothesisStatus",
-          "status": "pending"
+          "status": "done"
         },
         {
           "agent": "hex-coder",
@@ -55,7 +55,7 @@
           "id": "P1.3",
           "layer": "domain",
           "name": "Add Verdict + VerdictDecision",
-          "status": "pending"
+          "status": "done"
         },
         {
           "agent": "hex-coder",
@@ -72,7 +72,7 @@
           "id": "P1.4",
           "layer": "domain",
           "name": "Wire experiment module + serde round-trip smoke test",
-          "status": "pending"
+          "status": "done"
         }
       ],
       "tier": 0

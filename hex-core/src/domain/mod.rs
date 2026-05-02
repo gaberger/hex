@@ -3,6 +3,7 @@ pub mod api_optimization;
 pub mod brain;
 pub mod capability;
 pub mod enforcement;
+pub mod experiment;
 pub mod hooks;
 pub mod messages;
 pub mod sandbox;
