@@ -1,0 +1,81 @@
+{
+  "adr": "ADR-2605021400",
+  "created_at": "2026-05-02T14:30:00Z",
+  "created_by": "claude+adr-synthesis",
+  "description": "Phase 1 of ADR-2605021400. Land the loop-closing trio of domain types (Objective, Hypothesis, Verdict) plus their supporting enums in hex-core. No port traits, no adapters — pure value types that subsequent phases (P2 IExperimentPort, P3 SpacetimeDB adapter, P4 CLI) build on. Persona / Workload / Trial / Failure are deferred to wp-experiment-loop-p2 (corresponding to ADR P5-P8).",
+  "feature": "Experimental Loop Representations — Phase 1 (Loop-Closing Trio)",
+  "id": "wp-experiment-loop-p1",
+  "phases": [
+    {
+      "description": "Domain-only phase. Gate is `cargo check -p hex-core` to confirm the surface compiles. ADR-001 rule 1 — modules import only std + chrono + serde + thiserror, never from ports/ or adapters/. Verdict.trial_id stays as String in this phase since the Trial type itself ships in Phase 2 (wp-experiment-loop-p2); convert to TrialId newtype when Trial is added.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check -p hex-core",
+        "type": "test"
+      },
+      "id": "P1",
+      "name": "Objective + Hypothesis + Verdict domain types",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Create hex-core/src/domain/experiment/objective.rs. Types (all derive Debug + Clone + PartialEq + serde::Serialize + serde::Deserialize): (1) ObjectiveId(String) — newtype. (2) Objective { id: ObjectiveId, name: String, description: String, parent: Option<ObjectiveId>, priority: ObjectivePriority, target_value: f64, comparison: ComparisonOperator, unit: String, status: ObjectiveStatus, created_at: chrono::DateTime<chrono::Utc>, updated_at: chrono::DateTime<chrono::Utc> }. (3) ObjectivePriority enum: Critical | High | Medium | Low. (4) ComparisonOperator enum: GreaterThan | GreaterThanOrEqual | LessThan | LessThanOrEqual | Equal | WithinRange { tolerance: f64 }. (5) ObjectiveStatus enum: Active | Achieved | Abandoned | Superseded. Per ADR-2605021400 §Decision: this is target-app Objective, distinct from `hex-cli/src/pipeline/objectives.rs` (dev-process). Add a doc comment on the module noting the distinction. No methods other than Default impls where natural.",
+          "files": [
+            "hex-core/src/domain/experiment/objective.rs"
+          ],
+          "id": "P1.1",
+          "layer": "domain",
+          "name": "Add Objective + supporting enums",
+          "status": "pending"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1"
+          ],
+          "description": "Create hex-core/src/domain/experiment/hypothesis.rs. Imports super::objective::ObjectiveId. Types (all derive Debug + Clone + PartialEq + Serialize + Deserialize): (1) HypothesisId(String). (2) Hypothesis { id: HypothesisId, content: String, target_objective: ObjectiveId, predicted_delta: f64, predicted_confidence: f64, verification_plan: String, adr_id: Option<String>, status: HypothesisStatus, created_at: chrono::DateTime<chrono::Utc> }. (3) HypothesisStatus enum: Untested | Confirmed { confirmed_at: chrono::DateTime<chrono::Utc> } | Rejected { rejected_at: chrono::DateTime<chrono::Utc>, reason: String } | Inconclusive { reviewed_at: chrono::DateTime<chrono::Utc> }. Per ADR-2605021400 §Citation, this type lifts stash's `hypothesis` shape verbatim and adds `target_objective: ObjectiveId` — keep the field set minimal so the StashExperimentAdapter (Phase 3) can projection-map cleanly.",
+          "files": [
+            "hex-core/src/domain/experiment/hypothesis.rs"
+          ],
+          "id": "P1.2",
+          "layer": "domain",
+          "name": "Add Hypothesis + HypothesisStatus",
+          "status": "pending"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1",
+            "P1.2"
+          ],
+          "description": "Create hex-core/src/domain/experiment/verdict.rs. Imports super::objective::ObjectiveId, super::hypothesis::HypothesisId. Types (Debug + Clone + PartialEq + Serialize + Deserialize): (1) VerdictId(String). (2) Verdict { id: VerdictId, trial_id: String, /* Trial type lands in wp-experiment-loop-p2; convert to TrialId newtype when added */ hypothesis_id: HypothesisId, objective_id: ObjectiveId, baseline_score: f64, trial_score: f64, delta: f64, confidence: f64, decision: VerdictDecision, archived_at: chrono::DateTime<chrono::Utc>, notes: String }. (3) VerdictDecision enum: Graduate | Hold { until: chrono::DateTime<chrono::Utc> } | Rollback { reason: String } | Inconclusive. Add a #[doc] comment on Verdict.trial_id explaining the deferred newtype. No constructors that compute delta — that's the VerdictPolicy port's job (Phase 7 of the ADR), not domain.",
+          "files": [
+            "hex-core/src/domain/experiment/verdict.rs"
+          ],
+          "id": "P1.3",
+          "layer": "domain",
+          "name": "Add Verdict + VerdictDecision",
+          "status": "pending"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1",
+            "P1.2",
+            "P1.3"
+          ],
+          "description": "Create hex-core/src/domain/experiment/mod.rs that declares `pub mod objective; pub mod hypothesis; pub mod verdict;` and re-exports the public types: pub use objective::{Objective, ObjectiveId, ObjectivePriority, ObjectiveStatus, ComparisonOperator}; same for hypothesis and verdict. Add ExperimentError thiserror enum at module root with variants: ObjectiveNotFound(ObjectiveId), HypothesisNotFound(HypothesisId), VerdictAlreadyArchived(VerdictId), InvalidPredictedDelta { value: f64, reason: String }, Backend(String). Then add `pub mod experiment;` to hex-core/src/domain/mod.rs. Add a #[cfg(test)] mod tests block in experiment/mod.rs with two tests: (1) round_trip_serde — construct one of each type, serialize to JSON via serde_json, deserialize back, assert PartialEq. (2) ids_are_distinct — assert ObjectiveId(\"x\") and HypothesisId(\"x\") have different types (compile-only via let _: ObjectiveId = ObjectiveId(\"x\".into()); — verify the two newtypes don't accidentally share a type alias).",
+          "files": [
+            "hex-core/src/domain/experiment/mod.rs",
+            "hex-core/src/domain/mod.rs"
+          ],
+          "id": "P1.4",
+          "layer": "domain",
+          "name": "Wire experiment module + serde round-trip smoke test",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ]
+}
