@@ -3146,3 +3146,349 @@ pub fn archive_old_briefings(
 //   result_truncated: String      // first 300 chars of result (empty if null)
 //   created_at_us: i64            // RFC3339 → microseconds since epoch
 //   completed_at_us: i64          // 0 if not completed
+
+// ─── Experimental Loop (ADR-2605021400) ──────────────────────────────────
+//
+// Storage for the loop-closing trio of target-app representations:
+// Objective (what to maximize), Hypothesis (predicted Δ on Objective),
+// and Verdict (measured outcome + graduate/hold/rollback decision).
+//
+// Persona / Workload / Trial / Failure tables land in a follow-up phase
+// (wp-experiment-loop-p2-extras, ADR-2605021400 §Implementation P5–P8).
+//
+// Enums are stored as String columns (SpacetimeDB cannot store nested
+// Rust enums in columns). The hex-side adapter (ADR-2605021400 §P3)
+// converts between these row shapes and `hex_core::domain::experiment::*`.
+
+/// A target-app objective — what the application is trying to maximize/
+/// minimize over its workload (ADR-2605021400 §Decision).
+#[table(name = objective, public)]
+#[derive(Clone, Debug)]
+pub struct Objective {
+    #[primary_key]
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub description: String,
+    /// Empty string = top-level objective (no parent).
+    pub parent_id: String,
+    /// "critical" | "high" | "medium" | "low"
+    pub priority: String,
+    pub target_value: f64,
+    /// "greater_than" | "greater_than_or_equal" | "less_than" |
+    /// "less_than_or_equal" | "equal" | "within_range"
+    pub comparison: String,
+    /// Tolerance for the `within_range` comparison; 0.0 otherwise.
+    pub comparison_tolerance: f64,
+    pub unit: String,
+    /// "active" | "achieved" | "abandoned" | "superseded"
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A falsifiable predicted effect on an Objective.
+#[table(name = hypothesis, public)]
+#[derive(Clone, Debug)]
+pub struct Hypothesis {
+    #[primary_key]
+    pub id: String,
+    pub project_id: String,
+    pub content: String,
+    pub target_objective_id: String,
+    pub predicted_delta: f64,
+    pub predicted_confidence: f64,
+    pub verification_plan: String,
+    /// Empty string = unattached.
+    pub adr_id: String,
+    /// "untested" | "confirmed" | "rejected" | "inconclusive"
+    pub status: String,
+    /// Timestamp of the most recent status transition; empty for "untested".
+    pub status_at: String,
+    /// Populated when status is "rejected".
+    pub status_reason: String,
+    pub created_at: String,
+}
+
+/// Quantified outcome record — closes the experimental loop.
+#[table(name = verdict, public)]
+#[derive(Clone, Debug)]
+pub struct Verdict {
+    #[primary_key]
+    pub id: String,
+    pub project_id: String,
+    /// String stub until the Trial table lands (wp-experiment-loop-p2-extras).
+    pub trial_id: String,
+    pub hypothesis_id: String,
+    pub objective_id: String,
+    pub baseline_score: f64,
+    pub trial_score: f64,
+    pub delta: f64,
+    pub confidence: f64,
+    /// "graduate" | "hold" | "rollback" | "inconclusive"
+    pub decision: String,
+    /// Populated when decision is "hold" — re-evaluate timestamp.
+    pub decision_until: String,
+    /// Populated when decision is "rollback".
+    pub decision_reason: String,
+    pub archived_at: String,
+    pub notes: String,
+}
+
+const VALID_OBJECTIVE_PRIORITIES: [&str; 4] = ["critical", "high", "medium", "low"];
+const VALID_OBJECTIVE_STATUSES: [&str; 4] = ["active", "achieved", "abandoned", "superseded"];
+const VALID_OBJECTIVE_COMPARISONS: [&str; 6] = [
+    "greater_than",
+    "greater_than_or_equal",
+    "less_than",
+    "less_than_or_equal",
+    "equal",
+    "within_range",
+];
+const VALID_HYPOTHESIS_STATUSES: [&str; 4] =
+    ["untested", "confirmed", "rejected", "inconclusive"];
+const VALID_VERDICT_DECISIONS: [&str; 4] = ["graduate", "hold", "rollback", "inconclusive"];
+
+/// Insert or update an objective.
+#[reducer]
+pub fn objective_create(
+    ctx: &ReducerContext,
+    id: String,
+    project_id: String,
+    name: String,
+    description: String,
+    parent_id: String,
+    priority: String,
+    target_value: f64,
+    comparison: String,
+    comparison_tolerance: f64,
+    unit: String,
+    created_at: String,
+) -> Result<(), String> {
+    if id.is_empty() {
+        return Err("Objective id is required".to_string());
+    }
+    if !VALID_OBJECTIVE_PRIORITIES.contains(&priority.as_str()) {
+        return Err(format!(
+            "Invalid priority '{}'. Must be one of: {}",
+            priority,
+            VALID_OBJECTIVE_PRIORITIES.join(", ")
+        ));
+    }
+    if !VALID_OBJECTIVE_COMPARISONS.contains(&comparison.as_str()) {
+        return Err(format!(
+            "Invalid comparison '{}'. Must be one of: {}",
+            comparison,
+            VALID_OBJECTIVE_COMPARISONS.join(", ")
+        ));
+    }
+    if !parent_id.is_empty() && ctx.db.objective().id().find(&parent_id).is_none() {
+        return Err(format!("Parent objective '{}' not found", parent_id));
+    }
+    let row = Objective {
+        id: id.clone(),
+        project_id,
+        name,
+        description,
+        parent_id,
+        priority,
+        target_value,
+        comparison,
+        comparison_tolerance,
+        unit,
+        status: "active".to_string(),
+        created_at: created_at.clone(),
+        updated_at: created_at,
+    };
+    if ctx.db.objective().id().find(&id).is_some() {
+        ctx.db.objective().id().update(row);
+    } else {
+        ctx.db.objective().insert(row);
+    }
+    Ok(())
+}
+
+/// Update an objective's lifecycle status.
+#[reducer]
+pub fn objective_update_status(
+    ctx: &ReducerContext,
+    id: String,
+    status: String,
+    updated_at: String,
+) -> Result<(), String> {
+    if !VALID_OBJECTIVE_STATUSES.contains(&status.as_str()) {
+        return Err(format!(
+            "Invalid status '{}'. Must be one of: {}",
+            status,
+            VALID_OBJECTIVE_STATUSES.join(", ")
+        ));
+    }
+    let existing = ctx
+        .db
+        .objective()
+        .id()
+        .find(&id)
+        .ok_or_else(|| format!("Objective '{}' not found", id))?;
+    ctx.db.objective().id().update(Objective {
+        status,
+        updated_at,
+        ..existing
+    });
+    Ok(())
+}
+
+/// Insert a new hypothesis attached to an existing objective.
+#[reducer]
+pub fn hypothesis_create(
+    ctx: &ReducerContext,
+    id: String,
+    project_id: String,
+    content: String,
+    target_objective_id: String,
+    predicted_delta: f64,
+    predicted_confidence: f64,
+    verification_plan: String,
+    adr_id: String,
+    created_at: String,
+) -> Result<(), String> {
+    if id.is_empty() {
+        return Err("Hypothesis id is required".to_string());
+    }
+    if target_objective_id.is_empty() {
+        return Err("target_objective_id is required".to_string());
+    }
+    if ctx
+        .db
+        .objective()
+        .id()
+        .find(&target_objective_id)
+        .is_none()
+    {
+        return Err(format!(
+            "Target objective '{}' not found",
+            target_objective_id
+        ));
+    }
+    if !(0.0..=1.0).contains(&predicted_confidence) {
+        return Err(format!(
+            "predicted_confidence {} must be in [0.0, 1.0]",
+            predicted_confidence
+        ));
+    }
+    let row = Hypothesis {
+        id: id.clone(),
+        project_id,
+        content,
+        target_objective_id,
+        predicted_delta,
+        predicted_confidence,
+        verification_plan,
+        adr_id,
+        status: "untested".to_string(),
+        status_at: String::new(),
+        status_reason: String::new(),
+        created_at,
+    };
+    if ctx.db.hypothesis().id().find(&id).is_some() {
+        ctx.db.hypothesis().id().update(row);
+    } else {
+        ctx.db.hypothesis().insert(row);
+    }
+    Ok(())
+}
+
+/// Transition a hypothesis to confirmed / rejected / inconclusive.
+#[reducer]
+pub fn hypothesis_update_status(
+    ctx: &ReducerContext,
+    id: String,
+    status: String,
+    status_at: String,
+    status_reason: String,
+) -> Result<(), String> {
+    if !VALID_HYPOTHESIS_STATUSES.contains(&status.as_str()) {
+        return Err(format!(
+            "Invalid status '{}'. Must be one of: {}",
+            status,
+            VALID_HYPOTHESIS_STATUSES.join(", ")
+        ));
+    }
+    let existing = ctx
+        .db
+        .hypothesis()
+        .id()
+        .find(&id)
+        .ok_or_else(|| format!("Hypothesis '{}' not found", id))?;
+    ctx.db.hypothesis().id().update(Hypothesis {
+        status,
+        status_at,
+        status_reason,
+        ..existing
+    });
+    Ok(())
+}
+
+/// Record a verdict against a hypothesis + objective. Insert-or-update on id.
+#[reducer]
+pub fn verdict_record(
+    ctx: &ReducerContext,
+    id: String,
+    project_id: String,
+    trial_id: String,
+    hypothesis_id: String,
+    objective_id: String,
+    baseline_score: f64,
+    trial_score: f64,
+    delta: f64,
+    confidence: f64,
+    decision: String,
+    decision_until: String,
+    decision_reason: String,
+    archived_at: String,
+    notes: String,
+) -> Result<(), String> {
+    if id.is_empty() {
+        return Err("Verdict id is required".to_string());
+    }
+    if !VALID_VERDICT_DECISIONS.contains(&decision.as_str()) {
+        return Err(format!(
+            "Invalid decision '{}'. Must be one of: {}",
+            decision,
+            VALID_VERDICT_DECISIONS.join(", ")
+        ));
+    }
+    if ctx.db.hypothesis().id().find(&hypothesis_id).is_none() {
+        return Err(format!("Hypothesis '{}' not found", hypothesis_id));
+    }
+    if ctx.db.objective().id().find(&objective_id).is_none() {
+        return Err(format!("Objective '{}' not found", objective_id));
+    }
+    if !(0.0..=1.0).contains(&confidence) {
+        return Err(format!(
+            "confidence {} must be in [0.0, 1.0]",
+            confidence
+        ));
+    }
+    let row = Verdict {
+        id: id.clone(),
+        project_id,
+        trial_id,
+        hypothesis_id,
+        objective_id,
+        baseline_score,
+        trial_score,
+        delta,
+        confidence,
+        decision,
+        decision_until,
+        decision_reason,
+        archived_at,
+        notes,
+    };
+    if ctx.db.verdict().id().find(&id).is_some() {
+        ctx.db.verdict().id().update(row);
+    } else {
+        ctx.db.verdict().insert(row);
+    }
+    Ok(())
+}
