@@ -35,7 +35,7 @@ Consequences of leaving this drift:
 
 Real top-level languages on this branch:
 
-- **Rust** — 6 (now 7, counting `hex-setup/`) workspace crates + 7 SpacetimeDB WASM modules. The kernel.
+- **Rust** — 6 workspace crates (`hex-cli`, `hex-nexus`, `hex-desktop`, `hex-core`, `hex-parser`, `hex-agent`) + 7 SpacetimeDB WASM modules. The kernel. (`hex-setup/` exists on disk but holds only `mcp/mcp-tools.json` — it is a config asset directory, not a workspace member.)
 - **Solid.js + Tailwind** — `hex-nexus/assets/` dashboard, embedded into `hex-nexus` via `rust-embed`.
 - **Bun-driven scripts** — `scripts/test-conflict-prevention.ts`, `scripts/test-coordination.ts`, `scripts/push-dashboard-data.cjs` — these legitimately need `package.json` for runtime deps (`ws`, etc.).
 - **Proposed Go sidecar** — stash, out-of-process per ADR-2604261430.
@@ -73,7 +73,7 @@ In `## What This Project Is`: drop "and TypeScript library" if present. Confirm 
 In `## File Organization`:
 
 - Delete the `# TypeScript library` block (`src/core/domain/`, `src/core/ports/`, etc.).
-- Add `hex-setup/` to the crate list (currently missing — confirmed present on disk).
+- Note `hex-setup/` exists as a config asset directory (holds `mcp/mcp-tools.json`); not a crate, but currently undocumented.
 - Note `hex-nexus/assets/` is Solid.js + Tailwind, not generic.
 
 In `## Build & Test`:
