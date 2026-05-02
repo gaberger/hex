@@ -1,0 +1,49 @@
+{
+  "adr": "ADR-2605021400",
+  "created_at": "2026-05-02T16:00:00Z",
+  "created_by": "claude+adr-synthesis",
+  "description": "Phase 3a of ADR-2605021400 (split from former wp-experiment-loop-p3). Lands the two adapter implementations of IExperimentPort that DO NOT need a live SpacetimeDB: (1) InMemoryExperimentAdapter — Arc<RwLock<HashMap<...>>>-backed, the reference impl that powers tests, the future CLI/REST surface, and the pilot example app; (2) StashExperimentAdapter<Inner> — decorator over an inner IExperimentPort plus an IConsolidationMemoryPort, projects hypothesis/objective/failure into stash. Composition wiring is deferred to P4 (CLI/REST consumer) since neither adapter has a consumer yet inside hex-nexus. The SpacetimeDB-bound adapter and live integration test live in wp-experiment-loop-p3b.",
+  "feature": "Experimental Loop Representations — Phase 3a (Adapters that need no external infra)",
+  "id": "wp-experiment-loop-p3a",
+  "phases": [
+    {
+      "description": "Two secondary adapters per ADR-001 rule 4 — adapters import from ports/ only. The InMemoryExperimentAdapter is the reference impl; the StashExperimentAdapter is a decorator that the in-memory adapter (or any other IExperimentPort) can be wrapped by. Gate: cargo check -p hex-nexus && cargo test -p hex-nexus --lib adapters::in_memory_experiment && cargo test -p hex-nexus --lib adapters::stash_experiment.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check -p hex-nexus && cargo test -p hex-nexus --lib adapters::in_memory_experiment adapters::stash_experiment",
+        "type": "test"
+      },
+      "id": "P3a",
+      "name": "InMemoryExperimentAdapter + StashExperimentAdapter",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Create hex-nexus/src/adapters/in_memory_experiment.rs implementing `IExperimentPort` from hex-core. Internals: pub struct InMemoryExperimentAdapter { state: Arc<tokio::sync::RwLock<State>> }; struct State { objectives: HashMap<ObjectiveId, Objective>, hypotheses: HashMap<HypothesisId, Hypothesis>, verdicts: HashMap<VerdictId, Verdict>, project_objectives: HashMap<String /* project_id */, Vec<ObjectiveId>>, project_hypotheses: HashMap<String, Vec<HypothesisId>>, project_verdicts: HashMap<String, Vec<VerdictId>> }. Behavior: validate FK existence on hypothesis_create (target_objective must exist) and verdict_record (hypothesis_id and objective_id must exist); return ExperimentError::HypothesisNotFound / ObjectiveNotFound on miss. update_status methods return ExperimentError::HypothesisNotFound / ObjectiveNotFound when the id is unknown. List methods return Vec sorted by id (deterministic). Add a Default impl that returns an empty adapter, and a #[cfg(test)] mod tests block covering: (1) round-trip create + get; (2) FK validation on hypothesis_create with bogus objective_id returns ObjectiveNotFound; (3) FK validation on verdict_record with bogus hypothesis_id returns HypothesisNotFound; (4) list_for_objective filters correctly; (5) update_status returns NotFound on unknown id. No #[serde] derives on the adapter itself.",
+          "files": [
+            "hex-nexus/src/adapters/in_memory_experiment.rs",
+            "hex-nexus/src/adapters/mod.rs"
+          ],
+          "id": "P3a.1",
+          "layer": "secondary",
+          "name": "Add InMemoryExperimentAdapter",
+          "status": "done"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Create hex-nexus/src/adapters/stash_experiment.rs containing pub struct StashExperimentAdapter<Inner> { inner: Inner, stash: Arc<dyn IConsolidationMemoryPort>, enabled: bool } and impl<Inner: IExperimentPort + Send + Sync> IExperimentPort for StashExperimentAdapter<Inner>. Imports from hex-core: IExperimentPort, IConsolidationMemoryPort, domain types from both. For each WRITE method, call inner first; if Ok and enabled, project to stash best-effort: hypothesis_create → stash.create_hypothesis(content, verification_plan) [content is hypothesis.content; verification_plan is hypothesis.verification_plan; namespace argument uses project_id]; objective_create → stash.create_goal(name, parent_id_opt, priority_str) [where priority_str is the lowercased ObjectivePriority]; verdict_record where decision matches VerdictDecision::Rollback{reason} → stash.create_failure(content=verdict.notes, reason=reason, lesson=String::new(), goal_id=Some(objective_id)). Projection failures must be LOGGED via tracing::warn! (or log::warn! — match what hex-nexus already uses) but NOT propagated. Read methods are pure delegation to inner. Tests (#[cfg(test)] mod tests): use InMemoryExperimentAdapter (depends on P3a.1) as inner and a hand-written MockConsolidationMemoryPort that records calls into Arc<Mutex<Vec<String>>>; verify projection happens for hypothesis_create + objective_create, that read methods do NOT touch stash, that decision=Graduate on verdict_record does NOT trigger create_failure, and that projection failures from the mock do not surface to the caller.",
+          "files": [
+            "hex-nexus/src/adapters/stash_experiment.rs",
+            "hex-nexus/src/adapters/mod.rs"
+          ],
+          "id": "P3a.2",
+          "layer": "secondary",
+          "name": "Add StashExperimentAdapter decorator",
+          "status": "done"
+        }
+      ],
+      "tier": 1
+    }
+  ]
+}

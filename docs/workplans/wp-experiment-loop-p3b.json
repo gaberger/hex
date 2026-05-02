@@ -1,0 +1,65 @@
+{
+  "adr": "ADR-2605021400",
+  "created_at": "2026-05-02T16:00:00Z",
+  "created_by": "claude+adr-synthesis",
+  "description": "Phase 3b of ADR-2605021400 (split from former wp-experiment-loop-p3). Lands the production SpacetimeDB-bound adapter for IExperimentPort. DEFERRED — requires the SpacetimeDB binary installed and a reachable spacetime instance, neither of which is available in the current build environment. The InMemoryExperimentAdapter from wp-experiment-loop-p3a is the reference oracle the integration test diffs against.",
+  "feature": "Experimental Loop Representations — Phase 3b (SpacetimeDB-bound adapter, deferred)",
+  "id": "wp-experiment-loop-p3b",
+  "phases": [
+    {
+      "description": "Production persistence binding. Gate: cargo check -p hex-nexus is the local-only check; the integration test (P3b.2) is the real verification and is env-gated by SPACETIMEDB_HOST so it skips cleanly when no instance is reachable. Composition-root wiring lives here too — it picks SpacetimeExperimentAdapter when SPACETIMEDB_HOST is reachable, else falls back to InMemoryExperimentAdapter (from wp-experiment-loop-p3a).",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check -p hex-nexus && cargo test -p hex-nexus --test spacetime_experiment_integration",
+        "type": "test"
+      },
+      "id": "P3b",
+      "name": "SpacetimeExperimentAdapter + composition fallback + integration test",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Create hex-nexus/src/adapters/spacetime_experiment.rs. pub struct SpacetimeExperimentAdapter { client: Arc<SpacetimeClient> } following the pattern in spacetime_state.rs / spacetime_inference.rs / spacetime_secrets.rs. #[async_trait] impl IExperimentPort for SpacetimeExperimentAdapter. Each port method: (a) translate the domain type into reducer args — enum variants → string columns. ObjectivePriority::High → \"high\" etc. ComparisonOperator::WithinRange{tolerance} → comparison=\"within_range\" + comparison_tolerance=tolerance; all other variants set comparison_tolerance=0.0. HypothesisStatus::Confirmed{confirmed_at} → status=\"confirmed\" + status_at=confirmed_at + status_reason=\"\"; Rejected{rejected_at, reason} → status=\"rejected\" + status_at=rejected_at + status_reason=reason; etc. VerdictDecision similar mapping. (b) call the matching reducer via the SpacetimeDB client. (c) map errors: transport failures → ExperimentError::Backend(message); reducer error strings containing \"Objective ... not found\" → ObjectiveNotFound, \"Hypothesis ... not found\" → HypothesisNotFound, \"already archived\" → VerdictAlreadyArchived (parse the reducer's Err string conservatively — fall through to Backend on any unrecognized message). For _get and _list methods, query the table directly via SpacetimeDB row-subscription / read API; convert row → domain type via small unit-testable functions: fn objective_row_to_domain(row: ObjectiveRow) -> Result<Objective, ExperimentError>; same for hypothesis and verdict. Conversion functions return ExperimentError::Backend(\"invalid status: ...\") on unknown enum strings.",
+          "files": [
+            "hex-nexus/src/adapters/spacetime_experiment.rs",
+            "hex-nexus/src/adapters/mod.rs"
+          ],
+          "id": "P3b.1",
+          "layer": "secondary",
+          "name": "Add SpacetimeExperimentAdapter implementing IExperimentPort",
+          "status": "pending"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P3b.1"
+          ],
+          "description": "Add hex-nexus/tests/spacetime_experiment_integration.rs. Env-gated: if std::env::var(\"SPACETIMEDB_HOST\").is_err() { eprintln!(\"skipping: SPACETIMEDB_HOST not set\"); return; }. Steps: (1) construct SpacetimeExperimentAdapter against env-pointed instance; (2) construct an InMemoryExperimentAdapter with the same project_id — the in-memory adapter is the oracle; (3) run the same sequence of mutations against both: objective_create → hypothesis_create (good objective_id) → hypothesis_create (bad objective_id, expect ObjectiveNotFound from both) → verdict_record (decision=Graduate) → verdict_list_for_objective; (4) assert each method's results from the SpacetimeDB adapter match the in-memory adapter (same domain values returned, same error variants raised). Cleanup: delete the test rows on completion (best-effort; the test should not assume a clean DB on entry — use UUID-prefixed ids to isolate).",
+          "files": [
+            "hex-nexus/tests/spacetime_experiment_integration.rs"
+          ],
+          "id": "P3b.2",
+          "layer": "integration",
+          "name": "End-to-end integration test diffed against InMemory oracle (env-gated)",
+          "status": "pending"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P3b.1"
+          ],
+          "description": "Wire the experiment adapter into hex-nexus's composition root: pick SpacetimeExperimentAdapter when SPACETIMEDB_HOST is reachable at startup, fall back to InMemoryExperimentAdapter otherwise. Wrap with StashExperimentAdapter when consolidation.enabled is true in .hex/project.json AND a stash sidecar is reachable. Expose Arc<dyn IExperimentPort> on the AgentManager / composition struct so REST routes (P4) can pull it. Per ADR-001 rule 6, only the composition-root file may import from adapters/ — verify with grep.",
+          "files": [
+            "hex-nexus/src/main.rs",
+            "hex-nexus/src/composition/mod.rs"
+          ],
+          "id": "P3b.3",
+          "layer": "composition",
+          "name": "Composition root: SpacetimeDB primary + InMemory fallback + Stash decorator",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    }
+  ]
+}

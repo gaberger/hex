@@ -27,7 +27,7 @@
           "id": "P1.1",
           "layer": "domain",
           "name": "Add consolidation domain types to hex-core",
-          "status": "pending"
+          "status": "done"
         },
         {
           "agent": "hex-coder",
@@ -42,7 +42,7 @@
           "id": "P1.2",
           "layer": "ports",
           "name": "Add IConsolidationMemoryPort trait to hex-core",
-          "status": "pending"
+          "status": "done"
         },
         {
           "agent": "hex-coder",
@@ -57,7 +57,7 @@
           "id": "P1.3",
           "layer": "ports",
           "name": "Object-safety smoke test for IConsolidationMemoryPort",
-          "status": "pending"
+          "status": "done"
         }
       ],
       "tier": 0

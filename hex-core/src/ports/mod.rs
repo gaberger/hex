@@ -1,6 +1,7 @@
 pub mod agent_runtime;
 pub mod brain;
 pub mod build;
+pub mod consolidation_memory;
 pub mod context_compressor;
 pub mod coordination;
 pub mod enforcement;

@@ -2,6 +2,7 @@ pub mod agents;
 pub mod api_optimization;
 pub mod brain;
 pub mod capability;
+pub mod consolidation;
 pub mod enforcement;
 pub mod experiment;
 pub mod hooks;
