@@ -2852,6 +2852,15 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         state.tick_count = state.tick_count.saturating_add(1);
         save_daemon_state(&state);
 
+        // ── Improver history recorder ───────────────────────────────────
+        // One snapshot per tick so the convergence series accumulates
+        // passively even when no operator is invoking the CLI. Side-
+        // effect: appends one line to ~/.hex/improver/history.jsonl.
+        // No stdout output (we have the daemon tick summary above).
+        if let Err(e) = crate::commands::sched::improver::record_history_snapshot().await {
+            eprintln!("  ! improver history snapshot: {}", e);
+        }
+
         // ── Analyze regression detection (ADR-2604241800) ────────────────
         // After each tick, check if a completed analyze task has more violations
         // than last time. Notify operator on regression.

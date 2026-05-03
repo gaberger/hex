@@ -102,6 +102,23 @@ pub enum ImproverAction {
         /// watching an auto-act sweep settle.
         #[arg(long)]
         watch: Option<u64>,
+        /// Suppress appending this invocation to the history JSONL.
+        /// Default: every status call appends so the convergence series
+        /// accumulates passively without any cron or daemon wiring.
+        #[arg(long)]
+        no_history: bool,
+    },
+    /// Show the homeostasis convergence series — last N status snapshots
+    /// rendered as a per-line trend with delta-from-previous. Useful for
+    /// answering "is the loop converging" or "what changed in the last
+    /// hour" without running the discover sweep yourself.
+    History {
+        /// Maximum rows to display (newest first). Default 30.
+        #[arg(long, default_value_t = 30)]
+        limit: usize,
+        /// Emit the history slice as JSON instead of a table.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -114,13 +131,157 @@ pub async fn run(action: ImproverAction) -> Result<()> {
         ImproverAction::Act { top, apply, json } => run_act(top, apply, json).await,
         ImproverAction::Learn { json } => run_learn(json).await,
         ImproverAction::Scores { json, starvation } => run_scores(json, starvation).await,
-        ImproverAction::Status { json, watch } => run_status(json, watch).await,
+        ImproverAction::Status { json, watch, no_history } => run_status(json, watch, no_history).await,
+        ImproverAction::History { limit, json } => run_history(limit, json).await,
     }
 }
 
-async fn run_status(json: bool, watch: Option<u64>) -> Result<()> {
+const HISTORY_MAX_LINES: usize = 1000;
+
+fn history_path() -> Result<std::path::PathBuf> {
+    let home = dirs::home_dir().context("resolve home dir")?;
+    let dir = home.join(".hex/improver");
+    std::fs::create_dir_all(&dir).ok();
+    Ok(dir.join("history.jsonl"))
+}
+
+/// Append one status snapshot to the history JSONL. Bounded to the last
+/// HISTORY_MAX_LINES entries — older lines are dropped when the file grows
+/// past 1.5× the cap, so the rotation is amortized rather than every call.
+fn append_history(snapshot: &serde_json::Value) -> Result<()> {
+    let path = history_path()?;
+    let line = serde_json::to_string(snapshot)? + "\n";
+    use std::io::Write;
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .with_context(|| format!("open {}", path.display()))?;
+        f.write_all(line.as_bytes())?;
+    }
+    // Amortized rotation: only inspect line count past 1.5× cap, then
+    // truncate to the cap. Avoids reading-then-writing on every append.
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        let line_count = content.lines().count();
+        if line_count > (HISTORY_MAX_LINES * 3 / 2) {
+            let kept: Vec<&str> = content
+                .lines()
+                .rev()
+                .take(HISTORY_MAX_LINES)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            let trimmed = kept.join("\n") + "\n";
+            std::fs::write(&path, trimmed).ok();
+        }
+    }
+    Ok(())
+}
+
+async fn run_history(limit: usize, json: bool) -> Result<()> {
+    let path = history_path()?;
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        if json {
+            println!("[]");
+        } else {
+            println!("Improver history empty — no `hex sched improver status` invocations recorded yet.");
+        }
+        return Ok(());
+    };
+    let entries: Vec<serde_json::Value> = content
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    let slice: Vec<&serde_json::Value> = entries.iter().rev().take(limit).collect();
+    if json {
+        let arr: Vec<serde_json::Value> = slice.iter().map(|v| (*v).clone()).collect();
+        println!("{}", serde_json::to_string_pretty(&arr)?);
+        return Ok(());
+    }
+    use colored::Colorize;
+    println!("{}", "── Improver Convergence History ──".cyan().bold());
+    let rows: Vec<Vec<String>> = slice
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let timestamp = e
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .unwrap_or("—")
+                .replace('T', " ")
+                .chars()
+                .take(19)
+                .collect::<String>();
+            let score = e
+                .get("homeostasis_score")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let total = e
+                .get("hypotheses")
+                .and_then(|v| v.get("total"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let auto_share = e
+                .get("hypotheses")
+                .and_then(|v| v.get("auto_share_pct"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let q_samples = e
+                .get("q_table")
+                .and_then(|v| v.get("total_samples"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let dead_letter = e
+                .get("queue")
+                .and_then(|v| v.get("dead_letter"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            // Compute deltas relative to the *next* (older) entry. The
+            // slice is newest-first, so previous = slice[i+1].
+            let prev_total = slice.get(i + 1)
+                .and_then(|p| p.get("hypotheses"))
+                .and_then(|p| p.get("total"))
+                .and_then(|v| v.as_u64());
+            let total_delta = prev_total.map(|p| total as i64 - p as i64).unwrap_or(0);
+            let total_str = if total_delta > 0 {
+                format!("{} ({:+})", total, total_delta).yellow().to_string()
+            } else if total_delta < 0 {
+                format!("{} ({:+})", total, total_delta).green().to_string()
+            } else {
+                total.to_string()
+            };
+            let score_str = if score >= 80 {
+                score.to_string().green().to_string()
+            } else if score >= 60 {
+                score.to_string().yellow().to_string()
+            } else {
+                score.to_string().red().to_string()
+            };
+            vec![
+                timestamp,
+                score_str,
+                total_str,
+                format!("{:.0}%", auto_share),
+                q_samples.to_string(),
+                dead_letter.to_string(),
+            ]
+        })
+        .collect();
+    println!(
+        "{}",
+        crate::fmt::pretty_table(
+            &["TIME (UTC)", "SCORE", "HYPS", "AUTO%", "Q-N", "DEAD"],
+            &rows
+        )
+    );
+    Ok(())
+}
+
+async fn run_status(json: bool, watch: Option<u64>, no_history: bool) -> Result<()> {
     loop {
-        render_status_once(json).await?;
+        render_status_once(json, !no_history).await?;
         match watch {
             Some(secs) if secs > 0 => {
                 tokio::time::sleep(Duration::from_secs(secs)).await;
@@ -136,22 +297,30 @@ async fn run_status(json: bool, watch: Option<u64>) -> Result<()> {
     }
 }
 
-async fn render_status_once(json: bool) -> Result<()> {
+/// Compute a snapshot value and append it to history without rendering
+/// any output. Used by the daemon tick so the convergence series
+/// accumulates passively. Returns the snapshot for any caller that
+/// wants to inspect it without the side-effect of printing.
+pub async fn record_history_snapshot() -> Result<serde_json::Value> {
+    let snapshot = build_snapshot().await?;
+    append_history(&snapshot)?;
+    Ok(snapshot)
+}
+
+/// Build the homeostasis snapshot value (JSON object). Pure read of
+/// hypotheses + Q-table + queue state; no rendering, no side effects.
+async fn build_snapshot() -> Result<serde_json::Value> {
     use crate::commands::sched::list_brain_tasks;
 
-    let repo = std::env::current_dir().context("resolve repo root for status")?;
+    let repo = std::env::current_dir().context("resolve repo root for snapshot")?;
     let hypotheses = discover::discover(&repo).unwrap_or_default();
     let ranked = judge::rank(&hypotheses);
     let table = learn::load_q_table();
 
-    // Per-source counts (drives the by-source breakdown line).
     let mut by_source: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     for h in &hypotheses {
         *by_source.entry(format!("{:?}", h.source)).or_insert(0) += 1;
     }
-
-    // Detector_health and q_starvation findings are the homeostatic guards.
-    // Their presence means the loop is reporting drift in its own surface.
     let detector_health: Vec<&Hypothesis> = hypotheses
         .iter()
         .filter(|h| h.evidence.get("detector_health").is_some())
@@ -161,8 +330,6 @@ async fn render_status_once(json: bool) -> Result<()> {
         .filter(|h| h.source == Source::QStarvation)
         .collect();
 
-    // Auto-actionable share — the convergence motor. SchedShell + Workplan
-    // are auto-mappable; Recommend requires operator decision.
     let mut auto_mappable = 0usize;
     for s in &ranked {
         if let Some(action) = act::derive(s) {
@@ -177,7 +344,6 @@ async fn render_status_once(json: bool) -> Result<()> {
         auto_mappable as f64 / hypotheses.len() as f64 * 100.0
     };
 
-    // Dead-letter accumulation.
     let dead_letter_count = list_brain_tasks(Some("dead_letter"))
         .await
         .map(|t| t.len())
@@ -187,7 +353,6 @@ async fn render_status_once(json: bool) -> Result<()> {
         .map(|t| t.len())
         .unwrap_or(0);
 
-    // Mean reward across all Q-table entries — overall learning signal.
     let (q_total_samples, q_mean_reward) = if table.entries.is_empty() {
         (0_u64, 0.0_f64)
     } else {
@@ -197,15 +362,6 @@ async fn render_status_once(json: bool) -> Result<()> {
         (total_samples, mean)
     };
 
-    // Homeostasis score 0–100. Lower is better up to a point, then health
-    // signals dominate. Start at 100, deduct for unfixable accumulation
-    // and surface drift, with caps so any single signal can't dominate.
-    //
-    // - Each detector_health finding: -8 (capped at -40)
-    // - Each q_starvation finding:    -8 (capped at -40)
-    // - Dead-letter > 5:              -1 per task above 5 (capped at -20)
-    // - Auto-share < 80%:             -(80 - auto_share) (capped at -30)
-    // - Negative q_mean_reward:       -10
     let mut score: i32 = 100;
     score -= (detector_health.len() as i32 * 8).min(40);
     score -= (q_starvation.len() as i32 * 8).min(40);
@@ -220,42 +376,121 @@ async fn render_status_once(json: bool) -> Result<()> {
     }
     let homeostasis = score.max(0).min(100);
 
+    Ok(serde_json::json!({
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "homeostasis_score": homeostasis,
+        "hypotheses": {
+            "total": hypotheses.len(),
+            "by_source": by_source,
+            "auto_actionable": auto_mappable,
+            "auto_share_pct": auto_share,
+        },
+        "guards": {
+            "detector_health": detector_health.len(),
+            "q_starvation": q_starvation.len(),
+        },
+        "queue": {
+            "pending": pending_count,
+            "dead_letter": dead_letter_count,
+        },
+        "q_table": {
+            "templates": table.entries.len(),
+            "total_samples": q_total_samples,
+            "mean_reward": q_mean_reward,
+        },
+        "top_hypothesis": ranked.first().map(|s| serde_json::json!({
+            "source": format!("{:?}", s.hypothesis.source),
+            "scope": s.hypothesis.scope,
+            "score": s.score,
+            "reason": s.reason,
+        })),
+    }))
+}
+
+/// Build + render one homeostasis snapshot, optionally appending to
+/// history. `record_history=false` is used by terminal `--watch` polls
+/// (which would otherwise flood the file with redundant entries) and
+/// any internal callers (the daemon tick already appends separately).
+pub async fn render_status_once(json: bool, record_history: bool) -> Result<()> {
+    let snapshot = build_snapshot().await?;
+    if record_history {
+        if let Err(e) = append_history(&snapshot) {
+            eprintln!("  ! history append failed: {}", e);
+        }
+    }
     if json {
-        let output = serde_json::json!({
-            "homeostasis_score": homeostasis,
-            "hypotheses": {
-                "total": hypotheses.len(),
-                "by_source": by_source,
-                "auto_actionable": auto_mappable,
-                "auto_share_pct": auto_share,
-            },
-            "guards": {
-                "detector_health": detector_health.len(),
-                "q_starvation": q_starvation.len(),
-            },
-            "queue": {
-                "pending": pending_count,
-                "dead_letter": dead_letter_count,
-            },
-            "q_table": {
-                "templates": table.entries.len(),
-                "total_samples": q_total_samples,
-                "mean_reward": q_mean_reward,
-            },
-            "top_hypothesis": ranked.first().map(|s| serde_json::json!({
-                "source": format!("{:?}", s.hypothesis.source),
-                "scope": s.hypothesis.scope,
-                "score": s.score,
-                "reason": s.reason,
-            })),
-        });
-        println!("{}", serde_json::to_string_pretty(&output)?);
+        println!("{}", serde_json::to_string_pretty(&snapshot)?);
         return Ok(());
     }
+    render_snapshot_table(&snapshot);
+    Ok(())
+}
 
-    // Human-readable rendering. Color codes: green = healthy, yellow =
-    // attention, red = drift the operator should look at.
+/// Render a snapshot JSON object as a colored terminal table. Pulls the
+/// fields it needs out of the snapshot rather than recomputing — keeps
+/// the on-screen view in sync with the history JSONL.
+fn render_snapshot_table(snapshot: &serde_json::Value) {
     use colored::Colorize;
+    let homeostasis = snapshot
+        .get("homeostasis_score")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let total = snapshot
+        .get("hypotheses")
+        .and_then(|v| v.get("total"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let auto_share = snapshot
+        .get("hypotheses")
+        .and_then(|v| v.get("auto_share_pct"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let by_source: std::collections::BTreeMap<String, u64> = snapshot
+        .get("hypotheses")
+        .and_then(|v| v.get("by_source"))
+        .and_then(|v| v.as_object())
+        .map(|o| {
+            o.iter()
+                .filter_map(|(k, v)| v.as_u64().map(|n| (k.clone(), n)))
+                .collect()
+        })
+        .unwrap_or_default();
+    let detector_health = snapshot
+        .get("guards")
+        .and_then(|v| v.get("detector_health"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let q_starvation = snapshot
+        .get("guards")
+        .and_then(|v| v.get("q_starvation"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let pending_count = snapshot
+        .get("queue")
+        .and_then(|v| v.get("pending"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let dead_letter_count = snapshot
+        .get("queue")
+        .and_then(|v| v.get("dead_letter"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let q_templates = snapshot
+        .get("q_table")
+        .and_then(|v| v.get("templates"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let q_total_samples = snapshot
+        .get("q_table")
+        .and_then(|v| v.get("total_samples"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let q_mean_reward = snapshot
+        .get("q_table")
+        .and_then(|v| v.get("mean_reward"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+
     let score_str = format!("{}/100", homeostasis);
     let score_colored = if homeostasis >= 80 {
         score_str.green().bold().to_string()
@@ -268,20 +503,22 @@ async fn render_status_once(json: bool) -> Result<()> {
     println!("{}", "── Improver Homeostasis ────────────────────".cyan().bold());
     println!("  Score:           {}", score_colored);
     println!();
-    println!("  Hypotheses:      {} total ({:.0}% auto-actionable)", hypotheses.len(), auto_share);
+    println!(
+        "  Hypotheses:      {} total ({:.0}% auto-actionable)",
+        total, auto_share
+    );
     for (source, count) in &by_source {
         println!("    {} {}: {}", "·".dimmed(), source, count);
     }
     println!();
-    let guard_line = if detector_health.is_empty() && q_starvation.is_empty() {
+    let guard_line = if detector_health == 0 && q_starvation == 0 {
         "  Self-monitor:    surface clean (no detector_health or q_starvation findings)"
             .green()
             .to_string()
     } else {
         format!(
             "  Self-monitor:    {} detector_health, {} q_starvation",
-            detector_health.len(),
-            q_starvation.len(),
+            detector_health, q_starvation
         )
         .yellow()
         .to_string()
@@ -310,23 +547,22 @@ async fn render_status_once(json: bool) -> Result<()> {
         };
         println!(
             "  Q-table:         {} templates, {} samples, mean reward {}",
-            table.entries.len(),
-            q_total_samples,
-            reward_colored
+            q_templates, q_total_samples, reward_colored
         );
     }
     println!();
-    if let Some(top) = ranked.first() {
+    if let Some(top) = snapshot.get("top_hypothesis").and_then(|v| v.as_object()) {
+        let source = top.get("source").and_then(|v| v.as_str()).unwrap_or("?");
+        let scope = top.get("scope").and_then(|v| v.as_str()).unwrap_or("?");
+        let score = top.get("score").and_then(|v| v.as_u64()).unwrap_or(0);
         println!(
-            "  Top hypothesis:  {:?} {} (score {})",
-            top.hypothesis.source,
-            top.hypothesis.scope,
-            top.score
+            "  Top hypothesis:  {} {} (score {})",
+            source, scope, score
         );
     }
     println!();
-    Ok(())
 }
+
 
 async fn run_learn(json: bool) -> Result<()> {
     let repo = std::env::current_dir().context("resolve repo root for learn")?;
