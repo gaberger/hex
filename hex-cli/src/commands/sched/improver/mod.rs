@@ -88,6 +88,21 @@ pub enum ImproverAction {
         #[arg(long)]
         starvation: bool,
     },
+    /// Single-pane homeostasis dashboard for the self-improvement loop.
+    /// Aggregates discover counts (with delta), Q-table state, detector
+    /// health, dead-letter accumulation, and a synthesized homeostasis
+    /// score so an operator can answer "is the loop healthy" in one
+    /// glance without running five subcommands.
+    Status {
+        /// Emit the status as a structured JSON object suitable for
+        /// dashboards or CI.
+        #[arg(long)]
+        json: bool,
+        /// Re-render every N seconds until interrupted. Useful when
+        /// watching an auto-act sweep settle.
+        #[arg(long)]
+        watch: Option<u64>,
+    },
 }
 
 pub async fn run(action: ImproverAction) -> Result<()> {
@@ -99,7 +114,218 @@ pub async fn run(action: ImproverAction) -> Result<()> {
         ImproverAction::Act { top, apply, json } => run_act(top, apply, json).await,
         ImproverAction::Learn { json } => run_learn(json).await,
         ImproverAction::Scores { json, starvation } => run_scores(json, starvation).await,
+        ImproverAction::Status { json, watch } => run_status(json, watch).await,
     }
+}
+
+async fn run_status(json: bool, watch: Option<u64>) -> Result<()> {
+    loop {
+        render_status_once(json).await?;
+        match watch {
+            Some(secs) if secs > 0 => {
+                tokio::time::sleep(Duration::from_secs(secs)).await;
+                if !json {
+                    // Clear screen between renders for terminal viewers; in
+                    // JSON mode emit a newline-separated stream so a tail
+                    // consumer doesn't lose history.
+                    print!("\x1b[2J\x1b[H");
+                }
+            }
+            _ => return Ok(()),
+        }
+    }
+}
+
+async fn render_status_once(json: bool) -> Result<()> {
+    use crate::commands::sched::list_brain_tasks;
+
+    let repo = std::env::current_dir().context("resolve repo root for status")?;
+    let hypotheses = discover::discover(&repo).unwrap_or_default();
+    let ranked = judge::rank(&hypotheses);
+    let table = learn::load_q_table();
+
+    // Per-source counts (drives the by-source breakdown line).
+    let mut by_source: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for h in &hypotheses {
+        *by_source.entry(format!("{:?}", h.source)).or_insert(0) += 1;
+    }
+
+    // Detector_health and q_starvation findings are the homeostatic guards.
+    // Their presence means the loop is reporting drift in its own surface.
+    let detector_health: Vec<&Hypothesis> = hypotheses
+        .iter()
+        .filter(|h| h.evidence.get("detector_health").is_some())
+        .collect();
+    let q_starvation: Vec<&Hypothesis> = hypotheses
+        .iter()
+        .filter(|h| h.source == Source::QStarvation)
+        .collect();
+
+    // Auto-actionable share — the convergence motor. SchedShell + Workplan
+    // are auto-mappable; Recommend requires operator decision.
+    let mut auto_mappable = 0usize;
+    for s in &ranked {
+        if let Some(action) = act::derive(s) {
+            if !matches!(action.kind, act::ActionKind::Recommend) {
+                auto_mappable += 1;
+            }
+        }
+    }
+    let auto_share = if hypotheses.is_empty() {
+        100.0
+    } else {
+        auto_mappable as f64 / hypotheses.len() as f64 * 100.0
+    };
+
+    // Dead-letter accumulation.
+    let dead_letter_count = list_brain_tasks(Some("dead_letter"))
+        .await
+        .map(|t| t.len())
+        .unwrap_or(0);
+    let pending_count = list_brain_tasks(Some("pending"))
+        .await
+        .map(|t| t.len())
+        .unwrap_or(0);
+
+    // Mean reward across all Q-table entries — overall learning signal.
+    let (q_total_samples, q_mean_reward) = if table.entries.is_empty() {
+        (0_u64, 0.0_f64)
+    } else {
+        let total_samples: u64 = table.entries.values().map(|e| e.samples).sum();
+        let total_reward: f64 = table.entries.values().map(|e| e.total_reward).sum();
+        let mean = if total_samples == 0 { 0.0 } else { total_reward / total_samples as f64 };
+        (total_samples, mean)
+    };
+
+    // Homeostasis score 0–100. Lower is better up to a point, then health
+    // signals dominate. Start at 100, deduct for unfixable accumulation
+    // and surface drift, with caps so any single signal can't dominate.
+    //
+    // - Each detector_health finding: -8 (capped at -40)
+    // - Each q_starvation finding:    -8 (capped at -40)
+    // - Dead-letter > 5:              -1 per task above 5 (capped at -20)
+    // - Auto-share < 80%:             -(80 - auto_share) (capped at -30)
+    // - Negative q_mean_reward:       -10
+    let mut score: i32 = 100;
+    score -= (detector_health.len() as i32 * 8).min(40);
+    score -= (q_starvation.len() as i32 * 8).min(40);
+    if dead_letter_count > 5 {
+        score -= ((dead_letter_count as i32 - 5).min(20)).max(0);
+    }
+    if auto_share < 80.0 {
+        score -= ((80.0 - auto_share) as i32).min(30);
+    }
+    if q_total_samples > 0 && q_mean_reward < 0.0 {
+        score -= 10;
+    }
+    let homeostasis = score.max(0).min(100);
+
+    if json {
+        let output = serde_json::json!({
+            "homeostasis_score": homeostasis,
+            "hypotheses": {
+                "total": hypotheses.len(),
+                "by_source": by_source,
+                "auto_actionable": auto_mappable,
+                "auto_share_pct": auto_share,
+            },
+            "guards": {
+                "detector_health": detector_health.len(),
+                "q_starvation": q_starvation.len(),
+            },
+            "queue": {
+                "pending": pending_count,
+                "dead_letter": dead_letter_count,
+            },
+            "q_table": {
+                "templates": table.entries.len(),
+                "total_samples": q_total_samples,
+                "mean_reward": q_mean_reward,
+            },
+            "top_hypothesis": ranked.first().map(|s| serde_json::json!({
+                "source": format!("{:?}", s.hypothesis.source),
+                "scope": s.hypothesis.scope,
+                "score": s.score,
+                "reason": s.reason,
+            })),
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
+    // Human-readable rendering. Color codes: green = healthy, yellow =
+    // attention, red = drift the operator should look at.
+    use colored::Colorize;
+    let score_str = format!("{}/100", homeostasis);
+    let score_colored = if homeostasis >= 80 {
+        score_str.green().bold().to_string()
+    } else if homeostasis >= 60 {
+        score_str.yellow().bold().to_string()
+    } else {
+        score_str.red().bold().to_string()
+    };
+
+    println!("{}", "── Improver Homeostasis ────────────────────".cyan().bold());
+    println!("  Score:           {}", score_colored);
+    println!();
+    println!("  Hypotheses:      {} total ({:.0}% auto-actionable)", hypotheses.len(), auto_share);
+    for (source, count) in &by_source {
+        println!("    {} {}: {}", "·".dimmed(), source, count);
+    }
+    println!();
+    let guard_line = if detector_health.is_empty() && q_starvation.is_empty() {
+        "  Self-monitor:    surface clean (no detector_health or q_starvation findings)"
+            .green()
+            .to_string()
+    } else {
+        format!(
+            "  Self-monitor:    {} detector_health, {} q_starvation",
+            detector_health.len(),
+            q_starvation.len(),
+        )
+        .yellow()
+        .to_string()
+    };
+    println!("{}", guard_line);
+    println!();
+    println!(
+        "  Queue:           {} pending, {} dead-lettered",
+        pending_count,
+        if dead_letter_count > 5 {
+            dead_letter_count.to_string().yellow().to_string()
+        } else {
+            dead_letter_count.to_string()
+        }
+    );
+    println!();
+    if q_total_samples == 0 {
+        println!("  Q-table:         {} (no samples yet — run improver act --apply)", "untrained".dimmed());
+    } else {
+        let reward_colored = if q_mean_reward > 0.0 {
+            format!("{:+.3}", q_mean_reward).green().to_string()
+        } else if q_mean_reward < 0.0 {
+            format!("{:+.3}", q_mean_reward).red().to_string()
+        } else {
+            format!("{:+.3}", q_mean_reward).yellow().to_string()
+        };
+        println!(
+            "  Q-table:         {} templates, {} samples, mean reward {}",
+            table.entries.len(),
+            q_total_samples,
+            reward_colored
+        );
+    }
+    println!();
+    if let Some(top) = ranked.first() {
+        println!(
+            "  Top hypothesis:  {:?} {} (score {})",
+            top.hypothesis.source,
+            top.hypothesis.scope,
+            top.score
+        );
+    }
+    println!();
+    Ok(())
 }
 
 async fn run_learn(json: bool) -> Result<()> {
