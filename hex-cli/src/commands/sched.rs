@@ -51,6 +51,12 @@ pub struct DaemonState {
     /// can treat sustained idleness as a signal (e.g. wind down a worker).
     #[serde(default)]
     idle_tick_count: u32,
+    /// Monotonic per-daemon-process tick counter. Used by the improver
+    /// auto-act gate so a small action sweep fires only every N ticks
+    /// (default 6 ≈ every 3 minutes at 30s interval). Persisted across
+    /// restarts so a restart-loop can't repeatedly fire auto-act.
+    #[serde(default)]
+    tick_count: u32,
     /// Last time an analyze task was enqueued (RFC3339). Used to enforce the
     /// `brain.analyze_interval_secs` interval so we don't spam the queue.
     #[serde(default)]
@@ -2764,46 +2770,87 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                             let _ = enqueue_brain_task(kind, &updated_payload).await;
                             // Mark original as completed to prevent re-retry
                             let _ = update_brain_task(task_id, BrainTaskStatus::Completed, "auto-retried").await;
+                        } else if retry_count >= 3 {
+                            // Retry budget exhausted — quarantine to DeadLetter
+                            // so this task stops appearing in every subsequent
+                            // failed-pool scan. The dead_letter detector will
+                            // surface it as a hypothesis so the operator (or a
+                            // future act mapping) can decide whether the task
+                            // is structurally broken or worth a manual rerun.
+                            eprintln!(
+                                "  ⊘ dead-letter {} (retry budget exhausted, age {}h)",
+                                task_id,
+                                age.num_hours()
+                            );
+                            let _ = update_brain_task(
+                                task_id,
+                                BrainTaskStatus::DeadLetter,
+                                "retry budget exhausted",
+                            )
+                            .await;
                         }
                     }
                 }
             }
         }
 
-        // ── Improver learn pass (ADR-2604271100 P5) ─────────────────────
-        // If a prior `act --apply` snapshot is on disk, run the learn
-        // pass: see which targeted hypotheses disappeared, credit the
-        // Q-table, then rotate the snapshot. Best-effort — failures
-        // log but don't abort the tick. The discover() call here is
-        // shared with the next improver run; not memoized because the
-        // hypothesis stream is deliberately recomputed each tick.
-        if let Ok(snap) = std::env::var("HOME").map(|h| std::path::PathBuf::from(h).join(".hex/improver/snapshot.json")) {
-            if snap.exists() {
-                match std::env::current_dir() {
-                    Ok(repo) => {
-                        match crate::commands::sched::improver::discover::discover(&repo) {
-                            Ok(hyps) => {
-                                match crate::commands::sched::improver::learn::observe_and_reward(&hyps) {
-                                    Ok(0) => {}
-                                    Ok(n) => {
-                                        println!("  ⬡ improver learn: credited {n} action(s)");
-                                    }
-                                    Err(e) => {
-                                        eprintln!("  {} improver learn: {}", "✗".red(), e);
+        // ── Improver learn + auto-act pass (ADR-2604271100 P5/P6) ───────
+        // Two-step:
+        //   1. If a prior `act --apply` snapshot is on disk, learn from it
+        //      (credit resolved hypotheses, rotate snapshot).
+        //   2. If no snapshot is on disk AND tick is divisible by
+        //      AUTO_ACT_EVERY_N_TICKS, run a small auto-act sweep
+        //      (top 1 only, to keep blast radius minimal). Operator can
+        //      still drive larger sweeps via `hex sched improver act`.
+        const AUTO_ACT_EVERY_N_TICKS: u32 = 6;
+        if let Ok(home) = std::env::var("HOME") {
+            let snap_path = std::path::PathBuf::from(&home).join(".hex/improver/snapshot.json");
+            let repo = std::env::current_dir();
+            let hyps = repo
+                .as_ref()
+                .ok()
+                .and_then(|r| crate::commands::sched::improver::discover::discover(r).ok());
+
+            // Step 1: learn (consumes snapshot if present)
+            if snap_path.exists() {
+                if let Some(ref hs) = hyps {
+                    match crate::commands::sched::improver::learn::observe_and_reward(hs) {
+                        Ok(0) => {}
+                        Ok(n) => println!("  ⬡ improver learn: credited {n} action(s)"),
+                        Err(e) => eprintln!("  {} improver learn: {}", "✗".red(), e),
+                    }
+                }
+            }
+
+            // Step 2: auto-act (only when no snapshot pending — don't
+            // pile new actions on top of unobserved ones).
+            let snap_path_now_exists = snap_path.exists();
+            let tick_modulo = state.tick_count % AUTO_ACT_EVERY_N_TICKS;
+            if !snap_path_now_exists && tick_modulo == 0 {
+                if let Some(ref hs) = hyps {
+                    let ranked = crate::commands::sched::improver::judge::rank(hs);
+                    // Only auto-act on score >=80 (high confidence) and only
+                    // top 1 — small budget per tick to bound queue impact.
+                    if let Some(top) = ranked.first() {
+                        if top.score >= 80 {
+                            match crate::commands::sched::improver::act::act(&ranked, 1, true).await {
+                                Ok(actions) => {
+                                    if let Some(a) = actions.first() {
+                                        println!(
+                                            "  ⬡ improver auto-act: {} (priority {}, score {})",
+                                            a.derived_from, a.priority, top.score
+                                        );
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                eprintln!("  {} improver discover (for learn): {}", "✗".red(), e);
+                                Err(e) => eprintln!("  {} improver auto-act: {}", "✗".red(), e),
                             }
                         }
-                    }
-                    Err(e) => {
-                        eprintln!("  {} improver learn (cwd): {}", "✗".red(), e);
                     }
                 }
             }
         }
+        state.tick_count = state.tick_count.saturating_add(1);
+        save_daemon_state(&state);
 
         // ── Analyze regression detection (ADR-2604241800) ────────────────
         // After each tick, check if a completed analyze task has more violations
@@ -3272,6 +3319,12 @@ pub(crate) enum BrainTaskStatus {
     InProgress,
     Completed,
     Failed,
+    /// Quarantined: task failed, exhausted retry budget, AND the
+    /// underlying problem appears non-transient. Excluded from auto-retry
+    /// scans so a structurally-broken task can't camp the failed pool
+    /// forever. Surfaced via the `dead_letter` improver detector so
+    /// operators can see the queue's accumulated unfixables.
+    DeadLetter,
 }
 
 impl BrainTaskStatus {
@@ -3285,11 +3338,17 @@ impl BrainTaskStatus {
             BrainTaskStatus::InProgress => "in_progress",
             BrainTaskStatus::Completed => "completed",
             BrainTaskStatus::Failed => "failed",
+            BrainTaskStatus::DeadLetter => "dead_letter",
         }
     }
 
     pub(crate) fn is_terminal(&self) -> bool {
-        matches!(self, BrainTaskStatus::Completed | BrainTaskStatus::Failed)
+        matches!(
+            self,
+            BrainTaskStatus::Completed
+                | BrainTaskStatus::Failed
+                | BrainTaskStatus::DeadLetter
+        )
     }
 
     /// Parse a wire string into an enum variant. Tolerant of unknown values
@@ -3302,6 +3361,7 @@ impl BrainTaskStatus {
             "in_progress" => Some(BrainTaskStatus::InProgress),
             "completed" => Some(BrainTaskStatus::Completed),
             "failed" => Some(BrainTaskStatus::Failed),
+            "dead_letter" => Some(BrainTaskStatus::DeadLetter),
             _ => None,
         }
     }
