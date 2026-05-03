@@ -1,6 +1,6 @@
 # ADR-2605021400 — Experimental Loop Representations: Persona, Workload, Trial, Verdict
 
-**Status:** Proposed
+**Status:** Accepted (P1–P3 implemented; P4–P8 pending)
 **Date:** 2026-05-02
 **Drivers:** The vision plan in `docs/guides/SELF-REORGANIZING-HEXAGON.md` describes target apps reorganizing themselves under demand, with synthetic users placing challenges and an objective function to maximize. The existing ADR / spec / workplan / test taxonomy covers *deciding, accepting, planning, verifying*, but cannot express *who stresses the app, what to maximize, what we predict, what variants we're running, or did the change win*. Without those, the loop is open and the "experiment" is hand-waved.
 **Related:** ADR-2604261430 (stash consolidation memory port — provides Hypothesis, Goal, Failure types we lift here), ADR-2604142243 (classifier rules as data — the data-fy precedent), ADR-2603240130 (declarative agent/swarm YAMLs — same "behavior is data" pattern), ADR-2604120202 (tiered inference routing — feeds RL signal that Verdicts archive)
@@ -126,9 +126,9 @@ hex experiment status            # full loop snapshot for current project
 
 | Phase | Description | Status |
 |-------|------------|--------|
-| P1 | Domain types in `hex-core/src/domain/experiment/{objective,hypothesis,verdict}.rs` (the loop-closing three). Re-export under `hex-core::domain::experiment`. ADR-001 rule 1 — domain only | Pending |
-| P2 | SpacetimeDB tables + reducers for Objective / Hypothesis / Verdict in `spacetime-modules/experiment/` (or `hexflo-coordination` if size is modest). `IExperimentPort` trait in `hex-core/src/ports/experiment.rs` | Pending |
-| P3 | Adapter implementing `IExperimentPort` against the SpacetimeDB module. `StashExperimentAdapter` *projection* — when a Hypothesis is created in hex it mirrors to stash via `IConsolidationMemoryPort.create_hypothesis`; same for Goal→Objective and Failure | Pending |
+| P1 | Domain types in `hex-core/src/domain/experiment/{objective,hypothesis,verdict}.rs` (the loop-closing three). Re-export under `hex-core::domain::experiment`. ADR-001 rule 1 — domain only | Done (96a18f45) |
+| P2 | SpacetimeDB tables + reducers for Objective / Hypothesis / Verdict in `spacetime-modules/experiment/` (or `hexflo-coordination` if size is modest). `IExperimentPort` trait in `hex-core/src/ports/experiment.rs` | Done (421cd771) |
+| P3 | Adapter implementing `IExperimentPort` against the SpacetimeDB module. `StashExperimentAdapter` *projection* — when a Hypothesis is created in hex it mirrors to stash via `IConsolidationMemoryPort.create_hypothesis`; same for Goal→Objective and Failure | Done (1f4790fc) |
 | P4 | CLI: `hex objective`, `hex hypothesis`, `hex verdict`, `hex experiment status` subcommands. `hex adr create --hypothesis --target-objective` flags. `hex doctor` warning for ADRs missing them | Pending |
 | P5 | Domain types in `hex-core/src/domain/experiment/{persona,workload,trial,failure}.rs` (the richening four). Reuse failure shape from stash | Pending |
 | P6 | SpacetimeDB tables + reducers for Persona / Workload / Trial / Failure. `hex persona`, `hex workload`, `hex trial` CLI subcommands | Pending |

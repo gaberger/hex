@@ -525,6 +525,14 @@ pub enum BrainAction {
         kind: String,
         /// Task payload (command args, workplan path, or shell command)
         payload: String,
+        /// Scheduling priority (0 = normal, higher = more urgent). The daemon
+        /// drains pending tasks in priority-desc, created_at-asc order so a
+        /// `--priority 9` task jumps ahead of normal-priority backlog without
+        /// needing the queue to drain first. Useful when local Ollama is
+        /// saturated and a frontier-bound urgent task needs to bypass the
+        /// speculative loops.
+        #[arg(long, default_value = "0")]
+        priority: u8,
     },
     /// Manage the sched task queue
     Queue {
@@ -606,9 +614,10 @@ pub async fn run(action: BrainAction) -> anyhow::Result<()> {
         BrainAction::DaemonStop => daemon_stop(),
         BrainAction::DaemonRestart => daemon_restart(),
         BrainAction::DaemonStatus => daemon_status(),
-        BrainAction::Enqueue { kind, payload } => {
-            let id = enqueue_brain_task(&kind, &payload).await?;
-            println!("⬡ enqueued sched task {id} ({kind}: {payload})");
+        BrainAction::Enqueue { kind, payload, priority } => {
+            let id = enqueue_brain_task_with_priority(&kind, &payload, priority).await?;
+            let priority_tag = if priority > 0 { format!(" priority={priority}") } else { String::new() };
+            println!("⬡ enqueued sched task {id} ({kind}: {payload}){priority_tag}");
             Ok(())
         }
         BrainAction::Queue { action } => match action {
@@ -636,8 +645,8 @@ async fn status() -> anyhow::Result<()> {
     // unscoped endpoint (useful for operator views on hex-intf itself).
     // project_id is a UUID → safe as a URL query value without encoding.
     let url = match brain_project_id() {
-        Some(pid) => format!("{}/api/brain/status?project={}", base_url, pid),
-        None => format!("{}/api/brain/status", base_url),
+        Some(pid) => format!("{}/api/sched/status?project={}", base_url, pid),
+        None => format!("{}/api/sched/status", base_url),
     };
     let resp = client.get(&url).send().await?;
     
@@ -701,7 +710,7 @@ async fn test(model: &str) -> anyhow::Result<()> {
     let base_url = format!("http://127.0.0.1:{}", port);
     let client = reqwest::Client::new();
     
-    let url = format!("{}/api/brain/test", base_url);
+    let url = format!("{}/api/sched/test", base_url);
     let body = json!({ "model": model });
     let resp = client.post(&url).json(&body).send().await?;
     
@@ -729,7 +738,7 @@ async fn scores() -> anyhow::Result<()> {
     let base_url = format!("http://127.0.0.1:{}", port);
     let client = reqwest::Client::new();
     
-    let url = format!("{}/api/brain/scores", base_url);
+    let url = format!("{}/api/sched/scores", base_url);
     let resp = client.get(&url).send().await?;
     
     if resp.status() == 404 {
@@ -2727,7 +2736,16 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             for task in failed_tasks {
                 let task_id = task.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 let created_at = task.get("created_at").and_then(|v| v.as_str());
-                let retry_count = task.get("retry_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                let payload_retry_count = task
+                    .get("payload")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                    .and_then(|p| p.get("retry_count").and_then(|v| v.as_u64()));
+                let retry_count = task
+                    .get("retry_count")
+                    .and_then(|v| v.as_u64())
+                    .or(payload_retry_count)
+                    .unwrap_or(0);
 
                 if let Some(created_str) = created_at {
                     if let Ok(created) = chrono::DateTime::parse_from_rfc3339(created_str) {
@@ -3300,6 +3318,14 @@ pub(crate) struct BrainTaskRecord {
     pub(crate) swarm_task_id: Option<String>,
     #[serde(default)]
     pub(crate) evidence: BrainTaskEvidence,
+
+    // ─── Scheduling priority ────────────────────────────────────────────
+    // 0 = normal (default), higher = more urgent. The daemon drains pending
+    // tasks in priority-desc, created_at-asc order. Lets urgent frontier-
+    // bound work bypass speculative local-Ollama loops without flushing the
+    // whole queue.
+    #[serde(default)]
+    pub(crate) priority: u8,
 }
 
 impl BrainTaskRecord {
@@ -3341,6 +3367,11 @@ impl BrainTaskRecord {
             .cloned()
             .and_then(|e| serde_json::from_value::<BrainTaskEvidence>(e).ok())
             .unwrap_or_default();
+        let priority = v
+            .get("priority")
+            .and_then(|x| x.as_u64())
+            .map(|n| n.min(u8::MAX as u64) as u8)
+            .unwrap_or(0);
         Some(BrainTaskRecord {
             id,
             kind,
@@ -3356,6 +3387,7 @@ impl BrainTaskRecord {
             lease_attempts,
             swarm_task_id,
             evidence,
+            priority,
         })
     }
 }
@@ -3373,16 +3405,20 @@ impl BrainTaskRecord {
 // land an entry here, otherwise `lease_for` falls through to the shell
 // timeout and legitimate long-runners get reaped mid-flight.
 
+// Lease windows are sized for ~5 tok/s local-model output (qwen2.5-coder:32b
+// benchmarked May 2026 at 5 tok/s on this Bazzite host). Frontier rates are
+// 10–15× faster, so these windows leave tasks 90% idle on Claude — the cost
+// is reclamation latency on stuck local-model tasks, not throughput.
 pub(crate) const LEASE_DURATIONS: [(&str, Duration); 5] = [
-    ("workplan", Duration::from_secs(30 * 60)),
-    ("hex-command", Duration::from_secs(5 * 60)),
-    ("analyze", Duration::from_secs(5 * 60)),
-    ("shell", Duration::from_secs(2 * 60)),
-    ("remote-shell", Duration::from_secs(60)),
+    ("workplan", Duration::from_secs(60 * 60)),
+    ("hex-command", Duration::from_secs(15 * 60)),
+    ("analyze", Duration::from_secs(10 * 60)),
+    ("shell", Duration::from_secs(10 * 60)),
+    ("remote-shell", Duration::from_secs(5 * 60)),
 ];
 
 /// Default lease window for `kind`. Unknown kinds fall back to the
-/// shell-style 2-minute timeout so a typo or a newly-added kind can't camp
+/// shell-style 10-minute timeout so a typo or a newly-added kind can't camp
 /// the queue forever — the sweeper will still reclaim it, just on the
 /// shorter-than-ideal schedule until the table is updated.
 pub(crate) fn lease_for(kind: &str) -> Duration {
@@ -3390,7 +3426,7 @@ pub(crate) fn lease_for(kind: &str) -> Duration {
         .iter()
         .find(|(k, _)| *k == kind)
         .map(|(_, d)| *d)
-        .unwrap_or(Duration::from_secs(2 * 60))
+        .unwrap_or(Duration::from_secs(10 * 60))
 }
 
 pub async fn enqueue_brain_task_pub(kind: &str, payload: &str) -> anyhow::Result<String> {
@@ -3429,6 +3465,10 @@ async fn notify_brain_task_result(
 }
 
 async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String> {
+    enqueue_brain_task_with_priority(kind, payload, 0).await
+}
+
+async fn enqueue_brain_task_with_priority(kind: &str, payload: &str, priority: u8) -> anyhow::Result<String> {
     use crate::nexus_client::NexusClient;
 
     // Reject "audit theater" stubs: shell tasks whose payload is just an echo
@@ -3498,7 +3538,12 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
                                     .filter_map(|f| f.as_str().map(String::from))
                                     .collect();
 
-                                if let Err(blocked) = hex_core::validation::validate_workplan_task_safety(&file_paths) {
+                                let blocked: Vec<String> = file_paths
+                                    .iter()
+                                    .filter(|p| hex_core::validation::is_critical_path(p))
+                                    .cloned()
+                                    .collect();
+                                if !blocked.is_empty() {
                                     let task_id = task.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
                                     eprintln!("⚠ Workplan rejected: task {} targets protected files:", task_id);
                                     for file in &blocked {
@@ -3536,6 +3581,7 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
         "completed_at": serde_json::Value::Null,
         "result": serde_json::Value::Null,
         "timeout_s": timeout,
+        "priority": priority,
     });
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
@@ -3589,14 +3635,29 @@ pub(crate) async fn list_brain_tasks(
 
 /// Drain up to `limit` pending sched tasks. Reserved for the future sched daemon tick loop
 /// (P3 of ADR-2604132330). Also invoked by `hex brain queue drain` logic indirectly.
+///
+/// Tasks are drained in (priority desc, created_at asc) order — higher-priority
+/// work jumps the queue without needing a flush. Equal-priority tasks fall back
+/// to FIFO so normal traffic stays fair. Missing/garbage `priority` defaults to 0.
 #[allow(dead_code)]
 pub(crate) async fn drain_brain_tasks(limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
-    let pending = list_brain_tasks(Some("pending")).await?;
+    let mut pending = list_brain_tasks(Some("pending")).await?;
+    pending.sort_by(|a, b| {
+        let pa = a.get("priority").and_then(|v| v.as_u64()).unwrap_or(0);
+        let pb = b.get("priority").and_then(|v| v.as_u64()).unwrap_or(0);
+        // Priority desc first; then created_at asc for FIFO at equal priority.
+        pb.cmp(&pa).then_with(|| {
+            let ca = a.get("created_at").and_then(|v| v.as_str()).unwrap_or("");
+            let cb = b.get("created_at").and_then(|v| v.as_str()).unwrap_or("");
+            ca.cmp(cb)
+        })
+    });
     let claimed: Vec<_> = pending.into_iter().take(limit).collect();
     for task in &claimed {
         let id = task.get("id").and_then(|v| v.as_str()).unwrap_or("");
         let kind = task.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-        debug!(task_id = %id, kind = %kind, "drain-path: claim");
+        let priority = task.get("priority").and_then(|v| v.as_u64()).unwrap_or(0);
+        debug!(task_id = %id, kind = %kind, priority = priority, "drain-path: claim");
     }
     Ok(claimed)
 }
@@ -4483,13 +4544,16 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
             }
         }
         "shell" => {
-            // Whitelist: only cargo, git, ls, echo
+            // Whitelist for shell-kind tasks. `hex` is allowed so the daemon
+            // can dispatch hex's own subcommands (plan draft, doctor, …) —
+            // those flow back through the same trusted CLI surface that
+            // produced the task. Anything broader belongs in a workplan.
             let mut parts = payload.split_whitespace();
             let cmd = match parts.next() {
                 Some(c) => c,
                 None => return (false, "empty shell command".to_string()),
             };
-            const ALLOWED: &[&str] = &["cargo", "git", "ls", "echo", "ssh"];
+            const ALLOWED: &[&str] = &["cargo", "git", "ls", "echo", "ssh", "hex"];
             if !ALLOWED.contains(&cmd) {
                 return (
                     false,
@@ -4719,7 +4783,7 @@ async fn queue_list(include: &str, since: Option<&str>) -> anyhow::Result<()> {
 
 /// Render the recent brain-task history table (wp-sched-queue-history P1.3).
 ///
-/// Hits `GET /api/brain/queue/history` and formats each row with a 60-char
+/// Hits `GET /api/sched/queue/history` and formats each row with a 60-char
 /// tail of the result string so the `no git evidence` marker (ADR-2604141400
 /// §1 P1 evidence-guard) is visible without horizontal scrolling. Using the
 /// tail rather than the head is deliberate — the guard appends the marker,
@@ -4731,7 +4795,7 @@ async fn queue_history(status: Option<String>, limit: u32) -> anyhow::Result<()>
 
     // Build query string; skip `status=` entirely when unset so nexus treats
     // it as "all statuses" rather than filtering on an empty-string match.
-    let mut path = format!("/api/brain/queue/history?limit={}", limit);
+    let mut path = format!("/api/sched/queue/history?limit={}", limit);
     if let Some(s) = status.as_deref() {
         path.push_str(&format!("&status={}", s));
     }
@@ -5595,6 +5659,7 @@ min_priority = 2
                         commits: vec!["c1".into()],
                         reconcile_verdict: None,
                     },
+                    priority: 0,
                 };
                 let v = serde_json::to_value(&original).unwrap();
                 let round = BrainTaskRecord::from_value(&v).expect("roundtrip");
@@ -5626,19 +5691,19 @@ min_priority = 2
 
             #[test]
             fn lease_for_known_kinds_matches_table() {
-                assert_eq!(lease_for("workplan"), Duration::from_secs(30 * 60));
-                assert_eq!(lease_for("hex-command"), Duration::from_secs(5 * 60));
-                assert_eq!(lease_for("shell"), Duration::from_secs(2 * 60));
-                assert_eq!(lease_for("remote-shell"), Duration::from_secs(60));
+                assert_eq!(lease_for("workplan"), Duration::from_secs(60 * 60));
+                assert_eq!(lease_for("hex-command"), Duration::from_secs(15 * 60));
+                assert_eq!(lease_for("shell"), Duration::from_secs(10 * 60));
+                assert_eq!(lease_for("remote-shell"), Duration::from_secs(5 * 60));
             }
 
             #[test]
             fn lease_for_unknown_kind_falls_back_to_shell_timeout() {
-                // Unknown/typoed kind → 2-minute shell-style window so the
+                // Unknown/typoed kind → 10-minute shell-style window so the
                 // sweeper can still reclaim it rather than leaving it
                 // leased forever.
-                assert_eq!(lease_for("bogus"), Duration::from_secs(2 * 60));
-                assert_eq!(lease_for(""), Duration::from_secs(2 * 60));
+                assert_eq!(lease_for("bogus"), Duration::from_secs(10 * 60));
+                assert_eq!(lease_for(""), Duration::from_secs(10 * 60));
             }
 
             #[test]
@@ -5652,7 +5717,8 @@ min_priority = 2
                 assert!(kinds.contains(&"hex-command"));
                 assert!(kinds.contains(&"shell"));
                 assert!(kinds.contains(&"remote-shell"));
-                assert_eq!(kinds.len(), 4, "LEASE_DURATIONS gained a new kind — update this test and confirm the duration is tuned");
+                assert!(kinds.contains(&"analyze"));
+                assert_eq!(kinds.len(), 5, "LEASE_DURATIONS gained a new kind — update this test and confirm the duration is tuned");
             }
 
             #[test]
@@ -5707,7 +5773,7 @@ min_priority = 2
                     .get("timeout_s")
                     .and_then(|v| v.as_u64())
                     .unwrap_or_else(|| lease_for("workplan").as_secs());
-                assert_eq!(timeout, 30 * 60);
+                assert_eq!(timeout, 60 * 60);
             }
 
             #[test]
@@ -5717,7 +5783,7 @@ min_priority = 2
                     .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
                     .and_then(|wp| wp.get("timeout_s")?.as_u64())
                     .unwrap_or_else(|| lease_for("workplan").as_secs());
-                assert_eq!(timeout, 30 * 60);
+                assert_eq!(timeout, 60 * 60);
             }
 
             #[test]
@@ -5745,7 +5811,7 @@ min_priority = 2
                     .get("timeout_s")
                     .and_then(|v| v.as_u64())
                     .unwrap_or_else(|| lease_for("workplan").as_secs());
-                assert_eq!(window_secs, 30 * 60);
+                assert_eq!(window_secs, 60 * 60);
             }
         }
 
@@ -5827,6 +5893,7 @@ min_priority = 2
                     lease_attempts: 0,
                     swarm_task_id: None,
                     evidence: BrainTaskEvidence::default(),
+                    priority: 0,
                 }
             }
 
@@ -5873,7 +5940,7 @@ min_priority = 2
             fn effective_timeout_falls_back_to_lease_for_when_absent() {
                 let rec = make_record("t4", "workplan", "2026-04-14T00:00:00Z", None);
                 let effective = rec.timeout_s.unwrap_or_else(|| lease_for(&rec.kind).as_secs());
-                assert_eq!(effective, 30 * 60);
+                assert_eq!(effective, 60 * 60);
             }
 
             #[test]
