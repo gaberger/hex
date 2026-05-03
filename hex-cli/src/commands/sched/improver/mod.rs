@@ -11,6 +11,7 @@
 pub mod act;
 pub mod discover;
 pub mod judge;
+pub mod learn;
 
 use std::time::Duration;
 
@@ -63,6 +64,24 @@ pub enum ImproverAction {
         #[arg(long)]
         json: bool,
     },
+    /// Observe outcomes from the prior `act --apply` snapshot and update
+    /// the improver Q-table. Run after enough time has passed for the
+    /// queued actions to have completed (~one daemon tick is usually
+    /// enough). Read-only against the workplan corpus; mutates only
+    /// `~/.hex/improver/q-table.json`.
+    Learn {
+        /// Emit the credited (template, reward) pairs as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the improver Q-table (per-action-template mean reward and
+    /// sample count). Distinct from `hex sched scores`, which shows the
+    /// nexus sched_service's RL engine for model selection.
+    Scores {
+        /// Emit the table as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub async fn run(action: ImproverAction) -> Result<()> {
@@ -72,7 +91,62 @@ pub async fn run(action: ImproverAction) -> Result<()> {
         }
         ImproverAction::Judge { json } => run_judge(json).await,
         ImproverAction::Act { top, apply, json } => run_act(top, apply, json).await,
+        ImproverAction::Learn { json } => run_learn(json).await,
+        ImproverAction::Scores { json } => run_scores(json).await,
     }
+}
+
+async fn run_learn(json: bool) -> Result<()> {
+    let repo = std::env::current_dir().context("resolve repo root for learn")?;
+    let hypotheses = discover::discover(&repo)?;
+    let credited = learn::observe_and_reward(&hypotheses)?;
+    if json {
+        let table = learn::load_q_table();
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+            "credited": credited,
+            "table": table,
+        }))?);
+    } else {
+        println!(
+            "Improver learn: credited {} action(s); Q-table now has {} entries",
+            credited,
+            learn::load_q_table().entries.len(),
+        );
+    }
+    Ok(())
+}
+
+async fn run_scores(json: bool) -> Result<()> {
+    let table = learn::load_q_table();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&table)?);
+        return Ok(());
+    }
+    if table.entries.is_empty() {
+        println!("Improver Q-table empty — run `hex sched improver act --apply` followed by `hex sched improver learn` to start collecting samples.");
+        return Ok(());
+    }
+    let mut keys: Vec<_> = table.entries.keys().cloned().collect();
+    keys.sort();
+    let rows: Vec<Vec<String>> = keys
+        .iter()
+        .map(|k| {
+            let e = &table.entries[k];
+            vec![
+                k.clone(),
+                format!("{:+.3}", e.mean()),
+                e.samples.to_string(),
+                e.last_updated
+                    .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                    .unwrap_or_else(|| "—".to_string()),
+            ]
+        })
+        .collect();
+    println!(
+        "{}",
+        pretty_table(&["TEMPLATE", "MEAN REWARD", "SAMPLES", "LAST UPDATE"], &rows)
+    );
+    Ok(())
 }
 
 async fn run_judge(json: bool) -> Result<()> {

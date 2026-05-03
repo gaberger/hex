@@ -265,6 +265,16 @@ pub async fn act(
                 }
             }
         }
+        // Snapshot for the learn phase. The learn pass on the next sweep
+        // reads this and credits resolved hypotheses → action templates.
+        // We snapshot the full live hypothesis set so an action that
+        // resolves a *different* hypothesis (rare but possible — fixing
+        // one ADR can clear several lifecycle findings) is observable.
+        let snap_hypotheses: Vec<super::discover::Hypothesis> =
+            ranked.iter().map(|s| s.hypothesis.clone()).collect();
+        if let Err(e) = super::learn::take_snapshot(&actions, &snap_hypotheses) {
+            eprintln!("  ! snapshot for learn phase failed: {}", e);
+        }
     }
 
     Ok(actions)

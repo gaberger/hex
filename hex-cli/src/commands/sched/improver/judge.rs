@@ -110,12 +110,30 @@ pub fn score(h: &Hypothesis) -> (u32, String) {
 
     let evidence_boost: u32 = evidence_boost(h);
 
-    let total = severity_base.saturating_add(source_mod).saturating_add(evidence_boost);
+    // Q-table contribution: per-source learned offset from prior outcomes.
+    // Bounded ±10 in learn::q_offset so the static formula remains
+    // authoritative until enough samples accumulate. Subtracting a positive
+    // offset would never make sense (rewards favor the action) so we treat
+    // negative offsets as a small demotion.
+    let q = super::learn::q_offset(&super::learn::load_q_table(), h.source);
+    let q_component: i32 = q.clamp(-10, 10);
+
+    let static_total = severity_base
+        .saturating_add(source_mod)
+        .saturating_add(evidence_boost) as i32;
+    let with_q = (static_total + q_component).max(0) as u32;
     // Cap real findings at 99 so detector_health (100) always wins ties.
-    let clamped = total.min(99);
+    let clamped = with_q.min(99);
     let reason = format!(
-        "severity={}+source={}+evidence={}",
-        severity_base, source_mod, evidence_boost
+        "severity={}+source={}+evidence={}{}",
+        severity_base,
+        source_mod,
+        evidence_boost,
+        if q_component != 0 {
+            format!("+q={:+}", q_component)
+        } else {
+            String::new()
+        }
     );
     (clamped, reason)
 }
