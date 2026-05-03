@@ -63,6 +63,12 @@ cmd = "hex plan integrity --json"
 description = "Workplan files with missing required structural fields (title, phase title, task id/title). Catches destructive action-quality issues — particularly aggressive `reconcile --update` that strips fields while clearing its target hypothesis. Reward attribution alone can't see this; the detector surfaces the corruption as a hypothesis so the brain can react."
 allow_nonzero_exit = true
 
+[[detector]]
+source = "layer_coverage"
+cmd = "hex plan layers --json"
+description = "Canonical hexagonal-architecture layers missing in the current project (use cases, primary adapters, composition root). Surfaces structural gaps so target apps can be developed from skeleton to complete via improver-driven drafts."
+allow_nonzero_exit = true
+
 # ─── Aspirational detectors (gated until enum + CLI surface land) ────
 #
 # Entries below reference `Source` variants and CLI flags that haven't

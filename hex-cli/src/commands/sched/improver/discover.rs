@@ -47,6 +47,11 @@ pub enum Source {
     /// attribution can't tell positive resolution from destructive
     /// resolution; this detector closes that gap).
     WorkplanIntegrity,
+    /// Project-structure detector: canonical hexagonal-architecture
+    /// layers missing in the current project (use cases, primary
+    /// adapters, composition root). Surfaces structural gaps so the
+    /// improver can propose drafts that close them.
+    LayerCoverage,
 }
 
 impl Source {
@@ -63,6 +68,7 @@ impl Source {
             PunchList,
             QStarvation,
             WorkplanIntegrity,
+            LayerCoverage,
         ]
     }
 }
@@ -300,6 +306,7 @@ fn extract_scope(finding: &Value, source: Source) -> String {
         Source::GitDrift => &["path", "branch", "scope"],
         Source::QStarvation => &["template", "scope"],
         Source::WorkplanIntegrity => &["workplan_id", "scope"],
+        Source::LayerCoverage => &["layer", "scope"],
     };
     for key in candidates {
         if let Some(s) = finding.get(*key).and_then(|v| v.as_str()) {

@@ -298,6 +298,35 @@ pub fn derive(scored: &ScoredHypothesis) -> Option<Action> {
             });
         }
 
+        // LayerCoverage: a canonical architecture layer is missing.
+        // Auto-draft a workplan to scaffold the missing layer. Drafts
+        // live at docs/workplans/drafts/ ready for /hex-feature-dev
+        // promotion to a real workplan that hex-coder agents execute.
+        // This is the "hex develops the app" path: detection → draft →
+        // (operator promotes) → workplan execution → layer exists.
+        Source::LayerCoverage => {
+            let layer = h
+                .evidence
+                .get("layer")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&h.scope);
+            let remediation = h
+                .evidence
+                .get("remediation")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            return Some(Action {
+                kind: ActionKind::DraftWorkplan,
+                priority,
+                payload: format!(
+                    "Add missing hexagonal-architecture layer `{}` to this project. {}. Each task should follow the existing layer conventions (file naming, imports, hexagonal boundary rules). Tier T2 is appropriate; the work is mostly scaffolding + adapter wiring with established patterns.",
+                    layer, remediation
+                ),
+                derived_from: h.id.clone(),
+                reason: scored.reason.clone(),
+            });
+        }
+
         // Punch-list items: each unrouted gap recommends the operator
         // route it (task id, draft path, or out-of-scope tag).
         Source::PunchList => {

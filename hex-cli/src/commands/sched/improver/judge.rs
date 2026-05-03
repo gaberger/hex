@@ -89,6 +89,11 @@ pub fn score(h: &Hypothesis) -> (u32, String) {
         Severity::Info => 10,
     };
     let source_mod: u32 = match h.source {
+        // LayerCoverage findings flag missing canonical architecture
+        // layers — significant structural work to add. Score lower than
+        // active drift sources (active drift has someone using broken
+        // surfaces; missing layers represent unbuilt scaffolding).
+        Source::LayerCoverage => 12,
         // WorkplanIntegrity findings flag destructive action quality —
         // the system corrupted a file while clearing a hypothesis.
         // Higher than QStarvation because corruption is actively

@@ -148,6 +148,17 @@ pub enum PlanAction {
         #[arg(long)]
         json: bool,
     },
+    /// Layer-coverage scan — detects canonical hexagonal-architecture
+    /// directories that are missing in the current project (use cases,
+    /// primary adapters, composition root). Surfaces structural gaps
+    /// in target apps so the improver can propose drafts that close them.
+    /// Language is auto-detected (TS/Rust) from project markers.
+    Layers {
+        /// Emit findings as JSON for the improver detector pipeline
+        /// (`{findings: [{layer, severity, kind: "missing_layer"}]}`).
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Subcommands for `hex plan drafts` — manage auto-generated draft workplans.
@@ -390,7 +401,102 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::Drafts { action } => drafts_dispatch(action).await,
         PlanAction::Lint { file, all } => lint::run(file.as_deref(), all).await,
         PlanAction::Integrity { json } => integrity_check(json).await,
+        PlanAction::Layers { json } => layers_check(json).await,
     }
+}
+
+/// Hexagonal-architecture layer-coverage scan. Each canonical layer that
+/// the project is missing becomes a finding so the improver can surface
+/// the gap as a hypothesis. Auto-detects language from project markers
+/// (package.json → TypeScript, Cargo.toml → Rust).
+async fn layers_check(json: bool) -> anyhow::Result<()> {
+    use std::path::PathBuf;
+
+    let cwd = std::env::current_dir()?;
+    let is_ts = cwd.join("package.json").exists();
+    let is_rust = cwd.join("Cargo.toml").exists();
+    if !is_ts && !is_rust {
+        if json {
+            println!("{}", serde_json::json!({"findings": []}));
+        } else {
+            println!("Layers: no project markers found (package.json / Cargo.toml)");
+        }
+        return Ok(());
+    }
+
+    // TS canonical layers — Rust/Go variants can be added when those
+    // examples land. Comp root has glob fallbacks for the conventional
+    // file names (composition-root.ts, composition_root.ts, app.ts,
+    // bootstrap.ts).
+    let layers: &[(&str, &[&str], &str)] = if is_ts {
+        &[
+            ("usecases", &["src/core/usecases"], "directory"),
+            ("primary_adapters", &["src/adapters/primary"], "directory"),
+            ("secondary_adapters", &["src/adapters/secondary"], "directory"),
+            ("ports", &["src/core/ports"], "directory"),
+            ("domain", &["src/core/domain"], "directory"),
+            (
+                "composition_root",
+                &[
+                    "src/composition-root.ts",
+                    "src/composition_root.ts",
+                    "src/composition.ts",
+                    "src/app.ts",
+                    "src/bootstrap.ts",
+                ],
+                "file",
+            ),
+        ]
+    } else {
+        &[]
+    };
+
+    let mut findings: Vec<serde_json::Value> = Vec::new();
+    for (layer, candidates, kind) in layers {
+        let exists = candidates.iter().any(|c| {
+            let p: PathBuf = cwd.join(c);
+            if *kind == "directory" {
+                p.is_dir()
+            } else {
+                p.is_file()
+            }
+        });
+        if !exists {
+            findings.push(serde_json::json!({
+                "layer": layer,
+                "kind": "missing_layer",
+                "severity": "warning",
+                "checked": candidates,
+                "remediation": format!(
+                    "create the {} layer at one of: {}",
+                    layer,
+                    candidates.join(", ")
+                ),
+            }));
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::json!({"findings": findings}));
+    } else {
+        println!("Layer coverage: {} missing", findings.len());
+        for f in &findings {
+            println!(
+                "  ✗ {} (checked: {})",
+                f.get("layer").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("checked")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default()
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Workplan integrity scan — detects genuine structural corruption.
