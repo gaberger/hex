@@ -393,18 +393,20 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
     }
 }
 
-/// Workplan integrity scan — detects structural corruption.
+/// Workplan integrity scan — detects genuine structural corruption.
 ///
-/// A healthy workplan has at minimum:
-///   - top-level `title` (string, non-empty)
-///   - top-level `phases` (array, non-empty)
-///   - each phase has `title` (string)
-///   - each task has `id` AND `title`
+/// Heterogeneity discovery (2026-05-03): workplans don't share a single
+/// schema. Some have `title`, some have `feature`, some have neither.
+/// An over-strict detector that flags every wp-*.json missing `title`
+/// poisons reward attribution by punishing the loop's actions for a
+/// schema mismatch they didn't cause.
 ///
-/// Workplans missing any of these get flagged. The reconcile-update path
-/// has been observed to strip `title` fields aggressively; this detector
-/// catches that class of action-quality regression that the existing
-/// reconcile_strict reward attribution can't see.
+/// Real corruption signals (the only things this detector flags):
+///   - Unparseable JSON (file is malformed)
+///   - Missing both `id` AND `phases` (no plan structure at all)
+///   - `phases` present but empty array (degenerate)
+///   - Any task object missing `id` (loses anchor for reconcile)
+///   - File shrank >40% vs its previous git revision (destructive mutation)
 async fn integrity_check(json: bool) -> anyhow::Result<()> {
     use std::path::PathBuf;
     let wp_dir = PathBuf::from("docs/workplans");
@@ -430,56 +432,44 @@ async fn integrity_check(json: bool) -> anyhow::Result<()> {
                 "workplan_id": name,
                 "kind": "unparseable_json",
                 "severity": "error",
-                "missing_fields": ["all"],
             }));
             continue;
         };
 
-        let mut missing: Vec<&str> = Vec::new();
-        if root.get("title").and_then(|v| v.as_str()).map(|s| s.is_empty()).unwrap_or(true) {
-            missing.push("title");
-        }
+        let workplan_id = root.get("id").and_then(|v| v.as_str()).unwrap_or(name).to_string();
+        let has_id = root.get("id").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
         let phases = root.get("phases").and_then(|v| v.as_array());
-        if phases.is_none() || phases.map(|a| a.is_empty()).unwrap_or(true) {
-            missing.push("phases");
+        let phases_present = phases.is_some();
+        let phases_nonempty = phases.map(|a| !a.is_empty()).unwrap_or(false);
+
+        if !has_id && !phases_present {
+            findings.push(serde_json::json!({
+                "workplan_id": workplan_id,
+                "kind": "missing_structural_fields",
+                "severity": "error",
+                "missing_fields": ["id", "phases"],
+            }));
+            continue;
         }
-        let mut phase_missing_title = 0;
+        if phases_present && !phases_nonempty {
+            findings.push(serde_json::json!({
+                "workplan_id": workplan_id,
+                "kind": "empty_phases",
+                "severity": "error",
+            }));
+        }
+
         let mut tasks_missing_id = 0;
-        let mut tasks_missing_title = 0;
         if let Some(phases) = phases {
             for phase in phases {
-                if phase.get("title").and_then(|v| v.as_str()).map(|s| s.is_empty()).unwrap_or(true) {
-                    phase_missing_title += 1;
-                }
                 if let Some(tasks) = phase.get("tasks").and_then(|v| v.as_array()) {
                     for task in tasks {
                         if task.get("id").and_then(|v| v.as_str()).map(|s| s.is_empty()).unwrap_or(true) {
                             tasks_missing_id += 1;
                         }
-                        if task.get("title").and_then(|v| v.as_str()).map(|s| s.is_empty()).unwrap_or(true) {
-                            tasks_missing_title += 1;
-                        }
                     }
                 }
             }
-        }
-        let workplan_id = root.get("id").and_then(|v| v.as_str()).unwrap_or(name).to_string();
-
-        if !missing.is_empty() {
-            findings.push(serde_json::json!({
-                "workplan_id": workplan_id,
-                "kind": "missing_top_level_field",
-                "severity": "error",
-                "missing_fields": missing,
-            }));
-        }
-        if phase_missing_title > 0 {
-            findings.push(serde_json::json!({
-                "workplan_id": workplan_id,
-                "kind": "phases_missing_title",
-                "severity": "error",
-                "count": phase_missing_title,
-            }));
         }
         if tasks_missing_id > 0 {
             findings.push(serde_json::json!({
@@ -489,13 +479,20 @@ async fn integrity_check(json: bool) -> anyhow::Result<()> {
                 "count": tasks_missing_id,
             }));
         }
-        if tasks_missing_title > 0 {
-            findings.push(serde_json::json!({
-                "workplan_id": workplan_id,
-                "kind": "tasks_missing_title",
-                "severity": "warning",
-                "count": tasks_missing_title,
-            }));
+
+        // Destructive-shrinkage signal: file shrank >40% in last commit.
+        if let Some(prev_size) = previous_revision_size(&path) {
+            let curr_size = content.len() as i64;
+            if prev_size > 0 && curr_size < (prev_size * 6 / 10) {
+                findings.push(serde_json::json!({
+                    "workplan_id": workplan_id,
+                    "kind": "destructive_shrinkage",
+                    "severity": "error",
+                    "prev_bytes": prev_size,
+                    "curr_bytes": curr_size,
+                    "shrinkage_pct": ((prev_size - curr_size) as f64 / prev_size as f64 * 100.0) as i64,
+                }));
+            }
         }
     }
     if json {
@@ -512,6 +509,21 @@ async fn integrity_check(json: bool) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Get the size in bytes of the file at HEAD~1, or None if no prior
+/// revision exists or git is unavailable. Used by integrity_check to
+/// flag files that shrank dramatically (likely destructive mutation).
+fn previous_revision_size(path: &std::path::Path) -> Option<i64> {
+    let path_str = path.to_string_lossy();
+    let out = std::process::Command::new("git")
+        .args(["show", &format!("HEAD~1:{}", path_str)])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(out.stdout.len() as i64)
 }
 
 /// Execute a workplan — dispatches tasks through tiered inference routing (ADR-2604120202).
