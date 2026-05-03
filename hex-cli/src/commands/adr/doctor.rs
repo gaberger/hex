@@ -1840,11 +1840,37 @@ mod tests {
     }
 
     #[test]
-    fn missing_required_field_flags_absent_date() {
-        let (path, content) = read_fixture(FX_MISSING_DATE);
+    fn missing_required_field_flags_absent_date_when_no_git_history() {
+        // When the file has no git first-commit (untracked / new), the
+        // doctor flags the missing Date field — git can't tell us the
+        // creation date so the markdown frontmatter is the only source.
+        // Use a temp file outside any git repo so file_has_git_history
+        // returns false deterministically.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ADR-2604010008-missing-date.md");
+        let (_, content) = read_fixture(FX_MISSING_DATE);
+        std::fs::write(&path, &content).expect("write tempfile");
         let findings = detect_missing_required_field(&path, &content);
         assert_eq!(kinds(&findings), vec![FindingKind::MissingRequiredField]);
         assert!(findings[0].detail.contains("Date"));
+    }
+
+    #[test]
+    fn missing_date_suppressed_when_file_tracked_in_git() {
+        // The fixture file IS in the workspace's git history (it's
+        // checked into hex-cli/tests/fixtures/), so the suppression
+        // kicks in: git knows the date, no need to flag.
+        let (path, content) = read_fixture(FX_MISSING_DATE);
+        let findings = detect_missing_required_field(&path, &content);
+        let date_findings: Vec<_> = findings
+            .iter()
+            .filter(|f| f.detail.contains("Date"))
+            .collect();
+        assert!(
+            date_findings.is_empty(),
+            "expected no Date finding for git-tracked fixture, got {:?}",
+            date_findings
+        );
     }
 
     #[test]
