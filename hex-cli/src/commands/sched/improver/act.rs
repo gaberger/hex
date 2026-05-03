@@ -267,6 +267,37 @@ pub fn derive(scored: &ScoredHypothesis) -> Option<Action> {
             });
         }
 
+        // WorkplanIntegrity: a workplan file is missing required fields,
+        // most likely from a destructive reconcile run. Auto-draft a
+        // workplan capturing the corruption so an operator can restore
+        // from git history. Critically, this finding's existence ALSO
+        // signals (via the cross-source attribution in learn::observe_
+        // and_reward) that the most recent SchedShell action targeting
+        // this workplan was destructive — that template's Q-mean drops
+        // accordingly, eventually triggering q_starvation if it persists.
+        Source::WorkplanIntegrity => {
+            let workplan_id = h
+                .evidence
+                .get("workplan_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&h.scope);
+            let kind_str = h
+                .evidence
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            return Some(Action {
+                kind: ActionKind::DraftWorkplan,
+                priority,
+                payload: format!(
+                    "Restore workplan integrity for `{}`: detected `{}`. Most recent SchedShell action against this workplan stripped required fields. Either restore the file from git (`git checkout HEAD~1 -- docs/workplans/{}.json`) and rerun the source ReconcileStrict action with a less aggressive flag, OR fix the reconcile mutator in hex-cli/src/commands/plan/reconcile.rs so --audit --update --strict only modifies status, never deletes title/strategy_hint/files.",
+                    workplan_id, kind_str, workplan_id
+                ),
+                derived_from: h.id.clone(),
+                reason: scored.reason.clone(),
+            });
+        }
+
         // Punch-list items: each unrouted gap recommends the operator
         // route it (task id, draft path, or out-of-scope tag).
         Source::PunchList => {

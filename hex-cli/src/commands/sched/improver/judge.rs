@@ -89,6 +89,12 @@ pub fn score(h: &Hypothesis) -> (u32, String) {
         Severity::Info => 10,
     };
     let source_mod: u32 = match h.source {
+        // WorkplanIntegrity findings flag destructive action quality —
+        // the system corrupted a file while clearing a hypothesis.
+        // Higher than QStarvation because corruption is actively
+        // harmful, not just unproductive: every additional auto-act
+        // tick can compound the damage.
+        Source::WorkplanIntegrity => 35,
         // Q-starvation findings flag broken action mappings — like
         // detector_health, they block the loop's ability to make
         // progress. Sit just below detector_health (which gets a flat

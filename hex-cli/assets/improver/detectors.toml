@@ -57,6 +57,12 @@ cmd = "hex sched improver scores --starvation"
 description = "Improver action templates that ran enough times (≥3 samples) to be statistically meaningful but produced non-positive mean reward — i.e. the action runs but doesn't resolve its target hypothesis. Indicates a broken (source, action_kind) mapping in act::derive that needs operator review."
 allow_nonzero_exit = true
 
+[[detector]]
+source = "workplan_integrity"
+cmd = "hex plan integrity --json"
+description = "Workplan files with missing required structural fields (title, phase title, task id/title). Catches destructive action-quality issues — particularly aggressive `reconcile --update` that strips fields while clearing its target hypothesis. Reward attribution alone can't see this; the detector surfaces the corruption as a hypothesis so the brain can react."
+allow_nonzero_exit = true
+
 # ─── Aspirational detectors (gated until enum + CLI surface land) ────
 #
 # Entries below reference `Source` variants and CLI flags that haven't

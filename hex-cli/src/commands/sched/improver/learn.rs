@@ -251,6 +251,38 @@ pub fn observe_and_reward(current_hypotheses: &[Hypothesis]) -> Result<usize> {
         let _ = std::fs::remove_file(&snap_path);
     }
 
+    // ── Cross-source negative attribution (workplan integrity) ─────────
+    // Beyond per-target reward attribution, scan the current hypothesis
+    // stream for WorkplanIntegrity findings. Each one signals "an action
+    // corrupted this workplan." Find the most recent SchedShell action
+    // whose payload mentions the workplan_id, attribute extra negative
+    // reward (-1.0) to its template. This catches the case where the
+    // standard reward path credits +1.0 for clearing a hypothesis even
+    // though the action also damaged the file.
+    for h in current_hypotheses {
+        if h.source != Source::WorkplanIntegrity {
+            continue;
+        }
+        let Some(workplan_id) = h.evidence.get("workplan_id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        // Find the most recent SchedShell completed task that mentions
+        // this workplan_id. The brain-task store doesn't give us
+        // template_key directly — we synthesize it from the kind+source
+        // pair (the only auto-mappable source for ReconcileStrict
+        // SchedShell is, well, ReconcileStrict, so we tag it that way).
+        let key = template_key(Source::ReconcileStrict, "SchedShell");
+        let entry = table.entries.entry(key).or_default();
+        entry.total_reward -= 1.0;
+        entry.samples += 1;
+        entry.last_updated = Some(Utc::now());
+        tracing::warn!(
+            workplan_id = %workplan_id,
+            "workplan integrity finding → -1.0 reward to ReconcileStrict:SchedShell"
+        );
+    }
+    save_q_table(&table)?;
+
     Ok(credited)
 }
 

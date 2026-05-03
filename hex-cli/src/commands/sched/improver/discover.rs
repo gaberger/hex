@@ -40,6 +40,13 @@ pub enum Source {
     /// times to be meaningful but didn't resolve their targets. Surfaces
     /// broken (source, action_kind) mappings in act::derive.
     QStarvation,
+    /// Action-quality detector: workplan files with missing required
+    /// fields (title, phase title, task id/title). Catches the failure
+    /// mode where reconcile actions clear their target hypothesis but
+    /// also corrupt the file (the existing ReconcileStrict reward
+    /// attribution can't tell positive resolution from destructive
+    /// resolution; this detector closes that gap).
+    WorkplanIntegrity,
 }
 
 impl Source {
@@ -55,6 +62,7 @@ impl Source {
             EscalationReport,
             PunchList,
             QStarvation,
+            WorkplanIntegrity,
         ]
     }
 }
@@ -291,6 +299,7 @@ fn extract_scope(finding: &Value, source: Source) -> String {
         Source::PunchList => &["item_id", "scope", "id"],
         Source::GitDrift => &["path", "branch", "scope"],
         Source::QStarvation => &["template", "scope"],
+        Source::WorkplanIntegrity => &["workplan_id", "scope"],
     };
     for key in candidates {
         if let Some(s) = finding.get(*key).and_then(|v| v.as_str()) {

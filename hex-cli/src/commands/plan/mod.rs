@@ -136,6 +136,18 @@ pub enum PlanAction {
         #[arg(long, default_value_t = false)]
         all: bool,
     },
+    /// Workplan structural integrity check — detects destructive
+    /// mutations (missing required fields like title, phases[*].title,
+    /// task[*].id) that aggressive `reconcile --update` runs can cause.
+    /// Used by the improver `workplan_integrity` detector to catch
+    /// action quality issues that ReconcileStrict's reward attribution
+    /// can't see (a hypothesis can clear AND the file get corrupted).
+    Integrity {
+        /// Emit findings as JSON for the improver detector pipeline
+        /// (`{findings: [{workplan_id, kind, severity, missing_fields}]}`).
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Subcommands for `hex plan drafts` — manage auto-generated draft workplans.
@@ -377,7 +389,129 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::Draft { prompt, background } => draft_plan(&prompt, background).await,
         PlanAction::Drafts { action } => drafts_dispatch(action).await,
         PlanAction::Lint { file, all } => lint::run(file.as_deref(), all).await,
+        PlanAction::Integrity { json } => integrity_check(json).await,
     }
+}
+
+/// Workplan integrity scan — detects structural corruption.
+///
+/// A healthy workplan has at minimum:
+///   - top-level `title` (string, non-empty)
+///   - top-level `phases` (array, non-empty)
+///   - each phase has `title` (string)
+///   - each task has `id` AND `title`
+///
+/// Workplans missing any of these get flagged. The reconcile-update path
+/// has been observed to strip `title` fields aggressively; this detector
+/// catches that class of action-quality regression that the existing
+/// reconcile_strict reward attribution can't see.
+async fn integrity_check(json: bool) -> anyhow::Result<()> {
+    use std::path::PathBuf;
+    let wp_dir = PathBuf::from("docs/workplans");
+    if !wp_dir.is_dir() {
+        if json {
+            println!("{}", serde_json::json!({"findings": []}));
+        }
+        return Ok(());
+    }
+    let mut findings: Vec<serde_json::Value> = Vec::new();
+    for entry in std::fs::read_dir(&wp_dir)?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if !name.starts_with("wp-") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        let Ok(root): Result<serde_json::Value, _> = serde_json::from_str(&content) else {
+            findings.push(serde_json::json!({
+                "workplan_id": name,
+                "kind": "unparseable_json",
+                "severity": "error",
+                "missing_fields": ["all"],
+            }));
+            continue;
+        };
+
+        let mut missing: Vec<&str> = Vec::new();
+        if root.get("title").and_then(|v| v.as_str()).map(|s| s.is_empty()).unwrap_or(true) {
+            missing.push("title");
+        }
+        let phases = root.get("phases").and_then(|v| v.as_array());
+        if phases.is_none() || phases.map(|a| a.is_empty()).unwrap_or(true) {
+            missing.push("phases");
+        }
+        let mut phase_missing_title = 0;
+        let mut tasks_missing_id = 0;
+        let mut tasks_missing_title = 0;
+        if let Some(phases) = phases {
+            for phase in phases {
+                if phase.get("title").and_then(|v| v.as_str()).map(|s| s.is_empty()).unwrap_or(true) {
+                    phase_missing_title += 1;
+                }
+                if let Some(tasks) = phase.get("tasks").and_then(|v| v.as_array()) {
+                    for task in tasks {
+                        if task.get("id").and_then(|v| v.as_str()).map(|s| s.is_empty()).unwrap_or(true) {
+                            tasks_missing_id += 1;
+                        }
+                        if task.get("title").and_then(|v| v.as_str()).map(|s| s.is_empty()).unwrap_or(true) {
+                            tasks_missing_title += 1;
+                        }
+                    }
+                }
+            }
+        }
+        let workplan_id = root.get("id").and_then(|v| v.as_str()).unwrap_or(name).to_string();
+
+        if !missing.is_empty() {
+            findings.push(serde_json::json!({
+                "workplan_id": workplan_id,
+                "kind": "missing_top_level_field",
+                "severity": "error",
+                "missing_fields": missing,
+            }));
+        }
+        if phase_missing_title > 0 {
+            findings.push(serde_json::json!({
+                "workplan_id": workplan_id,
+                "kind": "phases_missing_title",
+                "severity": "error",
+                "count": phase_missing_title,
+            }));
+        }
+        if tasks_missing_id > 0 {
+            findings.push(serde_json::json!({
+                "workplan_id": workplan_id,
+                "kind": "tasks_missing_id",
+                "severity": "error",
+                "count": tasks_missing_id,
+            }));
+        }
+        if tasks_missing_title > 0 {
+            findings.push(serde_json::json!({
+                "workplan_id": workplan_id,
+                "kind": "tasks_missing_title",
+                "severity": "warning",
+                "count": tasks_missing_title,
+            }));
+        }
+    }
+    if json {
+        println!("{}", serde_json::json!({"findings": findings}));
+    } else {
+        println!("Workplan integrity: {} finding(s)", findings.len());
+        for f in &findings {
+            println!(
+                "  {} {} {}",
+                f.get("severity").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("workplan_id").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("kind").and_then(|v| v.as_str()).unwrap_or(""),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Execute a workplan — dispatches tasks through tiered inference routing (ADR-2604120202).
