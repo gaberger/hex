@@ -530,7 +530,46 @@ pub async fn inference_complete(
                         }
                     }
                 }
-                // If all free models failed, try Anthropic direct as final fallback.
+                // If all free models failed, try a registered local Ollama
+                // endpoint with a sensible code-gen model. Most operators
+                // running this loop have Ollama on localhost (the standalone
+                // composition variant requires it). When OpenRouter's free
+                // tier is exhausted (rate-limited or auth-broken), local
+                // inference is the difference between the loop progressing
+                // and the loop sitting idle on every workplan.
+                if fallback_result.is_err() {
+                    if let Some(ref stdb) = state.inference_stdb {
+                        let ollama = stdb.list_providers().await.ok()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .find(|p| p.provider_type == "ollama" && !p.base_url.is_empty());
+                        if let Some(p) = ollama {
+                            // Default to the T2 codegen tier model; operators can
+                            // override per project via .hex/project.json → inference.tier_models.
+                            let local_model = "qwen2.5-coder:32b".to_string();
+                            tracing::info!(
+                                provider = %p.provider_id,
+                                model = %local_model,
+                                "all openrouter fallbacks failed — retrying via local Ollama"
+                            );
+                            let synth = crate::routes::secrets::InferenceEndpointEntry {
+                                id: p.provider_id.clone(),
+                                url: p.base_url.clone(),
+                                provider: "ollama".into(),
+                                model: local_model,
+                                status: "unknown".into(),
+                                requires_auth: false,
+                                secret_key: String::new(),
+                                health_checked_at: p.last_health_check.clone(),
+                            };
+                            fallback_result = super::chat::call_inference_endpoint(&synth, &messages).await;
+                            if let Err(ref e) = fallback_result {
+                                tracing::warn!(error = %e, "local Ollama fallback also failed");
+                            }
+                        }
+                    }
+                }
+                // If even Ollama failed, try Anthropic direct as final fallback.
                 if fallback_result.is_err() {
                     if let Some(ref api_key) = state.anthropic_api_key {
                         if api_key.starts_with("sk-ant-") {
