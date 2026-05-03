@@ -146,6 +146,17 @@ pub fn discover_with(repo: &Path, detectors: &[Detector]) -> Vec<Hypothesis> {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(source = ?det.source, error = %e, "detector failed");
+                // Homeostasis: a detector that can't be invoked is itself a
+                // finding. Emit a synthetic hypothesis tagged to this detector's
+                // own source so the broken-detector signal shows up in the same
+                // pane as real findings — invisible-failure mode is the bug
+                // class we're guarding against (TOML/CLI drift).
+                hypotheses.push(detector_health_hypothesis(
+                    det,
+                    "spawn_or_exit_error",
+                    &e.to_string(),
+                    now,
+                ));
                 continue;
             }
         };
@@ -157,6 +168,15 @@ pub fn discover_with(repo: &Path, detectors: &[Detector]) -> Vec<Hypothesis> {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!(source = ?det.source, error = %e, "detector emitted non-JSON");
+                // Same rationale as above: a detector that runs but produces
+                // unparseable stdout (e.g. a CLI emitting a coloured table when
+                // the TOML expected `--json` output) is reported as a finding.
+                hypotheses.push(detector_health_hypothesis(
+                    det,
+                    "non_json_stdout",
+                    &e.to_string(),
+                    now,
+                ));
                 continue;
             }
         };
@@ -181,6 +201,34 @@ pub fn discover_with(repo: &Path, detectors: &[Detector]) -> Vec<Hypothesis> {
 
 // ── Internals ────────────────────────────────────────────────────────────
 
+/// Build a synthetic hypothesis for a detector that failed to produce parseable
+/// findings. Tags it to the detector's own source with severity=Error and a
+/// `detector_health` evidence object so a downstream act() can route it
+/// distinctly from real findings if needed. Scope is the detector source name
+/// so multiple failure-modes for the same detector dedup naturally via the
+/// (source, scope) seen-set.
+fn detector_health_hypothesis(
+    det: &Detector,
+    failure_kind: &str,
+    detail: &str,
+    now: DateTime<Utc>,
+) -> Hypothesis {
+    let scope = format!("detector:{:?}", det.source);
+    Hypothesis {
+        id: hypothesis_id(det.source, &scope),
+        source: det.source,
+        scope,
+        severity: Severity::Error,
+        evidence: serde_json::json!({
+            "detector_health": failure_kind,
+            "cmd": det.cmd,
+            "detail": detail,
+            "remediation": "align CLI surface with detectors.toml — usually a missing --json flag",
+        }),
+        generated_at: now,
+    }
+}
+
 fn run_detector(repo: &Path, det: &Detector) -> Result<String> {
     let output = Command::new("sh")
         .arg("-c")
@@ -188,14 +236,28 @@ fn run_detector(repo: &Path, det: &Detector) -> Result<String> {
         .current_dir(repo)
         .output()
         .with_context(|| format!("spawn detector: {}", det.cmd))?;
-    if !output.status.success() && !det.allow_nonzero_exit {
-        anyhow::bail!(
-            "detector exited {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        // Hard failure when allow_nonzero_exit=false (existing contract).
+        if !det.allow_nonzero_exit {
+            anyhow::bail!("detector exited {}: {}", output.status, stderr.trim());
+        }
+        // Soft failure case: allow_nonzero_exit=true is meant for diagnostic
+        // CLIs that signal "findings present" via exit code while still
+        // producing JSON on stdout. If stdout is empty, the CLI didn't run
+        // the way the TOML expected — almost always TOML/CLI flag drift.
+        // Surface this as a detector_health finding rather than swallowing
+        // it (homeostasis: the improver reports its own broken detectors).
+        if stdout.trim().is_empty() {
+            anyhow::bail!(
+                "detector exited {} with empty stdout (likely TOML/CLI drift): {}",
+                output.status,
+                stderr.trim()
+            );
+        }
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(stdout)
 }
 
 fn extract_findings(value: &Value, pointer: Option<&str>) -> Vec<Value> {
