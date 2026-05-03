@@ -83,7 +83,7 @@ pub struct QTable {
 /// hypothesis IDs were live at the moment, plus per-applied action the
 /// (template_key, hypothesis_id) pair so the next observation knows what
 /// to credit.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Snapshot {
     pub taken_at: DateTime<Utc>,
     pub live_hypotheses: Vec<String>,
@@ -95,6 +95,16 @@ pub struct AppliedAction {
     pub template_key: String,
     pub hypothesis_id: String,
     pub score: u32,
+}
+
+impl Snapshot {
+    pub(crate) fn clone(&self) -> Self {
+        Snapshot {
+            taken_at: self.taken_at,
+            live_hypotheses: self.live_hypotheses.clone(),
+            applied: self.applied.clone(),
+        }
+    }
 }
 
 /// Build the template key used for Q-table entries.
@@ -221,8 +231,16 @@ pub fn observe_and_reward(current_hypotheses: &[Hypothesis]) -> Result<usize> {
 
     let mut table = load_q_table();
     let mut credited = 0_usize;
+    // Track which applied actions were credited THIS pass so we can
+    // remove them from the snapshot. Re-crediting the same applied
+    // action on every subsequent learn tick (the bug observed
+    // 2026-05-03 that pushed LayerCoverage:DraftWorkplan from 3 to 35
+    // samples in 5 minutes) is a fatal source of false-positive
+    // attribution: each credit is real once, but each re-credit is
+    // double-counting.
+    let mut credited_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
-    for applied in &snap.applied {
+    for (idx, applied) in snap.applied.iter().enumerate() {
         let still_present = live_now.contains(&applied.hypothesis_id);
         let reward = if !still_present {
             REWARD_RESOLVED
@@ -236,19 +254,31 @@ pub fn observe_and_reward(current_hypotheses: &[Hypothesis]) -> Result<usize> {
         entry.samples += 1;
         entry.last_updated = Some(Utc::now());
         credited += 1;
+        credited_indices.insert(idx);
     }
 
     save_q_table(&table)?;
 
-    // If we credited every applied action OR the snapshot is stale, clear
-    // it so the next observation isn't double-counting. Otherwise keep
-    // the snapshot — pending actions will be observed on a later sweep.
-    let all_resolved = snap
-        .applied
-        .iter()
-        .all(|a| !live_now.contains(&a.hypothesis_id));
-    if all_resolved || is_stale {
+    // Rotate the snapshot: drop applied actions we credited this pass so
+    // the next learn tick doesn't double-count their resolution. If
+    // every action was credited, delete the snapshot file entirely.
+    // Stale snapshots (>30min) get deleted unconditionally — pending
+    // observations past that window are abandoned rather than accruing
+    // forever.
+    if is_stale || credited_indices.len() == snap.applied.len() {
         let _ = std::fs::remove_file(&snap_path);
+    } else if !credited_indices.is_empty() {
+        let mut remaining = snap.clone();
+        remaining.applied = snap
+            .applied
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !credited_indices.contains(i))
+            .map(|(_, a)| a.clone())
+            .collect();
+        if let Ok(serialized) = serde_json::to_string_pretty(&remaining) {
+            let _ = std::fs::write(&snap_path, serialized);
+        }
     }
 
     // ── Cross-source negative attribution (workplan integrity) ─────────
