@@ -32,6 +32,7 @@ use commands::{
     git_cmd::GitAction,
     hook::HookEvent,
     inbox::InboxAction,
+    insight::InsightAction,
     init::InitArgs,
     refresh::RefreshArgs,
     memory::MemoryAction,
@@ -288,6 +289,11 @@ enum Commands {
     Inbox {
         #[command(subcommand)]
         action: InboxAction,
+    },
+    /// Insight extraction surfaces (punch-list, gap detection)
+    Insight {
+        #[command(subcommand)]
+        action: InsightAction,
     },
     /// Persistent memory
     Memory {
@@ -628,6 +634,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Swarm { action } => commands::swarm::run(action).await,
         Commands::Task { action } => commands::task::run(action).await,
         Commands::Inbox { action } => commands::inbox::run(action).await,
+        Commands::Insight { action } => commands::insight::run(action).await,
         Commands::Memory { action } => commands::memory::run(action).await,
         Commands::Monitor(args) => commands::monitor::run(args).await,
         Commands::NeuralLab { action } => commands::neural_lab::run(action).await,

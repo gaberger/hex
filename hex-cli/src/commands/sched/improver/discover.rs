@@ -398,7 +398,11 @@ mod tests {
     }
 
     #[test]
-    fn detector_failures_are_skipped_not_fatal() {
+    fn detector_failures_surface_as_hypotheses_alongside_real_findings() {
+        // Homeostatic contract: a detector that fails to produce parseable
+        // findings doesn't get silently skipped — it surfaces as its own
+        // synthetic hypothesis so the broken-detector signal is visible
+        // in the hypothesis stream rather than buried in tracing logs.
         let dir = tempdir().expect("tempdir");
         let bad = Detector {
             source: Source::GitDrift,
@@ -416,8 +420,23 @@ mod tests {
             description: String::new(),
         };
         let hypotheses = discover_with(dir.path(), &[bad, good]);
-        assert_eq!(hypotheses.len(), 1, "good detector must still produce output");
-        assert_eq!(hypotheses[0].source, Source::AdrDoctor);
+        assert_eq!(
+            hypotheses.len(),
+            2,
+            "broken detector emits a detector_health hypothesis, good detector emits its real finding"
+        );
+        // Good detector's finding still lands.
+        let good_h = hypotheses.iter().find(|h| h.source == Source::AdrDoctor).expect("AdrDoctor hypothesis");
+        assert_eq!(good_h.scope, "ADR-Y");
+        // Broken detector's signal lands tagged to its own source with
+        // scope=detector:<Source> so it dedups by detector identity.
+        let bad_h = hypotheses.iter().find(|h| h.source == Source::GitDrift).expect("GitDrift health hypothesis");
+        assert_eq!(bad_h.severity, Severity::Error);
+        assert_eq!(bad_h.scope, "detector:GitDrift");
+        assert_eq!(
+            bad_h.evidence.get("detector_health").and_then(|v| v.as_str()),
+            Some("spawn_or_exit_error"),
+        );
     }
 
     #[test]

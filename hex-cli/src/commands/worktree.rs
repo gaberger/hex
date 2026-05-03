@@ -12,7 +12,16 @@ use colored::Colorize;
 #[derive(Subcommand)]
 pub enum WorktreeAction {
     /// List all active worktrees
-    List,
+    List {
+        /// Only list worktrees with no commits in the last 24h (drift signal
+        /// for the improver `git_drift` detector).
+        #[arg(long)]
+        stale: bool,
+        /// Emit findings as JSON for the improver detector pipeline
+        /// (`{findings: [{branch, path, age_hours}]}`).
+        #[arg(long)]
+        json: bool,
+    },
     /// Merge worktree branches into main (file-level cherry-pick)
     Merge {
         /// Branch pattern to match (e.g. "feat/auth" matches all feat/auth/* branches)
@@ -35,7 +44,7 @@ pub enum WorktreeAction {
 
 pub async fn run(action: WorktreeAction) -> anyhow::Result<()> {
     match action {
-        WorktreeAction::List => list().await,
+        WorktreeAction::List { stale, json } => list(stale, json).await,
         WorktreeAction::Merge { pattern, all, force } => merge(pattern, all, force).await,
         WorktreeAction::Cleanup { force } => cleanup(force).await,
     }
@@ -167,19 +176,63 @@ fn is_merged(branch: &str, main: &str) -> bool {
 
 // ── Subcommands ────────────────────────────────────────
 
-async fn list() -> anyhow::Result<()> {
+async fn list(stale: bool, json: bool) -> anyhow::Result<()> {
     let worktrees = parse_worktrees()?;
     let main = main_branch();
+
+    // Compute hours since the most recent commit on each worktree's branch.
+    // A worktree with >24h since last commit is "stale" — likely abandoned
+    // mid-feature or already merged elsewhere. Branches we can't query (e.g.
+    // detached) get u64::MAX so the --stale filter treats them as stale too.
+    let last_commit_hours = |branch: &str| -> u64 {
+        let out = Command::new("git")
+            .args(["log", "-1", "--format=%ct", branch])
+            .output();
+        let Ok(out) = out else { return u64::MAX };
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let Ok(committed_at) = s.parse::<i64>() else { return u64::MAX };
+        let now = chrono::Utc::now().timestamp();
+        ((now - committed_at).max(0) / 3600) as u64
+    };
+
+    let mut entries: Vec<(String, String, u64, bool)> = worktrees
+        .iter()
+        .map(|(path, branch)| {
+            let age = if branch == &main { 0 } else { last_commit_hours(branch) };
+            let is_stale = branch != &main && age > 24;
+            (path.clone(), branch.clone(), age, is_stale)
+        })
+        .collect();
+    if stale {
+        entries.retain(|e| e.3);
+    }
+
+    if json {
+        let findings: Vec<_> = entries
+            .iter()
+            .map(|(path, branch, age, is_stale)| {
+                serde_json::json!({
+                    "branch": branch,
+                    "path": path,
+                    "age_hours": age,
+                    "stale": is_stale,
+                    "severity": if *is_stale { "warning" } else { "info" },
+                })
+            })
+            .collect();
+        println!("{}", serde_json::json!({"findings": findings}));
+        return Ok(());
+    }
 
     println!("{}", "Worktrees".bold());
     println!("{}", "\u{2500}".repeat(60));
 
-    if worktrees.is_empty() {
+    if entries.is_empty() {
         println!("  No worktrees found.");
         return Ok(());
     }
 
-    for (path, branch) in &worktrees {
+    for (path, branch, _age, _is_stale) in &entries {
         let is_main = branch == &main;
         let merged = if !is_main { is_merged(branch, &main) } else { false };
         let indicator = if is_main {

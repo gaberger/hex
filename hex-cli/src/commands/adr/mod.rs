@@ -14,7 +14,14 @@ pub enum AdrAction {
     /// List all ADRs with status
     List,
     /// Show ADR lifecycle summary
-    Status,
+    Status {
+        /// Emit findings as JSON for the improver detector pipeline
+        /// (`{findings: [{adr_id, status, kind, severity}]}`). Each
+        /// finding flags a lifecycle issue: Proposed >30 days, Abandoned
+        /// without replacement, or Superseded without backlink.
+        #[arg(long)]
+        json: bool,
+    },
     /// Search ADRs by keyword
     Search {
         /// Search query
@@ -71,7 +78,7 @@ pub enum AdrAction {
 pub async fn run(action: AdrAction) -> anyhow::Result<()> {
     match action {
         AdrAction::List => list().await,
-        AdrAction::Status => status().await,
+        AdrAction::Status { json } => status(json).await,
         AdrAction::Search { query } => search(&query).await,
         AdrAction::Abandoned => abandoned().await,
         AdrAction::Review { adr_id, strict } => super::adr_review::run(adr_id, strict).await,
@@ -470,9 +477,47 @@ async fn list() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn status() -> anyhow::Result<()> {
+async fn status(json: bool) -> anyhow::Result<()> {
     let adr_dir = find_adr_dir().ok_or_else(|| anyhow::anyhow!("No docs/adrs/ directory found"))?;
     let adrs = collect_adrs(&adr_dir).await?;
+
+    if json {
+        // Emit findings shape consumed by the improver's `adr_lifecycle`
+        // detector. Anything in {proposed (>0 = always interesting), abandoned,
+        // superseded} surfaces as a finding; final triage (e.g. age cutoffs)
+        // is left to judge() so this command stays cheap and side-effect-free.
+        let mut findings = Vec::new();
+        for (path, content) in &adrs {
+            let s = parse_adr_status(content);
+            let lower = s.to_lowercase();
+            let kind = if lower.starts_with("proposed") {
+                Some("proposed")
+            } else if lower.starts_with("abandoned") {
+                Some("abandoned")
+            } else if lower.starts_with("superseded") {
+                Some("superseded")
+            } else if lower.starts_with("deprecated") {
+                Some("deprecated")
+            } else if lower == "unknown" {
+                Some("unparseable_status")
+            } else {
+                None
+            };
+            if let Some(k) = kind {
+                let filename = path.file_stem().and_then(|x| x.to_str()).unwrap_or("");
+                let adr_id = extract_adr_id(filename);
+                let severity = if k == "unparseable_status" || k == "abandoned" { "error" } else { "warning" };
+                findings.push(serde_json::json!({
+                    "adr_id": adr_id,
+                    "status": s,
+                    "kind": k,
+                    "severity": severity,
+                }));
+            }
+        }
+        println!("{}", serde_json::json!({"findings": findings}));
+        return Ok(());
+    }
 
     let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for (_, content) in &adrs {

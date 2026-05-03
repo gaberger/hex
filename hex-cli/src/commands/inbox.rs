@@ -18,6 +18,15 @@ pub enum InboxAction {
         /// Show all (including acknowledged)
         #[arg(long)]
         all: bool,
+        /// Only list unacknowledged notifications past their priority SLA
+        /// (P2 critical >5m, P1 warning >24h, P0 info >7d) — drift signal
+        /// for the improver `inbox_stale` detector.
+        #[arg(long)]
+        stale: bool,
+        /// Emit findings as JSON for the improver detector pipeline
+        /// (`{findings: [{id, kind, priority, age_minutes, sla_minutes}]}`).
+        #[arg(long)]
+        json: bool,
     },
     /// Send a notification to an agent or project
     Notify {
@@ -47,7 +56,7 @@ pub enum InboxAction {
 
 pub async fn run(action: InboxAction) -> anyhow::Result<()> {
     match action {
-        InboxAction::List { min_priority, all } => list(min_priority, all).await,
+        InboxAction::List { min_priority, all, stale, json } => list(min_priority, all, stale, json).await,
         InboxAction::Notify { agent, project, priority, kind, payload } => {
             notify(agent, project, priority, &kind, &payload).await
         }
@@ -56,7 +65,7 @@ pub async fn run(action: InboxAction) -> anyhow::Result<()> {
     }
 }
 
-async fn list(min_priority: u8, all: bool) -> anyhow::Result<()> {
+async fn list(min_priority: u8, all: bool, stale: bool, json: bool) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
@@ -68,10 +77,57 @@ async fn list(min_priority: u8, all: bool) -> anyhow::Result<()> {
     );
 
     let resp = nexus.get(&path).await?;
-    let notifications = resp["notifications"]
+    let mut notifications = resp["notifications"]
         .as_array()
         .cloned()
         .unwrap_or_default();
+
+    // SLA per priority level. Stale = unacked AND age past SLA.
+    let sla_minutes = |priority: u64| -> u64 {
+        match priority {
+            2 => 5,        // critical: 5min
+            1 => 24 * 60,  // warning: 24h
+            _ => 7 * 24 * 60, // info: 7d
+        }
+    };
+    let age_minutes = |created: &str| -> u64 {
+        let Ok(dt) = chrono::DateTime::parse_from_rfc3339(created) else { return 0 };
+        let now = chrono::Utc::now();
+        ((now - dt.with_timezone(&chrono::Utc)).num_minutes().max(0)) as u64
+    };
+    if stale {
+        notifications.retain(|n| {
+            if n["acknowledgedAt"].as_str().is_some() { return false; }
+            let priority = n["priority"].as_u64().unwrap_or(0);
+            let created = n["createdAt"].as_str().unwrap_or("");
+            age_minutes(created) > sla_minutes(priority)
+        });
+    }
+
+    if json {
+        let findings: Vec<_> = notifications
+            .iter()
+            .filter(|n| n["acknowledgedAt"].as_str().is_none())
+            .map(|n| {
+                let priority = n["priority"].as_u64().unwrap_or(0);
+                let created = n["createdAt"].as_str().unwrap_or("");
+                let age = age_minutes(created);
+                let sla = sla_minutes(priority);
+                serde_json::json!({
+                    "id": n["id"].as_u64().unwrap_or(0),
+                    "kind": n["kind"].as_str().unwrap_or("-"),
+                    "priority": priority,
+                    "age_minutes": age,
+                    "sla_minutes": sla,
+                    "stale": age > sla,
+                    "severity": if priority >= 2 { "error" } else { "warning" },
+                })
+            })
+            .filter(|f| !stale || f["stale"].as_bool().unwrap_or(false))
+            .collect();
+        println!("{}", serde_json::json!({"findings": findings}));
+        return Ok(());
+    }
 
     if notifications.is_empty() {
         println!("{} Inbox empty", "\u{2b21}".dimmed());

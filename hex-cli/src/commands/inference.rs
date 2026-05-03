@@ -150,7 +150,13 @@ pub enum InferenceAction {
     /// Show inference cost attribution and provider statistics (ADR-2604052125)
     Stats,
     /// Show escalation rates per task-tier and model (P4.2 — escalation tracking)
-    EscalationReport,
+    EscalationReport {
+        /// Emit findings as JSON for the improver detector pipeline
+        /// (`{findings: [{tier, model, success, escalated, rate}]}`).
+        /// Findings are tier:model combos with escalation_rate > 0.5.
+        #[arg(long)]
+        json: bool,
+    },
     /// Query the inference q-report: per-model usage, latency, and 7-day trends
     QReport {
         /// Filter by inference tier (e.g. t1, t2, t2_5, t3)
@@ -265,7 +271,7 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
         InferenceAction::Watch { agent_id, daemon } => watch(agent_id, daemon).await,
         InferenceAction::Queue => queue_list().await,
         InferenceAction::Stats => inference_stats().await,
-        InferenceAction::EscalationReport => escalation_report().await,
+        InferenceAction::EscalationReport { json } => escalation_report(json).await,
         InferenceAction::QReport { tier, task_type, model, sort, limit, format, since, watch } => {
             q_report(tier, task_type, model, &sort, limit, &format, since, watch).await
         }
@@ -2510,7 +2516,7 @@ fn print_q_report_table(body: &serde_json::Value) {
 
 /// `hex inference escalation-report` — read escalation/success keys from HexFlo
 /// memory and print a table of escalation rates per task-tier and model (P4.2).
-async fn escalation_report() -> anyhow::Result<()> {
+async fn escalation_report(json: bool) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
@@ -2558,6 +2564,34 @@ async fn escalation_report() -> anyhow::Result<()> {
     let mut all_keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     all_keys.extend(escalations.keys().cloned());
     all_keys.extend(successes.keys().cloned());
+
+    if json {
+        let mut findings = Vec::new();
+        for key in &all_keys {
+            let esc_count = escalations.get(key).copied().unwrap_or(0);
+            let suc_count = successes.get(key).copied().unwrap_or(0);
+            let total = esc_count + suc_count;
+            let rate = if total > 0 { esc_count as f64 / total as f64 } else { 0.0 };
+            // Only escalation rates above the threshold are findings — the
+            // detector is for diagnosing tier mis-assignment, not for
+            // surfacing every (tier,model) pair the system has ever used.
+            if rate <= 0.5 {
+                continue;
+            }
+            let parts: Vec<&str> = key.splitn(2, ':').collect();
+            let (tier, model) = if parts.len() == 2 { (parts[0], parts[1]) } else { (key.as_str(), "unknown") };
+            findings.push(serde_json::json!({
+                "tier": tier,
+                "model": model,
+                "success": suc_count,
+                "escalated": esc_count,
+                "rate": rate,
+                "severity": "warning",
+            }));
+        }
+        println!("{}", serde_json::json!({"findings": findings}));
+        return Ok(());
+    }
 
     if all_keys.is_empty() {
         println!(

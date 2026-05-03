@@ -63,8 +63,15 @@ pub enum PlanAction {
     },
     /// Reconcile workplan step statuses against actual code (check done conditions)
     Reconcile {
-        /// Workplan filename (e.g. feat-fix-dev-pipeline.json)
-        file: String,
+        /// Workplan filename (e.g. feat-fix-dev-pipeline.json). Omit when
+        /// using --all.
+        #[arg(conflicts_with = "all")]
+        file: Option<String>,
+        /// Reconcile every docs/workplans/wp-*.json. Mutually exclusive with
+        /// a positional file. Used by the improver `reconcile_strict`
+        /// detector to scan the whole workplan corpus in one shot.
+        #[arg(long, default_value_t = false)]
+        all: bool,
         /// Write confirmed-done statuses back to the workplan JSON
         #[arg(long, default_value_t = false)]
         update: bool,
@@ -88,6 +95,11 @@ pub enum PlanAction {
         /// Force-promote a task regardless of evidence (logs forced_by for audit)
         #[arg(long)]
         force: Option<String>,
+        /// Emit findings as JSON for the improver detector pipeline
+        /// (`{findings: [{workplan_id, task_id, kind, severity}]}`). Pairs
+        /// naturally with --all to scan every workplan's evidence drift.
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     /// Output the canonical workplan JSON schema
     Schema,
@@ -354,8 +366,13 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::History => show_execution_history().await,
         PlanAction::Report { id } => show_execution_report(&id).await,
         PlanAction::Schema => show_schema().await,
-        PlanAction::Reconcile { file, update, audit, strict, dry_run, why, force } => {
-            reconcile::run(&file, update, audit || strict, strict, dry_run, why.as_deref(), force.as_deref()).await
+        PlanAction::Reconcile { file, all, update, audit, strict, dry_run, why, force, json } => {
+            if all || json {
+                reconcile_all(strict, json).await
+            } else {
+                let file = file.ok_or_else(|| anyhow::anyhow!("specify a workplan file or use --all"))?;
+                reconcile::run(&file, update, audit || strict, strict, dry_run, why.as_deref(), force.as_deref()).await
+            }
         }
         PlanAction::Draft { prompt, background } => draft_plan(&prompt, background).await,
         PlanAction::Drafts { action } => drafts_dispatch(action).await,
@@ -1955,6 +1972,119 @@ fn slug_from_prompt(prompt: &str) -> String {
 /// Claude Code context so the agent can pick it up via /hex-feature-dev
 /// (or the user can approve/edit it manually).
 ///
+/// Scan every `docs/workplans/wp-*.json` for evidence drift and report
+/// divergences as findings. Used by the improver `reconcile_strict`
+/// detector. Read-only: never mutates workplan JSON. A finding is any
+/// task whose `status == "done"` (or "completed") yet either:
+///   - has no `evidence.commits` entries, OR
+///   - in strict mode, has commits but none reference the workplan_id
+///
+/// The check is deliberately cheap (no git interrogation) so the detector
+/// can run on every improver tick. Deeper evidence-validation belongs in
+/// `hex plan reconcile <file>` proper.
+async fn reconcile_all(strict: bool, json: bool) -> anyhow::Result<()> {
+    use std::path::PathBuf;
+
+    let wp_dir = PathBuf::from("docs/workplans");
+    if !wp_dir.is_dir() {
+        if json {
+            println!("{}", serde_json::json!({"findings": []}));
+        }
+        return Ok(());
+    }
+
+    let mut findings: Vec<serde_json::Value> = Vec::new();
+    for entry in std::fs::read_dir(&wp_dir)?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if !name.starts_with("wp-") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        let Ok(root): Result<serde_json::Value, _> = serde_json::from_str(&content) else { continue };
+
+        let workplan_id = root.get("id").and_then(|v| v.as_str()).unwrap_or(name).to_string();
+        let Some(phases) = root.get("phases").and_then(|v| v.as_array()) else { continue };
+        for phase in phases {
+            let Some(tasks) = phase.get("tasks").and_then(|v| v.as_array()) else { continue };
+            for task in tasks {
+                let task_id = task.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let status = task
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                if status != "done" && status != "completed" {
+                    continue;
+                }
+                let commits: Vec<&str> = task
+                    .get("evidence")
+                    .and_then(|e| e.get("commits"))
+                    .and_then(|c| c.as_array())
+                    .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
+
+                if commits.is_empty() {
+                    findings.push(serde_json::json!({
+                        "workplan_id": workplan_id,
+                        "task_id": task_id,
+                        "kind": "done_without_evidence",
+                        "severity": "error",
+                    }));
+                } else if strict {
+                    // Strict mode: at least one commit must reference workplan_id
+                    let workplan_referenced = commits
+                        .iter()
+                        .any(|sha| commit_message_contains(sha, &workplan_id).unwrap_or(false));
+                    if !workplan_referenced {
+                        findings.push(serde_json::json!({
+                            "workplan_id": workplan_id,
+                            "task_id": task_id,
+                            "kind": "evidence_missing_workplan_id",
+                            "severity": "warning",
+                            "commits": commits,
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::json!({"findings": findings}));
+    } else {
+        println!("Reconcile-all: {} divergence(s)", findings.len());
+        for f in &findings {
+            println!(
+                "  {} {} task={} kind={}",
+                f.get("severity").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("workplan_id").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("task_id").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("kind").and_then(|v| v.as_str()).unwrap_or(""),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Cheap check: does `git show -s --format=%B <sha>` contain `needle`?
+/// Returns `Ok(false)` rather than `Err` for failed git invocations so a
+/// transient git issue doesn't blow up the entire --all sweep.
+fn commit_message_contains(sha: &str, needle: &str) -> anyhow::Result<bool> {
+    let out = std::process::Command::new("git")
+        .args(["show", "-s", "--format=%B", sha])
+        .output();
+    let Ok(out) = out else { return Ok(false) };
+    if !out.status.success() {
+        return Ok(false);
+    }
+    let body = String::from_utf8_lossy(&out.stdout);
+    Ok(body.contains(needle))
+}
+
 /// This function deliberately does NOT spawn Claude subagents directly —
 /// that happens upstream in Claude Code when it reads the banner and
 /// notices the draft file. Keeping the spawn visible preserves the ADR
