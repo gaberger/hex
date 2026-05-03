@@ -1985,6 +1985,14 @@ fn slug_from_prompt(prompt: &str) -> String {
 async fn reconcile_all(strict: bool, json: bool) -> anyhow::Result<()> {
     use std::path::PathBuf;
 
+    // Evidence-schema cutoff: ADR-2604142200 (Reconcile must verify file
+    // evidence) was accepted 2026-04-14. Workplans whose first git commit
+    // predates that date can't reasonably be flagged for missing
+    // `evidence.commits` — the field didn't exist when their tasks were
+    // marked done. Skipping them turns ~514 raw task-findings into the
+    // ~30 that represent actual post-schema evidence drift.
+    const EVIDENCE_SCHEMA_EPOCH: i64 = 1744588800; // 2026-04-14T00:00:00Z
+
     let wp_dir = PathBuf::from("docs/workplans");
     if !wp_dir.is_dir() {
         if json {
@@ -2002,6 +2010,14 @@ async fn reconcile_all(strict: bool, json: bool) -> anyhow::Result<()> {
         let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
         if !name.starts_with("wp-") {
             continue;
+        }
+        // Pre-schema guard: skip workplans created before the evidence
+        // schema landed. file_first_commit_ts returns None for untracked
+        // files — those we still scan since we can't prove they're old.
+        if let Some(ts) = file_first_commit_ts(&path) {
+            if ts < EVIDENCE_SCHEMA_EPOCH {
+                continue;
+            }
         }
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
         let Ok(root): Result<serde_json::Value, _> = serde_json::from_str(&content) else { continue };
@@ -2068,6 +2084,28 @@ async fn reconcile_all(strict: bool, json: bool) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// First-commit Unix timestamp for a tracked file, or `None` when the
+/// file isn't in git (untracked, new file, etc.). Used by the pre-schema
+/// guard in reconcile_all so we don't flag workplans that pre-date the
+/// evidence schema for "missing evidence."
+fn file_first_commit_ts(path: &std::path::Path) -> Option<i64> {
+    let out = std::process::Command::new("git")
+        .args([
+            "log",
+            "--diff-filter=A",
+            "--format=%ct",
+            "--",
+            &path.to_string_lossy(),
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    stdout.trim().lines().last()?.parse().ok()
 }
 
 /// Cheap check: does `git show -s --format=%B <sha>` contain `needle`?

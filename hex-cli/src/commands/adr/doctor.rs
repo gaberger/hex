@@ -402,6 +402,33 @@ fn detect_id_format_mismatch(path: &Path, content: &str) -> Vec<Finding> {
     )]
 }
 
+/// True when `git log` can locate the file's first commit. Used to suppress
+/// the `missing required field: Date` finding for ADRs whose creation date
+/// is recoverable from git history — the most common pattern for the
+/// 50+ pre-Date-field-convention ADRs in this repo.
+fn file_has_git_history(path: &Path) -> bool {
+    let out = std::process::Command::new("git")
+        .args(["log", "-1", "--diff-filter=A", "--format=%H", "--", &path.to_string_lossy()])
+        .output();
+    matches!(out, Ok(o) if o.status.success() && !o.stdout.iter().all(|b| b.is_ascii_whitespace()))
+}
+
+/// Days since the file's first git commit. Returns None for untracked files
+/// so callers can fall back to "no age info available."
+fn file_git_age_days(path: &Path) -> Option<i64> {
+    let out = std::process::Command::new("git")
+        .args(["log", "--diff-filter=A", "--format=%ct", "--", &path.to_string_lossy()])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let ts: i64 = stdout.trim().lines().last()?.parse().ok()?;
+    let now = chrono::Utc::now().timestamp();
+    Some(((now - ts).max(0)) / 86400)
+}
+
 fn detect_missing_required_field(path: &Path, content: &str) -> Vec<Finding> {
     let adr_id = extract_filename_adr_id(path).unwrap_or_default();
     let mut findings = Vec::new();
@@ -414,12 +441,19 @@ fn detect_missing_required_field(path: &Path, content: &str) -> Vec<Finding> {
         ));
     }
     if !lenient_has_date_line(content) {
-        findings.push(finding(
-            adr_id.clone(),
-            path.to_path_buf(),
-            FindingKind::MissingRequiredField,
-            "missing required field: Date",
-        ));
+        // Suppress when git knows the file's first-commit date — the date
+        // IS in git, just not duplicated into the markdown frontmatter.
+        // Pre-Date-field-convention ADRs (ADR-001 onward) all hit this.
+        // Backfilling 60+ ADRs by hand to add a redundant field produces
+        // no operator value, so we treat git's record as authoritative.
+        if !file_has_git_history(path) {
+            findings.push(finding(
+                adr_id.clone(),
+                path.to_path_buf(),
+                FindingKind::MissingRequiredField,
+                "missing required field: Date",
+            ));
+        }
     }
     if !has_h1_title(content) {
         findings.push(finding(

@@ -477,15 +477,40 @@ async fn list() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Days since a file's first git commit. Returns `None` when the file
+/// isn't tracked or git isn't available — callers treat that as "no age
+/// info" (skip age-based filtering rather than risk false negatives).
+fn file_first_commit_age_days(path: &std::path::Path) -> Option<i64> {
+    let out = std::process::Command::new("git")
+        .args([
+            "log",
+            "--diff-filter=A",
+            "--format=%ct",
+            "--",
+            &path.to_string_lossy(),
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let ts: i64 = stdout.trim().lines().last()?.parse().ok()?;
+    let now = chrono::Utc::now().timestamp();
+    Some(((now - ts).max(0)) / 86400)
+}
+
 async fn status(json: bool) -> anyhow::Result<()> {
     let adr_dir = find_adr_dir().ok_or_else(|| anyhow::anyhow!("No docs/adrs/ directory found"))?;
     let adrs = collect_adrs(&adr_dir).await?;
 
     if json {
         // Emit findings shape consumed by the improver's `adr_lifecycle`
-        // detector. Anything in {proposed (>0 = always interesting), abandoned,
-        // superseded} surfaces as a finding; final triage (e.g. age cutoffs)
-        // is left to judge() so this command stays cheap and side-effect-free.
+        // detector. Filter out in-flight Proposed ADRs (<30 days since
+        // first commit) — those aren't drift, they're work in progress.
+        // Superseded/Deprecated/Abandoned/Unparseable always surface
+        // because their status doesn't decay with age.
+        const PROPOSED_STALE_DAYS: i64 = 30;
         let mut findings = Vec::new();
         for (path, content) in &adrs {
             let s = parse_adr_status(content);
@@ -504,6 +529,12 @@ async fn status(json: bool) -> anyhow::Result<()> {
                 None
             };
             if let Some(k) = kind {
+                if k == "proposed" {
+                    let age = file_first_commit_age_days(path).unwrap_or(0);
+                    if age < PROPOSED_STALE_DAYS {
+                        continue;
+                    }
+                }
                 let filename = path.file_stem().and_then(|x| x.to_str()).unwrap_or("");
                 let adr_id = extract_adr_id(filename);
                 let severity = if k == "unparseable_status" || k == "abandoned" { "error" } else { "warning" };
