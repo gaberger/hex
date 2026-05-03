@@ -97,36 +97,59 @@ pub fn derive(scored: &ScoredHypothesis) -> Option<Action> {
             reason: scored.reason.clone(),
         }),
 
-        // Lifecycle: stale Proposed → ADR review pass; Abandoned without
-        // replacement → operator. Don't auto-mutate ADR text.
+        // Lifecycle: read-only diagnostic actions — never mutate ADR text.
+        // - Proposed → enqueue `hex adr review <scope>` so the reviewer
+        //   agent surfaces what's missing for promotion (cheap + safe).
+        // - unparseable_status → enqueue `hex adr doctor --fix --strict`
+        //   which the existing AdrDoctor act path also produces; safe
+        //   because doctor's fix tier-A is non-destructive.
+        // - Abandoned/Superseded → operator decision (link replacement /
+        //   verify backlink); recommend only.
         Source::AdrLifecycle => {
-            let kind = h.evidence.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-            let recommendation = match kind {
-                "proposed" => format!(
-                    "stale Proposed {}: review and either Accept, supersede, or mark Abandoned",
-                    h.scope
-                ),
-                "abandoned" => format!(
-                    "Abandoned ADR {}: link a replacement or document why no replacement exists",
-                    h.scope
-                ),
-                "superseded" => format!(
-                    "Superseded ADR {}: ensure the successor is linked back",
-                    h.scope
-                ),
-                "unparseable_status" => format!(
-                    "ADR {} has unparseable Status — fix the markdown header",
-                    h.scope
-                ),
-                _ => format!("ADR {} lifecycle issue ({})", h.scope, kind),
-            };
-            Some(Action {
-                kind: ActionKind::Recommend,
-                priority,
-                payload: recommendation,
-                derived_from: h.id.clone(),
-                reason: scored.reason.clone(),
-            })
+            let kind_str = h.evidence.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            match kind_str {
+                "proposed" => Some(Action {
+                    kind: ActionKind::SchedShell,
+                    priority,
+                    payload: format!("hex adr review {}", h.scope),
+                    derived_from: h.id.clone(),
+                    reason: scored.reason.clone(),
+                }),
+                "unparseable_status" => Some(Action {
+                    kind: ActionKind::SchedShell,
+                    priority,
+                    payload: format!("hex adr doctor --fix --strict"),
+                    derived_from: h.id.clone(),
+                    reason: scored.reason.clone(),
+                }),
+                "abandoned" => Some(Action {
+                    kind: ActionKind::Recommend,
+                    priority,
+                    payload: format!(
+                        "Abandoned ADR {}: link a replacement or document why no replacement exists",
+                        h.scope
+                    ),
+                    derived_from: h.id.clone(),
+                    reason: scored.reason.clone(),
+                }),
+                "superseded" => Some(Action {
+                    kind: ActionKind::Recommend,
+                    priority,
+                    payload: format!(
+                        "Superseded ADR {}: ensure the successor is linked back",
+                        h.scope
+                    ),
+                    derived_from: h.id.clone(),
+                    reason: scored.reason.clone(),
+                }),
+                _ => Some(Action {
+                    kind: ActionKind::Recommend,
+                    priority,
+                    payload: format!("ADR {} lifecycle issue ({})", h.scope, kind_str),
+                    derived_from: h.id.clone(),
+                    reason: scored.reason.clone(),
+                }),
+            }
         }
 
         // Workplan evidence drift → enqueue an audit reconcile so the
