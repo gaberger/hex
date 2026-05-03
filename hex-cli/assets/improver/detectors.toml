@@ -69,6 +69,12 @@ cmd = "hex plan layers --json"
 description = "Canonical hexagonal-architecture layers missing in the current project (use cases, primary adapters, composition root). Surfaces structural gaps so target apps can be developed from skeleton to complete via improver-driven drafts."
 allow_nonzero_exit = true
 
+[[detector]]
+source = "build_readiness"
+cmd = "hex plan ready --json --no-tests"
+description = "Typecheck failures (tsc/cargo check) in the current project. Closes the gap between 'structural layers exist' and 'code in them actually compiles.' Run with --no-tests so the detector stays cheap on every tick; full test pass is a separate readiness signal."
+allow_nonzero_exit = true
+
 # ─── Aspirational detectors (gated until enum + CLI surface land) ────
 #
 # Entries below reference `Source` variants and CLI flags that haven't

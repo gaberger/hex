@@ -44,6 +44,12 @@ pub enum ActionKind {
     SchedShell,
     /// Enqueue as a sched workplan task. Payload is the workplan path.
     SchedWorkplan,
+    /// Drive `hex plan execute <workplan>` through the workplan task
+    /// dispatcher (which routes through tiered inference + spawns
+    /// hex-coder agents). Closes the gap between improver observation
+    /// and the dev-pipeline coder/tester/judge swarms. Payload is the
+    /// workplan path.
+    ExecuteWorkplan,
     /// Auto-draft a workplan stub capturing fix-the-loop work for a
     /// degradation that act() can't safely auto-resolve (broken detector
     /// surface, starved action template). Payload is the prompt string.
@@ -327,6 +333,39 @@ pub fn derive(scored: &ScoredHypothesis) -> Option<Action> {
             });
         }
 
+        // BuildReadiness: typecheck or tests are failing. Auto-draft a
+        // workplan capturing the errors so a downstream coder swarm can
+        // fix them. Critical companion to LayerCoverage — without this,
+        // the layer detector credits "structural existence" as success
+        // even when the code in those layers doesn't compile.
+        Source::BuildReadiness => {
+            let gate = h
+                .evidence
+                .get("gate")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let preview = h
+                .evidence
+                .get("errors_preview")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let language = h
+                .evidence
+                .get("language")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            return Some(Action {
+                kind: ActionKind::DraftWorkplan,
+                priority,
+                payload: format!(
+                    "Fix {} `{}` failures in this {} project. Compiler/test output:\n\n{}\n\nWork should resolve each error in turn, re-run the gate after each fix, and target zero violations before completion. Tier T2 (codegen) for straightforward type errors; T2.5 (complex reasoning) for cross-adapter or interface-redesign issues.",
+                    language, gate, language, preview
+                ),
+                derived_from: h.id.clone(),
+                reason: scored.reason.clone(),
+            });
+        }
+
         // Punch-list items: each unrouted gap recommends the operator
         // route it (task id, draft path, or out-of-scope tag).
         Source::PunchList => {
@@ -404,6 +443,22 @@ pub async fn act(
                     }
                 }
                 ActionKind::SchedWorkplan => {
+                    if let Err(e) = crate::commands::sched::enqueue_brain_task_pub(
+                        "workplan",
+                        &action.payload,
+                    )
+                    .await
+                    {
+                        eprintln!("  ✗ enqueue failed for {}: {}", action.derived_from, e);
+                    }
+                }
+                ActionKind::ExecuteWorkplan => {
+                    // Same plumbing as SchedWorkplan — both go through the
+                    // brain-task `workplan` kind dispatcher in nexus, which
+                    // routes through tiered inference + spawns hex-coder
+                    // agents. Distinct ActionKind preserved so judge() and
+                    // learn() can see "this was a code-generation action"
+                    // separately from a metadata reconcile.
                     if let Err(e) = crate::commands::sched::enqueue_brain_task_pub(
                         "workplan",
                         &action.payload,

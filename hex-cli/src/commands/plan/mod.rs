@@ -159,6 +159,21 @@ pub enum PlanAction {
         #[arg(long)]
         json: bool,
     },
+    /// Build-readiness probe — runs the project's typecheck (tsc/cargo
+    /// check) and tests, surfacing failures as findings. Closes the gap
+    /// between "structural layers exist" (hex plan layers) and "the code
+    /// actually compiles + tests pass." Critical for the improver's
+    /// ability to credit code-generation actions: structural existence ≠
+    /// functional correctness.
+    Ready {
+        /// Emit findings as JSON for the improver detector pipeline.
+        #[arg(long)]
+        json: bool,
+        /// Skip running tests (typecheck only). Faster — useful when the
+        /// detector runs on every daemon tick.
+        #[arg(long)]
+        no_tests: bool,
+    },
 }
 
 /// Subcommands for `hex plan drafts` — manage auto-generated draft workplans.
@@ -402,7 +417,124 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::Lint { file, all } => lint::run(file.as_deref(), all).await,
         PlanAction::Integrity { json } => integrity_check(json).await,
         PlanAction::Layers { json } => layers_check(json).await,
+        PlanAction::Ready { json, no_tests } => ready_check(json, no_tests).await,
     }
+}
+
+/// Build-readiness probe. Runs the project's typecheck command (npx tsc
+/// --noEmit for TypeScript, cargo check for Rust) and optionally the
+/// project's test suite, emitting one finding per failed gate.
+///
+/// Findings are intentionally coarse-grained: typecheck either passes or
+/// fails as a whole (with stderr captured for the prompt). Per-error
+/// breakdown belongs in the IDE / language-server, not in a homeostasis
+/// signal. The detector's job is "are we ready to ship," not "what's
+/// every error."
+async fn ready_check(json: bool, no_tests: bool) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let is_ts = cwd.join("package.json").exists();
+    let is_rust = cwd.join("Cargo.toml").exists();
+
+    let mut findings: Vec<serde_json::Value> = Vec::new();
+
+    if is_ts {
+        // Typecheck via npx tsc --noEmit
+        let out = std::process::Command::new("npx")
+            .args(["tsc", "--noEmit"])
+            .current_dir(&cwd)
+            .output();
+        match out {
+            Ok(o) if !o.status.success() => {
+                let stderr = String::from_utf8_lossy(&o.stderr).into_owned();
+                let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+                let combined = if stderr.trim().is_empty() { stdout } else { stderr };
+                let preview: String = combined.lines().take(20).collect::<Vec<_>>().join("\n");
+                findings.push(serde_json::json!({
+                    "gate": "typecheck",
+                    "kind": "typecheck_failed",
+                    "severity": "error",
+                    "language": "typescript",
+                    "errors_preview": preview,
+                }));
+            }
+            Ok(_) => {} // pass
+            Err(e) => {
+                findings.push(serde_json::json!({
+                    "gate": "typecheck",
+                    "kind": "typecheck_unavailable",
+                    "severity": "warning",
+                    "detail": e.to_string(),
+                }));
+            }
+        }
+
+        if !no_tests {
+            // Run npm test if a "test" script is defined
+            let pkg = cwd.join("package.json");
+            let has_test_script = std::fs::read_to_string(&pkg)
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| v.get("scripts").cloned())
+                .and_then(|s| s.get("test").cloned())
+                .is_some();
+            if has_test_script {
+                let out = std::process::Command::new("npm")
+                    .args(["test", "--silent"])
+                    .current_dir(&cwd)
+                    .output();
+                if let Ok(o) = out {
+                    if !o.status.success() {
+                        let combined = format!(
+                            "{}\n{}",
+                            String::from_utf8_lossy(&o.stdout),
+                            String::from_utf8_lossy(&o.stderr)
+                        );
+                        let preview: String =
+                            combined.lines().take(30).collect::<Vec<_>>().join("\n");
+                        findings.push(serde_json::json!({
+                            "gate": "tests",
+                            "kind": "tests_failed",
+                            "severity": "error",
+                            "language": "typescript",
+                            "errors_preview": preview,
+                        }));
+                    }
+                }
+            }
+        }
+    } else if is_rust {
+        let out = std::process::Command::new("cargo")
+            .args(["check", "--quiet"])
+            .current_dir(&cwd)
+            .output();
+        if let Ok(o) = out {
+            if !o.status.success() {
+                let stderr = String::from_utf8_lossy(&o.stderr).into_owned();
+                let preview: String = stderr.lines().take(20).collect::<Vec<_>>().join("\n");
+                findings.push(serde_json::json!({
+                    "gate": "typecheck",
+                    "kind": "typecheck_failed",
+                    "severity": "error",
+                    "language": "rust",
+                    "errors_preview": preview,
+                }));
+            }
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::json!({"findings": findings}));
+    } else {
+        println!("Build readiness: {} gate(s) failing", findings.len());
+        for f in &findings {
+            println!(
+                "  ✗ {} ({})",
+                f.get("gate").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("kind").and_then(|v| v.as_str()).unwrap_or("")
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Hexagonal-architecture layer-coverage scan. Each canonical layer that

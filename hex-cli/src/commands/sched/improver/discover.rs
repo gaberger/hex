@@ -52,6 +52,13 @@ pub enum Source {
     /// adapters, composition root). Surfaces structural gaps so the
     /// improver can propose drafts that close them.
     LayerCoverage,
+    /// Build-readiness detector: typecheck or test-suite failures in
+    /// the current project. Closes the gap between "structural layers
+    /// exist" (LayerCoverage) and "the code in those layers actually
+    /// compiles + tests pass." Without this, LayerCoverage:DraftWorkplan
+    /// can credit +1.0 for adding broken code (the layer dir exists, so
+    /// the missing_layer hypothesis clears, even though typecheck fails).
+    BuildReadiness,
 }
 
 impl Source {
@@ -69,6 +76,7 @@ impl Source {
             QStarvation,
             WorkplanIntegrity,
             LayerCoverage,
+            BuildReadiness,
         ]
     }
 }
@@ -307,6 +315,7 @@ fn extract_scope(finding: &Value, source: Source) -> String {
         Source::QStarvation => &["template", "scope"],
         Source::WorkplanIntegrity => &["workplan_id", "scope"],
         Source::LayerCoverage => &["layer", "scope"],
+        Source::BuildReadiness => &["gate", "scope"],
     };
     for key in candidates {
         if let Some(s) = finding.get(*key).and_then(|v| v.as_str()) {

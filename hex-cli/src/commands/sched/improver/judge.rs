@@ -89,6 +89,14 @@ pub fn score(h: &Hypothesis) -> (u32, String) {
         Severity::Info => 10,
     };
     let source_mod: u32 = match h.source {
+        // BuildReadiness findings flag broken builds — code is supposed
+        // to compile and doesn't. Highest weight among real findings
+        // (above WorkplanIntegrity 35) because a broken build blocks
+        // every downstream signal: tests can't run, agents can't dispatch,
+        // operator can't ship. Critically also dominates LayerCoverage so
+        // that "the code in those layers compiles" beats "more layers
+        // exist" in ranking.
+        Source::BuildReadiness => 38,
         // LayerCoverage findings flag missing canonical architecture
         // layers — significant structural work to add. Score lower than
         // active drift sources (active drift has someone using broken
