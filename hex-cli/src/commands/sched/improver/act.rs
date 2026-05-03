@@ -497,9 +497,14 @@ pub async fn act(
                     }
                 }
                 ActionKind::DraftWorkplan => {
-                    // Skip if a draft already exists for this hypothesis
-                    // — the same degradation shouldn't produce N drafts.
-                    if drafted.contains_key(&action.derived_from) {
+                    // Drafting itself dedups (same degradation → one draft),
+                    // but the inbox notify must fire even on a dedup hit:
+                    // the build is still red, the operator still needs to
+                    // know, and one inbox entry per failure-recurrence is
+                    // the explicit "fail through" signal we want.
+                    let existing_path = drafted.get(&action.derived_from).cloned();
+                    if let Some(path_str) = existing_path {
+                        notify_inbox_for_action(ranked, action, &path_str).await;
                         continue;
                     }
                     match crate::commands::plan::draft_plan_silent(&action.payload).await {
@@ -507,6 +512,7 @@ pub async fn act(
                             let path_str = path.display().to_string();
                             drafted.insert(action.derived_from.clone(), path_str.clone());
                             println!("  ✓ drafted: {}", path_str);
+                            notify_inbox_for_action(ranked, action, &path_str).await;
                         }
                         Err(e) => {
                             eprintln!("  ✗ draft failed for {}: {}", action.derived_from, e);
@@ -534,6 +540,124 @@ pub async fn act(
     }
 
     Ok(actions)
+}
+
+/// Best-effort inbox notification for high-signal drafts.
+///
+/// We notify on:
+/// - `detector_health` hypotheses — broken detectors are the loop's
+///   silent-failure mode; without a notification they sit invisible
+///   in `docs/workplans/drafts/` until the operator runs `hex plan
+///   drafts list`.
+/// - `BuildReadiness` hypotheses — the build is broken (typecheck or
+///   tests). Same rationale: a green-CI illusion is worse than a noisy
+///   inbox.
+///
+/// Failures here are logged but never propagated — a flaky nexus
+/// shouldn't break the act phase.
+async fn notify_inbox_for_action(
+    ranked: &[ScoredHypothesis],
+    action: &Action,
+    draft_path: &str,
+) {
+    let Some(scored) = ranked
+        .iter()
+        .find(|s| s.hypothesis.id == action.derived_from)
+    else {
+        return;
+    };
+    let h = &scored.hypothesis;
+    let is_detector_health = h.evidence.get("detector_health").is_some();
+    let is_build_readiness = matches!(h.source, Source::BuildReadiness);
+    if !is_detector_health && !is_build_readiness {
+        return;
+    }
+
+    let (kind, summary) = if is_detector_health {
+        let cmd = h
+            .evidence
+            .get("cmd")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(unknown)");
+        (
+            "detector_health",
+            format!(
+                "improver detector `{:?}` is silent-failing (cmd: {}). draft: {}",
+                h.source, cmd, draft_path
+            ),
+        )
+    } else {
+        let gate = h
+            .evidence
+            .get("gate")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        (
+            "build_readiness",
+            format!(
+                "build is failing (gate={}, score={}). draft: {}",
+                gate, scored.score, draft_path
+            ),
+        )
+    };
+
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    if nexus.ensure_running().await.is_err() {
+        return;
+    }
+    let project_id = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "default".to_string());
+
+    // Try the inbox API first (operator inbox if an agent is registered).
+    let inbox_body = serde_json::json!({
+        "priority": 2,
+        "kind": kind,
+        "payload": summary,
+        "project_id": project_id,
+    });
+    let inbox_ok = nexus
+        .post("/api/hexflo/inbox/notify", &inbox_body)
+        .await
+        .is_ok();
+
+    // Always also emit a `loop_notification` event so the failure is
+    // visible in `hex sched watch`-style streams even when the daemon
+    // has no registered agent (HexFlo inbox is auth-gated, /api/events
+    // is not). This is the load-bearing "fail through to the user"
+    // signal — silent inbox 401s used to swallow it entirely.
+    let port = std::env::var("HEX_NEXUS_PORT")
+        .unwrap_or_else(|_| "5555".to_string())
+        .parse::<u16>()
+        .unwrap_or(5555);
+    let event_url = format!("http://127.0.0.1:{}/api/events", port);
+    let session_id = std::env::var("CLAUDE_SESSION_ID")
+        .unwrap_or_else(|_| format!("sched-daemon-{}", std::process::id()));
+    let event_body = serde_json::json!({
+        "session_id": session_id,
+        "event_type": "loop_notification",
+        "input_json": serde_json::to_string(&serde_json::json!({
+            "priority": 2,
+            "kind": kind,
+            "summary": summary,
+            "draft": draft_path,
+            "inbox_ok": inbox_ok,
+            "source": format!("{:?}", h.source),
+            "score": scored.score,
+        })).unwrap_or_default(),
+    });
+    let _ = reqwest::Client::new()
+        .post(&event_url)
+        .json(&event_body)
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await;
+
+    println!(
+        "  ⬡ loop notify [{}] inbox={} draft={}",
+        kind, inbox_ok, draft_path
+    );
 }
 
 #[cfg(test)]

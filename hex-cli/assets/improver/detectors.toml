@@ -71,8 +71,8 @@ allow_nonzero_exit = true
 
 [[detector]]
 source = "build_readiness"
-cmd = "hex plan ready --json --no-tests"
-description = "Typecheck failures (tsc/cargo check) in the current project. Closes the gap between 'structural layers exist' and 'code in them actually compiles.' Run with --no-tests so the detector stays cheap on every tick; full test pass is a separate readiness signal."
+cmd = "hex plan ready --json"
+description = "Typecheck AND test-suite failures in the current project. Closes the gap between 'structural layers exist' and 'code in them actually works.' Tests are included so failing test runs (vitest/cargo test) surface as findings — a green typecheck with red tests is exactly the silent-failure mode this loop must catch. Cost: one `npm test` / `cargo test` per tick; if your test suite is too slow for every-tick polling, gate it via `cmd = ... --no-tests` and add a separate longer-period detector."
 allow_nonzero_exit = true
 
 [[detector]]

@@ -2811,6 +2811,41 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                 .ok()
                 .and_then(|r| crate::commands::sched::improver::discover::discover(r).ok());
 
+            // Visibility: emit an `improver_tick` event so `hex sched watch`
+            // shows what the loop is finding, not just brain_tick heartbeats.
+            // Without this, operators see only adr_doctor/brain_tick and
+            // assume the improver is dead even when it's running.
+            if let Some(ref hs) = hyps {
+                let by_source: std::collections::HashMap<String, usize> = hs
+                    .iter()
+                    .fold(std::collections::HashMap::new(), |mut m, h| {
+                        *m.entry(format!("{:?}", h.source)).or_insert(0) += 1;
+                        m
+                    });
+                let port = std::env::var("HEX_NEXUS_PORT")
+                    .unwrap_or_else(|_| "5555".to_string())
+                    .parse::<u16>()
+                    .unwrap_or(5555);
+                let event_url = format!("http://127.0.0.1:{}/api/events", port);
+                let session_id = std::env::var("CLAUDE_SESSION_ID")
+                    .unwrap_or_else(|_| format!("sched-daemon-{}", std::process::id()));
+                let body = serde_json::json!({
+                    "session_id": session_id,
+                    "event_type": "improver_tick",
+                    "duration_ms": 0_i64,
+                    "input_json": serde_json::to_string(&serde_json::json!({
+                        "total": hs.len(),
+                        "by_source": by_source,
+                    })).unwrap_or_default(),
+                });
+                let _ = reqwest::Client::new()
+                    .post(&event_url)
+                    .json(&body)
+                    .timeout(Duration::from_secs(2))
+                    .send()
+                    .await;
+            }
+
             // Step 1: learn (consumes snapshot if present)
             if snap_path.exists() {
                 if let Some(ref hs) = hyps {
@@ -2824,13 +2859,20 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
 
             // Step 2: auto-act (only when no snapshot pending — don't
             // pile new actions on top of unobserved ones).
+            //
+            // Previously gated to every 6th tick (every 3min at 30s
+            // intervals) — too slow for an interactive feedback loop on a
+            // failing build. The score≥80 + top-1 throttle still bounds
+            // blast radius to one high-confidence action per tick.
+            // AUTO_ACT_EVERY_N_TICKS retained as a safety knob: if a tick
+            // is ever flagged as "skip" (e.g. expensive sweep), the modulo
+            // still fires every Nth tick.
             let snap_path_now_exists = snap_path.exists();
             let tick_modulo = state.tick_count % AUTO_ACT_EVERY_N_TICKS;
-            if !snap_path_now_exists && tick_modulo == 0 {
+            let _ = tick_modulo;
+            if !snap_path_now_exists {
                 if let Some(ref hs) = hyps {
                     let ranked = crate::commands::sched::improver::judge::rank(hs);
-                    // Only auto-act on score >=80 (high confidence) and only
-                    // top 1 — small budget per tick to bound queue impact.
                     if let Some(top) = ranked.first() {
                         if top.score >= 80 {
                             match crate::commands::sched::improver::act::act(&ranked, 1, true).await {
@@ -2840,6 +2882,30 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                                             "  ⬡ improver auto-act: {} (priority {}, score {})",
                                             a.derived_from, a.priority, top.score
                                         );
+                                        // Visible event so watchers see the action land.
+                                        let port = std::env::var("HEX_NEXUS_PORT")
+                                            .unwrap_or_else(|_| "5555".to_string())
+                                            .parse::<u16>()
+                                            .unwrap_or(5555);
+                                        let event_url = format!("http://127.0.0.1:{}/api/events", port);
+                                        let session_id = std::env::var("CLAUDE_SESSION_ID")
+                                            .unwrap_or_else(|_| format!("sched-daemon-{}", std::process::id()));
+                                        let body = serde_json::json!({
+                                            "session_id": session_id,
+                                            "event_type": "improver_act",
+                                            "input_json": serde_json::to_string(&serde_json::json!({
+                                                "derived_from": a.derived_from,
+                                                "priority": a.priority,
+                                                "score": top.score,
+                                                "kind": format!("{:?}", a.kind),
+                                            })).unwrap_or_default(),
+                                        });
+                                        let _ = reqwest::Client::new()
+                                            .post(&event_url)
+                                            .json(&body)
+                                            .timeout(Duration::from_secs(2))
+                                            .send()
+                                            .await;
                                     }
                                 }
                                 Err(e) => eprintln!("  {} improver auto-act: {}", "✗".red(), e),
