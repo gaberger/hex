@@ -8,7 +8,9 @@
 //! lets a human preview what the autonomous loop would propose, with either
 //! a single sweep (`--once`) or polling at the daemon's cadence.
 
+pub mod act;
 pub mod discover;
+pub mod judge;
 
 use std::time::Duration;
 
@@ -39,6 +41,28 @@ pub enum ImproverAction {
         #[arg(long, default_value_t = DEFAULT_INTERVAL_SECS)]
         interval: u64,
     },
+    /// Run discover() then rank hypotheses by impact (ADR-2604271100 P3).
+    /// Outputs the ranked list with score + reason. Read-only.
+    Judge {
+        /// Emit ranked output as JSON instead of a table.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run the full discover → judge → act pipeline. Maps top-N ranked
+    /// hypotheses to concrete actions (sched tasks or operator
+    /// recommendations). Defaults to dry-run; pass `--apply` to actually
+    /// enqueue the auto-mappable actions (priority-tagged per score).
+    Act {
+        /// Number of top-ranked hypotheses to act on. 0 = all.
+        #[arg(long, default_value_t = 5)]
+        top: usize,
+        /// Actually enqueue sched tasks. Default is dry-run preview.
+        #[arg(long)]
+        apply: bool,
+        /// Emit actions as JSON instead of a table.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub async fn run(action: ImproverAction) -> Result<()> {
@@ -46,7 +70,65 @@ pub async fn run(action: ImproverAction) -> Result<()> {
         ImproverAction::Discover { once, json, interval } => {
             run_discover(once, json, interval).await
         }
+        ImproverAction::Judge { json } => run_judge(json).await,
+        ImproverAction::Act { top, apply, json } => run_act(top, apply, json).await,
     }
+}
+
+async fn run_judge(json: bool) -> Result<()> {
+    let repo = std::env::current_dir().context("resolve repo root for judge")?;
+    let hypotheses = discover::discover(&repo)?;
+    let ranked = judge::rank(&hypotheses);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&ranked)?);
+    } else {
+        let rows: Vec<Vec<String>> = ranked
+            .iter()
+            .map(|s| {
+                vec![
+                    s.score.to_string(),
+                    format!("{:?}", s.hypothesis.source),
+                    format!("{:?}", s.hypothesis.severity).to_lowercase(),
+                    truncate(&s.hypothesis.scope, 36),
+                    truncate(&s.reason, 40),
+                ]
+            })
+            .collect();
+        println!(
+            "{}",
+            pretty_table(&["SCORE", "SOURCE", "SEVERITY", "SCOPE", "REASON"], &rows)
+        );
+    }
+    Ok(())
+}
+
+async fn run_act(top: usize, apply: bool, json: bool) -> Result<()> {
+    let repo = std::env::current_dir().context("resolve repo root for act")?;
+    let hypotheses = discover::discover(&repo)?;
+    let ranked = judge::rank(&hypotheses);
+    let actions = act::act(&ranked, top, apply).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&actions)?);
+    } else {
+        let mode = if apply { "apply" } else { "dry-run" };
+        println!("Improver actions ({}, top {}):", mode, if top == 0 { ranked.len() } else { top });
+        let rows: Vec<Vec<String>> = actions
+            .iter()
+            .map(|a| {
+                vec![
+                    a.priority.to_string(),
+                    format!("{:?}", a.kind).to_lowercase(),
+                    truncate(&a.payload, 60),
+                    truncate(&a.derived_from, 22),
+                ]
+            })
+            .collect();
+        println!(
+            "{}",
+            pretty_table(&["PRI", "KIND", "PAYLOAD", "FROM"], &rows)
+        );
+    }
+    Ok(())
 }
 
 async fn run_discover(once: bool, json: bool, interval_secs: u64) -> Result<()> {
