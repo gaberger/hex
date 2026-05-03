@@ -75,6 +75,12 @@ cmd = "hex plan ready --json --no-tests"
 description = "Typecheck failures (tsc/cargo check) in the current project. Closes the gap between 'structural layers exist' and 'code in them actually compiles.' Run with --no-tests so the detector stays cheap on every tick; full test pass is a separate readiness signal."
 allow_nonzero_exit = true
 
+[[detector]]
+source = "test_coverage"
+cmd = "hex plan tests --json"
+description = "Source files lacking sibling test files (or test files with zero test cases). Drives a test-generation swarm: each finding becomes a draft for the tester agent to consume. Coverage gaps that operators wouldn't notice in a code review surface here."
+allow_nonzero_exit = true
+
 # ─── Aspirational detectors (gated until enum + CLI surface land) ────
 #
 # Entries below reference `Source` variants and CLI flags that haven't

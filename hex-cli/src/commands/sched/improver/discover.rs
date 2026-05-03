@@ -59,6 +59,12 @@ pub enum Source {
     /// can credit +1.0 for adding broken code (the layer dir exists, so
     /// the missing_layer hypothesis clears, even though typecheck fails).
     BuildReadiness,
+    /// Test-coverage detector: source files lacking sibling test files
+    /// (or test files with zero test cases). Surfaces uncovered code as
+    /// hypotheses so a tester swarm can generate test suites. Distinct
+    /// from BuildReadiness which checks "do existing tests pass" — this
+    /// one checks "do tests EXIST."
+    TestCoverage,
 }
 
 impl Source {
@@ -77,6 +83,7 @@ impl Source {
             WorkplanIntegrity,
             LayerCoverage,
             BuildReadiness,
+            TestCoverage,
         ]
     }
 }
@@ -316,6 +323,7 @@ fn extract_scope(finding: &Value, source: Source) -> String {
         Source::WorkplanIntegrity => &["workplan_id", "scope"],
         Source::LayerCoverage => &["layer", "scope"],
         Source::BuildReadiness => &["gate", "scope"],
+        Source::TestCoverage => &["source", "scope"],
     };
     for key in candidates {
         if let Some(s) = finding.get(*key).and_then(|v| v.as_str()) {

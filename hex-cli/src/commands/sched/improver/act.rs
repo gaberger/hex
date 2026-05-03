@@ -333,6 +333,34 @@ pub fn derive(scored: &ScoredHypothesis) -> Option<Action> {
             });
         }
 
+        // TestCoverage: a source file has no tests (or empty tests).
+        // Auto-draft a test-generation workplan that a tester swarm
+        // consumes. Prompt captures the source path + the expected
+        // test conventions (file naming, framework). The tester agent
+        // generates behavioral tests covering happy path + edge cases.
+        Source::TestCoverage => {
+            let source = h
+                .evidence
+                .get("source")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&h.scope);
+            let kind_str = h
+                .evidence
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            return Some(Action {
+                kind: ActionKind::DraftWorkplan,
+                priority,
+                payload: format!(
+                    "Generate tests for `{}` (currently {}). Use the project's existing test framework (vitest/jest for TS, cargo test for Rust). Cover: happy-path execution, input validation, error cases, and any state-transition rules visible in the source. Match the file-naming convention (sibling `<name>.test.<ext>`). Each test should assert observable behavior, not implementation details. Tier T2 (codegen) is appropriate.",
+                    source, kind_str
+                ),
+                derived_from: h.id.clone(),
+                reason: scored.reason.clone(),
+            });
+        }
+
         // BuildReadiness: typecheck or tests are failing. Auto-draft a
         // workplan capturing the errors so a downstream coder swarm can
         // fix them. Critical companion to LayerCoverage — without this,

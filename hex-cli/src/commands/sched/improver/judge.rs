@@ -97,6 +97,11 @@ pub fn score(h: &Hypothesis) -> (u32, String) {
         // that "the code in those layers compiles" beats "more layers
         // exist" in ranking.
         Source::BuildReadiness => 38,
+        // TestCoverage findings flag uncovered code — important quality
+        // work but not blocking the way build failures are. Score above
+        // LayerCoverage (an empty layer is a stub; an untested layer
+        // is potentially-broken code masquerading as working).
+        Source::TestCoverage => 16,
         // LayerCoverage findings flag missing canonical architecture
         // layers — significant structural work to add. Score lower than
         // active drift sources (active drift has someone using broken

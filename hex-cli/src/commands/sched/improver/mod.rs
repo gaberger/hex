@@ -374,6 +374,16 @@ async fn build_snapshot() -> Result<serde_json::Value> {
     if q_total_samples > 0 && q_mean_reward < 0.0 {
         score -= 10;
     }
+    // Absolute hypothesis-count penalty so adding findings can never
+    // raise the score. Without this, a new auto-actionable detector
+    // (TestCoverage adding 8 findings) lifts auto_share from 65% → 75%
+    // and the score *increases* by ~10 — paradoxical: more drift =
+    // higher score. Cap at -20 so it doesn't dominate small-count
+    // surfaces.
+    let total_hyps = hypotheses.len() as i32;
+    if total_hyps > 10 {
+        score -= ((total_hyps - 10).min(20)).max(0);
+    }
     let homeostasis = score.max(0).min(100);
 
     Ok(serde_json::json!({

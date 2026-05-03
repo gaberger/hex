@@ -174,6 +174,16 @@ pub enum PlanAction {
         #[arg(long)]
         no_tests: bool,
     },
+    /// Test-coverage scan — for each non-test source file, check that a
+    /// sibling *.test.* file exists with at least one test case. Each
+    /// uncovered file becomes a finding so the improver can propose
+    /// test-generation workplans that a tester swarm consumes.
+    Tests {
+        /// Emit findings as JSON for the improver detector pipeline
+        /// (`{findings: [{source, kind: "no_test_file"|"empty_test_file"}]}`).
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Subcommands for `hex plan drafts` — manage auto-generated draft workplans.
@@ -418,7 +428,149 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::Integrity { json } => integrity_check(json).await,
         PlanAction::Layers { json } => layers_check(json).await,
         PlanAction::Ready { json, no_tests } => ready_check(json, no_tests).await,
+        PlanAction::Tests { json } => tests_check(json).await,
     }
+}
+
+/// Test-coverage scan. Walks src/ for non-test source files and emits
+/// a finding when no sibling *.test.* exists or when the test file
+/// contains zero test cases. Skips:
+///   - port files (interfaces only — testing them tests nothing)
+///   - composition-root (integration-tested via end-to-end suites)
+///   - barrel files (`index.ts`, `mod.rs`)
+///
+/// The detector is per-file granular so a tester swarm can handle each
+/// gap independently; the improver's source-scope dedup collapses them
+/// to one hypothesis per source-file path.
+async fn tests_check(json: bool) -> anyhow::Result<()> {
+    use std::path::Path;
+
+    let cwd = std::env::current_dir()?;
+    let src_root = cwd.join("src");
+    if !src_root.is_dir() {
+        if json {
+            println!("{}", serde_json::json!({"findings": []}));
+        }
+        return Ok(());
+    }
+
+    let is_test_file = |p: &Path| -> bool {
+        let s = p.to_string_lossy();
+        s.contains(".test.") || s.contains(".spec.") || s.contains("/tests/") || s.contains("\\tests\\")
+    };
+    let is_skip = |p: &Path| -> bool {
+        let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        // Ports are interfaces; don't require tests. Match any path
+        // component called "ports" (regardless of leading/trailing
+        // slashes) — earlier `contains("/ports/")` check missed
+        // `src/core/ports/IOrderRepository.ts` whose parent is
+        // `src/core/ports` (no trailing /).
+        let in_ports = p
+            .components()
+            .any(|c| c.as_os_str().to_string_lossy() == "ports");
+        in_ports
+            || name == "index.ts"
+            || name == "mod.rs"
+            || name == "composition-root.ts"
+            || name == "composition_root.ts"
+    };
+
+    fn walk(root: &Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(root) else { return };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if p.file_name().and_then(|s| s.to_str()) == Some("node_modules") {
+                    continue;
+                }
+                walk(&p, out);
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    let mut all_files: Vec<std::path::PathBuf> = Vec::new();
+    walk(&src_root, &mut all_files);
+
+    // Count `it(...)` / `test(...)` calls regardless of leading
+    // whitespace (vitest/jest test files routinely indent under a
+    // `describe(...)` block). The earlier `\nit(` regex missed
+    // every test inside an indented block, falsely flagging files
+    // with hundreds of tests as "empty_test_file."
+    let test_count_in_file = |path: &Path| -> usize {
+        let Ok(content) = std::fs::read_to_string(path) else { return 0 };
+        let lines = content
+            .lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                t.starts_with("it(")
+                    || t.starts_with("it (")
+                    || t.starts_with("test(")
+                    || t.starts_with("test (")
+                    || t.starts_with("it.skip(")
+                    || t.starts_with("it.only(")
+                    || t.starts_with("test.skip(")
+                    || t.starts_with("test.only(")
+            })
+            .count();
+        lines + content.matches("#[test]").count()
+    };
+
+    let mut findings: Vec<serde_json::Value> = Vec::new();
+    for path in &all_files {
+        if is_test_file(path) || is_skip(path) {
+            continue;
+        }
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext != "ts" && ext != "tsx" && ext != "js" && ext != "rs" {
+            continue;
+        }
+        // Look for a sibling *.test.<ext> at same dir + stem
+        let parent = path.parent().unwrap_or(Path::new(""));
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let candidates = [
+            parent.join(format!("{}.test.{}", stem, ext)),
+            parent.join(format!("{}.spec.{}", stem, ext)),
+        ];
+        let test_path = candidates.iter().find(|p| p.is_file());
+        let rel = path.strip_prefix(&cwd).unwrap_or(path).to_string_lossy().to_string();
+
+        match test_path {
+            None => {
+                findings.push(serde_json::json!({
+                    "source": rel,
+                    "kind": "no_test_file",
+                    "severity": "warning",
+                    "scope": rel,
+                }));
+            }
+            Some(tp) => {
+                if test_count_in_file(tp) == 0 {
+                    findings.push(serde_json::json!({
+                        "source": rel,
+                        "test_file": tp.strip_prefix(&cwd).unwrap_or(tp).to_string_lossy().to_string(),
+                        "kind": "empty_test_file",
+                        "severity": "warning",
+                        "scope": rel,
+                    }));
+                }
+            }
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::json!({"findings": findings}));
+    } else {
+        println!("Test coverage: {} source file(s) without tests", findings.len());
+        for f in &findings {
+            println!(
+                "  ✗ {} ({})",
+                f.get("source").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("kind").and_then(|v| v.as_str()).unwrap_or(""),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Build-readiness probe. Runs the project's typecheck command (npx tsc
