@@ -2,9 +2,11 @@ pub mod adapter_generator;
 pub mod agent_runtime;
 pub mod brain;
 pub mod build;
+pub mod consolidation_memory;
 pub mod context_compressor;
 pub mod coordination;
 pub mod enforcement;
+pub mod experiment;
 pub mod file_system;
 // `inference` is a module directory: `inference.rs` declares the trait
 // surface and `inference/mock.rs` ships `MockInferencePort` for downstream

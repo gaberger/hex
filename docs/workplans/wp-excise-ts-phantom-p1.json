@@ -1,0 +1,63 @@
+{
+  "adr": "ADR-2604261800",
+  "created_at": "2026-04-26T20:00:00Z",
+  "created_by": "claude+adr-synthesis",
+  "description": "Phase 1 of ADR-2604261800. Produce a definitive audit of which package.json dependencies are actually used by scripts/ and which are vestigial. The audit document is the single output; it gates the package.json rewrite in P2 (separate workplan). No edits to package.json or CLAUDE.md in this phase — investigation only.",
+  "feature": "Excise Phantom TypeScript Library — Phase 1 (Scripts Dep Audit)",
+  "id": "wp-excise-ts-phantom-p1",
+  "phases": [
+    {
+      "description": "Investigation phase: enumerate every script, extract its imports/requires, cross-reference against package.json. Output is a single audit document; no source files change. Gate is presence of the non-empty audit at the canonical path.",
+      "gate": {
+        "blocking": true,
+        "command": "test -s docs/analysis/scripts-deps-audit.md && grep -q 'Recommended dependencies' docs/analysis/scripts-deps-audit.md",
+        "type": "test"
+      },
+      "id": "P1",
+      "name": "Audit scripts/ dependency usage",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Enumerate every executable file under scripts/ matching *.ts, *.cjs, *.mjs, *.js. For each file, extract: (1) all `import ... from '...'` statements, (2) all `require('...')` calls, (3) the shebang line if present, (4) any `bun run`, `npx`, or `node` invocations of other tooling that would imply a dep. Output a temporary inventory at /tmp/scripts-imports.txt with one line per (file, kind, target) tuple. Use ripgrep with capture groups; do not parse AST. Bare-module specifiers (no leading . or /) are deps; relative imports (./foo) are intra-script and ignored. Do NOT modify any files outside /tmp/.",
+          "files": [
+            "/tmp/scripts-imports.txt"
+          ],
+          "id": "P1.1",
+          "layer": "tooling",
+          "name": "Enumerate script imports into /tmp inventory",
+          "status": "pending"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1"
+          ],
+          "description": "Cross-reference /tmp/scripts-imports.txt against the dependencies + devDependencies blocks of package.json. Produce docs/analysis/scripts-deps-audit.md with the following sections (verbatim headings): (1) `# Scripts Dependency Audit` — date, branch, commit hash. (2) `## Inventory` — table of every script file, its imports (grouped by bare-module), and shebang. (3) `## Used dependencies` — bullet list of package.json deps that have at least one bare-module import in scripts/. Each bullet cites the consuming file. (4) `## Unused dependencies` — bullet list of package.json deps with zero bare-module imports in scripts/. Each bullet flagged DROP. (5) `## Missing dependencies` — bullet list of bare-module imports that resolve to no package.json entry (would need adding, or imply a phantom). (6) `## Recommended dependencies` — the minimum set: union of used + missing, formatted as a JSON snippet ready to paste into package.json. (7) `## Open questions` — anything ambiguous (e.g. transitive needs, optional native modules). The doc is the contract for ADR-2604261800 P2.",
+          "files": [
+            "docs/analysis/scripts-deps-audit.md"
+          ],
+          "id": "P1.2",
+          "layer": "docs",
+          "name": "Write the audit report at canonical path",
+          "status": "pending"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.2"
+          ],
+          "description": "Sanity-check the audit by running each remaining bun script against the recommended dependency set in a scratch directory. For each script in `Used dependencies` consumers list: copy the script + a stub package.json containing only the recommended deps to /tmp/scripts-audit-check/, run `bun install` then `bun run --check <script>` (or `node --check` for .cjs) — capture exit code. Append a `## Verification` section to docs/analysis/scripts-deps-audit.md listing each script + pass/fail. If any script fails, file is updated with the missing dep added back to the recommended set. Do NOT modify the real package.json; the scratch directory is throwaway.",
+          "files": [
+            "docs/analysis/scripts-deps-audit.md"
+          ],
+          "id": "P1.3",
+          "layer": "verification",
+          "name": "Verify the recommended dep set against real scripts",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ]
+}

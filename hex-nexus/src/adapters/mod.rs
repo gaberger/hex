@@ -18,6 +18,8 @@ pub mod agent_lifecycle;
 pub mod inference_router;
 pub mod adr_review;
 pub mod events;
+pub mod in_memory_experiment;
+pub mod stash_experiment;
 
 #[cfg(test)]
 mod state_tests;
