@@ -38,7 +38,7 @@ const VALID_STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.Pending]: [OrderStatus.Confirmed, OrderStatus.Cancelled],
   [OrderStatus.Confirmed]: [OrderStatus.Preparing, OrderStatus.Cancelled],
   [OrderStatus.Preparing]: [OrderStatus.OutForDelivery, OrderStatus.Cancelled],
-  [OrderStatus.OutForDelivery]: [OrderStatus.Delivered, OrderStatus.Cancelled],
+  [OrderStatus.OutForDelivery]: [OrderStatus.Delivered],
   [OrderStatus.Delivered]: [],
   [OrderStatus.Cancelled]: []
 };
@@ -93,11 +93,16 @@ export function canTransitionTo(currentStatus: OrderStatus, newStatus: OrderStat
   return allowedTransitions.includes(newStatus);
 }
 
+export class InvalidStatusTransitionError extends Error {
+  constructor(public readonly from: OrderStatus, public readonly to: OrderStatus) {
+    super(`Invalid status transition from ${from} to ${to}`);
+    this.name = 'InvalidStatusTransitionError';
+  }
+}
+
 export function transitionStatus(order: Order, newStatus: OrderStatus): Order {
   if (!canTransitionTo(order.status, newStatus)) {
-    throw new Error(
-      `Invalid status transition from ${order.status} to ${newStatus}`
-    );
+    throw new InvalidStatusTransitionError(order.status, newStatus);
   }
 
   return {

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   createOrder,
   transitionStatus,
@@ -9,14 +9,13 @@ import {
   type CustomerId,
   type RestaurantId,
   type OrderItem,
-  type Money,
 } from './Order.js';
 import { OrderStatus } from './OrderStatus.js';
 
 describe('Order Domain', () => {
-  const mockOrderId: OrderId = { value: 'order-123' };
-  const mockCustomerId: CustomerId = { value: 'customer-456' };
-  const mockRestaurantId: RestaurantId = { value: 'restaurant-789' };
+  const mockOrderId: OrderId = 'order-123';
+  const mockCustomerId: CustomerId = 'customer-456';
+  const mockRestaurantId: RestaurantId = 'restaurant-789';
 
   const createMockItem = (
     id: string,
@@ -31,18 +30,24 @@ describe('Order Domain', () => {
     quantity,
   });
 
+  const makeOrder = (items: OrderItem[]): Order =>
+    createOrder({
+      orderId: mockOrderId,
+      customerId: mockCustomerId,
+      restaurantId: mockRestaurantId,
+      items,
+    });
+
   describe('createOrder', () => {
     it('should create a valid order with correct properties', () => {
       const items: OrderItem[] = [
         createMockItem('item-1', 'Burger', 10.5, 2),
         createMockItem('item-2', 'Fries', 3.5, 1),
       ];
-
-      const order = createOrder(mockOrderId, mockCustomerId, mockRestaurantId, items);
-
-      expect(order.orderId).toEqual(mockOrderId);
-      expect(order.customerId).toEqual(mockCustomerId);
-      expect(order.restaurantId).toEqual(mockRestaurantId);
+      const order = makeOrder(items);
+      expect(order.orderId).toBe(mockOrderId);
+      expect(order.customerId).toBe(mockCustomerId);
+      expect(order.restaurantId).toBe(mockRestaurantId);
       expect(order.items).toEqual(items);
       expect(order.status).toBe(OrderStatus.Pending);
       expect(order.createdAt).toBeInstanceOf(Date);
@@ -50,228 +55,165 @@ describe('Order Domain', () => {
       expect(order.createdAt.getTime()).toBe(order.updatedAt.getTime());
     });
 
-    it('should calculate totalAmount correctly for single item', () => {
-      const items: OrderItem[] = [createMockItem('item-1', 'Pizza', 15.99, 1)];
-
-      const order = createOrder(mockOrderId, mockCustomerId, mockRestaurantId, items);
-
+    it('single item totalAmount', () => {
+      const order = makeOrder([createMockItem('i', 'Pizza', 15.99, 1)]);
       expect(order.totalAmount).toEqual({ amount: 15.99, currency: 'USD' });
     });
 
-    it('should calculate totalAmount correctly for multiple items', () => {
-      const items: OrderItem[] = [
-        createMockItem('item-1', 'Burger', 10.5, 2), // 21.0
-        createMockItem('item-2', 'Fries', 3.5, 1), // 3.5
-        createMockItem('item-3', 'Soda', 2.0, 3), // 6.0
-      ];
-
-      const order = createOrder(mockOrderId, mockCustomerId, mockRestaurantId, items);
-
+    it('multi-item totalAmount', () => {
+      const order = makeOrder([
+        createMockItem('a', 'Burger', 10.5, 2),
+        createMockItem('b', 'Fries', 3.5, 1),
+        createMockItem('c', 'Soda', 2.0, 3),
+      ]);
       expect(order.totalAmount).toEqual({ amount: 30.5, currency: 'USD' });
     });
 
-    it('should calculate totalAmount with quantity multiplier', () => {
-      const items: OrderItem[] = [createMockItem('item-1', 'Taco', 4.25, 5)];
-
-      const order = createOrder(mockOrderId, mockCustomerId, mockRestaurantId, items);
-
+    it('quantity multiplier', () => {
+      const order = makeOrder([createMockItem('a', 'Taco', 4.25, 5)]);
       expect(order.totalAmount).toEqual({ amount: 21.25, currency: 'USD' });
     });
 
-    it('should throw error when creating order with no items', () => {
-      expect(() => createOrder(mockOrderId, mockCustomerId, mockRestaurantId, [])).toThrow(
-        'Order must have at least one item'
-      );
+    it('rejects empty items', () => {
+      expect(() => makeOrder([])).toThrow('Order must have at least one item');
     });
 
-    it('should throw error when items have different currencies', () => {
-      const items: OrderItem[] = [
-        createMockItem('item-1', 'Burger', 10.5, 1, 'USD'),
-        createMockItem('item-2', 'Fries', 3.5, 1, 'EUR'),
-      ];
-
-      expect(() => createOrder(mockOrderId, mockCustomerId, mockRestaurantId, items)).toThrow(
-        'All items must have the same currency'
-      );
+    it('rejects mixed currencies', () => {
+      expect(() =>
+        makeOrder([
+          createMockItem('a', 'Burger', 10.5, 1, 'USD'),
+          createMockItem('b', 'Fries', 3.5, 1, 'EUR'),
+        ])
+      ).toThrow('All items must have the same currency');
     });
 
-    it('should handle non-USD currency', () => {
-      const items: OrderItem[] = [
-        createMockItem('item-1', 'Pasta', 12.0, 2, 'EUR'),
-        createMockItem('item-2', 'Wine', 8.0, 1, 'EUR'),
-      ];
-
-      const order = createOrder(mockOrderId, mockCustomerId, mockRestaurantId, items);
-
+    it('non-USD currency', () => {
+      const order = makeOrder([
+        createMockItem('a', 'Pasta', 12.0, 2, 'EUR'),
+        createMockItem('b', 'Wine', 8.0, 1, 'EUR'),
+      ]);
       expect(order.totalAmount).toEqual({ amount: 32.0, currency: 'EUR' });
     });
 
-    it('should handle zero-amount items', () => {
-      const items: OrderItem[] = [
-        createMockItem('item-1', 'Free Sample', 0, 1),
-        createMockItem('item-2', 'Burger', 10.5, 1),
-      ];
-
-      const order = createOrder(mockOrderId, mockCustomerId, mockRestaurantId, items);
-
+    it('zero-amount items', () => {
+      const order = makeOrder([
+        createMockItem('a', 'Free', 0, 1),
+        createMockItem('b', 'Burger', 10.5, 1),
+      ]);
       expect(order.totalAmount).toEqual({ amount: 10.5, currency: 'USD' });
     });
   });
 
   describe('Status Transitions', () => {
     let baseOrder: Order;
-
     beforeEach(() => {
-      const items: OrderItem[] = [createMockItem('item-1', 'Burger', 10.5, 1)];
-      baseOrder = createOrder(mockOrderId, mockCustomerId, mockRestaurantId, items);
+      baseOrder = makeOrder([createMockItem('a', 'Burger', 10.5, 1)]);
     });
 
     describe('canTransitionTo', () => {
-      it('should allow Pending → Confirmed transition', () => {
+      it('Pending → Confirmed', () => {
         expect(canTransitionTo(OrderStatus.Pending, OrderStatus.Confirmed)).toBe(true);
       });
-
-      it('should allow Pending → Cancelled transition', () => {
+      it('Pending → Cancelled', () => {
         expect(canTransitionTo(OrderStatus.Pending, OrderStatus.Cancelled)).toBe(true);
       });
-
-      it('should allow Confirmed → Preparing transition', () => {
+      it('Confirmed → Preparing', () => {
         expect(canTransitionTo(OrderStatus.Confirmed, OrderStatus.Preparing)).toBe(true);
       });
-
-      it('should allow Confirmed → Cancelled transition', () => {
+      it('Confirmed → Cancelled', () => {
         expect(canTransitionTo(OrderStatus.Confirmed, OrderStatus.Cancelled)).toBe(true);
       });
-
-      it('should allow Preparing → OutForDelivery transition', () => {
+      it('Preparing → OutForDelivery', () => {
         expect(canTransitionTo(OrderStatus.Preparing, OrderStatus.OutForDelivery)).toBe(true);
       });
-
-      it('should allow Preparing → Cancelled transition', () => {
+      it('Preparing → Cancelled', () => {
         expect(canTransitionTo(OrderStatus.Preparing, OrderStatus.Cancelled)).toBe(true);
       });
-
-      it('should allow OutForDelivery → Delivered transition', () => {
+      it('OutForDelivery → Delivered', () => {
         expect(canTransitionTo(OrderStatus.OutForDelivery, OrderStatus.Delivered)).toBe(true);
       });
-
-      it('should not allow Pending → Preparing transition', () => {
+      it('blocks Pending → Preparing', () => {
         expect(canTransitionTo(OrderStatus.Pending, OrderStatus.Preparing)).toBe(false);
       });
-
-      it('should not allow Pending → Delivered transition', () => {
+      it('blocks Pending → Delivered', () => {
         expect(canTransitionTo(OrderStatus.Pending, OrderStatus.Delivered)).toBe(false);
       });
-
-      it('should not allow Delivered → any transition', () => {
+      it('blocks Delivered → anything', () => {
         expect(canTransitionTo(OrderStatus.Delivered, OrderStatus.Pending)).toBe(false);
         expect(canTransitionTo(OrderStatus.Delivered, OrderStatus.Cancelled)).toBe(false);
       });
-
-      it('should not allow Cancelled → any transition', () => {
+      it('blocks Cancelled → anything', () => {
         expect(canTransitionTo(OrderStatus.Cancelled, OrderStatus.Pending)).toBe(false);
         expect(canTransitionTo(OrderStatus.Cancelled, OrderStatus.Confirmed)).toBe(false);
       });
-
-      it('should not allow OutForDelivery → Cancelled transition', () => {
+      it('blocks OutForDelivery → Cancelled', () => {
         expect(canTransitionTo(OrderStatus.OutForDelivery, OrderStatus.Cancelled)).toBe(false);
       });
     });
 
     describe('transitionStatus', () => {
-      it('should transition from Pending to Confirmed', () => {
+      it('Pending → Confirmed', () => {
         const updated = transitionStatus(baseOrder, OrderStatus.Confirmed);
-
         expect(updated.status).toBe(OrderStatus.Confirmed);
-        expect(updated.updatedAt.getTime()).toBeGreaterThanOrEqual(
-          baseOrder.updatedAt.getTime()
-        );
+        expect(updated.updatedAt.getTime()).toBeGreaterThanOrEqual(baseOrder.updatedAt.getTime());
       });
-
-      it('should transition through full happy path: Pending → Confirmed → Preparing', () => {
+      it('happy path: Pending → Confirmed → Preparing', () => {
         const confirmed = transitionStatus(baseOrder, OrderStatus.Confirmed);
-        expect(confirmed.status).toBe(OrderStatus.Confirmed);
-
         const preparing = transitionStatus(confirmed, OrderStatus.Preparing);
         expect(preparing.status).toBe(OrderStatus.Preparing);
       });
-
-      it('should transition through full delivery flow', () => {
+      it('full delivery flow', () => {
         let order = baseOrder;
         order = transitionStatus(order, OrderStatus.Confirmed);
         order = transitionStatus(order, OrderStatus.Preparing);
         order = transitionStatus(order, OrderStatus.OutForDelivery);
         order = transitionStatus(order, OrderStatus.Delivered);
-
         expect(order.status).toBe(OrderStatus.Delivered);
       });
-
-      it('should allow cancellation from Pending', () => {
-        const cancelled = transitionStatus(baseOrder, OrderStatus.Cancelled);
-        expect(cancelled.status).toBe(OrderStatus.Cancelled);
+      it('cancel from Pending', () => {
+        expect(transitionStatus(baseOrder, OrderStatus.Cancelled).status).toBe(OrderStatus.Cancelled);
       });
-
-      it('should allow cancellation from Confirmed', () => {
-        const confirmed = transitionStatus(baseOrder, OrderStatus.Confirmed);
-        const cancelled = transitionStatus(confirmed, OrderStatus.Cancelled);
-        expect(cancelled.status).toBe(OrderStatus.Cancelled);
+      it('cancel from Confirmed', () => {
+        const c = transitionStatus(baseOrder, OrderStatus.Confirmed);
+        expect(transitionStatus(c, OrderStatus.Cancelled).status).toBe(OrderStatus.Cancelled);
       });
-
-      it('should allow cancellation from Preparing', () => {
-        const confirmed = transitionStatus(baseOrder, OrderStatus.Confirmed);
-        const preparing = transitionStatus(confirmed, OrderStatus.Preparing);
-        const cancelled = transitionStatus(preparing, OrderStatus.Cancelled);
-        expect(cancelled.status).toBe(OrderStatus.Cancelled);
+      it('cancel from Preparing', () => {
+        let o = transitionStatus(baseOrder, OrderStatus.Confirmed);
+        o = transitionStatus(o, OrderStatus.Preparing);
+        expect(transitionStatus(o, OrderStatus.Cancelled).status).toBe(OrderStatus.Cancelled);
       });
-
-      it('should update updatedAt timestamp on transition', () => {
-        const beforeTransition = new Date();
-        const updated = transitionStatus(baseOrder, OrderStatus.Confirmed);
-
-        expect(updated.updatedAt.getTime()).toBeGreaterThanOrEqual(beforeTransition.getTime());
-        expect(updated.updatedAt.getTime()).toBeGreaterThanOrEqual(
-          baseOrder.updatedAt.getTime()
-        );
+      it('updates updatedAt', () => {
+        const before = new Date();
+        const u = transitionStatus(baseOrder, OrderStatus.Confirmed);
+        expect(u.updatedAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
       });
-
-      it('should preserve all other order properties during transition', () => {
-        const updated = transitionStatus(baseOrder, OrderStatus.Confirmed);
-
-        expect(updated.orderId).toEqual(baseOrder.orderId);
-        expect(updated.customerId).toEqual(baseOrder.customerId);
-        expect(updated.restaurantId).toEqual(baseOrder.restaurantId);
-        expect(updated.items).toEqual(baseOrder.items);
-        expect(updated.totalAmount).toEqual(baseOrder.totalAmount);
-        expect(updated.createdAt).toEqual(baseOrder.createdAt);
+      it('preserves other props', () => {
+        const u = transitionStatus(baseOrder, OrderStatus.Confirmed);
+        expect(u.orderId).toBe(baseOrder.orderId);
+        expect(u.customerId).toBe(baseOrder.customerId);
+        expect(u.restaurantId).toBe(baseOrder.restaurantId);
+        expect(u.items).toEqual(baseOrder.items);
+        expect(u.totalAmount).toEqual(baseOrder.totalAmount);
+        expect(u.createdAt).toEqual(baseOrder.createdAt);
       });
-
-      it('should throw InvalidStatusTransitionError for invalid transition', () => {
+      it('throws InvalidStatusTransitionError for invalid', () => {
         expect(() => transitionStatus(baseOrder, OrderStatus.Preparing)).toThrow(
           InvalidStatusTransitionError
         );
       });
-
-      it('should throw error when transitioning from Delivered', () => {
-        let order = baseOrder;
-        order = transitionStatus(order, OrderStatus.Confirmed);
-        order = transitionStatus(order, OrderStatus.Preparing);
-        order = transitionStatus(order, OrderStatus.OutForDelivery);
-        order = transitionStatus(order, OrderStatus.Delivered);
-
-        expect(() => transitionStatus(order, OrderStatus.Pending)).toThrow(
-          InvalidStatusTransitionError
-        );
+      it('throws from Delivered', () => {
+        let o = baseOrder;
+        o = transitionStatus(o, OrderStatus.Confirmed);
+        o = transitionStatus(o, OrderStatus.Preparing);
+        o = transitionStatus(o, OrderStatus.OutForDelivery);
+        o = transitionStatus(o, OrderStatus.Delivered);
+        expect(() => transitionStatus(o, OrderStatus.Pending)).toThrow(InvalidStatusTransitionError);
       });
-
-      it('should throw error when transitioning from Cancelled', () => {
-        const cancelled = transitionStatus(baseOrder, OrderStatus.Cancelled);
-
-        expect(() => transitionStatus(cancelled, OrderStatus.Confirmed)).toThrow(
-          InvalidStatusTransitionError
-        );
+      it('throws from Cancelled', () => {
+        const c = transitionStatus(baseOrder, OrderStatus.Cancelled);
+        expect(() => transitionStatus(c, OrderStatus.Confirmed)).toThrow(InvalidStatusTransitionError);
       });
-
-      it('should not allow skipping statuses', () => {
+      it('rejects skipping statuses', () => {
         expect(() => transitionStatus(baseOrder, OrderStatus.OutForDelivery)).toThrow(
           InvalidStatusTransitionError
         );
@@ -280,64 +222,43 @@ describe('Order Domain', () => {
   });
 
   describe('Validation Rules', () => {
-    it('should enforce minimum item quantity of 1', () => {
-      const items: OrderItem[] = [createMockItem('item-1', 'Burger', 10.5, 1)];
-      const order = createOrder(mockOrderId, mockCustomerId, mockRestaurantId, items);
-
-      expect(order.items[0].quantity).toBeGreaterThan(0);
+    it('min item quantity 1', () => {
+      const o = makeOrder([createMockItem('a', 'Burger', 10.5, 1)]);
+      expect(o.items[0].quantity).toBeGreaterThan(0);
     });
-
-    it('should handle large quantities', () => {
-      const items: OrderItem[] = [createMockItem('item-1', 'Napkin', 0.05, 100)];
-      const order = createOrder(mockOrderId, mockCustomerId, mockRestaurantId, items);
-
-      expect(order.totalAmount).toEqual({ amount: 5.0, currency: 'USD' });
+    it('large quantities', () => {
+      const o = makeOrder([createMockItem('a', 'Napkin', 0.05, 100)]);
+      expect(o.totalAmount).toEqual({ amount: 5.0, currency: 'USD' });
     });
-
-    it('should handle decimal prices correctly', () => {
-      const items: OrderItem[] = [
-        createMockItem('item-1', 'Coffee', 3.99, 1),
-        createMockItem('item-2', 'Muffin', 2.49, 1),
-      ];
-      const order = createOrder(mockOrderId, mockCustomerId, mockRestaurantId, items);
-
-      expect(order.totalAmount.amount).toBeCloseTo(6.48, 2);
+    it('decimal prices', () => {
+      const o = makeOrder([
+        createMockItem('a', 'Coffee', 3.99, 1),
+        createMockItem('b', 'Muffin', 2.49, 1),
+      ]);
+      expect(o.totalAmount.amount).toBeCloseTo(6.48, 2);
     });
-
-    it('should maintain order immutability', () => {
-      const items: OrderItem[] = [createMockItem('item-1', 'Burger', 10.5, 1)];
-      const order = createOrder(mockOrderId, mockCustomerId, mockRestaurantId, items);
-      const transitioned = transitionStatus(order, OrderStatus.Confirmed);
-
-      expect(order.status).toBe(OrderStatus.Pending);
-      expect(transitioned.status).toBe(OrderStatus.Confirmed);
-      expect(order).not.toBe(transitioned);
+    it('immutability', () => {
+      const o = makeOrder([createMockItem('a', 'Burger', 10.5, 1)]);
+      const t = transitionStatus(o, OrderStatus.Confirmed);
+      expect(o.status).toBe(OrderStatus.Pending);
+      expect(t.status).toBe(OrderStatus.Confirmed);
+      expect(o).not.toBe(t);
     });
   });
 
   describe('InvalidStatusTransitionError', () => {
-    it('should have correct error message', () => {
-      const error = new InvalidStatusTransitionError(
-        OrderStatus.Pending,
-        OrderStatus.Preparing
-      );
-
-      expect(error.message).toBe('Invalid status transition from Pending to Preparing');
-      expect(error.name).toBe('InvalidStatusTransitionError');
+    it('correct message', () => {
+      const e = new InvalidStatusTransitionError(OrderStatus.Pending, OrderStatus.Preparing);
+      expect(e.message).toBe('Invalid status transition from Pending to Preparing');
+      expect(e.name).toBe('InvalidStatusTransitionError');
     });
-
-    it('should be throwable and catchable', () => {
-      const items: OrderItem[] = [createMockItem('item-1', 'Burger', 10.5, 1)];
-      const order = createOrder(mockOrderId, mockCustomerId, mockRestaurantId, items);
-
+    it('throwable + catchable', () => {
+      const o = makeOrder([createMockItem('a', 'Burger', 10.5, 1)]);
       try {
-        transitionStatus(order, OrderStatus.Preparing);
-        expect.fail('Should have thrown error');
-      } catch (error) {
-        expect(error).toBeInstanceOf(InvalidStatusTransitionError);
-        if (error instanceof InvalidStatusTransitionError) {
-          expect(error.message).toContain('Invalid status transition');
-        }
+        transitionStatus(o, OrderStatus.Preparing);
+        expect.fail('should throw');
+      } catch (e) {
+        expect(e).toBeInstanceOf(InvalidStatusTransitionError);
       }
     });
   });
