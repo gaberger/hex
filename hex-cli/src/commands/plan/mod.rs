@@ -2123,6 +2123,38 @@ fn commit_message_contains(sha: &str, needle: &str) -> anyhow::Result<bool> {
     Ok(body.contains(needle))
 }
 
+/// Public wrapper for the improver act phase: draft a workplan stub from
+/// a prompt string. Returns the path of the created draft file so the
+/// caller can record it in dedup tracking. Bypasses `--background`
+/// chatter by always running silent.
+pub async fn draft_plan_silent(prompt: &str) -> anyhow::Result<std::path::PathBuf> {
+    use std::io::Write;
+    let trimmed = prompt.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("draft_plan_silent: empty prompt");
+    }
+    let dir = drafts_dir();
+    std::fs::create_dir_all(&dir)?;
+    let ts = chrono::Local::now().format("%y%m%d%H%M").to_string();
+    let slug = slug_from_prompt(trimmed);
+    let filename = format!("draft-{}-{}.json", ts, slug);
+    let path = dir.join(&filename);
+    let draft_id = format!("draft-{}-{}", ts, slug);
+    let draft = serde_json::json!({
+        "id": draft_id,
+        "kind": "workplan-draft",
+        "status": "pending-planner",
+        "adr": "ADR-2604271100",
+        "created_at": chrono::Local::now().to_rfc3339(),
+        "origin": "improver-auto-act",
+        "prompt": trimmed,
+        "notes": "Auto-drafted by the improver act phase from a detector_health or q_starvation hypothesis. The improver couldn't fix the underlying surface (broken CLI, ineffective action mapping) automatically, so it captured the work as a draft for the operator (or a downstream planner agent) to pick up."
+    });
+    let mut file = std::fs::File::create(&path)?;
+    file.write_all(serde_json::to_string_pretty(&draft)?.as_bytes())?;
+    Ok(path)
+}
+
 /// This function deliberately does NOT spawn Claude subagents directly —
 /// that happens upstream in Claude Code when it reads the banner and
 /// notices the draft file. Keeping the spawn visible preserves the ADR

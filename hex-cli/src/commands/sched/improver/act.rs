@@ -20,7 +20,7 @@
 //!
 //! [`judge::rank`]: super::judge::rank
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use super::discover::Source;
@@ -44,6 +44,15 @@ pub enum ActionKind {
     SchedShell,
     /// Enqueue as a sched workplan task. Payload is the workplan path.
     SchedWorkplan,
+    /// Auto-draft a workplan stub capturing fix-the-loop work for a
+    /// degradation that act() can't safely auto-resolve (broken detector
+    /// surface, starved action template). Payload is the prompt string.
+    /// Closes the homeostatic loop: the system surfaces drift in its own
+    /// machinery as actionable workplan drafts the operator can promote
+    /// via /hex-feature-dev. Dedup-tracked at
+    /// ~/.hex/improver/drafted-hypotheses.json so a recurring hypothesis
+    /// only produces one draft per scope.
+    DraftWorkplan,
     /// No safe auto-action — surface to operator. Payload is a human-
     /// readable recommendation.
     Recommend,
@@ -64,22 +73,28 @@ pub fn derive(scored: &ScoredHypothesis) -> Option<Action> {
         0
     };
 
-    // Detector_health hypotheses propose the operator fix the broken
-    // detector — there's no safe auto-action because we don't know which
-    // CLI flag is missing.
+    // Detector_health hypotheses auto-draft a workplan capturing the
+    // fix-the-detector-surface work. The improver can't add CLI flags
+    // by itself, but it can ensure the work is queued so it doesn't sit
+    // invisible. Dedup is handled by act() so the same broken detector
+    // doesn't generate a draft every tick.
     if h.evidence.get("detector_health").is_some() {
         let cmd = h
             .evidence
             .get("cmd")
             .and_then(|v| v.as_str())
             .unwrap_or("(unknown)");
+        let detail = h
+            .evidence
+            .get("detail")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         return Some(Action {
-            kind: ActionKind::Recommend,
+            kind: ActionKind::DraftWorkplan,
             priority,
             payload: format!(
-                "fix detector surface: `{}` doesn't produce parseable JSON; \
-                 add the missing CLI flag in hex-cli or update detectors.toml",
-                cmd
+                "Fix improver detector surface for source {:?}: command `{}` doesn't produce parseable JSON. Detail: {}. Either add the missing CLI flag in hex-cli, point detectors.toml at a working command, or relax the detector contract. The detector currently emits a synthetic detector_health hypothesis on every tick; resolving this clears that drift signal.",
+                h.source, cmd, detail
             ),
             derived_from: h.id.clone(),
             reason: scored.reason.clone(),
@@ -223,10 +238,12 @@ pub fn derive(scored: &ScoredHypothesis) -> Option<Action> {
         }
 
         // Q-starvation: a template ran ≥3 times with non-positive mean
-        // reward — the action runs but doesn't clear the hypothesis.
-        // Recommend operator review of act::derive for that mapping.
-        // Never auto-act because the broken mapping is, by definition,
-        // part of the act surface itself.
+        // reward. Auto-draft a workplan to fix the (source, kind)
+        // mapping in act::derive — the action runs but doesn't clear
+        // the target hypothesis, so the mapping itself is the bug.
+        // We can't auto-fix Rust source from here, but we can capture
+        // the work as a draft so it doesn't sit invisible in the Q-
+        // table waiting for operator attention.
         Source::QStarvation => {
             let template = h
                 .evidence
@@ -239,10 +256,10 @@ pub fn derive(scored: &ScoredHypothesis) -> Option<Action> {
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
             return Some(Action {
-                kind: ActionKind::Recommend,
+                kind: ActionKind::DraftWorkplan,
                 priority,
                 payload: format!(
-                    "improver action template `{}` mean reward {:+.2} after ≥3 samples — review act::derive for that (source, kind) mapping, the action runs but doesn't clear the target hypothesis",
+                    "Fix improver action mapping `{}`: mean reward {:+.2} after ≥3 samples — the action runs but doesn't clear the target hypothesis. Review act::derive for this (source, kind) and either pick a different action, refine the action's payload, or change ActionKind from auto-enqueueable to Recommend. Add a regression test that asserts the hypothesis count drops after the action runs.",
                     template, mean
                 ),
                 derived_from: h.id.clone(),
@@ -272,6 +289,30 @@ pub fn derive(scored: &ScoredHypothesis) -> Option<Action> {
     }
 }
 
+/// Drafted-hypothesis dedup file: maps hypothesis_id → draft path so the
+/// same broken detector or starved template doesn't generate a fresh
+/// draft every tick. The improver-loop's contract: one degradation =
+/// one open draft until the operator processes it.
+fn drafted_hypotheses_path() -> Result<std::path::PathBuf> {
+    let home = dirs::home_dir().context("resolve home dir")?;
+    let dir = home.join(".hex/improver");
+    std::fs::create_dir_all(&dir).ok();
+    Ok(dir.join("drafted-hypotheses.json"))
+}
+
+fn load_drafted_hypotheses() -> std::collections::HashMap<String, String> {
+    let Ok(path) = drafted_hypotheses_path() else { return Default::default() };
+    let Ok(content) = std::fs::read_to_string(&path) else { return Default::default() };
+    serde_json::from_str(&content).unwrap_or_default()
+}
+
+fn save_drafted_hypotheses(map: &std::collections::HashMap<String, String>) -> Result<()> {
+    let path = drafted_hypotheses_path()?;
+    let pretty = serde_json::to_string_pretty(map)?;
+    std::fs::write(&path, pretty).context("write drafted-hypotheses")?;
+    Ok(())
+}
+
 /// Top-level act() entry: derive actions for the top-N hypotheses (or all
 /// of them if `n == 0`), optionally enqueueing the SchedShell/SchedWorkplan
 /// actions when `apply == true`. Returns the action stream so callers can
@@ -289,6 +330,7 @@ pub async fn act(
         .collect();
 
     if apply {
+        let mut drafted = load_drafted_hypotheses();
         for action in &mut actions {
             match action.kind {
                 ActionKind::SchedShell => {
@@ -311,10 +353,30 @@ pub async fn act(
                         eprintln!("  ✗ enqueue failed for {}: {}", action.derived_from, e);
                     }
                 }
+                ActionKind::DraftWorkplan => {
+                    // Skip if a draft already exists for this hypothesis
+                    // — the same degradation shouldn't produce N drafts.
+                    if drafted.contains_key(&action.derived_from) {
+                        continue;
+                    }
+                    match crate::commands::plan::draft_plan_silent(&action.payload).await {
+                        Ok(path) => {
+                            let path_str = path.display().to_string();
+                            drafted.insert(action.derived_from.clone(), path_str.clone());
+                            println!("  ✓ drafted: {}", path_str);
+                        }
+                        Err(e) => {
+                            eprintln!("  ✗ draft failed for {}: {}", action.derived_from, e);
+                        }
+                    }
+                }
                 ActionKind::Recommend => {
                     // Recommendations don't enqueue — they print only.
                 }
             }
+        }
+        if let Err(e) = save_drafted_hypotheses(&drafted) {
+            eprintln!("  ! save drafted-hypotheses: {}", e);
         }
         // Snapshot for the learn phase. The learn pass on the next sweep
         // reads this and credits resolved hypotheses → action templates.
@@ -353,14 +415,19 @@ mod tests {
     }
 
     #[test]
-    fn detector_health_maps_to_recommendation_with_cmd_in_payload() {
+    fn detector_health_maps_to_draft_workplan_with_cmd_in_payload() {
+        // Updated contract (homeostatic loop closure): detector_health
+        // findings auto-draft a workplan capturing the fix-the-detector
+        // work, rather than emitting a Recommend that sits invisible.
+        // Dedup is handled at act() time so the same broken detector
+        // produces one draft, not one per tick.
         let s = scored(
             Source::GitDrift,
             Severity::Error,
             json!({"detector_health": "spawn_or_exit_error", "cmd": "hex worktree list --stale"}),
         );
         let action = derive(&s).expect("derive action");
-        assert!(matches!(action.kind, ActionKind::Recommend));
+        assert!(matches!(action.kind, ActionKind::DraftWorkplan));
         assert!(action.payload.contains("hex worktree list --stale"));
     }
 
