@@ -2671,11 +2671,21 @@ pub async fn draft_plan_silent(prompt: &str) -> anyhow::Result<std::path::PathBu
     }
     let dir = drafts_dir();
     std::fs::create_dir_all(&dir)?;
-    let ts = chrono::Local::now().format("%y%m%d%H%M").to_string();
+    let ts = chrono::Local::now().format("%y%m%d%H%M%S").to_string();
     let slug = slug_from_prompt(trimmed);
-    let filename = format!("draft-{}-{}.json", ts, slug);
+    // Hash the prompt to derive a 6-char unique suffix. Without this,
+    // multiple drafts created in the same second with similar prompts
+    // (5 TestCoverage findings → all slug "generate-tests-for-src-core")
+    // collide on filename and overwrite each other. Each call should
+    // produce a distinct file when the prompt is distinct.
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    trimmed.hash(&mut hasher);
+    let suffix = format!("{:06x}", (hasher.finish() & 0xFFFFFF));
+    let filename = format!("draft-{}-{}-{}.json", ts, slug, suffix);
     let path = dir.join(&filename);
-    let draft_id = format!("draft-{}-{}", ts, slug);
+    let draft_id = format!("draft-{}-{}-{}", ts, slug, suffix);
     let draft = serde_json::json!({
         "id": draft_id,
         "kind": "workplan-draft",
