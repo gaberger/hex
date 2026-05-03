@@ -89,6 +89,11 @@ pub fn score(h: &Hypothesis) -> (u32, String) {
         Severity::Info => 10,
     };
     let source_mod: u32 = match h.source {
+        // Q-starvation findings flag broken action mappings — like
+        // detector_health, they block the loop's ability to make
+        // progress. Sit just below detector_health (which gets a flat
+        // 100) so they always rank near the top.
+        Source::QStarvation => 30,
         // Inbox criticals are operator-attention work — outrank everything
         // architectural since a stuck P2 means the system is asking for help.
         Source::InboxStale => 25,

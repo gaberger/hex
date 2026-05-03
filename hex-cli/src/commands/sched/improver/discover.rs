@@ -36,6 +36,10 @@ pub enum Source {
     AdrLifecycle,
     EscalationReport,
     PunchList,
+    /// Meta-detector: templates in the improver Q-table that ran enough
+    /// times to be meaningful but didn't resolve their targets. Surfaces
+    /// broken (source, action_kind) mappings in act::derive.
+    QStarvation,
 }
 
 impl Source {
@@ -50,6 +54,7 @@ impl Source {
             AdrLifecycle,
             EscalationReport,
             PunchList,
+            QStarvation,
         ]
     }
 }
@@ -285,6 +290,7 @@ fn extract_scope(finding: &Value, source: Source) -> String {
         Source::EscalationReport => &["task_id", "agent_id", "scope", "id"],
         Source::PunchList => &["item_id", "scope", "id"],
         Source::GitDrift => &["path", "branch", "scope"],
+        Source::QStarvation => &["template", "scope"],
     };
     for key in candidates {
         if let Some(s) = finding.get(*key).and_then(|v| v.as_str()) {

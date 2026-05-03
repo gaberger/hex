@@ -199,6 +199,34 @@ pub fn derive(scored: &ScoredHypothesis) -> Option<Action> {
             })
         }
 
+        // Q-starvation: a template ran ≥3 times with non-positive mean
+        // reward — the action runs but doesn't clear the hypothesis.
+        // Recommend operator review of act::derive for that mapping.
+        // Never auto-act because the broken mapping is, by definition,
+        // part of the act surface itself.
+        Source::QStarvation => {
+            let template = h
+                .evidence
+                .get("template")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let mean = h
+                .evidence
+                .get("mean_reward")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            return Some(Action {
+                kind: ActionKind::Recommend,
+                priority,
+                payload: format!(
+                    "improver action template `{}` mean reward {:+.2} after ≥3 samples — review act::derive for that (source, kind) mapping, the action runs but doesn't clear the target hypothesis",
+                    template, mean
+                ),
+                derived_from: h.id.clone(),
+                reason: scored.reason.clone(),
+            });
+        }
+
         // Punch-list items: each unrouted gap recommends the operator
         // route it (task id, draft path, or out-of-scope tag).
         Source::PunchList => {

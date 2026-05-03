@@ -2770,6 +2770,41 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             }
         }
 
+        // ── Improver learn pass (ADR-2604271100 P5) ─────────────────────
+        // If a prior `act --apply` snapshot is on disk, run the learn
+        // pass: see which targeted hypotheses disappeared, credit the
+        // Q-table, then rotate the snapshot. Best-effort — failures
+        // log but don't abort the tick. The discover() call here is
+        // shared with the next improver run; not memoized because the
+        // hypothesis stream is deliberately recomputed each tick.
+        if let Ok(snap) = std::env::var("HOME").map(|h| std::path::PathBuf::from(h).join(".hex/improver/snapshot.json")) {
+            if snap.exists() {
+                match std::env::current_dir() {
+                    Ok(repo) => {
+                        match crate::commands::sched::improver::discover::discover(&repo) {
+                            Ok(hyps) => {
+                                match crate::commands::sched::improver::learn::observe_and_reward(&hyps) {
+                                    Ok(0) => {}
+                                    Ok(n) => {
+                                        println!("  ⬡ improver learn: credited {n} action(s)");
+                                    }
+                                    Err(e) => {
+                                        eprintln!("  {} improver learn: {}", "✗".red(), e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("  {} improver discover (for learn): {}", "✗".red(), e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("  {} improver learn (cwd): {}", "✗".red(), e);
+                    }
+                }
+            }
+        }
+
         // ── Analyze regression detection (ADR-2604241800) ────────────────
         // After each tick, check if a completed analyze task has more violations
         // than last time. Notify operator on regression.

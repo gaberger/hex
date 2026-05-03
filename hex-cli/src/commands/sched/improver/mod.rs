@@ -81,6 +81,12 @@ pub enum ImproverAction {
         /// Emit the table as JSON.
         #[arg(long)]
         json: bool,
+        /// Emit findings for action templates with non-positive mean
+        /// reward (action ran but didn't resolve its target). Used by
+        /// the improver `q_starvation` meta-detector to surface action
+        /// mappings that need review. Implies --json.
+        #[arg(long)]
+        starvation: bool,
     },
 }
 
@@ -92,7 +98,7 @@ pub async fn run(action: ImproverAction) -> Result<()> {
         ImproverAction::Judge { json } => run_judge(json).await,
         ImproverAction::Act { top, apply, json } => run_act(top, apply, json).await,
         ImproverAction::Learn { json } => run_learn(json).await,
-        ImproverAction::Scores { json } => run_scores(json).await,
+        ImproverAction::Scores { json, starvation } => run_scores(json, starvation).await,
     }
 }
 
@@ -116,8 +122,31 @@ async fn run_learn(json: bool) -> Result<()> {
     Ok(())
 }
 
-async fn run_scores(json: bool) -> Result<()> {
+async fn run_scores(json: bool, starvation: bool) -> Result<()> {
     let table = learn::load_q_table();
+    if starvation {
+        // Templates with ≥3 samples and non-positive mean — the action
+        // ran enough times to be statistically meaningful, but didn't
+        // resolve its target. Surface as findings for the q_starvation
+        // meta-detector so the improver flags its own broken mappings.
+        let findings: Vec<_> = table
+            .entries
+            .iter()
+            .filter(|(_, e)| e.samples >= 3 && e.mean() <= 0.0)
+            .map(|(k, e)| {
+                serde_json::json!({
+                    "template": k,
+                    "samples": e.samples,
+                    "mean_reward": e.mean(),
+                    "kind": "action_not_resolving",
+                    "severity": "warning",
+                    "remediation": "review the (source, action_kind) mapping in act::derive — the action runs but doesn't clear the hypothesis",
+                })
+            })
+            .collect();
+        println!("{}", serde_json::json!({"findings": findings}));
+        return Ok(());
+    }
     if json {
         println!("{}", serde_json::to_string_pretty(&table)?);
         return Ok(());

@@ -51,6 +51,12 @@ source = "punch_list"
 cmd = "hex insight punch-list --json"
 description = "Self-acknowledged punch-list items in agent transcripts"
 
+[[detector]]
+source = "q_starvation"
+cmd = "hex sched improver scores --starvation"
+description = "Improver action templates that ran enough times (≥3 samples) to be statistically meaningful but produced non-positive mean reward — i.e. the action runs but doesn't resolve its target hypothesis. Indicates a broken (source, action_kind) mapping in act::derive that needs operator review."
+allow_nonzero_exit = true
+
 # ─── Aspirational detectors (gated until enum + CLI surface land) ────
 #
 # Entries below reference `Source` variants and CLI flags that haven't

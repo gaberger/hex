@@ -727,7 +727,13 @@ async fn inference_stats() -> anyhow::Result<()> {
                 for p in providers {
                     let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("?");
                     let requests = p.get("requests").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let tokens = p.get("tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    // Server emits input_tokens/output_tokens separately; aggregate
+                    // for display. Reading a flat `tokens` field always returned
+                    // 0 because no such field exists on ProviderCostStats — the
+                    // wire shape diverged from this CLI without anyone noticing.
+                    let input = p.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let output = p.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let tokens = input + output;
                     let cost = p.get("cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     let is_free = p.get("is_free_tier").and_then(|v| v.as_bool()).unwrap_or(false);
                     let cost_str = if is_free {
