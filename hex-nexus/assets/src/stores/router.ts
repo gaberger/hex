@@ -20,6 +20,7 @@ export type Route =
   | { page: "fleet" }
   | { page: "research-lab" }
   | { page: "swaps" }
+  | { page: "brain-decisions" }
   | { page: "workplans" }
   // Project-scoped
   | { page: "project"; projectId: string }
@@ -230,6 +231,8 @@ function routeToHash(r: Route): string {
       return "#/research-lab";
     case "swaps":
       return "#/swaps";
+    case "brain-decisions":
+      return "#/decisions";
     case "project":
       return `#/project/${r.projectId}`;
     case "project-agents":
@@ -280,6 +283,7 @@ function hashToRoute(hash: string): Route {
   if (parts[0] === "fleet") return { page: "fleet" };
   if (parts[0] === "research-lab") return { page: "research-lab" };
   if (parts[0] === "swaps") return { page: "swaps" };
+  if (parts[0] === "decisions") return { page: "brain-decisions" };
 
   // Project-scoped routes: /project/:id/...
   if (parts[0] === "project" && parts[1]) {

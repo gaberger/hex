@@ -518,6 +518,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/{project_id}/commands", get(commands::list_commands))
         // Decisions (browser → hub → WS)
         .route("/api/{project_id}/decisions/{decision_id}", post(decisions::handle_decision))
+        // Brain-dashboard decisions aggregator (wp-brain-dashboard M1):
+        // GET → list everything that needs operator decision
+        // POST /api/decisions/{id} (resolve_decision) is registered later.
+        .route("/api/decisions", get(decisions::list_decisions))
         // ═══════════════════════════════════════════════════════════
         // DEPRECATED STATE ROUTES — migrate to SpacetimeDB subscriptions
         // These routes add X-Deprecated headers via deprecation_layer.

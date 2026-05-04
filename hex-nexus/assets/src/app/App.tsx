@@ -36,6 +36,7 @@ const InboxPanel = lazy(() => import('../components/inbox/InboxPanel'));
 const ResearchLab = lazy(() => import('../components/neural-lab/ResearchLab'));
 const SwapsView = lazy(() => import('../components/swaps/SwapsView'));
 const ActivityPanel = lazy(() => import('../components/views/ActivityPanel'));
+const BrainDecisions = lazy(() => import('../components/views/BrainDecisions'));
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
 
@@ -505,6 +506,25 @@ const App: Component = () => {
               </svg>
               <Show when={!sidebarCollapsed()}>Research Lab</Show>
             </button>
+            {/* Brain Decisions (wp-brain-dashboard M1) */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              classList={{
+                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "brain-decisions",
+                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "brain-decisions",
+                "justify-center px-0": sidebarCollapsed(),
+              }}
+              aria-label={sidebarCollapsed() ? "Decisions" : undefined}
+              aria-current={route().page === "brain-decisions" ? "page" : undefined}
+              onClick={() => { navigate({ page: "brain-decisions" }); setMobileDrawerOpen(false); }}
+            >
+              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                classList={{ "text-cyan-400": route().page === "brain-decisions" }}>
+                <path d="M9 11l3 3L22 4" />
+                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Decisions</Show>
+            </button>
             {/* Substrate Swaps (ADR-2604261500) */}
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
@@ -566,6 +586,7 @@ const App: Component = () => {
             <Match when={route().page === "fleet"}><ControlPlane /></Match>
             <Match when={route().page === "research-lab"}><ResearchLab /></Match>
             <Match when={route().page === "swaps"}><SwapsView /></Match>
+            <Match when={route().page === "brain-decisions"}><BrainDecisions /></Match>
           </Switch>
           {/* BottomBar -- inside center content so it doesn't span under sidebar */}
           <BottomBar />

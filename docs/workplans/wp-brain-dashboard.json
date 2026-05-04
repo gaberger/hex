@@ -1,0 +1,139 @@
+{
+  "id": "wp-brain-dashboard",
+  "title": "Brain Dashboard — decisions lane, kanban projection, agent chat",
+  "rationale": "Today the dashboard at hex-nexus :5555 is a status surface (Solid + Tailwind, real-time via STDB). The operator described the desired shape as a 'Brain' — three fused panes: TEAM rail (25 personas grouped into 5 departments), KANBAN center (work in flight by lane, plus a Decisions lane for human-in-loop bottlenecks), CHAT right (operator @-mentions a hex agent → spawns transient worker → streams response). All driven by the existing data substrate (HexFlo + STDB subs + REST). Three milestones, each shippable independently.",
+  "phases": [
+    {
+      "id": "M1",
+      "title": "Decisions lane — surface human-in-loop bottlenecks",
+      "rationale": "Smallest, highest-ROI milestone. Adds a /api/decisions aggregator that pulls together blocked tasks, ADRs aging in Status: Proposed, Gap A/B from `hex agent overview`, and adversary-disagreement findings. Adds one new view to the dashboard listing them with one-click resolve actions. No new chat, no kanban yet.",
+      "tasks": [
+        {
+          "id": "M1.1",
+          "title": "Backend: add GET /api/decisions aggregator that returns DecisionItem[]. Pulls blocked tasks (status:blocked OR blocked_reason set), Proposed ADRs (>24h since proposed_at), Gap B persona-bypass items, adversary-disagreement findings (when red+blue disagree on CRITICAL), reconcile demotions (when reconcile_strict flagged in last 24h). Each item: {id, kind, severity, title, link, age, suggested_action}.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/src/routes/decisions.rs",
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "evidence": [
+            "grep -q 'pub async fn list_decisions' hex-nexus/src/routes/decisions.rs",
+            "grep -q 'route.*api/decisions.*get' hex-nexus/src/routes/mod.rs",
+            "cargo check -p hex-nexus"
+          ]
+        },
+        {
+          "id": "M1.2",
+          "title": "Frontend: BrainDecisions.tsx view at hex-nexus/assets/src/components/views/. Solid component, fetches /api/decisions on mount + every 30s, groups by severity (CRITICAL > HIGH > MEDIUM), shows count badge in nav. One-click actions: 'resolve' (POST /api/decisions/{id} per ADR-2604131500), 'navigate' (deep-link to the artifact), 'dismiss' (operator says not actionable now).",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/assets/src/components/views/BrainDecisions.tsx",
+            "hex-nexus/assets/src/app/App.tsx"
+          ],
+          "evidence": [
+            "test -f hex-nexus/assets/src/components/views/BrainDecisions.tsx",
+            "grep -q 'BrainDecisions' hex-nexus/assets/src/app/App.tsx",
+            "grep -q \"page: 'brain-decisions'\" hex-nexus/assets/src/app/App.tsx"
+          ]
+        },
+        {
+          "id": "M1.3",
+          "title": "Rebuild + redistribute hex-nexus binary; restart daemon; hard-refresh browser. Verify /api/decisions returns JSON + Brain Decisions view renders + count badge updates when an item resolves.",
+          "status": "pending",
+          "strategy_hint": "script",
+          "files": [],
+          "evidence": [
+            "cargo build -p hex-nexus --release 2>&1 | grep -q 'Finished'",
+            "curl -s http://127.0.0.1:5555/api/decisions | jq -e '.items | type==\"array\"'"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "M2",
+      "title": "Kanban projection + team rail — visual reorganization",
+      "rationale": "No new state. Reprojects /api/swarms/active tasks into Backlog/Ready/Doing/Done lanes. Team rail groups /api/hex-agents instances by role-category (PRODUCT/ENGINEERING/QUALITY/DESIGN/OPS — the 5 departments derived from agent YAML `type` field). Drag-and-drop deferred (don't gate ship on it).",
+      "tasks": [
+        {
+          "id": "M2.1",
+          "title": "Backend: add GET /api/agent-roster that returns the 25 YAML personas grouped by category, with each persona's runtime instance status if registered. Single source for the team rail.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/src/routes/agents.rs",
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "evidence": [
+            "grep -q 'pub async fn agent_roster' hex-nexus/src/routes/agents.rs",
+            "grep -q 'api/agent-roster' hex-nexus/src/routes/mod.rs",
+            "cargo check -p hex-nexus"
+          ]
+        },
+        {
+          "id": "M2.2",
+          "title": "Frontend: BrainKanban.tsx — 4-lane projection of swarm tasks. Each card shows: title, assigned agent (color-coded from YAML), age, swarm. Click → swarm detail.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/assets/src/components/views/BrainKanban.tsx",
+            "hex-nexus/assets/src/app/App.tsx"
+          ],
+          "evidence": [
+            "test -f hex-nexus/assets/src/components/views/BrainKanban.tsx",
+            "grep -q 'BrainKanban' hex-nexus/assets/src/app/App.tsx"
+          ]
+        },
+        {
+          "id": "M2.3",
+          "title": "Frontend: TeamRail.tsx — left-side fixed component listing personas grouped by category, status dot per registered instance, click → filter kanban to that agent's tasks.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/assets/src/components/views/TeamRail.tsx"
+          ],
+          "evidence": [
+            "test -f hex-nexus/assets/src/components/views/TeamRail.tsx",
+            "grep -q 'TeamRail' hex-nexus/assets/src/components/views/BrainKanban.tsx"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "M3",
+      "title": "Chat — operator talks to agents through hex pipeline",
+      "rationale": "WebSocket relay. Operator types `@pm-agent classify ...` → frontend POSTs to /api/chat/dispatch which creates a swarm + task + assigns to a worker spawned for `pm-agent` (or routes to existing supervisor) → tokens stream back over WS. Result lands in hexflo memory at <task_id>:result, thread anchor preserved for navigation. Bidirectional: agent escalations (judge FAIL, pm-agent ESCALATE, priority-2 inbox) appear as inline cards in the active thread.",
+      "tasks": [
+        {
+          "id": "M3.1",
+          "title": "Backend: WS /api/chat/stream endpoint. Operator message in → spawn `hex agent worker --role <name> --once` for the @-mentioned agent → relay tokens from /api/inference/complete back to WS. Persist thread metadata (task_id, swarm_id, role) so chat history navigates back to artifacts.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/src/routes/chat.rs",
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "evidence": [
+            "grep -q 'pub async fn chat_stream' hex-nexus/src/routes/chat.rs",
+            "grep -q 'api/chat/stream' hex-nexus/src/routes/mod.rs",
+            "cargo check -p hex-nexus"
+          ]
+        },
+        {
+          "id": "M3.2",
+          "title": "Frontend: BrainChat.tsx — chat pane with @-mention autocomplete from /api/agent-roster, message bubbles, agent avatars (color from YAML), inline cards for priority-2 notifications, thread links to swarm/task artifacts.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/assets/src/components/views/BrainChat.tsx"
+          ],
+          "evidence": [
+            "test -f hex-nexus/assets/src/components/views/BrainChat.tsx",
+            "grep -q '@mention\\|@-mention\\|atMention' hex-nexus/assets/src/components/views/BrainChat.tsx"
+          ]
+        }
+      ]
+    }
+  ]
+}
