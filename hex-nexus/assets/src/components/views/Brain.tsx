@@ -242,6 +242,9 @@ const TeamRail: Component<{
   onlineNames: () => Set<string>;
   onSelect: (name: string) => void;
   selected: () => string | null;
+  /** Pool status keyed by role name. Drives the dot color + count badge. */
+  poolByRole: () => Map<string, PoolStatus>;
+  onScale: (role: string, count: number) => void;
 }> = (props) => {
   const grouped = createMemo(() => {
     const cats: Record<string, Persona[]> = { PRODUCT: [], ENGINEERING: [], QUALITY: [], DESIGN: [], OPS: [] };
@@ -249,11 +252,42 @@ const TeamRail: Component<{
     return cats;
   });
 
+  // Pool indicator: dot color + optional count badge.
+  //   red       → crash-loop (operator action needed)
+  //   green     → desired>0 and alive>=desired (healthy)
+  //   yellow⚡  → desired>0 but alive<desired (spawning/transient)
+  //   amber     → paused (operator-stopped)
+  //   green-soft→ online via @-mention dispatch (chat path, no pool)
+  //   gray      → idle placeholder (default — nothing to worry about)
+  const indicator = (p: Persona): { dot: string; badge: string | null; tip: string } => {
+    const pool = props.poolByRole().get(p.name);
+    const onlineFromChat = props.onlineNames().has(p.name);
+    if (pool?.inCrashLoop) {
+      return {
+        dot: "bg-red-500",
+        badge: `${pool.aliveCount}/${pool.desiredCount}`,
+        tip: `crash-loop · ${pool.exitedCount} exits — clear the flag in the supervisor panel`,
+      };
+    }
+    if (pool && pool.desiredCount > 0) {
+      const healthy = pool.aliveCount >= pool.desiredCount;
+      return {
+        dot: pool.paused ? "bg-yellow-500" : (healthy ? "bg-green-500" : "bg-yellow-400 animate-pulse"),
+        badge: `${pool.aliveCount}/${pool.desiredCount}`,
+        tip: pool.paused ? "paused" : (healthy ? "active" : "spawning"),
+      };
+    }
+    if (onlineFromChat) {
+      return { dot: "bg-green-600", badge: null, tip: "online (chat dispatch)" };
+    }
+    return { dot: "bg-gray-700", badge: null, tip: "idle — click + to scale up" };
+  };
+
   return (
     <aside class="w-72 border-r border-gray-800 bg-gray-950 overflow-y-auto px-3 py-4">
       <h2 class="text-[11px] font-bold uppercase tracking-wider text-gray-300 mb-3 px-1">Team</h2>
       <p class="text-[10px] text-gray-400 px-1 mb-3 leading-relaxed">
-        Click a persona to start a chat with them. Hover for one-line summary.
+        Click a persona to chat. Dot color = pool state · hover for <span class="text-cyan-400 font-mono">+</span>/<span class="text-cyan-400 font-mono">−</span>.
       </p>
       <For each={Object.entries(grouped())}>
         {([cat, members]) => (
@@ -264,27 +298,47 @@ const TeamRail: Component<{
             </div>
             <ul class="space-y-0.5">
               <For each={members}>
-                {(p) => (
-                  <li
-                    onClick={() => props.onSelect(p.name)}
-                    title={p.tagline}
-                    classList={{
-                      "flex items-start gap-2 px-2 py-1 rounded cursor-pointer text-xs transition": true,
-                      "bg-gray-900 ring-1 ring-cyan-700/50": props.selected() === p.name,
-                      "hover:bg-gray-900": props.selected() !== p.name,
-                    }}
-                  >
-                    <span
-                      class={`h-1.5 w-1.5 rounded-full flex-shrink-0 mt-1.5 ${
-                        props.onlineNames().has(p.name) ? "bg-green-500" : "bg-gray-700"
-                      }`}
-                    />
-                    <div class="flex-1 min-w-0">
-                      <div class={`${p.color} truncate`}>{p.name}</div>
-                      <div class="text-[10px] text-gray-400 truncate">{p.tagline}</div>
-                    </div>
-                  </li>
-                )}
+                {(p) => {
+                  const ind = createMemo(() => indicator(p));
+                  const pool = createMemo(() => props.poolByRole().get(p.name));
+                  return (
+                    <li
+                      onClick={() => props.onSelect(p.name)}
+                      title={`${p.tagline}\n${ind().tip}`}
+                      classList={{
+                        "group flex items-start gap-2 px-2 py-1 rounded cursor-pointer text-xs transition": true,
+                        "bg-gray-900 ring-1 ring-cyan-700/50": props.selected() === p.name,
+                        "hover:bg-gray-900": props.selected() !== p.name,
+                      }}
+                    >
+                      <span class={`h-1.5 w-1.5 rounded-full flex-shrink-0 mt-1.5 ${ind().dot}`} />
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-1.5">
+                          <span class={`${p.color} truncate`}>{p.name}</span>
+                          <Show when={ind().badge}>
+                            <span class="text-[9px] font-mono text-gray-400">{ind().badge}</span>
+                          </Show>
+                        </div>
+                        <div class="text-[10px] text-gray-400 truncate">{p.tagline}</div>
+                      </div>
+                      {/* Hover-reveal scale buttons. + always present; − only when desired>0. */}
+                      <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
+                        <Show when={pool() && pool()!.desiredCount > 0}>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); props.onScale(p.name, Math.max(0, pool()!.desiredCount - 1)); }}
+                            class="text-[11px] text-gray-400 hover:text-cyan-400 px-1"
+                            title="Scale down by 1"
+                          >−</button>
+                        </Show>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); props.onScale(p.name, (pool()?.desiredCount ?? 0) + 1); }}
+                          class="text-[11px] text-gray-400 hover:text-cyan-400 px-1"
+                          title="Scale up by 1"
+                        >+</button>
+                      </div>
+                    </li>
+                  );
+                }}
               </For>
             </ul>
           </div>
@@ -685,62 +739,162 @@ const SupervisorPanel: Component = () => {
   });
   onCleanup(() => { if (pollHandle !== undefined) window.clearInterval(pollHandle); });
 
-  const pause = async (id: string, paused: boolean) => {
+  const setPoolPaused = async (id: string, paused: boolean) => {
     try {
       await restClient.patch(`/api/pools/${id}/paused`, { paused });
       refresh();
     } catch { /* surface in toast later */ }
   };
 
+  // Scale a pool: read existing config, post back with new desired_count.
+  // Bumps to 1 when first activating from idle.
+  const scalePool = async (p: PoolStatus, count: number) => {
+    try {
+      await restClient.post("/api/pools", {
+        id: p.id,
+        role: p.role,
+        desired_count: count,
+        restart_strategy: p.restartStrategy,
+        max_restarts: 5,
+        max_restart_window_secs: 60,
+        paused: false,
+        owner_agent_id: "operator",
+      });
+      refresh();
+    } catch { /* surface in toast later */ }
+  };
+
+  // Split into three buckets: ACTIVE (desired>0 OR running), CRASH (any
+  // in_crash_loop), IDLE (the auto-seeded placeholders the operator hasn't
+  // touched). Each gets its own visual treatment so 24 idle placeholders
+  // don't drown out the 1-2 pools the operator actually cares about.
+  const active = createMemo(() => pools().filter((p) => p.desiredCount > 0 && !p.inCrashLoop));
+  const crashed = createMemo(() => pools().filter((p) => p.inCrashLoop));
+  const idle = createMemo(() => pools().filter((p) => p.desiredCount === 0 && !p.inCrashLoop));
+
   return (
     <section class="bg-gray-900/50 border border-gray-800 rounded-lg p-3 mb-4">
-      <div class="flex items-center justify-between mb-1 px-1">
+      <div class="flex items-center justify-between mb-2 px-1">
         <h3 class="text-xs font-bold uppercase tracking-wider text-gray-400">Worker Pools</h3>
-        <Show when={pools().some((p) => p.inCrashLoop)}>
-          <span class="text-[10px] font-bold text-red-400">⚠ crash loop</span>
-        </Show>
+        <span class="text-[10px] text-gray-400">
+          <span class="text-green-400">{active().length} active</span>
+          <span class="mx-1.5 text-gray-700">·</span>
+          <span class="text-red-400">{crashed().length} crash</span>
+          <span class="mx-1.5 text-gray-700">·</span>
+          <span class="text-gray-500">{idle().length} idle</span>
+        </span>
       </div>
-      <p class="text-[10px] text-gray-400 px-1 mb-2">
-        STDB-supervised process pools · alive/desired · click pause/resume to control
-      </p>
-      <Show
-        when={!loading() && pools().length > 0}
-        fallback={
-          <div class="text-center text-gray-300 text-xs py-3">
-            <Show when={loading()} fallback={<>no pools defined — <code class="text-cyan-400">hex pool create</code></>}>loading…</Show>
-          </div>
-        }
-      >
-        <ul class="space-y-1">
-          <For each={pools()}>
-            {(p) => {
-              const aliveText = `${p.aliveCount}/${p.desiredCount}`;
-              const aliveColor = p.inCrashLoop ? "text-red-400"
-                : p.aliveCount >= p.desiredCount ? "text-green-400"
-                : "text-yellow-400";
-              return (
-                <li class="flex items-center gap-2 text-xs px-2 py-1.5 rounded bg-gray-950 border border-gray-800">
-                  <span class={`font-mono font-bold w-12 text-right ${aliveColor}`}>{aliveText}</span>
-                  <span class="text-gray-200 flex-1 truncate" title={p.id}>{p.id}</span>
-                  <span class="text-[10px] text-gray-400">{p.role}</span>
-                  <Show when={p.inCrashLoop}>
-                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-red-900/40 text-red-300 border-red-700">CRASH</span>
-                  </Show>
-                  <Show when={p.paused && !p.inCrashLoop}>
-                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-yellow-900/30 text-yellow-300 border-yellow-700">paused</span>
-                  </Show>
+
+      <Show when={loading()}>
+        <div class="text-center text-gray-400 text-xs py-3">loading…</div>
+      </Show>
+
+      {/* CRASH section — surface first because it needs operator action. */}
+      <Show when={crashed().length > 0}>
+        <div class="mb-3">
+          <div class="text-[10px] font-bold uppercase tracking-wider text-red-400 mb-1 px-1">⚠ Crash-looped</div>
+          <ul class="space-y-1">
+            <For each={crashed()}>
+              {(p) => (
+                <li class="grid grid-cols-[3rem_1fr_auto_auto] items-center gap-3 text-xs px-2 py-1.5 rounded bg-red-950/20 border border-red-900/40">
+                  <span class="font-mono font-bold text-right text-red-400">{p.aliveCount}/{p.desiredCount}</span>
+                  <span class="text-gray-100 truncate min-w-0" title={`${p.id}\nrole: ${p.role}\nexited: ${p.exitedCount}`}>
+                    {p.id}
+                    <span class="text-red-400/70 ml-2">· {p.exitedCount} exits</span>
+                  </span>
                   <button
-                    onClick={() => pause(p.id, !p.paused)}
-                    class="text-[10px] text-gray-300 hover:text-cyan-400 underline"
-                    title={p.paused ? "Resume — supervisor will start spawning again" : "Pause — supervisor stops spawning"}
+                    onClick={async () => {
+                      await restClient.patch(`/api/pools/${p.id}/paused`, { paused: false });
+                      await restClient.patch(`/api/pools/${p.id}/paused`, { paused: true });
+                      refresh();
+                    }}
+                    class="text-[10px] text-red-300 hover:text-red-200 underline"
+                    title="Clear crash-loop flag (resumes briefly to clear, then re-pauses)"
                   >
-                    {p.paused ? "resume" : "pause"}
+                    clear flag
+                  </button>
+                  <button
+                    onClick={() => setPoolPaused(p.id, false)}
+                    class="text-[10px] text-cyan-400 hover:text-cyan-300 underline"
+                    title="Resume — clears crash flag and restarts spawning"
+                  >
+                    resume
                   </button>
                 </li>
-              );
-            }}
-          </For>
-        </ul>
+              )}
+            </For>
+          </ul>
+        </div>
+      </Show>
+
+      {/* ACTIVE section — pools the operator has explicitly scaled up. */}
+      <Show when={active().length > 0}>
+        <div class="mb-3">
+          <div class="text-[10px] font-bold uppercase tracking-wider text-green-400 mb-1 px-1">Active</div>
+          <ul class="space-y-1">
+            <For each={active()}>
+              {(p) => {
+                const healthy = p.aliveCount >= p.desiredCount;
+                return (
+                  <li class="grid grid-cols-[3rem_1fr_auto_auto_auto] items-center gap-3 text-xs px-2 py-1.5 rounded bg-gray-950 border border-gray-800">
+                    <span class={`font-mono font-bold text-right ${healthy ? "text-green-400" : "text-yellow-400"}`}>
+                      {p.aliveCount}/{p.desiredCount}
+                    </span>
+                    <span class="text-gray-200 truncate min-w-0" title={`${p.id}\nrole: ${p.role}\nstrategy: ${p.restartStrategy}\nexits: ${p.exitedCount}`}>
+                      {p.id}
+                      <span class="text-gray-500 ml-2">· {p.role}</span>
+                    </span>
+                    <Show when={p.paused}>
+                      <span class="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-yellow-900/30 text-yellow-300 border-yellow-700">paused</span>
+                    </Show>
+                    <button
+                      onClick={() => scalePool(p, Math.max(0, p.desiredCount - 1))}
+                      class="text-[11px] text-gray-400 hover:text-cyan-400 px-1"
+                      title="Scale down by 1"
+                    >
+                      −
+                    </button>
+                    <button
+                      onClick={() => scalePool(p, p.desiredCount + 1)}
+                      class="text-[11px] text-gray-400 hover:text-cyan-400 px-1"
+                      title="Scale up by 1"
+                    >
+                      +
+                    </button>
+                  </li>
+                );
+              }}
+            </For>
+          </ul>
+        </div>
+      </Show>
+
+      {/* IDLE section — collapsed by default. Click to expand and scale up. */}
+      <Show when={idle().length > 0}>
+        <details class="text-xs">
+          <summary class="cursor-pointer text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 px-1 hover:text-gray-200">
+            ▸ Available roles ({idle().length}) — click to scale up
+          </summary>
+          <div class="grid grid-cols-3 gap-1 mt-2">
+            <For each={idle()}>
+              {(p) => (
+                <button
+                  onClick={() => scalePool(p, 1)}
+                  class="text-[10px] text-left px-2 py-1 rounded border border-gray-800 bg-gray-950 hover:border-cyan-700 hover:bg-gray-900 transition group"
+                  title={`Scale ${p.role} to 1 worker`}
+                >
+                  <span class="text-gray-300 group-hover:text-cyan-300 truncate block">{p.role}</span>
+                </button>
+              )}
+            </For>
+          </div>
+        </details>
+      </Show>
+
+      <Show when={!loading() && pools().length === 0}>
+        <div class="text-center text-gray-300 text-xs py-3">
+          no pools defined — <code class="text-cyan-400">hex pool create</code>
+        </div>
       </Show>
     </section>
   );
@@ -1615,6 +1769,33 @@ const Brain: Component = () => {
   const [improver, setImprover] = createSignal<ImproverStatus | null>(null);
   const [agents, setAgents] = createSignal<{ name?: string; capabilities?: { role?: string } }[]>([]);
   const [projects, setProjects] = createSignal<ProjectInfo[]>([]);
+  const [pools, setPools] = createSignal<PoolStatus[]>([]);
+  // Keyed lookup so TeamRail can read each persona's pool by role name.
+  const poolByRole = createMemo(() => {
+    const m = new Map<string, PoolStatus>();
+    for (const p of pools()) m.set(p.role, p);
+    return m;
+  });
+  const scalePool = async (role: string, count: number) => {
+    const existing = pools().find((p) => p.role === role);
+    if (!existing) return;
+    try {
+      await restClient.post("/api/pools", {
+        id: existing.id,
+        role: existing.role,
+        desired_count: count,
+        restart_strategy: existing.restartStrategy,
+        max_restarts: 5,
+        max_restart_window_secs: 60,
+        paused: false,
+        owner_agent_id: "operator",
+      });
+      // Optimistic local update; refresh() will reconcile.
+      setPools((all) => all.map((p) =>
+        p.id === existing.id ? { ...p, desiredCount: count, paused: false, inCrashLoop: false } : p,
+      ));
+    } catch { /* surface in toast later */ }
+  };
   // Lifted chat input — DecisionsPanel and KanbanLanes write to it on card
   // click (prefill an @-mention + question), ChatPanel reads and sends.
   const [chatInput, setChatInput] = createSignal("");
@@ -1691,6 +1872,10 @@ const Brain: Component = () => {
       const p = await restClient.get<{ projects: ProjectInfo[] }>("/api/projects");
       setProjects(p?.projects ?? []);
     } catch { /* projects endpoint may not exist */ }
+    try {
+      const pp = await restClient.get<{ pools: PoolStatus[] }>("/api/pools");
+      setPools(pp?.pools ?? []);
+    } catch { /* pools table may not exist on first STDB sync */ }
     try {
       // Project-scoped decisions when a filter is active. The aggregator
       // walks <projectRootPath>/docs/workplans + docs/adrs instead of cwd.
@@ -1769,6 +1954,8 @@ const Brain: Component = () => {
           onlineNames={onlineNames}
           onSelect={setSelectedAgent}
           selected={selectedAgent}
+          poolByRole={poolByRole}
+          onScale={scalePool}
         />
 
         <div class="flex-1 overflow-y-auto px-4 py-4">
@@ -1776,7 +1963,6 @@ const Brain: Component = () => {
               priority lane (human-in-loop bottlenecks). Kanban next for
               flow visibility. Swarms + Health below as supplementary. */}
           <DecisionsPanel data={decisions} onSendToChat={sendToChat} />
-          <SupervisorPanel />
           <KanbanLanes swarms={swarms} onSendToChat={sendToChat} onTaskMoved={refresh} />
           <div class="grid grid-cols-2 gap-4">
             <SwarmsPanel swarms={swarms} projectName={projectName} />

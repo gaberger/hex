@@ -4494,6 +4494,20 @@ pub fn supervisor_tick(
     _schedule: SupervisorTickSchedule,
 ) -> Result<(), String> {
     let now_str = format!("{:?}", ctx.timestamp);
+    // Extract the integer micros from the Debug-format timestamp so we can
+    // do window-relative comparisons. STDB's Debug format is:
+    //   "Timestamp { __timestamp_micros_since_unix_epoch__: 1234567890 }"
+    // Returns None on any parse mismatch — caller falls back to counting
+    // all rows in that case (safer than skipping detection entirely).
+    fn parse_ts_micros(s: &str) -> Option<i64> {
+        let key = "__timestamp_micros_since_unix_epoch__:";
+        let pos = s.find(key)?;
+        let tail = &s[pos + key.len()..];
+        let end = tail.find(|c: char| !c.is_ascii_digit() && c != '-' && c != ' ')
+            .unwrap_or(tail.len());
+        tail[..end].trim().parse::<i64>().ok()
+    }
+    let now_micros = parse_ts_micros(&now_str).unwrap_or(0);
 
     // Snapshot all worker_process rows once; we'll scan per-pool.
     let processes: Vec<WorkerProcess> = ctx.db.worker_process().iter().collect();
@@ -4514,15 +4528,24 @@ pub fn supervisor_tick(
             .filter(|p| p.pool_id == pool.id && p.exited_at.is_empty() && !p.in_crash_loop)
             .count() as u32;
 
-        // Crash-loop accounting: count exits in the configured window.
-        // We treat any process row with non-empty exited_at as a "restart
-        // event" and count those whose started_at is within the window.
-        // Timestamp parsing here uses the Debug-format `{ __timestamp_micros... }`
-        // string we emit elsewhere. Cheap pass: bag up by start ordering and
-        // take the last N. Window comparison is best-effort — a dropped sample
-        // doesn't trip the breaker incorrectly, just delays it by one tick.
+        // Crash-loop accounting: count exits within the configured window.
+        // Without this scoping, ANY pool that ever had >max_restarts exits in
+        // its lifetime can never recover — the supervisor would re-trip the
+        // breaker every tick because all-time exits dwarfs max_restarts.
+        // Window: max_restart_window_secs from the pool config.
+        let window_micros: i64 = (pool.max_restart_window_secs as i64) * 1_000_000;
+        let cutoff_micros = now_micros - window_micros;
         let exited_in_pool: Vec<&WorkerProcess> = processes.iter()
             .filter(|p| p.pool_id == pool.id && !p.exited_at.is_empty())
+            .filter(|p| {
+                // If we can't parse the timestamp (or now_micros was 0), include
+                // the row — safer to over-count than under-count for a breaker.
+                if now_micros == 0 { return true; }
+                match parse_ts_micros(&p.exited_at) {
+                    Some(t) => t >= cutoff_micros,
+                    None => true,
+                }
+            })
             .collect();
         let recent_exits = exited_in_pool.len() as u32;
 
