@@ -1605,6 +1605,22 @@ mod real {
             Ok(())
         }
 
+        async fn worker_process_orphans(&self) -> Result<Vec<String>, StateError> {
+            let rows = self
+                .query_table("SELECT id FROM worker_process WHERE exited_at = ''")
+                .await?;
+            let mut ids = Vec::with_capacity(rows.len());
+            for r in rows {
+                if let Some(s) = r.as_object()
+                    .and_then(|o| o.get("id"))
+                    .and_then(|v| v.as_str())
+                {
+                    ids.push(s.to_string());
+                }
+            }
+            Ok(ids)
+        }
+
         async fn pool_status_all(
             &self,
         ) -> Result<Vec<(String, String, u32, u32, u32, String, u32, u32, bool, bool)>, StateError> {
@@ -2139,6 +2155,7 @@ mod stub {
         async fn pool_set_paused(&self, _: &str, _: bool) -> Result<(), StateError> { Err(Self::err()) }
         async fn pool_delete(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn pool_status_all(&self) -> Result<Vec<(String, String, u32, u32, u32, String, u32, u32, bool, bool)>, StateError> { Err(Self::err()) }
+        async fn worker_process_orphans(&self) -> Result<Vec<String>, StateError> { Err(Self::err()) }
     }
 
     #[async_trait]

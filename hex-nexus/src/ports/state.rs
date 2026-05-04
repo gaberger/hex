@@ -858,6 +858,11 @@ pub trait IHexAgentStatePort: Send + Sync {
     async fn pool_status_all(
         &self,
     ) -> Result<Vec<(String, String, u32, u32, u32, String, u32, u32, bool, bool)>, StateError>;
+    /// Returns ids of worker_process rows with empty exited_at. Used by the
+    /// supervisor subscriber's startup reconciliation pass: if a row says
+    /// alive but no watchdog is tracking it (because the previous nexus
+    /// process died), assume the worker is dead and mark exited.
+    async fn worker_process_orphans(&self) -> Result<Vec<String>, StateError>;
 }
 
 /// Agent notification inbox (ADR-060).

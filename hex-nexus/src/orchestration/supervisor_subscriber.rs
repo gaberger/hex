@@ -39,6 +39,28 @@ impl SupervisorSubscriber {
     async fn run(self) {
         let mut interval = time::interval(Duration::from_secs(POLL_INTERVAL_SECS));
         info!("supervisor subscriber started (poll interval {}s)", POLL_INTERVAL_SECS);
+
+        // Startup reconciliation (P3.4): any worker_process row with empty
+        // exited_at at this point is an orphan — the watchdog tokio task
+        // that was tracking it died with the previous nexus process. Mark
+        // them all exited so the supervisor's alive_count is honest from
+        // the first tick. On a clean restart, all in-flight hex-agents
+        // are either dead or orphaned to init anyway — assume dead.
+        if let Some(port) = &self.state.state_port {
+            match port.worker_process_orphans().await {
+                Ok(ids) if !ids.is_empty() => {
+                    info!("supervisor: reconciling {} orphaned worker_process rows from prior nexus", ids.len());
+                    for id in ids {
+                        if let Err(e) = port.worker_process_record_exit(&id, "orphaned").await {
+                            warn!("orphan reconcile for {}: {}", id, e);
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => warn!("orphan reconcile query failed: {}", e),
+            }
+        }
+
         loop {
             interval.tick().await;
             if let Err(e) = self.tick().await {

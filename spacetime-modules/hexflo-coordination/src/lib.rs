@@ -4500,7 +4500,11 @@ pub fn supervisor_tick(
     let pools: Vec<WorkerPoolIntent> = ctx.db.worker_pool_intent().iter().collect();
 
     for pool in pools {
-        if pool.paused {
+        // paused is operator-controlled; in_crash_loop is sticky-set by the
+        // crash-loop detector below. Both stop spawning. Operator clears
+        // in_crash_loop via worker_pool_intent_set_paused(false) which
+        // toggles it as a side-effect.
+        if pool.paused || pool.in_crash_loop {
             continue;
         }
 
