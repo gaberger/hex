@@ -1,5 +1,5 @@
 #![allow(clippy::too_many_arguments)]
-use spacetimedb::{reducer, table, ReducerContext, Table};
+use spacetimedb::{reducer, table, ReducerContext, ScheduleAt, Table};
 
 // ============================================================
 //  Tables
@@ -4149,5 +4149,147 @@ pub fn verdict_record(
     } else {
         ctx.db.verdict().insert(row);
     }
+    Ok(())
+}
+
+// ============================================================
+//  STDB-as-supervisor (wp-stdb-supervisor P1)
+//
+//  Replaces the naïve "spawn-and-pray" hex-agent restart with an OTP-style
+//  supervisor: declarative desired state (worker_pool_intent), actual
+//  state (worker_process), and an event log (supervisor_event) that
+//  hex-nexus subscribes to for spawn / crash-loop handling.
+//
+//  P1.1 (this commit): just the worker_pool_intent table + a setter reducer.
+//  P1.2/P1.3 (follow-up): worker_process and supervisor_event tables.
+//  P2.* (follow-up): scheduled supervisor_tick reducer that does the
+//  desired-vs-alive reconciliation + crash-loop accounting.
+// ============================================================
+
+/// Operator's declared intent for a worker pool. "I want N workers of role X
+/// running, with Y restart strategy". The supervisor_tick scheduled reducer
+/// (P2.1) reconciles actual `worker_process` rows against this intent and
+/// emits `supervisor_event::spawn_request` when alive < desired.
+///
+/// `restart_strategy`:
+///   - "permanent" — always respawn on exit (default for long-running pools)
+///   - "transient" — respawn only on abnormal exit (exit_reason != "normal")
+///   - "temporary" — never respawn (one-shot tasks)
+///
+/// `paused=true` + `desired_count=0` is how operators temporarily disable
+/// a pool without deleting its config (CLI: `hex pool pause <id>`).
+#[table(name = worker_pool_intent, public)]
+#[derive(Clone, Debug)]
+pub struct WorkerPoolIntent {
+    #[primary_key]
+    pub id: String,
+    /// Persona role that this pool runs (matches a YAML in
+    /// hex-cli/assets/agents/hex/hex/<role>.yml).
+    pub role: String,
+    /// How many workers of this role should be alive at any time.
+    pub desired_count: u32,
+    /// "permanent" | "transient" | "temporary".
+    pub restart_strategy: String,
+    /// Crash-loop circuit-breaker: max restarts inside the window before
+    /// the supervisor stops respawning + alerts the operator.
+    pub max_restarts: u32,
+    pub max_restart_window_secs: u32,
+    /// When true, supervisor stops emitting spawn_request for this pool.
+    /// Set by operator (`hex pool pause`) or by supervisor_tick when the
+    /// crash-loop circuit-breaker trips.
+    pub paused: bool,
+    /// Set by supervisor_tick when restart accounting trips the breaker.
+    /// Operator must `hex pool resume <id>` to clear (also resets restart
+    /// accounting window).
+    pub in_crash_loop: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    /// Agent ID of the operator that created/last-updated this pool. Used
+    /// for audit + ownership transfer (operator who owns the registration
+    /// is the one whose inbox gets crash-loop alerts).
+    pub owner_agent_id: String,
+}
+
+/// Create or update a worker pool intent. Idempotent — same `id` overwrites.
+///
+/// Inputs default-friendly so a minimal call (`worker_pool_intent_set` with
+/// `id`, `role`, `desired_count`) gets sensible behaviour:
+/// permanent + 5 restarts in 60s window + not paused.
+#[reducer]
+pub fn worker_pool_intent_set(
+    ctx: &ReducerContext,
+    id: String,
+    role: String,
+    desired_count: u32,
+    restart_strategy: String,
+    max_restarts: u32,
+    max_restart_window_secs: u32,
+    paused: bool,
+    owner_agent_id: String,
+) -> Result<(), String> {
+    if id.is_empty() { return Err("id is required".into()); }
+    if role.is_empty() { return Err("role is required".into()); }
+    let strategy = restart_strategy.trim().to_lowercase();
+    if !matches!(strategy.as_str(), "permanent" | "transient" | "temporary") {
+        return Err(format!(
+            "invalid restart_strategy '{}': must be permanent | transient | temporary",
+            restart_strategy
+        ));
+    }
+
+    let now = format!("{:?}", ctx.timestamp);
+    let existing = ctx.db.worker_pool_intent().id().find(&id);
+    let row = WorkerPoolIntent {
+        id: id.clone(),
+        role,
+        desired_count,
+        restart_strategy: strategy,
+        max_restarts: if max_restarts == 0 { 5 } else { max_restarts },
+        max_restart_window_secs: if max_restart_window_secs == 0 { 60 } else { max_restart_window_secs },
+        paused,
+        // Updating an intent always clears the crash-loop flag — operator
+        // is taking deliberate action, give the pool another chance.
+        in_crash_loop: false,
+        created_at: existing.as_ref().map(|e| e.created_at.clone()).unwrap_or_else(|| now.clone()),
+        updated_at: now,
+        owner_agent_id,
+    };
+    if existing.is_some() {
+        ctx.db.worker_pool_intent().id().update(row);
+    } else {
+        ctx.db.worker_pool_intent().insert(row);
+    }
+    Ok(())
+}
+
+/// Pause/resume a pool without recreating it. Convenience reducer for
+/// `hex pool pause <id>` / `hex pool resume <id>`.
+#[reducer]
+pub fn worker_pool_intent_set_paused(
+    ctx: &ReducerContext,
+    id: String,
+    paused: bool,
+) -> Result<(), String> {
+    let mut row = ctx.db.worker_pool_intent().id().find(&id)
+        .ok_or_else(|| format!("worker pool '{}' not found", id))?;
+    row.paused = paused;
+    if !paused {
+        // Resuming a pool clears any sticky crash-loop flag too.
+        row.in_crash_loop = false;
+    }
+    row.updated_at = format!("{:?}", ctx.timestamp);
+    ctx.db.worker_pool_intent().id().update(row);
+    Ok(())
+}
+
+/// Delete a pool intent. Does NOT terminate any currently-running workers
+/// of that role — they continue until they exit naturally. After delete,
+/// the supervisor_tick stops emitting spawn_request for this pool.
+#[reducer]
+pub fn worker_pool_intent_delete(ctx: &ReducerContext, id: String) -> Result<(), String> {
+    if ctx.db.worker_pool_intent().id().find(&id).is_none() {
+        return Err(format!("worker pool '{}' not found", id));
+    }
+    ctx.db.worker_pool_intent().id().delete(&id);
     Ok(())
 }
