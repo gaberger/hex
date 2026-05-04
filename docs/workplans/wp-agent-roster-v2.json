@@ -1,0 +1,234 @@
+{
+  "id": "wp-agent-roster-v2",
+  "title": "Agent roster v2 — pm-agent, two-adversary debate, CLI+UX designers",
+  "paused": true,
+  "paused_reason": "DO NOT auto-execute. Background agent ran this workplan unsupervised on 2026-05-04 and destroyed Cargo.toml, hex-cli/src/commands/readme.rs (1161→38 lines), hex-nexus/src/coordination/mod.rs (724→20 lines), and replaced devstral-small-2:24b with hallucinated 'gemma4:latest' across 4 files. All damage was reverted. Resume only after: (1) SafeFileWriter actually exists and is wired into hex-agent, (2) codegen tasks here are split into per-Edit ops with stricter context-injection or routed exclusively to T3, (3) the hex inference watch zombie-process accumulation is fixed.",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Agent YAMLs landed (pre-existing — verify-only)",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "pm-agent.yml exists with system_prompt + user_prompt_template + adr_triggers",
+          "status": "done",
+          "strategy_hint": "scaffold",
+          "files": [
+            "hex-cli/assets/agents/hex/hex/pm-agent.yml"
+          ],
+          "evidence": [
+            "test -f hex-cli/assets/agents/hex/hex/pm-agent.yml",
+            "grep -q '^name: pm-agent' hex-cli/assets/agents/hex/hex/pm-agent.yml",
+            "grep -q '^system_prompt:' hex-cli/assets/agents/hex/hex/pm-agent.yml",
+            "grep -q '^user_prompt_template:' hex-cli/assets/agents/hex/hex/pm-agent.yml",
+            "grep -q 'adr_triggers:' hex-cli/assets/agents/hex/hex/pm-agent.yml"
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "adversarial-red.yml exists with provider_lock: anthropic",
+          "status": "done",
+          "strategy_hint": "scaffold",
+          "files": [
+            "hex-cli/assets/agents/hex/hex/adversarial-red.yml"
+          ],
+          "evidence": [
+            "test -f hex-cli/assets/agents/hex/hex/adversarial-red.yml",
+            "grep -q '^name: adversarial-red' hex-cli/assets/agents/hex/hex/adversarial-red.yml",
+            "grep -q 'provider_lock: anthropic' hex-cli/assets/agents/hex/hex/adversarial-red.yml"
+          ]
+        },
+        {
+          "id": "P1.3",
+          "title": "adversarial-blue.yml exists with provider_lock: openai_or_local",
+          "status": "done",
+          "strategy_hint": "scaffold",
+          "files": [
+            "hex-cli/assets/agents/hex/hex/adversarial-blue.yml"
+          ],
+          "evidence": [
+            "test -f hex-cli/assets/agents/hex/hex/adversarial-blue.yml",
+            "grep -q '^name: adversarial-blue' hex-cli/assets/agents/hex/hex/adversarial-blue.yml",
+            "grep -q 'provider_lock: openai_or_local' hex-cli/assets/agents/hex/hex/adversarial-blue.yml"
+          ]
+        },
+        {
+          "id": "P1.4",
+          "title": "validation-judge.yml accepts red_report + blue_report and arbitrates",
+          "status": "done",
+          "strategy_hint": "transform",
+          "files": [
+            "hex-cli/assets/agents/hex/hex/validation-judge.yml"
+          ],
+          "evidence": [
+            "grep -q 'red_report:' hex-cli/assets/agents/hex/hex/validation-judge.yml",
+            "grep -q 'blue_report:' hex-cli/assets/agents/hex/hex/validation-judge.yml",
+            "grep -q '6a_arbitrate_adversaries:' hex-cli/assets/agents/hex/hex/validation-judge.yml"
+          ]
+        },
+        {
+          "id": "P1.5",
+          "title": "cli-designer.yml exists, read-only (no Write/Edit in tools)",
+          "status": "done",
+          "strategy_hint": "scaffold",
+          "files": [
+            "hex-cli/assets/agents/hex/hex/cli-designer.yml"
+          ],
+          "evidence": [
+            "test -f hex-cli/assets/agents/hex/hex/cli-designer.yml",
+            "grep -q '^name: cli-designer' hex-cli/assets/agents/hex/hex/cli-designer.yml",
+            "! grep -E '^\\s*-\\s*(Write|Edit)\\s*$' hex-cli/assets/agents/hex/hex/cli-designer.yml"
+          ]
+        },
+        {
+          "id": "P1.6",
+          "title": "ux-designer.yml exists, read-only",
+          "status": "done",
+          "strategy_hint": "scaffold",
+          "files": [
+            "hex-cli/assets/agents/hex/hex/ux-designer.yml"
+          ],
+          "evidence": [
+            "test -f hex-cli/assets/agents/hex/hex/ux-designer.yml",
+            "grep -q '^name: ux-designer' hex-cli/assets/agents/hex/hex/ux-designer.yml",
+            "! grep -E '^\\s*-\\s*(Write|Edit)\\s*$' hex-cli/assets/agents/hex/hex/ux-designer.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "Update README integrity check (hex-cli/src/commands/readme.rs)",
+      "tasks": [
+        {
+          "id": "P2.1",
+          "title": "Add pm-agent, adversarial-red, adversarial-blue, cli-designer, ux-designer to the agent_names array in readme.rs around line 887. Remove adversarial-reviewer (split into red+blue) once the YAML is deprecated/removed.",
+          "status": "failed",
+          "strategy_hint": "transform",
+          "files": [
+            "hex-cli/src/commands/readme.rs"
+          ],
+          "evidence": [
+            "grep -q '\"pm-agent\"' hex-cli/src/commands/readme.rs",
+            "grep -q '\"adversarial-red\"' hex-cli/src/commands/readme.rs",
+            "grep -q '\"adversarial-blue\"' hex-cli/src/commands/readme.rs",
+            "grep -q '\"cli-designer\"' hex-cli/src/commands/readme.rs",
+            "grep -q '\"ux-designer\"' hex-cli/src/commands/readme.rs",
+            "cargo check -p hex-cli"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "Deprecate adversarial-reviewer.yml (has unresolved git conflict markers)",
+      "tasks": [
+        {
+          "id": "P3.1",
+          "title": "Replace adversarial-reviewer.yml content with a deprecation stub pointing to red+blue. Keep file present until P2.1 lands so README check doesn't break mid-build.",
+          "status": "failed",
+          "strategy_hint": "transform",
+          "files": [
+            "hex-cli/assets/agents/hex/hex/adversarial-reviewer.yml"
+          ],
+          "evidence": [
+            "grep -q 'DEPRECATED: split into adversarial-red + adversarial-blue' hex-cli/assets/agents/hex/hex/adversarial-reviewer.yml",
+            "! grep -q '<<<<<<< HEAD' hex-cli/assets/agents/hex/hex/adversarial-reviewer.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "title": "Supervisor dispatch — teach hex-nexus to load and route the new agents",
+      "tasks": [
+        {
+          "id": "P4.1",
+          "title": "Verify rust-embed picks up the new YAMLs at build time. The hex-cli/assets/ tree is baked in via embed; no source change should be needed if the embed glob is *.yml. Spot-check by running `hex-cli` after rebuild and listing agents.",
+          "status": "failed",
+          "strategy_hint": "script",
+          "files": [],
+          "evidence": [
+            "cargo build -p hex-cli --release 2>&1 | tail -5",
+            "./target/release/hex-cli agent list 2>/dev/null | grep -q pm-agent || hex agent list | grep -q pm-agent"
+          ]
+        },
+        {
+          "id": "P4.2",
+          "title": "Provider-lock enforcement: when red+blue are both invoked, the supervisor must verify they resolve to different providers and abort with a clear error if not. Likely lives in hex-nexus/src/coordination/ near the agent dispatch.",
+          "status": "failed",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/src/coordination/mod.rs"
+          ],
+          "evidence": [
+            "grep -q 'provider_lock' hex-nexus/src/coordination/mod.rs || grep -rn 'provider_lock' hex-nexus/src/",
+            "cargo check -p hex-nexus"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "title": "Rebuild + redistribute",
+      "tasks": [
+        {
+          "id": "P5.1",
+          "title": "cargo build -p hex-cli --release",
+          "status": "failed",
+          "strategy_hint": "script",
+          "files": [],
+          "evidence": [
+            "cargo build -p hex-cli --release 2>&1 | grep -q 'Finished'",
+            "test -x target/release/hex-cli"
+          ]
+        },
+        {
+          "id": "P5.2",
+          "title": "cargo build -p hex-nexus --release",
+          "status": "failed",
+          "strategy_hint": "script",
+          "files": [],
+          "evidence": [
+            "cargo build -p hex-nexus --release 2>&1 | grep -q 'Finished'",
+            "test -x target/release/hex-nexus"
+          ]
+        },
+        {
+          "id": "P5.3",
+          "title": "Redistribute binaries to ~/.hex/bin/ and restart hex-nexus daemon",
+          "status": "failed",
+          "strategy_hint": "script",
+          "files": [],
+          "evidence": [
+            "cp target/release/hex-nexus ~/.hex/bin/hex-nexus",
+            "hex nexus stop && hex nexus start",
+            "hex agent list | grep -q pm-agent",
+            "hex agent list | grep -q adversarial-red",
+            "hex agent list | grep -q adversarial-blue",
+            "hex agent list | grep -q cli-designer",
+            "hex agent list | grep -q ux-designer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P6",
+      "title": "Open the deferred ADR (polyglot-vs-language-specialist coder)",
+      "tasks": [
+        {
+          "id": "P6.1",
+          "title": "Draft ADR recording the deferred decision: when does polyglot hex-coder graduate to per-language specialists. Status: Proposed. Triggers + cost analysis only — no implementation.",
+          "status": "done",
+          "strategy_hint": "scaffold",
+          "files": [
+            "docs/adrs/"
+          ],
+          "evidence": [
+            "ls docs/adrs/ | grep -i 'polyglot\\|language-specialist' | head -1"
+          ]
+        }
+      ]
+    }
+  ]
+}

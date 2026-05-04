@@ -887,11 +887,16 @@ pub fn validate_readme(readme_path: &Path, project_root: &Path) -> Result<Valida
     let agent_names = [
         "hex-coder",
         "planner",
+        "pm-agent",
         "integrator",
         "swarm-coordinator",
         "validation-judge",
         "behavioral-spec-writer",
         "adversarial-reviewer",
+        "adversarial-red",
+        "adversarial-blue",
+        "cli-designer",
+        "ux-designer",
         "rust-refactorer",
     ];
     let agents_dir = project_root.join("hex-cli/assets/agents/hex/hex");

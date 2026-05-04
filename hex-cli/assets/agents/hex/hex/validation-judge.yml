@@ -34,6 +34,18 @@ inputs:
     type: array
     required: false
     description: "Pre-generated BehavioralSpec[] from behavioral-spec-writer"
+  red_report:
+    type: AdversarialReport
+    required: false
+    description: >
+      Output of adversarial-red (security/hex-boundary lens, Anthropic provider).
+      When present, judge weighs red findings into the verdict.
+  blue_report:
+    type: AdversarialReport
+    required: false
+    description: >
+      Output of adversarial-blue (correctness/UX lens, OpenAI/local provider).
+      When present, judge weighs blue findings into the verdict.
 
 outputs:
   verdict:
@@ -97,6 +109,24 @@ phases:
       FAIL (score < 80): Return specific fix instructions.
     output: verdict
     blocking: true  # If FAIL, code generation must iterate
+
+  6a_arbitrate_adversaries:
+    description: >
+      Arbitrate red_report vs blue_report when both are provided.
+      Both adversaries must come from DIFFERENT providers (red=anthropic,
+      blue=openai/local) — verify provider field on each report; if same
+      provider, mark verdict ESCALATE (the debate is theatre).
+      Aggregation rules:
+        - Any CRITICAL on either side → verdict FAIL
+        - Disagreements where red flags CRITICAL but blue says clean →
+          investigate the boundary/security claim, weight toward red
+        - Disagreements where blue flags CRITICAL but red says clean →
+          investigate the correctness/UX claim, weight toward blue
+        - Both adversaries clean → contributes +20 to overall_score
+      Skip this phase entirely if neither red_report nor blue_report
+      is provided (single-adversary or no-adversary mode).
+    output: arbitration
+    blocking: true  # If adversaries disagree on CRITICAL, judge investigates before verdict
 
   7_verify_hex_boundaries:
     description: >
