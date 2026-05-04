@@ -492,10 +492,29 @@ pub async fn dispatch_brain_chat(
     system_lines.push(String::new());
     system_lines.push("CAPABILITIES IN THIS SURFACE:".to_string());
     system_lines.push("- You are responding via the Brain chat surface. You have NO direct shell, MCP, or filesystem tools — anything you 'observe' must come from LIVE STATE / PROJECT FACTS / RELEVANT MEMORY blocks above.".to_string());
-    system_lines.push("- HOWEVER, you CAN delegate to other agents by mentioning `@<role>` at the start of any line in your reply. The system auto-dispatches each `@<role>` to that agent in the same thread, with the rest of the line (and indented body) as the task brief. Roles available: any persona YAML under hex-cli/assets/agents/hex/hex/. Use this whenever the request is technical work that another role specializes in — DO NOT bounce the question back to the operator if a specialist can handle it.".to_string());
+    system_lines.push("- HOWEVER, you CAN delegate to other agents by mentioning `@<role>` at the start of any line in your reply. The system auto-dispatches each `@<role>` to that agent in the same thread, with the rest of the line (and indented body) as the task brief. Use this whenever the request is technical work that another role specializes in — DO NOT bounce the question back to the operator if a specialist can handle it.".to_string());
+    // Inject the actual roster so models can't invent fake roles like
+    // @shell-operator / @ops / @sysadmin. Generated from the embedded
+    // persona YAMLs at startup; always reflects what's actually deployable.
+    let roster: Vec<String> = AgentTemplates::iter()
+        .filter_map(|p| {
+            let s = p.as_ref();
+            let prefix = "agents/hex/hex/";
+            if !s.starts_with(prefix) || !s.ends_with(".yml") { return None; }
+            Some(s[prefix.len()..s.len() - 4].to_string())
+        })
+        .collect();
+    let mut roster_sorted = roster.clone();
+    roster_sorted.sort();
+    roster_sorted.dedup();
+    system_lines.push(format!(
+        "- VALID @<role> ROSTER (the ONLY roles you may dispatch to — anything else is silently dropped): @{}",
+        roster_sorted.join(" @"),
+    ));
+    system_lines.push("- DO NOT invent roles like @shell-operator, @ops, @engineer, @backend, @sysadmin, @devops. If your task needs filesystem/shell work, dispatch to @hex-coder (general code edits), @hex-fixer (bugfix), @rust-refactorer (Rust refactor), @scaffold-validator (build/typecheck gates), or @hex-tester (tests). Those roles have the actual tool access in the worker dispatch path.".to_string());
     system_lines.push("- DO NOT pretend to have tried a tool, called an MCP function, or executed a command yourself. DO NOT generate fake error messages. If you need work done, delegate via @<role>; if you need data only the operator can give, ask ONE specific question.".to_string());
     system_lines.push("- DO NOT contradict LIVE STATE. If LIVE STATE says '2 registered, 1 online' and the operator says 'agents are offline', the truth is in LIVE STATE — explain what online/stale/dead actually mean in the registry.".to_string());
-    system_lines.push("- AUTO-DISPATCH DEPTH: If you see this reply is itself a delegation (the user message starts with 'Inbound delegation from @...'), execute the task. Don't bounce it back up the chain by mentioning the parent role.".to_string());
+    system_lines.push("- AUTO-DISPATCH DEPTH: If you see this reply is itself a delegation (the user message starts with 'Inbound delegation from @...'), execute the task directly. Don't bounce it back up the chain by re-mentioning the sender's role — that's a loop the system will break, but it wastes a turn.".to_string());
     let system_prompt = system_lines.join("\n");
 
     // Brain chat ALWAYS routes to a frontier model — the operator wants
