@@ -1071,6 +1071,11 @@ mod real {
             }).collect())
         }
 
+        async fn inference_task_promote(&self, id: &str, updated_at: &str) -> Result<(), StateError> {
+            self.call_reducer("inference_task_promote", serde_json::json!([id, updated_at])).await?;
+            Ok(())
+        }
+
         async fn inference_task_list_all(&self) -> Result<Vec<InferenceTaskInfo>, StateError> {
             let rows = self.query_table("SELECT * FROM inference_task").await?;
             Ok(rows.into_iter().filter_map(|r| {
@@ -2134,6 +2139,7 @@ mod stub {
         async fn inference_task_get(&self, _: &str) -> Result<Option<InferenceTaskInfo>, StateError> { Err(Self::err()) }
         async fn inference_task_list_pending(&self) -> Result<Vec<InferenceTaskInfo>, StateError> { Err(Self::err()) }
         async fn inference_task_list_all(&self) -> Result<Vec<InferenceTaskInfo>, StateError> { Err(Self::err()) }
+        async fn inference_task_promote(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
     }
 
     #[async_trait]

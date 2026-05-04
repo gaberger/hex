@@ -732,6 +732,26 @@ pub async fn dispatch_brain_chat(
     )
 }
 
+/// POST /api/brain/dispatches/{id}/promote — flip PendingReview → Pending.
+/// Used by the dashboard's "Approve" button on critical-path-gated dispatches.
+pub async fn promote_brain_dispatch(
+    state: State<crate::state::SharedState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let port = match state.0.state_port.as_ref() {
+        Some(p) => p,
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "no state port" }))),
+    };
+    let now = chrono::Utc::now().to_rfc3339();
+    match port.inference_task_promote(&id, &now).await {
+        Ok(()) => (StatusCode::OK, Json(json!({ "ok": true, "id": id, "status": "Pending" }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("promote: {}", e) })),
+        ),
+    }
+}
+
 /// GET /api/brain/dispatches — list recent brain-chat dispatches.
 /// Filters inference_task rows whose workplan_id starts with "brain-chat:"
 /// (the prefix written by dispatch_brain_chat when an @<role> mention fires).

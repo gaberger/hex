@@ -730,6 +730,96 @@ interface SupervisorEvent {
   handled: boolean;
 }
 
+interface BrainDispatch {
+  id: string;
+  role: string;
+  prompt: string;
+  status: string;
+  agentId?: string;
+  threadId?: string;
+  createdAt: string;
+  updatedAt?: string;
+  result?: string;
+  error?: string;
+}
+
+const BrainDispatchesPanel: Component<{
+  dispatches: () => BrainDispatch[];
+  counts: () => { pending: number; inProgress: number; completed: number };
+  onPromote: (id: string) => void;
+  onSendToChat: (text: string, role?: string) => void;
+}> = (props) => {
+  const visible = () => props.dispatches().slice(0, 12);
+  const statusColor = (s: string): string => {
+    if (s === "Pending") return "text-yellow-400 bg-yellow-900/30";
+    if (s === "PendingReview") return "text-amber-400 bg-amber-900/40 border border-amber-700";
+    if (s === "InProgress") return "text-cyan-300 bg-cyan-900/30 animate-pulse";
+    if (s === "Completed") return "text-green-400 bg-green-900/30";
+    if (s === "Failed") return "text-red-400 bg-red-900/30";
+    return "text-gray-400 bg-gray-800";
+  };
+  return (
+    <section class="mb-4 border border-gray-800 rounded bg-gray-950">
+      <header class="px-3 py-2 border-b border-gray-800 flex items-center gap-2">
+        <span class="text-[10px] font-bold uppercase tracking-wider text-gray-300">Brain Dispatches</span>
+        <span class="text-[10px] text-gray-400">
+          {props.counts().pending} pending · {props.counts().inProgress} running · {props.counts().completed} done
+        </span>
+        <span class="ml-auto text-[10px] text-gray-500 italic">@&lt;role&gt; mentions in chat enqueue real worker tasks</span>
+      </header>
+      <Show when={visible().length > 0} fallback={
+        <div class="px-3 py-4 text-[11px] italic text-gray-500">
+          No dispatches yet. Use @&lt;role&gt; in chat to enqueue work.
+        </div>
+      }>
+        <ul class="divide-y divide-gray-900">
+          <For each={visible()}>
+            {(d) => (
+              <li class="px-3 py-2 flex items-start gap-2 text-[11px]">
+                <span class={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${statusColor(d.status)}`}>
+                  {d.status === "PendingReview" ? "review" : d.status.toLowerCase()}
+                </span>
+                <span class="shrink-0 text-purple-300 font-mono">@{d.role}</span>
+                <span class="flex-1 text-gray-200 truncate" title={d.prompt}>
+                  {d.prompt.length > 90 ? d.prompt.slice(0, 87) + "…" : d.prompt}
+                </span>
+                <span class="shrink-0 text-gray-500 font-mono text-[10px]">
+                  {new Date(d.createdAt).toLocaleTimeString().slice(0, 8)}
+                </span>
+                <Show when={d.status === "PendingReview"}>
+                  <button
+                    type="button"
+                    class="shrink-0 px-2 py-0.5 rounded bg-amber-700 hover:bg-amber-600 text-white text-[10px] font-semibold"
+                    onClick={() => props.onPromote(d.id)}
+                    title="Approve and let a worker claim this dispatch"
+                  >
+                    Approve
+                  </button>
+                </Show>
+                <Show when={d.status === "Completed" && d.result}>
+                  <button
+                    type="button"
+                    class="shrink-0 px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px]"
+                    onClick={() => props.onSendToChat(`Result from @${d.role}:\n\n${d.result}`, d.role)}
+                    title="View result in chat"
+                  >
+                    View
+                  </button>
+                </Show>
+                <Show when={d.status === "Failed" && d.error}>
+                  <span class="shrink-0 text-red-400 text-[10px] truncate max-w-[200px]" title={d.error}>
+                    {d.error}
+                  </span>
+                </Show>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+    </section>
+  );
+};
+
 const SupervisorPanel: Component = () => {
   const [pools, setPools] = createSignal<PoolStatus[]>([]);
   const [loading, setLoading] = createSignal(true);
@@ -1880,6 +1970,15 @@ const Brain: Component = () => {
   const [projects, setProjects] = createSignal<ProjectInfo[]>([]);
   const [pools, setPools] = createSignal<PoolStatus[]>([]);
   const [supervisorEvents, setSupervisorEvents] = createSignal<SupervisorEvent[]>([]);
+  const [dispatches, setDispatches] = createSignal<BrainDispatch[]>([]);
+  const [dispatchCounts, setDispatchCounts] = createSignal({ pending: 0, inProgress: 0, completed: 0 });
+  const promoteDispatch = async (id: string) => {
+    try {
+      await restClient.post(`/api/brain/dispatches/${id}/promote`, {});
+      // Optimistic flip — refresh on next poll will overwrite if reducer rejected.
+      setDispatches((all) => all.map((d) => d.id === id ? { ...d, status: "Pending" } : d));
+    } catch { /* surfaces in next poll */ }
+  };
   // Keyed lookup so TeamRail can read each persona's pool by role name.
   const poolByRole = createMemo(() => {
     const m = new Map<string, PoolStatus>();
@@ -1991,6 +2090,15 @@ const Brain: Component = () => {
       setSupervisorEvents(se?.events ?? []);
     } catch { /* supervisor_event table may not exist yet */ }
     try {
+      const dd = await restClient.get<{ dispatches: BrainDispatch[]; pending: number; inProgress: number; completed: number }>("/api/brain/dispatches");
+      setDispatches(dd?.dispatches ?? []);
+      setDispatchCounts({
+        pending: dd?.pending ?? 0,
+        inProgress: dd?.inProgress ?? 0,
+        completed: dd?.completed ?? 0,
+      });
+    } catch { /* inference_task may be uninitialized */ }
+    try {
       // Project-scoped decisions when a filter is active. The aggregator
       // walks <projectRootPath>/docs/workplans + docs/adrs instead of cwd.
       const f = projectFilter();
@@ -2077,6 +2185,12 @@ const Brain: Component = () => {
               priority lane (human-in-loop bottlenecks). Kanban next for
               flow visibility. Swarms + Health below as supplementary. */}
           <DecisionsPanel data={decisions} onSendToChat={sendToChat} />
+          <BrainDispatchesPanel
+            dispatches={dispatches}
+            counts={dispatchCounts}
+            onPromote={promoteDispatch}
+            onSendToChat={sendToChat}
+          />
           <KanbanLanes swarms={swarms} onSendToChat={sendToChat} onTaskMoved={refresh} />
           <div class="grid grid-cols-2 gap-4">
             <SwarmsPanel swarms={swarms} projectName={projectName} />

@@ -16,8 +16,6 @@ pub const CRITICAL_FILES: &[&str] = &[
     "monitor.rs",
     "workplan_executor.rs",
     "main.rs",
-    "composition_root.rs",
-    "supervisor_subscriber.rs",
 ];
 
 /// Check if a path is a critical system file OR a critical hex

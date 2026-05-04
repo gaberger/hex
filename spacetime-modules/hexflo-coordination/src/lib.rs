@@ -1510,6 +1510,37 @@ pub fn inference_task_claim(
     Ok(())
 }
 
+/// Promote a PendingReview inference_task to Pending so workers can claim it.
+/// Used by the brain-dispatch surface when an operator approves a dispatch
+/// whose brief touched a critical-path token. CAS-checks the current status
+/// so a stray promote on a Completed/Failed task is a no-op error rather than
+/// a state corruption.
+#[reducer]
+pub fn inference_task_promote(
+    ctx: &ReducerContext,
+    id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let task = ctx
+        .db
+        .inference_task()
+        .id()
+        .find(&id)
+        .ok_or_else(|| format!("InferenceTask '{}' not found", id))?;
+
+    if task.status != "PendingReview" {
+        return Err(format!("cannot_promote: task is {}", task.status));
+    }
+
+    ctx.db.inference_task().id().update(InferenceTask {
+        status: "Pending".to_string(),
+        updated_at: timestamp,
+        ..task
+    });
+
+    Ok(())
+}
+
 /// Mark an inference task as completed with a result.
 #[reducer]
 pub fn inference_task_complete(

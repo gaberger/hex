@@ -697,6 +697,9 @@ pub trait IInferenceTaskStatePort: Send + Sync {
     /// + Completed) so the dashboard isn't blank when workers process tasks
     /// fast. Returns up to 200 rows.
     async fn inference_task_list_all(&self) -> Result<Vec<InferenceTaskInfo>, StateError>;
+    /// Promote a PendingReview task to Pending so a worker can claim it.
+    /// Used by the brain-dispatch operator-approval flow.
+    async fn inference_task_promote(&self, id: &str, updated_at: &str) -> Result<(), StateError>;
 }
 
 /// HexFlo key-value memory (scoped: global, per-swarm, per-agent).

@@ -532,6 +532,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/brain/broadcast", post(brain_chat::dispatch_brain_broadcast))
         // Pending dispatches enqueued by @<role> mentions in chat replies.
         .route("/api/brain/dispatches", get(brain_chat::list_brain_dispatches))
+        .route("/api/brain/dispatches/{id}/promote", post(brain_chat::promote_brain_dispatch))
         // STDB-supervisor pool surface (wp-stdb-supervisor P4 + P5)
         .route("/api/pools", get(pools::list_pools).post(pools::create_pool))
         .route("/api/pools/{id}", delete(pools::delete_pool))
