@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use hex_core::ports::file_writer::IFileWriter;
+
 use crate::inference_client::{InferenceClient, InferenceTier, OpenRouterClient, ClaudeClient};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -446,6 +448,7 @@ pub async fn execute_workplan_autonomous(
     workplan_path: &Path,
     background: bool,
     project_dir: &Path,
+    writer: &dyn IFileWriter,
 ) -> Result<String> {
     let start = std::time::Instant::now();
 
@@ -504,23 +507,24 @@ pub async fn execute_workplan_autonomous(
                             attempt.tier_used, attempt.model_name, attempt.duration_ms, attempt.cost_estimate);
                     }
 
-                    // Write files (with critical path protection)
+                    // Write files via IFileWriter — adapter enforces
+                    // critical-path protection (sched.rs, monitor.rs, …)
                     let mut blocked_files = Vec::new();
                     for (file_path, content) in file_contents {
-                        // Check if file is critical infrastructure
-                        if hex_core::validation::is_critical_path(&file_path) {
-                            if !background {
-                                eprintln!("    ⚠ Blocked write to critical file: {}", file_path);
-                            }
-                            blocked_files.push(file_path.clone());
-                            continue;
-                        }
-
                         let full_path = project_dir.join(&file_path);
-                        if let Some(parent) = full_path.parent() {
-                            std::fs::create_dir_all(parent).ok();
+                        match writer.write_file(&full_path, &content) {
+                            Ok(()) => {}
+                            Err(err) => {
+                                if !background {
+                                    eprintln!("    ⚠ {}", err);
+                                }
+                                if err.to_lowercase().contains("critical") {
+                                    blocked_files.push(file_path.clone());
+                                } else {
+                                    blocked_files.push(format!("{}: {}", file_path, err));
+                                }
+                            }
                         }
-                        std::fs::write(&full_path, &content).ok();
                     }
 
                     // If any files were blocked, fail the task

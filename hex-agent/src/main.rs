@@ -318,7 +318,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if let Some(Command::Workplan { workplan, background }) = &args.command {
-        let result = execute_workplan_autonomous(workplan, *background, &project_dir).await;
+        let writer = adapters::safe_file_writer::SafeFileWriter::new();
+        let result =
+            execute_workplan_autonomous(workplan, *background, &project_dir, &writer).await;
         match result {
             Ok(summary) => {
                 println!("{}", summary);
