@@ -538,7 +538,31 @@ function decisionAction(item: DecisionItem): { role: string; prompt: string } {
 const DecisionsPanel: Component<{
   data: () => DecisionsResponse | null;
   onSendToChat: (text: string, role?: string) => void;
+  onResolved?: () => void;
 }> = (props) => {
+  const resolveBlocked = async (id: string, action: "unblock" | "complete" | "abandon", evt: MouseEvent) => {
+    evt.stopPropagation();
+    if (action === "complete" && !confirm("Mark this task DONE? Only do this if work is actually completed.")) return;
+    if (action === "abandon" && !confirm("Abandon this task? It won't be re-attempted.")) return;
+    try {
+      await restClient.post(`/api/decisions/blocked-task/resolve`, { id, action });
+      props.onResolved?.();
+    } catch (e) {
+      alert(`resolve failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+  const resolveAdr = async (id: string, action: "accept" | "reject" | "abandon", evt: MouseEvent) => {
+    evt.stopPropagation();
+    if (action === "accept" && !confirm("Accept this ADR? Status will flip to 'Accepted'.")) return;
+    if (action === "reject" && !confirm("Reject this ADR?")) return;
+    if (action === "abandon" && !confirm("Abandon this ADR?")) return;
+    try {
+      await restClient.post(`/api/decisions/adr/resolve`, { id, action });
+      props.onResolved?.();
+    } catch (e) {
+      alert(`adr resolve failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
   // Expanded shows all decisions; collapsed shows top 5. Toggle in-place
   // (no navigation) so the operator stays in Brain.
   const [expanded, setExpanded] = createSignal(false);
@@ -596,6 +620,50 @@ const DecisionsPanel: Component<{
                 </span>
                 <span class="text-gray-200 truncate flex-1" title={item.title}>{item.title}</span>
                 <span class="text-[10px] text-gray-400 flex-shrink-0">{ageShort(item.ageSeconds)}</span>
+                <Show when={item.kind === "blocked_task"}>
+                  <span class="flex gap-1 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={(e) => resolveBlocked(item.id, "unblock", e)}
+                      class="text-[9px] px-1.5 py-0.5 rounded bg-cyan-900 hover:bg-cyan-800 text-cyan-200"
+                      title="Clear blocked_reason and re-queue this task"
+                    >Unblock</button>
+                    <button
+                      type="button"
+                      onClick={(e) => resolveBlocked(item.id, "complete", e)}
+                      class="text-[9px] px-1.5 py-0.5 rounded bg-green-900 hover:bg-green-800 text-green-200"
+                      title="Mark task done — operator confirms work is finished"
+                    >Done</button>
+                    <button
+                      type="button"
+                      onClick={(e) => resolveBlocked(item.id, "abandon", e)}
+                      class="text-[9px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-red-900 text-gray-400 hover:text-red-200"
+                      title="Abandon — not going to do this"
+                    >×</button>
+                  </span>
+                </Show>
+                <Show when={item.kind === "proposed_adr"}>
+                  <span class="flex gap-1 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={(e) => resolveAdr(item.id, "accept", e)}
+                      class="text-[9px] px-1.5 py-0.5 rounded bg-green-900 hover:bg-green-800 text-green-200"
+                      title="Flip ADR Status to Accepted"
+                    >Accept</button>
+                    <button
+                      type="button"
+                      onClick={(e) => resolveAdr(item.id, "reject", e)}
+                      class="text-[9px] px-1.5 py-0.5 rounded bg-red-900 hover:bg-red-800 text-red-200"
+                      title="Flip ADR Status to Rejected"
+                    >Reject</button>
+                    <button
+                      type="button"
+                      onClick={(e) => resolveAdr(item.id, "abandon", e)}
+                      class="text-[9px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400"
+                      title="Flip ADR Status to Abandoned"
+                    >×</button>
+                  </span>
+                </Show>
                 <span class="text-cyan-400 text-[12px] opacity-0 group-hover:opacity-100 transition">→</span>
               </li>
             )}
@@ -800,8 +868,16 @@ const BrainDispatchesPanel: Component<{
                   <button
                     type="button"
                     class="shrink-0 px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px]"
-                    onClick={() => props.onSendToChat(`Result from @${d.role}:\n\n${d.result}`, d.role)}
-                    title="View result in chat"
+                    onClick={() => {
+                      // PRE-FILL ONLY — never auto-send. Sending the result
+                      // back as a "user" message used to trigger fresh chat
+                      // recursion (the result text contained @-mentions that
+                      // the parser dispatched again). Operator clicks send
+                      // explicitly if they want to follow up; otherwise this
+                      // is just a read-only paste they can copy from.
+                      props.onSendToChat(`Result from @${d.role} dispatch ${d.id.slice(0, 8)}:\n\n${d.result}`, d.role, { autoSend: false });
+                    }}
+                    title="Pre-fill chat input with the result (does not auto-send)"
                   >
                     View
                   </button>
@@ -1026,7 +1102,14 @@ const HealthPanel: Component<{ improver: () => ImproverStatus | null; swarmCount
   </section>
 );
 
-interface ChatMessage {
+interface ChatMessageMeta {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  costUsd?: number;
+  contextWindow?: number;
+}
+interface ChatMessage extends ChatMessageMeta {
   from: "you" | string; // "you" or persona name
   text: string;
   ts: string;
@@ -1444,21 +1527,39 @@ const ChatPanel: Component<{
         content?: string;
         error?: unknown;
         children?: ChildResp[];
+        inputTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+        costUsd?: number;
+        contextWindow?: number;
       }
-      const resp = await restClient.post<{ role: string; model: string; content: string; children?: ChildResp[] }>(
-        "/api/brain/chat",
-        {
-          role: targetRole,
-          message: messageBody,
-          project_id: projectId || undefined,
-          thread_id: activeThreadId() || undefined,
-        },
-      );
+      type ChatResp = {
+        role: string;
+        model: string;
+        content: string;
+        children?: ChildResp[];
+        inputTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+        costUsd?: number;
+        contextWindow?: number;
+      };
+      const resp = await restClient.post<ChatResp>("/api/brain/chat", {
+        role: targetRole,
+        message: messageBody,
+        project_id: projectId || undefined,
+        thread_id: activeThreadId() || undefined,
+      });
       const finalMsg: ChatMessage = {
         from: resp.role,
         text: resp.content || "(empty response)",
         ts: new Date().toISOString(),
         model: resp.model,
+        inputTokens: resp.inputTokens,
+        outputTokens: resp.outputTokens,
+        totalTokens: resp.totalTokens,
+        costUsd: resp.costUsd,
+        contextWindow: resp.contextWindow,
       };
       // Replace the pending bubble with the real response.
       setHistory((h) => h.map((m) =>
@@ -1481,6 +1582,11 @@ const ChatPanel: Component<{
             text: `${prefix} ${text}`,
             ts: new Date().toISOString(),
             model: typeof c.model === "string" ? c.model : undefined,
+            inputTokens: c.inputTokens,
+            outputTokens: c.outputTokens,
+            totalTokens: c.totalTokens,
+            costUsd: c.costUsd,
+            contextWindow: c.contextWindow,
           };
           setHistory((h) => [...h, childMsg]);
           persistMessage(childMsg);
@@ -1623,11 +1729,44 @@ const ChatPanel: Component<{
                 </span>
                 <span class="text-gray-400">· {new Date(msg.ts).toLocaleTimeString()}</span>
                 <Show when={msg.model && !msg.pending}>
-                  <span class="text-[9px] text-gray-300 ml-auto truncate max-w-[120px]" title={msg.model}>
+                  <span class="text-[9px] text-gray-300 ml-auto truncate max-w-[160px]" title={msg.model}>
                     {msg.model}
                   </span>
                 </Show>
               </div>
+              {/* Token / cost / context-window meter — shown only on
+                  agent responses that have usage data. Layout: small
+                  pill row + a thin context-window progress bar. Cost
+                  defaults to $0.00 for self-hosted models so the bar
+                  still renders consistently. */}
+              <Show when={!msg.pending && msg.from !== "you" && (msg.totalTokens ?? 0) > 0}>
+                {(() => {
+                  const total = msg.totalTokens ?? 0;
+                  const ctx = msg.contextWindow ?? 0;
+                  const pct = ctx > 0 ? Math.min(100, (total / ctx) * 100) : 0;
+                  const cost = msg.costUsd ?? 0;
+                  const costStr = cost === 0 ? "$0" : cost < 0.001 ? "<$0.001" : `$${cost.toFixed(cost < 0.01 ? 4 : 3)}`;
+                  const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n.toString();
+                  const pctClass = pct > 80 ? "bg-red-500" : pct > 50 ? "bg-yellow-500" : "bg-cyan-700";
+                  return (
+                    <div class="text-[9px] text-gray-400 mb-1 flex items-center gap-2">
+                      <span title="input tokens">↓{fmt(msg.inputTokens ?? 0)}</span>
+                      <span title="output tokens">↑{fmt(msg.outputTokens ?? 0)}</span>
+                      <span class="text-gray-500">·</span>
+                      <span title="cost (estimated for non-OpenRouter providers)">{costStr}</span>
+                      <Show when={ctx > 0}>
+                        <span class="text-gray-500">·</span>
+                        <span title={`${total.toLocaleString()} / ${ctx.toLocaleString()} tokens`}>
+                          {pct < 1 ? "<1" : pct.toFixed(0)}% ctx
+                        </span>
+                        <span class="flex-1 h-1 bg-gray-800 rounded overflow-hidden max-w-[80px]">
+                          <span class={`block h-full ${pctClass}`} style={{ width: `${pct}%` }}></span>
+                        </span>
+                      </Show>
+                    </div>
+                  );
+                })()}
+              </Show>
               <Show
                 when={msg.pending && msg.startedAt}
                 fallback={
@@ -2184,7 +2323,7 @@ const Brain: Component = () => {
           {/* Decisions placed at the top of the center stack — it's the
               priority lane (human-in-loop bottlenecks). Kanban next for
               flow visibility. Swarms + Health below as supplementary. */}
-          <DecisionsPanel data={decisions} onSendToChat={sendToChat} />
+          <DecisionsPanel data={decisions} onSendToChat={sendToChat} onResolved={refresh} />
           <BrainDispatchesPanel
             dispatches={dispatches}
             counts={dispatchCounts}

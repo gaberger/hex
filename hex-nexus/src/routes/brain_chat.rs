@@ -516,6 +516,7 @@ pub async fn dispatch_brain_chat(
     system_lines.push("- DO NOT pretend to have tried a tool, called an MCP function, or executed a command yourself. DO NOT generate fake error messages. If you need work done, delegate via @<role>; if you need data only the operator can give, ask ONE specific question.".to_string());
     system_lines.push("- DO NOT contradict LIVE STATE. If LIVE STATE says '2 registered, 1 online' and the operator says 'agents are offline', the truth is in LIVE STATE — explain what online/stale/dead actually mean in the registry.".to_string());
     system_lines.push("- AUTO-DISPATCH DEPTH: If you see this reply is itself a delegation (the user message starts with 'Inbound delegation from @...'), execute the task directly. Don't bounce it back up the chain by re-mentioning the sender's role — that's a loop the system will break, but it wastes a turn.".to_string());
+    system_lines.push("- INBOUND-DELEGATION HANDLING: When you receive an 'Inbound delegation from @<sender>' brief: (a) if you have the capability to do the task in this surface — DO IT and reply with the result; (b) if the brief is incomplete or garbled (truncated mid-sentence, no clear task verb, references missing context) — return ONE clarifying question to @<sender> only, do NOT re-delegate to a different role guessing at intent; (c) only fan out further with @<another-role> if your role legitimately requires that other role's domain (e.g. @planner → @hex-coder for impl). Never delegate JUST because you lack tool access — say what you'd do and let the supervisor enqueue it as a worker task. Re-delegation cascades waste tokens and drift from the original ask.".to_string());
     let system_prompt = system_lines.join("\n");
 
     // Brain chat ALWAYS routes to a frontier model — the operator wants
@@ -610,6 +611,14 @@ pub async fn dispatch_brain_chat(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .unwrap_or(model_id);
+    let input_tokens = resp.0.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let output_tokens = resp.0.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let cost_usd = resp.0
+        .get("openrouter_cost_usd")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or_else(|| estimate_cost_usd(&final_model, input_tokens, output_tokens));
+    let context_window = context_window_for(&final_model);
 
     // Agent-to-agent auto-dispatch.
     //
@@ -706,6 +715,11 @@ pub async fn dispatch_brain_chat(
                     "children": child_resp.0.get("children").cloned().unwrap_or(Value::Array(vec![])),
                     "enqueued_task_id": task_id,
                     "enqueue_status": enqueue_status,
+                    "inputTokens": child_resp.0.get("inputTokens").cloned().unwrap_or(json!(0)),
+                    "outputTokens": child_resp.0.get("outputTokens").cloned().unwrap_or(json!(0)),
+                    "totalTokens": child_resp.0.get("totalTokens").cloned().unwrap_or(json!(0)),
+                    "costUsd": child_resp.0.get("costUsd").cloned().unwrap_or(json!(0.0)),
+                    "contextWindow": child_resp.0.get("contextWindow").cloned().unwrap_or(json!(0)),
                 }));
             } else {
                 out.push(json!({
@@ -728,8 +742,62 @@ pub async fn dispatch_brain_chat(
             "children": children,
             "enqueued": enqueued,
             "depth": depth,
+            "inputTokens": input_tokens,
+            "outputTokens": output_tokens,
+            "totalTokens": input_tokens + output_tokens,
+            "costUsd": cost_usd,
+            "contextWindow": context_window,
         })),
     )
+}
+
+/// Static lookup of a model's max context window in tokens.
+/// Used by the dashboard to render a usage/budget bar on each chat bubble.
+/// Falls back to 32_000 (a conservative local-model default) for unknown ids.
+fn context_window_for(model: &str) -> u64 {
+    let m = model.to_ascii_lowercase();
+    if m.contains("claude") {
+        if m.contains("claude-sonnet-4") || m.contains("claude-opus-4") || m.contains("claude-4") {
+            return 1_000_000; // Claude 4.x family — 1M context
+        }
+        return 200_000; // older Claudes
+    }
+    if m.contains("gpt-4o") { return 128_000; }
+    if m.contains("gpt-4-turbo") { return 128_000; }
+    if m.contains("gpt-4") { return 8_192; }
+    if m.contains("gpt-3.5") { return 16_385; }
+    if m.contains("gemini") { return 1_000_000; }
+    if m.contains("devstral") { return 128_000; }
+    if m.contains("qwen") { return 32_768; }
+    if m.contains("llama") { return 32_768; }
+    if m.contains("mistral") { return 32_768; }
+    32_000
+}
+
+/// Best-effort cost estimate when the provider doesn't return a price.
+/// Per-million-token rates inferred from public pricing pages — local
+/// Ollama models cost $0 (we self-host). Used when openrouter_cost_usd
+/// is absent (Anthropic-direct, OpenAI-direct, or Ollama paths).
+fn estimate_cost_usd(model: &str, input_tokens: u64, output_tokens: u64) -> f64 {
+    let m = model.to_ascii_lowercase();
+    let (in_per_m, out_per_m) = if m.contains("opus-4") {
+        (15.00_f64, 75.00_f64)
+    } else if m.contains("sonnet-4") {
+        (3.00, 15.00)
+    } else if m.contains("haiku-4") {
+        (0.80, 4.00)
+    } else if m.contains("gpt-4o-mini") {
+        (0.15, 0.60)
+    } else if m.contains("gpt-4o") {
+        (2.50, 10.00)
+    } else if m.contains("gemini") {
+        (0.30, 2.50)
+    } else if m.contains(':') || m.contains("ollama") || m.contains("qwen") || m.contains("devstral") || m.contains("llama") {
+        (0.0, 0.0) // self-hosted
+    } else {
+        (1.0, 3.0) // unknown — modest default
+    };
+    (input_tokens as f64 * in_per_m + output_tokens as f64 * out_per_m) / 1_000_000.0
 }
 
 /// POST /api/brain/dispatches/{id}/promote — flip PendingReview → Pending.

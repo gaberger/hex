@@ -6,7 +6,7 @@
 //! POST /api/decisions/{id}                        — resolve via inbox ack
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     Json,
 };
 use http::StatusCode;
@@ -14,6 +14,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::state::{DecisionRequest, SharedState, WsEnvelope};
+
+#[derive(Debug, Deserialize, Default)]
+pub struct DecisionsQuery {
+    /// Optional project ID. When set, scan that project's rootPath/docs/
+    /// instead of the nexus daemon's cwd. Use "__global__" to force the
+    /// cwd-only behavior even when projects are registered.
+    #[serde(default, alias = "projectId")]
+    pub project: Option<String>,
+}
 
 /// Legacy project-scoped decision handler (WS broadcast).
 pub async fn handle_decision(
@@ -109,6 +118,215 @@ pub async fn resolve_decision(
     )
 }
 
+/// POST /api/decisions/blocked-task/resolve — resolve a blocked workplan task.
+///
+/// Body: { "id": "blocked:wp-foo:P1.1", "action": "unblock" | "complete" | "abandon", "note": "..." }
+///
+/// Parses the composite id ("blocked:<workplan_id>:<task_id>"), opens the
+/// workplan JSON, locates the task, applies the action:
+///   - unblock: clear blocked_reason, set status="pending" (re-queueable)
+///   - complete: set status="done" (operator confirms it's actually done)
+///   - abandon: set status="abandoned"
+/// In all three cases the entry stops appearing in /api/decisions because
+/// the aggregator filters on status=="blocked" || blocked_reason.
+///
+/// Writes via std::fs — no SafeFileWriter here because workplan JSONs are
+/// not on the critical-paths list (operator-curated artifacts).
+#[derive(Debug, Deserialize)]
+pub struct ResolveBlockedTaskRequest {
+    pub id: String,
+    pub action: String,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+pub async fn resolve_blocked_task(
+    State(_state): State<SharedState>,
+    Json(req): Json<ResolveBlockedTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    // Parse "blocked:<workplan_id>:<task_id>" — workplan ids contain '-' and
+    // task ids contain '.' but no colons, so split_once on ':' twice is safe.
+    let stripped = match req.id.strip_prefix("blocked:") {
+        Some(s) => s,
+        None => return (StatusCode::BAD_REQUEST, Json(json!({
+            "error": format!("expected id starting with 'blocked:', got '{}'", req.id),
+        }))),
+    };
+    let (wp_id, task_id) = match stripped.rsplit_once(':') {
+        Some(p) => p,
+        None => return (StatusCode::BAD_REQUEST, Json(json!({
+            "error": format!("expected 'blocked:<workplan>:<task>' format, got '{}'", req.id),
+        }))),
+    };
+    let valid_actions = ["unblock", "complete", "abandon"];
+    if !valid_actions.contains(&req.action.as_str()) {
+        return (StatusCode::BAD_REQUEST, Json(json!({
+            "error": format!("invalid action '{}'. Must be: {}", req.action, valid_actions.join(", ")),
+        })));
+    }
+
+    let scan_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let wp_path = scan_root.join("docs/workplans").join(format!("{}.json", wp_id));
+    let raw = match std::fs::read_to_string(&wp_path) {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::NOT_FOUND, Json(json!({
+            "error": format!("workplan not found at {}: {}", wp_path.display(), e),
+        }))),
+    };
+    let mut doc: Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+            "error": format!("workplan JSON parse failed: {}", e),
+        }))),
+    };
+
+    let new_status = match req.action.as_str() {
+        "unblock" => "pending",
+        "complete" => "done",
+        _ => "abandoned",
+    };
+
+    let mut found = false;
+    if let Some(phases) = doc.get_mut("phases").and_then(|v| v.as_array_mut()) {
+        for phase in phases {
+            if let Some(tasks) = phase.get_mut("tasks").and_then(|v| v.as_array_mut()) {
+                for task in tasks {
+                    let matches = task.get("id").and_then(|v| v.as_str()) == Some(task_id);
+                    if !matches { continue; }
+                    found = true;
+                    if let Some(obj) = task.as_object_mut() {
+                        obj.insert("status".to_string(), json!(new_status));
+                        // Clear blocked_reason regardless of action — once
+                        // resolved it's no longer blocked.
+                        obj.remove("blocked_reason");
+                        if let Some(note) = req.note.as_deref() {
+                            obj.insert("operator_resolution_note".to_string(), json!(note));
+                        }
+                        obj.insert("operator_resolved_at".to_string(), json!(chrono::Utc::now().to_rfc3339()));
+                    }
+                }
+            }
+        }
+    }
+    if !found {
+        return (StatusCode::NOT_FOUND, Json(json!({
+            "error": format!("task '{}' not found in workplan '{}'", task_id, wp_id),
+        })));
+    }
+
+    let serialized = match serde_json::to_string_pretty(&doc) {
+        Ok(s) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+            "error": format!("workplan re-serialize failed: {}", e),
+        }))),
+    };
+    if let Err(e) = std::fs::write(&wp_path, serialized) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+            "error": format!("workplan write failed: {}", e),
+        })));
+    }
+    (StatusCode::OK, Json(json!({
+        "ok": true,
+        "workplan": wp_id,
+        "task": task_id,
+        "newStatus": new_status,
+    })))
+}
+
+/// POST /api/decisions/adr/resolve — resolve a Proposed ADR.
+///
+/// Body: { "id": "adr:ADR-047-…", "action": "accept" | "reject" | "abandon", "note": "..." }
+///
+/// Edits the ADR markdown file in place to flip the Status line:
+///   - accept   → "**Status:** Accepted"
+///   - reject   → "**Status:** Rejected"
+///   - abandon  → "**Status:** Abandoned"
+/// Once flipped, the ADR no longer matches the "Proposed" filter in the
+/// decisions aggregator, so it disappears from the list on next refresh.
+#[derive(Debug, Deserialize)]
+pub struct ResolveAdrRequest {
+    pub id: String,
+    pub action: String,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+pub async fn resolve_adr(
+    State(_state): State<SharedState>,
+    Json(req): Json<ResolveAdrRequest>,
+) -> (StatusCode, Json<Value>) {
+    let stripped = match req.id.strip_prefix("adr:") {
+        Some(s) => s,
+        None => return (StatusCode::BAD_REQUEST, Json(json!({
+            "error": format!("expected id starting with 'adr:', got '{}'", req.id),
+        }))),
+    };
+    let valid = ["accept", "reject", "abandon"];
+    if !valid.contains(&req.action.as_str()) {
+        return (StatusCode::BAD_REQUEST, Json(json!({
+            "error": format!("invalid action '{}'. Must be: {}", req.action, valid.join(", ")),
+        })));
+    }
+    let new_status = match req.action.as_str() {
+        "accept" => "Accepted",
+        "reject" => "Rejected",
+        _ => "Abandoned",
+    };
+
+    let scan_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let adr_path = scan_root.join("docs/adrs").join(format!("{}.md", stripped));
+    let raw = match std::fs::read_to_string(&adr_path) {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::NOT_FOUND, Json(json!({
+            "error": format!("ADR not found at {}: {}", adr_path.display(), e),
+        }))),
+    };
+    // Replace the first Status: Proposed line. Tolerant of "Status:", "**Status:**",
+    // mixed case, and whatever's after Proposed (some have trailing dates).
+    let mut found = false;
+    let mut updated_lines: Vec<String> = Vec::with_capacity(raw.lines().count());
+    for line in raw.lines() {
+        if !found {
+            let lower = line.to_ascii_lowercase();
+            let trimmed = lower.trim();
+            if (trimmed.starts_with("**status:**") || trimmed.starts_with("status:"))
+                && trimmed.contains("proposed")
+            {
+                // Preserve original style (bold or plain) by replacing only the word.
+                let new_line = if line.trim().to_ascii_lowercase().starts_with("**status:**") {
+                    format!("**Status:** {} (resolved {})", new_status, chrono::Utc::now().format("%Y-%m-%d"))
+                } else {
+                    format!("Status: {} (resolved {})", new_status, chrono::Utc::now().format("%Y-%m-%d"))
+                };
+                updated_lines.push(new_line);
+                found = true;
+                continue;
+            }
+        }
+        updated_lines.push(line.to_string());
+    }
+    if !found {
+        return (StatusCode::NOT_FOUND, Json(json!({
+            "error": "no 'Status: Proposed' line found in this ADR",
+        })));
+    }
+    let mut new_content = updated_lines.join("\n");
+    if !new_content.ends_with('\n') { new_content.push('\n'); }
+    if let Some(note) = req.note.as_deref().filter(|s| !s.is_empty()) {
+        new_content.push_str(&format!("\n---\n## Operator Resolution Note ({})\n\n{}\n", chrono::Utc::now().to_rfc3339(), note));
+    }
+    if let Err(e) = std::fs::write(&adr_path, new_content) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+            "error": format!("ADR write failed: {}", e),
+        })));
+    }
+    (StatusCode::OK, Json(json!({
+        "ok": true,
+        "adr": stripped,
+        "newStatus": new_status,
+    })))
+}
+
 // ── Brain-dashboard decisions aggregator (wp-brain-dashboard M1) ──────────
 
 /// One actionable item the operator owes a decision on.
@@ -149,13 +367,33 @@ pub struct DecisionItem {
 /// (e.g. age when timestamp is missing) default to 0.
 pub async fn list_decisions(
     State(state): State<SharedState>,
+    Query(q): Query<DecisionsQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    // Resolve scan root. When ?project=<id> is set and resolves to a
+    // ProjectRecord, walk THAT project's docs tree. Otherwise fall back to
+    // the nexus daemon's cwd (legacy behavior).
+    let project_id_filter = q.project.as_deref().unwrap_or("");
+    let scan_root: std::path::PathBuf = if !project_id_filter.is_empty() && project_id_filter != "__global__" {
+        if let Some(port) = state.state_port.as_ref() {
+            match port.project_get(project_id_filter).await {
+                Ok(Some(p)) => std::path::PathBuf::from(p.root_path),
+                _ => std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            }
+        } else {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        }
+    } else {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    };
+    let workplans_dir = scan_root.join("docs/workplans");
+    let adrs_dir = scan_root.join("docs/adrs");
+
     let mut items: Vec<DecisionItem> = Vec::new();
 
     // Source 1: Blocked workplan tasks (read from filesystem because workplans
     // live in docs/workplans/wp-*.json, not just STDB). Best-effort — we look
     // in the project working directory if available.
-    if let Ok(entries) = std::fs::read_dir("docs/workplans") {
+    if let Ok(entries) = std::fs::read_dir(&workplans_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
@@ -198,7 +436,7 @@ pub async fn list_decisions(
     }
 
     // Source 2: Proposed ADRs (older than 24h). Best-effort filesystem scan.
-    if let Ok(entries) = std::fs::read_dir("docs/adrs") {
+    if let Ok(entries) = std::fs::read_dir(&adrs_dir) {
         let now = chrono::Utc::now().timestamp();
         for entry in entries.flatten() {
             let path = entry.path();
