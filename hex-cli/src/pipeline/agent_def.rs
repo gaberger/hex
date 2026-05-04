@@ -217,6 +217,18 @@ impl ModelConfig {
             "qwen-72b" | "qwen2.5-72b" => "qwen/qwen-2.5-72b-instruct:free",
             "qwen-coder" | "qwen2.5-coder" => "qwen/qwen-2.5-coder-32b-instruct:free",
             "qwen-7b" | "qwen2.5-7b" => "qwen/qwen-2.5-7b-instruct:free",
+            // Local Ollama models with explicit tags (e.g. "qwen2.5-coder:32b",
+            // "devstral-small-2:24b") pass through as-is so the inference router
+            // matches them to the registered Ollama provider. The colon-tag is
+            // the Ollama convention for size/variant. Without this, every
+            // operator-set HEX_MODEL like "foo:1b" would silently fall to
+            // openrouter/free and 401 in air-gapped setups.
+            name if name.contains(':') => {
+                // Leak: returning &'static str from runtime data requires Box::leak.
+                // Acceptable here — the leak is bounded by the set of distinct
+                // Ollama model names ever resolved in a single process lifetime.
+                Box::leak(name.to_string().into_boxed_str())
+            }
             // Unknown → openrouter/free so the inference layer picks the best available
             _ => "openrouter/free",
         }

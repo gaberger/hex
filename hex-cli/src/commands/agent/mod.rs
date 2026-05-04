@@ -1524,32 +1524,43 @@ async fn worker(
                     if let Some(tasks) = swarm["tasks"].as_array() {
                         for candidate in tasks {
                             let status = candidate["status"].as_str().unwrap_or("");
-                            if !matches!(status, "pending" | "") {
-                                continue;
-                            }
                             let task_id = candidate["id"].as_str().unwrap_or("");
                             if task_id.is_empty() {
                                 continue;
                             }
-                            // Skip already-assigned tasks
                             let existing_agent = candidate["agent_id"]
                                 .as_str()
                                 .or_else(|| candidate["agentId"].as_str())
                                 .unwrap_or("");
-                            if !existing_agent.is_empty() && existing_agent != "null" {
+                            // Two valid pickup paths:
+                            //   (a) Pull: status pending + unassigned → atomic claim below
+                            //   (b) Push: status pending|in_progress + agent_id == self → operator
+                            //       pre-assigned via `hex task assign <task_id> <self>`. Re-issue
+                            //       the patch as a no-op-equivalent and execute.
+                            let is_pull_eligible =
+                                matches!(status, "pending" | "")
+                                    && (existing_agent.is_empty() || existing_agent == "null");
+                            let is_push_assigned =
+                                matches!(status, "pending" | "in_progress")
+                                    && existing_agent == agent_id;
+                            if !is_pull_eligible && !is_push_assigned {
                                 continue;
                             }
-                            // Role guard
-                            let c_title = candidate["title"].as_str().unwrap_or("");
-                            let c_role: Option<String> = serde_json::from_str::<serde_json::Value>(c_title)
-                                .ok()
-                                .and_then(|v| v["role"].as_str().map(|s| s.to_string()));
-                            let role_ok = match &c_role {
-                                Some(r) => r == role,
-                                None => c_title.starts_with(&format!("{}: ", role)) || !c_title.contains(": "),
-                            };
-                            if !role_ok {
-                                continue;
+                            // Role guard — only enforced for pull-claimed tasks. Push-assigned
+                            // tasks (operator-explicit `hex task assign <id> <agent>`) bypass
+                            // the title heuristic since the operator already chose the agent.
+                            if is_pull_eligible {
+                                let c_title = candidate["title"].as_str().unwrap_or("");
+                                let c_role: Option<String> = serde_json::from_str::<serde_json::Value>(c_title)
+                                    .ok()
+                                    .and_then(|v| v["role"].as_str().map(|s| s.to_string()));
+                                let role_ok = match &c_role {
+                                    Some(r) => r == role,
+                                    None => c_title.starts_with(&format!("{}: ", role)) || !c_title.contains(": "),
+                                };
+                                if !role_ok {
+                                    continue;
+                                }
                             }
                             println!("  [claim] attempting task {} for role {}", &task_id[..8.min(task_id.len())], role);
                             let assign_result = nexus
@@ -1619,18 +1630,26 @@ async fn worker(
                         // Role guard: skip tasks intended for a different worker role.
                         // Tasks embed the target role either as JSON {"role":"hex-tester",...}
                         // or as a title prefix "hex-tester: ... [iteration N]".
+                        // EXCEPTION: push-assigned tasks (operator did `hex task assign
+                        // <id> <self>`) bypass the title heuristic — the operator already
+                        // chose the agent. Only enforce on tasks that arrived via Step-1
+                        // pull-claim (those would have the role-prefix convention).
+                        // Role guard for push-assigned tasks: by this point
+                        // t_agent == agent_id, so the operator chose this agent.
+                        // Only reject when the task explicitly embeds a DIFFERENT
+                        // role in JSON metadata. Title-prefix heuristics are NOT
+                        // applied — operators write natural titles like
+                        // "Classify: Add a Redis adapter" without boilerplate.
                         let task_role: Option<String> = serde_json::from_str::<serde_json::Value>(title)
                             .ok()
                             .and_then(|v| v["role"].as_str().map(|s| s.to_string()));
-                        let role_match = match &task_role {
-                            Some(r) => r == role,
-                            // Fallback: title prefix "hex-fixer: ..." or no role marker (accept)
-                            None => title.starts_with(&format!("{}: ", role)) || !title.contains(": "),
-                        };
-                        if !role_match {
-                            debug!(task_id, worker_role = role, task_role = ?task_role, "skipping task — role mismatch");
-                            continue;
+                        if let Some(ref tr) = task_role {
+                            if tr != role {
+                                debug!(task_id, worker_role = role, task_role = ?task_role, "skipping push-assigned task — explicit role mismatch in JSON metadata");
+                                continue;
+                            }
                         }
+                        // No explicit role marker or role marker matches → trust the operator.
 
                         let tid_short = &task_id[..8.min(task_id.len())];
                         let display_title = serde_json::from_str::<serde_json::Value>(title)
@@ -2341,6 +2360,9 @@ async fn execute_worker_task(
                 role = %role,
                 model = %model_id,
                 tier = p.model.tier,
+                persona_preferred = ?p.model.preferred,
+                outer_persona_model = ?persona_model,
+                env_hex_model = ?std::env::var("HEX_MODEL").ok(),
                 "yaml-driven worker dispatch"
             );
 

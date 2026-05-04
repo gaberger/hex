@@ -313,9 +313,15 @@ async fn assign(task_id: &str, agent_id: Option<String>) -> anyhow::Result<()> {
             ))?,
     };
 
+    // PATCH /api/hexflo/tasks/{id} expects the canonical TaskCompletionBody
+    // (hex-core/types/task_completion.rs) with required `task_id` and `status`
+    // fields — the URL path id alone isn't enough. For assignment we keep
+    // status as Pending (the worker transitions it to InProgress on claim).
     let path = format!("/api/hexflo/tasks/{}", task_id);
     nexus.patch(&path, &json!({
-        "agentId": resolved_agent_id,
+        "task_id": task_id,
+        "status": "pending",
+        "agent_id": resolved_agent_id,
     })).await?;
 
     println!("{} Task assigned", "\u{2b21}".green());
