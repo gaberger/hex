@@ -1,0 +1,137 @@
+{
+  "id": "wp-extend-hex-agent-worker-roles",
+  "title": "Extend hex agent worker --role to support all 22 declarative agents",
+  "paused": true,
+  "paused_reason": "DO NOT auto-execute. Each role's worker arm in hex-cli/src/commands/agent/mod.rs:1557 has non-trivial dispatch logic (model selection, context loading, gate execution, output schema). Implementing 16 new arms is dedicated work, not a transform. Resume by either (a) hand-implementing each arm against its YAML contract, or (b) refactoring the worker dispatch into a generic YAML-driven executor (preferable — single change point).",
+  "rationale": "Today `hex agent worker --role` accepts a String but the dispatch match in agent/mod.rs:1557 has only 6 hardcoded arms (hex-coder, hex-tester, hex-reviewer, hex-documenter, hex-ux, hex-fixer). The supervisor reads all 22 YAMLs from hex-cli/assets/agents/hex/hex/, but only those 6 can actually execute via the worker CLI. Until extended, @-mention wrappers for the other 16 agents (pm-agent, planner, integrator, validation-judge, swarm-coordinator, adversarial-red, adversarial-blue, cli-designer, ux-designer, behavioral-spec-writer, scaffold-validator, adr-reviewer, dead-code-analyzer, dependency-analyst, status-monitor, dev-tracker, rust-refactorer, feature-developer) cannot truly delegate to hex — they hit `Unknown worker role`.",
+  "phases": [
+    {
+      "id": "P0",
+      "title": "Decision: per-arm vs generic executor",
+      "tasks": [
+        {
+          "id": "P0.1",
+          "title": "ADR: choose between per-arm worker implementation (16 new match arms) vs generic YAML-driven executor (single new arm that reads workflow.phases from the YAML and executes generically). Option B is preferable for maintenance — new agents only require a YAML, no Rust code. Document tradeoffs in ADR.",
+          "status": "pending",
+          "strategy_hint": "scaffold",
+          "files": [
+            "docs/adrs/"
+          ],
+          "evidence": [
+            "ls docs/adrs/ | grep -iE 'worker.*dispatch|generic.*executor|yaml.*executor' | head -1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "title": "If P0 chose generic executor — implement YAML-driven dispatch",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "Add generic match arm catching any role name. Look up the YAML from the embedded registry, read workflow.phases, execute each phase via the supervisor's existing phase runner. Output per the YAML's outputs schema.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/agent/mod.rs",
+            "hex-cli/src/pipeline/supervisor.rs"
+          ],
+          "evidence": [
+            "grep -q 'fn run_yaml_driven_role' hex-cli/src/commands/agent/mod.rs",
+            "grep -q 'workflow.phases' hex-cli/src/commands/agent/mod.rs",
+            "cargo check -p hex-cli"
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Provider-lock enforcement: when running an agent with model.provider_lock set (adversarial-red: anthropic, adversarial-blue: openai_or_local), refuse to run if the resolved provider doesn't match. Required for the two-adversary debate to be non-theatre.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/agent/mod.rs",
+            "hex-cli/src/pipeline/supervisor.rs",
+            "hex-nexus/src/coordination/mod.rs"
+          ],
+          "evidence": [
+            "grep -q 'provider_lock' hex-cli/src/pipeline/supervisor.rs || grep -rn 'provider_lock' hex-cli/src/",
+            "grep -q 'provider_lock' hex-nexus/src/coordination/mod.rs",
+            "cargo check -p hex-cli -p hex-nexus"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "If P0 chose per-arm — add the 16 missing arms",
+      "tasks": [
+        {
+          "id": "P2.1",
+          "title": "Each new arm needs: model resolution from YAML.model.tier/preferred/fallback, context loading per YAML.context.load_on_start, workflow execution per YAML.workflow.phases or .steps, output emission per YAML.outputs schema. Roles to add: pm-agent, planner, feature-developer, swarm-coordinator, integrator, rust-refactorer, behavioral-spec-writer, validation-judge, adversarial-red, adversarial-blue, cli-designer, ux-designer, scaffold-validator, adr-reviewer, dead-code-analyzer, dependency-analyst, status-monitor, dev-tracker.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/agent/mod.rs"
+          ],
+          "evidence": [
+            "for r in pm-agent planner feature-developer swarm-coordinator integrator rust-refactorer behavioral-spec-writer validation-judge adversarial-red adversarial-blue cli-designer ux-designer scaffold-validator adr-reviewer dead-code-analyzer dependency-analyst status-monitor dev-tracker; do grep -q \"\\\"$r\\\" =>\" hex-cli/src/commands/agent/mod.rs || (echo \"missing: $r\"; exit 1); done",
+            "cargo check -p hex-cli"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "Smoke-test every wrapper end-to-end",
+      "tasks": [
+        {
+          "id": "P3.1",
+          "title": "For each of the 22 wrappers, run a smoke test: create swarm, create task, assign role, run worker --once, verify task transitions to completed and result is non-empty. Script lives in scripts/test-agent-roles.sh.",
+          "status": "pending",
+          "strategy_hint": "script",
+          "files": [
+            "scripts/test-agent-roles.sh"
+          ],
+          "evidence": [
+            "test -x scripts/test-agent-roles.sh",
+            "scripts/test-agent-roles.sh 2>&1 | grep -q '22/22 passed'"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "title": "Update wrapper delegation_status from NOT WIRED to SUPPORTED",
+      "tasks": [
+        {
+          "id": "P4.1",
+          "title": "Update /tmp/hex-wrapper-template.sh WORKER_SUPPORTED list to include the newly-wired roles, then re-run the script to regenerate all 22 wrappers with accurate status. Or: edit the wrappers in place to flip status messaging.",
+          "status": "pending",
+          "strategy_hint": "transform",
+          "files": [
+            "/home/gary/.claude/agents/hex/"
+          ],
+          "evidence": [
+            "! grep -l 'NOT YET WIRED' ~/.claude/agents/hex/*.md"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "title": "Rebuild + redistribute",
+      "tasks": [
+        {
+          "id": "P5.1",
+          "title": "cargo build -p hex-cli --release && cargo build -p hex-nexus --release; install to ~/.local/bin/; restart nexus; verify hex agent worker --role <each> --help succeeds without 'Unknown worker role' for all 22.",
+          "status": "pending",
+          "strategy_hint": "script",
+          "files": [],
+          "evidence": [
+            "cargo build -p hex-cli -p hex-nexus --release 2>&1 | grep -q 'Finished'",
+            "for r in pm-agent planner adversarial-red adversarial-blue cli-designer ux-designer; do hex agent worker --role $r --once 2>&1 | grep -qv 'Unknown worker role' || (echo \"still unknown: $r\"; exit 1); done"
+          ]
+        }
+      ]
+    }
+  ]
+}
