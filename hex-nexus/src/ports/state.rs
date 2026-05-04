@@ -836,6 +836,28 @@ pub trait IHexAgentStatePort: Send + Sync {
     /// Look up a pool's role (for the spawn-request fallback path when
     /// the event payload is missing/malformed).
     async fn worker_pool_role(&self, pool_id: &str) -> Result<Option<String>, StateError>;
+
+    // ── Pool CLI / dashboard surface (P4 + P5) ──────────────────────────
+    async fn pool_create(
+        &self,
+        id: &str,
+        role: &str,
+        desired_count: u32,
+        restart_strategy: &str,
+        max_restarts: u32,
+        max_restart_window_secs: u32,
+        paused: bool,
+        owner_agent_id: &str,
+    ) -> Result<(), StateError>;
+    async fn pool_set_paused(&self, id: &str, paused: bool) -> Result<(), StateError>;
+    async fn pool_delete(&self, id: &str) -> Result<(), StateError>;
+    /// Returns one row per pool with derived alive/exited counts:
+    /// (id, role, desired_count, alive_count, exited_count,
+    ///  restart_strategy, max_restarts, max_restart_window_secs,
+    ///  paused, in_crash_loop)
+    async fn pool_status_all(
+        &self,
+    ) -> Result<Vec<(String, String, u32, u32, u32, String, u32, u32, bool, bool)>, StateError>;
 }
 
 /// Agent notification inbox (ADR-060).

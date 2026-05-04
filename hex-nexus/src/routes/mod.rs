@@ -6,6 +6,7 @@ pub mod stdb;
 pub mod analysis;
 pub mod chat;
 pub mod brain_chat;
+pub mod pools;
 pub mod commands;
 pub mod coordination;
 pub mod decisions;
@@ -526,6 +527,19 @@ pub fn build_router(state: SharedState) -> Router {
         // Brain-dashboard chat dispatch (wp-brain-dashboard M3):
         // POST { role, message } → loads YAML persona → calls inference → returns content.
         .route("/api/brain/chat", post(brain_chat::dispatch_brain_chat))
+        // Brain-dashboard broadcast: POST { message, roles? } → fans out to all
+        // (or specified) personas in parallel → array of responses.
+        .route("/api/brain/broadcast", post(brain_chat::dispatch_brain_broadcast))
+        // STDB-supervisor pool surface (wp-stdb-supervisor P4 + P5)
+        .route("/api/pools", get(pools::list_pools).post(pools::create_pool))
+        .route("/api/pools/{id}", delete(pools::delete_pool))
+        .route("/api/pools/{id}/paused", patch(pools::set_paused))
+        // STDB-backed chat threads (stored as hexflo memory keys "chat:thread:<id>").
+        .route("/api/brain/threads", get(brain_chat::list_threads).post(brain_chat::create_thread))
+        .route("/api/brain/threads/{id}",
+            get(brain_chat::get_thread).delete(brain_chat::delete_thread))
+        .route("/api/brain/threads/{id}/messages",
+            post(brain_chat::append_thread_message))
         // ═══════════════════════════════════════════════════════════
         // DEPRECATED STATE ROUTES — migrate to SpacetimeDB subscriptions
         // These routes add X-Deprecated headers via deprecation_layer.

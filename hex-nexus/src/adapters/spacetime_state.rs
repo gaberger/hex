@@ -1570,6 +1570,81 @@ mod real {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()))
         }
+
+        async fn pool_create(
+            &self,
+            id: &str,
+            role: &str,
+            desired_count: u32,
+            restart_strategy: &str,
+            max_restarts: u32,
+            max_restart_window_secs: u32,
+            paused: bool,
+            owner_agent_id: &str,
+        ) -> Result<(), StateError> {
+            self.call_reducer(
+                "worker_pool_intent_set",
+                serde_json::json!([
+                    id, role, desired_count, restart_strategy,
+                    max_restarts, max_restart_window_secs, paused, owner_agent_id,
+                ]),
+            ).await?;
+            Ok(())
+        }
+
+        async fn pool_set_paused(&self, id: &str, paused: bool) -> Result<(), StateError> {
+            self.call_reducer(
+                "worker_pool_intent_set_paused",
+                serde_json::json!([id, paused]),
+            ).await?;
+            Ok(())
+        }
+
+        async fn pool_delete(&self, id: &str) -> Result<(), StateError> {
+            self.call_reducer("worker_pool_intent_delete", serde_json::json!([id])).await?;
+            Ok(())
+        }
+
+        async fn pool_status_all(
+            &self,
+        ) -> Result<Vec<(String, String, u32, u32, u32, String, u32, u32, bool, bool)>, StateError> {
+            // One round-trip: fetch all pools.
+            let pool_rows = self.query_table("SELECT * FROM worker_pool_intent").await?;
+            // Second: all worker_process rows. We tally alive/exited per pool.
+            let proc_rows = self.query_table("SELECT pool_id, exited_at FROM worker_process").await?;
+
+            let mut alive: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+            let mut exited: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+            for r in &proc_rows {
+                let obj = match r.as_object() { Some(o) => o, None => continue };
+                let pid = obj.get("pool_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let ex = obj.get("exited_at").and_then(|v| v.as_str()).unwrap_or("");
+                if pid.is_empty() { continue; }
+                if ex.is_empty() {
+                    *alive.entry(pid).or_insert(0) += 1;
+                } else {
+                    *exited.entry(pid).or_insert(0) += 1;
+                }
+            }
+
+            let mut out = Vec::with_capacity(pool_rows.len());
+            for r in pool_rows {
+                let obj = match r.as_object() { Some(o) => o, None => continue };
+                let id = obj.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if id.is_empty() { continue; }
+                let role = obj.get("role").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let desired = obj.get("desired_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let strat = obj.get("restart_strategy").and_then(|v| v.as_str()).unwrap_or("permanent").to_string();
+                let max_r = obj.get("max_restarts").and_then(|v| v.as_u64()).unwrap_or(5) as u32;
+                let win = obj.get("max_restart_window_secs").and_then(|v| v.as_u64()).unwrap_or(60) as u32;
+                let paused = obj.get("paused").and_then(|v| v.as_bool()).unwrap_or(false);
+                let crash = obj.get("in_crash_loop").and_then(|v| v.as_bool()).unwrap_or(false);
+                let a = *alive.get(&id).unwrap_or(&0);
+                let e = *exited.get(&id).unwrap_or(&0);
+                out.push((id, role, desired, a, e, strat, max_r, win, paused, crash));
+            }
+            Ok(out)
+        }
     }
 
     #[async_trait]
@@ -2060,6 +2135,10 @@ mod stub {
         async fn worker_process_register(&self, _: &str, _: &str, _: &str, _: &str, _: i64) -> Result<(), StateError> { Err(Self::err()) }
         async fn worker_process_record_exit(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn worker_pool_role(&self, _: &str) -> Result<Option<String>, StateError> { Err(Self::err()) }
+        async fn pool_create(&self, _: &str, _: &str, _: u32, _: &str, _: u32, _: u32, _: bool, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn pool_set_paused(&self, _: &str, _: bool) -> Result<(), StateError> { Err(Self::err()) }
+        async fn pool_delete(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn pool_status_all(&self) -> Result<Vec<(String, String, u32, u32, u32, String, u32, u32, bool, bool)>, StateError> { Err(Self::err()) }
     }
 
     #[async_trait]

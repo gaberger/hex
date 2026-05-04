@@ -259,6 +259,11 @@ enum Commands {
         #[command(subcommand)]
         action: BrainAction,
     },
+    /// Worker pools — STDB-backed supervisor (wp-stdb-supervisor)
+    Pool {
+        #[command(subcommand)]
+        action: commands::pool::PoolAction,
+    },
     /// Deprecated alias for `sched` (ADR-2604150000) — forwards with warning
     #[command(hide = true)]
     Brain {
@@ -628,6 +633,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Go => commands::go::run().await,
         Commands::Hey(args) => commands::hey::run(args).await,
         Commands::Sched { action } => commands::sched::run(action).await,
+        Commands::Pool { action } => commands::pool::run(action).await,
         Commands::Brain { action } => commands::brain_alias::run(action).await,
         Commands::Stdb { action } => commands::stdb::run(action).await,
         Commands::Substrate { action } => commands::substrate::run(action).await,
