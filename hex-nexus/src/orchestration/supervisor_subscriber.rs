@@ -61,12 +61,74 @@ impl SupervisorSubscriber {
             }
         }
 
+        // Auto-seed pool placeholders from the embedded persona YAML registry.
+        // Each persona gets a worker_pool_intent row with desired=0, paused=true
+        // so it appears in `hex pool list` (discoverable) but doesn't spawn any
+        // workers until the operator opts in via `hex pool resume <id>` and
+        // a desired_count bump. Idempotent — existing pool ids are skipped, so
+        // operator-customized pools are never overwritten.
+        if let Some(port) = &self.state.state_port {
+            if let Err(e) = self.seed_persona_pools(port.as_ref()).await {
+                warn!("auto-seed persona pools skipped: {}", e);
+            }
+        }
+
         loop {
             interval.tick().await;
             if let Err(e) = self.tick().await {
                 warn!("supervisor subscriber tick error: {}", e);
             }
         }
+    }
+
+    /// Walk every persona YAML embedded via rust-embed and create a
+    /// worker_pool_intent row with desired=0, paused=true for each one whose
+    /// pool id (`{role}-default`) doesn't already exist. Lets operators see
+    /// the full menu of available roles in `hex pool list` without forcing
+    /// them to declare each one manually.
+    async fn seed_persona_pools(
+        &self,
+        port: &dyn crate::ports::state::IStatePort,
+    ) -> Result<(), String> {
+        // Existing pool ids — skip these.
+        let existing: std::collections::HashSet<String> = port
+            .pool_status_all()
+            .await
+            .map_err(|e| format!("pool_status_all: {}", e))?
+            .into_iter()
+            .map(|t| t.0)
+            .collect();
+
+        let mut roles: Vec<String> = crate::templates::AgentTemplates::iter()
+            .filter_map(|p| {
+                let s = p.as_ref();
+                let prefix = "agents/hex/hex/";
+                if !s.starts_with(prefix) || !s.ends_with(".yml") { return None; }
+                let stem = &s[prefix.len()..s.len() - 4];
+                if stem == "adversarial-reviewer" { return None; } // deprecated stub
+                Some(stem.to_string())
+            })
+            .collect();
+        roles.sort();
+        roles.dedup();
+
+        let mut seeded = 0;
+        for role in &roles {
+            let pool_id = format!("{}-default", role);
+            if existing.contains(&pool_id) { continue; }
+            if let Err(e) = port
+                .pool_create(&pool_id, role, 0, "permanent", 5, 60, true, "system-seed")
+                .await
+            {
+                warn!("seed pool '{}' skipped: {}", pool_id, e);
+                continue;
+            }
+            seeded += 1;
+        }
+        if seeded > 0 {
+            info!("supervisor: seeded {} pool placeholders from persona YAMLs (desired=0, paused=true)", seeded);
+        }
+        Ok(())
     }
 
     async fn tick(&self) -> Result<(), String> {

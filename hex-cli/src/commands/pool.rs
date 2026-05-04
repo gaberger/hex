@@ -37,6 +37,14 @@ pub enum PoolAction {
     },
     /// List all pools with desired/alive/exited counts and crash-loop status
     List,
+    /// Adjust desired_count without recreating. Useful for the auto-seeded
+    /// placeholders: `hex pool scale hex-coder-default 3` opens the pool to 3
+    /// workers AND clears the seed-default `paused` flag so the supervisor
+    /// starts spawning.
+    Scale {
+        id: String,
+        count: u32,
+    },
     /// Pause a pool (supervisor stops emitting spawn_request)
     Pause {
         id: String,
@@ -100,6 +108,26 @@ pub async fn run(action: PoolAction) -> anyhow::Result<()> {
                 println!("{:<28} {:<20} {:>9}  {:<11}  {}{}",
                     id, role, alive_colored, strat, status, exited_str);
             }
+        }
+        PoolAction::Scale { id, count } => {
+            // Read the existing pool to preserve role / strategy / window etc.
+            let resp = nexus.get("/api/pools").await?;
+            let pools = resp["pools"].as_array().cloned().unwrap_or_default();
+            let existing = pools.iter()
+                .find(|p| p["id"].as_str() == Some(&id))
+                .ok_or_else(|| anyhow::anyhow!("pool '{}' not found — use `hex pool create` first", id))?;
+            let body = json!({
+                "id": id,
+                "role": existing["role"].as_str().unwrap_or(""),
+                "desired_count": count,
+                "restart_strategy": existing["restartStrategy"].as_str().unwrap_or("permanent"),
+                "max_restarts": existing["maxRestarts"].as_u64().unwrap_or(5),
+                "max_restart_window_secs": existing["maxRestartWindowSecs"].as_u64().unwrap_or(60),
+                "paused": false,  // scaling implies enabling
+                "owner_agent_id": "operator",
+            });
+            nexus.post("/api/pools", &body).await?;
+            println!("{} pool {} scaled to {} (paused/crash-loop flags cleared)", "↗".cyan(), id.bold(), count);
         }
         PoolAction::Pause { id } => {
             nexus.patch(&format!("/api/pools/{}/paused", id), &json!({"paused": true})).await?;
