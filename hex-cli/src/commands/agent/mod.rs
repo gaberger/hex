@@ -1043,10 +1043,12 @@ async fn overview(json: bool) -> anyhow::Result<()> {
     yaml_names.sort();
     yaml_names.dedup();
 
-    // Layer 2: Worker-runnable roles. Hardcoded list mirrors agent/mod.rs:1557
-    // match arms. When wp-extend-hex-agent-worker-roles ships, this should be
-    // replaced with a runtime lookup against the registered dispatch.
-    let worker_roles: Vec<&str> = vec![
+    // Layer 2: Worker-runnable roles. After wp-extend-hex-agent-worker-roles
+    // P0.1 landed, ANY role with a YAML persona is dispatchable via the
+    // generic YAML-driven executor (see agent/mod.rs end-of-match). The 6
+    // names here are the roles that ALSO have a specialized hardcoded arm
+    // (codegen, review, etc.); the rest fall through to the generic executor.
+    let specialized_roles: Vec<&str> = vec![
         "hex-coder",
         "hex-tester",
         "hex-reviewer",
@@ -1054,6 +1056,9 @@ async fn overview(json: bool) -> anyhow::Result<()> {
         "hex-ux",
         "hex-fixer",
     ];
+    // Worker-runnable = every YAML persona (generic) ∪ specialized arms.
+    // When the persona is missing for a specialized arm, that's Gap B.
+    let worker_roles: Vec<&str> = specialized_roles.clone();
 
     // Layer 3 + 4: Running instances + swarms (best-effort — nexus may be down)
     let nexus = NexusClient::from_env();
@@ -1114,51 +1119,48 @@ async fn overview(json: bool) -> anyhow::Result<()> {
         println!("     (none — no YAMLs found in .claude/agents/hex/hex/)");
     } else {
         for name in &yaml_names {
-            let marker = if worker_roles.contains(&name.as_str()) {
-                "✓".green().to_string()
+            let marker = if specialized_roles.contains(&name.as_str()) {
+                "★".green().to_string()  // specialized hardcoded arm
             } else {
-                "○".dimmed().to_string()
+                "✓".cyan().to_string()    // generic YAML-driven dispatch
             };
             println!("     {} {}", marker, name);
         }
         println!();
         println!(
-            "     {} = worker-runnable today    {} = YAML present, worker not yet wired",
-            "✓".green(),
-            "○".dimmed()
+            "     {} = specialized worker arm    {} = generic YAML-driven dispatch (any persona)",
+            "★".green(),
+            "✓".cyan()
         );
     }
     println!();
 
     println!(
-        "  {} ({} of {})",
+        "  {} ({} of {} dispatchable today)",
         "2. Worker-runnable roles:".bold(),
-        worker_roles.len(),
+        yaml_names.len(),  // every YAML is dispatchable via generic executor
         yaml_names.len()
     );
-    println!("     {}", worker_roles.join(", "));
-    let no_dispatch = yaml_names.len().saturating_sub(
-        worker_roles
-            .iter()
-            .filter(|r| yaml_names.contains(&r.to_string()))
-            .count(),
+    println!(
+        "     {} specialized: {}",
+        "★".green(),
+        specialized_roles.join(", ")
     );
-    if no_dispatch > 0 {
-        println!(
-            "     {}",
-            format!(
-                "Gap A: {} YAML(s) have no worker dispatch — see wp-extend-hex-agent-worker-roles",
-                no_dispatch
-            )
-            .yellow()
-        );
-    }
+    let generic_count = yaml_names
+        .iter()
+        .filter(|n| !specialized_roles.contains(&n.as_str()))
+        .count();
+    println!(
+        "     {} generic (YAML-driven): {} other persona(s) — any role with a YAML",
+        "✓".cyan(),
+        generic_count
+    );
     if !bypass.is_empty() {
         let names: Vec<String> = bypass.iter().map(|s| s.to_string()).collect();
         println!(
             "     {}",
             format!(
-                "Gap B (PERSONA BYPASS): {} dispatch arm(s) have NO YAML persona — {}. \
+                "Gap B (PERSONA BYPASS): {} specialized arm(s) have NO YAML persona — {}. \
                  These workers execute without model contract / context / gates. CRITICAL.",
                 bypass.len(),
                 names.join(", ")
@@ -2268,7 +2270,123 @@ async fn execute_worker_task(
                 upstream_issues.len()
             )
         }
-        _ => anyhow::bail!("Unknown worker role: {}", role),
+        // Generic YAML-driven executor (wp-extend-hex-agent-worker-roles P0.1).
+        // Any role name not handled above is dispatched here. We require a YAML
+        // persona — without it we bail loudly so the gap is visible in
+        // `hex agent overview` (Gap B) and the operator can backfill or remove.
+        //
+        // This single arm makes the supervisor truly persona-driven:
+        //   - new agents only need a YAML; no Rust changes
+        //   - persona.model.preferred drives model selection
+        //   - persona.constraints + description + prompt_suffix construct the prompt
+        //   - the inference call goes through nexus's existing routing (tier, RL, fallbacks)
+        //   - result lands in hexflo memory under <task_id>:result
+        _ => {
+            let p = persona.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no YAML persona for role '{}' — backfill hex-cli/assets/agents/hex/hex/{}.yml \
+                     or remove the dispatch (see `hex agent overview` Gap B)",
+                    role, role
+                )
+            })?;
+
+            // Build system prompt from persona constraints + description.
+            let mut system_lines: Vec<String> = Vec::new();
+            if !p.description.is_empty() {
+                system_lines.push(format!("ROLE: {}\n\n{}", p.name, p.description.trim()));
+            } else {
+                system_lines.push(format!("ROLE: {}", p.name));
+            }
+            if !p.constraints.is_empty() {
+                system_lines.push("\nCONSTRAINTS:".to_string());
+                for c in &p.constraints {
+                    system_lines.push(format!("- {}", c));
+                }
+            }
+            // shared_prefix and prompt_suffix aren't on the parsed struct yet —
+            // they're cosmetic-only fields the supervisor expands. We'll add
+            // them when AgentDefinition gains those fields. For now, the
+            // description + constraints is the load-bearing prompt content.
+            let system_prompt = system_lines.join("\n");
+
+            // User prompt: the task title + (if available) any source_files
+            // gathered from depends_on. This mirrors the pattern used by
+            // hex-coder/hex-reviewer above.
+            let deps = task["depends_on"].as_str().unwrap_or("");
+            let dep_files = gather_dep_files(deps).await;
+            let mut user_lines: Vec<String> = Vec::new();
+            user_lines.push(format!("TASK: {}", title));
+            if !dep_files.is_empty() {
+                user_lines.push("\nUPSTREAM CONTEXT:".to_string());
+                for (dep_id, content) in &dep_files {
+                    user_lines.push(format!(
+                        "--- {} ---\n{}",
+                        dep_id,
+                        &content[..content.len().min(4000)]
+                    ));
+                }
+            }
+            let user_prompt = user_lines.join("\n");
+
+            // Resolve model: env override → persona.model.preferred → openrouter/free
+            let model_id = std::env::var("HEX_MODEL")
+                .ok()
+                .or_else(|| persona_model.clone())
+                .map(|name| {
+                    crate::pipeline::agent_def::ModelConfig::resolve_model_id(&name).to_string()
+                })
+                .unwrap_or_else(|| "openrouter/free".to_string());
+
+            tracing::info!(
+                role = %role,
+                model = %model_id,
+                tier = p.model.tier,
+                "yaml-driven worker dispatch"
+            );
+
+            // Call nexus inference with the persona-built prompts.
+            let req_body = serde_json::json!({
+                "messages": [{"role": "user", "content": user_prompt}],
+                "system": system_prompt,
+                "model": model_id,
+            });
+            let response_content = match nexus.post_long("/api/inference/complete", &req_body).await {
+                Ok(resp) => resp["content"].as_str().unwrap_or("").to_string(),
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "yaml-driven worker '{}' inference failed: {}",
+                        role, e
+                    ));
+                }
+            };
+
+            // Store result in hexflo memory so downstream tasks (and
+            // `hex task list`) can see it.
+            let memory_key = format!("{}:result", task_id);
+            let _ = nexus
+                .post(
+                    "/api/hexflo/memory",
+                    &json!({
+                        "key": memory_key,
+                        "value": json!({
+                            "role": role,
+                            "model": model_id,
+                            "tier": p.model.tier,
+                            "content": response_content,
+                            "task_title": title,
+                        }).to_string(),
+                    }),
+                )
+                .await;
+
+            format!(
+                "{}: {} chars produced (model={}, tier=T{})",
+                role,
+                response_content.len(),
+                model_id,
+                p.model.tier
+            )
+        }
     };
 
     Ok(result)
