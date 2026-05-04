@@ -808,6 +808,34 @@ pub trait IHexAgentStatePort: Send + Sync {
     async fn hex_agent_get(&self, id: &str) -> Result<Option<serde_json::Value>, StateError>;
     async fn hex_agent_evict_dead(&self) -> Result<(), StateError>;
     async fn hex_agent_mark_inactive(&self) -> Result<(), StateError>;
+
+    // ── STDB-as-supervisor (wp-stdb-supervisor P3) ─────────────────────
+    /// Query unhandled supervisor_event rows. Returns a list of
+    /// (id, kind, pool_id, payload).
+    async fn supervisor_event_unhandled(&self) -> Result<Vec<(u64, String, String, String)>, StateError>;
+    /// Mark a supervisor_event as handled. handled_by is a free-form
+    /// identifier ("nexus-supervisor", "operator", etc.).
+    async fn supervisor_event_mark_handled(&self, id: u64, by: &str) -> Result<(), StateError>;
+    /// Register a freshly-spawned worker_process row.
+    async fn worker_process_register(
+        &self,
+        id: &str,
+        pool_id: &str,
+        role: &str,
+        host: &str,
+        pid: i64,
+    ) -> Result<(), StateError>;
+    /// Record process exit. exit_reason: "normal" | "crashed" | "killed" | "unknown".
+    /// Idempotent — calling twice for the same id is a no-op (the WASM reducer
+    /// returns Ok if exited_at is already set).
+    async fn worker_process_record_exit(
+        &self,
+        id: &str,
+        exit_reason: &str,
+    ) -> Result<(), StateError>;
+    /// Look up a pool's role (for the spawn-request fallback path when
+    /// the event payload is missing/malformed).
+    async fn worker_pool_role(&self, pool_id: &str) -> Result<Option<String>, StateError>;
 }
 
 /// Agent notification inbox (ADR-060).

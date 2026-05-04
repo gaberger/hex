@@ -1504,6 +1504,72 @@ mod real {
             self.call_reducer("agent_mark_inactive", serde_json::json!([stale, dead])).await?;
             Ok(())
         }
+
+        // ── STDB-as-supervisor (wp-stdb-supervisor P3) ─────────────────────
+        async fn supervisor_event_unhandled(&self)
+            -> Result<Vec<(u64, String, String, String)>, StateError>
+        {
+            let rows = self
+                .query_table("SELECT id, kind, pool_id, payload FROM supervisor_event WHERE handled = false")
+                .await?;
+            // parse_stdb_response returns rows as JSON objects keyed by column name.
+            let mut out = Vec::with_capacity(rows.len());
+            for row in rows {
+                let obj = match row.as_object() {
+                    Some(o) => o,
+                    None => continue,
+                };
+                let id = obj.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+                if id == 0 { continue; }
+                let kind = obj.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let pool_id = obj.get("pool_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let payload = obj.get("payload").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                out.push((id, kind, pool_id, payload));
+            }
+            Ok(out)
+        }
+
+        async fn supervisor_event_mark_handled(&self, id: u64, by: &str) -> Result<(), StateError> {
+            self.call_reducer("supervisor_event_handle", serde_json::json!([id, by])).await?;
+            Ok(())
+        }
+
+        async fn worker_process_register(
+            &self,
+            id: &str,
+            pool_id: &str,
+            role: &str,
+            host: &str,
+            pid: i64,
+        ) -> Result<(), StateError> {
+            self.call_reducer(
+                "worker_process_register",
+                serde_json::json!([id, pool_id, role, host, pid]),
+            ).await?;
+            Ok(())
+        }
+
+        async fn worker_process_record_exit(&self, id: &str, exit_reason: &str) -> Result<(), StateError> {
+            self.call_reducer(
+                "worker_process_record_exit",
+                serde_json::json!([id, exit_reason]),
+            ).await?;
+            Ok(())
+        }
+
+        async fn worker_pool_role(&self, pool_id: &str) -> Result<Option<String>, StateError> {
+            // Escape single quotes minimally; pool ids are operator-controlled
+            // strings that shouldn't contain quotes in practice.
+            let escaped = pool_id.replace('\'', "''");
+            let rows = self
+                .query_table(&format!("SELECT role FROM worker_pool_intent WHERE id = '{}'", escaped))
+                .await?;
+            Ok(rows.first()
+                .and_then(|r| r.as_object())
+                .and_then(|o| o.get("role"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()))
+        }
     }
 
     #[async_trait]
@@ -1989,6 +2055,11 @@ mod stub {
         async fn hex_agent_get(&self, _: &str) -> Result<Option<serde_json::Value>, StateError> { Err(Self::err()) }
         async fn hex_agent_evict_dead(&self) -> Result<(), StateError> { Err(Self::err()) }
         async fn hex_agent_mark_inactive(&self) -> Result<(), StateError> { Err(Self::err()) }
+        async fn supervisor_event_unhandled(&self) -> Result<Vec<(u64, String, String, String)>, StateError> { Err(Self::err()) }
+        async fn supervisor_event_mark_handled(&self, _: u64, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn worker_process_register(&self, _: &str, _: &str, _: &str, _: &str, _: i64) -> Result<(), StateError> { Err(Self::err()) }
+        async fn worker_process_record_exit(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn worker_pool_role(&self, _: &str) -> Result<Option<String>, StateError> { Err(Self::err()) }
     }
 
     #[async_trait]

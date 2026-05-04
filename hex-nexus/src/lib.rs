@@ -611,6 +611,17 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         cleanup::CleanupService::spawn(cleanup_state);
     }
 
+    // STDB-supervisor subscriber (wp-stdb-supervisor P3): polls
+    // supervisor_event for unhandled spawn_request / crash_loop rows and
+    // turns them into actual hex-agent process spawns + priority-2 inbox
+    // alerts. The supervisor's "brain" lives in the scheduled reducer
+    // inside the hexflo-coordination WASM module; this subscriber is the
+    // hands.
+    {
+        let sup_state = state.clone();
+        orchestration::supervisor_subscriber::SupervisorSubscriber::spawn(sup_state);
+    }
+
     // Background sched self-improvement service (ADR-2604102200):
     // Tests local models periodically, records outcomes to RL engine.
     {

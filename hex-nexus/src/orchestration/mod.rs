@@ -2,6 +2,7 @@ pub mod adr_conformance;
 pub mod adversarial_swarm;
 pub mod agent;
 pub mod agent_manager;
+pub mod supervisor_subscriber;
 pub mod constraint_enforcer;
 pub mod context_pressure;
 pub mod directive;
