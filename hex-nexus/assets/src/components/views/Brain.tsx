@@ -1348,7 +1348,14 @@ const ChatPanel: Component<{
     ]);
 
     try {
-      const resp = await restClient.post<{ role: string; model: string; content: string }>(
+      interface ChildResp {
+        role: string;
+        model?: string;
+        content?: string;
+        error?: unknown;
+        children?: ChildResp[];
+      }
+      const resp = await restClient.post<{ role: string; model: string; content: string; children?: ChildResp[] }>(
         "/api/brain/chat",
         {
           role: targetRole,
@@ -1368,6 +1375,29 @@ const ChatPanel: Component<{
         m.pending && m.model === pendingId ? finalMsg : m,
       ));
       persistMessage(finalMsg);
+
+      // Recursively flatten children into the chat history. Each child is
+      // an auto-dispatch from a parent's @<role> mention; we render them as
+      // ordinary chat bubbles, prefixed with "↳" so the threading is visible
+      // without requiring nested DOM. The brief lives in the parent message,
+      // not duplicated here — that's why text starts with the bare reply.
+      const renderChildren = (children: ChildResp[] | undefined, prefix: string) => {
+        for (const c of children ?? []) {
+          const text = typeof c.content === "string" && c.content.length > 0
+            ? c.content
+            : (c.error ? `error: ${typeof c.error === "string" ? c.error : JSON.stringify(c.error)}` : "(empty response)");
+          const childMsg: ChatMessage = {
+            from: c.role,
+            text: `${prefix} ${text}`,
+            ts: new Date().toISOString(),
+            model: typeof c.model === "string" ? c.model : undefined,
+          };
+          setHistory((h) => [...h, childMsg]);
+          persistMessage(childMsg);
+          renderChildren(c.children, `${prefix}↳`);
+        }
+      };
+      renderChildren(resp.children, "↳");
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
       setHistory((h) => h.map((m) =>

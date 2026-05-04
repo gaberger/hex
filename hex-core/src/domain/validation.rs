@@ -6,10 +6,32 @@ const CRITICAL_PATHS: &[&str] = &[
     "/etc/sudoers",
 ];
 
-/// Check if a path is a critical system file.
-/// Used by validation rules to prevent modification of sensitive system files.
+/// Critical hex infrastructure files autonomous agents cannot modify
+/// without explicit operator approval. Each entry is a path *suffix* —
+/// matched against the trailing components of the candidate path so that
+/// e.g. "hex-nexus/src/sched.rs" matches whether passed absolute,
+/// repo-relative, or as bare basename.
+pub const CRITICAL_FILES: &[&str] = &[
+    "sched.rs",
+    "monitor.rs",
+    "workplan_executor.rs",
+    "main.rs",
+    "composition_root.rs",
+    "supervisor_subscriber.rs",
+];
+
+/// Check if a path is a critical system file OR a critical hex
+/// infrastructure file. Used by validation rules to prevent modification
+/// of sensitive files by autonomous agents (SafeFileWriter adapter).
 pub fn is_critical_path(path: &str) -> bool {
-    CRITICAL_PATHS.iter().any(|&critical| path == critical)
+    if CRITICAL_PATHS.iter().any(|&critical| path == critical) {
+        return true;
+    }
+    let normalized = path.trim_end_matches('/');
+    CRITICAL_FILES.iter().any(|&infra| {
+        normalized == infra
+            || normalized.ends_with(&format!("/{}", infra))
+    })
 }
 
 /// ValidationRule trait defines the contract for validation logic.
