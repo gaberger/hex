@@ -5,6 +5,7 @@ pub mod files;
 pub mod stdb;
 pub mod analysis;
 pub mod chat;
+pub mod brain_chat;
 pub mod commands;
 pub mod coordination;
 pub mod decisions;
@@ -522,6 +523,9 @@ pub fn build_router(state: SharedState) -> Router {
         // GET → list everything that needs operator decision
         // POST /api/decisions/{id} (resolve_decision) is registered later.
         .route("/api/decisions", get(decisions::list_decisions))
+        // Brain-dashboard chat dispatch (wp-brain-dashboard M3):
+        // POST { role, message } → loads YAML persona → calls inference → returns content.
+        .route("/api/brain/chat", post(brain_chat::dispatch_brain_chat))
         // ═══════════════════════════════════════════════════════════
         // DEPRECATED STATE ROUTES — migrate to SpacetimeDB subscriptions
         // These routes add X-Deprecated headers via deprecation_layer.

@@ -20,6 +20,7 @@ export type Route =
   | { page: "fleet" }
   | { page: "research-lab" }
   | { page: "swaps" }
+  | { page: "brain" }
   | { page: "brain-decisions" }
   | { page: "workplans" }
   // Project-scoped
@@ -44,7 +45,7 @@ export type Route =
 // ── State ───────────────────────────────────────────────────────────────────
 
 // Signal is safe at module level — no computation, just a getter/setter pair
-const [route, setRoute] = createSignal<Route>({ page: "control-plane" });
+const [route, setRoute] = createSignal<Route>({ page: "brain" });
 export { route };
 
 // ── Derived state (assigned inside createRoot by initRouterStore) ───────────
@@ -231,6 +232,8 @@ function routeToHash(r: Route): string {
       return "#/research-lab";
     case "swaps":
       return "#/swaps";
+    case "brain":
+      return "#/brain";
     case "brain-decisions":
       return "#/decisions";
     case "project":
@@ -283,6 +286,7 @@ function hashToRoute(hash: string): Route {
   if (parts[0] === "fleet") return { page: "fleet" };
   if (parts[0] === "research-lab") return { page: "research-lab" };
   if (parts[0] === "swaps") return { page: "swaps" };
+  if (parts[0] === "brain") return { page: "brain" };
   if (parts[0] === "decisions") return { page: "brain-decisions" };
 
   // Project-scoped routes: /project/:id/...
@@ -339,7 +343,9 @@ function hashToRoute(hash: string): Route {
     }
   }
 
-  return { page: "control-plane" };
+  // Default landing — Brain is the operator's home. The legacy ControlPlane
+  // remains accessible via the sidebar but is no longer the default.
+  return { page: "brain" };
 }
 
 // ── Initialization ──────────────────────────────────────────────────────────

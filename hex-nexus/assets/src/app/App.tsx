@@ -37,6 +37,7 @@ const ResearchLab = lazy(() => import('../components/neural-lab/ResearchLab'));
 const SwapsView = lazy(() => import('../components/swaps/SwapsView'));
 const ActivityPanel = lazy(() => import('../components/views/ActivityPanel'));
 const BrainDecisions = lazy(() => import('../components/views/BrainDecisions'));
+const Brain = lazy(() => import('../components/views/Brain'));
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
 
@@ -244,6 +245,24 @@ const App: Component = () => {
   onCleanup(() => {
     window.removeEventListener('keydown', handleKeyboard);
   });
+
+  // Brain takes the entire viewport — no sidebar, no breadcrumbs, no
+  // bottom bar. The Brain component itself contains the three-pane layout
+  // (TEAM rail · KANBAN+DECISIONS+SWARMS+HEALTH · CHAT) plus its own
+  // top bar and event-feed strip.
+  if (route().page === "brain") {
+    return (
+      <>
+        <ConnectionStatusBanner />
+        <Brain />
+        <SpawnDialog />
+        <SwarmInitDialog />
+        <CommandPalette />
+        <ToastContainer />
+        <ShortcutsOverlay />
+      </>
+    );
+  }
 
   return (
     <div class="flex h-screen flex-col bg-gray-950 text-gray-100">
@@ -506,6 +525,25 @@ const App: Component = () => {
               </svg>
               <Show when={!sidebarCollapsed()}>Research Lab</Show>
             </button>
+            {/* Brain — full three-pane (TEAM | KANBAN+DECISIONS+SWARMS+HEALTH | CHAT) */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              classList={{
+                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "brain",
+                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "brain",
+                "justify-center px-0": sidebarCollapsed(),
+              }}
+              aria-label={sidebarCollapsed() ? "Brain" : undefined}
+              aria-current={route().page === "brain" ? "page" : undefined}
+              onClick={() => { navigate({ page: "brain" }); setMobileDrawerOpen(false); }}
+            >
+              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                classList={{ "text-cyan-400": route().page === "brain" }}>
+                <path d="M9.5 2A2.5 2.5 0 007 4.5v15A2.5 2.5 0 009.5 22h0a2.5 2.5 0 002.5-2.5v-15A2.5 2.5 0 009.5 2z" />
+                <path d="M14.5 2A2.5 2.5 0 0112 4.5v15a2.5 2.5 0 002.5 2.5h0a2.5 2.5 0 002.5-2.5v-15A2.5 2.5 0 0014.5 2z" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Brain</Show>
+            </button>
             {/* Brain Decisions (wp-brain-dashboard M1) */}
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
@@ -587,6 +625,7 @@ const App: Component = () => {
             <Match when={route().page === "research-lab"}><ResearchLab /></Match>
             <Match when={route().page === "swaps"}><SwapsView /></Match>
             <Match when={route().page === "brain-decisions"}><BrainDecisions /></Match>
+            <Match when={route().page === "brain"}><Brain /></Match>
           </Switch>
           {/* BottomBar -- inside center content so it doesn't span under sidebar */}
           <BottomBar />

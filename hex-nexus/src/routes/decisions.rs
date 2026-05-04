@@ -327,10 +327,13 @@ pub async fn list_decisions(
         m
     };
 
+    // camelCase for frontend consumption — matches DecisionItem's serde
+    // rename_all attribute. The json! macro doesn't auto-rename so spell
+    // it explicitly here.
     Ok(Json(json!({
         "items": items,
         "total": items.len(),
-        "by_severity": counts_by_severity,
-        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "bySeverity": counts_by_severity,
+        "generatedAt": chrono::Utc::now().to_rfc3339(),
     })))
 }
