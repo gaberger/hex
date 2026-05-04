@@ -4,7 +4,7 @@
 //! supervisor panel (P5). Each endpoint maps to a STDB reducer or query.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     Json,
 };
 use http::StatusCode;
@@ -119,6 +119,49 @@ pub async fn set_paused(
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() })));
     }
     (StatusCode::OK, Json(json!({ "ok": true, "id": id, "paused": req.paused })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EventsQuery {
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SupervisorEventOut {
+    pub id: u64,
+    pub ts: String,
+    pub kind: String,
+    pub pool_id: String,
+    pub worker_id: String,
+    pub payload: String,
+    pub handled: bool,
+}
+
+/// GET /api/supervisor/events?limit=N — recent supervisor_event rows for the
+/// dashboard activity feed. Newest first; capped at 100 server-side.
+pub async fn list_supervisor_events(
+    State(state): State<SharedState>,
+    Query(params): Query<EventsQuery>,
+) -> (StatusCode, Json<Value>) {
+    let port = match state.state_port.as_ref() {
+        Some(p) => p,
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "no state port" }))),
+    };
+    let limit = params.limit.unwrap_or(20).min(100);
+    match port.supervisor_events_recent(limit).await {
+        Ok(rows) => {
+            let events: Vec<SupervisorEventOut> = rows.into_iter().map(|r| SupervisorEventOut {
+                id: r.0, ts: r.1, kind: r.2, pool_id: r.3,
+                worker_id: r.4, payload: r.5, handled: r.6,
+            }).collect();
+            (StatusCode::OK, Json(json!({ "events": events, "total": events.len() })))
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("supervisor_events_recent: {}", e) })),
+        ),
+    }
 }
 
 /// DELETE /api/pools/{id}

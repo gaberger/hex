@@ -1534,6 +1534,35 @@ mod real {
             Ok(())
         }
 
+        async fn supervisor_events_recent(
+            &self,
+            limit: u32,
+        ) -> Result<Vec<(u64, String, String, String, String, String, bool)>, StateError> {
+            // STDB SQL doesn't reliably support ORDER BY DESC LIMIT, so fetch
+            // all and sort by id descending in Rust. supervisor_event is small
+            // (TTL-purged) so this is fine — typical row counts are low.
+            let rows = self
+                .query_table("SELECT id, ts, kind, pool_id, worker_id, payload, handled FROM supervisor_event")
+                .await?;
+            let mut out: Vec<(u64, String, String, String, String, String, bool)> =
+                Vec::with_capacity(rows.len());
+            for row in rows {
+                let obj = match row.as_object() { Some(o) => o, None => continue };
+                let id = obj.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+                if id == 0 { continue; }
+                let ts = obj.get("ts").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let kind = obj.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let pool_id = obj.get("pool_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let worker_id = obj.get("worker_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let payload = obj.get("payload").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let handled = obj.get("handled").and_then(|v| v.as_bool()).unwrap_or(false);
+                out.push((id, ts, kind, pool_id, worker_id, payload, handled));
+            }
+            out.sort_by(|a, b| b.0.cmp(&a.0));
+            out.truncate(limit as usize);
+            Ok(out)
+        }
+
         async fn worker_process_register(
             &self,
             id: &str,
@@ -2148,6 +2177,7 @@ mod stub {
         async fn hex_agent_mark_inactive(&self) -> Result<(), StateError> { Err(Self::err()) }
         async fn supervisor_event_unhandled(&self) -> Result<Vec<(u64, String, String, String)>, StateError> { Err(Self::err()) }
         async fn supervisor_event_mark_handled(&self, _: u64, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn supervisor_events_recent(&self, _: u32) -> Result<Vec<(u64, String, String, String, String, String, bool)>, StateError> { Err(Self::err()) }
         async fn worker_process_register(&self, _: &str, _: &str, _: &str, _: &str, _: i64) -> Result<(), StateError> { Err(Self::err()) }
         async fn worker_process_record_exit(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn worker_pool_role(&self, _: &str) -> Result<Option<String>, StateError> { Err(Self::err()) }

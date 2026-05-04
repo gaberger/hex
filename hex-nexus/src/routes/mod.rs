@@ -534,6 +534,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/pools", get(pools::list_pools).post(pools::create_pool))
         .route("/api/pools/{id}", delete(pools::delete_pool))
         .route("/api/pools/{id}/paused", patch(pools::set_paused))
+        // Supervisor activity log — drives the Brain dashboard activity feed.
+        .route("/api/supervisor/events", get(pools::list_supervisor_events))
         // STDB-backed chat threads (stored as hexflo memory keys "chat:thread:<id>").
         .route("/api/brain/threads", get(brain_chat::list_threads).post(brain_chat::create_thread))
         .route("/api/brain/threads/{id}",

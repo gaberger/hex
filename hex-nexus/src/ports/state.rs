@@ -816,6 +816,13 @@ pub trait IHexAgentStatePort: Send + Sync {
     /// Mark a supervisor_event as handled. handled_by is a free-form
     /// identifier ("nexus-supervisor", "operator", etc.).
     async fn supervisor_event_mark_handled(&self, id: u64, by: &str) -> Result<(), StateError>;
+    /// Query the N most recent supervisor_event rows (handled or not) for
+    /// dashboard activity-feed surfacing. Returns
+    /// (id, ts, kind, pool_id, worker_id, payload, handled).
+    async fn supervisor_events_recent(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<(u64, String, String, String, String, String, bool)>, StateError>;
     /// Register a freshly-spawned worker_process row.
     async fn worker_process_register(
         &self,

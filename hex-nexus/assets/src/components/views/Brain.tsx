@@ -720,6 +720,16 @@ interface PoolStatus {
   inCrashLoop: boolean;
 }
 
+interface SupervisorEvent {
+  id: number;
+  ts: string;
+  kind: string;
+  poolId: string;
+  workerId: string;
+  payload: string;
+  handled: boolean;
+}
+
 const SupervisorPanel: Component = () => {
   const [pools, setPools] = createSignal<PoolStatus[]>([]);
   const [loading, setLoading] = createSignal(true);
@@ -1625,6 +1635,10 @@ let prevTaskStatus: Map<string, string> = new Map();
 let prevSwarmIds: Set<string> = new Set();
 let prevDecisionTotal = -1;
 let prevAgentOnlineCount = -1;
+// Pool deltas — alive_count / paused / in_crash_loop transitions.
+const prevPoolState: Map<string, { alive: number; desired: number; paused: boolean; crash: boolean }> = new Map();
+// Supervisor event log — last seen ID so we don't re-emit events on every poll.
+let lastSupervisorEventId = 0;
 
 function pushEvent(e: DerivedEvent) {
   eventBuffer.push(e);
@@ -1635,9 +1649,70 @@ function deriveEvents(args: {
   swarms: Swarm[];
   decisions: DecisionsResponse | null;
   agents: { name?: string; status?: string }[];
+  pools?: PoolStatus[];
+  supervisorEvents?: SupervisorEvent[];
 }) {
   const now = performance.now();
   const time = new Date().toLocaleTimeString().slice(0, 8);
+
+  // 0a. Supervisor events — these are the actual spawn/exit/crash signals
+  //     emitted by the STDB supervisor. Most user-visible "what's happening"
+  //     surface; emit one row per kind.
+  for (const ev of args.supervisorEvents ?? []) {
+    if (ev.id <= lastSupervisorEventId) continue;
+    lastSupervisorEventId = Math.max(lastSupervisorEventId, ev.id);
+    const evTime = ev.ts ? new Date().toLocaleTimeString().slice(0, 8) : time;
+    let icon = "•", color = "text-blue-400", text = ev.kind;
+    if (ev.kind === "spawn_request") {
+      icon = "↑"; color = "text-green-400";
+      text = `spawn ${ev.poolId}`;
+    } else if (ev.kind === "process_exited") {
+      icon = "↓"; color = "text-orange-400";
+      const reason = (() => { try { return JSON.parse(ev.payload).reason ?? ""; } catch { return ""; } })();
+      text = reason ? `exit ${ev.poolId} (${reason})` : `exit ${ev.poolId}`;
+    } else if (ev.kind === "crash_loop") {
+      icon = "✗"; color = "text-red-400";
+      text = `crash-loop: ${ev.poolId}`;
+    } else if (ev.kind === "tick") {
+      // Skip noisy tick events — they fire every 10s.
+      continue;
+    }
+    pushEvent({ ts: now, time: evTime, icon, color, source: "super", text });
+  }
+
+  // 0b. Pool state transitions (alive count / paused / in_crash_loop)
+  for (const p of args.pools ?? []) {
+    const prev = prevPoolState.get(p.id);
+    const cur = {
+      alive: p.aliveCount, desired: p.desiredCount,
+      paused: p.paused, crash: p.inCrashLoop,
+    };
+    if (prev) {
+      if (prev.alive !== cur.alive) {
+        const delta = cur.alive - prev.alive;
+        pushEvent({
+          ts: now, time,
+          icon: delta > 0 ? "↑" : "↓",
+          color: delta > 0 ? "text-green-400" : "text-orange-400",
+          source: "pool",
+          text: `${p.id} ${prev.alive}→${cur.alive}/${cur.desired}`,
+        });
+      }
+      if (!prev.crash && cur.crash) {
+        pushEvent({ ts: now, time, icon: "✗", color: "text-red-400",
+          source: "pool", text: `${p.id} entered CRASH LOOP` });
+      } else if (prev.crash && !cur.crash) {
+        pushEvent({ ts: now, time, icon: "✓", color: "text-green-400",
+          source: "pool", text: `${p.id} recovered` });
+      }
+      if (prev.paused !== cur.paused) {
+        pushEvent({ ts: now, time, icon: cur.paused ? "⏸" : "▶",
+          color: "text-yellow-400", source: "pool",
+          text: `${p.id} ${cur.paused ? "paused" : "resumed"}` });
+      }
+    }
+    prevPoolState.set(p.id, cur);
+  }
 
   // 1. Task status transitions
   const currentTaskStatus = new Map<string, string>();
@@ -1721,6 +1796,8 @@ const EventFeed: Component<{
   swarms: () => Swarm[];
   decisions: () => DecisionsResponse | null;
   agents: () => { name?: string; status?: string }[];
+  pools: () => PoolStatus[];
+  supervisorEvents: () => SupervisorEvent[];
 }> = (props) => {
   const [, forceRender] = createSignal(0);
 
@@ -1730,6 +1807,8 @@ const EventFeed: Component<{
       swarms: props.swarms(),
       decisions: props.decisions(),
       agents: props.agents(),
+      pools: props.pools(),
+      supervisorEvents: props.supervisorEvents(),
     });
     forceRender((n) => n + 1);
   });
@@ -1770,6 +1849,7 @@ const Brain: Component = () => {
   const [agents, setAgents] = createSignal<{ name?: string; capabilities?: { role?: string } }[]>([]);
   const [projects, setProjects] = createSignal<ProjectInfo[]>([]);
   const [pools, setPools] = createSignal<PoolStatus[]>([]);
+  const [supervisorEvents, setSupervisorEvents] = createSignal<SupervisorEvent[]>([]);
   // Keyed lookup so TeamRail can read each persona's pool by role name.
   const poolByRole = createMemo(() => {
     const m = new Map<string, PoolStatus>();
@@ -1877,6 +1957,10 @@ const Brain: Component = () => {
       setPools(pp?.pools ?? []);
     } catch { /* pools table may not exist on first STDB sync */ }
     try {
+      const se = await restClient.get<{ events: SupervisorEvent[] }>("/api/supervisor/events?limit=40");
+      setSupervisorEvents(se?.events ?? []);
+    } catch { /* supervisor_event table may not exist yet */ }
+    try {
       // Project-scoped decisions when a filter is active. The aggregator
       // walks <projectRootPath>/docs/workplans + docs/adrs instead of cwd.
       const f = projectFilter();
@@ -1981,7 +2065,7 @@ const Brain: Component = () => {
         />
       </main>
 
-      <EventFeed swarms={swarms} decisions={decisions} agents={agents} />
+      <EventFeed swarms={swarms} decisions={decisions} agents={agents} pools={pools} supervisorEvents={supervisorEvents} />
     </div>
   );
 };
