@@ -1,0 +1,103 @@
+{
+  "id": "wp-hex-agent-idle-loop",
+  "title": "hex-agent idle loop — sleep+poll instead of exit on no work",
+  "paused": true,
+  "paused_reason": "Touches hex-agent worker dispatch loop. Resume deliberately, run with the supervisor watching so crash-loop alerts surface real failures instead of legitimate exits. Test plan must include: idle worker stays alive ≥10min, restart_strategy=transient still respawns on real crashes (not normal exits), shutdown signal still terminates cleanly.",
+  "rationale": "wp-stdb-supervisor exposed the underlying problem: hex-agent's main loop polls for tasks and if there's nothing to do, exits with status 0. The supervisor (correctly) sees a dead worker, respawns. After 5 exits in 60s the pool flips in_crash_loop and alerts the operator. Net result: 'keep N hex-coder workers alive ready for incoming work' is impossible today — every spawn dies in <1s. The supervisor surfaces the problem; this workplan fixes the underlying behavior.",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Idle-loop in hex-agent main",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "Identify the existing exit-on-empty-poll path. Currently in hex-agent/src/main.rs (or task_executor.rs) — when poll_tasks returns 0 results, the function returns and main() exits. Map every exit-path that should become a sleep-loop.",
+          "status": "pending",
+          "strategy_hint": "transform",
+          "files": [
+            "hex-agent/src/main.rs",
+            "hex-agent/src/adapters/secondary/task_executor.rs"
+          ],
+          "evidence": [
+            "grep -nE 'no.*tasks.*found|empty.*queue|return.*Ok|exit.*status.*0' hex-agent/src/main.rs hex-agent/src/adapters/secondary/task_executor.rs | head -10"
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Wrap the poll-and-execute logic in a loop with bounded sleep between empty polls. Default poll interval 5s when busy, 30s when idle (exponential backoff between 5s and 60s if many consecutive empty polls). Always honor SIGTERM via tokio's ctrl_c handler — clean exit must still work.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-agent/src/main.rs"
+          ],
+          "evidence": [
+            "grep -q 'idle.*sleep\\|poll_interval' hex-agent/src/main.rs",
+            "grep -q 'tokio::signal::ctrl_c' hex-agent/src/main.rs",
+            "cargo check -p hex-agent"
+          ]
+        },
+        {
+          "id": "P1.3",
+          "title": "Heartbeat update inside the idle loop — every poll cycle, even when empty, the worker calls worker_process_heartbeat. Without this, supervisor_tick's 'last_heartbeat < 45s ago' check would mark idle workers stale and the supervisor would spawn replacements unnecessarily.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-agent/src/main.rs"
+          ],
+          "evidence": [
+            "grep -q 'worker_process_heartbeat' hex-agent/src/main.rs"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "Graceful shutdown + restart-strategy semantics",
+      "tasks": [
+        {
+          "id": "P2.1",
+          "title": "On SIGTERM, set exit_reason='normal' before exiting (so supervisor's restart_strategy='transient' doesn't respawn after a deliberate stop). Use the existing worker_process_record_exit reducer with reason 'normal'.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-agent/src/main.rs"
+          ],
+          "evidence": [
+            "grep -q 'worker_process_record_exit.*normal' hex-agent/src/main.rs"
+          ]
+        },
+        {
+          "id": "P2.2",
+          "title": "Crash detection: if a panic propagates out of the main task, catch + record exit_reason='crashed' before exiting. Without this, a panic exits with non-zero status and the supervisor counts it as crashed correctly — but the worker_process row's exit_reason stays empty (watchdog defaults to 'unknown'). This task makes it explicit.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-agent/src/main.rs"
+          ],
+          "evidence": [
+            "grep -q 'std::panic::catch_unwind\\|panic_hook' hex-agent/src/main.rs"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "Smoke test — supervisor + hex-agent loop end-to-end",
+      "tasks": [
+        {
+          "id": "P3.1",
+          "title": "Create pool desired=2, restart=permanent, leave idle for 5 minutes. Verify: 2 workers stay alive, last_heartbeat updates every cycle, no crash-loop, no superfluous spawns. Then send SIGTERM to one worker → supervisor sees alive=1, spawns replacement → new worker stays alive. Then test crash path: pkill -SEGV → exit_reason=crashed → supervisor respawns.",
+          "status": "pending",
+          "strategy_hint": "script",
+          "files": [
+            "scripts/test-supervisor-idle-loop.sh"
+          ],
+          "evidence": [
+            "test -x scripts/test-supervisor-idle-loop.sh",
+            "scripts/test-supervisor-idle-loop.sh 2>&1 | grep -q 'PASS'"
+          ]
+        }
+      ]
+    }
+  ]
+}
