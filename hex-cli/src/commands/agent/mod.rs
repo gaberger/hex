@@ -1771,6 +1771,41 @@ async fn execute_worker_task(
         }
     };
 
+    // ── PERSONA WIRING (wp-extend-hex-agent-worker-roles P0.0) ──────────
+    // Load the YAML persona ONCE before dispatch. Every worker arm must use
+    // this for model selection, retry limits, prompt suffix, quality
+    // thresholds. Env vars (HEX_MODEL, etc.) remain valid overrides — but
+    // the persona is the default, NOT a hardcoded constant.
+    //
+    // If the persona is missing for a dispatch arm (Gap B in `hex agent
+    // overview`), we don't bail — we warn and proceed with hardcoded
+    // defaults so existing behavior isn't broken. The overview surfaces the
+    // gap; backfilling the YAML closes it.
+    let persona = crate::pipeline::agent_def::AgentDefinition::load(role);
+    if persona.is_none() {
+        tracing::warn!(
+            role = %role,
+            "PERSONA BYPASS: no YAML persona for role; using hardcoded defaults. \
+             Backfill hex-cli/assets/agents/hex/hex/{}.yml or remove the dispatch arm. \
+             See `hex agent overview` Gap B.",
+            role
+        );
+    }
+    // Resolve persona-driven defaults (each used inside specific arms below).
+    let persona_model: Option<String> = persona
+        .as_ref()
+        .and_then(|p| p.model.preferred.clone());
+    let persona_max_iter: Option<u32> = persona
+        .as_ref()
+        .and_then(|p| p.workflow.as_ref())
+        .and_then(|w| w.feedback_loop.as_ref())
+        .map(|f| f.max_iterations);
+    let persona_constraints: Vec<String> = persona
+        .as_ref()
+        .map(|p| p.constraints.clone())
+        .unwrap_or_default();
+    let _ = persona_constraints; // reserved for arms that augment prompts
+
     let result = match role {
         "hex-coder" => {
             // P1.1: Real hex-coder worker — fetch step metadata from hexflo memory
@@ -1791,11 +1826,16 @@ async fn execute_worker_task(
                 Err(_)   => worker_stub_step(task_id, title),
             };
 
-            // 2. Run code generation with ADR-005 retry loop (max 5 iterations)
-            let model_override = std::env::var("HEX_MODEL").ok();
+            // 2. Run code generation with ADR-005 retry loop.
+            //    Persona-wired (wp-extend-hex-agent-worker-roles P0.0):
+            //    - model: persona.model.preferred → HEX_MODEL env override
+            //    - max_iterations: persona.workflow.feedback_loop.max_iterations → 5 default
+            let model_override = std::env::var("HEX_MODEL")
+                .ok()
+                .or_else(|| persona_model.clone());
             let _provider_pref = std::env::var("HEX_PROVIDER").ok();
             let language = std::env::var("HEX_LANGUAGE").unwrap_or_else(|_| worker_detect_language(&output_dir));
-            let max_iterations = 5;
+            let max_iterations: u32 = persona_max_iter.unwrap_or(5);
             let mut compile_pass = false;
             let mut tests_pass = false;
             let mut test_output = String::new();

@@ -1,0 +1,129 @@
+# hex-documenter — Generates documentation for a single source file or module
+# Closes Gap B in `hex agent overview` — persona for the existing
+# `hex agent worker --role hex-documenter` dispatch arm.
+
+name: hex-documenter
+type: documenter
+version: "1.0.0"
+description: >
+  Generates documentation for a single source file or module — JSDoc/TSDoc,
+  Rust doc comments (///), Go godoc, README sections. Local Ollama for fast
+  offline generation. Output is the documented file (or a sibling .md for
+  module-level docs).
+
+shared_prefix:
+  id: hex-agent-common-v1
+  constraints:
+    - "TOOL PREFERENCE: mcp__hex__* before Bash."
+    - "ADR-060 PRIORITY: Stop on priority-2 inbox notifications."
+    - "READ-ONLY-ON-PUBLIC: never alter function signatures or public API while documenting."
+
+model:
+  tier: 2
+  preferred: qwen-coder
+  fallback: gpt-4o-mini
+  reasoning: >
+    Doc generation is structural — descriptions of existing public surfaces.
+    Local qwen-coder is fast + offline; gpt-4o-mini is the cloud fallback.
+  timeout_secs: 90
+
+context:
+  load_on_start:
+    - path: "{{target_file}}"
+      level: L3
+      purpose: Full source for accurate docstrings
+    - path: "{{target_dir}}/README.md"
+      level: L2
+      purpose: Match project doc style if a README exists
+      load: on_demand
+  token_budget:
+    max: 40000
+    reserved_response: 10000
+
+inputs:
+  target_file:
+    type: string
+    required: true
+    description: "Path to the file to document"
+  language:
+    type: string
+    enum: [typescript, go, rust]
+    required: false
+    description: "Auto-detected from file extension if absent"
+  scope:
+    type: string
+    enum: [function, file, module]
+    default: file
+
+outputs:
+  documented_file:
+    type: object
+    schema:
+      path: string
+      added_doc_comments: number
+      updated_doc_comments: number
+      readme_sections_added: number
+
+constraints:
+  - "NEVER alter function signatures, parameter names, or return types"
+  - "NEVER add new code — only doc comments and inline annotations"
+  - "ALWAYS describe behavior + invariants + side effects, not just types"
+  - "ALWAYS use the language's idiomatic doc convention (JSDoc, ///, godoc)"
+  - "If existing docs exist and are correct, leave them untouched"
+
+tools:
+  required:
+    - Read
+    - Edit
+    - Bash
+  optional:
+    - Glob
+    - Grep
+
+workflow:
+  phases:
+    - id: read
+      description: Read the target file and detect documentation patterns already in use
+      action: |
+        1. Read target_file
+        2. Detect language from extension
+        3. Identify existing doc-comment style (JSDoc / /// / //!  / godoc / docstring)
+        4. List public symbols that lack docs
+
+    - id: generate
+      description: Add doc comments to undocumented public symbols
+      action: |
+        For each undocumented public symbol:
+          1. Describe what it does (behavior, not signature)
+          2. Document parameters with types + meaning + valid ranges
+          3. Document return value + error conditions
+          4. Note any side effects or invariants
+          5. Use the language's idiomatic style
+
+    - id: verify
+      description: Re-read the file to verify no signatures changed
+      action: |
+        1. Diff before/after — only doc-comment lines should differ
+        2. If any code line changed, REVERT and re-attempt without altering code
+        3. Run language compile gate (tsc --noEmit, cargo check, go build) to confirm
+
+  feedback_loop:
+    max_iterations: 3
+    gates:
+      - name: compile
+        command:
+          typescript: "npx tsc --noEmit"
+          go: "go build ./..."
+          rust: "cargo check"
+        timeout_ms: 10000
+        on_fail: |
+          A doc-comment edit broke compilation (likely a malformed comment
+          delimiter). Revert and re-attempt with stricter delimiter handling.
+
+quality_thresholds:
+  max_lint_warnings: 0
+  max_file_lines: 500
+
+prompt_suffix:
+  - "REMEMBER: doc comments only — never edit code lines."
+  - "REMEMBER: behavior + invariants + side effects, not type restatement."
