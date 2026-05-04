@@ -60,6 +60,14 @@ pub enum AgentAction {
     },
     /// Show fleet capacity summary
     Fleet,
+    /// One-shot view across all four agent layers — types (YAMLs), worker-runnable
+    /// roles, running instances, active swarms + worktrees. Use this to answer
+    /// "what agents are available and running".
+    Overview {
+        /// Output as JSON for machine consumption
+        #[arg(long)]
+        json: bool,
+    },
     /// Audit recent commits against HexFlo task tracking (ADR-2603221939)
     Audit,
     /// Show active git worktrees with assigned agent, task, and age (ADR-2603231700)
@@ -220,6 +228,7 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
         } => spawn_remote(&target, project_dir, source_dir, sandbox, model).await,
         AgentAction::Disconnect { agent_id } => disconnect(&agent_id).await,
         AgentAction::Fleet => fleet().await,
+        AgentAction::Overview { json } => overview(json).await,
         AgentAction::Evict => evict().await,
         AgentAction::Audit => audit().await,
         AgentAction::WorktreeAudit => super::agent_audit::run().await,
@@ -995,6 +1004,214 @@ async fn evict() -> anyhow::Result<()> {
             }
         }
     }
+
+    Ok(())
+}
+
+/// One-shot view across all four agent layers:
+///   1. Available agent TYPES — declarative YAMLs the supervisor knows about
+///   2. Worker-runnable ROLES — which YAMLs `hex agent worker --role` accepts today
+///   3. Running INSTANCES — agents currently registered with nexus
+///   4. Active SWARMS + WORKTREES — what's actually executing right now
+///
+/// Answers "what agents are available and running" without remembering the
+/// four separate commands (`hex agent list`, `hex swarm list`, etc.).
+async fn overview(json: bool) -> anyhow::Result<()> {
+    use std::path::PathBuf;
+
+    // Layer 1: Available types (YAMLs in the project + user agent registries)
+    // Look in both project-local extracted assets and the user-level mirror.
+    let yaml_dirs = [
+        PathBuf::from(".claude/agents/hex/hex"),
+        dirs::home_dir()
+            .map(|h| h.join(".claude/agents/hex/hex"))
+            .unwrap_or_default(),
+    ];
+    let mut yaml_names: Vec<String> = Vec::new();
+    for dir in &yaml_dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.extension().and_then(|s| s.to_str()) == Some("yml") {
+                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                        yaml_names.push(stem.to_string());
+                    }
+                }
+            }
+        }
+    }
+    yaml_names.sort();
+    yaml_names.dedup();
+
+    // Layer 2: Worker-runnable roles. Hardcoded list mirrors agent/mod.rs:1557
+    // match arms. When wp-extend-hex-agent-worker-roles ships, this should be
+    // replaced with a runtime lookup against the registered dispatch.
+    let worker_roles: Vec<&str> = vec![
+        "hex-coder",
+        "hex-tester",
+        "hex-reviewer",
+        "hex-documenter",
+        "hex-ux",
+        "hex-fixer",
+    ];
+
+    // Layer 3 + 4: Running instances + swarms (best-effort — nexus may be down)
+    let nexus = NexusClient::from_env();
+    let nexus_up = nexus.ensure_running().await.is_ok();
+    let mut instances_json = serde_json::json!([]);
+    let mut swarms_json = serde_json::json!([]);
+    if nexus_up {
+        // Nexus returns { "agents": [...] } at /api/hex-agents — unwrap.
+        // (Plain /api/agents is a different surface and may not exist.)
+        let raw = nexus
+            .get("/api/hex-agents")
+            .await
+            .unwrap_or_else(|_| serde_json::json!({}));
+        instances_json = raw["agents"].as_array().cloned()
+            .map(serde_json::Value::Array)
+            .or_else(|| raw.as_array().cloned().map(serde_json::Value::Array))
+            .unwrap_or_else(|| serde_json::json!([]));
+        let raw_swarms = nexus
+            .get("/api/swarms/active")
+            .await
+            .unwrap_or_else(|_| serde_json::json!([]));
+        swarms_json = raw_swarms.as_array().cloned()
+            .map(serde_json::Value::Array)
+            .or_else(|| raw_swarms["swarms"].as_array().cloned().map(serde_json::Value::Array))
+            .unwrap_or_else(|| serde_json::json!([]));
+    }
+
+    // Identify persona-bypass: worker dispatch arms with NO matching YAML.
+    // This is the load-bearing health check — a worker arm without a YAML
+    // persona executes without model contract, context, workflow, or gates.
+    let bypass: Vec<&&str> = worker_roles
+        .iter()
+        .filter(|r| !yaml_names.contains(&r.to_string()))
+        .collect();
+
+    if json {
+        let out = serde_json::json!({
+            "types": yaml_names,
+            "worker_runnable": worker_roles,
+            "instances": instances_json,
+            "swarms": swarms_json,
+            "nexus_up": nexus_up,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+
+    // Pretty-printed (default)
+    println!("{} Agent Overview", "\u{2b21}".cyan());
+    println!();
+
+    println!(
+        "  {} ({} total)",
+        "1. Available types (YAMLs):".bold(),
+        yaml_names.len()
+    );
+    if yaml_names.is_empty() {
+        println!("     (none — no YAMLs found in .claude/agents/hex/hex/)");
+    } else {
+        for name in &yaml_names {
+            let marker = if worker_roles.contains(&name.as_str()) {
+                "✓".green().to_string()
+            } else {
+                "○".dimmed().to_string()
+            };
+            println!("     {} {}", marker, name);
+        }
+        println!();
+        println!(
+            "     {} = worker-runnable today    {} = YAML present, worker not yet wired",
+            "✓".green(),
+            "○".dimmed()
+        );
+    }
+    println!();
+
+    println!(
+        "  {} ({} of {})",
+        "2. Worker-runnable roles:".bold(),
+        worker_roles.len(),
+        yaml_names.len()
+    );
+    println!("     {}", worker_roles.join(", "));
+    let no_dispatch = yaml_names.len().saturating_sub(
+        worker_roles
+            .iter()
+            .filter(|r| yaml_names.contains(&r.to_string()))
+            .count(),
+    );
+    if no_dispatch > 0 {
+        println!(
+            "     {}",
+            format!(
+                "Gap A: {} YAML(s) have no worker dispatch — see wp-extend-hex-agent-worker-roles",
+                no_dispatch
+            )
+            .yellow()
+        );
+    }
+    if !bypass.is_empty() {
+        let names: Vec<String> = bypass.iter().map(|s| s.to_string()).collect();
+        println!(
+            "     {}",
+            format!(
+                "Gap B (PERSONA BYPASS): {} dispatch arm(s) have NO YAML persona — {}. \
+                 These workers execute without model contract / context / gates. CRITICAL.",
+                bypass.len(),
+                names.join(", ")
+            )
+            .red()
+        );
+    }
+    println!();
+
+    println!("  {}", "3. Running instances:".bold());
+    if !nexus_up {
+        println!("     {}", "(nexus is down — cannot query)".red());
+    } else if let Some(arr) = instances_json.as_array() {
+        if arr.is_empty() {
+            println!("     (none registered)");
+        } else {
+            for agent in arr {
+                let id = agent["id"].as_str().unwrap_or("?");
+                let name = agent["name"].as_str().unwrap_or("?");
+                let status = agent["status"].as_str().unwrap_or("?");
+                let status_colored = match status {
+                    "online" => status.green().to_string(),
+                    "stale" => status.yellow().to_string(),
+                    "dead" | "offline" => status.red().to_string(),
+                    _ => status.to_string(),
+                };
+                println!("     {:<40}  {}  {}", &id[..id.len().min(36)], name, status_colored);
+            }
+        }
+    }
+    println!();
+
+    println!("  {}", "4. Active swarms:".bold());
+    if !nexus_up {
+        println!("     {}", "(nexus is down — cannot query)".red());
+    } else if let Some(arr) = swarms_json.as_array() {
+        if arr.is_empty() {
+            println!("     (no active swarms)");
+        } else {
+            for swarm in arr {
+                let id = swarm["id"].as_str().unwrap_or("?");
+                let name = swarm["name"].as_str().unwrap_or("?");
+                let status = swarm["status"].as_str().unwrap_or("?");
+                println!("     {:<40}  {:<24}  {}", &id[..id.len().min(36)], name, status);
+            }
+        }
+    }
+    println!();
+    println!(
+        "  {} {}",
+        "Tip:".dimmed(),
+        "hex agent worktree-audit  for active worktrees + assigned tasks".dimmed()
+    );
 
     Ok(())
 }

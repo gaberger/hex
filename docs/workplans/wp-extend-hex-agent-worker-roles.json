@@ -3,22 +3,52 @@
   "title": "Extend hex agent worker --role to support all 22 declarative agents",
   "paused": true,
   "paused_reason": "DO NOT auto-execute. Each role's worker arm in hex-cli/src/commands/agent/mod.rs:1557 has non-trivial dispatch logic (model selection, context loading, gate execution, output schema). Implementing 16 new arms is dedicated work, not a transform. Resume by either (a) hand-implementing each arm against its YAML contract, or (b) refactoring the worker dispatch into a generic YAML-driven executor (preferable — single change point).",
-  "rationale": "Today `hex agent worker --role` accepts a String but the dispatch match in agent/mod.rs:1557 has only 6 hardcoded arms (hex-coder, hex-tester, hex-reviewer, hex-documenter, hex-ux, hex-fixer). The supervisor reads all 22 YAMLs from hex-cli/assets/agents/hex/hex/, but only those 6 can actually execute via the worker CLI. Until extended, @-mention wrappers for the other 16 agents (pm-agent, planner, integrator, validation-judge, swarm-coordinator, adversarial-red, adversarial-blue, cli-designer, ux-designer, behavioral-spec-writer, scaffold-validator, adr-reviewer, dead-code-analyzer, dependency-analyst, status-monitor, dev-tracker, rust-refactorer, feature-developer) cannot truly delegate to hex — they hit `Unknown worker role`.",
+  "rationale": "Two separate persona-bypass bugs both surface here. (Bug A — coverage) `hex agent worker --role` accepts a String but the dispatch match in agent/mod.rs:1557 has only 6 hardcoded arms (hex-coder, hex-tester, hex-reviewer, hex-documenter, hex-ux, hex-fixer); the other 17 hit `Unknown worker role`. (Bug B — persona-bypass) Even the 6 arms that DO dispatch don't load AgentDefinition::load(role) — they use hardcoded HEX_MODEL env var, hardcoded language detection, hardcoded retry counts, hardcoded compile/test commands. The persona infrastructure exists (pipeline/agent_def.rs:746, used by adr_phase + objectives) but the worker dispatch ignores it. AND 2 dispatch arms (hex-documenter, hex-ux) don't even have YAML personas to load. Net result: every worker invocation today bypasses the YAML's model.tier, context.load_strategy, workflow.phases, feedback_loop.gates, quality_thresholds, prompt_suffix. The user-facing instruction is unambiguous: 'we need to ensure agents are wired to the personas always'.",
   "phases": [
     {
       "id": "P0",
-      "title": "Decision: per-arm vs generic executor",
+      "title": "PERSONA WIRING — non-negotiable contract for every worker arm",
       "tasks": [
         {
+          "id": "P0.0",
+          "title": "Hard rule: every worker dispatch arm MUST start with `let persona = AgentDefinition::load(role).ok_or_else(|| anyhow!(\"no persona for role {}\", role))?;` and use the loaded persona for model selection, context loading, workflow execution, feedback loop, quality thresholds, and prompt suffix. NO arm may bypass the YAML. NO hardcoded HEX_MODEL fallback that ignores persona.model. Add a unit test that fails the build if any arm doesn't reference `persona.` at least N times.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/agent/mod.rs",
+            "hex-cli/src/pipeline/agent_def.rs",
+            "hex-cli/tests/persona_wiring.rs"
+          ],
+          "evidence": [
+            "grep -c 'AgentDefinition::load' hex-cli/src/commands/agent/mod.rs | awk '{exit ($1>=6)?0:1}'",
+            "test -f hex-cli/tests/persona_wiring.rs",
+            "cargo test -p hex-cli persona_wiring"
+          ]
+        },
+        {
+          "id": "P0.0a",
+          "title": "Backfill missing YAMLs: hex-documenter and hex-ux are dispatch arms with no persona at all (`hex agent overview` flags Gap B). Either (a) write hex-cli/assets/agents/hex/hex/hex-documenter.yml and hex-ux.yml, or (b) delete the dispatch arms. Cannot leave persona-less dispatch arms — that's the bypass we're closing.",
+          "status": "pending",
+          "strategy_hint": "scaffold",
+          "files": [
+            "hex-cli/assets/agents/hex/hex/hex-documenter.yml",
+            "hex-cli/assets/agents/hex/hex/hex-ux.yml"
+          ],
+          "evidence": [
+            "test -f hex-cli/assets/agents/hex/hex/hex-documenter.yml || ! grep -q '\"hex-documenter\" =>' hex-cli/src/commands/agent/mod.rs",
+            "test -f hex-cli/assets/agents/hex/hex/hex-ux.yml || ! grep -q '\"hex-ux\" =>' hex-cli/src/commands/agent/mod.rs"
+          ]
+        },
+        {
           "id": "P0.1",
-          "title": "ADR: choose between per-arm worker implementation (16 new match arms) vs generic YAML-driven executor (single new arm that reads workflow.phases from the YAML and executes generically). Option B is preferable for maintenance — new agents only require a YAML, no Rust code. Document tradeoffs in ADR.",
+          "title": "ADR: choose between per-arm worker implementation (16 new match arms, each loading its persona) vs generic YAML-driven executor (single arm that reads `workflow.phases` from the persona and executes generically — new agents only need a YAML). Option B is preferable since it makes P0.0 mechanically enforced (one arm = one place to verify persona-load).",
           "status": "pending",
           "strategy_hint": "scaffold",
           "files": [
             "docs/adrs/"
           ],
           "evidence": [
-            "ls docs/adrs/ | grep -iE 'worker.*dispatch|generic.*executor|yaml.*executor' | head -1"
+            "ls docs/adrs/ | grep -iE 'worker.*dispatch|generic.*executor|yaml.*executor|persona.*wiring' | head -1"
           ]
         }
       ]
