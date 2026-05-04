@@ -1071,6 +1071,26 @@ mod real {
             }).collect())
         }
 
+        async fn inference_task_list_all(&self) -> Result<Vec<InferenceTaskInfo>, StateError> {
+            let rows = self.query_table("SELECT * FROM inference_task").await?;
+            Ok(rows.into_iter().filter_map(|r| {
+                Some(InferenceTaskInfo {
+                    id: r.get("id")?.as_str()?.to_string(),
+                    workplan_id: r.get("workplan_id")?.as_str()?.to_string(),
+                    task_id: r.get("task_id")?.as_str()?.to_string(),
+                    phase: r.get("phase")?.as_str()?.to_string(),
+                    prompt: r.get("prompt")?.as_str()?.to_string(),
+                    role: r.get("role")?.as_str()?.to_string(),
+                    status: r.get("status")?.as_str()?.to_string(),
+                    agent_id: r.get("agent_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    result: r.get("result").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    error: r.get("error").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    created_at: r.get("created_at")?.as_str()?.to_string(),
+                    updated_at: r.get("updated_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                })
+            }).collect())
+        }
+
     }
 
     // ── HexFlo memory (ADR-2604112000 P5) ──
@@ -2113,6 +2133,7 @@ mod stub {
         async fn inference_task_fail(&self, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn inference_task_get(&self, _: &str) -> Result<Option<InferenceTaskInfo>, StateError> { Err(Self::err()) }
         async fn inference_task_list_pending(&self) -> Result<Vec<InferenceTaskInfo>, StateError> { Err(Self::err()) }
+        async fn inference_task_list_all(&self) -> Result<Vec<InferenceTaskInfo>, StateError> { Err(Self::err()) }
     }
 
     #[async_trait]

@@ -692,6 +692,11 @@ pub trait IInferenceTaskStatePort: Send + Sync {
     async fn inference_task_fail(&self, id: &str, error: &str, updated_at: &str) -> Result<(), StateError>;
     async fn inference_task_get(&self, id: &str) -> Result<Option<InferenceTaskInfo>, StateError>;
     async fn inference_task_list_pending(&self) -> Result<Vec<InferenceTaskInfo>, StateError>;
+    /// List ALL inference_task rows regardless of status. Used by the
+    /// brain-dispatches endpoint to show recent history (Pending + InProgress
+    /// + Completed) so the dashboard isn't blank when workers process tasks
+    /// fast. Returns up to 200 rows.
+    async fn inference_task_list_all(&self) -> Result<Vec<InferenceTaskInfo>, StateError>;
 }
 
 /// HexFlo key-value memory (scoped: global, per-swarm, per-agent).

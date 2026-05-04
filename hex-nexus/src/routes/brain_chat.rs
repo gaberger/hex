@@ -22,6 +22,7 @@ use serde_json::{json, Value};
 use crate::state::SharedState;
 use crate::templates::AgentTemplates;
 use crate::routes::inference::{inference_complete, InferenceCompleteRequest};
+use tracing::warn;
 
 #[derive(Debug, Deserialize)]
 pub struct BrainChatRequest {
@@ -618,6 +619,7 @@ pub async fn dispatch_brain_chat(
     // sees what the PM said, not just the operator's original message).
     // Cap at MAX_AGENT_DISPATCH_DEPTH so a chain of `@`s can't infinite-loop.
     let depth = req.dispatch_depth.unwrap_or(0);
+    let mut enqueued: Vec<Value> = Vec::new();
     let children: Vec<Value> = if depth >= MAX_AGENT_DISPATCH_DEPTH {
         Vec::new()
     } else {
@@ -626,8 +628,60 @@ pub async fn dispatch_brain_chat(
         for (target_role, brief) in mentions {
             // Skip self-mentions (an agent cannot delegate to itself).
             if target_role == req.role { continue; }
-            // The brief sent to the engineer has the PM's full reply as
-            // context, then the specific @-mention task at the bottom.
+
+            // EXECUTION PATH: write an inference_task row so an alive hex-agent
+            // worker in this role's pool can claim and run it. This is
+            // separate from the chat recursion below — the chat call gives
+            // the operator visible reasoning in the thread; the inference_task
+            // is the actual work order. Once `wp-hex-agent-idle-loop` ships
+            // and pool workers stay alive, claim+execute happens autonomously.
+            //
+            // SAFETY GATE: if the brief mentions any path that matches
+            // is_critical_path, we mark the task as "PendingReview" instead
+            // of "Pending" so a worker won't auto-claim. Operator must
+            // explicitly promote via `hex brain dispatch run <id>`. This
+            // mirrors the "background hex-agent overwrote files" lesson —
+            // never auto-execute writes that touch infra.
+            let task_id = uuid::Uuid::new_v4().to_string();
+            let workplan_id = format!(
+                "brain-chat:{}",
+                req.thread_id.as_deref().unwrap_or("global")
+            );
+            let phase = format!("dispatch-from-{}", req.role);
+            let timestamp = chrono::Utc::now().to_rfc3339();
+            let touches_critical = mentions_critical_path(&brief);
+            let port_handle = inner_state.0.state_port.clone();
+            let mut enqueue_status: &str = "skipped";
+            if let Some(port) = port_handle.as_ref() {
+                let create_res = port
+                    .inference_task_create(
+                        &task_id, &workplan_id, &task_id, &phase,
+                        &brief, &target_role, &timestamp,
+                    )
+                    .await;
+                match create_res {
+                    Ok(()) => {
+                        enqueue_status = if touches_critical { "pending_review" } else { "pending" };
+                    }
+                    Err(e) => {
+                        warn!("brain-chat dispatch enqueue failed for role={} id={}: {}",
+                            target_role, task_id, e);
+                        enqueue_status = "enqueue_failed";
+                    }
+                }
+            }
+            enqueued.push(json!({
+                "id": task_id,
+                "role": target_role,
+                "status": enqueue_status,
+                "workplan_id": workplan_id,
+                "touches_critical_path": touches_critical,
+            }));
+
+            // VISIBILITY PATH: recursive chat call so the operator sees
+            // what the engineer would do. Goes regardless of enqueue
+            // status — even pending_review tasks get a visible reasoning
+            // bubble so the operator can decide whether to promote.
             let dispatch_message = format!(
                 "Inbound delegation from @{}.\n\n--- @{} said ---\n{}\n--- end @{} ---\n\nYour task: {}",
                 req.role, req.role, content, req.role, brief
@@ -650,11 +704,15 @@ pub async fn dispatch_brain_chat(
                     "content": child_resp.0.get("content").cloned().unwrap_or(Value::Null),
                     "model": child_resp.0.get("model").cloned().unwrap_or(Value::Null),
                     "children": child_resp.0.get("children").cloned().unwrap_or(Value::Array(vec![])),
+                    "enqueued_task_id": task_id,
+                    "enqueue_status": enqueue_status,
                 }));
             } else {
                 out.push(json!({
                     "role": target_role,
                     "error": child_resp.0.get("error").cloned().unwrap_or(json!("dispatch failed")),
+                    "enqueued_task_id": task_id,
+                    "enqueue_status": enqueue_status,
                 }));
             }
         }
@@ -668,9 +726,85 @@ pub async fn dispatch_brain_chat(
             "model": final_model,
             "content": content,
             "children": children,
+            "enqueued": enqueued,
             "depth": depth,
         })),
     )
+}
+
+/// GET /api/brain/dispatches — list recent brain-chat dispatches.
+/// Filters inference_task rows whose workplan_id starts with "brain-chat:"
+/// (the prefix written by dispatch_brain_chat when an @<role> mention fires).
+/// Includes Pending, InProgress, and recently-Completed (last 50) so the
+/// dashboard shows "what just ran" not just the empty-when-fast queue.
+pub async fn list_brain_dispatches(
+    state: State<crate::state::SharedState>,
+) -> (StatusCode, Json<Value>) {
+    let port = match state.0.state_port.as_ref() {
+        Some(p) => p,
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "no state port" }))),
+    };
+    // SELECT * FROM inference_task — STDB SQL doesn't support LIKE, so we
+    // pull all and filter client-side. brain-chat dispatches are a small
+    // fraction of total inference_task volume; this stays fast.
+    let res: Result<Vec<crate::ports::state::InferenceTaskInfo>, _> =
+        port.inference_task_list_all().await;
+    match res {
+        Ok(rows) => {
+            let mut dispatches: Vec<Value> = rows.into_iter()
+                .filter(|t| t.workplan_id.starts_with("brain-chat:"))
+                .map(|t| json!({
+                    "id": t.id,
+                    "role": t.role,
+                    "prompt": t.prompt,
+                    "status": t.status,
+                    "agentId": t.agent_id,
+                    "threadId": t.workplan_id.strip_prefix("brain-chat:").unwrap_or("").to_string(),
+                    "createdAt": t.created_at,
+                    "updatedAt": t.updated_at,
+                    "result": t.result,
+                    "error": t.error,
+                }))
+                .collect();
+            // Newest first — sort descending by createdAt string (RFC3339 sorts lexicographically).
+            dispatches.sort_by(|a, b| b["createdAt"].as_str().unwrap_or("").cmp(a["createdAt"].as_str().unwrap_or("")));
+            dispatches.truncate(50);
+            let pending = dispatches.iter().filter(|d| d["status"] == "Pending").count();
+            let in_progress = dispatches.iter().filter(|d| d["status"] == "InProgress").count();
+            let completed = dispatches.iter().filter(|d| d["status"] == "Completed").count();
+            (StatusCode::OK, Json(json!({
+                "dispatches": dispatches,
+                "total": dispatches.len(),
+                "pending": pending,
+                "inProgress": in_progress,
+                "completed": completed,
+            })))
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("inference_task_list_all: {}", e) })),
+        ),
+    }
+}
+
+/// Best-effort detection of critical-path tokens in a free-form brief.
+/// Returns true if any whitespace-delimited word in the brief matches
+/// `hex_core::domain::validation::is_critical_path`. Used to gate
+/// auto-execution: if true, the inference_task is marked PendingReview
+/// instead of Pending so a worker won't auto-claim.
+///
+/// We deliberately under-match rather than over-match: if the operator
+/// explicitly mentions e.g. "edit hex-nexus/src/main.rs" the dispatch is
+/// gated; but generic phrasing like "the main entry point" passes through.
+fn mentions_critical_path(brief: &str) -> bool {
+    use hex_core::domain::validation::is_critical_path;
+    brief
+        .split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '`' | '"' | '\'' | '(' | ')'))
+        .filter(|tok| tok.contains('/') || tok.ends_with(".rs"))
+        .any(|tok| {
+            let cleaned = tok.trim_matches(|c: char| matches!(c, '.' | ',' | ';' | ':' | '!' | '?'));
+            !cleaned.is_empty() && is_critical_path(cleaned)
+        })
 }
 
 /// Parse `@<role>` mentions at line-start from an agent's reply.
