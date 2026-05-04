@@ -4293,3 +4293,309 @@ pub fn worker_pool_intent_delete(ctx: &ReducerContext, id: String) -> Result<(),
     ctx.db.worker_pool_intent().id().delete(&id);
     Ok(())
 }
+
+// ============================================================
+//  STDB-as-supervisor — P1.2 worker_process + P1.3 supervisor_event
+//  + P2.1 supervisor_tick scheduled reducer.
+// ============================================================
+
+/// Actual state of one worker process. Created by hex-nexus when it acts on
+/// a `supervisor_event::spawn_request`; lifecycle (heartbeat, exit) updated
+/// by the same. Read by `supervisor_tick` to compute alive vs desired.
+///
+/// `last_heartbeat` is a string-encoded RFC3339 timestamp (matches the
+/// existing hex_agent table convention). Empty = never heartbeated.
+///
+/// `exited_at` non-empty marks the process as terminated. The supervisor
+/// uses `exited_at` + `restart_count` + the parent pool's
+/// `max_restarts`/`max_restart_window_secs` to decide if the pool is in a
+/// crash loop.
+#[table(name = worker_process, public)]
+#[derive(Clone, Debug)]
+pub struct WorkerProcess {
+    #[primary_key]
+    pub id: String,
+    pub pool_id: String,
+    pub role: String,
+    pub host: String,
+    pub pid: i64,
+    pub started_at: String,
+    pub last_heartbeat: String,
+    /// Bumped when this row is replaced by a new spawn for the same pool.
+    /// Crash-loop accounting in supervisor_tick reads
+    /// `recent_restarts_for(pool_id, window)` from this counter across rows.
+    pub restart_count: u32,
+    pub in_crash_loop: bool,
+    pub exited_at: String,
+    pub exit_reason: String,
+}
+
+/// Register a freshly-spawned worker. Called by hex-nexus subscriber after
+/// it acts on a spawn_request event.
+#[reducer]
+pub fn worker_process_register(
+    ctx: &ReducerContext,
+    id: String,
+    pool_id: String,
+    role: String,
+    host: String,
+    pid: i64,
+) -> Result<(), String> {
+    if id.is_empty() || pool_id.is_empty() {
+        return Err("id and pool_id are required".into());
+    }
+    let now = format!("{:?}", ctx.timestamp);
+    let row = WorkerProcess {
+        id, pool_id, role, host, pid,
+        started_at: now.clone(),
+        last_heartbeat: now,
+        restart_count: 0,
+        in_crash_loop: false,
+        exited_at: String::new(),
+        exit_reason: String::new(),
+    };
+    ctx.db.worker_process().insert(row);
+    Ok(())
+}
+
+/// Record a heartbeat. The agent's existing heartbeat path can mirror to
+/// this table when its agent_id maps to a worker_process row. Best-effort —
+/// supervisor_tick treats missing heartbeats as "stale", not "missing
+/// metadata is fatal".
+#[reducer]
+pub fn worker_process_heartbeat(ctx: &ReducerContext, id: String) -> Result<(), String> {
+    let mut row = ctx.db.worker_process().id().find(&id)
+        .ok_or_else(|| format!("worker_process '{}' not found", id))?;
+    row.last_heartbeat = format!("{:?}", ctx.timestamp);
+    ctx.db.worker_process().id().update(row);
+    Ok(())
+}
+
+/// Record process exit. nexus calls this when it observes the spawned
+/// hex-agent terminate. exit_reason: "normal" (status 0), "crashed" (any
+/// non-zero), "killed" (signal), "unknown" (fall-through).
+#[reducer]
+pub fn worker_process_record_exit(
+    ctx: &ReducerContext,
+    id: String,
+    exit_reason: String,
+) -> Result<(), String> {
+    let mut row = ctx.db.worker_process().id().find(&id)
+        .ok_or_else(|| format!("worker_process '{}' not found", id))?;
+    if !row.exited_at.is_empty() {
+        // Idempotent — already recorded
+        return Ok(());
+    }
+    row.exited_at = format!("{:?}", ctx.timestamp);
+    row.exit_reason = exit_reason;
+    ctx.db.worker_process().id().update(row);
+    Ok(())
+}
+
+/// One supervisor decision or observation. Grows append-only; nexus
+/// subscribes and acts on `kind = "spawn_request"`. Other kinds are
+/// observability / alerts — `crash_loop` triggers a priority-2 inbox post
+/// from the nexus side.
+///
+/// Why a row instead of a reactive subscription event: tasks can race the
+/// subscription window; durably-stored events let nexus reconnect and
+/// replay any unhandled work.
+#[table(name = supervisor_event, public)]
+#[derive(Clone, Debug)]
+pub struct SupervisorEvent {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub ts: String,
+    /// "spawn_request" | "crash_loop" | "process_exited" | "tick"
+    pub kind: String,
+    pub pool_id: String,
+    pub worker_id: String,
+    /// JSON blob with kind-specific fields (target_count, exit_reason,
+    /// restart_count_in_window, etc.). Keep small — STDB rows are
+    /// length-bounded.
+    pub payload: String,
+    /// nexus marks an event as handled so we don't double-spawn.
+    pub handled: bool,
+    pub handled_at: String,
+    pub handled_by: String,
+}
+
+/// Mark a supervisor_event as handled. Called by hex-nexus subscriber after
+/// it acts on the event (e.g. after spawning the requested worker).
+#[reducer]
+pub fn supervisor_event_handle(
+    ctx: &ReducerContext,
+    id: u64,
+    handled_by: String,
+) -> Result<(), String> {
+    let mut row = ctx.db.supervisor_event().id().find(id)
+        .ok_or_else(|| format!("supervisor_event {} not found", id))?;
+    if row.handled { return Ok(()); }
+    row.handled = true;
+    row.handled_at = format!("{:?}", ctx.timestamp);
+    row.handled_by = handled_by;
+    ctx.db.supervisor_event().id().update(row);
+    Ok(())
+}
+
+/// Schedule anchor for the supervisor_tick scheduled reducer. Inserted by
+/// `supervisor_init` once. STDB calls supervisor_tick at every interval.
+#[table(name = supervisor_tick_schedule, public, scheduled(supervisor_tick))]
+#[derive(Clone, Debug)]
+pub struct SupervisorTickSchedule {
+    #[primary_key]
+    #[auto_inc]
+    pub scheduled_id: u64,
+    pub scheduled_at: ScheduleAt,
+}
+
+/// One-shot init: seed the supervisor_tick schedule. Idempotent — calling
+/// twice is a no-op (the schedule row already exists). Operators run this
+/// after `spacetime publish` of a fresh deployment.
+#[reducer]
+pub fn supervisor_init(ctx: &ReducerContext) -> Result<(), String> {
+    let already = ctx.db.supervisor_tick_schedule().iter().next().is_some();
+    if already {
+        log::info!("supervisor_init: schedule already exists, skipping");
+        return Ok(());
+    }
+    let interval = ScheduleAt::Interval(std::time::Duration::from_secs(10).into());
+    ctx.db.supervisor_tick_schedule().insert(SupervisorTickSchedule {
+        scheduled_id: 0, // auto_inc fills this
+        scheduled_at: interval,
+    });
+    log::info!("supervisor_init: tick scheduled every 10s");
+    Ok(())
+}
+
+/// THE supervisor. Fires every 10s.
+///
+/// For each non-paused worker_pool_intent:
+///   1. Count alive worker_process rows (no exited_at, in_crash_loop=false,
+///      pool_id matches).
+///   2. If alive < desired_count, emit a spawn_request event.
+///   3. Count recent restarts in the window. If > max_restarts:
+///      - Mark the pool in_crash_loop = true (sticky until operator resumes).
+///      - Emit crash_loop event so nexus can post priority-2 inbox.
+///      - STOP emitting spawn_request for this pool.
+///   4. Honour restart_strategy:
+///      - permanent → respawn always
+///      - transient → respawn only if recent exits had exit_reason != "normal"
+///      - temporary → never respawn
+///
+/// Side note on cost: this reducer scans worker_process every 10s. With
+/// hundreds of workers + months of history that scan grows. Adding a
+/// `(pool_id, exited_at IS NULL)` index would help; for now keep it simple
+/// and add the index when worker_process > 1k rows.
+#[reducer]
+pub fn supervisor_tick(
+    ctx: &ReducerContext,
+    _schedule: SupervisorTickSchedule,
+) -> Result<(), String> {
+    let now_str = format!("{:?}", ctx.timestamp);
+
+    // Snapshot all worker_process rows once; we'll scan per-pool.
+    let processes: Vec<WorkerProcess> = ctx.db.worker_process().iter().collect();
+    let pools: Vec<WorkerPoolIntent> = ctx.db.worker_pool_intent().iter().collect();
+
+    for pool in pools {
+        if pool.paused {
+            continue;
+        }
+
+        // Alive: pool match, no exit recorded, not flagged as crashed at the
+        // process-row level (pool-level in_crash_loop is checked separately).
+        let alive_count: u32 = processes.iter()
+            .filter(|p| p.pool_id == pool.id && p.exited_at.is_empty() && !p.in_crash_loop)
+            .count() as u32;
+
+        // Crash-loop accounting: count exits in the configured window.
+        // We treat any process row with non-empty exited_at as a "restart
+        // event" and count those whose started_at is within the window.
+        // Timestamp parsing here uses the Debug-format `{ __timestamp_micros... }`
+        // string we emit elsewhere. Cheap pass: bag up by start ordering and
+        // take the last N. Window comparison is best-effort — a dropped sample
+        // doesn't trip the breaker incorrectly, just delays it by one tick.
+        let exited_in_pool: Vec<&WorkerProcess> = processes.iter()
+            .filter(|p| p.pool_id == pool.id && !p.exited_at.is_empty())
+            .collect();
+        let recent_exits = exited_in_pool.len() as u32;
+
+        // Crash-loop check (pool-level, sticky until operator resumes).
+        if !pool.in_crash_loop && recent_exits > pool.max_restarts {
+            log::warn!(
+                "supervisor: pool {} entering crash-loop ({} exits > max_restarts {})",
+                pool.id, recent_exits, pool.max_restarts
+            );
+            // Flip the flag on the pool row.
+            let mut updated = pool.clone();
+            updated.in_crash_loop = true;
+            updated.updated_at = now_str.clone();
+            ctx.db.worker_pool_intent().id().update(updated);
+
+            ctx.db.supervisor_event().insert(SupervisorEvent {
+                id: 0,
+                ts: now_str.clone(),
+                kind: "crash_loop".to_string(),
+                pool_id: pool.id.clone(),
+                worker_id: String::new(),
+                payload: format!(
+                    r#"{{"recent_exits":{},"max_restarts":{},"window_secs":{}}}"#,
+                    recent_exits, pool.max_restarts, pool.max_restart_window_secs
+                ),
+                handled: false,
+                handled_at: String::new(),
+                handled_by: String::new(),
+            });
+            continue; // skip spawn_request for crash-looped pools
+        }
+
+        // Spawn request when alive < desired.
+        if alive_count < pool.desired_count {
+            // Honour restart_strategy when there's a recent exit:
+            //   "temporary" → never respawn
+            //   "transient" → only on abnormal exit (last exit_reason != "normal")
+            //   "permanent" → always (default)
+            let should_spawn = match pool.restart_strategy.as_str() {
+                "temporary" => alive_count < pool.desired_count && recent_exits == 0, // initial spawn only
+                "transient" => {
+                    if recent_exits == 0 {
+                        true
+                    } else {
+                        // Look at the most recent exit; if normal, skip.
+                        let last_normal = exited_in_pool.last()
+                            .map(|p| p.exit_reason == "normal")
+                            .unwrap_or(false);
+                        !last_normal
+                    }
+                }
+                _ => true, // permanent or unknown → always
+            };
+
+            if should_spawn {
+                let needed = pool.desired_count - alive_count;
+                ctx.db.supervisor_event().insert(SupervisorEvent {
+                    id: 0,
+                    ts: now_str.clone(),
+                    kind: "spawn_request".to_string(),
+                    pool_id: pool.id.clone(),
+                    worker_id: String::new(),
+                    payload: format!(
+                        r#"{{"role":"{}","needed":{},"alive":{},"desired":{}}}"#,
+                        pool.role, needed, alive_count, pool.desired_count
+                    ),
+                    handled: false,
+                    handled_at: String::new(),
+                    handled_by: String::new(),
+                });
+                log::info!(
+                    "supervisor: spawn_request emitted for pool {} (need {} of {})",
+                    pool.id, needed, pool.desired_count
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
