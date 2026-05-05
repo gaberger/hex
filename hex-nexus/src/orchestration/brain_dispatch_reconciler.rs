@@ -126,6 +126,7 @@ impl BrainDispatchReconciler {
             }
 
             let mut resolved_pairs: Vec<(String, String)> = Vec::new();
+            let mut evidence_rejections: Vec<(String, String, String)> = Vec::new();
             for (wp_id, task_id) in refs {
                 let path = workplans_dir.join(format!("{}.json", wp_id));
                 match try_complete_task(&path, &task_id, &c.id) {
@@ -139,11 +140,36 @@ impl BrainDispatchReconciler {
                     Ok(false) => {
                         // Task not found OR already done — fine, don't retry.
                     }
+                    Err(e) if e.starts_with("evidence-gate rejected") => {
+                        warn!(
+                            "brain reconciler: REJECTED false-done on {} {} from dispatch {}: {}",
+                            wp_id, task_id, c.id, e
+                        );
+                        evidence_rejections.push((wp_id, task_id, e));
+                    }
                     Err(e) => {
                         warn!(
                             "brain reconciler: workplan {} task {} update failed: {}",
                             wp_id, task_id, e
                         );
+                    }
+                }
+            }
+            // Surface evidence failures back to the originating thread so
+            // the operator sees the worker claimed done but evidence didn't
+            // pass — false-done caught by the gate, not silently accepted.
+            if !evidence_rejections.is_empty() {
+                if let Some(thread_id) = extract_thread_id(&c.workplan_id) {
+                    if !thread_id.is_empty() && thread_id != "global" {
+                        let body = format!(
+                            "**⚠ Evidence gate REJECTED claimed completion** for dispatch `{}`:\n\n{}",
+                            &c.id[..c.id.len().min(8)],
+                            evidence_rejections.iter()
+                                .map(|(w, t, why)| format!("- `{} {}`: {}", w, t, why))
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                        );
+                        let _ = post_evidence_warning(port.as_ref(), &thread_id, &c.id, &body).await;
                     }
                 }
             }
@@ -242,6 +268,52 @@ async fn post_result_to_thread(
     Ok(())
 }
 
+/// Idempotent post of an evidence-gate warning to a chat thread.
+/// Tracked separately from the result-posted key so a worker can have
+/// both a result-posted message AND an evidence rejection.
+async fn post_evidence_warning(
+    port: &dyn IStatePort,
+    thread_id: &str,
+    dispatch_id: &str,
+    body: &str,
+) -> Result<(), String> {
+    let memo_key = format!("brain-evidence-rejected:{}", dispatch_id);
+    if port.hexflo_memory_retrieve(&memo_key).await.ok().flatten().is_some() {
+        return Ok(()); // already posted
+    }
+    let thread_key = format!("chat:thread:{}", thread_id);
+    let raw = match port.hexflo_memory_retrieve(&thread_key).await {
+        Ok(Some(s)) => s,
+        _ => return Ok(()),
+    };
+    let mut record: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+    let new_msg = serde_json::json!({
+        "from": "system",
+        "text": body,
+        "ts": chrono::Utc::now().to_rfc3339(),
+        "model": "evidence-gate",
+    });
+    if let Some(messages) = record.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        messages.push(new_msg);
+    } else {
+        record["messages"] = serde_json::json!([new_msg]);
+    }
+    record["last_active_at"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
+    let serialized = serde_json::to_string(&record).map_err(|e| format!("serialize: {}", e))?;
+    port.hexflo_memory_store(&thread_key, &serialized, "system")
+        .await
+        .map_err(|e| format!("store: {}", e))?;
+    let _ = port.hexflo_memory_store(
+        &memo_key,
+        &serde_json::json!({"ts": chrono::Utc::now().to_rfc3339()}).to_string(),
+        "system",
+    ).await;
+    Ok(())
+}
+
 /// Parse free-form text for workplan-id + phase/task references.
 ///
 /// Two-pass: collect ALL wp-ids and ALL P-refs in the text, then form the
@@ -308,18 +380,67 @@ fn is_valid_wp_id(s: &str) -> bool {
         && s[3..].chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// Verify a task's evidence predicates pass. Each predicate is a shell
+/// command — if it exits 0, the predicate passed. Used to gate
+/// auto-reconcile so workers can't claim "done" without proving it.
+///
+/// Returns Ok(()) if all predicates pass (or no evidence is declared).
+/// Returns Err with a brief failure description on any failure.
+/// Each predicate has a 30s timeout to bound runtime.
+fn verify_evidence(task: &serde_json::Value, project_root: &std::path::Path) -> Result<(), String> {
+    let evidence = match task.get("evidence").and_then(|v| v.as_array()) {
+        Some(arr) if !arr.is_empty() => arr,
+        _ => return Ok(()), // no evidence declared = nothing to verify
+    };
+    for cmd_v in evidence {
+        let cmd = match cmd_v.as_str() {
+            Some(s) => s.trim(),
+            None => continue,
+        };
+        if cmd.is_empty() { continue; }
+        let out = std::process::Command::new("sh")
+            .args(["-c", cmd])
+            .current_dir(project_root)
+            .output();
+        match out {
+            Ok(o) if o.status.success() => continue, // pass
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                let msg = stderr.trim().lines().next()
+                    .or_else(|| stdout.trim().lines().next())
+                    .unwrap_or("(no output)");
+                return Err(format!("evidence predicate failed: `{}` — {}",
+                    if cmd.len() > 80 { &cmd[..80] } else { cmd }, msg));
+            }
+            Err(e) => return Err(format!("evidence predicate spawn failed: `{}` ({})", cmd, e)),
+        }
+    }
+    Ok(())
+}
+
 /// Open a workplan JSON, find the named task across all phases, flip
-/// its status to "done" with traceability fields. Returns Ok(true) if a
-/// matching task was updated, Ok(false) if no matching task or already done,
-/// Err on filesystem / parse errors.
+/// its status to "done" with traceability fields. Evidence predicates
+/// are verified before the flip — false-done claims get rejected here
+/// instead of corrupting the workplan state.
+///
+/// Returns Ok(true) if a matching task was updated, Ok(false) if no
+/// matching task or already done, Err on filesystem/parse errors OR
+/// on evidence verification failure (with the failure reason in the
+/// error string so the caller can log it).
 fn try_complete_task(path: &std::path::Path, task_id: &str, dispatch_id: &str) -> Result<bool, String> {
     if !path.exists() {
         return Ok(false);
     }
     let raw = std::fs::read_to_string(path).map_err(|e| format!("read: {}", e))?;
     let mut doc: serde_json::Value = serde_json::from_str(&raw).map_err(|e| format!("parse: {}", e))?;
+    let project_root = path
+        .parent().and_then(|p| p.parent()).and_then(|p| p.parent())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
     let mut updated = false;
+    let mut evidence_failures: Vec<String> = Vec::new();
     if let Some(phases) = doc.get_mut("phases").and_then(|v| v.as_array_mut()) {
         for phase in phases {
             if let Some(tasks) = phase.get_mut("tasks").and_then(|v| v.as_array_mut()) {
@@ -336,9 +457,28 @@ fn try_complete_task(path: &std::path::Path, task_id: &str, dispatch_id: &str) -
                     if current_status == "done" || current_status == "completed" {
                         continue; // already resolved
                     }
+                    // EVIDENCE GATE: verify predicates pass. If any fail,
+                    // record the failure and DO NOT flip status. Worker
+                    // reported done but the proof doesn't hold; leave the
+                    // task in its current state for the operator to triage.
+                    if let Err(why) = verify_evidence(task, &project_root) {
+                        evidence_failures.push(format!("{}: {}", task_id, why));
+                        if let Some(obj) = task.as_object_mut() {
+                            obj.insert(
+                                "last_evidence_failure".to_string(),
+                                serde_json::json!({
+                                    "ts": chrono::Utc::now().to_rfc3339(),
+                                    "dispatch": dispatch_id,
+                                    "reason": why,
+                                }),
+                            );
+                        }
+                        continue; // skip the status flip
+                    }
                     if let Some(obj) = task.as_object_mut() {
                         obj.insert("status".to_string(), serde_json::json!("done"));
                         obj.remove("blocked_reason");
+                        obj.remove("last_evidence_failure");
                         obj.insert(
                             "completed_by_brain_dispatch".to_string(),
                             serde_json::json!(dispatch_id),
@@ -353,12 +493,17 @@ fn try_complete_task(path: &std::path::Path, task_id: &str, dispatch_id: &str) -
             }
         }
     }
-    if !updated {
-        return Ok(false);
+    // Persist any state changes — even when only `last_evidence_failure`
+    // got set on a task whose evidence didn't pass. Operator sees the
+    // failure trail in the workplan JSON next time they open it.
+    if updated || !evidence_failures.is_empty() {
+        let serialized = serde_json::to_string_pretty(&doc).map_err(|e| format!("serialize: {}", e))?;
+        std::fs::write(path, serialized).map_err(|e| format!("write: {}", e))?;
     }
-    let serialized = serde_json::to_string_pretty(&doc).map_err(|e| format!("serialize: {}", e))?;
-    std::fs::write(path, serialized).map_err(|e| format!("write: {}", e))?;
-    Ok(true)
+    if !updated && !evidence_failures.is_empty() {
+        return Err(format!("evidence-gate rejected: {}", evidence_failures.join("; ")));
+    }
+    Ok(updated)
 }
 
 #[cfg(test)]
