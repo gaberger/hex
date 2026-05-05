@@ -82,10 +82,14 @@ impl SupervisorSubscriber {
     }
 
     /// Walk every persona YAML embedded via rust-embed and create a
-    /// worker_pool_intent row with desired=0, paused=true for each one whose
-    /// pool id (`{role}-default`) doesn't already exist. Lets operators see
-    /// the full menu of available roles in `hex pool list` without forcing
-    /// them to declare each one manually.
+    /// worker_pool_intent row with desired=1, paused=false for each one whose
+    /// pool id (`{role}-default`) doesn't already exist. The supervisor
+    /// brings them up automatically on the next tick. Operator can still
+    /// scale to 0 (`hex pool scale <id> 0`) or pause (`hex pool pause`)
+    /// to disable any individual persona.
+    ///
+    /// Set HEX_SEED_PAUSED=1 to keep the old paused-by-default behavior
+    /// (useful when bringing up nexus on a low-resource host).
     async fn seed_persona_pools(
         &self,
         port: &dyn crate::ports::state::IStatePort,
@@ -112,12 +116,15 @@ impl SupervisorSubscriber {
         roles.sort();
         roles.dedup();
 
+        let seed_paused = std::env::var("HEX_SEED_PAUSED").as_deref() == Ok("1");
+        let (seed_desired, seed_paused_flag) = if seed_paused { (0, true) } else { (1, false) };
+
         let mut seeded = 0;
         for role in &roles {
             let pool_id = format!("{}-default", role);
             if existing.contains(&pool_id) { continue; }
             if let Err(e) = port
-                .pool_create(&pool_id, role, 0, "permanent", 5, 60, true, "system-seed")
+                .pool_create(&pool_id, role, seed_desired, "permanent", 5, 60, seed_paused_flag, "system-seed")
                 .await
             {
                 warn!("seed pool '{}' skipped: {}", pool_id, e);
@@ -126,7 +133,10 @@ impl SupervisorSubscriber {
             seeded += 1;
         }
         if seeded > 0 {
-            info!("supervisor: seeded {} pool placeholders from persona YAMLs (desired=0, paused=true)", seeded);
+            info!(
+                "supervisor: seeded {} pool placeholders from persona YAMLs (desired={}, paused={})",
+                seeded, seed_desired, seed_paused_flag
+            );
         }
         Ok(())
     }

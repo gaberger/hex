@@ -26,6 +26,12 @@ pub async fn run() -> anyhow::Result<()> {
     // Gate 5: Embedded assets must be project-generic (ADR-2604111142)
     all_passed &= gate_embedded_assets_generic();
 
+    // Gate 6: WASM assets in hex-cli/assets/wasm/ must be at-or-newer than
+    // the corresponding spacetime-modules/<x>/src/. Stale wasm means nexus
+    // ships old reducer behavior despite source updates — root cause of the
+    // "no agents starting" outage we just fixed.
+    all_passed &= gate_wasm_fresh().await;
+
     println!();
     if all_passed {
         println!("{} All gates passed", "\u{2713}".green().bold());
@@ -461,6 +467,34 @@ async fn gate_spec_coverage() -> bool {
             println!("      {}", m.dimmed());
         }
         false
+    }
+}
+
+/// Verify each spacetime-modules/<x>/src/ tree's newest .rs mtime is <=
+/// the corresponding hex-cli/assets/wasm/<x>.wasm mtime. Wraps
+/// scripts/check-wasm-fresh.sh — single source of truth for the policy.
+async fn gate_wasm_fresh() -> bool {
+    print!("  {} WASM assets fresh ......... ", "\u{25cb}".dimmed());
+    let script = std::path::Path::new("scripts/check-wasm-fresh.sh");
+    if !script.exists() {
+        println!("{} (scripts/check-wasm-fresh.sh missing)", "skip".yellow());
+        return true;
+    }
+    let out = tokio::process::Command::new("bash")
+        .arg(script)
+        .output()
+        .await;
+    match out {
+        Ok(o) if o.status.success() => { println!("{}", "pass".green()); true }
+        Ok(o) => {
+            println!("{}", "fail".red());
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            for line in stdout.lines().take(8) {
+                println!("      {}", line.dimmed());
+            }
+            false
+        }
+        Err(e) => { println!("{} ({})", "fail".red(), e); false }
     }
 }
 
