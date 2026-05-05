@@ -887,6 +887,42 @@ pub async fn dispatch_brain_chat(
     let mut auto_followup_summary: Option<String> = None;
     let mut auto_resolved: Vec<(String, String, String)> = Vec::new(); // (kind, id, action)
 
+    // Pre-load in-flight inference_tasks ONCE so both @-mention recursion
+    // and auto-followup can dedup against them. Without this, every chat
+    // turn that mentions ADR-X / wp-Y respawns the same hex-coder task —
+    // 7+ dups per ADR are visible in the operator's session.
+    let in_flight_prompts: Vec<String> = {
+        let port_handle = inner_state.0.state_port.clone();
+        if let Some(port) = port_handle {
+            port.inference_task_list_all().await
+                .map(|rows| rows.into_iter()
+                    .filter(|t| matches!(t.status.as_str(), "Pending" | "PendingReview" | "InProgress"))
+                    .filter(|t| t.workplan_id.starts_with("brain-chat:"))
+                    .map(|t| t.prompt.to_lowercase())
+                    .collect())
+                .unwrap_or_default()
+        } else { Vec::new() }
+    };
+    let already_in_flight = |brief: &str| -> bool {
+        // Compare on subject tokens: any wp-id + P-ref pair OR any ADR id token
+        // present in BOTH the brief and an existing in-flight prompt = duplicate.
+        let lo_brief = brief.to_ascii_lowercase();
+        let mut subjects: Vec<String> = Vec::new();
+        for tok in lo_brief.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '`' | '"' | '(' | ')' | '?')) {
+            let cleaned = tok.trim_matches(|c: char| matches!(c, '.' | ',' | ':' | '!' | '?'));
+            if cleaned.starts_with("wp-") && cleaned.len() > 4 {
+                subjects.push(cleaned.trim_end_matches(".json").to_string());
+            }
+            if cleaned.starts_with("adr-") && cleaned.len() > 4 {
+                subjects.push(cleaned.trim_end_matches(".md").to_string());
+            }
+        }
+        if subjects.is_empty() { return false; } // no identifiable subject = always allow
+        in_flight_prompts.iter().any(|p|
+            subjects.iter().any(|s| p.contains(s.as_str()))
+        )
+    };
+
     // AUTO-RESOLVE DECISIONS: if the agent's reply contains a clear
     // accept/reject/abandon verdict on an ADR mentioned in the operator's
     // message, call the matching resolve endpoint right here so the
@@ -934,6 +970,10 @@ pub async fn dispatch_brain_chat(
     // = wasted work.
     if depth == 0 && auto_resolved.is_empty() {
         if let Some((subject, summary)) = detect_open_followup(&content) {
+            // Dedup auto-followup the same way as @-mention enqueue.
+            if already_in_flight(&summary) || already_in_flight(&subject) {
+                // Silent skip — the operator already has work in flight on this subject.
+            } else {
             let task_id = uuid::Uuid::new_v4().to_string();
             let workplan_id = format!(
                 "brain-chat:{}:auto-followup",
@@ -1003,6 +1043,7 @@ pub async fn dispatch_brain_chat(
                         warn!("auto-followup enqueue failed: {}", e);
                     }
                 }
+            }
             }
         }
     }
@@ -1076,6 +1117,24 @@ pub async fn dispatch_brain_chat(
         for (target_role, brief) in mentions {
             // Skip self-mentions (an agent cannot delegate to itself).
             if target_role == req.role { continue; }
+
+            // DEDUP: skip enqueue if an in-flight worker task already covers
+            // this subject. Prevents the operator's chat session from spawning
+            // 7+ hex-coder dispatches all working on the same ADR / workplan.
+            // Chat recursion below still fires so the operator sees the
+            // engineer's reasoning, but no second worker task gets created.
+            if already_in_flight(&brief) {
+                enqueued.push(json!({
+                    "id": null,
+                    "role": target_role,
+                    "status": "deduped",
+                    "kind": "duplicate",
+                    "reason": "Existing in-flight worker task already covers this subject. Wait for it to complete or check the Brain Dispatches panel.",
+                }));
+                // Skip BOTH enqueue + recursion — the duplicate signal also
+                // means the operator is asking about something already handled.
+                continue;
+            }
 
             // EXECUTION PATH: write an inference_task row so an alive hex-agent
             // worker in this role's pool can claim and run it. This is
