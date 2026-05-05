@@ -345,25 +345,48 @@ pub async fn resolve_adr(
     let adr_path: std::path::PathBuf = if literal.exists() {
         literal
     } else {
+        // Build a list of normalized candidates from the stripped id so we
+        // tolerate operator/agent variations:
+        //   ADR-018 → also try ADR-0018 / ADR-18 / ADR-00018
+        //   ADR-2604121630-foo → unchanged (timestamp form is unambiguous)
+        // Plus: strip "ADR-" prefix on the final component to compare numeric
+        // tokens directly (handles agents that say "ADR-018" when the file
+        // is "ADR-018-something" but ALSO when the file is "ADR-0018-...").
+        let stripped_upper = stripped.to_ascii_uppercase();
+        let mut candidates: Vec<String> = vec![stripped_upper.clone()];
+        if let Some(rest) = stripped_upper.strip_prefix("ADR-") {
+            // Capture the numeric prefix (before the first '-' if any).
+            let num_part = rest.split('-').next().unwrap_or(rest);
+            if !num_part.is_empty() && num_part.chars().all(|c| c.is_ascii_digit()) {
+                let stripped_zeros = num_part.trim_start_matches('0');
+                let canonical = if stripped_zeros.is_empty() { "0".to_string() } else { stripped_zeros.to_string() };
+                // Try widths 2, 3, 4, 5
+                for width in [2usize, 3, 4, 5] {
+                    let padded = format!("{:0>width$}", canonical, width = width);
+                    let cand = format!("ADR-{}", padded);
+                    if !candidates.contains(&cand) { candidates.push(cand); }
+                }
+                // Also bare canonical (no padding)
+                let cand = format!("ADR-{}", canonical);
+                if !candidates.contains(&cand) { candidates.push(cand); }
+            }
+        }
+
         let mut found: Option<std::path::PathBuf> = None;
         if let Ok(entries) = std::fs::read_dir(&adrs_dir) {
-            // Build prefix candidates from the stripped id.
-            // "ADR-047" → ["ADR-047-", "ADR-047."]
-            // "ADR-2604121630-foo" → ["ADR-2604121630-foo"]  (already specific)
-            let stripped_upper = stripped.to_ascii_uppercase();
-            for ent in entries.flatten() {
-                let name = ent.file_name();
-                let name_str = name.to_string_lossy().to_string();
-                if !name_str.ends_with(".md") { continue; }
-                let name_upper = name_str.to_ascii_uppercase();
-                let stem_upper = name_upper.trim_end_matches(".MD");
-                // Match if filename starts with the stripped id followed by
-                // either "-" (slug continues) or "." (exact match).
-                if stem_upper == stripped_upper
-                    || stem_upper.starts_with(&format!("{}-", stripped_upper))
-                {
-                    found = Some(ent.path());
-                    break;
+            let entry_list: Vec<_> = entries.flatten().collect();
+            'outer: for cand in &candidates {
+                for ent in &entry_list {
+                    let name_str = ent.file_name().to_string_lossy().to_string();
+                    if !name_str.ends_with(".md") { continue; }
+                    let stem_upper = name_str.to_ascii_uppercase();
+                    let stem_upper = stem_upper.trim_end_matches(".MD");
+                    if stem_upper == cand.as_str()
+                        || stem_upper.starts_with(&format!("{}-", cand))
+                    {
+                        found = Some(ent.path());
+                        break 'outer;
+                    }
                 }
             }
         }
@@ -371,8 +394,8 @@ pub async fn resolve_adr(
             Some(p) => p,
             None => return (StatusCode::NOT_FOUND, Json(json!({
                 "error": format!(
-                    "ADR not found: no file in docs/adrs/ matches `{}` (tried literal `{}.md` and prefix glob `{}*.md`). Use `hex adr list` to find the canonical id.",
-                    stripped, stripped, stripped
+                    "ADR not found: no file in docs/adrs/ matches `{}` (also tried zero-padding variants {:?}). Use `hex adr list` to find the canonical id.",
+                    stripped, candidates
                 ),
             }))),
         }
