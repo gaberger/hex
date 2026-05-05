@@ -1,0 +1,160 @@
+{
+  "adr": "ADR-047",
+  "created_at": "2026-05-04T00:00:00Z",
+  "created_by": "adr-reviewer-followup",
+  "description": "Complete Phases 2-5 of ADR-047 (Internal Documentation System). Phase 1 (canonical glossary) shipped 2026-05-04 in commit 15841351. Remaining work: system-architecture + component docs migrated from CLAUDE.md, WASM module READMEs (7 modules), hex docs check CLI, and ADR frontmatter migration.",
+  "feature": "ADR-047 documentation system completion",
+  "id": "wp-adr-047-docs-phases-2-5",
+  "phases": [
+    {
+      "description": "Migrate the system-architecture overview from CLAUDE.md and the README into a canonical docs/reference/system-architecture.md plus per-component docs/reference/components/<unit>.md files. CLAUDE.md remains the model-facing kernel; reference docs become the long-form source of truth.",
+      "gate": {
+        "blocking": true,
+        "command": "test -f docs/reference/system-architecture.md && test -d docs/reference/components",
+        "type": "shell"
+      },
+      "id": "P2",
+      "name": "Phase 2 — system-architecture + component docs",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Create docs/reference/system-architecture.md. Source content: existing CLAUDE.md 'System Components' table + README architecture sections. Cover all 5 deployment units (SpacetimeDB, hex-nexus, hex-agent, hex-dashboard, hex clients), their dependency graph, data flow on cold start, data flow on a typical workplan execution, and the standalone-mode variant (ADR-2604112000). Use mermaid diagrams for the dependency graph. Cite ADR-025, ADR-027, ADR-044, ADR-2604112000.",
+          "files": ["docs/reference/system-architecture.md"],
+          "id": "P2.1",
+          "layer": "doc",
+          "name": "Author docs/reference/system-architecture.md",
+          "status": "pending"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": ["P2.1"],
+          "description": "Create five component docs in docs/reference/components/: spacetimedb.md, hex-nexus.md, hex-agent.md, hex-dashboard.md, hex-clients.md. Each follows the AI-agent-optimized format from ADR-047 (One-Line Summary, Key Facts, API Surface, Configuration, Depends On, Depended On By). Pull authoritative content from the matching CLAUDE.md sections + crate top-level docs + dashboard route table.",
+          "files": [
+            "docs/reference/components/spacetimedb.md",
+            "docs/reference/components/hex-nexus.md",
+            "docs/reference/components/hex-agent.md",
+            "docs/reference/components/hex-dashboard.md",
+            "docs/reference/components/hex-clients.md"
+          ],
+          "id": "P2.2",
+          "layer": "doc",
+          "name": "Author 5 component reference docs",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "description": "Author per-WASM-module READMEs documenting tables, reducers, subscription queries, and example usage. One file per module dir. Source content: each module's lib.rs (table macros + reducer signatures) plus client subscription examples in hex-nexus/src/coordination/.",
+      "gate": {
+        "blocking": true,
+        "command": "for m in agent-registry chat-relay hexflo-coordination inference-gateway neural-lab rl-engine secret-grant; do test -f spacetime-modules/$m/README.md || exit 1; done",
+        "type": "shell"
+      },
+      "id": "P3",
+      "name": "Phase 3 — WASM module READMEs",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Generate spacetime-modules/<module>/README.md for each of the 7 modules: agent-registry, chat-relay, hexflo-coordination, inference-gateway, neural-lab, rl-engine, secret-grant. Each README must list all tables (schema, indexes), all reducers (parameters, side effects, error cases), recommended subscription queries, and a minimal client usage example. Use the lib.rs of each module as ground truth.",
+          "files": [
+            "spacetime-modules/agent-registry/README.md",
+            "spacetime-modules/chat-relay/README.md",
+            "spacetime-modules/hexflo-coordination/README.md",
+            "spacetime-modules/inference-gateway/README.md",
+            "spacetime-modules/neural-lab/README.md",
+            "spacetime-modules/rl-engine/README.md",
+            "spacetime-modules/secret-grant/README.md"
+          ],
+          "id": "P3.1",
+          "layer": "doc",
+          "name": "Author 7 WASM module READMEs",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "description": "Implement the hex docs check CLI command. Scans docs/reference/ for code-symbol references, verifies they still resolve, and flags terminology drift against the glossary. Reports docs untouched in 90+ days. Wire as a subcommand in hex-cli/src/commands/.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo build -p hex-cli --release && ./target/release/hex docs check --help",
+        "type": "shell"
+      },
+      "id": "P4",
+      "name": "Phase 4 — hex docs check CLI",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Create hex-cli/src/commands/docs.rs with subcommands: `hex docs check` (scans docs/reference/, verifies referenced symbols exist via tree-sitter or ripgrep, checks glossary compliance, reports stale docs >90d). Wire into the top-level Cli enum in hex-cli/src/main.rs. Output: ANSI-coloured human report by default, --json for tooling. Exit code non-zero on any failure so CI can gate.",
+          "files": [
+            "hex-cli/src/commands/docs.rs",
+            "hex-cli/src/commands/mod.rs",
+            "hex-cli/src/main.rs"
+          ],
+          "id": "P4.1",
+          "layer": "primary",
+          "name": "Implement hex docs check command",
+          "status": "pending"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": ["P4.1"],
+          "description": "Add a pre-commit hook helper: when files in spacetime-modules/<m>/ change, warn if the matching spacetime-modules/<m>/README.md is unchanged in the same commit. Wire via the existing hex hook system (hex-cli/src/commands/hook.rs).",
+          "files": ["hex-cli/src/commands/hook.rs"],
+          "id": "P4.2",
+          "layer": "primary",
+          "name": "Pre-commit warning for stale module READMEs",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "description": "Migrate all ADRs to the YAML frontmatter spec defined in ADR-047 §Tier 2. Add the hex adr graph subcommand that reads frontmatter and emits a dependency graph (mermaid + JSON).",
+      "gate": {
+        "blocking": true,
+        "command": "./target/release/hex adr graph --help && head -1 docs/adrs/ADR-047-internal-documentation-system.md | grep -q '^---$'",
+        "type": "shell"
+      },
+      "id": "P5",
+      "name": "Phase 5 — ADR frontmatter + dependency graph",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Migrate all ADRs in docs/adrs/ to include the YAML frontmatter block (id, status, date, supersedes, superseded_by, depends_on, components, modules) defined in ADR-047 §Tier 2. Backfill components/modules by parsing existing 'Dependencies' and prose sections. Validate every ADR parses with serde_yaml.",
+          "files": ["docs/adrs/ADR-*.md"],
+          "id": "P5.1",
+          "layer": "doc",
+          "name": "Backfill YAML frontmatter on all ADRs",
+          "status": "pending"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": ["P5.1"],
+          "description": "Add `hex adr graph` subcommand under hex-cli/src/commands/adr.rs. Reads frontmatter from every ADR, builds depends_on / supersedes graph, emits mermaid (default) or JSON (--json). Extend `hex adr abandoned` to walk depends_on chains for cascading staleness.",
+          "files": ["hex-cli/src/commands/adr.rs"],
+          "id": "P5.2",
+          "layer": "primary",
+          "name": "Implement hex adr graph + cascading staleness",
+          "status": "pending"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": ["P5.2"],
+          "description": "Update ADR-047 implementation evidence block: mark all 5 phases done, cite the commits that shipped them, drop the 2026-05-04 'Phase 1 shipped' provisional language.",
+          "files": ["docs/adrs/ADR-047-internal-documentation-system.md"],
+          "id": "P5.3",
+          "layer": "doc",
+          "name": "Close out ADR-047 evidence block",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    }
+  ]
+}
