@@ -1,0 +1,85 @@
+{
+  "adr": "ADR-047",
+  "created_at": "2026-05-04T21:30:00Z",
+  "created_by": "fcb65d4e-63a5-4ea8-a08b-76018094e0e2",
+  "description": "ADR-047 follow-up — three items the parent workplan (wp-adr-047-docs-phases-2-5) has reconciler-flagged as done but ground-truth grep proves are not yet shipped. Filed as a fresh workplan rather than fighting the auto-reconciler on the parent. Phases 1-2-3-4.1-5.1(tooling)-5.3 already shipped in commits 15841351, 5612efe6, 65488f6b, 81a03edc.",
+  "feature": "ADR-047 documentation system — remaining work",
+  "id": "wp-adr-047-followup-p4-2-p5-2-bulk-adrs",
+  "phases": [
+    {
+      "description": "Implement the pre-commit warning for stale spacetime-module READMEs (parent workplan P4.2). Real path is hex-cli/src/commands/hook/mod.rs, not the now-stale hook.rs the parent workplan cites.",
+      "gate": {
+        "blocking": true,
+        "command": "./target/release/hex hook --help | grep -q stale-module-readme || ./target/release/hex hook --help | grep -q 'pre-commit'",
+        "type": "shell"
+      },
+      "id": "F1",
+      "name": "Pre-commit warning for stale module READMEs",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Add a pre-commit hook entry under hex-cli/src/commands/hook/ that, given a list of files staged for commit, warns when any file under spacetime-modules/<m>/ has changed but spacetime-modules/<m>/README.md has not. Wire it into the existing hex hook command surface. Source: ADR-047 §Documentation Freshness item 2.",
+          "files": [
+            "hex-cli/src/commands/hook/mod.rs"
+          ],
+          "id": "F1.1",
+          "layer": "primary",
+          "name": "Implement stale-module-readme pre-commit warning",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "description": "Implement the hex adr graph subcommand and cascading staleness for hex adr abandoned (parent workplan P5.2). Real path is hex-cli/src/commands/adr/mod.rs (now a module dir, not adr.rs).",
+      "gate": {
+        "blocking": true,
+        "command": "./target/release/hex adr graph --help",
+        "type": "shell"
+      },
+      "id": "F2",
+      "name": "hex adr graph + cascading staleness",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Add the `hex adr graph` subcommand. Reads YAML frontmatter from every ADR in docs/adrs/ (skips ADRs without frontmatter — those still emit `missing_adr_frontmatter` warnings via hex docs check). Builds depends_on / supersedes / superseded_by graph. Emits mermaid by default; --json for tooling. Then extend hex adr abandoned to walk depends_on chains so cascading staleness is detected. Source: ADR-047 §ADR staleness + §ADR dependency graph.",
+          "files": [
+            "hex-cli/src/commands/adr/mod.rs"
+          ],
+          "id": "F2.1",
+          "layer": "primary",
+          "name": "Implement hex adr graph + cascading abandoned",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "description": "Bulk-migrate the remaining ADRs to the YAML frontmatter spec defined in ADR-047 §Tier 2. ADR-047 itself is already migrated (commit 81a03edc). Tooling already shipped: hex docs migrate-adr <id> --apply (idempotent). hex docs check currently reports ~190 missing_adr_frontmatter warnings — that count is the success metric.",
+      "gate": {
+        "blocking": true,
+        "command": "./target/release/hex docs check --json 2>/dev/null | jq '[.findings[] | select(.kind == \"missing_adr_frontmatter\")] | length' | grep -qE '^(0|[1-9])$' && [ \"$(./target/release/hex docs check --json 2>/dev/null | jq '[.findings[] | select(.kind == \"missing_adr_frontmatter\")] | length')\" -lt 5 ]",
+        "type": "shell"
+      },
+      "id": "F3",
+      "name": "Bulk ADR frontmatter migration",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Run `hex docs migrate-adr <id> --apply` against every ADR currently flagged by `hex docs check` with kind=missing_adr_frontmatter. Spot-check 5 random ADRs to verify components/modules fields were sensibly inferred. Re-run hex docs check at the end and confirm the missing_adr_frontmatter count drops to <5 (allowing for unparseable edge cases, which should each get a brief comment in this task).",
+          "files": [
+            "docs/adrs/"
+          ],
+          "id": "F3.1",
+          "layer": "doc",
+          "name": "Run migrate-adr across all flagged ADRs",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    }
+  ]
+}
