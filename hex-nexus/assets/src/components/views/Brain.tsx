@@ -456,13 +456,24 @@ const KanbanLanes: Component<{
   const persistDispatched = (s: Set<string>) => {
     try { localStorage.setItem(DISPATCHED_KEY, JSON.stringify([...s].slice(-200))); } catch { /* quota */ }
   };
-  const dispatchTask = (t: SwarmTask, evt: MouseEvent) => {
+  const dispatchTask = async (t: SwarmTask, evt: MouseEvent) => {
     evt.stopPropagation();
     if (dispatchedIds().has(t.id)) return; // idempotent guard
     const role = taskRole(t);
     const title = taskTitle(t);
     const prompt = `@${role} Please execute: ${title}`;
     props.onSendToChat(prompt, role);
+    // Also flip the swarm_task itself to in_progress so it leaves the Ready
+    // lane visually. Without this, the task sat in Ready forever even after
+    // the operator dispatched it (Kanban swarm_tasks live in a different
+    // queue than inference_tasks; click only fired the chat path before).
+    try {
+      await restClient.patch(`/api/hexflo/tasks/${t.id}`, {
+        task_id: t.id,
+        status: "in_progress",
+      });
+      props.onTaskMoved?.();
+    } catch { /* best-effort — chat dispatch already fired */ }
     setDispatchedIds((prev) => {
       const next = new Set(prev);
       next.add(t.id);
@@ -490,9 +501,38 @@ const KanbanLanes: Component<{
     <section class="bg-gray-900/50 border border-gray-800 rounded-lg p-3 mb-4">
       <div class="flex items-center justify-between mb-1 px-1">
         <h3 class="text-xs font-bold uppercase tracking-wider text-gray-400">Kanban</h3>
-        <Show when={rejectMsg()}>
-          <span class="text-[10px] text-yellow-400" role="alert">⚠ {rejectMsg()}</span>
-        </Show>
+        <span class="flex items-center gap-2">
+          <Show when={rejectMsg()}>
+            <span class="text-[10px] text-yellow-400" role="alert">⚠ {rejectMsg()}</span>
+          </Show>
+          {/* Mass-abandon all unassigned Ready tasks. Most operators have
+              hundreds of stale brain-task:* rows from old test runs that no
+              worker will ever claim. One click → all marked failed → Ready
+              lane drains to actionable items only. Confirms first. */}
+          <Show when={tasksByLane()["Ready"].length >= 5}>
+            <button
+              type="button"
+              class="text-[10px] px-2 py-0.5 rounded bg-gray-800 hover:bg-red-900 text-gray-400 hover:text-red-200"
+              title={`Abandon all unassigned Ready tasks (${tasksByLane()["Ready"].filter((t) => !(t.agentId || t.agent_id)).length} shown). Useful for clearing stale brain-task:* rows from old test runs.`}
+              onClick={async () => {
+                const stale = tasksByLane()["Ready"].filter((t) => !(t.agentId || t.agent_id));
+                if (stale.length === 0) return;
+                if (!confirm(`Abandon ${stale.length} unassigned Ready task${stale.length === 1 ? "" : "s"}? They'll move to Done as failed. This is non-recoverable.`)) return;
+                let ok = 0;
+                for (const t of stale) {
+                  try {
+                    await restClient.patch(`/api/hexflo/tasks/${t.id}`, { task_id: t.id, status: "failed" });
+                    ok++;
+                  } catch { /* keep going */ }
+                }
+                showReject(`Abandoned ${ok}/${stale.length} stale tasks`);
+                props.onTaskMoved?.();
+              }}
+            >
+              Clear stale ↘
+            </button>
+          </Show>
+        </span>
       </div>
       <p class="text-[10px] text-gray-400 px-1 mb-2">
         Hover a Ready/Backlog card → <span class="text-cyan-400">▶</span> dispatches to a worker (no token spend, just queues)
@@ -1102,9 +1142,48 @@ const BrainDispatchesPanel: Component<{
   dispatches: () => BrainDispatch[];
   counts: () => { pending: number; inProgress: number; completed: number };
   onPromote: (id: string) => void;
-  onSendToChat: (text: string, role?: string) => void;
+  onSendToChat: (text: string, role?: string, opts?: { autoSend?: boolean; threadKey?: string }) => void;
 }> = (props) => {
   const visible = () => props.dispatches().slice(0, 12);
+  // Tick every 2s so the elapsed-time field on InProgress rows updates live.
+  const [tickCounter, setTickCounter] = createSignal(0);
+  let tickHandle: number | undefined;
+  onMount(() => { tickHandle = window.setInterval(() => setTickCounter((c) => c + 1), 2000); });
+  onCleanup(() => { if (tickHandle !== undefined) window.clearInterval(tickHandle); });
+  const elapsed = (since: string): string => {
+    tickCounter(); // reactivity tracker
+    const start = Date.parse(since);
+    if (Number.isNaN(start)) return "?";
+    const secs = Math.max(0, Math.floor((Date.now() - start) / 1000));
+    if (secs < 60) return `${secs}s`;
+    if (secs < 3600) return `${Math.floor(secs / 60)}m${secs % 60}s`;
+    return `${Math.floor(secs / 3600)}h${Math.floor((secs % 3600) / 60)}m`;
+  };
+  // Open the thread that a dispatch's progress is being streamed into.
+  // workplan_id format from the backend: "brain-chat:<thread-id>[:auto-followup]".
+  // The streamer + reconciler post messages to chat:thread:<thread-id>.
+  const watchDispatch = async (d: BrainDispatch) => {
+    const tid = d.threadId && d.threadId !== "global" ? d.threadId : null;
+    if (!tid) {
+      alert("This dispatch has no thread (was enqueued from the global scope). Progress streams to the BrainProgressStreamer log only.");
+      return;
+    }
+    try {
+      // get-or-create the thread, then notify ChatPanel to switch.
+      const resp = await restClient.post<{ id: string }>(
+        `/api/brain/threads/by-key/${encodeURIComponent(tid)}`,
+        { title: `dispatch ${d.id.slice(0, 8)}` },
+      );
+      if (resp?.id) {
+        localStorage.setItem("hex-brain-chat-active-thread-v2", resp.id);
+        window.dispatchEvent(new CustomEvent("hex-brain-thread-switch", {
+          detail: { threadId: resp.id },
+        }));
+      }
+    } catch (e) {
+      alert(`failed to open thread: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
   const statusColor = (s: string): string => {
     if (s === "Pending") return "text-yellow-400 bg-yellow-900/30";
     if (s === "PendingReview") return "text-amber-400 bg-amber-900/40 border border-amber-700";
@@ -1120,7 +1199,7 @@ const BrainDispatchesPanel: Component<{
         <span class="text-[10px] text-gray-400">
           {props.counts().pending} pending · {props.counts().inProgress} running · {props.counts().completed} done
         </span>
-        <span class="ml-auto text-[10px] text-gray-500 italic">@&lt;role&gt; mentions in chat enqueue real worker tasks</span>
+        <span class="ml-auto text-[10px] text-gray-500 italic">@&lt;role&gt; mentions in chat enqueue real worker tasks · Watch ↗ jumps to live progress</span>
       </header>
       <Show when={visible().length > 0} fallback={
         <div class="px-3 py-4 text-[11px] italic text-gray-500">
@@ -1141,6 +1220,27 @@ const BrainDispatchesPanel: Component<{
                 <span class="shrink-0 text-gray-500 font-mono text-[10px]">
                   {new Date(d.createdAt).toLocaleTimeString().slice(0, 8)}
                 </span>
+                {/* InProgress: live elapsed counter + Watch button to jump
+                    to the streaming thread. Operator no longer wonders
+                    "is anything happening" — the counter ticks every 2s
+                    and Watch swaps the chat into the thread where ▶ claimed
+                    / ⏱ heartbeats / · tool calls are landing. */}
+                <Show when={d.status === "InProgress"}>
+                  <span
+                    class="shrink-0 text-cyan-300 font-mono text-[10px] animate-pulse"
+                    title={`Running for ${elapsed(d.updatedAt || d.createdAt)} since claim. Click Watch to see live progress.`}
+                  >
+                    {elapsed(d.updatedAt || d.createdAt)}
+                  </span>
+                  <button
+                    type="button"
+                    class="shrink-0 px-2 py-0.5 rounded bg-cyan-900 hover:bg-cyan-800 text-cyan-100 text-[10px] font-semibold"
+                    onClick={() => watchDispatch(d)}
+                    title="Open the chat thread where this worker's progress is being streamed live (▶ claimed → · tool calls → ✓ finished)."
+                  >
+                    Watch ↗
+                  </button>
+                </Show>
                 <Show when={d.status === "PendingReview"}>
                   <button
                     type="button"
