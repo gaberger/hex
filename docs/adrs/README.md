@@ -56,7 +56,7 @@ Every ADR must begin with:
 ```markdown
 # ADR-{NNN}: {Title}
 
-**Status:** {Proposed | Accepted | Deprecated | Superseded}
+**Status:** Abandoned (resolved 2026-05-04)
 **Date:** {YYYY-MM-DD}
 **Drivers:** {What triggered this decision}
 ```
@@ -163,3 +163,8 @@ interface. Use the inference-gateway (ADR-035) for LLM calls.
 **Mitigations:**
 - Use hex-coder agent with TDD to ensure coverage
 ```
+
+---
+## Operator Resolution Note (2026-05-04T23:59:01.209807075+00:00)
+
+README is not an ADR — auto-abandoned to clean up index

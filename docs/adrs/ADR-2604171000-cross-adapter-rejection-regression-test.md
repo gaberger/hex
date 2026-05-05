@@ -1,6 +1,6 @@
 # ADR-2604171000 — Cross-Adapter Rejection Regression Test
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-17
 **Drivers:** docs/EVIDENCE.md commit `ac4e5aa` — the README claims "cross-layer imports block the commit" but no automated test proves the rejection path; only the pass path is covered.
 **Related:** ADR-001 (hexagonal architecture), ADR-2603283000 (Rust workspace boundary analysis), ADR-2604142200-reconcile-evidence-verification (same pattern: test the rejection, not just the accept)

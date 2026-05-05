@@ -1,7 +1,8 @@
 # ADR-2604151330 — Per-Project Sched Queue Isolation
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-15
+**Accepted:** 2026-05-04
 **Related:** ADR-2604150000 (brain→sched rename), ADR-2604141400 (sched evidence-guard), ADR-2604151200 (idle research swarm), ADR-2604142200 (reconcile evidence verification)
 
 ## Context

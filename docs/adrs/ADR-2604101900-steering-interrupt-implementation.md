@@ -1,6 +1,6 @@
 # ADR-2604101900: Steering/Interrupt API — Full Implementation
 
-**Status:** Proposed
+**Status:** Accepted (resolved 2026-05-05)
 **Date:** 2026-04-10
 **Drivers:** Gap analysis ADR-2604100000 identified steering/interrupt API but implementation is stubbed
 

@@ -1,6 +1,6 @@
 # ADR-2604151400 — `hex sched queue list` Shows Running Tasks
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-15
 **Related:** ADR-2604150000 (brain→sched rename), ADR-2604151330 (per-project queue isolation)
 

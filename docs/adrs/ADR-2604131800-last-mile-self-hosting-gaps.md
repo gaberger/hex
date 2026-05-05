@@ -1,6 +1,7 @@
 # ADR-2604131800: Last-Mile Self-Hosting Gaps — hex Must Use hex
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-05-05
 **Date:** 2026-04-13
 **Drivers:** Dog-fooding session exposed 7 friction points where hex's designed workflow breaks down in practice. Agent sessions bypass hex's own formalism because the tooling doesn't close the loop.
 

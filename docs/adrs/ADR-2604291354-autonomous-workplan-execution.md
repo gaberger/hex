@@ -1,6 +1,6 @@
 # ADR-2604291354 — Autonomous Workplan Execution
 
-**Status:** Proposed
+**Status:** Accepted (2026-05-05)
 **Date:** 2026-04-29
 **Supersedes:** —
 **Related:** ADR-2604141400 (brain queue swarm-lease), ADR-2604131630 (code-first execution), ADR-2604110227 (task tier routing)

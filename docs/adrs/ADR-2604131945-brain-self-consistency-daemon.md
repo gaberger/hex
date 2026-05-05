@@ -1,6 +1,6 @@
 # ADR-2604131945: Brain as Self-Consistency Daemon
 
-**Status:** Proposed
+**Status:** Accepted (resolved 2026-05-05)
 **Date:** 2026-04-13
 **Drivers:** Every bug caught this session was a deterministic invariant violation that hex already had tools to detect — but nothing ran those tools automatically. Brain should be hex's continuous self-consistency layer, not just an RL model selector.
 
@@ -110,3 +110,8 @@ Brain SHALL NOT auto-fix issues that require judgment:
 - ADR-2604131800: Last-Mile Self-Hosting Gaps
 - ADR-2604131930: First-Class Worktree Lifecycle
 - Session 2026-04-13: 5 classes of deterministic bugs caught manually
+
+---
+## Operator Resolution Note (2026-05-05T02:10:45.795661613+00:00)
+
+Auto-applied from @adr-reviewer chat verdict

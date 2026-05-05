@@ -1,6 +1,6 @@
 # ADR-2605040824 — Polyglot hex-coder vs per-language specialist agents
 
-**Status:** Proposed
+**Status:** Accepted (2026-05-05)
 **Date:** 2026-05-04
 **Supersedes:** none
 **Superseded by:** none

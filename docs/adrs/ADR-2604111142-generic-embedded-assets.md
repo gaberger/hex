@@ -1,6 +1,7 @@
 # ADR-2604111142: Generic-Only Embedded Assets in hex-cli/assets/
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-05-04
 **Date:** 2026-04-11
 **Drivers:** `hex assets sync` audit on 2026-04-11 revealed that `hex-cli/assets/` — the template set embedded into the binary via `rust-embed` and shipped to every target project via `hex init` / `hex assets sync` / `hex scaffold` — contains skills, agents, hooks, context templates, and CI configs that are **hex-maintainer runbooks**, not project-agnostic templates. Specifically, `hex-cli/assets/skills/hex-publish-module/SKILL.md` shipped literal `cd /Volumes/ExtendedStorage/PARA/01-Projects/hex-intf` and `cargo build -p hex-nexus -p hex-cli --release` instructions to any target project that ran `hex init`. This is an AIOS positioning failure: hex claims to be the OS layer for *other* projects, but its templates assume every consumer is hex-intf itself.
 **Supersedes:** None (complements ADR-2603221522 `hex assets` embedded-asset CLI, ADR-049 MCP/settings template)
@@ -213,3 +214,8 @@ modules, rebuilding hex-nexus). This ADR explicitly preserves the
   ADR-049 (MCP config and settings template embedding). This ADR does
   not contradict either — it adds a content rule on top of the existing
   embedding mechanism.
+
+---
+## Operator Resolution Note (2026-05-05T02:33:37.771866266+00:00)
+
+Auto-applied from @adr-reviewer chat verdict

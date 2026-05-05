@@ -1,6 +1,6 @@
 # ADR-2604140000: Hey Hex — Natural Language Task Enqueue
 
-**Status:** Proposed
+**Status:** Accepted (resolved 2026-05-05)
 **Date:** 2026-04-14
 **Drivers:** `hex brain enqueue hex-command -- "--version"` is friction. Users want to say "hey brain, do X" and have brain figure it out. An AIOS should have a voice-assistant-style natural-language surface, not just structured CLI.
 
@@ -134,3 +134,8 @@ For users who want the Siri-style feel.
 - ADR-2604132330: Brain Inbox Queue (execution target)
 - ADR-2604132300: Brain Daemon Loop (async execution)
 - ADR-2604131630: Code-First Execution (tier 1 keyword match, tier 2 LLM)
+
+---
+## Operator Resolution Note (2026-05-05T17:31:38.926373427+00:00)
+
+Inline chat-bubble accept on @adr-reviewer's verdict

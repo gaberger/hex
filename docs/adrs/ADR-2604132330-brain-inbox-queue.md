@@ -1,6 +1,6 @@
 # ADR-2604132330: Brain Inbox — Task Queue for the Supervisor Loop
 
-**Status:** Proposed
+**Status:** Accepted (2026-05-05)
 **Date:** 2026-04-13
 **Drivers:** Brain daemon ticks every 60s running fixed validation checks. But the real use case is "tell brain to do X, it picks it up on next tick." Brain needs an inbox — a task queue that any process can add work to, and the supervisor executes autonomously.
 

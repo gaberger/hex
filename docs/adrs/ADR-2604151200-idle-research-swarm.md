@@ -1,7 +1,8 @@
 # ADR-2604151200 — Idle Research Swarm
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-15
+**Accepted:** 2026-05-04
 **Supersedes:** —
 **Related:** ADR-2604142345 (insight routing), ADR-2604141400 (sched queue swarm-lease), ADR-2604131630 (code-first execution)
 

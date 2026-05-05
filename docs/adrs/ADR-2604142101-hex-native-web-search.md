@@ -1,6 +1,6 @@
 # ADR-2604142100: Hex-Native Web Search & Fetch (First-Class)
 
-**Status:** Proposed
+**Status:** Accepted (2026-05-05)
 **Date:** 2026-04-14
 **Drivers:** context-mode's `ctx_fetch_and_index` and implicit WebSearch are third-party, project-scope-leaky, and bypass hex's tool-precedence rule (CLAUDE.md). Agents running standalone (no Claude Code) have no web-access path at all. Web search must route through hex-nexus like every other I/O boundary.
 **Supersedes:** n/a (first ADR on this capability)

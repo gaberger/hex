@@ -1,6 +1,6 @@
 # ADR-2604141200: Remote Shell Commands via hex-agent Worker
 
-**Status:** Proposed
+**Status:** Rejected (resolved 2026-05-05)
 **Date:** 2026-04-14
 **Drivers:** Users want to run shell commands on remote hosts (bazzite) from their local hex session. Today hex-agent workers poll for tasks but there's no clean way to enqueue a shell command and see the output.
 
@@ -60,3 +60,8 @@ When hex-agent is running on bazzite, it polls `/api/hexflo/memory/search?q=brai
 - ADR-040: Remote Agent Transport (WebSocket over SSH)
 - ADR-2604132330: Brain Inbox Queue
 - ADR-2604140000: Hey Hex
+
+---
+## Operator Resolution Note (2026-05-05T02:02:35.247100130+00:00)
+
+Auto-applied from @adr-reviewer chat verdict

@@ -1,6 +1,6 @@
 # ADR-2604151300 — `hex inference q-report` CLI
 
-**Status:** Proposed
+**Status:** Accepted (resolved 2026-05-05)
 **Date:** 2026-04-15
 **Related:** ADR-2604120202 (tiered inference routing), ADR-2604131238 (`hex inference bench`), ADR-2604102200 (local-success bonus), ADR-2604151200 (idle research swarm — Q-report is a planned input signal)
 
@@ -92,3 +92,8 @@ The data lives in SpacetimeDB tables, not SQLite. A direct subscription is corre
 ## Implementation
 
 See `wp-inference-q-report.json`.
+
+---
+## Operator Resolution Note (2026-05-05T02:09:56.921419557+00:00)
+
+Auto-applied from @adr-reviewer chat verdict

@@ -1,6 +1,6 @@
 # ADR-2603312340: Automated ADR Acceptance Verification
 
-**Status:** Proposed
+**Status:** Accepted (2026-05-05)
 **Date:** 2026-03-31
 **Drivers:** ADRs document architectural decisions but have no automated verification that implementation matches the spec. Status is manually changed from "Proposed" to "Accepted" with no test or validation — unlike hex's enforcement of hexagonal architecture on target projects.
 
