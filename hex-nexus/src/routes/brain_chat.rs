@@ -92,6 +92,101 @@ struct PersonaModel {
     preferred: Option<String>,
 }
 
+/// Replace `ADR-[PHONE]-<slug>` and `ADR-[PHONE-NUMBER]-<slug>` placeholders
+/// in agent reply text with the real timestamp prefix by globbing
+/// `docs/adrs/ADR-*-<slug>.md`. Upstream LLM providers strip 10-digit
+/// numbers as PII; without this, operator sees unresolvable IDs in chat.
+///
+/// Conservative: only substitutes when EXACTLY ONE file in docs/adrs/
+/// matches the slug. Multiple matches are left as-is (ambiguous).
+fn unredact_adr_placeholders(text: &str, project_root: Option<&str>) -> String {
+    if !text.contains("[PHONE]") && !text.contains("[PHONE-NUMBER]") {
+        return text.to_string();
+    }
+    let root = match project_root.and_then(|r| std::path::PathBuf::from(r).canonicalize().ok()) {
+        Some(r) => r,
+        None => return text.to_string(),
+    };
+    let adrs_dir = root.join("docs/adrs");
+    if !adrs_dir.is_dir() { return text.to_string(); }
+    // Build a map slug → list of timestamps so we resolve multi-match cases.
+    let mut by_slug: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    if let Ok(entries) = std::fs::read_dir(&adrs_dir) {
+        for ent in entries.flatten() {
+            let name = ent.file_name().to_string_lossy().to_string();
+            if !name.ends_with(".md") { continue; }
+            let stem = name.trim_end_matches(".md");
+            // Pattern: ADR-<digits>-<slug>
+            if !stem.starts_with("ADR-") { continue; }
+            let body = &stem[4..];
+            // Split into [<digits>, <slug...>]
+            let dash = match body.find('-') {
+                Some(i) => i,
+                None => continue,
+            };
+            let timestamp_part = &body[..dash];
+            let slug = &body[dash + 1..];
+            if !timestamp_part.chars().all(|c| c.is_ascii_digit()) { continue; }
+            by_slug.entry(slug.to_ascii_lowercase()).or_default().push(timestamp_part.to_string());
+        }
+    }
+    if by_slug.is_empty() { return text.to_string(); }
+
+    // Walk the text; for each `ADR-[PHONE]-<slug>` or `ADR-[PHONE-NUMBER]-<slug>`,
+    // try to find the slug in our map. Slug runs until whitespace / common
+    // punctuation / .md.
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0usize;
+    let bytes = text.as_bytes();
+    while i < bytes.len() {
+        // Find next placeholder start
+        let next_phone = text[i..].find("ADR-[PHONE]");
+        let next_pn = text[i..].find("ADR-[PHONE-NUMBER]");
+        let (start_off, marker_len) = match (next_phone, next_pn) {
+            (Some(a), Some(b)) => if a <= b { (a, "ADR-[PHONE]".len()) } else { (b, "ADR-[PHONE-NUMBER]".len()) },
+            (Some(a), None) => (a, "ADR-[PHONE]".len()),
+            (None, Some(b)) => (b, "ADR-[PHONE-NUMBER]".len()),
+            (None, None) => {
+                out.push_str(&text[i..]);
+                break;
+            }
+        };
+        let abs_start = i + start_off;
+        out.push_str(&text[i..abs_start]);
+        // After the marker we expect '-' then slug
+        let after = abs_start + marker_len;
+        if after >= bytes.len() || bytes[after] != b'-' {
+            // Marker is not followed by a slug; leave literal.
+            out.push_str(&text[abs_start..after]);
+            i = after;
+            continue;
+        }
+        let slug_start = after + 1;
+        // Slug ends at first non-alphanumeric, non-dash, non-underscore (or .md).
+        let mut slug_end = slug_start;
+        while slug_end < bytes.len() {
+            let c = bytes[slug_end] as char;
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' { slug_end += 1; }
+            else { break; }
+        }
+        let slug = &text[slug_start..slug_end];
+        let slug_lower = slug.to_ascii_lowercase();
+        // Strip trailing .md if present in slug (shouldn't be, but defensive)
+        let slug_clean = slug_lower.trim_end_matches(".md");
+        match by_slug.get(slug_clean) {
+            Some(tses) if tses.len() == 1 => {
+                out.push_str(&format!("ADR-{}-{}", tses[0], slug));
+            }
+            _ => {
+                // Ambiguous or unknown — keep the original placeholder
+                out.push_str(&text[abs_start..slug_end]);
+            }
+        }
+        i = slug_end;
+    }
+    out
+}
+
 /// Detect plausible file-path tokens in the operator's message and pre-fetch
 /// their contents from inside the project root. Returns a single block
 /// formatted as `FILES READ FOR YOU (verbatim — no need to ask the operator
@@ -957,11 +1052,26 @@ pub async fn dispatch_brain_chat(
         return (status, resp);
     }
 
-    let content = resp.0
+    let raw_content = resp.0
         .get("content")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+
+    // UNREDACT PHONE PLACEHOLDERS. Upstream providers (OpenRouter →
+    // Anthropic) treat 10-digit ADR timestamp numbers as phone-number PII
+    // and replace them with literal "[PHONE]" / "[PHONE-NUMBER]" in
+    // responses. Resolve project root via inner_state (state was consumed
+    // by inference_complete above); fall back to cwd for global scope.
+    let unredact_root: Option<String> = match req.project_id.as_deref() {
+        Some(id) if !id.is_empty() && id != "__global__" => {
+            if let Some(port) = inner_state.0.state_port.as_ref() {
+                port.project_get(id).await.ok().flatten().map(|p| p.root_path)
+            } else { None }
+        }
+        _ => std::env::current_dir().ok().map(|p| p.display().to_string()),
+    };
+    let content = unredact_adr_placeholders(&raw_content, unredact_root.as_deref());
 
     let final_model = resp.0
         .get("model")
