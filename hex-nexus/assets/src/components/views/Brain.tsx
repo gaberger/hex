@@ -541,9 +541,22 @@ function decisionAction(item: DecisionItem): { role: string; prompt: string } {
   }
 }
 
+/// Derive a stable thread key for a Decision item so clicking the same
+/// card later opens the SAME conversation. Uses the decision id which is
+/// already stable per-subject:
+///   blocked:wp-foo:P1.1  →  decision-wp-foo-p1-1
+///   adr:ADR-047-...      →  decision-adr-047-...
+function decisionThreadKey(decisionId: string): string {
+  return `decision-${decisionId}`
+    .toLowerCase()
+    .replace(/[:.\s]/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 180);
+}
+
 const DecisionsPanel: Component<{
   data: () => DecisionsResponse | null;
-  onSendToChat: (text: string, role?: string) => void;
+  onSendToChat: (text: string, role?: string, opts?: { autoSend?: boolean; threadKey?: string }) => void;
   onResolved?: () => void;
 }> = (props) => {
   const resolveBlocked = async (id: string, action: "unblock" | "complete" | "abandon", evt: MouseEvent) => {
@@ -615,19 +628,20 @@ const DecisionsPanel: Component<{
             {(item) => (
               <li
                 onClick={() => {
-                  // If a worker is already working this, don't let the
-                  // operator dispatch again — that's the whole point of the
-                  // in-flight tag. Visual stays clickable for "open in chat
-                  // to see context" but with a different action.
+                  // Open/resume the per-decision thread so all conversation
+                  // about THIS subject stays grouped — clicking ADR-047
+                  // twice opens the same thread, not a new uuid each time.
+                  const threadKey = decisionThreadKey(item.id);
                   if (item.inFlight) {
                     props.onSendToChat(
                       `Status of dispatch ${item.inFlight.dispatchId.slice(0, 8)} (@${item.inFlight.role})?`,
                       item.inFlight.role,
+                      { threadKey },
                     );
                     return;
                   }
                   const a = decisionAction(item);
-                  props.onSendToChat(a.prompt, a.role);
+                  props.onSendToChat(a.prompt, a.role, { threadKey });
                 }}
                 class="flex items-start gap-2 text-xs px-2 py-1.5 rounded cursor-pointer hover:bg-gray-800/50 transition group"
                 classList={{ "opacity-60": !!item.inFlight }}
@@ -1358,10 +1372,18 @@ const ChatPanel: Component<{
 
   // On mount: if we have an active thread id, load its messages from STDB.
   // Always refresh the threads list so the picker has data.
+  // Also listens for "hex-brain-thread-switch" custom events so per-decision
+  // clicks switch the chat panel into the relevant subject thread live.
   onMount(() => {
     refreshThreads();
     const tid = activeThreadId();
     if (tid) loadThread(tid);
+    const onSwitch = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail as { threadId?: string } | undefined;
+      if (detail?.threadId) loadThread(detail.threadId);
+    };
+    window.addEventListener("hex-brain-thread-switch", onSwitch);
+    onCleanup(() => window.removeEventListener("hex-brain-thread-switch", onSwitch));
   });
   const [showSuggestions, setShowSuggestions] = createSignal(false);
   const [suggestionQuery, setSuggestionQuery] = createSignal("");
@@ -2244,7 +2266,32 @@ const Brain: Component = () => {
   // Helper for cards to dispatch to chat. Default is auto-send (one-click).
   // Operator can still edit and re-send by typing; the card flow is for
   // common questions where editing is unnecessary.
-  const sendToChat = (text: string, role?: string, opts?: { autoSend?: boolean }) => {
+  const sendToChat = async (text: string, role?: string, opts?: { autoSend?: boolean; threadKey?: string }) => {
+    // Per-subject threading: if the caller supplied a stable threadKey
+    // (e.g. from clicking a Decision card), open/resume that thread first
+    // so the conversation lives in one place per subject. ChatPanel reads
+    // activeThreadId from its own scope; we set it via the shared
+    // localStorage + a custom event the panel listens for. Simplest path:
+    // POST to /api/brain/threads/by-key/<key> to ensure the thread exists,
+    // then write the resolved id to localStorage + dispatch a 'storage'
+    // event so the panel re-reads it.
+    if (opts?.threadKey) {
+      try {
+        const resp = await restClient.post<{ id: string }>(
+          `/api/brain/threads/by-key/${encodeURIComponent(opts.threadKey)}`,
+          { title: `decision: ${opts.threadKey.replace(/^decision-/, "")}` },
+        );
+        if (resp?.id) {
+          localStorage.setItem("hex-brain-chat-active-thread-v2", resp.id);
+          // Notify ChatPanel — it owns activeThreadId and reads from
+          // localStorage on mount; we dispatch a custom event for live
+          // runtime switching.
+          window.dispatchEvent(new CustomEvent("hex-brain-thread-switch", {
+            detail: { threadId: resp.id },
+          }));
+        }
+      } catch { /* fallthrough to plain send */ }
+    }
     setChatInput(text);
     if (role) setSelectedAgent(role);
     if (opts?.autoSend !== false) {

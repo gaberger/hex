@@ -546,6 +546,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/supervisor/events", get(pools::list_supervisor_events))
         // STDB-backed chat threads (stored as hexflo memory keys "chat:thread:<id>").
         .route("/api/brain/threads", get(brain_chat::list_threads).post(brain_chat::create_thread))
+        .route("/api/brain/threads/by-key/{key}", post(brain_chat::get_or_create_thread_by_key))
         .route("/api/brain/threads/{id}",
             get(brain_chat::get_thread).delete(brain_chat::delete_thread))
         .route("/api/brain/threads/{id}/messages",

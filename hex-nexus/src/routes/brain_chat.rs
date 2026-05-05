@@ -1903,6 +1903,62 @@ pub async fn create_thread(
     }
 }
 
+/// POST /api/brain/threads/by-key/:key — get-or-create a thread by stable
+/// operator-supplied id. Used by per-decision threading: clicking the
+/// "ADR-047" Decision card always opens the same thread (key
+/// "decision:adr-047-…") instead of spawning a new uuid-keyed thread
+/// each time. Different ADRs / blocked tasks get different threads —
+/// conversation about each subject stays grouped.
+///
+/// Body: optional { "title": "...", "project_id": "..." } applied only on
+/// the create path; existing threads are returned as-is.
+///
+/// Key sanity: rejected if it contains characters that would break the
+/// hexflo_memory key shape (`:` is allowed because the prefix already
+/// uses one; we just disallow control chars and shell-unfriendly chars).
+pub async fn get_or_create_thread_by_key(
+    state: State<crate::state::SharedState>,
+    Path(key): Path<String>,
+    Json(req): Json<ThreadCreateRequest>,
+) -> (StatusCode, Json<Value>) {
+    let port = match state.state_port.as_ref() {
+        Some(p) => p,
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "no state port" }))),
+    };
+    if key.is_empty() || key.len() > 200
+        || key.chars().any(|c| c.is_control() || matches!(c, '\\' | ' ' | '\t' | '\n' | '\r'))
+    {
+        return (StatusCode::BAD_REQUEST, Json(json!({
+            "error": "invalid key (1-200 chars, no whitespace or control chars)",
+        })));
+    }
+    let memory_key = format!("{}{}", THREAD_KEY_PREFIX, key);
+    // Existing thread? Return it as-is.
+    if let Ok(Some(raw)) = port.hexflo_memory_retrieve(&memory_key).await {
+        if let Ok(record) = serde_json::from_str::<ThreadRecord>(&raw) {
+            return (StatusCode::OK, Json(serde_json::to_value(&record).unwrap_or(Value::Null)));
+        }
+    }
+    // Create with the stable id.
+    let now = chrono::Utc::now().to_rfc3339();
+    let record = ThreadRecord {
+        id: key.clone(),
+        title: req.title.unwrap_or_else(|| format!("thread for {}", key)),
+        project_id: req.project_id,
+        created_at: now.clone(),
+        last_active_at: now,
+        messages: vec![],
+    };
+    let value = serde_json::to_string(&record).unwrap_or_default();
+    match port.hexflo_memory_store(&memory_key, &value, "global").await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::to_value(&record).unwrap_or(Value::Null))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("failed to store thread: {}", e) })),
+        ),
+    }
+}
+
 /// GET /api/brain/threads — list all chat threads.
 /// Most-recent first by last_active_at.
 pub async fn list_threads(
