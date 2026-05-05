@@ -26,7 +26,7 @@
           "id": "P1.1",
           "layer": "secondary",
           "name": "Add developer_inbox table to hexflo-coordination WASM module",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -38,7 +38,7 @@
           "id": "P1.2",
           "layer": "secondary",
           "name": "Add delegation_trust table to hexflo-coordination WASM module",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -50,7 +50,7 @@
           "id": "P1.3",
           "layer": "secondary",
           "name": "Add briefing_buffer table to hexflo-coordination WASM module",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -70,7 +70,7 @@
           "id": "P1.4",
           "layer": "secondary",
           "name": "hex-nexus REST endpoints for briefing, decisions, and trust",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 0
@@ -98,7 +98,7 @@
           "id": "P2.1",
           "layer": "primary",
           "name": "Add Brief command to hex-cli",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -112,7 +112,7 @@
           "id": "P2.2",
           "layer": "primary",
           "name": "Narrative template renderer",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -127,7 +127,7 @@
           "id": "P2.3",
           "layer": "secondary",
           "name": "Wire briefing_buffer event logging into existing hex-nexus operations",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 1
@@ -155,7 +155,7 @@
           "id": "P3.1",
           "layer": "primary",
           "name": "Add Decide command to hex-cli",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -171,7 +171,7 @@
           "id": "P3.2",
           "layer": "secondary",
           "name": "Decision surfacing in workplan executor",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -185,7 +185,7 @@
           "id": "P3.3",
           "layer": "secondary",
           "name": "Decision deadline auto-resolution daemon",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 1
@@ -213,7 +213,7 @@
           "id": "P4.1",
           "layer": "primary",
           "name": "Add Trust command to hex-cli",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -227,7 +227,7 @@
           "id": "P4.2",
           "layer": "secondary",
           "name": "Trust initialization on project creation",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 1
@@ -255,7 +255,7 @@
           "id": "P5.1",
           "layer": "primary",
           "name": "Add Steer command to hex-cli",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -270,7 +270,7 @@
           "id": "P5.2",
           "layer": "secondary",
           "name": "Directive classifier in hex-nexus",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -284,7 +284,7 @@
           "id": "P5.3",
           "layer": "secondary",
           "name": "Directive executor — priority reordering",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 2
@@ -312,7 +312,7 @@
           "id": "P6.1",
           "layer": "secondary",
           "name": "Add /api/pulse endpoint to hex-nexus",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -326,7 +326,7 @@
           "id": "P6.2",
           "layer": "primary",
           "name": "Update hex-statusline.cjs to render Pulse format",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 2
@@ -359,7 +359,7 @@
           "id": "P7.1",
           "layer": "primary",
           "name": "Wire MCP tools for brief, decide, trust, steer, pulse",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -373,7 +373,7 @@
           "id": "P7.2",
           "layer": "integration",
           "name": "End-to-end smoke test",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 3
@@ -381,5 +381,5 @@
   ],
   "priority": "high",
   "relates_to": "wp-hex-standalone-dispatch",
-  "status": "done"
+  "status": "in_progress"
 }
