@@ -535,8 +535,9 @@ const KanbanLanes: Component<{
         </span>
       </div>
       <p class="text-[10px] text-gray-400 px-1 mb-2">
-        Hover a Ready/Backlog card → <span class="text-cyan-400">▶</span> dispatches to a worker (no token spend, just queues)
-        · <span class="text-red-400">✗</span> abandons · click for status · drag to move · ● assigned · ○ unclaimed
+        These are <code class="text-gray-300">swarm_task</code> rows from the workplan executor — separate pipeline from brain-chat dispatches.
+        Pending+unassigned older than 24h auto-drain to failed (server-side daemon).
+        Hover Ready/Backlog → <span class="text-cyan-400">▶</span> dispatches · <span class="text-red-400">✗</span> abandons · drag to move · ● assigned · ○ unclaimed
       </p>
       <div class="grid grid-cols-4 gap-2">
         <For each={["Backlog", "Ready", "Doing", "Done"] as LaneName[]}>

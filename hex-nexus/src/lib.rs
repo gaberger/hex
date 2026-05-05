@@ -641,6 +641,17 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         orchestration::brain_progress_streamer::BrainProgressStreamer::spawn(streamer_state);
     }
 
+    // Drain orphaned swarm_task rows: workplan executor + legacy "hex brain
+    // enqueue" paths create swarm_task entries that nothing currently
+    // polls — they pile up unbounded in the Kanban Ready lane. Daemon
+    // marks unassigned pending swarm_tasks older than 24h as failed every
+    // 5min so the lane stays usable while the workplan executor migrates
+    // to inference_task.
+    {
+        let drainer_state = state.clone();
+        orchestration::swarm_task_drainer::SwarmTaskDrainer::spawn(drainer_state);
+    }
+
     // Background sched self-improvement service (ADR-2604102200):
     // Tests local models periodically, records outcomes to RL engine.
     {
