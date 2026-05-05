@@ -165,11 +165,17 @@ interface Swarm {
   project_id?: string;
 }
 interface ProjectInfo { id: string; name: string; rootPath?: string; status?: string; }
+interface DecisionInFlight {
+  dispatchId: string;
+  role: string;
+  status: string;
+}
 interface DecisionItem {
   id: string; kind: string;
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   title: string; reason: string; ageSeconds: number;
   suggestedAction: string; link: string | null;
+  inFlight?: DecisionInFlight;
 }
 interface DecisionsResponse { items: DecisionItem[]; total: number; bySeverity: Record<string, number>; }
 interface ImproverStatus { score?: number; mean_reward?: number; meanReward?: number; topHypothesis?: string; deadLetter?: number; }
@@ -609,16 +615,40 @@ const DecisionsPanel: Component<{
             {(item) => (
               <li
                 onClick={() => {
+                  // If a worker is already working this, don't let the
+                  // operator dispatch again — that's the whole point of the
+                  // in-flight tag. Visual stays clickable for "open in chat
+                  // to see context" but with a different action.
+                  if (item.inFlight) {
+                    props.onSendToChat(
+                      `Status of dispatch ${item.inFlight.dispatchId.slice(0, 8)} (@${item.inFlight.role})?`,
+                      item.inFlight.role,
+                    );
+                    return;
+                  }
                   const a = decisionAction(item);
                   props.onSendToChat(a.prompt, a.role);
                 }}
                 class="flex items-start gap-2 text-xs px-2 py-1.5 rounded cursor-pointer hover:bg-gray-800/50 transition group"
-                title={`Click to ask @${decisionAction(item).role} about this decision`}
+                classList={{ "opacity-60": !!item.inFlight }}
+                title={item.inFlight
+                  ? `In flight: @${item.inFlight.role} (${item.inFlight.status}, dispatch ${item.inFlight.dispatchId.slice(0, 8)}). Click to ask for status.`
+                  : `Click to ask @${decisionAction(item).role} about this decision`}
               >
                 <span class={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${severityClass(item.severity)} flex-shrink-0`}>
                   {item.severity[0]}
                 </span>
                 <span class="text-gray-200 truncate flex-1" title={item.title}>{item.title}</span>
+                <Show when={item.inFlight}>
+                  {(inf) => (
+                    <span
+                      class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-cyan-900/60 text-cyan-200 border border-cyan-700 flex-shrink-0 animate-pulse"
+                      title={`Dispatch ${inf().dispatchId} status: ${inf().status}`}
+                    >
+                      🔄 {inf().status === "PendingReview" ? "review" : inf().status.toLowerCase()} · @{inf().role}
+                    </span>
+                  )}
+                </Show>
                 <span class="text-[10px] text-gray-400 flex-shrink-0">{ageShort(item.ageSeconds)}</span>
                 <Show when={item.kind === "blocked_task"}>
                   <span class="flex gap-1 opacity-0 group-hover:opacity-100 transition flex-shrink-0">

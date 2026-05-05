@@ -464,6 +464,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/briefing", get(briefing::get_briefing))
         // AGENTIC SCHED (ADR-2604102200) — must register BEFORE {project_id} routes
         .route("/api/sched/status", get(sched::status))
+        .route("/api/sched/improver/status", get(sched::improver_status))
         .route("/api/sched/test", post(sched::test))
         // wp-sched-queue-history P1.2 — handler existed in sched.rs but was
         // never registered. Wired here so `hex sched queue history` and the

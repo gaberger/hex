@@ -202,6 +202,88 @@ pub async fn status(
     })
 }
 
+/// GET /api/sched/improver/status — feeds the dashboard Health panel.
+///
+/// Returns four operator-readable health signals:
+///   score        — homeostasis composite (0-100, higher = healthier).
+///                  Computed from sched queue depth + recent task success rate.
+///   meanReward   — average RL reward across recent improvement cycles.
+///                  Read from sched_service's recent outcomes.
+///   deadLetter   — count of inference_task rows in Failed status.
+///                  Hint: needs operator attention if > 0.
+///   activeTasks  — sum of Pending + InProgress inference_tasks.
+///
+/// All fields are best-effort; failures degrade to null (which the
+/// dashboard renders as "—").
+pub async fn improver_status(
+    State(state): State<SharedState>,
+) -> Json<serde_json::Value> {
+    let port = match state.state_port.as_ref() {
+        Some(p) => p.clone(),
+        None => {
+            return Json(serde_json::json!({
+                "score": null, "meanReward": null,
+                "deadLetter": null, "activeTasks": 0,
+            }));
+        }
+    };
+
+    // Pull all inference_task rows once; bucket by status.
+    let (active, completed, failed) = match port.inference_task_list_all().await {
+        Ok(rows) => {
+            let mut a = 0u32; let mut c = 0u32; let mut f = 0u32;
+            for r in &rows {
+                match r.status.as_str() {
+                    "Pending" | "PendingReview" | "InProgress" => a += 1,
+                    "Completed" => c += 1,
+                    "Failed" => f += 1,
+                    _ => {}
+                }
+            }
+            (a, c, f)
+        }
+        Err(_) => (0u32, 0u32, 0u32),
+    };
+
+    // Recent improvement reward — last entry from sched_service writes via
+    // hexflo memory key prefix "sched:cycle:". Average up to 20 most recent.
+    let mean_reward: Option<f64> = match port.hexflo_memory_search("sched:cycle:").await {
+        Ok(entries) => {
+            let mut rewards: Vec<f64> = entries
+                .iter()
+                .filter_map(|(_k, v)| {
+                    let parsed: serde_json::Value = serde_json::from_str(v).ok()?;
+                    parsed.get("reward").and_then(|x| x.as_f64())
+                })
+                .collect();
+            if rewards.is_empty() { None }
+            else {
+                rewards.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+                rewards.truncate(20);
+                Some(rewards.iter().sum::<f64>() / rewards.len() as f64)
+            }
+        }
+        Err(_) => None,
+    };
+
+    // Homeostasis composite (0-100). Penalize active backlog + failures,
+    // reward high success ratio. Single-shot heuristic; tune later.
+    let total = active + completed + failed;
+    let score: Option<f64> = if total == 0 { None } else {
+        let success_ratio = completed as f64 / total as f64;
+        let backlog_penalty = (active as f64).min(20.0) * 1.5; // cap at 30
+        let failure_penalty = (failed as f64).min(20.0) * 2.5; // cap at 50
+        Some(((success_ratio * 100.0) - backlog_penalty - failure_penalty).max(0.0).min(100.0))
+    };
+
+    Json(serde_json::json!({
+        "score": score.map(|s| (s * 10.0).round() / 10.0),
+        "meanReward": mean_reward.map(|r| (r * 1000.0).round() / 1000.0),
+        "deadLetter": failed,
+        "activeTasks": active,
+    }))
+}
+
 pub async fn test(
     State(state): State<SharedState>,
     Json(_req): Json<SchedTestRequest>,

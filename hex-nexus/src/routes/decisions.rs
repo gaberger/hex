@@ -351,6 +351,20 @@ pub struct DecisionItem {
     pub suggested_action: String,
     /// Deep-link path (relative URL) into the dashboard for context.
     pub link: Option<String>,
+    /// In-flight worker dispatch covering this decision (None if no worker
+    /// is actively working on it). Operator should NOT re-dispatch when
+    /// this is set — duplicates work that's already running.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_flight: Option<DecisionInFlight>,
+}
+
+/// Lightweight pointer to an inference_task that's covering a decision.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionInFlight {
+    pub dispatch_id: String,
+    pub role: String,
+    pub status: String,
 }
 
 /// GET /api/decisions — pull together everything that needs an operator decision.
@@ -428,6 +442,7 @@ pub async fn list_decisions(
                             age_seconds: 0,
                             suggested_action: "Decide and unblock".to_string(),
                             link: Some(format!("/workplan/{}", workplan_id)),
+                            in_flight: None,
                         });
                     }
                 }
@@ -474,6 +489,7 @@ pub async fn list_decisions(
                 age_seconds,
                 suggested_action: "Review + accept or close".to_string(),
                 link: Some(format!("/adr/{}", name)),
+                in_flight: None,
             });
         }
     }
@@ -518,6 +534,7 @@ pub async fn list_decisions(
                 age_seconds: 0,
                 suggested_action: "Backfill YAML or remove arm".to_string(),
                 link: Some(format!("/persona/{}", role)),
+                in_flight: None,
             });
         }
     }
@@ -538,7 +555,53 @@ pub async fn list_decisions(
                     age_seconds: 0,
                     suggested_action: "Acknowledge".to_string(),
                     link: Some("/inbox".to_string()),
+                    in_flight: None,
                 });
+            }
+        }
+    }
+
+    // Cross-reference each decision against in-flight inference_tasks.
+    // Tags items whose subject is currently being worked on by a worker
+    // dispatch so the operator doesn't accidentally re-dispatch (which
+    // duplicates work + burns tokens). Best-effort: failures degrade to
+    // no tagging.
+    if let Some(port) = state.state_port.as_ref() {
+        if let Ok(rows) = port.inference_task_list_all().await {
+            let in_flight_tasks: Vec<_> = rows
+                .iter()
+                .filter(|t| matches!(t.status.as_str(), "Pending" | "PendingReview" | "InProgress"))
+                .collect();
+            for it in items.iter_mut() {
+                // Build the search keys from the decision id.
+                // blocked:wp-foo:P1.1 → match prompts containing "wp-foo" + "P1.1"
+                // adr:ADR-047-... → match prompts containing "ADR-047"
+                let needles: Vec<String> = if it.id.starts_with("blocked:") {
+                    let stripped = it.id.strip_prefix("blocked:").unwrap_or("");
+                    if let Some((wp, task)) = stripped.rsplit_once(':') {
+                        vec![wp.to_string(), task.to_string()]
+                    } else { continue; }
+                } else if it.id.starts_with("adr:") {
+                    let stripped = it.id.strip_prefix("adr:").unwrap_or("");
+                    // Match against the leading "ADR-XXX" segment, not the full slug,
+                    // so dispatches that say "ADR-047" match "adr:ADR-047-internal-...".
+                    let key = stripped.split('-').take(2).collect::<Vec<_>>().join("-");
+                    vec![key]
+                } else {
+                    continue;
+                };
+                let lneedles: Vec<String> = needles.iter().map(|n| n.to_lowercase()).collect();
+                let matched = in_flight_tasks.iter().find(|t| {
+                    let prompt_lo = t.prompt.to_lowercase();
+                    lneedles.iter().all(|n| prompt_lo.contains(n))
+                });
+                if let Some(t) = matched {
+                    it.in_flight = Some(DecisionInFlight {
+                        dispatch_id: t.id.clone(),
+                        role: t.role.clone(),
+                        status: t.status.clone(),
+                    });
+                }
             }
         }
     }
