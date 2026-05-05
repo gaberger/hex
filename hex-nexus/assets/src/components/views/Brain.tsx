@@ -1146,6 +1146,13 @@ function detectAdrVerdicts(text: string): Array<{ adrId: string; action: "accept
     const cleaned = tok.replace(/[.,:!?]+$/g, "").replace(/\.md$/i, "");
     if (cleaned.length <= 4) continue;
     if (!cleaned.toLowerCase().startsWith("adr-")) continue;
+    // Skip placeholder-redacted ids — some upstream layers replace 10-digit
+    // ADR numbers (mistaken for phone numbers) with literal "[PHONE]" or
+    // "[PHONE-NUMBER]". Backend falls back to slug-glob, but the pill is
+    // safer to skip when the displayed id is unresolvable client-side.
+    if (cleaned.toUpperCase().includes("[PHONE]")
+      || cleaned.toUpperCase().includes("[PHONE-NUMBER]")
+      || cleaned.toUpperCase().includes("[REDACTED]")) continue;
     const norm = `ADR-${cleaned.slice(4)}`;
     if (!seen.has(norm)) {
       seen.add(norm);

@@ -334,11 +334,53 @@ pub async fn resolve_adr(
     };
 
     let scan_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let adr_path = scan_root.join("docs/adrs").join(format!("{}.md", stripped));
+    let adrs_dir = scan_root.join("docs/adrs");
+    // Try the literal filename first (operator passed "ADR-047-internal-..."
+    // and the file is exactly that). If missing, fall back to a prefix glob:
+    // operators commonly say "ADR-004" but the actual file is
+    // "ADR-2604040000-..." (timestamp-prefixed) or "ADR-047-internal-..."
+    // (3-digit slug form). Match any file whose name starts with stripped
+    // OR with a normalized variant.
+    let literal = adrs_dir.join(format!("{}.md", stripped));
+    let adr_path: std::path::PathBuf = if literal.exists() {
+        literal
+    } else {
+        let mut found: Option<std::path::PathBuf> = None;
+        if let Ok(entries) = std::fs::read_dir(&adrs_dir) {
+            // Build prefix candidates from the stripped id.
+            // "ADR-047" → ["ADR-047-", "ADR-047."]
+            // "ADR-2604121630-foo" → ["ADR-2604121630-foo"]  (already specific)
+            let stripped_upper = stripped.to_ascii_uppercase();
+            for ent in entries.flatten() {
+                let name = ent.file_name();
+                let name_str = name.to_string_lossy().to_string();
+                if !name_str.ends_with(".md") { continue; }
+                let name_upper = name_str.to_ascii_uppercase();
+                let stem_upper = name_upper.trim_end_matches(".MD");
+                // Match if filename starts with the stripped id followed by
+                // either "-" (slug continues) or "." (exact match).
+                if stem_upper == stripped_upper
+                    || stem_upper.starts_with(&format!("{}-", stripped_upper))
+                {
+                    found = Some(ent.path());
+                    break;
+                }
+            }
+        }
+        match found {
+            Some(p) => p,
+            None => return (StatusCode::NOT_FOUND, Json(json!({
+                "error": format!(
+                    "ADR not found: no file in docs/adrs/ matches `{}` (tried literal `{}.md` and prefix glob `{}*.md`). Use `hex adr list` to find the canonical id.",
+                    stripped, stripped, stripped
+                ),
+            }))),
+        }
+    };
     let raw = match std::fs::read_to_string(&adr_path) {
         Ok(r) => r,
         Err(e) => return (StatusCode::NOT_FOUND, Json(json!({
-            "error": format!("ADR not found at {}: {}", adr_path.display(), e),
+            "error": format!("ADR file unreadable at {}: {}", adr_path.display(), e),
         }))),
     };
     // Replace the first Status: Proposed line. Tolerant of "Status:", "**Status:**",
