@@ -1,6 +1,6 @@
 # ADR-2604151500 — Status Line Audit: Confusing and Inaccurate
 
-**Status:** Proposed (investigation deliverable)
+**Status:** Accepted
 **Date:** 2026-04-15
 **Related:** ADR-2604150000 (brain→sched rename — drives the brain/sched naming inaccuracy in the line), ADR-2604151400 (queue list show running — same data-source disagreement issue)
 
