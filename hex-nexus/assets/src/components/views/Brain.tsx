@@ -21,6 +21,7 @@
 import { Component, For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { restClient } from "../../services/rest-client";
 import MarkdownContent from "../chat/MarkdownContent";
+import { navigate } from "../../stores/router";
 
 // ── Persona registry (mirrors hex-cli/assets/agents/hex/hex/) ────────────────
 // Categories match the org-chart in the operator briefing. Order intentional.
@@ -1025,8 +1026,9 @@ const SwarmsPanel: Component<{
             const focusTitle = focus?.title?.replace(/\s+/g, " ").trim() || "(no tasks)";
             return (
               <li
-                class="text-xs bg-gray-950 border border-gray-800 rounded p-2 hover:border-gray-700 cursor-default"
-                title={`Swarm: ${s.id}\nStatus: ${s.status || "active"}`}
+                class="text-xs bg-gray-950 border border-gray-800 rounded p-2 hover:border-gray-700 cursor-pointer transition-colors"
+                title={`Swarm: ${s.id}\nStatus: ${s.status || "active"}\nClick to view details`}
+                onClick={() => navigate({ page: "project-swarm-detail", projectId: s.projectId || s.project_id || "", swarmId: s.id })}
               >
                 <div class="flex items-center gap-2 mb-1">
                   <span
