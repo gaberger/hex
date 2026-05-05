@@ -1,9 +1,10 @@
 # ADR-2604111229: Algebraic Formalization of hex Process Flow
 
-**Status:** Proposed
+**Status:** Accepted (2026-05-04 — P1 shipped, P2–P6 tracked as follow-up phases)
 **Date:** 2026-04-11
 **Drivers:** User question "Is there an algebraic way to represent hex process flow?" during session review. The codebase has grown enough that boundary violations, swarm coordination bugs, and lifecycle ordering mistakes are no longer catchable by reading the code — they need a formal model.
 **Supersedes:** None (complements ADR-2603221959 enforcement, ADR-027 HexFlo, ADR-2603240130 declarative swarm behaviors)
+**Amends:** None. P2 (`ports-signature-matches-source`) is **purely additive** — it adds a new check to the existing README/docs validation surface and does not replace, weaken, or subsume any check already shipped by ADR-047 (`hex docs check`: module READMEs, terminology, ADR frontmatter, staleness) or the legacy `validate_readme()` count/named-entity validator in `hex-cli/src/commands/readme.rs`. See P2 row in the Implementation table for the host command and check name.
 
 <!-- ID format: YYMMDDHHMM — 2604111229 = 2026-04-11 12:29 UTC -->
 
@@ -208,9 +209,10 @@ Each phase must satisfy:
 
 - **Documents drift.** If nobody updates the algebra when the code
   changes, the spec becomes a lie. Mitigation: tie the Σ-algebra file to
-  the existing `hex readme validate` pattern — add a check that every
-  `pub trait I*Port` in `hex-core/src/ports/` appears in the doc, and
-  vice versa.
+  the existing docs-validation pattern (P2) — add a check inside `hex
+  docs check` (ADR-047) that every `pub trait I*Port` in
+  `hex-core/src/ports/` appears in the doc, and vice versa. Additive,
+  not a replacement for any current README/docs check.
 - **Some readers will be intimidated.** "Free Σ-algebra morphism" is a
   non-zero barrier to entry. Mitigation: lead with prose, put the
   notation in a "Formal statement" subsection, and include a worked
@@ -226,10 +228,7 @@ Each phase must satisfy:
 
 **Mitigations:**
 
-- **`hex readme validate` extension.** Add a check in phase 1 that every
-  `pub trait I*Port` in `hex-core/src/ports/` appears as a section in
-  `docs/algebra/ports-signature.md` — mirroring the agent/module/crate
-  checks already in place for the README.
+- **Docs-validation extension (P2).** Add an additive check to `hex docs check` (ADR-047) — with the legacy `validate_readme()` validator as a fallback host — verifying every `pub trait I*Port` in `hex-core/src/ports/` appears as a section in `docs/algebra/ports-signature.md` (and vice versa). This mirrors the agent/module/crate checks already in place for the README; it does not replace or modify any existing check.
 - **Every algebra file has a "Known gaps" section.** Drift is
   acknowledged rather than hidden.
 - **One formalism per layer, not a grand unified theory.** Nobody has to
@@ -242,7 +241,7 @@ Each phase must satisfy:
 | Phase | Description | Validation Gate | Status |
 |-------|-------------|-----------------|--------|
 | P1 | Write `docs/algebra/ports-signature.md` enumerating all 10 port traits as a Σ-algebra with operations, type signatures, errors, and layer stratum. Include a "Free algebra view" section explaining the interpreter as a morphism into IO. Cross-reference from CLAUDE.md's "Hexagonal Architecture Rules" section. | Document exists; every `pub trait I*Port` in `hex-core/src/ports/` has a corresponding section; file length <1000 lines | **In progress (this commit)** |
-| P2 | Extend `hex readme validate` with a `ports-signature-matches-source` check: every trait in `hex-core/src/ports/*.rs` must appear in `docs/algebra/ports-signature.md`. Fails CI if a new port is added without updating the algebra doc. | New validator check reports 0 drift; CI passes | Pending |
+| P2 | Extend the existing docs-validation surface (`hex docs check` from ADR-047, with the legacy `validate_readme()` count/named-entity validator as a fallback host) with a **new, additive** `ports-signature-matches-source` check: every trait in `hex-core/src/ports/*.rs` must appear in `docs/algebra/ports-signature.md`, and vice versa. The check is layered alongside (does not replace) the existing module-README, terminology, frontmatter, staleness, and count/named-entity checks. Fails CI if a new port is added without updating the algebra doc. | New validator check reports 0 drift; CI passes; existing ADR-047 + legacy README checks unchanged | Pending |
 | P3 | Write `docs/algebra/lifecycle-net.md` — 1-safe workflow Petri net for the 7-phase feature lifecycle. Places, transitions, tokens, fork/join semantics. Include an ASCII art diagram. Optional TLA+ encoding in `docs/algebra/lifecycle.tla`. | Document covers all 7 phases + tier barriers; reachability argument for the accepting state | Pending |
 | P4 | Write `docs/algebra/hexflo-swarm.md` — π-calculus (or CCS) spec for HexFlo coordination. Agent lifecycle, heartbeat timeout, task claim CAS, reclamation. Optional TLA+ in `docs/algebra/hexflo.tla` with TLC-checkable invariants (no task loss, progress, deadlock freedom). | Document covers the full agent protocol; TLA+ (if shipped) passes TLC on the base spec | Pending |
 | P5 | Write `docs/algebra/capabilities-rows.md` — effect row types for the `secret-grant` capability set. Subsumption rules, grant/revoke semantics, TTL invariants. | Document enumerates all grantable capabilities + subsumption lattice | Pending |
