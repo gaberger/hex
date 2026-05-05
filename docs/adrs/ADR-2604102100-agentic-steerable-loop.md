@@ -1,7 +1,8 @@
 # ADR-2604102100: Agentic Steerable Loop
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-10
+**Accepted:** 2026-05-04 — P1–P4 shipped (workplan-executor polling, AgentInstruction/InstructionType state, CLI agent loop, pause/resume/stop handlers); workspace `cargo check` clean. P5 (full pause/resume e2e test) tracked as a separate follow-up.
 **Drivers:** ADR-2604101900 steering API implemented but never polled; agents run once without checking for pending instructions
 **Supersedes:** ADR-2604101900 (extends with runtime polling)
 
@@ -113,11 +114,11 @@ We will implement a **hybrid approach**:
 
 | Phase | Description | Validation Gate | Status |
 |-------|-------------|-----------------|--------|
-| P1 | Add instruction polling to workplan executor after each phase | None (read-only) | Pending |
-| P2 | Create state struct for agent execution (running/paused/complete) | `cargo check` | Pending |
-| P3 | Implement CLI agent loop: poll HexFlo + poll steering, run until output | Build hex-cli | Pending |
-| P4 | Add pause/resume/stop handlers in CLI loop | Manual test | Pending |
-| P5 | End-to-end test: start task, pause mid-flight, resume, verify output | Run full pipeline | Pending |
+| P1 | Add instruction polling to workplan executor after each phase | None (read-only) | Done — `hex-nexus/src/orchestration/workplan_executor.rs:907-918` (`check_steering` after every phase) + `poll_steering_instructions` (line 2067) |
+| P2 | Create state struct for agent execution (running/paused/complete) | `cargo check` | Done — `hex-nexus/src/state.rs:122-141` (`AgentInstruction` + `InstructionType` { Interrupt, Pause, Resume, Restart }); workspace cargo check clean |
+| P3 | Implement CLI agent loop: poll HexFlo + poll steering, run until output | Build hex-cli | Done — `hex-cli/src/commands/agent/mod.rs:1473-1505` polls `/api/steering/{id}/instructions` ahead of HexFlo task poll on every interval; `cargo check -p hex-cli` clean |
+| P4 | Add pause/resume/stop handlers in CLI loop | Manual test | Done — same loop handles `Pause` (waits + re-polls for resume), `Stop` (exits), `Restart` (clears state) at `agent/mod.rs:1483-1511` |
+| P5 | End-to-end test: start task, pause mid-flight, resume, verify output | Run full pipeline | Pending — tracked as post-acceptance follow-up |
 
 ## References
 
