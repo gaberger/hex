@@ -51,7 +51,7 @@ pub enum NexusAction {
         #[arg(short, long, default_value_t = DEFAULT_PORT)]
         port: u16,
         /// Bind address (use 0.0.0.0 for remote agent access)
-        #[arg(short, long, default_value = "127.0.0.1")]
+        #[arg(short, long, default_value = "0.0.0.0")]
         bind: String,
         /// Auth token for dashboard/chat access
         #[arg(short, long)]
@@ -256,7 +256,7 @@ pub async fn ensure_nexus_running() -> anyhow::Result<()> {
         "\u{2b21}".yellow(),
         port
     );
-    start(port, "127.0.0.1", None, false).await
+    start(port, "0.0.0.0", None, false).await
 }
 
 pub async fn run(action: NexusAction) -> anyhow::Result<()> {

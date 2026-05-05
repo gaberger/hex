@@ -71,7 +71,7 @@ impl Default for HubConfig {
     fn default() -> Self {
         Self {
             port: DEFAULT_PORT,
-            bind: "127.0.0.1".to_string(),
+            bind: "0.0.0.0".to_string(),
             token: None,
             is_daemon: false,
             no_agent: false,
