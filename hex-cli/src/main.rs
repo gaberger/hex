@@ -371,6 +371,11 @@ enum Commands {
         #[command(subcommand)]
         action: commands::opencode::Commands,
     },
+    /// Internal documentation health (ADR-047) — terminology, freshness, module READMEs
+    Docs {
+        #[command(subcommand)]
+        action: commands::docs::DocsAction,
+    },
     /// Docker AI Sandbox management — build image, check readiness (ADR-2603282000)
     Sandbox {
         #[command(subcommand)]
@@ -658,6 +663,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Status => status::run().await,
         Commands::Pulse => commands::pulse::run().await,
         Commands::Opencode { action } => commands::opencode::run(action),
+        Commands::Docs { action } => commands::docs::run(action).await,
         Commands::Sandbox { action } => commands::sandbox::run(action).await,
         Commands::Fingerprint { action } => commands::fingerprint::run(action).await,
         Commands::Doctor { verbose, fix, check } => {

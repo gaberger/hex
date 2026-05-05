@@ -56,3 +56,4 @@ pub mod taste;
 pub mod trust;
 pub mod steer;
 pub mod hey;
+pub mod docs;
