@@ -1,0 +1,163 @@
+{
+  "critical_path": [
+    "P1.1",
+    "P1.2",
+    "P1.3",
+    "P2.1",
+    "P2.2",
+    "P2.3",
+    "P3.1",
+    "P3.2",
+    "P3.3"
+  ],
+  "goal": "All conversation AND worker progress for one ADR/workplan lives in one thread (e.g. decision-adr-047, decision-wp-foo-p1-1) regardless of which operator session triggered the dispatch. Auto-followup posts go to that subject thread instead of brain-chat:<session-thread>:auto-followup.",
+  "id": "wp-subject-threading-for-dispatches",
+  "parallelism_note": "P3.1 can start as soon as P1.3 is done (does not wait for P2). P3.2 depends on both P3.1 and P2.2. Maximum parallel tasks at P3 entry: P2.3 + P3.1 can run concurrently.",
+  "phases": [
+    {
+      "description": "Implement a pure function that accepts a dispatch prompt string and returns a canonical subject-thread ID (e.g. 'decision-adr-047', 'decision-wp-embedded-assets-p2-3'). Rules: if the prompt references an ADR number, emit decision-adr-<N>; if it references a workplan ID + phase/task, emit decision-<wp-id>-<phase>-<task>; if it references a workplan ID only, emit decision-<wp-id>; otherwise fall back to nil (caller keeps session thread).",
+      "id": "P1",
+      "tasks": [
+        {
+          "adapter": "brain-infra/src/dispatch/subject_thread.rs",
+          "description": "Add port interface SubjectThreadDeriver to the brain domain layer. Signature: derive_subject_thread(prompt: &str) -> Option<String>. Document matching rules in a doc-comment. File: brain-infra/src/dispatch/subject_thread.rs (new file). Done: file compiles, doc-comment covers ADR, workplan+phase+task, workplan-only, and fallback cases.",
+          "done_condition": "cargo check -p brain-infra passes; doc-comment present with all 4 matching rules",
+          "id": "P1.1",
+          "port": "SubjectThreadDeriver",
+          "status": "failed",
+          "status_note": "False done marker — no file at brain-infra/src/dispatch/subject_thread.rs (crate does not exist). Real target: hex-nexus/src/orchestration/.",
+          "title": "Design subject-thread derivation interface",
+          "type": "transform"
+        },
+        {
+          "adapter": "brain-infra/src/dispatch/subject_thread.rs",
+          "depends_on": [
+            "P1.1"
+          ],
+          "description": "Implement SubjectThreadDeriver using regex. Patterns (in priority order): (1) ADR-\\d+ -> decision-adr-<lowercased-number>; (2) wp-<slug>:P<N>.<M> -> decision-wp-<slug>-p<N>-<M>; (3) wp-<slug>:P<N> -> decision-wp-<slug>-p<N>; (4) wp-<slug> standalone -> decision-<slug>. Return None if no pattern matches. File: brain-infra/src/dispatch/subject_thread.rs. Done: unit tests for all 4 patterns + fallback pass.",
+          "done_condition": "cargo test -p brain-infra subject_thread passes (min 6 test cases)",
+          "id": "P1.2",
+          "port": "SubjectThreadDeriver",
+          "status": "failed",
+          "status_note": "False done marker — no derive_subject_thread fn exists. Grep -R 'derive_subject_thread' returns zero hits.",
+          "title": "Implement regex-based subject-thread extraction",
+          "type": "transform"
+        },
+        {
+          "adapter": "brain-infra/src/dispatch/mod.rs",
+          "depends_on": [
+            "P1.2"
+          ],
+          "description": "Add subject_thread: Option<String> field to the BrainDispatch domain struct (or equivalent dispatch envelope). Populate it at dispatch-creation time by calling SubjectThreadDeriver::derive on the prompt. File: wherever BrainDispatch is defined (likely brain-infra/src/dispatch/mod.rs or brain-domain). Done: all existing tests still pass; new field serialises to/from JSON.",
+          "done_condition": "cargo test --workspace passes; subject_thread field present in dispatch JSON snapshots",
+          "id": "P1.3",
+          "port": "SubjectThreadDeriver",
+          "status": "failed",
+          "status_note": "False done marker — no subject_thread field on any dispatch struct. Grep -R 'subject_thread' on workspace returns zero hits outside this workplan.",
+          "title": "Wire SubjectThreadDeriver into BrainDispatch struct",
+          "type": "transform"
+        }
+      ],
+      "title": "Subject-thread derivation"
+    },
+    {
+      "description": "Change both types so that when subject_thread is Some, progress and result messages are posted to that thread instead of brain-chat:<session-thread>:auto-followup. Session thread receives only a brief 'see <subject-thread> for details' cross-post.",
+      "id": "P2",
+      "tasks": [
+        {
+          "adapter": "brain-infra/src/progress_streamer.rs",
+          "depends_on": [
+            "P1.3"
+          ],
+          "description": "In BrainProgressStreamer::stream_progress (and equivalent tick/heartbeat methods), check dispatch.subject_thread. If Some(t), post progress lines to thread t. If None, keep existing session-thread behaviour. File: brain-infra/src/progress_streamer.rs (or equivalent). Done: unit test verifies that a dispatch with subject_thread=Some posts to that thread; dispatch with subject_thread=None posts to session thread.",
+          "done_condition": "cargo test -p brain-infra progress_streamer passes; both routing branches covered",
+          "id": "P2.1",
+          "port": "BrainProgressStreamer",
+          "status": "failed",
+          "status_note": "False done marker — hex-nexus/src/orchestration/brain_progress_streamer.rs::extract_thread_id (line 235) still strips the auto-followup suffix and posts back to the session thread. No subject-thread branch.",
+          "title": "Update BrainProgressStreamer to post to subject thread",
+          "type": "transform"
+        },
+        {
+          "adapter": "brain-infra/src/dispatch_reconciler.rs",
+          "depends_on": [
+            "P2.1"
+          ],
+          "description": "In BrainDispatchReconciler::reconcile (or on_dispatch_complete), post the final result to dispatch.subject_thread if Some. Also emit a one-line cross-post to the originating session thread: '✓ Worker @<role> finished — full output in <subject-thread>'. File: brain-infra/src/dispatch_reconciler.rs (or equivalent). Done: integration test confirms result lands in subject thread and cross-post appears in session thread.",
+          "done_condition": "cargo test -p brain-infra dispatch_reconciler passes; result in subject thread + cross-post in session thread both asserted",
+          "id": "P2.2",
+          "port": "BrainDispatchReconciler",
+          "title": "Update BrainDispatchReconciler to post result to subject thread",
+          "type": "transform"
+        },
+        {
+          "adapter": "workspace",
+          "depends_on": [
+            "P2.2"
+          ],
+          "description": "Run cargo check --workspace && cargo test --workspace --no-fail-fast. Fix any compilation errors or test failures introduced by P2.1/P2.2. Done: both commands exit 0.",
+          "done_condition": "cargo check --workspace && cargo test --workspace --no-fail-fast both exit 0",
+          "id": "P2.3",
+          "port": "build-gate",
+          "title": "Gate: full workspace compile + test after P2 changes",
+          "type": "transform"
+        }
+      ],
+      "title": "Update BrainProgressStreamer and BrainDispatchReconciler"
+    },
+    {
+      "description": "For dispatches that were created before this change and therefore have no subject_thread field, run a one-time migration: scan the dispatch store, apply SubjectThreadDeriver to each prompt, write the result into subject_thread if non-nil, and copy any existing auto-followup messages from brain-chat:<session>:auto-followup into the correct decision-* thread.",
+      "id": "P3",
+      "tasks": [
+        {
+          "adapter": "brain-infra/src/bin/backfill_subject_threads.rs",
+          "depends_on": [
+            "P1.3"
+          ],
+          "description": "Write a CLI subcommand or standalone Rust binary (brain-infra/src/bin/backfill_subject_threads.rs) that: (1) iterates all dispatch records in the store, (2) calls SubjectThreadDeriver::derive on each prompt, (3) sets subject_thread = Some(result) where currently None and derivation succeeds, (4) persists the updated record. Dry-run flag required. Done: dry-run prints expected changes; live run mutates store; idempotent on re-run.",
+          "done_condition": "binary compiles; dry-run output lists dispatches that would be updated; live run is idempotent",
+          "id": "P3.1",
+          "port": "SubjectThreadDeriver",
+          "status": "failed",
+          "status_note": "False done marker — no backfill binary exists. Find . -name 'backfill_subject*' returns zero hits.",
+          "title": "Write backfill script: derive + stamp subject_thread on existing dispatches",
+          "type": "transform"
+        },
+        {
+          "adapter": "brain-infra/src/bin/backfill_subject_threads.rs",
+          "depends_on": [
+            "P3.1",
+            "P2.2"
+          ],
+          "description": "Extend the backfill binary (or add a second pass) that: (1) for each dispatch with a now-resolved subject_thread, reads messages from brain-chat:<session>:auto-followup, (2) appends them to the subject thread with a header '--- backfilled from <session-thread> ---', (3) does NOT delete the originals (non-destructive). Done: messages appear in subject thread after run; originals intact.",
+          "done_condition": "backfill run results in messages appearing in target decision-* thread; source auto-followup thread unchanged",
+          "id": "P3.2",
+          "port": "BrainProgressStreamer",
+          "status": "blocked",
+          "status_note": "Blocked on P1.x/P2.x/P3.1 — backfill needs a subject_thread field to backfill into and a derivation fn to call. Neither exists. Auto-followup repeatedly fires this task; that loop is the symptom, not the bug.",
+          "title": "Write backfill script: copy auto-followup messages to subject threads",
+          "type": "transform"
+        },
+        {
+          "adapter": "CLAUDE.md",
+          "depends_on": [
+            "P3.2"
+          ],
+          "description": "In CLAUDE.md, add a section under the brain-dispatch or worker-dispatch heading explaining: (1) subject_thread derivation rules (ADR, wp+phase+task, wp-only, fallback), (2) where to find worker progress for a given ADR or workplan, (3) cross-post format in the session thread, (4) backfill tool usage. Done: grep -n 'subject_thread' CLAUDE.md returns at least 3 hits.",
+          "done_condition": "grep -n 'subject_thread' CLAUDE.md returns >= 3 hits; section is coherent prose",
+          "id": "P3.3",
+          "port": "docs",
+          "status": "blocked",
+          "status_note": "Blocked — depends on P3.2 which depends on a non-existent code path. Grep -n 'subject_thread' CLAUDE.md returns 0 hits, contradicting the false done marker.",
+          "title": "Update CLAUDE.md: document subject-thread routing behaviour",
+          "type": "transform"
+        }
+      ],
+      "title": "Backfill existing dispatches"
+    }
+  ],
+  "saved_at": "docs/workplans/wp-subject-threading-for-dispatches.json",
+  "status_note": "2026-05-05: false 'done' markers cleared. No code corresponds to P1.x/P2.1/P3.x — workplan paths reference a fictional 'brain-infra' crate (real code is in hex-nexus/src/orchestration/). Commit 93368fc8 (per-decision threading) superseded this design with an operator-side stable-thread-key approach (POST /api/brain/threads/by-key/{key}) instead of dispatch-side derivation+routing. Needs re-planning against actual architecture: derive subject thread inside hex-nexus/src/orchestration/brain_dispatch_reconciler.rs and brain_progress_streamer.rs, mirroring the TS decisionThreadKey() in hex-nexus/assets/src/components/views/Brain.tsx so dashboard clicks and worker output land in the same decision-<subject> thread.",
+  "title": "Route auto-followup worker dispatches to per-subject decision threads",
+  "total_tasks": 9
+}
