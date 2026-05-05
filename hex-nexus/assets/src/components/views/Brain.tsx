@@ -651,7 +651,7 @@ const DecisionsPanel: Component<{
                 </Show>
                 <span class="text-[10px] text-gray-400 flex-shrink-0">{ageShort(item.ageSeconds)}</span>
                 <Show when={item.kind === "blocked_task"}>
-                  <span class="flex gap-1 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
+                  <span class="flex gap-1 opacity-50 group-hover:opacity-100 transition flex-shrink-0">
                     <button
                       type="button"
                       onClick={(e) => resolveBlocked(item.id, "unblock", e)}
@@ -673,7 +673,7 @@ const DecisionsPanel: Component<{
                   </span>
                 </Show>
                 <Show when={item.kind === "proposed_adr"}>
-                  <span class="flex gap-1 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
+                  <span class="flex gap-1 opacity-50 group-hover:opacity-100 transition flex-shrink-0">
                     <button
                       type="button"
                       onClick={(e) => resolveAdr(item.id, "accept", e)}
@@ -2414,7 +2414,7 @@ const Brain: Component = () => {
           <KanbanLanes swarms={swarms} onSendToChat={sendToChat} onTaskMoved={refresh} />
           <div class="grid grid-cols-2 gap-4">
             <SwarmsPanel swarms={swarms} projectName={projectName} />
-            <HealthPanel improver={improver} swarmCount={() => swarms().length} />
+            <HealthPanel improver={improver} swarmCount={() => swarmsAll().length} />
           </div>
         </div>
 

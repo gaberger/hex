@@ -132,7 +132,7 @@ pub async fn resolve_decision(
 ///
 /// Writes via std::fs — no SafeFileWriter here because workplan JSONs are
 /// not on the critical-paths list (operator-curated artifacts).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct ResolveBlockedTaskRequest {
     pub id: String,
     pub action: String,
@@ -243,7 +243,7 @@ pub async fn resolve_blocked_task(
 ///   - abandon  → "**Status:** Abandoned"
 /// Once flipped, the ADR no longer matches the "Proposed" filter in the
 /// decisions aggregator, so it disappears from the list on next refresh.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct ResolveAdrRequest {
     pub id: String,
     pub action: String,

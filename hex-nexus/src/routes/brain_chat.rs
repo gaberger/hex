@@ -843,6 +843,36 @@ pub async fn dispatch_brain_chat(
     let mut enqueued: Vec<Value> = Vec::new();
     let mut auto_followup_id: Option<String> = None;
     let mut auto_followup_summary: Option<String> = None;
+    let mut auto_resolved: Vec<(String, String, String)> = Vec::new(); // (kind, id, action)
+
+    // AUTO-RESOLVE DECISIONS: if the agent's reply contains a clear
+    // accept/reject/abandon verdict on an ADR mentioned in the operator's
+    // message, call the matching resolve endpoint right here so the
+    // operator doesn't have to remember to click anything in the panel.
+    // Only fires at depth=0 (operator-initiated). Conservative — requires
+    // unambiguous verdict phrasing AND a single ADR target.
+    if depth == 0 {
+        for (kind, id, action) in detect_decision_verdicts(&req.message, &content) {
+            let payload = serde_json::json!({"id": id, "action": action,
+                "note": format!("Auto-applied from @{} chat verdict", req.role)});
+            let res = match kind.as_str() {
+                "adr" => crate::routes::decisions::resolve_adr(
+                    State(inner_state.0.clone()),
+                    Json(serde_json::from_value(payload).unwrap_or_default()),
+                ).await,
+                "blocked-task" => crate::routes::decisions::resolve_blocked_task(
+                    State(inner_state.0.clone()),
+                    Json(serde_json::from_value(payload).unwrap_or_default()),
+                ).await,
+                _ => continue,
+            };
+            if res.0 == StatusCode::OK {
+                auto_resolved.push((kind, id, action));
+            } else {
+                warn!("auto-resolve failed for {} {}: {:?}", kind, id, res.1.0);
+            }
+        }
+    }
 
     // AUTO-FOLLOWUP: when the agent's reply identifies specific open phases
     // of an ADR or workplan ("Phases 3-5 remaining", "Phase 2 still pending"),
@@ -892,19 +922,31 @@ pub async fn dispatch_brain_chat(
                     .await;
                 match create_res {
                     Ok(()) => {
-                        // Immediately gate the task to PendingReview so no
-                        // worker can auto-claim. Operator approves via the
-                        // BrainDispatchesPanel button or by replying with
-                        // "approve <id>" in chat. Best-effort — if the gate
-                        // call fails (race with claim), the task runs as
-                        // normal Pending which is the existing behavior.
-                        if let Err(e) = port.inference_task_gate(&task_id, &timestamp).await {
-                            warn!("auto-followup gate failed (task will run as Pending): {}", e);
-                        }
+                        // GATE ONLY HIGH-RISK followups. Trivial work (docs,
+                        // ADR comments, non-critical paths) goes straight to
+                        // Pending so hex-coder picks up immediately — keeps
+                        // the chat-driven flow snappy. Critical paths
+                        // (sched.rs, main.rs, etc. — see is_critical_path)
+                        // and explicit operator-write language ("delete",
+                        // "drop table", etc.) stay gated.
+                        let needs_gate = mentions_critical_path(&prompt)
+                            || ["delete ", "drop table", "force-push", "rm -rf"]
+                                .iter()
+                                .any(|p| prompt.to_ascii_lowercase().contains(p));
+                        let final_status = if needs_gate {
+                            if let Err(e) = port.inference_task_gate(&task_id, &timestamp).await {
+                                warn!("auto-followup gate failed (will run as Pending): {}", e);
+                                "pending"
+                            } else {
+                                "pending_review"
+                            }
+                        } else {
+                            "pending"
+                        };
                         enqueued.push(json!({
                             "id": task_id.clone(),
                             "role": "hex-coder",
-                            "status": "pending_review",
+                            "status": final_status,
                             "kind": "auto-followup",
                             "subject": subject,
                             "summary": summary.clone(),
@@ -927,6 +969,36 @@ pub async fn dispatch_brain_chat(
     // reading the chat doesn't connect "good analysis" with "work
     // happening". Format is markdown blockquote so it renders distinctly
     // from the agent's own voice.
+    // Append auto-resolution footer FIRST (before the auto-followup one) —
+    // the operator wants to see "✓ I closed this for you" before "🛡 here's
+    // the next step gated for your approval".
+    let content = if !auto_resolved.is_empty() {
+        let mut footer = String::from("\n\n> **✓ Auto-applied to your decision:**");
+        for (kind, id, action) in &auto_resolved {
+            let display_id = id.split(':').next_back().unwrap_or(id);
+            let display_id = if display_id.len() > 30 {
+                format!("{}…", &display_id[..30])
+            } else { display_id.to_string() };
+            footer.push_str(&format!(
+                "\n> · `{}` → **{}** (was {})",
+                display_id,
+                match action.as_str() {
+                    "accept" => "Accepted",
+                    "reject" => "Rejected",
+                    "abandon" => "Abandoned",
+                    "complete" => "Done",
+                    "unblock" => "Unblocked",
+                    o => o,
+                },
+                kind,
+            ));
+        }
+        footer.push_str("\n> The Decisions Needed panel will drop this on next refresh. Reply `revert <id>` if this was wrong.");
+        format!("{}{}", content, footer)
+    } else {
+        content
+    };
+
     let content = if let (Some(id), Some(summary)) = (auto_followup_id.as_ref(), auto_followup_summary.as_ref()) {
         let short_id = &id[..id.len().min(8)];
         let short_summary = if summary.len() > 140 {
@@ -934,10 +1006,20 @@ pub async fn dispatch_brain_chat(
         } else {
             summary.clone()
         };
-        format!(
-            "{}\n\n> **🛡 Auto-followup gated** — hex-coder dispatch `{}` is **awaiting your approval**: {}\n> **To approve**, click the green Approve button in the Brain Dispatches panel, OR reply in this thread with `approve {}`. The worker won't run until you do. Auto-reconciler will close the matching workplan task on completion.",
-            content, short_id, short_summary, short_id
-        )
+        let was_gated = enqueued.iter().any(|e|
+            e.get("kind").and_then(|v| v.as_str()) == Some("auto-followup")
+            && e.get("status").and_then(|v| v.as_str()) == Some("pending_review"));
+        if was_gated {
+            format!(
+                "{}\n\n> **🛡 Auto-followup gated** — hex-coder dispatch `{}` touches a critical path and is **awaiting your approval**: {}\n> Reply `approve {}` (or click Approve in the Dispatches panel) to release the worker.",
+                content, short_id, short_summary, short_id
+            )
+        } else {
+            format!(
+                "{}\n\n> **🤖 Auto-followup queued** — hex-coder dispatch `{}` will be claimed within ~10s: {}\n> Watch the thread for `▶ claimed` → `· tool calls` → `✓ finished`. Reply `cancel {}` to stop it before it claims.",
+                content, short_id, short_summary, short_id
+            )
+        }
     } else {
         content
     };
@@ -1270,6 +1352,165 @@ pub async fn list_brain_dispatches(
             Json(json!({ "error": format!("inference_task_list_all: {}", e) })),
         ),
     }
+}
+
+/// Detect clear verdicts in an agent's reply on ADRs/blocked-tasks named in
+/// the operator's message. Returns (kind, id, action) tuples that map 1:1
+/// to the existing resolve endpoints:
+///   ("adr", "adr:ADR-XXX-...", "accept" | "reject" | "abandon")
+///   ("blocked-task", "blocked:wp-foo:P1.1", "complete" | "unblock" | "abandon")
+///
+/// Conservative: only fires when ALL of the following hold:
+///   1. The operator's message references exactly one subject (one ADR id
+///      OR one blocked-task id).
+///   2. The agent's reply contains an unambiguous verdict line — e.g.
+///      "Recommend: Accept" or "should be Accepted" — without a negation
+///      ("should NOT") in the same line.
+///   3. No conflicting verdict appears elsewhere in the reply.
+///
+/// False negatives (verdict missed) are safe — the existing manual
+/// resolve buttons still work. False positives (acting on the wrong
+/// verdict) are more harmful — hence the strict matching.
+fn detect_decision_verdicts(operator_msg: &str, agent_reply: &str) -> Vec<(String, String, String)> {
+    let mut out: Vec<(String, String, String)> = Vec::new();
+
+    // Step 1: extract candidate subjects from the operator's message.
+    // Preserve original casing for ADR ids — resolve_adr looks up the
+    // file by exact name in docs/adrs/. Slug case matters (the on-disk
+    // file is e.g. "ADR-XXX-hex-native-filesystem.md" — uppercasing the
+    // whole thing breaks the lookup).
+    let mut adr_ids: Vec<String> = Vec::new();
+    let mut wp_pairs: Vec<(String, String)> = Vec::new();
+    for tok in operator_msg.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '`' | '"' | '\'' | '(' | ')' | '?')) {
+        let cleaned = tok.trim_matches(|c: char| matches!(c, '.' | ',' | ':' | '!' | '?'));
+        if cleaned.len() > 4 && cleaned.to_ascii_lowercase().starts_with("adr-") {
+            // Normalize prefix to "ADR-" (uppercase) but keep the rest as-is
+            // so the slug matches the on-disk filename.
+            let stem = cleaned.trim_end_matches(".md");
+            let normalized = format!("ADR-{}", &stem[4..]);
+            if !adr_ids.contains(&normalized) {
+                adr_ids.push(normalized);
+            }
+        }
+    }
+    // Same parser used elsewhere — inline lightweight version here so we
+    // don't depend on the brain_dispatch_reconciler module's parser.
+    for tok in operator_msg.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '`' | '"' | '\'' | '(' | ')' | '?')) {
+        let cleaned = tok.trim_matches(|c: char| matches!(c, '.' | ',' | ':' | '!' | '?'));
+        if cleaned.len() < 5 { continue; }
+        let lo = cleaned.to_ascii_lowercase();
+        if !lo.starts_with("wp-") { continue; }
+        // Find an adjacent P-ref token in the rest of the message (cheap scan)
+        for ptok in operator_msg.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '`' | '"' | '\'' | '(' | ')' | '?')) {
+            let pcleaned = ptok.trim_matches(|c: char| matches!(c, '.' | ',' | ':' | '!' | '?'));
+            let plo = pcleaned.to_ascii_lowercase();
+            if plo.len() < 2 || !plo.starts_with('p') { continue; }
+            let rest = &plo[1..];
+            if !rest.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) { continue; }
+            if !rest.chars().all(|c| c.is_ascii_digit() || c == '.') { continue; }
+            let pair: (String, String) = (lo.clone(), format!("P{}", rest));
+            if !wp_pairs.contains(&pair) {
+                wp_pairs.push(pair);
+            }
+        }
+    }
+
+    if adr_ids.len() + wp_pairs.len() == 0 { return out; }
+
+    let lower_reply = agent_reply.to_ascii_lowercase();
+
+    // Detect any negation on a verdict line ("should NOT be accepted") — if
+    // present, skip the line. Also skip lines starting with > (quoted) or
+    // inside fenced code blocks. Simple line-by-line scan.
+    let detect_verdict = |reply_lower: &str, accept_pats: &[&str], reject_pats: &[&str], abandon_pats: &[&str]| -> Option<&'static str> {
+        let mut accept_hits = 0;
+        let mut reject_hits = 0;
+        let mut abandon_hits = 0;
+        let mut in_code = false;
+        for line in reply_lower.lines() {
+            let t = line.trim_start();
+            if t.starts_with("```") { in_code = !in_code; continue; }
+            if in_code { continue; }
+            // Skip lines saying "should not be X" / "do not X" / "no X needed"
+            if t.contains("should not")
+                || t.contains("do not")
+                || t.contains("don't")
+                || t.contains("not warranted")
+                || t.contains("not needed")
+                || t.contains("would be premature")
+            { continue; }
+            if accept_pats.iter().any(|p| t.contains(p)) { accept_hits += 1; }
+            if reject_pats.iter().any(|p| t.contains(p)) { reject_hits += 1; }
+            if abandon_pats.iter().any(|p| t.contains(p)) { abandon_hits += 1; }
+        }
+        // Single dominant verdict — return only if exactly one type fired.
+        let total = accept_hits + reject_hits + abandon_hits;
+        if total == 0 { return None; }
+        if accept_hits > 0 && reject_hits == 0 && abandon_hits == 0 { return Some("accept"); }
+        if reject_hits > 0 && accept_hits == 0 && abandon_hits == 0 { return Some("reject"); }
+        if abandon_hits > 0 && accept_hits == 0 && reject_hits == 0 { return Some("abandon"); }
+        None
+    };
+
+    // ADR verdicts
+    if adr_ids.len() == 1 {
+        let normalized_id = format!("adr:{}", adr_ids[0]);
+        let verdict = detect_verdict(
+            &lower_reply,
+            &["recommend: accept", "should be accepted", "remain accepted",
+              "stays accepted", "accept it", "approve as is", "ratify"],
+            &["recommend: reject", "should be rejected", "reject it", "decline"],
+            &["recommend: abandon", "should be abandoned", "abandon it", "should be closed",
+              "should be deprecated", "should be superseded"],
+        );
+        if let Some(action) = verdict {
+            // Skip "remain accepted" cases — the ADR is ALREADY accepted, no
+            // resolve action would change anything. resolve_adr looks for a
+            // "Status: Proposed" line; if status is already Accepted, the
+            // call returns 404 / no-op, but it's noise to make the call.
+            // Heuristic: only fire if the reply ALSO says the ADR is
+            // currently Proposed (i.e. there's an action to take).
+            let reply_says_proposed = lower_reply.contains("status: proposed")
+                || lower_reply.contains("currently proposed")
+                || lower_reply.contains("in proposed")
+                || lower_reply.contains("status set to proposed");
+            // For accept: only act if currently Proposed. For reject/abandon:
+            // act regardless (operator wants to close even if Accepted).
+            if action == "accept" && !reply_says_proposed {
+                // No-op: avoid the noisy "no Status: Proposed line" 404.
+            } else {
+                out.push(("adr".to_string(), normalized_id, action.to_string()));
+            }
+        }
+    }
+
+    // Blocked-task verdicts (single-target only)
+    if wp_pairs.len() == 1 {
+        let (wp, task) = &wp_pairs[0];
+        let id = format!("blocked:{}:{}", wp, task.to_uppercase());
+        let verdict = detect_verdict(
+            &lower_reply,
+            // "complete" maps to action="complete" (mark done)
+            &["mark it done", "mark this done", "task is complete", "task is done",
+              "should be marked done", "is finished", "is complete"],
+            // No "reject" for blocked-task — closest is "abandon".
+            &[],
+            &["should be abandoned", "abandon this task", "won't be done",
+              "no longer needed", "out of scope"],
+        );
+        if let Some(action) = verdict {
+            // Tasks need a remap: detect_verdict returns "accept"/"reject"/"abandon"
+            // but blocked-task expects "complete"/"unblock"/"abandon".
+            let mapped = match action {
+                "accept" => "complete",
+                "reject" => "abandon",
+                _ => action,
+            };
+            out.push(("blocked-task".to_string(), id, mapped.to_string()));
+        }
+    }
+
+    out
 }
 
 /// Detect when an agent reply is naming OPEN work on an ADR or workplan

@@ -2,13 +2,13 @@
 
 **Phase:** P1 of [ADR-2604111229](../adrs/ADR-2604111229-algebraic-formalization-of-process-flow.md)
 **Source of truth:** `hex-core/src/ports/*.rs`
-**Last verified against source:** 2026-04-12
+**Last verified against source:** 2026-05-04
 
 ---
 
 ## Overview
 
-hex's 10 port traits form an **algebraic signature** Sigma. Each port is a
+hex's 12 port traits form an **algebraic signature** Sigma. Each port is a
 sort in the signature; each trait method is an operation symbol with a typed
 arity. A program in hex layer L is a term in the free algebra `T(Sigma_L)` --
 it can only reference operations from the sub-signature visible to its layer.
@@ -19,7 +19,7 @@ operations become real side effects. Every adapter is a partial interpretation
 of this morphism: `FileSystemAdapter` interprets `Sigma_fs`, `OllamaInferenceAdapter`
 interprets `Sigma_inf`, and so on.
 
-This document enumerates all 10 ports, 43 operations, and their type
+This document enumerates all 12 ports, 63 operations, and their type
 signatures, then defines the layer visibility rules as sub-signature
 inclusions.
 
@@ -284,6 +284,62 @@ The simplest port in the signature -- a single pure guard function. Its algebrai
 
 ---
 
+## Sigma_consolidate -- IConsolidationMemoryPort
+
+**Source:** `hex-core/src/ports/consolidation_memory.rs`
+**Effect class:** Persistent episodic store + knowledge-graph queries (network/disk depending on adapter)
+**Error type (bottom):** `ConsolidationError`
+
+| #  | Operation | Signature | Effect |
+|----|-----------|-----------|--------|
+| 1  | `remember` | `content: &str x namespace: &str -> Result<EpisodeId, ConsolidationError>` | Write (episodic) |
+| 2  | `recall` | `query: &str x namespaces: &[String] x limit: u32 -> Result<Vec<Episode>, ConsolidationError>` | Read (episodic) |
+| 3  | `forget` | `about: &str x namespaces: &[String] -> Result<u32, ConsolidationError>` | Delete (episodic) |
+| 4  | `consolidate` | `namespaces: &[String] -> Result<ConsolidationReport, ConsolidationError>` | Compute + write (idempotent) |
+| 5  | `query_facts` | `query: &str x namespace: &str -> Result<Vec<Fact>, ConsolidationError>` | Read (knowledge graph) |
+| 6  | `query_relationships` | `entity: &str x namespace: &str -> Result<Vec<Relationship>, ConsolidationError>` | Read (knowledge graph) |
+| 7  | `list_contradictions` | `namespace: &str -> Result<Vec<Contradiction>, ConsolidationError>` | Read |
+| 8  | `resolve_contradiction` | `id: &str x resolution: &str -> Result<(), ConsolidationError>` | Write |
+| 9  | `trace_causal_chain` | `fact_id: &str x direction: CausalDirection x max_depth: u8 -> Result<CausalChain, ConsolidationError>` | Read (graph traversal) |
+
+**Error variants:** `NotFound`, `Backend`, `NotImplemented` (the noop fallback returns `NotImplemented` for every op)
+
+**Invariants:**
+- `consolidate` is **idempotent** -- only processes new data since last run (matches stash's `internal/brain/consolidate.go` behavior)
+- `recall(remember(c, ns))` retrieves the episode containing `c` within namespace `ns` (write-read coherence, modulo similarity ranking)
+- The port lives **alongside** `IHexFloMemoryStatePort` (KV coordination memory), not inside it -- consolidation is episodic + derived knowledge, coordination is mutable shared state (ADR-2604261430)
+
+---
+
+## Sigma_exp -- IExperimentPort
+
+**Source:** `hex-core/src/ports/experiment.rs`
+**Effect class:** CRUD over experimental loop entities (Objective / Hypothesis / Verdict)
+**Error type (bottom):** `ExperimentError`
+
+| #  | Operation | Signature | Effect |
+|----|-----------|-----------|--------|
+| 1  | `objective_create` | `project_id: &str x obj: Objective -> Result<ObjectiveId, ExperimentError>` | Write |
+| 2  | `objective_get` | `id: &ObjectiveId -> Result<Option<Objective>, ExperimentError>` | Read |
+| 3  | `objective_list` | `project_id: &str -> Result<Vec<Objective>, ExperimentError>` | Read |
+| 4  | `objective_update_status` | `id: &ObjectiveId x status: ObjectiveStatus -> Result<(), ExperimentError>` | Write (state transition) |
+| 5  | `hypothesis_create` | `project_id: &str x h: Hypothesis -> Result<HypothesisId, ExperimentError>` | Write |
+| 6  | `hypothesis_get` | `id: &HypothesisId -> Result<Option<Hypothesis>, ExperimentError>` | Read |
+| 7  | `hypothesis_list_for_objective` | `target: &ObjectiveId -> Result<Vec<Hypothesis>, ExperimentError>` | Read |
+| 8  | `hypothesis_update_status` | `id: &HypothesisId x status: HypothesisStatus -> Result<(), ExperimentError>` | Write (state transition) |
+| 9  | `verdict_record` | `project_id: &str x v: Verdict -> Result<VerdictId, ExperimentError>` | Write (append-only) |
+| 10 | `verdict_get` | `id: &VerdictId -> Result<Option<Verdict>, ExperimentError>` | Read |
+| 11 | `verdict_list_for_objective` | `obj: &ObjectiveId -> Result<Vec<Verdict>, ExperimentError>` | Read |
+
+**Error variants:** `NotFound`, `Backend`, `InvalidTransition`
+
+**Invariants:**
+- Verdicts are **append-only** -- `verdict_record` never updates an existing row; correction is a new verdict referencing the prior one
+- Status transitions follow an explicit lattice (e.g., `ObjectiveStatus::Open -> InProgress -> Resolved`); illegal jumps return `InvalidTransition` (cross-cuts P5 capability rows -- the lattice is a small effect row)
+- Scoped per-`project_id` -- no cross-project list/get; isolation is a security invariant (ADR-2605021400)
+
+---
+
 ## Layer Visibility (Sub-Signature Inclusions)
 
 The hexagonal boundary rules as sub-signature access control:
@@ -301,7 +357,7 @@ composition-root    Sigma (full signature -- wires everything)
 
 ### Formal Statement
 
-Let `Sigma = Sigma_fs + Sigma_inf + Sigma_coord + Sigma_enf + Sigma_secret + Sigma_brain + Sigma_build + Sigma_sandbox + Sigma_agent + Sigma_ctx` be the coproduct of all port signatures.
+Let `Sigma = Sigma_fs + Sigma_inf + Sigma_coord + Sigma_enf + Sigma_secret + Sigma_brain + Sigma_build + Sigma_sandbox + Sigma_agent + Sigma_ctx + Sigma_consolidate + Sigma_exp` be the coproduct of all port signatures.
 
 **Theorem (Hexagonal Containment):** A well-formed hex program in layer `L` is a term `t in T(Sigma_L)`. If `t` contains an operation `op in Sigma_P` where `P` is not in `visible(L)`, then `t` violates the hexagonal boundary.
 
@@ -366,7 +422,9 @@ that agrees on its sub-signature but differs in interpretation.
 | ISandboxPort | Sigma_sandbox | 4 | yes | SandboxError | Container lifecycle |
 | IAgentRuntimePort | Sigma_agent | 2 | yes | SandboxError | Task dispatch |
 | IContextCompressorPort | Sigma_ctx | 2 | no | (infallible) | Pure |
-| **Total** | **Sigma** | **43** | | | |
+| IConsolidationMemoryPort | Sigma_consolidate | 9 | yes | ConsolidationError | Episodic store + KG |
+| IExperimentPort | Sigma_exp | 11 | yes | ExperimentError | Experimental-loop CRUD |
+| **Total** | **Sigma** | **63** | | | |
 
 ---
 
