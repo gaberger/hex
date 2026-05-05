@@ -4,8 +4,18 @@ status: accepted
 date: 2026-03-22
 supersedes: []
 superseded_by: null
-depends_on: []
-components: []
+depends_on:
+  - ADR-025
+  - ADR-027
+  - ADR-044
+  - ADR-045
+  - ADR-2604112000
+components:
+  - hex-nexus
+  - hex-cli
+  - hex-agent
+  - hex-dashboard
+  - spacetimedb
 modules: []
 ---
 
@@ -213,3 +223,4 @@ This format gives AI agents the key facts in ~100 tokens, with structured sectio
 - ADR-044 (Config Sync) — documents sync behavior
 - ADR-025 (SpacetimeDB State Backend) — foundational component documentation
 - ADR-027 (HexFlo Swarm Coordination) — coordination layer documentation
+- ADR-2604112000 (hex Standalone Dispatch) — standalone-mode variant documented in `docs/reference/system-architecture.md`
