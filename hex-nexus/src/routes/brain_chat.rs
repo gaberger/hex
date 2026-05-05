@@ -454,6 +454,109 @@ pub async fn dispatch_brain_chat(
         }
     }
 
+    // DETERMINISTIC FILE-WRITE FAST PATH: "Write <path> with the following
+    // (exact )?content:\n\n<content>". When the operator's message is a
+    // verbatim file-write intent, skip the LLM entirely and execute as a
+    // server-side write. No tokens spent, no recursive children spawned,
+    // no auto-followup. Critical-path gating still applies — writes to
+    // sched.rs / main.rs / etc. are rejected even from this fast path.
+    //
+    // Recognized patterns (case-insensitive trigger phrase, exact content
+    // after the first blank line):
+    //   "write <path> with the following exact content:\n\n<content>"
+    //   "write <path> with the following content:\n\n<content>"
+    //   "create the file <path> with the following content:\n\n<content>"
+    //   "save the following to <path>:\n\n<content>"
+    //
+    // Path must be under the resolved project root (canonicalize +
+    // prefix-check) — same safety as prefetch_files_in_message.
+    if let Some((target_path, content)) = parse_write_intent(&req.message) {
+        let root_str: Option<String> = match req.project_id.as_deref() {
+            Some(id) if !id.is_empty() && id != "__global__" => {
+                if let Some(port) = state.0.state_port.as_ref() {
+                    port.project_get(id).await.ok().flatten().map(|p| p.root_path)
+                } else { None }
+            }
+            _ => std::env::current_dir().ok().map(|p| p.display().to_string()),
+        };
+        let root_str = root_str.unwrap_or_else(|| ".".to_string());
+        let root = match std::path::PathBuf::from(&root_str).canonicalize() {
+            Ok(p) => p,
+            Err(e) => return (
+                StatusCode::OK,
+                Json(json!({
+                    "role": "system",
+                    "model": "write-fastpath",
+                    "content": format!("✗ project root resolve failed: {}", e),
+                })),
+            ),
+        };
+        let abs_target: std::path::PathBuf = if std::path::Path::new(&target_path).is_absolute() {
+            std::path::PathBuf::from(&target_path)
+        } else {
+            root.join(&target_path)
+        };
+        // Verify within project root via parent canonicalize (the file may not
+        // exist yet, so we canonicalize the parent dir).
+        let parent = abs_target.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| root.clone());
+        let parent_canon = match parent.canonicalize() {
+            Ok(p) => p,
+            Err(_) => {
+                // parent missing — try to create
+                if let Err(e) = std::fs::create_dir_all(&parent) {
+                    return (StatusCode::OK, Json(json!({
+                        "role": "system", "model": "write-fastpath",
+                        "content": format!("✗ create parent dir failed: {} ({})", parent.display(), e),
+                    })));
+                }
+                parent.canonicalize().unwrap_or(parent)
+            }
+        };
+        if !parent_canon.starts_with(&root) {
+            return (StatusCode::OK, Json(json!({
+                "role": "system", "model": "write-fastpath",
+                "content": format!("✗ refused: path `{}` is outside project root `{}`",
+                    target_path, root.display()),
+            })));
+        }
+        // Critical-path gate: reuse the same domain rule as the SafeFileWriter.
+        let rel_path = abs_target.strip_prefix(&root).unwrap_or(&abs_target).display().to_string();
+        if hex_core::domain::validation::is_critical_path(&rel_path)
+            || hex_core::domain::validation::is_critical_path(&target_path)
+        {
+            return (StatusCode::OK, Json(json!({
+                "role": "system", "model": "write-fastpath",
+                "content": format!("✗ refused: `{}` is on the critical-path list (sched.rs / main.rs / workplan_executor.rs / etc.). Use the worker dispatch path with explicit operator approval.",
+                    target_path),
+            })));
+        }
+        // Cap content size at 256KB so a malformed paste doesn't fill disk.
+        if content.len() > 256 * 1024 {
+            return (StatusCode::OK, Json(json!({
+                "role": "system", "model": "write-fastpath",
+                "content": format!("✗ refused: content size {} bytes exceeds 256KB cap", content.len()),
+            })));
+        }
+        match std::fs::write(&abs_target, &content) {
+            Ok(()) => {
+                let bytes = content.len();
+                let preview: String = content.lines().take(5).collect::<Vec<_>>().join("\n");
+                return (StatusCode::OK, Json(json!({
+                    "role": "system",
+                    "model": "write-fastpath",
+                    "content": format!(
+                        "✓ Wrote `{}` ({} bytes). Deterministic fast path — no LLM tokens spent, no worker dispatched.\n\nFirst 5 lines:\n```\n{}\n```",
+                        rel_path, bytes, preview
+                    ),
+                })));
+            }
+            Err(e) => return (StatusCode::OK, Json(json!({
+                "role": "system", "model": "write-fastpath",
+                "content": format!("✗ write failed for `{}`: {}", rel_path, e),
+            }))),
+        }
+    }
+
     let Some(persona) = load_persona(&req.role) else {
         return (
             StatusCode::NOT_FOUND,
@@ -1400,6 +1503,113 @@ pub async fn promote_brain_dispatch(
             Json(json!({ "error": format!("promote: {}", e) })),
         ),
     }
+}
+
+/// Parse a chat message for a verbatim file-write intent. Returns
+/// `Some((relative_or_absolute_path, content))` on a clean match, None
+/// otherwise. Trigger phrases (case-insensitive):
+///   "Write <path> with the following [exact ]content:" + blank line + body
+///   "Create the file <path> with the following content:" + blank line + body
+///   "Save the following to <path>:" + blank line + body
+///
+/// Path is extracted from a backtick-quoted token (`docs/foo.json`) OR the
+/// first whitespace-delimited word that contains '/' or ends in a known
+/// extension. Body starts AFTER the first blank line and runs to the end of
+/// the message (or until a closing fence in the case of a fenced code block,
+/// to allow trailing operator instructions).
+fn parse_write_intent(msg: &str) -> Option<(String, String)> {
+    let lower = msg.to_ascii_lowercase();
+    let triggers = [
+        "write ", // "Write <path> with the following content:"
+        "create the file ",
+        "save the following to ",
+        "save to ",
+    ];
+    if !triggers.iter().any(|t| lower.contains(t)) { return None; }
+    // Look for the marker line ending in "following content:" or "to <path>:" + blank line
+    let body_split: Vec<&str> = msg.splitn(2, "\n\n").collect();
+    if body_split.len() < 2 { return None; }
+    let header = body_split[0];
+    let mut body = body_split[1].to_string();
+    let header_lower = header.to_ascii_lowercase();
+    let has_write_marker = header_lower.contains("with the following content:")
+        || header_lower.contains("with the following exact content:")
+        || header_lower.contains("save the following to")
+        || header_lower.contains("save to");
+    if !has_write_marker { return None; }
+
+    // Extract path. Prefer backtick-quoted; fall back to first /-containing token.
+    let path: Option<String> = {
+        let mut found: Option<String> = None;
+        // Backtick path
+        if let Some(start) = header.find('`') {
+            if let Some(end_off) = header[start + 1..].find('`') {
+                let candidate = &header[start + 1..start + 1 + end_off];
+                if !candidate.is_empty() && candidate.len() < 256 {
+                    found = Some(candidate.to_string());
+                }
+            }
+        }
+        // Fallback: scan tokens
+        if found.is_none() {
+            for tok in header.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '"' | '\'' | '(' | ')')) {
+                let cleaned = tok.trim_matches(|c: char| matches!(c, '.' | ',' | ':' | '!' | '?' | '`'));
+                if cleaned.is_empty() { continue; }
+                let exts = [".json", ".md", ".rs", ".ts", ".tsx", ".js", ".yml", ".yaml", ".toml", ".sh", ".py", ".html", ".css"];
+                let looks_like_path = cleaned.contains('/')
+                    || exts.iter().any(|e| cleaned.ends_with(e));
+                if looks_like_path && cleaned.len() < 256 {
+                    found = Some(cleaned.to_string());
+                    break;
+                }
+            }
+        }
+        found
+    };
+    let path = path?;
+
+    // Strip a leading fenced code block from the body so operators can paste:
+    //   Write foo.json with the following content:
+    //
+    //   ```json
+    //   { ... }
+    //   ```
+    let trimmed_body = body.trim_start();
+    if let Some(rest) = trimmed_body.strip_prefix("```") {
+        // Skip the language hint line up to the first '\n'
+        if let Some(after_lang) = rest.find('\n') {
+            let inner_start = &rest[after_lang + 1..];
+            // Drop the closing fence ``` (and any trailing chars after)
+            if let Some(end_idx) = inner_start.rfind("```") {
+                body = inner_start[..end_idx].trim_end().to_string();
+            }
+        }
+    } else {
+        // No fence — strip trailing operator-instruction lines that start with
+        // "Confirm" / "After writing" / etc. Best-effort: drop everything from
+        // the FIRST trailing blank-line + Confirm/After/Once line.
+        let lines: Vec<&str> = body.lines().collect();
+        let mut cut: Option<usize> = None;
+        for (i, line) in lines.iter().enumerate() {
+            let lo = line.to_ascii_lowercase();
+            let lo_trim = lo.trim();
+            if lo_trim.starts_with("confirm ") || lo_trim.starts_with("after writing")
+                || lo_trim.starts_with("once written") || lo_trim.starts_with("then ")
+            {
+                cut = Some(i);
+                break;
+            }
+        }
+        if let Some(i) = cut {
+            // Trim trailing blank line(s) before the instruction.
+            let mut j = i;
+            while j > 0 && lines[j - 1].trim().is_empty() { j -= 1; }
+            body = lines[..j].join("\n");
+        }
+    }
+
+    if body.trim().is_empty() { return None; }
+    Some((path, body))
 }
 
 /// GET /api/brain/dispatches — list recent brain-chat dispatches.
