@@ -1025,12 +1025,16 @@ const SwarmsPanel: Component<{
             // STDB stores UUIDs rather than role names. Fallback shows count.
             const focusTitle = focus?.title?.replace(/\s+/g, " ").trim() || "(no tasks)";
             const swarmProjectId = s.projectId || s.project_id || "";
-            const handleSwarmClick = () => {
+            const handleSwarmClick = (e: MouseEvent) => {
+              e.stopPropagation(); // Prevent event bubbling
               // Global swarms (no projectId) use a synthetic "__global__" project ID
               // so they can still use the project-swarm-detail route
               const pid = swarmProjectId || "__global__";
               console.log("Swarm clicked:", { swarmId: s.id, projectId: pid });
-              navigate({ page: "project-swarm-detail", projectId: pid, swarmId: s.id });
+              const newRoute = { page: "project-swarm-detail" as const, projectId: pid, swarmId: s.id };
+              console.log("Navigating to:", newRoute);
+              navigate(newRoute);
+              console.log("Navigate called, current hash:", window.location.hash);
             };
             return (
               <li
@@ -1594,6 +1598,63 @@ const SupervisorPanel: Component = () => {
           no pools defined — <code class="text-cyan-400">hex pool create</code>
         </div>
       </Show>
+    </section>
+  );
+};
+
+const VersionPanel: Component = () => {
+  const [commits, setCommits] = createSignal<any[]>([]);
+  const [version, setVersion] = createSignal<string>("");
+
+  onMount(async () => {
+    try {
+      const health = await restClient.get("/api/health");
+      setVersion(health.version || "unknown");
+
+      const log = await restClient.get("/api/git/log?limit=5");
+      setCommits(log.commits || []);
+    } catch (err) {
+      console.error("Failed to fetch version info:", err);
+    }
+  });
+
+  return (
+    <section class="bg-gray-900/50 border border-gray-800 rounded-lg p-3 mb-4">
+      <h3 class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 px-1">Version</h3>
+      <div class="space-y-2">
+        <div class="flex items-center gap-2 text-xs">
+          <span class="text-gray-400">hex</span>
+          <span class="font-mono text-green-400">{version()}</span>
+        </div>
+        <Show when={commits().length > 0}>
+          <div class="border-t border-gray-800 pt-2 space-y-1.5">
+            <For each={commits()}>
+              {(commit) => (
+                <div class="text-[10px]">
+                  <div class="flex items-center gap-2">
+                    <span class="font-mono text-cyan-400" title={commit.hash}>
+                      {(commit.hash || "").slice(0, 7)}
+                    </span>
+                    <span class="text-gray-400 text-[9px]">
+                      {(() => {
+                        const date = new Date(commit.timestamp || commit.date);
+                        const now = Date.now();
+                        const diff = now - date.getTime();
+                        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+                        if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+                        return `${Math.floor(diff / 86400000)}d ago`;
+                      })()}
+                    </span>
+                  </div>
+                  <div class="text-gray-300 truncate pl-0 mt-0.5" title={commit.message}>
+                    {(commit.message || "").split('\n')[0].slice(0, 60)}
+                  </div>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
     </section>
   );
 };
@@ -3158,8 +3219,9 @@ const Brain: Component = () => {
           <KanbanLanes swarms={swarms} onSendToChat={sendToChat} onTaskMoved={refresh} />
           <div class="grid grid-cols-2 gap-4">
             <SwarmsPanel swarms={swarms} projectName={projectName} />
-            <HealthPanel improver={improver} swarmCount={() => swarmsAll().length} />
+            <VersionPanel />
           </div>
+          <HealthPanel improver={improver} swarmCount={() => swarmsAll().length} />
         </div>
 
         <ChatPanel
