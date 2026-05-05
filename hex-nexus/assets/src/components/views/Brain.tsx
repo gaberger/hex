@@ -798,6 +798,29 @@ interface SupervisorEvent {
   handled: boolean;
 }
 
+/// Heuristic: should this agent reply offer a "Convert to workplan" button?
+/// Matches phrasing the agent typically uses when recommending workplan
+/// creation (adr-reviewer especially: "Phases X-Y should be tracked in a
+/// workplan"). False positives are cheap (operator just doesn't click);
+/// false negatives lose the affordance, so we cast a wide net.
+function shouldOfferWorkplanButton(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  const triggers = [
+    "create or update a workplan",
+    "create a workplan",
+    "should be tracked",
+    "follow-up workplan",
+    "open a workplan",
+    "open workplan",
+    "track in a workplan",
+    "tracked as a workplan",
+    "as workplan tasks",
+    "workplan to track",
+  ];
+  return triggers.some((t) => lower.includes(t));
+}
+
 interface BrainDispatch {
   id: string;
   role: string;
@@ -1732,6 +1755,34 @@ const ChatPanel: Component<{
                   <span class="text-[9px] text-gray-300 ml-auto truncate max-w-[160px]" title={msg.model}>
                     {msg.model}
                   </span>
+                </Show>
+                {/* "Convert to workplan" button — surfaces only on agent
+                    replies whose text contains workplan-creation language
+                    ("create or update a workplan", "should be tracked",
+                    "follow-up workplan", etc.). One click writes a draft
+                    JSON to docs/workplans/drafts/ that the planner /
+                    feature-dev workflow can pick up. */}
+                <Show when={!msg.pending && msg.from !== "you" && shouldOfferWorkplanButton(msg.text)}>
+                  <button
+                    type="button"
+                    class="text-[9px] px-1.5 py-0.5 rounded bg-cyan-900 hover:bg-cyan-800 text-cyan-200 ml-1"
+                    title="Create a workplan draft from this reply"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      const titleSeed = msg.text.slice(0, 80).replace(/\n/g, " ");
+                      const title = prompt("Workplan title:", `From @${msg.from}: ${titleSeed}…`);
+                      if (!title) return;
+                      try {
+                        const resp = await restClient.post<{ ok: boolean; draftId: string; path: string }>(
+                          "/api/brain/messages/to-workplan",
+                          { title, prompt: msg.text, source_role: msg.from },
+                        );
+                        alert(`Draft created:\n${resp.path}\n\nRun /hex-feature-dev to expand it.`);
+                      } catch (err) {
+                        alert(`Draft failed: ${err instanceof Error ? err.message : String(err)}`);
+                      }
+                    }}
+                  >📋 →workplan</button>
                 </Show>
               </div>
               {/* Token / cost / context-window meter — shown only on

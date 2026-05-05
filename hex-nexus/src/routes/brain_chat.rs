@@ -132,6 +132,38 @@ fn prefetch_files_in_message(message: &str, project_root: &str) -> Option<String
         // Strip surrounding punctuation: trailing '.' / ',' / ':' / '!' / '?'
         let cleaned = raw.trim_matches(|c: char| matches!(c, '.' | ',' | ':' | '!' | '?' | ']' | '['));
         if cleaned.is_empty() { continue; }
+
+        // Special case: bare ADR-XXX or ADR-XXX-slug references — auto-resolve
+        // to docs/adrs/ADR-XXX*.md by glob. Operators (and agents) commonly
+        // refer to ADRs by id without the path or extension. Matches:
+        //   ADR-047, ADR-2603312340, ADR-047-internal-documentation-system
+        let upper = cleaned.to_ascii_uppercase();
+        if upper.starts_with("ADR-") && upper.len() > 4 {
+            let adrs_dir = canonical_root.join("docs/adrs");
+            if adrs_dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&adrs_dir) {
+                    for ent in entries.flatten() {
+                        let p = ent.path();
+                        let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                        // Case-insensitive prefix match: file starts with cleaned
+                        // (e.g. "ADR-047" matches "ADR-047-internal-...md")
+                        let name_upper = name.to_ascii_uppercase();
+                        let stem = upper.trim_end_matches(".MD");
+                        if name_upper.starts_with(stem)
+                            && name_upper.ends_with(".MD")
+                        {
+                            if let Ok(resolved) = p.canonicalize() {
+                                if resolved.is_file() && seen.insert(resolved.clone()) {
+                                    to_read.push(resolved);
+                                    break; // first match wins per ADR id
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Heuristic: must look like a path — contain '/' OR end with a known ext.
         let looks_like_path = cleaned.contains('/')
             || exts.iter().any(|e| cleaned.ends_with(e));
@@ -920,6 +952,90 @@ fn estimate_cost_usd(model: &str, input_tokens: u64, output_tokens: u64) -> f64 
         (1.0, 3.0) // unknown — modest default
     };
     (input_tokens as f64 * in_per_m + output_tokens as f64 * out_per_m) / 1_000_000.0
+}
+
+/// POST /api/brain/messages/to-workplan — convert an agent reply into a
+/// workplan draft. Body: { "title": "...", "prompt": "...", "source_role": "..." }
+///
+/// Writes a draft JSON to docs/workplans/drafts/draft-<ts>-<slug>.json with
+/// the same shape as `hex plan draft` so /hex-feature-dev / planner can
+/// pick it up. Returns the draft id and path.
+#[derive(Debug, Deserialize)]
+pub struct ToWorkplanRequest {
+    pub title: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub source_role: Option<String>,
+}
+
+pub async fn message_to_workplan(
+    State(_state): State<crate::state::SharedState>,
+    Json(req): Json<ToWorkplanRequest>,
+) -> (StatusCode, Json<Value>) {
+    let title = req.title.trim();
+    let prompt = req.prompt.trim();
+    if title.is_empty() || prompt.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({
+            "error": "title and prompt are required",
+        })));
+    }
+    // Slug: lowercase, non-alnum → '-', collapse runs, cap at 40 chars.
+    let slug: String = title.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+        .chars()
+        .take(40)
+        .collect();
+    let slug = if slug.is_empty() { "from-chat".to_string() } else { slug };
+    let ts = chrono::Local::now().format("%y%m%d%H%M").to_string();
+    let filename = format!("draft-{}-{}.json", ts, slug);
+    let draft_id = format!("draft-{}-{}", ts, slug);
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let dir = cwd.join("docs/workplans/drafts");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+            "error": format!("create drafts dir: {}", e),
+        })));
+    }
+    let path = dir.join(&filename);
+    let draft = json!({
+        "id": draft_id,
+        "kind": "workplan-draft",
+        "status": "pending-planner",
+        "created_at": chrono::Local::now().to_rfc3339(),
+        "origin": "brain-chat-to-workplan",
+        "source_role": req.source_role.unwrap_or_default(),
+        "title": title,
+        "prompt": prompt,
+        "next_steps": [
+            "Run /hex-feature-dev to expand this draft into a full workplan",
+            format!("Or run `hex plan drafts approve {}`", filename),
+            format!("Or run `hex plan drafts clear --name {}`",
+                filename.trim_end_matches(".json")),
+        ],
+        "notes": "Created from a Brain-chat agent reply via the 'Convert to workplan' button. The planner agent expands this stub into phases + tasks when picked up."
+    });
+    let serialized = match serde_json::to_string_pretty(&draft) {
+        Ok(s) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+            "error": format!("serialize draft: {}", e),
+        }))),
+    };
+    if let Err(e) = std::fs::write(&path, serialized) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+            "error": format!("write draft: {}", e),
+        })));
+    }
+    (StatusCode::OK, Json(json!({
+        "ok": true,
+        "draftId": draft_id,
+        "path": path.display().to_string(),
+    })))
 }
 
 /// POST /api/brain/dispatches/{id}/promote — flip PendingReview → Pending.
