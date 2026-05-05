@@ -1127,6 +1127,83 @@ function extractDispatchIds(text: string): string[] {
   return out;
 }
 
+/// Detect (action, adrId) pairs in an agent reply. Returns one entry per
+/// distinct ADR mentioned alongside an unambiguous verdict ("accept it",
+/// "recommend: accept", "should be rejected", "should be abandoned"). Used
+/// to render inline Accept/Reject buttons on chat bubbles so the operator
+/// can act on the verdict without scrolling to the Decisions panel.
+///
+/// Conservative — same negation-aware matcher as the server-side
+/// auto-resolver. False positives would let a bad click flip ADR state
+/// permanently.
+function detectAdrVerdicts(text: string): Array<{ adrId: string; action: "accept" | "reject" | "abandon" }> {
+  if (!text) return [];
+  // Extract ADR ids (preserve case for the slug part).
+  const lower = text.toLowerCase();
+  const adrIds: string[] = [];
+  const seen = new Set<string>();
+  for (const tok of text.split(/[\s,;:`"'()?]+/)) {
+    const cleaned = tok.replace(/[.,:!?]+$/g, "").replace(/\.md$/i, "");
+    if (cleaned.length <= 4) continue;
+    if (!cleaned.toLowerCase().startsWith("adr-")) continue;
+    const norm = `ADR-${cleaned.slice(4)}`;
+    if (!seen.has(norm)) {
+      seen.add(norm);
+      adrIds.push(norm);
+    }
+  }
+  if (adrIds.length === 0) return [];
+
+  // Verdict detection — check each line for accept/reject/abandon patterns,
+  // skipping lines with negation prefixes ("not ready to accept" etc.) and
+  // suppressors ("keep status", "would be premature", "remain in proposed").
+  const accept = ["recommend: accept", "should be accepted", "remain accepted",
+    "stays accepted", "accept it", "approve as is", "ratify", "ready to accept",
+    "good to accept", "ready to be accepted"];
+  const reject = ["recommend: reject", "should be rejected", "reject it", "decline"];
+  const abandon = ["recommend: abandon", "should be abandoned", "abandon it",
+    "should be closed", "should be deprecated", "should be superseded"];
+  const negationPrefixes = [" not ", " n't ", " but not ", " isn't ",
+    " wasn't ", " doesn't ", " don't ", " no ", " never "];
+
+  const hitOnce = (arr: string[]) => {
+    let count = 0;
+    let inCode = false;
+    for (const line of lower.split("\n")) {
+      const t = line.trim();
+      if (t.startsWith("```")) { inCode = !inCode; continue; }
+      if (inCode) continue;
+      if (t.startsWith("> ")) continue;
+      if (t.includes("would be premature") || t.includes("not ready to")
+        || t.includes("not yet ready") || t.includes("keep status")
+        || t.includes("keep as proposed") || t.includes("remain in proposed")) continue;
+      for (const p of arr) {
+        // Walk occurrences and check the char immediately before each
+        // for a negation prefix.
+        let idx = -1;
+        while ((idx = t.indexOf(p, idx + 1)) !== -1) {
+          const before = " " + t.slice(0, idx);
+          if (!negationPrefixes.some((np) => before.endsWith(np))) {
+            count++;
+          }
+        }
+      }
+    }
+    return count;
+  };
+
+  const acceptHits = hitOnce(accept);
+  const rejectHits = hitOnce(reject);
+  const abandonHits = hitOnce(abandon);
+
+  let action: "accept" | "reject" | "abandon" | null = null;
+  if (acceptHits > 0 && rejectHits === 0 && abandonHits === 0) action = "accept";
+  else if (rejectHits > 0 && acceptHits === 0 && abandonHits === 0) action = "reject";
+  else if (abandonHits > 0 && acceptHits === 0 && rejectHits === 0) action = "abandon";
+  if (!action) return [];
+  return adrIds.map((adrId) => ({ adrId, action: action! }));
+}
+
 interface DispatchSource {
   id: string;
   role: string;
@@ -2251,6 +2328,55 @@ const ChatPanel: Component<{
                     >→ source {did}</button>
                   )}
                 </For>
+                {/* Inline verdict buttons — when an agent reply contains
+                    a clear "Accept it" / "Reject" verdict on a named ADR,
+                    render a one-click Accept/Reject pill so the operator
+                    doesn't have to scroll to the Decisions panel. The
+                    server-side auto-resolver may have already fired (and
+                    in that case the resolve will return 404 / no-op
+                    quietly) — these buttons are belt-and-suspenders for
+                    cases where the detector missed. */}
+                <Show when={msg.from !== "you" && !msg.pending}>
+                  <For each={detectAdrVerdicts(msg.text)}>
+                    {(v) => (
+                      <button
+                        type="button"
+                        class={`text-[9px] px-1.5 py-0.5 rounded ml-1 font-semibold ${
+                          v.action === "accept" ? "bg-green-800 hover:bg-green-700 text-green-100"
+                          : v.action === "reject" ? "bg-red-900 hover:bg-red-800 text-red-100"
+                          : "bg-gray-800 hover:bg-gray-700 text-gray-300"
+                        }`}
+                        title={`One-click ${v.action} for ${v.adrId} — flips the ADR's Status field. Confirms first.`}
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const verb = v.action === "accept" ? "Accept" :
+                                       v.action === "reject" ? "Reject" : "Abandon";
+                          if (!confirm(`${verb} ${v.adrId}? This flips the Status line in the ADR file.`)) return;
+                          try {
+                            await restClient.post(`/api/decisions/adr/resolve`, {
+                              id: `adr:${v.adrId}`,
+                              action: v.action,
+                              note: `Inline chat-bubble ${v.action} on @${msg.from}'s verdict`,
+                            });
+                            alert(`✓ ${v.adrId} → ${verb}ed. Decisions panel will drop it on next refresh.`);
+                          } catch (err) {
+                            const msg = err instanceof Error ? err.message : String(err);
+                            // 404 is the expected response when the ADR is
+                            // already in the target state (auto-resolver
+                            // beat us to it). Treat as success.
+                            if (msg.includes("404") || msg.toLowerCase().includes("no 'status: proposed'")) {
+                              alert(`${v.adrId} is already in the target state — no action needed.`);
+                            } else {
+                              alert(`${verb.toLowerCase()} failed: ${msg}`);
+                            }
+                          }
+                        }}
+                      >
+                        {v.action === "accept" ? "✓ Accept" : v.action === "reject" ? "✗ Reject" : "⊘ Abandon"} {v.adrId.replace(/^ADR-/, "")}
+                      </button>
+                    )}
+                  </For>
+                </Show>
                 {/* "Convert to workplan" button — surfaces only on agent
                     replies whose text contains workplan-creation language
                     ("create or update a workplan", "should be tracked",
