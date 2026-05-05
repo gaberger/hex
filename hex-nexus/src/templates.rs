@@ -29,3 +29,16 @@ pub struct HelperTemplates;
 #[folder = "../hex-cli/assets/mcp/"]
 #[prefix = "mcp/"]
 pub struct McpTemplates;
+
+/// Pre-compiled SpacetimeDB WASM modules baked into the nexus binary.
+/// Lets the launcher publish modules at startup WITHOUT requiring `cargo`
+/// or the wasm32-unknown-unknown toolchain on the host. The CI/release
+/// pipeline rebuilds these wasm files from spacetime-modules/<name>/
+/// before nexus is built.
+///
+/// Filenames match the module dir name with `-` replaced by `_`, e.g.
+/// `spacetime-modules/hexflo-coordination/` → `hexflo_coordination.wasm`.
+#[derive(Embed)]
+#[folder = "../hex-cli/assets/wasm/"]
+#[prefix = "wasm/"]
+pub struct WasmModules;

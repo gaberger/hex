@@ -455,43 +455,86 @@ pub async fn start_local(port: u16) -> Result<Child, String> {
 }
 
 /// Publish a WASM module to a SpacetimeDB instance.
+///
+/// Prefers the embedded pre-compiled WASM from `hex-cli/assets/wasm/`
+/// (no cargo / wasm32 target required at runtime). Falls back to
+/// `--module-path` if the embedded asset isn't found — covers operators
+/// developing against a custom module not in the embedded set.
+///
+/// The module name → wasm filename mapping replaces `-` with `_`, matching
+/// cargo's wasm output convention (e.g. `hexflo-coordination` →
+/// `hexflo_coordination.wasm`).
 pub async fn publish_module(
     host: &str,
     database: &str,
     module_path: &Path,
 ) -> Result<String, String> {
-    if !module_path.join("Cargo.toml").exists() {
-        return Err(format!(
-            "No Cargo.toml found at {}",
-            module_path.display()
-        ));
+    // Try embedded WASM first.
+    let module_name = module_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let wasm_filename = format!("wasm/{}.wasm", module_name.replace('-', "_"));
+    if let Some(asset) = crate::templates::WasmModules::get(&wasm_filename) {
+        tracing::info!(
+            host,
+            database,
+            module = module_name,
+            bytes = asset.data.len(),
+            "Publishing SpacetimeDB module from embedded WASM"
+        );
+        // Spill bytes to a temp file because spacetime CLI takes a path.
+        let temp_dir = std::env::temp_dir();
+        let temp_path = temp_dir.join(format!("hex-nexus-{}-{}.wasm",
+            module_name, std::process::id()));
+        if let Err(e) = std::fs::write(&temp_path, &asset.data) {
+            return Err(format!("write embedded wasm to temp: {}", e));
+        }
+        let output = Command::new("spacetime")
+            .arg("publish")
+            .arg("--server").arg(host)
+            .arg(database)
+            .arg("--bin-path").arg(&temp_path)
+            .arg("--delete-data=on-conflict")
+            .arg("--yes")
+            .output()
+            .await
+            .map_err(|e| format!("Failed to publish module: {}", e))?;
+        let _ = std::fs::remove_file(&temp_path);
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("spacetime publish (embedded wasm) failed: {}", stderr));
+        }
+        return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
     }
 
+    // Fallback: build from source via --module-path. Requires cargo + wasm32 target.
+    if !module_path.join("Cargo.toml").exists() {
+        return Err(format!(
+            "No embedded wasm for '{}' AND no Cargo.toml at {}",
+            module_name, module_path.display()
+        ));
+    }
     tracing::info!(
         host,
         database,
         module = %module_path.display(),
-        "Publishing SpacetimeDB module"
+        "Publishing SpacetimeDB module from source (cargo build)"
     );
-
     let output = Command::new("spacetime")
         .arg("publish")
-        .arg("--server")
-        .arg(host)
+        .arg("--server").arg(host)
         .arg(database)
-        .arg("--module-path")
-        .arg(module_path)
+        .arg("--module-path").arg(module_path)
         .arg("--delete-data=on-conflict")
         .arg("--yes")
         .output()
         .await
         .map_err(|e| format!("Failed to publish module: {}", e))?;
-
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("spacetime publish failed: {}", stderr));
     }
-
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
@@ -640,17 +683,21 @@ pub async fn publish_modules_ordered(
 
         for module_name in *tier_modules {
             let module_path = modules_root.join(module_name);
-
-            if !module_path.is_dir() || !module_path.join("Cargo.toml").exists() {
+            // We can publish even when source isn't present, as long as the
+            // embedded wasm exists. publish_module handles both paths.
+            let embedded_filename = format!("wasm/{}.wasm", module_name.replace('-', "_"));
+            let has_embedded = crate::templates::WasmModules::get(&embedded_filename).is_some();
+            let has_source = module_path.is_dir() && module_path.join("Cargo.toml").exists();
+            if !has_embedded && !has_source {
                 tracing::warn!(
                     module = module_name,
                     path = %module_path.display(),
-                    "Module directory not found — skipping"
+                    "Module not embedded AND no source dir — skipping"
                 );
                 tier_result.modules.push(ModulePublishResult {
                     name: module_name.to_string(),
                     status: ModulePublishStatus::Skipped,
-                    error: Some("module directory not found".to_string()),
+                    error: Some("no embedded wasm and no source dir".to_string()),
                 });
                 result.total_skipped += 1;
                 continue;
