@@ -95,6 +95,19 @@ impl BrainDispatchReconciler {
                 continue;
             }
 
+            // BACK-CHANNEL: post the worker's result into the originating
+            // chat thread so the operator sees what hex-coder did. The
+            // workplan_id format is "brain-chat:<thread_id>[:auto-followup]"
+            // — extract the thread id and append a synthetic message.
+            // Failures are silent — the resolve flow continues regardless.
+            if let Some(thread_id) = extract_thread_id(&c.workplan_id) {
+                if !thread_id.is_empty() && thread_id != "global" {
+                    let _ = post_result_to_thread(
+                        port.as_ref(), &thread_id, &c.id, &c.role, &c.result, &c.error,
+                    ).await;
+                }
+            }
+
             let refs = parse_workplan_refs(&c.prompt);
             if refs.is_empty() {
                 // Nothing to reconcile; record so we don't re-scan every tick.
@@ -149,6 +162,84 @@ impl BrainDispatchReconciler {
 
         Ok(())
     }
+}
+
+/// Extract the thread id from a brain-chat workplan_id.
+/// Format: "brain-chat:<thread>" or "brain-chat:<thread>:auto-followup".
+fn extract_thread_id(workplan_id: &str) -> Option<String> {
+    let stripped = workplan_id.strip_prefix("brain-chat:")?;
+    // If the suffix has its own colon (auto-followup tag), take the part before it.
+    let id = stripped.split(':').next().unwrap_or(stripped);
+    if id.is_empty() { None } else { Some(id.to_string()) }
+}
+
+/// Append a synthetic agent message to a chat thread containing the worker's
+/// result. Idempotent via a memory key ("brain-result-posted:<dispatch_id>").
+/// Reuses the existing chat:thread:<id> memory format used by ThreadRecord.
+async fn post_result_to_thread(
+    port: &dyn IStatePort,
+    thread_id: &str,
+    dispatch_id: &str,
+    role: &str,
+    result: &str,
+    error: &str,
+) -> Result<(), String> {
+    let posted_key = format!("brain-result-posted:{}", dispatch_id);
+    if port.hexflo_memory_retrieve(&posted_key).await.ok().flatten().is_some() {
+        return Ok(()); // already posted, idempotent
+    }
+    let thread_key = format!("chat:thread:{}", thread_id);
+    let raw = match port.hexflo_memory_retrieve(&thread_key).await {
+        Ok(Some(s)) => s,
+        _ => return Ok(()), // thread doesn't exist anymore, nothing to do
+    };
+    let mut record: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+    // Build the synthetic message. Truncate to 2KB so we don't blow up the
+    // thread record. If the result is bigger, the operator can retrieve the
+    // full text from BrainDispatchesPanel → View.
+    let body = if !error.is_empty() {
+        format!("**❌ Worker error** ({})\n\n{}", &dispatch_id[..dispatch_id.len().min(8)], error)
+    } else if result.is_empty() {
+        format!("**✓ Worker completed** ({}) — no output", &dispatch_id[..dispatch_id.len().min(8)])
+    } else {
+        let trimmed = if result.len() > 2048 {
+            format!("{}\n\n_(…truncated, {} bytes total — open dispatch {} in BrainDispatchesPanel for full output)_",
+                &result[..2048], result.len(), &dispatch_id[..dispatch_id.len().min(8)])
+        } else {
+            result.to_string()
+        };
+        format!("**✓ Worker @{} finished** (dispatch `{}`):\n\n{}",
+            role, &dispatch_id[..dispatch_id.len().min(8)], trimmed)
+    };
+    let new_msg = serde_json::json!({
+        "from": role,
+        "text": body,
+        "ts": chrono::Utc::now().to_rfc3339(),
+        "model": "worker-result",
+    });
+    if let Some(messages) = record.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        messages.push(new_msg);
+    } else {
+        record["messages"] = serde_json::json!([new_msg]);
+    }
+    record["last_active_at"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
+    let serialized = serde_json::to_string(&record).map_err(|e| format!("serialize thread: {}", e))?;
+    port.hexflo_memory_store(&thread_key, &serialized, "system")
+        .await
+        .map_err(|e| format!("store thread: {}", e))?;
+    // Mark posted so we don't re-post on a future tick.
+    let _ = port
+        .hexflo_memory_store(
+            &posted_key,
+            &serde_json::json!({"ts": chrono::Utc::now().to_rfc3339()}).to_string(),
+            "system",
+        )
+        .await;
+    info!("brain reconciler: posted result for dispatch {} to thread {}", dispatch_id, thread_id);
+    Ok(())
 }
 
 /// Parse free-form text for workplan-id + phase/task references.
