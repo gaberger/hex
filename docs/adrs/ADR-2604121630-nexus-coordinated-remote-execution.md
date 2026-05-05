@@ -1,7 +1,8 @@
 # ADR-2604121630: Nexus-Coordinated Remote Agent Execution
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-12
+**Accepted:** 2026-05-05
 **Drivers:** Session proving hex plan execute works on bazzite (remote GPU box) with local Ollama, but execution state stays local — coordinator nexus has no visibility into remote task results, gate outcomes, or RL rewards. Remote agents must report back to SpacetimeDB.
 
 ## Context
