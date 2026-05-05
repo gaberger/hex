@@ -1,8 +1,10 @@
 # ADR-2604141100: Brain Updates to Operator — Push, Don't Poll
 
-**Status:** Proposed
+**Status:** Accepted (2026-05-04)
 **Date:** 2026-04-14
 **Drivers:** Brain daemon runs autonomously but operator has no visibility unless they manually check `hex brain queue list`. An AIOS should keep the operator informed without being asked.
+
+> **Acceptance note (2026-05-04):** Verified by adr-reviewer — structurally complete (Context, Decision, Consequences, Implementation, References), clean Proposed→Accepted transition, all four cross-references resolve to existing ADRs (ADR-060, ADR-2604132300, ADR-2604132330, ADR-2604140000). All five implementation phases remain Pending — accepting now is the design gate before P1 begins.
 
 ## Context
 
