@@ -417,18 +417,48 @@ const KanbanLanes: Component<{
     return "swarm-coordinator";
   };
 
+  const taskTitle = (t: SwarmTask): string => {
+    try {
+      const obj = JSON.parse(t.title);
+      return obj.description || obj.title || t.title;
+    } catch { return t.title; }
+  };
+
   const taskClick = (t: SwarmTask) => {
     const role = taskRole(t);
     const status = t.status || "?";
-    let title = t.title;
-    try {
-      const obj = JSON.parse(title);
-      title = obj.description || obj.title || title;
-    } catch { /* ignore */ }
+    const title = taskTitle(t);
     const prompt = status === "completed" || status === "done"
       ? `@${role} can you summarize what you did for: ${title}`
       : `@${role} status check: ${title}\n\n(currently ${status})`;
     props.onSendToChat(prompt, role);
+  };
+
+  // ▶ Dispatch — fires an explicit "execute this" message to chat. The
+  // existing @-mention enqueue + dedup pipeline picks it up and creates an
+  // inference_task for a worker. Operator no longer wonders "what do I do
+  // with this Ready task" — one click → it's queued.
+  const dispatchTask = (t: SwarmTask, evt: MouseEvent) => {
+    evt.stopPropagation();
+    const role = taskRole(t);
+    const title = taskTitle(t);
+    const prompt = `@${role} Please execute: ${title}`;
+    props.onSendToChat(prompt, role);
+  };
+
+  // ✗ Abandon — PATCH the task to status="failed" so it leaves the Ready
+  // lane. Different from drag-to-Backlog (blocked) — failed is "we're not
+  // doing this", blocked is "we'd do it but something's stopping us".
+  const abandonTask = async (t: SwarmTask, evt: MouseEvent) => {
+    evt.stopPropagation();
+    const title = taskTitle(t);
+    if (!confirm(`Abandon task "${title.slice(0, 60)}"? It moves to Done lane as failed.`)) return;
+    try {
+      await restClient.patch(`/api/hexflo/tasks/${t.id}`, { task_id: t.id, status: "failed" });
+      props.onTaskMoved?.();
+    } catch (e) {
+      alert(`abandon failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   return (
@@ -440,7 +470,8 @@ const KanbanLanes: Component<{
         </Show>
       </div>
       <p class="text-[10px] text-gray-400 px-1 mb-2">
-        Click a card to chat · drag to move · ● assigned · ○ unclaimed · agent-owned lanes (Doing/Done) reject manual drops
+        Hover a Ready/Backlog card → <span class="text-cyan-400">▶</span> dispatches to a worker (no token spend, just queues)
+        · <span class="text-red-400">✗</span> abandons · click for status · drag to move · ● assigned · ○ unclaimed
       </p>
       <div class="grid grid-cols-4 gap-2">
         <For each={["Backlog", "Ready", "Doing", "Done"] as LaneName[]}>
@@ -494,14 +525,36 @@ const KanbanLanes: Component<{
                           }}
                           onDragEnd={() => { setDragging(null); setDragOverLane(null); }}
                           onClick={() => taskClick(t)}
-                          class="text-[11px] text-gray-200 bg-gray-900 border border-gray-800 rounded px-2 py-1 truncate cursor-grab active:cursor-grabbing hover:border-cyan-700 hover:bg-gray-800 transition group"
+                          class="text-[11px] text-gray-200 bg-gray-900 border border-gray-800 rounded px-2 py-1 cursor-grab active:cursor-grabbing hover:border-cyan-700 hover:bg-gray-800 transition group flex items-center gap-1"
                           classList={{ "opacity-50": dragging()?.taskId === t.id }}
-                          title={`${t.title}\nRole: ${role}\n\nClick to chat · Drag to move`}
+                          title={`${t.title}\nRole: ${role}\n\nClick to chat · Drag to move · Buttons on hover for direct actions`}
                         >
-                          <span class="text-gray-400 mr-1">{dot}</span>
-                          <span class="group-hover:text-gray-100">
+                          <span class="text-gray-400 shrink-0">{dot}</span>
+                          <span class="group-hover:text-gray-100 truncate flex-1">
                             {t.title.slice(0, 26)}{t.title.length > 26 ? "…" : ""}
                           </span>
+                          {/* Inline actions for Ready/Backlog tasks — Dispatch
+                              fires the worker pipeline; Abandon kills the
+                              task. Hidden on agent-owned lanes (Doing/Done)
+                              where workers control the lifecycle. */}
+                          <Show when={laneName === "Ready" || laneName === "Backlog"}>
+                            <span class="flex gap-0.5 opacity-0 group-hover:opacity-100 transition shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => dispatchTask(t, e)}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                class="text-[9px] px-1 py-0 rounded bg-cyan-900 hover:bg-cyan-700 text-cyan-100"
+                                title={`Dispatch this task to @${role} via chat`}
+                              >▶</button>
+                              <button
+                                type="button"
+                                onClick={(e) => abandonTask(t, e)}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                class="text-[9px] px-1 py-0 rounded bg-gray-800 hover:bg-red-900 text-gray-400 hover:text-red-200"
+                                title="Abandon this task"
+                              >✗</button>
+                            </span>
+                          </Show>
                         </li>
                       );
                     }}
