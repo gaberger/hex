@@ -1,3 +1,14 @@
+---
+id: ADR-047
+status: accepted
+date: 2026-03-22
+supersedes: []
+superseded_by: null
+depends_on: []
+components: []
+modules: []
+---
+
 # ADR-047: Internal Documentation System
 
 **Status:** Accepted
@@ -5,10 +16,10 @@
 
 > **Implementation Evidence (2026-05-04):**
 > - **Phase 1 (glossary)** — `docs/reference/glossary.md` shipped 2026-05-04 (~75 canonical terms across Core / Coordination & State / Architecture Layers / Inference / Workflow Artifacts / Deployment Units, plus a Banned-terms table and enforcement notes). File is gitignored under `docs/*` so it lives locally — that is intentional per the e46c7cf3 untrack-docs commit; the canonical copy is rebuilt from this ADR + CLAUDE.md if lost.
-> - **Phase 2 (system-architecture + component docs)** — NOT YET STARTED. Prior evidence claim of a 418-line `system-architecture.md` was inaccurate; the file has never existed in any commit. CLAUDE.md currently carries the source-of-truth architecture overview and should be the migration source.
-> - **Phase 3 (WASM module READMEs)** — NOT STARTED. `spacetime-modules/` has 7 module dirs (agent-registry, chat-relay, hexflo-coordination, inference-gateway, neural-lab, rl-engine, secret-grant), zero READMEs.
-> - **Phase 4 (`hex docs check` CLI)** — NOT STARTED. `hex --help` has no `docs` subcommand.
-> - **Phase 5 (ADR frontmatter migration)** — NOT STARTED. No ADR currently uses the YAML frontmatter spec defined below.
+> - **Phase 2 (system-architecture + component docs)** — DONE 2026-05-04. Authored `docs/reference/system-architecture.md` (5 deployment units, dependency graph, cold-start + workplan-execution mermaid flows, standalone-mode variant) plus the five component docs `docs/reference/components/{spacetimedb,hex-nexus,hex-agent,hex-dashboard,hex-clients}.md` in the AI-agent-optimized format defined below (One-Line Summary → See also). `.gitignore` was updated to whitelist `docs/reference/` so these are versioned alongside the ADR — the Phase 1 glossary policy of "local-only, rebuild from ADR if lost" was right-sized for one file, but six docs warrant tracked source-of-truth.
+> - **Phase 3 (WASM module READMEs)** — DONE 2026-05-04. All 7 modules now have a README documenting tables, reducers, subscription patterns, and example flows: `spacetime-modules/{agent-registry, chat-relay, hexflo-coordination, inference-gateway, neural-lab, rl-engine, secret-grant}/README.md`.
+> - **Phase 4 (`hex docs check` CLI)** — DONE 2026-05-04. `hex docs check` audits stale terminology (vs the deprecated-terms table in this ADR), missing module READMEs, ADR frontmatter, and stale docs (>90 days no commit). `hex docs glossary` lists the enforced canonical terms. Exit codes mirror `hex adr doctor` (0/1/2). Source: `hex-cli/src/commands/docs.rs`.
+> - **Phase 5 (ADR frontmatter migration)** — TOOLING DONE 2026-05-04. `hex docs migrate-adr <id> [--apply]` synthesizes YAML frontmatter from existing markdown fields (Status / Date / Supersedes / Affects), idempotent on re-run. ADR-047 itself is the first migrated ADR (dogfood). Bulk migration of the remaining ADRs is a separate workplan since it touches ~200 files. Detection (`missing_adr_frontmatter` finding in `hex docs check`) is live now to track progress.
 >
 > Note on the prior evidence block: an earlier review claimed Phases 1-2 were complete based on hallucinated file paths. That claim has been corrected here. Going forward, evidence updates MUST cite a `git log` or live `ls` check.
 

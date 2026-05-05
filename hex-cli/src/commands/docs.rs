@@ -143,6 +143,7 @@ async fn check(
 
     findings.extend(check_module_readmes(&root)?);
     findings.extend(check_terminology(&root)?);
+    findings.extend(check_adr_frontmatter(&root)?);
     if max_age_days > 0 {
         findings.extend(check_staleness(&root, max_age_days)?);
     }
@@ -273,6 +274,52 @@ fn check_terminology(root: &Path) -> anyhow::Result<Vec<Finding>> {
     Ok(out)
 }
 
+// ─── ADR frontmatter audit (Phase 5) ──────────────────────────────────────
+
+fn check_adr_frontmatter(root: &Path) -> anyhow::Result<Vec<Finding>> {
+    let adrs_dir = root.join("docs").join("adrs");
+    if !adrs_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(&adrs_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        if !name.starts_with("ADR-") || !name.ends_with(".md") {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if !has_yaml_frontmatter(&content) {
+            out.push(Finding {
+                kind: "missing_adr_frontmatter".into(),
+                severity: "warning".into(),
+                path: relative_to(&path, root),
+                line: Some(1),
+                detail:
+                    "ADR has no YAML frontmatter (ADR-047 Phase 5). Run `hex docs migrate-adr <id>`."
+                        .into(),
+            });
+        }
+    }
+    Ok(out)
+}
+
+fn has_yaml_frontmatter(content: &str) -> bool {
+    let mut lines = content.lines();
+    if lines.next().map(|l| l.trim()) != Some("---") {
+        return false;
+    }
+    // A frontmatter block must close with another `---` on its own line.
+    lines.any(|l| l.trim() == "---")
+}
+
 // ─── Staleness check (git-based) ───────────────────────────────────────────
 
 fn check_staleness(root: &Path, max_age_days: i64) -> anyhow::Result<Vec<Finding>> {
@@ -312,6 +359,188 @@ fn git_last_commit_age_days(path: &Path) -> Option<i64> {
     let ts: i64 = stdout.trim().parse().ok()?;
     let now = chrono::Utc::now().timestamp();
     Some(((now - ts).max(0)) / 86400)
+}
+
+// ─── ADR frontmatter migration (Phase 5) ──────────────────────────────────
+
+async fn migrate_adr(adr: &str, apply: bool) -> anyhow::Result<()> {
+    let path = resolve_adr_path(adr)?;
+    let content = std::fs::read_to_string(&path)?;
+
+    if has_yaml_frontmatter(&content) {
+        println!(
+            "{} {} already has YAML frontmatter — nothing to migrate.",
+            "\u{2713}".green(),
+            path.display()
+        );
+        return Ok(());
+    }
+
+    let frontmatter = synthesize_frontmatter(&path, &content);
+    let new_content = format!("{}\n{}", frontmatter, content);
+
+    if apply {
+        std::fs::write(&path, &new_content)?;
+        println!(
+            "{} Wrote frontmatter to {}",
+            "\u{2713}".green(),
+            path.display()
+        );
+    } else {
+        println!(
+            "{} Preview for {} (run with --apply to write):",
+            "\u{2b21}".cyan(),
+            path.display()
+        );
+        println!();
+        for line in frontmatter.lines() {
+            println!("{} {}", "+".green(), line);
+        }
+        println!();
+        println!(
+            "{} {} line(s) will be prepended.",
+            "\u{2139}".dimmed(),
+            frontmatter.lines().count()
+        );
+    }
+    Ok(())
+}
+
+fn resolve_adr_path(adr: &str) -> anyhow::Result<PathBuf> {
+    // If it's a path that exists, use it directly.
+    let direct = PathBuf::from(adr);
+    if direct.is_file() {
+        return Ok(direct);
+    }
+    let root = discover_root(None)?;
+    let adrs = root.join("docs").join("adrs");
+    if !adrs.is_dir() {
+        anyhow::bail!("docs/adrs/ not found under {}", root.display());
+    }
+    let needle = adr.to_uppercase();
+    let needle = if needle.starts_with("ADR-") {
+        needle
+    } else {
+        format!("ADR-{}", needle)
+    };
+    for entry in std::fs::read_dir(&adrs)? {
+        let entry = entry?;
+        let p = entry.path();
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name.to_uppercase().starts_with(&format!("{}-", needle))
+            || name.to_uppercase() == format!("{}.MD", needle)
+        {
+            return Ok(p);
+        }
+    }
+    anyhow::bail!("no ADR matched '{}' under {}", adr, adrs.display())
+}
+
+/// Synthesize a YAML frontmatter block from the markdown-style fields the ADRs
+/// already use. Idempotent on output (sorted, normalized).
+fn synthesize_frontmatter(path: &Path, content: &str) -> String {
+    let id = adr_id_from_filename(path);
+    let status = parse_field(content, "status").unwrap_or_else(|| "Proposed".into());
+    let date = parse_field(content, "date")
+        .or_else(|| parse_field(content, "accepted date"))
+        .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
+    let supersedes = parse_csv_field(content, "supersedes");
+    let superseded_by = parse_field(content, "superseded by")
+        .or_else(|| parse_field(content, "superseded-by"));
+    let depends_on = parse_csv_field(content, "depends on")
+        .into_iter()
+        .chain(parse_csv_field(content, "affects"))
+        .collect::<Vec<_>>();
+
+    let mut buf = String::new();
+    buf.push_str("---\n");
+    buf.push_str(&format!("id: {}\n", id));
+    buf.push_str(&format!("status: {}\n", status.to_lowercase()));
+    buf.push_str(&format!("date: {}\n", date));
+    buf.push_str(&format!("supersedes: {}\n", yaml_list(&supersedes)));
+    buf.push_str(&format!(
+        "superseded_by: {}\n",
+        match superseded_by.as_deref() {
+            Some(s) if !s.is_empty() => s,
+            _ => "null",
+        }
+    ));
+    buf.push_str(&format!("depends_on: {}\n", yaml_list(&depends_on)));
+    buf.push_str("components: []\n");
+    buf.push_str("modules: []\n");
+    buf.push_str("---\n");
+    buf
+}
+
+fn yaml_list(items: &[String]) -> String {
+    if items.is_empty() {
+        return "[]".into();
+    }
+    let parts: Vec<String> = items
+        .iter()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.clone())
+        .collect();
+    format!("[{}]", parts.join(", "))
+}
+
+fn adr_id_from_filename(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let rest = stem.strip_prefix("ADR-").unwrap_or(stem);
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        stem.to_string()
+    } else {
+        format!("ADR-{}", digits)
+    }
+}
+
+/// Parse a single-value field from common ADR markdown styles.
+/// Matches `**<name>:** value`, `## <name>: value`, or `<name>: value`
+/// (case-insensitive). Lines inside fenced code blocks (```...```) are
+/// skipped so embedded YAML examples don't pollute the synthesized output.
+fn parse_field(content: &str, name: &str) -> Option<String> {
+    let lname = name.to_lowercase();
+    let bold_prefix = format!("**{}:**", lname);
+    let heading_prefix = format!("## {}:", lname);
+    let plain_prefix = format!("{}:", lname);
+    let mut in_fence = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let lower = trimmed.to_lowercase();
+        if lower.starts_with(&bold_prefix) {
+            return Some(trimmed[bold_prefix.len()..].trim().to_string());
+        }
+        if lower.starts_with(&heading_prefix) {
+            return Some(trimmed[heading_prefix.len()..].trim().to_string());
+        }
+        if lower.starts_with(&plain_prefix) && !lower.starts_with("**") && !lower.starts_with("##") {
+            return Some(trimmed[plain_prefix.len()..].trim().to_string());
+        }
+    }
+    None
+}
+
+/// Parse a comma-separated field into a list of trimmed values.
+fn parse_csv_field(content: &str, name: &str) -> Vec<String> {
+    parse_field(content, name)
+        .map(|raw| {
+            raw.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -412,5 +641,60 @@ mod tests {
         let bad_terms: Vec<&str> = GLOSSARY.iter().map(|(b, _, _)| *b).collect();
         assert!(bad_terms.contains(&"hex-hub"));
         assert!(bad_terms.contains(&"ruflo"));
+    }
+
+    #[test]
+    fn detects_yaml_frontmatter() {
+        assert!(has_yaml_frontmatter("---\nid: ADR-001\n---\n# title"));
+        assert!(!has_yaml_frontmatter("# title\n\n**Status:** Accepted\n"));
+        // Open-ended `---` that never closes is not frontmatter.
+        assert!(!has_yaml_frontmatter("---\nid: ADR-001\n"));
+    }
+
+    #[test]
+    fn parse_bold_field() {
+        let content = "# ADR-001\n**Status:** Accepted\n**Date:** 2026-03-15\n";
+        assert_eq!(parse_field(content, "status").as_deref(), Some("Accepted"));
+        assert_eq!(parse_field(content, "date").as_deref(), Some("2026-03-15"));
+    }
+
+    #[test]
+    fn parse_csv_supersedes() {
+        let content = "**Supersedes:** ADR-016, ADR-017\n";
+        assert_eq!(
+            parse_csv_field(content, "supersedes"),
+            vec!["ADR-016".to_string(), "ADR-017".to_string()]
+        );
+    }
+
+    #[test]
+    fn synthesize_frontmatter_basic() {
+        let path = std::path::Path::new("ADR-047-foo.md");
+        let content = "# ADR-047: Foo\n\n**Status:** Accepted\n**Date:** 2026-03-22\n";
+        let fm = synthesize_frontmatter(path, content);
+        assert!(fm.starts_with("---\n"));
+        assert!(fm.ends_with("---\n"));
+        assert!(fm.contains("id: ADR-047"));
+        assert!(fm.contains("status: accepted"));
+        assert!(fm.contains("date: 2026-03-22"));
+        assert!(fm.contains("components: []"));
+        assert!(fm.contains("modules: []"));
+    }
+
+    #[test]
+    fn yaml_list_empty_and_full() {
+        assert_eq!(yaml_list(&[]), "[]");
+        assert_eq!(
+            yaml_list(&["ADR-016".into(), "ADR-017".into()]),
+            "[ADR-016, ADR-017]"
+        );
+    }
+
+    #[test]
+    fn adr_id_extraction_handles_legacy_and_timestamp() {
+        let p = std::path::Path::new("docs/adrs/ADR-047-internal-docs.md");
+        assert_eq!(adr_id_from_filename(p), "ADR-047");
+        let p = std::path::Path::new("docs/adrs/ADR-2603221500-foo.md");
+        assert_eq!(adr_id_from_filename(p), "ADR-2603221500");
     }
 }
