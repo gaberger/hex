@@ -438,12 +438,37 @@ const KanbanLanes: Component<{
   // existing @-mention enqueue + dedup pipeline picks it up and creates an
   // inference_task for a worker. Operator no longer wonders "what do I do
   // with this Ready task" — one click → it's queued.
+  //
+  // IDEMPOTENT: once dispatched, the task id is added to dispatchedIds
+  // (persisted to localStorage so a refresh doesn't reset the lock).
+  // Button changes to a disabled "queued" pill on subsequent renders so
+  // the operator can't accidentally double-fire. The dedup at the @-mention
+  // enqueue point (already_in_flight in brain_chat.rs) is the server-side
+  // belt-and-braces; this UI lock is the suspenders.
+  const DISPATCHED_KEY = "hex-brain-kanban-dispatched-v1";
+  const loadDispatched = (): Set<string> => {
+    try {
+      const raw = localStorage.getItem(DISPATCHED_KEY);
+      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch { return new Set(); }
+  };
+  const [dispatchedIds, setDispatchedIds] = createSignal<Set<string>>(loadDispatched());
+  const persistDispatched = (s: Set<string>) => {
+    try { localStorage.setItem(DISPATCHED_KEY, JSON.stringify([...s].slice(-200))); } catch { /* quota */ }
+  };
   const dispatchTask = (t: SwarmTask, evt: MouseEvent) => {
     evt.stopPropagation();
+    if (dispatchedIds().has(t.id)) return; // idempotent guard
     const role = taskRole(t);
     const title = taskTitle(t);
     const prompt = `@${role} Please execute: ${title}`;
     props.onSendToChat(prompt, role);
+    setDispatchedIds((prev) => {
+      const next = new Set(prev);
+      next.add(t.id);
+      persistDispatched(next);
+      return next;
+    });
   };
 
   // ✗ Abandon — PATCH the task to status="failed" so it leaves the Ready
@@ -538,14 +563,30 @@ const KanbanLanes: Component<{
                               task. Hidden on agent-owned lanes (Doing/Done)
                               where workers control the lifecycle. */}
                           <Show when={laneName === "Ready" || laneName === "Backlog"}>
-                            <span class="flex gap-0.5 opacity-0 group-hover:opacity-100 transition shrink-0">
-                              <button
-                                type="button"
-                                onClick={(e) => dispatchTask(t, e)}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                class="text-[9px] px-1 py-0 rounded bg-cyan-900 hover:bg-cyan-700 text-cyan-100"
-                                title={`Dispatch this task to @${role} via chat`}
-                              >▶</button>
+                            <span
+                              class="flex gap-0.5 transition shrink-0"
+                              classList={{
+                                "opacity-0 group-hover:opacity-100": !dispatchedIds().has(t.id),
+                                "opacity-100": dispatchedIds().has(t.id),
+                              }}
+                            >
+                              <Show
+                                when={!dispatchedIds().has(t.id)}
+                                fallback={
+                                  <span
+                                    class="text-[9px] px-1 py-0 rounded bg-gray-800 text-gray-500 italic cursor-not-allowed"
+                                    title="Already dispatched — server-side dedup will reject re-enqueue. Refresh after the worker completes if you need to re-run."
+                                  >queued</span>
+                                }
+                              >
+                                <button
+                                  type="button"
+                                  onClick={(e) => dispatchTask(t, e)}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  class="text-[9px] px-1 py-0 rounded bg-cyan-900 hover:bg-cyan-700 text-cyan-100"
+                                  title={`Dispatch this task to @${role} via chat`}
+                                >▶</button>
+                              </Show>
                               <button
                                 type="button"
                                 onClick={(e) => abandonTask(t, e)}
