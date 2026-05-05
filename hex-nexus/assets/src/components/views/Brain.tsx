@@ -1309,6 +1309,15 @@ interface ChatMessage extends ChatMessageMeta {
   model?: string;
   pending?: boolean;
   error?: boolean;
+  /** Recipient role when this is an agent-to-agent reply (the agent the
+   *  reply is addressed to, NOT the operator). Renders as a "→ @<role>"
+   *  pill so the operator can see at a glance whether a message was for
+   *  them or for another agent in the dispatch chain. */
+  replyTo?: string;
+  /** Depth of nesting in the dispatch chain. 0 = top-level reply to the
+   *  operator. 1+ = recursive child. Drives the indent + the "agent-to-agent"
+   *  visual styling. */
+  childDepth?: number;
   /** Performance.now() timestamp at dispatch start; used to render elapsed seconds in pending bubbles. */
   startedAt?: number;
 }
@@ -1779,20 +1788,23 @@ const ChatPanel: Component<{
       persistMessage(finalMsg);
 
       // Recursively flatten children into the chat history. Each child is
-      // an auto-dispatch from a parent's @<role> mention; we render them as
-      // ordinary chat bubbles, prefixed with "↳" so the threading is visible
-      // without requiring nested DOM. The brief lives in the parent message,
-      // not duplicated here — that's why text starts with the bare reply.
-      const renderChildren = (children: ChildResp[] | undefined, prefix: string) => {
+      // an auto-dispatch from a parent's @<role> mention. Operator was
+      // confused about who-said-what-to-whom — bubble now carries the
+      // PARENT role as `replyTo` and a `childDepth` so the renderer can
+      // surface a clear "→ @<parent-role>" pill, distinguishing
+      // operator-addressed replies from agent-to-agent ones.
+      const renderChildren = (children: ChildResp[] | undefined, depth: number, parentRole: string) => {
         for (const c of children ?? []) {
           const text = typeof c.content === "string" && c.content.length > 0
             ? c.content
             : (c.error ? `error: ${typeof c.error === "string" ? c.error : JSON.stringify(c.error)}` : "(empty response)");
           const childMsg: ChatMessage = {
             from: c.role,
-            text: `${prefix} ${text}`,
+            text,
             ts: new Date().toISOString(),
             model: typeof c.model === "string" ? c.model : undefined,
+            replyTo: parentRole,
+            childDepth: depth,
             inputTokens: c.inputTokens,
             outputTokens: c.outputTokens,
             totalTokens: c.totalTokens,
@@ -1801,10 +1813,10 @@ const ChatPanel: Component<{
           };
           setHistory((h) => [...h, childMsg]);
           persistMessage(childMsg);
-          renderChildren(c.children, `${prefix}↳`);
+          renderChildren(c.children, depth + 1, c.role);
         }
       };
-      renderChildren(resp.children, "↳");
+      renderChildren(resp.children, 1, resp.role);
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
       setHistory((h) => h.map((m) =>
@@ -1933,11 +1945,38 @@ const ChatPanel: Component<{
       >
         <For each={history()}>
           {(msg) => (
-            <div class="text-xs">
-              <div class="text-[10px] mb-0.5 flex items-center gap-2">
+            <div
+              class="text-xs"
+              classList={{
+                "pl-3 border-l border-cyan-900/40": (msg.childDepth ?? 0) === 1,
+                "pl-6 border-l-2 border-purple-900/40": (msg.childDepth ?? 0) >= 2,
+              }}
+            >
+              <div class="text-[10px] mb-0.5 flex items-center gap-2 flex-wrap">
                 <span class={msg.from === "you" ? "text-gray-400" : personaColor(msg.from)}>
                   {msg.from === "you" ? "you" : `@${msg.from}`}
                 </span>
+                {/* Recipient pill — when this message is an agent-to-agent
+                    reply (childDepth >= 1 AND replyTo set), render an
+                    explicit "→ @<role>" pill so the operator can tell at a
+                    glance who the message is FOR. Without this, every
+                    agent-to-agent reply looks like a reply to the operator. */}
+                <Show when={msg.replyTo && msg.from !== "you"}>
+                  <span
+                    class="text-[9px] px-1.5 py-0.5 rounded bg-cyan-900/60 text-cyan-200 border border-cyan-800"
+                    title={`Agent-to-agent reply: @${msg.from} → @${msg.replyTo}. NOT addressed to you.`}
+                  >
+                    → @{msg.replyTo}
+                  </span>
+                </Show>
+                <Show when={msg.from !== "you" && (msg.childDepth ?? 0) === 0}>
+                  <span
+                    class="text-[9px] px-1.5 py-0.5 rounded bg-gray-800/60 text-gray-300 border border-gray-700"
+                    title="Top-level reply addressed to you (the operator)."
+                  >
+                    → you
+                  </span>
+                </Show>
                 <span class="text-gray-400">· {new Date(msg.ts).toLocaleTimeString()}</span>
                 <Show when={msg.model && !msg.pending}>
                   <span class="text-[9px] text-gray-300 ml-auto truncate max-w-[160px]" title={msg.model}>
