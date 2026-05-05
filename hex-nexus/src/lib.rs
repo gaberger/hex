@@ -622,6 +622,16 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         orchestration::supervisor_subscriber::SupervisorSubscriber::spawn(sup_state);
     }
 
+    // Brain-dispatch auto-reconciler: every 15s, walks Completed
+    // brain-chat:* inference_task rows and flips matching workplan tasks
+    // to "done" if their prompt referenced wp-X PY.Z. Closes the loop
+    // between chat-driven dispatch and the Decisions Needed panel — work
+    // that gets done stops appearing in the operator's todo.
+    {
+        let reconciler_state = state.clone();
+        orchestration::brain_dispatch_reconciler::BrainDispatchReconciler::spawn(reconciler_state);
+    }
+
     // Background sched self-improvement service (ADR-2604102200):
     // Tests local models periodically, records outcomes to RL engine.
     {
