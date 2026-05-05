@@ -783,6 +783,8 @@ pub async fn dispatch_brain_chat(
     // Cap at MAX_AGENT_DISPATCH_DEPTH so a chain of `@`s can't infinite-loop.
     let depth = req.dispatch_depth.unwrap_or(0);
     let mut enqueued: Vec<Value> = Vec::new();
+    let mut auto_followup_id: Option<String> = None;
+    let mut auto_followup_summary: Option<String> = None;
 
     // AUTO-FOLLOWUP: when the agent's reply identifies specific open phases
     // of an ADR or workplan ("Phases 3-5 remaining", "Phase 2 still pending"),
@@ -815,18 +817,41 @@ pub async fn dispatch_brain_chat(
                     warn!("auto-followup enqueue failed: {}", e);
                 } else {
                     enqueued.push(json!({
-                        "id": task_id,
+                        "id": task_id.clone(),
                         "role": "hex-coder",
                         "status": "pending",
                         "kind": "auto-followup",
                         "subject": subject,
-                        "summary": summary,
+                        "summary": summary.clone(),
                         "workplan_id": workplan_id,
                     }));
+                    auto_followup_id = Some(task_id);
+                    auto_followup_summary = Some(summary);
                 }
             }
         }
     }
+
+    // Append a system footer to the agent's reply so the operator SEES that
+    // a follow-up worker task got queued. Without this the enqueue is
+    // silent — the data lives in BrainDispatchesPanel but the operator
+    // reading the chat doesn't connect "good analysis" with "work
+    // happening". Format is markdown blockquote so it renders distinctly
+    // from the agent's own voice.
+    let content = if let (Some(id), Some(summary)) = (auto_followup_id.as_ref(), auto_followup_summary.as_ref()) {
+        let short_id = &id[..id.len().min(8)];
+        let short_summary = if summary.len() > 140 {
+            format!("{}…", &summary[..140])
+        } else {
+            summary.clone()
+        };
+        format!(
+            "{}\n\n> **🤖 Auto-followup queued** — hex-coder dispatch `{}` (kind=auto-followup): {}\n> Track in the Brain Dispatches panel; auto-reconciler closes the matching workplan task on completion.",
+            content, short_id, short_summary
+        )
+    } else {
+        content
+    };
 
     let children: Vec<Value> = if depth >= MAX_AGENT_DISPATCH_DEPTH {
         Vec::new()
@@ -1188,6 +1213,8 @@ fn detect_open_followup(text: &str) -> Option<(String, String)> {
         "remaining", "pending", "open", "not yet", "still need", "still pending",
         "incomplete", "abandoned", "to do", "todo", "outstanding", "unfinished",
         "unimplemented", "not implemented", "not yet implemented",
+        "unstarted", "not started", "implementation gap", "not done",
+        "not complete", "yet to be", "still to be", "yet to do",
     ];
     let has_open_signal = signals.iter().any(|s| lower.contains(s));
     if !has_open_signal { return None; }
