@@ -92,6 +92,104 @@ struct PersonaModel {
     preferred: Option<String>,
 }
 
+/// Detect plausible file-path tokens in the operator's message and pre-fetch
+/// their contents from inside the project root. Returns a single block
+/// formatted as `FILES READ FOR YOU (verbatim — no need to ask the operator
+/// to paste these):` followed by each file's relative path + its contents.
+///
+/// This eliminates the "agent says 'I have no Read tool, please paste the
+/// file'" loop that was breaking chat. We do the read server-side; the LLM
+/// receives the bytes inline and can answer directly.
+///
+/// Safety:
+///   - Only paths under `project_root` are read (path-traversal protection
+///     via canonicalize + prefix check).
+///   - Skips binary files (heuristic: any 0x00 byte in the first 4KB).
+///   - Caps at 4 files per call, 32KB per file. Total budget ~128KB so the
+///     prompt stays bounded.
+///   - Token detection is permissive — it tries any string containing `/`
+///     or ending in a known extension, then falls back to existence check.
+fn prefetch_files_in_message(message: &str, project_root: &str) -> Option<String> {
+    use std::path::{Path, PathBuf};
+    let root = PathBuf::from(project_root);
+    let canonical_root = match root.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return None,
+    };
+    // Tokenize: split on whitespace + chars that can't be in paths.
+    let candidates: Vec<&str> = message
+        .split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '`' | '"' | '\'' | '(' | ')' | '<' | '>'))
+        .filter(|t| !t.is_empty())
+        .collect();
+    let exts = [
+        ".rs", ".ts", ".tsx", ".js", ".jsx", ".md", ".json", ".toml",
+        ".yml", ".yaml", ".sh", ".py", ".html", ".css", ".sql", ".lock",
+    ];
+    let mut to_read: Vec<PathBuf> = Vec::new();
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for raw in candidates {
+        if to_read.len() >= 4 { break; }
+        // Strip surrounding punctuation: trailing '.' / ',' / ':' / '!' / '?'
+        let cleaned = raw.trim_matches(|c: char| matches!(c, '.' | ',' | ':' | '!' | '?' | ']' | '['));
+        if cleaned.is_empty() { continue; }
+        // Heuristic: must look like a path — contain '/' OR end with a known ext.
+        let looks_like_path = cleaned.contains('/')
+            || exts.iter().any(|e| cleaned.ends_with(e));
+        if !looks_like_path { continue; }
+        // Resolve relative to project root.
+        let candidate_path = if Path::new(cleaned).is_absolute() {
+            PathBuf::from(cleaned)
+        } else {
+            canonical_root.join(cleaned)
+        };
+        // canonicalize protects against `../../etc/passwd` traversal
+        let resolved = match candidate_path.canonicalize() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        // Must live INSIDE the project root
+        if !resolved.starts_with(&canonical_root) { continue; }
+        if !resolved.is_file() { continue; }
+        if seen.insert(resolved.clone()) {
+            to_read.push(resolved);
+        }
+    }
+    if to_read.is_empty() { return None; }
+
+    let mut out = String::from("FILES READ FOR YOU (verbatim — these have already been loaded for you, do NOT ask the operator to paste them, do NOT delegate a file-read to another agent):\n");
+    for path in &to_read {
+        let rel = path
+            .strip_prefix(&canonical_root)
+            .unwrap_or(path)
+            .display()
+            .to_string();
+        let raw = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) => {
+                out.push_str(&format!("\n--- {} ---\n[read failed: {}]\n", rel, e));
+                continue;
+            }
+        };
+        // Binary detection: any null byte in the first 4KB.
+        let head = &raw[..raw.len().min(4096)];
+        if head.contains(&0u8) {
+            out.push_str(&format!("\n--- {} ---\n[binary file, {} bytes — not inlined]\n", rel, raw.len()));
+            continue;
+        }
+        let truncated = raw.len() > 32 * 1024;
+        let body_bytes = &raw[..raw.len().min(32 * 1024)];
+        let body = String::from_utf8_lossy(body_bytes);
+        out.push_str(&format!(
+            "\n--- {} ({} bytes{}) ---\n{}\n",
+            rel,
+            raw.len(),
+            if truncated { ", TRUNCATED to 32KB" } else { "" },
+            body
+        ));
+    }
+    Some(out)
+}
+
 /// Collect a small set of cheap, ground-truth facts about a project root so
 /// the agent doesn't have to invent them. Each line is "  fact: value" so
 /// the format is stable and easy for models to consume. All checks are
@@ -285,6 +383,18 @@ pub async fn dispatch_brain_chat(
     // confabulate (lacking filesystem tools, the model otherwise invents
     // plausible-looking but wrong details — e.g. "directory is empty",
     // "not a git repo", inventing usernames in paths).
+    // Resolve project root for file pre-fetch. When projectId is set, use the
+    // registered root; otherwise fall back to nexus's cwd (single-project mode).
+    let resolved_root: Option<String> = match req.project_id.as_deref() {
+        Some(id) if !id.is_empty() && id != "__global__" => {
+            let port_handle = state.0.state_port.clone();
+            if let Some(port) = port_handle {
+                port.project_get(id).await.ok().flatten().map(|p| p.root_path)
+            } else { None }
+        }
+        _ => std::env::current_dir().ok().map(|p| p.display().to_string()),
+    };
+
     let project_block: Option<String> = match req.project_id.as_deref() {
         Some(id) if !id.is_empty() && id != "__global__" => {
             let port_handle = state.0.state_port.clone();
@@ -305,6 +415,12 @@ pub async fn dispatch_brain_chat(
         }
         _ => None,
     };
+
+    // Pre-fetch any file paths the operator mentioned. Eliminates the
+    // "agent says 'I have no Read tool — paste the file please'" loop.
+    let files_block: Option<String> = resolved_root
+        .as_deref()
+        .and_then(|root| prefetch_files_in_message(&req.message, root));
 
     // Live runtime state — swarms, their tasks, registered agents. Without
     // this, asking "swarm status" causes the agent to invent JSON blobs
@@ -457,6 +573,10 @@ pub async fn dispatch_brain_chat(
         system_lines.push(block.clone());
         system_lines.push(String::new());
     }
+    if let Some(block) = files_block.as_ref() {
+        system_lines.push(block.clone());
+        system_lines.push(String::new());
+    }
     system_lines.push(format!(
         "ROLE: {}",
         if persona.name.is_empty() { req.role.clone() } else { persona.name.clone() }
@@ -492,7 +612,8 @@ pub async fn dispatch_brain_chat(
     system_lines.push("- NEVER invent specific identifiers (task IDs, UUIDs, file names, dates, model names) that do not appear in LIVE STATE / PROJECT FACTS / RELEVANT MEMORY above. If you would need to cite a specific id and one isn't in those blocks, say 'I don't see specific IDs in the snapshot — should I query for them?' rather than fabricating plausible-looking ones.".to_string());
     system_lines.push(String::new());
     system_lines.push("CAPABILITIES IN THIS SURFACE:".to_string());
-    system_lines.push("- You are responding via the Brain chat surface. You have NO direct shell, MCP, or filesystem tools — anything you 'observe' must come from LIVE STATE / PROJECT FACTS / RELEVANT MEMORY blocks above.".to_string());
+    system_lines.push("- You are responding via the Brain chat surface. You have NO direct shell or MCP tools, BUT files referenced by path in the operator's message are auto-pre-fetched and inlined as the 'FILES READ FOR YOU' block above when present. Look there FIRST before saying you can't read anything.".to_string());
+    system_lines.push("- If the operator asks about a file and the FILES READ FOR YOU block is absent or doesn't include it, that means: (a) the file path wasn't in the message, (b) the file doesn't exist, or (c) it's binary/oversized. Do NOT delegate a read to another agent — the same wall hits there. Either answer using what's already in PROJECT FACTS / LIVE STATE / FILES READ FOR YOU, or ask the operator to include the path explicitly in their next message.".to_string());
     system_lines.push("- HOWEVER, you CAN delegate to other agents by mentioning `@<role>` at the start of any line in your reply. The system auto-dispatches each `@<role>` to that agent in the same thread, with the rest of the line (and indented body) as the task brief. Use this whenever the request is technical work that another role specializes in — DO NOT bounce the question back to the operator if a specialist can handle it.".to_string());
     // Inject the actual roster so models can't invent fake roles like
     // @shell-operator / @ops / @sysadmin. Generated from the embedded
