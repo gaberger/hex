@@ -1,8 +1,10 @@
 # ADR-2604131930: First-Class Worktree Lifecycle Management
 
-**Status:** Proposed
+**Status:** Accepted (2026-05-04)
 **Date:** 2026-04-13
 **Drivers:** Worktrees are hex's primary isolation mechanism for parallel agent work, but their lifecycle is fragmented across shell scripts, hooks, agent internals, and manual git commands. Code was silently dropped during a merge because hex didn't own the full lifecycle. An AIOS must guarantee that every line of agent-generated code reaches main.
+
+> **Acceptance note (2026-05-04):** Verified by adr-reviewer — structurally complete (Context, Decision, Consequences, Implementation, References), grounded in the documented 2026-04-13 incident, clean Proposed→Accepted transition. Cross-references resolve: ADR-004 (worktree creation), ADR-2603231700 (hooks enforcement), ADR-2604131800 (self-hosting gaps). All seven implementation phases remain Pending — acceptance is the design gate before P1 begins. The 3-way merge (P3) is the correct fix for the silent-drop class of bug; the pre-bash guard (P6) is additive and low-risk.
 
 ## Context
 
@@ -128,6 +130,6 @@ This makes the destructive path impossible, not just discouraged.
 ## References
 
 - ADR-004: Git Worktrees for Parallel Agent Isolation
-- ADR-2603241700: Worktree Enforcement in Agent Hooks
+- ADR-2603231700: Worktree Enforcement in Agent Hooks
 - ADR-2604131800: Last-Mile Self-Hosting Gaps (G4, G6, G7)
 - Session 2026-04-13: `hex brief` CLI dropped by destructive git checkout merge
