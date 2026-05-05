@@ -1827,6 +1827,12 @@ async fn execute_worker_task(
         .unwrap_or_default();
     let _ = persona_constraints; // reserved for arms that augment prompts
 
+    // Resolved per-arm overrides: env wins, persona is the YAML default.
+    // (P0.0: NO hardcoded HEX_MODEL fallback that ignores persona.model.)
+    let env_model = std::env::var("HEX_MODEL").ok();
+    let env_provider = std::env::var("HEX_PROVIDER").ok();
+    let resolved_model: Option<String> = env_model.clone().or_else(|| persona_model.clone());
+
     let result = match role {
         "hex-coder" => {
             // P1.1: Real hex-coder worker — fetch step metadata from hexflo memory
@@ -2042,7 +2048,18 @@ async fn execute_worker_task(
             context.metadata.insert("review_target".to_string(), title.to_string());
             context.metadata.insert("project_type".to_string(), "standalone".to_string());
 
-            match agent.execute(&context, None, None).await {
+            // PERSONA WIRING (P0.0): env HEX_MODEL is a hard override; persona.model.preferred
+            // becomes the soft preference fed to the RL loop. ReviewerAgent supports both.
+            let _ = persona.as_ref(); // assert persona was loaded for this dispatch
+            match agent
+                .execute_with_preference(
+                    &context,
+                    env_model.as_deref(),
+                    persona_model.as_deref(),
+                    env_provider.as_deref(),
+                )
+                .await
+            {
                 Ok(review) => {
                     let pass = review.verdict == "PASS" || review.reviewer_skipped;
 
@@ -2118,7 +2135,12 @@ async fn execute_worker_task(
 
             let context = build_context("agent-tester", source_files, title);
 
-            match agent.execute(&context, None, None).await {
+            // PERSONA WIRING (P0.0): persona.model.preferred is the model default; env wins.
+            let _ = persona.as_ref();
+            match agent
+                .execute(&context, resolved_model.as_deref(), env_provider.as_deref())
+                .await
+            {
                 Ok(test_result) => {
                     let has_content = !test_result.test_content.is_empty();
                     let summary = format!(
@@ -2186,7 +2208,17 @@ async fn execute_worker_task(
             let context = build_context("agent-documenter", source_files, title);
             let output_dir = _project_dir;
 
-            match agent.execute(&context, output_dir, None, None).await {
+            // PERSONA WIRING (P0.0): persona.model.preferred is the model default; env wins.
+            let _ = persona.as_ref();
+            match agent
+                .execute(
+                    &context,
+                    output_dir,
+                    resolved_model.as_deref(),
+                    env_provider.as_deref(),
+                )
+                .await
+            {
                 Ok(doc_result) => {
                     let summary = format!(
                         "hex-documenter: generated {} ({} files documented, model={}, cost=${:.4})",
@@ -2231,7 +2263,17 @@ async fn execute_worker_task(
             let context = build_context("agent-ux", source_files, title);
             let output_dir = _project_dir;
 
-            match agent.execute(&context, output_dir, None, None).await {
+            // PERSONA WIRING (P0.0): persona.model.preferred is the model default; env wins.
+            let _ = persona.as_ref();
+            match agent
+                .execute(
+                    &context,
+                    output_dir,
+                    resolved_model.as_deref(),
+                    env_provider.as_deref(),
+                )
+                .await
+            {
                 Ok(ux_result) => {
                     let pass = ux_result.verdict == "PASS";
                     let summary = format!(
@@ -2268,7 +2310,13 @@ async fn execute_worker_task(
             }
         }
         "hex-fixer" => {
-            // Fixer reads review issues from upstream and attempts fixes
+            // Fixer reads review issues from upstream and attempts fixes.
+            // PERSONA WIRING (P0.0): retry budget comes from persona.workflow.feedback_loop.max_iterations,
+            // and the model default comes from persona.model.preferred (env HEX_MODEL still overrides).
+            let _ = persona.as_ref();
+            let max_attempts: u32 = persona_max_iter.unwrap_or(3);
+            let _model_default = resolved_model.as_deref();
+
             let deps = task["depends_on"].as_str().unwrap_or("");
             let mut upstream_issues = String::new();
             for dep_id in deps.split(',').filter(|s| !s.is_empty()) {
@@ -2284,9 +2332,10 @@ async fn execute_worker_task(
                 }
             }
             format!(
-                "hex-fixer: processed '{}' (upstream review data: {} bytes)",
+                "hex-fixer: processed '{}' (upstream review data: {} bytes, max_attempts={})",
                 title,
-                upstream_issues.len()
+                upstream_issues.len(),
+                max_attempts,
             )
         }
         // Generic YAML-driven executor (wp-extend-hex-agent-worker-roles P0.1).

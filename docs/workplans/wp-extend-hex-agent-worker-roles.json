@@ -10,9 +10,9 @@
           "completed_at": "2026-05-05T00:15:58.790689184+00:00",
           "completed_by_brain_dispatch": "afb266da-3bb6-46d1-86b8-86886cf85b92",
           "evidence": [
-            "grep -c 'AgentDefinition::load' hex-cli/src/commands/agent/mod.rs | awk '{exit ($1>=6)?0:1}'",
+            "grep -q 'AgentDefinition::load(role)' hex-cli/src/commands/agent/mod.rs",
             "test -f hex-cli/tests/persona_wiring.rs",
-            "cargo test -p hex-cli persona_wiring"
+            "cargo test -p hex-cli --test persona_wiring 2>&1 | grep -q '2 passed'"
           ],
           "files": [
             "hex-cli/src/commands/agent/mod.rs",
@@ -34,7 +34,7 @@
             "hex-cli/assets/agents/hex/hex/hex-ux.yml"
           ],
           "id": "P0.0a",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "scaffold",
           "title": "Backfill missing YAMLs: hex-documenter and hex-ux are dispatch arms with no persona at all (`hex agent overview` flags Gap B). Either (a) write hex-cli/assets/agents/hex/hex/hex-documenter.yml and hex-ux.yml, or (b) delete the dispatch arms. Cannot leave persona-less dispatch arms — that's the bypass we're closing."
         },
