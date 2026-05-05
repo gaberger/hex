@@ -1,6 +1,7 @@
 # ADR-2604132200: CLI Simplification — Progressive Disclosure for an AIOS
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-05-05
 **Date:** 2026-04-13
 **Drivers:** hex has 40+ top-level CLI commands. Users can't discover or remember them. An AIOS should be ambient — the default experience should require zero knowledge of the command surface.
 
