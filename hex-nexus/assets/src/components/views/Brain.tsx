@@ -1024,11 +1024,19 @@ const SwarmsPanel: Component<{
             // Try to map agent IDs back to a known persona — best-effort, since
             // STDB stores UUIDs rather than role names. Fallback shows count.
             const focusTitle = focus?.title?.replace(/\s+/g, " ").trim() || "(no tasks)";
+            const swarmProjectId = s.projectId || s.project_id || "";
+            const handleSwarmClick = () => {
+              // Global swarms (no projectId) use a synthetic "__global__" project ID
+              // so they can still use the project-swarm-detail route
+              const pid = swarmProjectId || "__global__";
+              console.log("Swarm clicked:", { swarmId: s.id, projectId: pid });
+              navigate({ page: "project-swarm-detail", projectId: pid, swarmId: s.id });
+            };
             return (
               <li
                 class="text-xs bg-gray-950 border border-gray-800 rounded p-2 hover:border-gray-700 cursor-pointer transition-colors"
                 title={`Swarm: ${s.id}\nStatus: ${s.status || "active"}\nClick to view details`}
-                onClick={() => navigate({ page: "project-swarm-detail", projectId: s.projectId || s.project_id || "", swarmId: s.id })}
+                onClick={handleSwarmClick}
               >
                 <div class="flex items-center gap-2 mb-1">
                   <span
