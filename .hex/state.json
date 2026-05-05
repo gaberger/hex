@@ -1,6 +1,6 @@
 {
   "host": "http://127.0.0.1:3033",
-  "database": "hexflo-coordination",
+  "database": "hex",
   "databases": {
     "hexflo_coordination": "hex",
     "agent_registry": "agent-registry",

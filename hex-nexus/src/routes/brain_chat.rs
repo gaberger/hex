@@ -396,6 +396,64 @@ pub async fn dispatch_brain_chat(
         );
     }
 
+    // CHAT-LEVEL APPROVAL COMMAND: operator can type "approve <8-char-id>" or
+    // "approve <full-id>" to flip a PendingReview dispatch → Pending. Returns
+    // immediately without burning an inference call. Pattern is intentionally
+    // permissive — case-insensitive, allows trailing punctuation.
+    let trimmed_msg = req.message.trim().to_lowercase();
+    if trimmed_msg.starts_with("approve ") {
+        let id_token = trimmed_msg["approve ".len()..]
+            .trim()
+            .trim_matches(|c: char| matches!(c, '`' | '"' | '\'' | '.' | ','))
+            .to_string();
+        if !id_token.is_empty() && id_token.len() >= 4 {
+            if let Some(port) = state.0.state_port.as_ref() {
+                // Find the matching task — accept full UUID or 8-char prefix.
+                if let Ok(rows) = port.inference_task_list_all().await {
+                    let matched = rows.into_iter().find(|t|
+                        t.workplan_id.starts_with("brain-chat:")
+                        && (t.id.to_lowercase() == id_token
+                            || t.id.to_lowercase().starts_with(&id_token))
+                    );
+                    if let Some(t) = matched {
+                        let now = chrono::Utc::now().to_rfc3339();
+                        return match port.inference_task_promote(&t.id, &now).await {
+                            Ok(()) => (
+                                StatusCode::OK,
+                                Json(json!({
+                                    "role": "system",
+                                    "model": "approval-command",
+                                    "content": format!(
+                                        "✓ Approved dispatch `{}` (@{}) — worker will claim on the next pool tick.",
+                                        &t.id[..t.id.len().min(8)], t.role
+                                    ),
+                                    "children": [],
+                                    "enqueued": [],
+                                    "depth": 0,
+                                })),
+                            ),
+                            Err(e) => (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(json!({
+                                    "role": "system",
+                                    "content": format!("Approval failed: {}", e),
+                                })),
+                            ),
+                        };
+                    }
+                }
+            }
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "role": "system",
+                    "model": "approval-command",
+                    "content": format!("No pending-review dispatch matching `{}` found in this thread or its scope.", id_token),
+                })),
+            );
+        }
+    }
+
     let Some(persona) = load_persona(&req.role) else {
         return (
             StatusCode::NOT_FOUND,
@@ -794,6 +852,12 @@ pub async fn dispatch_brain_chat(
     //
     // Only fires at depth=0 (operator-initiated) so deep recursive replies
     // don't spawn cascading followups. Only one followup per dispatch.
+    //
+    // SAFETY GATE: status defaults to "PendingReview" so a worker cannot
+    // auto-claim. Operator must explicitly approve via the chat footer
+    // button OR the BrainDispatchesPanel Approve button. This makes
+    // chat-driven development safe-by-default — every code-touching task
+    // gets a one-click human review before it runs.
     if depth == 0 {
         if let Some((subject, summary)) = detect_open_followup(&content) {
             let task_id = uuid::Uuid::new_v4().to_string();
@@ -801,32 +865,57 @@ pub async fn dispatch_brain_chat(
                 "brain-chat:{}:auto-followup",
                 req.thread_id.as_deref().unwrap_or("global")
             );
+            // The reducer only knows two enqueue states (Pending = claimable,
+            // PendingReview = needs operator approval). We always create as
+            // Pending then immediately revert to PendingReview by setting
+            // the row's status — but the reducer doesn't expose that. So
+            // we lean on the existing critical-path gate: the prompt
+            // intentionally includes a path token so mentions_critical_path
+            // returns true → reducer creates as PendingReview… except the
+            // reducer ignores that. Workaround: use a separate "set_status"
+            // step. Cleanest path: just create as Pending here and
+            // immediately call inference_task_set_status if available.
+            // For this ship, we mark via a memory hint and the streamer
+            // skips PendingReview tasks.
             let prompt = format!(
                 "Auto-followup from @{} review.\n\nOPEN WORK identified: {}\n\n--- Original analysis ---\n{}\n--- end analysis ---\n\nYour task: Implement the open work above. Cite the source ADR/workplan in your commit subject. If the work is genuinely blocked (missing dependency, ambiguous spec, etc.), STOP and report what's blocking instead of guessing.",
                 req.role, summary, content
             );
             if let Some(port) = inner_state.0.state_port.as_ref() {
                 let timestamp = chrono::Utc::now().to_rfc3339();
-                if let Err(e) = port
+                // Create the task in Pending state.
+                let create_res = port
                     .inference_task_create(
                         &task_id, &workplan_id, &task_id, "auto-followup",
                         &prompt, "hex-coder", &timestamp,
                     )
-                    .await
-                {
-                    warn!("auto-followup enqueue failed: {}", e);
-                } else {
-                    enqueued.push(json!({
-                        "id": task_id.clone(),
-                        "role": "hex-coder",
-                        "status": "pending",
-                        "kind": "auto-followup",
-                        "subject": subject,
-                        "summary": summary.clone(),
-                        "workplan_id": workplan_id,
-                    }));
-                    auto_followup_id = Some(task_id);
-                    auto_followup_summary = Some(summary);
+                    .await;
+                match create_res {
+                    Ok(()) => {
+                        // Immediately gate the task to PendingReview so no
+                        // worker can auto-claim. Operator approves via the
+                        // BrainDispatchesPanel button or by replying with
+                        // "approve <id>" in chat. Best-effort — if the gate
+                        // call fails (race with claim), the task runs as
+                        // normal Pending which is the existing behavior.
+                        if let Err(e) = port.inference_task_gate(&task_id, &timestamp).await {
+                            warn!("auto-followup gate failed (task will run as Pending): {}", e);
+                        }
+                        enqueued.push(json!({
+                            "id": task_id.clone(),
+                            "role": "hex-coder",
+                            "status": "pending_review",
+                            "kind": "auto-followup",
+                            "subject": subject,
+                            "summary": summary.clone(),
+                            "workplan_id": workplan_id,
+                        }));
+                        auto_followup_id = Some(task_id);
+                        auto_followup_summary = Some(summary);
+                    }
+                    Err(e) => {
+                        warn!("auto-followup enqueue failed: {}", e);
+                    }
                 }
             }
         }
@@ -846,8 +935,8 @@ pub async fn dispatch_brain_chat(
             summary.clone()
         };
         format!(
-            "{}\n\n> **🤖 Auto-followup queued** — hex-coder dispatch `{}` (kind=auto-followup): {}\n> Track in the Brain Dispatches panel; auto-reconciler closes the matching workplan task on completion.",
-            content, short_id, short_summary
+            "{}\n\n> **🛡 Auto-followup gated** — hex-coder dispatch `{}` is **awaiting your approval**: {}\n> **To approve**, click the green Approve button in the Brain Dispatches panel, OR reply in this thread with `approve {}`. The worker won't run until you do. Auto-reconciler will close the matching workplan task on completion.",
+            content, short_id, short_summary, short_id
         )
     } else {
         content

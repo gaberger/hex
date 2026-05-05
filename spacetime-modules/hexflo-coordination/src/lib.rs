@@ -1510,6 +1510,37 @@ pub fn inference_task_claim(
     Ok(())
 }
 
+/// Gate a Pending inference_task → PendingReview so workers cannot claim
+/// it until the operator approves. Used by the brain-chat auto-followup
+/// path: every code-touching task gets human approval before running.
+/// CAS-checked: only Pending tasks can be gated; rejecting Completed /
+/// InProgress / Failed prevents accidental state corruption.
+#[reducer]
+pub fn inference_task_gate(
+    ctx: &ReducerContext,
+    id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let task = ctx
+        .db
+        .inference_task()
+        .id()
+        .find(&id)
+        .ok_or_else(|| format!("InferenceTask '{}' not found", id))?;
+
+    if task.status != "Pending" {
+        return Err(format!("cannot_gate: task is {}", task.status));
+    }
+
+    ctx.db.inference_task().id().update(InferenceTask {
+        status: "PendingReview".to_string(),
+        updated_at: timestamp,
+        ..task
+    });
+
+    Ok(())
+}
+
 /// Promote a PendingReview inference_task to Pending so workers can claim it.
 /// Used by the brain-dispatch surface when an operator approves a dispatch
 /// whose brief touched a critical-path token. CAS-checks the current status

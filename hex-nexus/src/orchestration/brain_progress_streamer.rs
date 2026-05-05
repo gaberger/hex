@@ -117,6 +117,74 @@ impl BrainProgressStreamer {
             // InProgress. Skips Pending (worker hasn't claimed yet).
             if t.status != "InProgress" { continue; }
 
+            // TOOL-CALL STREAMING (Path A): for each new tool_event whose
+            // agent_id matches this in-flight task, post a one-line summary
+            // to the thread. Tracks last-posted event id per dispatch via
+            // memory key so we don't re-post on every tick.
+            if !t.agent_id.is_empty() {
+                let last_event_key = format!("brain-stream-last-event:{}", t.id);
+                let last_event_id: i64 = port
+                    .hexflo_memory_retrieve(&last_event_key)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|s| {
+                        let v: serde_json::Value = serde_json::from_str(&s).ok()?;
+                        v.get("event_id").and_then(|x| x.as_i64())
+                    })
+                    .unwrap_or(0);
+                let events = self.state.event_adapter.list_events(None, 200).await;
+                let mut new_max = last_event_id;
+                let mut new_lines: Vec<String> = Vec::new();
+                for ev in events.iter().rev() {
+                    if ev.id <= last_event_id { continue; }
+                    if ev.agent_id.as_deref() != Some(t.agent_id.as_str()) { continue; }
+                    if ev.id > new_max { new_max = ev.id; }
+                    let tool = ev.tool_name.as_deref().unwrap_or("?");
+                    // Single-line summary of tool input — truncate aggressively.
+                    let summary = ev.input_json.as_deref()
+                        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                        .map(|v| {
+                            // Common keys: file_path, command, pattern, path
+                            ["file_path", "command", "pattern", "path", "url", "query"]
+                                .iter()
+                                .find_map(|k| v.get(k).and_then(|x| x.as_str()).map(|s| s.to_string()))
+                                .unwrap_or_else(|| "…".to_string())
+                        })
+                        .unwrap_or_else(|| "…".to_string());
+                    let summary = if summary.len() > 80 { format!("{}…", &summary[..80]) } else { summary };
+                    let icon = match ev.event_type.as_str() {
+                        "PreToolUse" | "tool_start" => "·",
+                        "PostToolUse" | "tool_end" => match ev.exit_code {
+                            Some(0) | None => "·",
+                            Some(_) => "✗",
+                        },
+                        _ => "·",
+                    };
+                    new_lines.push(format!(
+                        "{} **[@{}]** `{}` {}",
+                        icon, t.role, tool, summary
+                    ));
+                }
+                // Post each new line as its own thread message — keeps the
+                // chat scrollback chronological and lets each tool call be
+                // referenced individually if the operator wants to ask about it.
+                for line in &new_lines {
+                    let _ = append_to_thread(port.as_ref(), &thread_id, &t.role, line).await;
+                }
+                if new_max > last_event_id {
+                    let _ = port.hexflo_memory_store(
+                        &last_event_key,
+                        &serde_json::json!({"event_id": new_max,
+                            "ts": chrono::Utc::now().to_rfc3339()}).to_string(),
+                        "system",
+                    ).await;
+                    // Skip the elapsed heartbeat this tick — tool events are
+                    // already showing the operator the worker is alive.
+                    continue;
+                }
+            }
+
             let last_tick_key = format!("{}{}", LAST_TICK_KEY_PREFIX, t.id);
             let last_tick = port.hexflo_memory_retrieve(&last_tick_key).await.ok().flatten();
             let now = chrono::Utc::now();
