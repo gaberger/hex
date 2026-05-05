@@ -2179,10 +2179,12 @@ async fn notify_validate_regression(
     notify_operator("brain.validate.regression", body, 2).await;
 }
 
-/// Fire-and-forget POST to `/api/events` recording a structured sched-daemon
-/// event. Mirrors the inline `brain_tick` POST in [`daemon`] but exposes a
-/// `payload` field so per-handler counts can travel alongside the kind.
-/// Errors are swallowed — event recording must never abort a tick.
+/// POST to `/api/events` recording a structured sched-daemon event.
+/// Mirrors the inline `brain_tick` POST in [`daemon`] but exposes a `payload`
+/// field so per-handler counts can travel alongside the kind. Network errors
+/// and HTTP non-success responses are logged to stderr (visible in the daemon
+/// log) per ADR-2604241815 P2 — the original silent-drop bug it diagnoses
+/// returned a 400 that fire-and-forget code never noticed.
 async fn record_sched_event(event_type: &str, payload: serde_json::Value) {
     let port = std::env::var("HEX_NEXUS_PORT")
         .unwrap_or_else(|_| "5555".to_string())
@@ -2196,12 +2198,34 @@ async fn record_sched_event(event_type: &str, payload: serde_json::Value) {
         "event_type": event_type,
         "payload": payload,
     });
-    let _ = reqwest::Client::new()
+    match reqwest::Client::new()
         .post(&event_url)
         .json(&body)
         .timeout(Duration::from_secs(2))
         .send()
-        .await;
+        .await
+    {
+        Ok(resp) if !resp.status().is_success() => {
+            let status = resp.status();
+            let body_text = resp.text().await.unwrap_or_default();
+            eprintln!(
+                "  {} {} event POST rejected ({}): {}",
+                "✗".red(),
+                event_type,
+                status,
+                body_text.trim()
+            );
+        }
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!(
+                "  {} {} event POST failed: {}",
+                "✗".red(),
+                event_type,
+                e
+            );
+        }
+    }
 }
 
 /// Sched event emitted by `tick_adr_health_actions`. Holds the same payload
@@ -2989,14 +3013,27 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             "event_type": "brain_tick",
             "duration_ms": elapsed.as_millis() as i64,
         });
-        if let Err(e) = reqwest::Client::new()
+        match reqwest::Client::new()
             .post(&event_url)
             .json(&body)
             .timeout(Duration::from_secs(2))
             .send()
             .await
         {
-            eprintln!("  {} brain_tick event POST failed: {}", "✗".red(), e);
+            Ok(resp) if !resp.status().is_success() => {
+                let status = resp.status();
+                let body_text = resp.text().await.unwrap_or_default();
+                eprintln!(
+                    "  {} brain_tick event POST rejected ({}): {}",
+                    "✗".red(),
+                    status,
+                    body_text.trim()
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("  {} brain_tick event POST failed: {}", "✗".red(), e);
+            }
         }
 
         // ADR-2604241820: Record validate outcome as RL reward.
