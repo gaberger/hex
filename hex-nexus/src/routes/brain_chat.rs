@@ -783,6 +783,51 @@ pub async fn dispatch_brain_chat(
     // Cap at MAX_AGENT_DISPATCH_DEPTH so a chain of `@`s can't infinite-loop.
     let depth = req.dispatch_depth.unwrap_or(0);
     let mut enqueued: Vec<Value> = Vec::new();
+
+    // AUTO-FOLLOWUP: when the agent's reply identifies specific open phases
+    // of an ADR or workplan ("Phases 3-5 remaining", "Phase 2 still pending"),
+    // auto-enqueue a hex-coder inference_task so the recommendation actually
+    // becomes work. Without this, the chat surface produces good analysis
+    // that goes nowhere — operator has to manually convert each one.
+    //
+    // Only fires at depth=0 (operator-initiated) so deep recursive replies
+    // don't spawn cascading followups. Only one followup per dispatch.
+    if depth == 0 {
+        if let Some((subject, summary)) = detect_open_followup(&content) {
+            let task_id = uuid::Uuid::new_v4().to_string();
+            let workplan_id = format!(
+                "brain-chat:{}:auto-followup",
+                req.thread_id.as_deref().unwrap_or("global")
+            );
+            let prompt = format!(
+                "Auto-followup from @{} review.\n\nOPEN WORK identified: {}\n\n--- Original analysis ---\n{}\n--- end analysis ---\n\nYour task: Implement the open work above. Cite the source ADR/workplan in your commit subject. If the work is genuinely blocked (missing dependency, ambiguous spec, etc.), STOP and report what's blocking instead of guessing.",
+                req.role, summary, content
+            );
+            if let Some(port) = inner_state.0.state_port.as_ref() {
+                let timestamp = chrono::Utc::now().to_rfc3339();
+                if let Err(e) = port
+                    .inference_task_create(
+                        &task_id, &workplan_id, &task_id, "auto-followup",
+                        &prompt, "hex-coder", &timestamp,
+                    )
+                    .await
+                {
+                    warn!("auto-followup enqueue failed: {}", e);
+                } else {
+                    enqueued.push(json!({
+                        "id": task_id,
+                        "role": "hex-coder",
+                        "status": "pending",
+                        "kind": "auto-followup",
+                        "subject": subject,
+                        "summary": summary,
+                        "workplan_id": workplan_id,
+                    }));
+                }
+            }
+        }
+    }
+
     let children: Vec<Value> = if depth >= MAX_AGENT_DISPATCH_DEPTH {
         Vec::new()
     } else {
@@ -1111,6 +1156,93 @@ pub async fn list_brain_dispatches(
             Json(json!({ "error": format!("inference_task_list_all: {}", e) })),
         ),
     }
+}
+
+/// Detect when an agent reply is naming OPEN work on an ADR or workplan
+/// that should be enqueued as a follow-up worker task. Looks for two
+/// signals together:
+///   1. A subject reference: ADR-XXX or wp-foo
+///   2. Open-work signal: phases mentioned alongside "remaining",
+///      "pending", "open", "TODO", "not yet", "still need", "incomplete",
+///      "abandoned" — anything operators would treat as actionable
+///
+/// Returns (subject, short_summary) on detection. Summary is at most ~200
+/// chars and captures the lines mentioning the open work for the dispatch
+/// brief.
+///
+/// Conservative: prefers false negatives over false positives so we don't
+/// spam the queue with bogus follow-ups every time an agent says "no work
+/// needed".
+fn detect_open_followup(text: &str) -> Option<(String, String)> {
+    let lower = text.to_ascii_lowercase();
+    // Must mention ADR-XXX or wp-foo.
+    let has_subject = lower.contains("adr-") || lower.contains("wp-");
+    if !has_subject { return None; }
+    // Must mention phases (P1 / Phase 3 / Phases 1-3 / etc.)
+    let has_phase = ["phase ", "phases ", " p1", " p2", " p3", " p4", " p5", " p6", " p7"]
+        .iter()
+        .any(|p| lower.contains(p));
+    if !has_phase { return None; }
+    // Must signal the work is open / not done.
+    let signals = [
+        "remaining", "pending", "open", "not yet", "still need", "still pending",
+        "incomplete", "abandoned", "to do", "todo", "outstanding", "unfinished",
+        "unimplemented", "not implemented", "not yet implemented",
+    ];
+    let has_open_signal = signals.iter().any(|s| lower.contains(s));
+    if !has_open_signal { return None; }
+    // Must NOT signal that no work at all is wanted. Note: "no status change"
+    // is NOT a suppressor — an ADR can stay Accepted while phases 3-5 still
+    // need work. Only suppress when the reply explicitly disclaims any action.
+    let suppressors = [
+        "no action", "no follow-up", "no followup", "no further action",
+        "do nothing", "no work needed", "leave as is", "leave as-is",
+        "no enqueue", "do not enqueue", "do not track", "nothing to do",
+    ];
+    if suppressors.iter().any(|s| lower.contains(s)) {
+        return None;
+    }
+
+    // Pull a subject line out of the original text (preserve casing).
+    let subject = text.lines()
+        .find(|l| {
+            let lo = l.to_ascii_lowercase();
+            (lo.contains("adr-") || lo.contains("wp-")) && lo.contains("phase")
+        })
+        .or_else(|| text.lines().find(|l| {
+            let lo = l.to_ascii_lowercase();
+            lo.contains("adr-") || lo.contains("wp-")
+        }))
+        .map(|s| s.trim())
+        .unwrap_or("(see analysis)")
+        .to_string();
+    let subject = if subject.len() > 120 {
+        format!("{}…", &subject[..120])
+    } else {
+        subject
+    };
+
+    // Summary: up to 3 lines that include open-work keywords from the reply.
+    let mut summary_lines: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        let lo = line.to_ascii_lowercase();
+        if signals.iter().any(|s| lo.contains(s)) {
+            summary_lines.push(line.trim());
+            if summary_lines.len() >= 3 { break; }
+        }
+    }
+    let summary = if summary_lines.is_empty() {
+        subject.clone()
+    } else {
+        summary_lines.join(" / ")
+    };
+    let summary = if summary.len() > 280 {
+        format!("{}…", &summary[..280])
+    } else {
+        summary
+    };
+
+    Some((subject, summary))
 }
 
 /// Best-effort detection of critical-path tokens in a free-form brief.
