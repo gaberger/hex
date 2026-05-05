@@ -1,6 +1,6 @@
 # ADR-2604142100: hex Native Filesystem — Self-Sufficient File Operations
 
-**Status:** Proposed
+**Status:** Accepted (resolved 2026-05-05)
 **Date:** 2026-04-14
 **Drivers:** hex currently depends on external tools (context-mode, Bash glob, Claude Read/Grep) for filesystem operations. An AIOS that needs third-party plugins for `ls` is not self-sufficient. hex must own its entire filesystem surface.
 
@@ -96,17 +96,26 @@ Update `hex-cli/assets/templates/claude-md-hex-section.md` to mandate hex fs pri
 
 ## Implementation
 
-| Phase | Description | Status |
-|-------|------------|--------|
-| P1 | hex fs list/read/search via REST + CLI | Pending |
-| P2 | MCP tool definitions | Pending |
-| P3 | hex fs glob/tree/stat/head/tail | Pending |
-| P4 | Capability-gated access via claims | Pending |
-| P5 | Update agent YAMLs + CLAUDE.md template | Pending |
-| P6 | Event emission to SpacetimeDB | Pending |
+Tracked by `docs/workplans/wp-hex-native-filesystem.json`. Phase IDs differ slightly from this table — the workplan groups list/read/search/glob/tree/stat/head/tail under a single REST phase.
+
+| Phase | Description | Workplan | Status |
+|-------|------------|----------|--------|
+| P1 | All 8 fs primitives via REST in hex-nexus (`/api/fs/*`) | wp P1 | Pending — `hex fs` CLI returns 404 (routes not implemented) |
+| P2 | `hex fs` CLI subcommand | wp P2 | Done (2026-04-14, hex-cli/src/commands/fs.rs) |
+| P3 | MCP tool definitions (`mcp__hex__hex_fs_*`) | wp P3 | Pending — `grep hex_fs_ hex-cli/src/commands/mcp.rs` empty |
+| P4 | Update agent YAMLs + CLAUDE.md template | wp P4 | Pending — no asset references hex_fs_ |
+| P5 | Capability-gated access via claims (ADR-010) | wp P5 | Pending |
+| P6 | Event emission to SpacetimeDB | wp P6 | Pending |
+
+> **Workplan integrity note (2026-05-04):** P1/P3/P4 were previously marked `done` in the workplan based on fabricated evidence. Salvage-checked against live nexus (`/api/fs/list` → 404) and asset grep, then flipped back to `pending`. P5 and P6 were missing from the workplan entirely and have been added.
 
 ## References
 
 - ADR-010: Claims-based Authorization
 - ADR-019: CLI-MCP Parity
-- ADR-2604112000: Standalone Mode (no Claude Code dependency)
+- ADR-2604112000: Hex Self-Sufficient Dispatch (Standalone Mode)
+
+---
+## Operator Resolution Note (2026-05-05T02:09:25.803241440+00:00)
+
+Auto-applied from @adr-reviewer chat verdict

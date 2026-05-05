@@ -27,7 +27,7 @@
           "id": "P1.1",
           "layer": "hex-nexus",
           "name": "routes/fs.rs",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -41,7 +41,7 @@
           "id": "P1.2",
           "layer": "hex-nexus",
           "name": "Unit tests",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 1
@@ -97,7 +97,7 @@
           "id": "P3.1",
           "layer": "hex-cli",
           "name": "MCP tool registration",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 3
@@ -125,10 +125,65 @@
           "id": "P4.1",
           "layer": "hex-cli",
           "name": "Agent YAML prefs",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 4
+    },
+    {
+      "description": "Capability-gated filesystem access via the existing claims system (ADR-010). Scopes: `fs:read:src/**`, `fs:read:docs/**`, `fs:write:docs/workplans/**`. Reject calls lacking the required claim with HTTP 403; allow when claim matches. Path traversal already covered by `safe_path()` in P1.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-nexus routes::fs::claims",
+        "type": "unit"
+      },
+      "id": "P5",
+      "name": "Capability-gated access via claims",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P4.1"
+          ],
+          "description": "In hex-nexus/src/routes/fs.rs, add a claim-extraction middleware/helper that resolves `fs:read:<path>` and `fs:write:<path>` against the request's claim set (existing claims port from ADR-010). Each handler enforces the relevant scope before touching disk. Add unit tests covering allow/deny + glob scoping.",
+          "files": [
+            "hex-nexus/src/routes/fs.rs"
+          ],
+          "id": "P5.1",
+          "layer": "hex-nexus",
+          "name": "Claims enforcement",
+          "status": "pending"
+        }
+      ],
+      "tier": 5
+    },
+    {
+      "description": "Emit observability events to SpacetimeDB for every fs operation: actor, operation, path, byte_count, duration_ms. Lets the dashboard show 'who read what, when' (ADR consequence: auditable access).",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-nexus routes::fs::events",
+        "type": "unit"
+      },
+      "id": "P6",
+      "name": "Event emission to SpacetimeDB",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P5.1"
+          ],
+          "description": "Wire fs handlers through the existing SpacetimeDB event port. Define `FsAccessEvent { actor, op, path, bytes, duration_ms, allowed }`. Reuse the agent-registry / event channel rather than introducing a new module. Test: a single fs read produces exactly one event row.",
+          "files": [
+            "hex-nexus/src/routes/fs.rs",
+            "spacetime-modules/agent-registry/src/lib.rs"
+          ],
+          "id": "P6.1",
+          "layer": "hex-nexus",
+          "name": "Event emission",
+          "status": "pending"
+        }
+      ],
+      "tier": 6
     }
   ]
 }
