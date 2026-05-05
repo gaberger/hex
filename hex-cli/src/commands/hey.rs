@@ -155,6 +155,24 @@ fn read_trusted_hosts() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Normalize a workplan reference (slug, bare filename, or full path) to a
+/// repo-relative `docs/workplans/<name>.json` path. Idempotent: passing an
+/// already-prefixed path leaves it unchanged instead of double-prepending,
+/// which previously produced `docs/workplans/docs/workplans/<name>.json`
+/// when the runner forwarded the result to `hex plan execute`.
+fn resolve_workplan_path(wp: &str) -> String {
+    let with_ext = if wp.ends_with(".json") {
+        wp.to_string()
+    } else {
+        format!("{}.json", wp)
+    };
+    if with_ext.starts_with("docs/workplans/") || std::path::Path::new(&with_ext).is_absolute() {
+        with_ext
+    } else {
+        format!("docs/workplans/{}", with_ext)
+    }
+}
+
 fn classify_intent(text: &str) -> TaskIntent {
     let t = text.to_lowercase();
 
@@ -312,9 +330,9 @@ fn classify_intent(text: &str) -> TaskIntent {
     if t.contains("run") || t.contains("execute") {
         // Extract workplan name
         if let Some(wp) = text.split_whitespace().find(|w| w.starts_with("wp-") || w.ends_with(".json")) {
-            let path = if wp.ends_with(".json") { wp.to_string() } else { format!("{}.json", wp) };
+            let path = resolve_workplan_path(wp);
             return TaskIntent::Workplan {
-                path: format!("docs/workplans/{}", path),
+                path,
                 description: format!("Execute workplan {}", wp),
             };
         }
@@ -822,6 +840,53 @@ mod remote_tests {
             assert_eq!(command, "nvidia-smi");
         } else {
             panic!("expected RemoteShell variant");
+        }
+    }
+
+    #[test]
+    fn resolve_workplan_slug_prepends_dir_and_extension() {
+        assert_eq!(resolve_workplan_path("wp-foo"), "docs/workplans/wp-foo.json");
+    }
+
+    #[test]
+    fn resolve_workplan_bare_json_prepends_dir() {
+        assert_eq!(
+            resolve_workplan_path("wp-foo.json"),
+            "docs/workplans/wp-foo.json"
+        );
+    }
+
+    #[test]
+    fn resolve_workplan_already_prefixed_is_idempotent() {
+        // Regression: the previous classifier produced
+        // `docs/workplans/docs/workplans/wp-foo.json` which then 404s in
+        // `hex plan execute` (and silently no-ops the brain runner).
+        assert_eq!(
+            resolve_workplan_path("docs/workplans/wp-foo.json"),
+            "docs/workplans/wp-foo.json"
+        );
+    }
+
+    #[test]
+    fn resolve_workplan_absolute_path_passthrough() {
+        let abs = "/tmp/wp-foo.json";
+        assert_eq!(resolve_workplan_path(abs), abs);
+    }
+
+    #[test]
+    fn classify_run_workplan_basename_resolves_correctly() {
+        // Sanity: typical user input "run wp-foo" produces a single-prefix
+        // path (regression for the double-prepend bug at the classifier
+        // surface). Full-path inputs ("run docs/workplans/...") are handled
+        // by the canonical resolver in plan::resolve_workplan_path; the
+        // classifier itself routes those through other branches due to
+        // keyword overlap with "docs".
+        let intent = classify_intent("run wp-foo");
+        match intent {
+            TaskIntent::Workplan { path, .. } => {
+                assert_eq!(path, "docs/workplans/wp-foo.json");
+            }
+            other => panic!("expected Workplan, got {:?}", other),
         }
     }
 }

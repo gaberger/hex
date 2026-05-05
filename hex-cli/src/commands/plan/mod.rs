@@ -916,22 +916,63 @@ fn previous_revision_size(path: &std::path::Path) -> Option<i64> {
     Some(out.stdout.len() as i64)
 }
 
+/// Resolve a workplan path argument. Tries (in order):
+///   1. The path as-given (absolute or relative to cwd).
+///   2. `docs/workplans/<basename>` from cwd — only if the input does not
+///      already start with `docs/workplans/`. Prevents the double-prefix
+///      bug seen by the sched daemon when its cwd is not the project root
+///      (`docs/workplans/docs/workplans/<file>`).
+///   3. Walk up from cwd looking for a directory containing the workplan
+///      at the input's relative position, so the daemon can find files
+///      regardless of where it was launched.
+pub(crate) fn resolve_workplan_path(file: &str) -> anyhow::Result<std::path::PathBuf> {
+    let raw = std::path::Path::new(file);
+    if raw.exists() {
+        return Ok(raw.to_path_buf());
+    }
+    if raw.is_absolute() {
+        anyhow::bail!("Workplan not found: {}", file);
+    }
+
+    let already_prefixed = raw.starts_with("docs/workplans");
+    if !already_prefixed {
+        let prefixed = std::path::Path::new("docs/workplans").join(raw);
+        if prefixed.exists() {
+            return Ok(prefixed);
+        }
+    }
+
+    // Walk up looking for a parent that contains the file at its relative path.
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut dir = cwd.as_path();
+        loop {
+            let candidate = dir.join(raw);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+            if !already_prefixed {
+                let candidate_prefixed = dir.join("docs/workplans").join(raw);
+                if candidate_prefixed.exists() {
+                    return Ok(candidate_prefixed);
+                }
+            }
+            match dir.parent() {
+                Some(parent) => dir = parent,
+                None => break,
+            }
+        }
+    }
+
+    anyhow::bail!("Workplan not found: {}", file);
+}
+
 /// Execute a workplan — dispatches tasks through tiered inference routing (ADR-2604120202).
 ///
 /// Sends the workplan to hex-nexus for execution. Nexus routes each task through
 /// Path C (headless inference for T1/T2/T2.5) or Path A (spawn agent for T3),
 /// with compile gates, GBNF grammar constraints, and RL reward recording.
 async fn execute_plan(file: &str) -> anyhow::Result<()> {
-    let path = std::path::Path::new(file);
-    let path = if path.exists() {
-        path.to_path_buf()
-    } else {
-        let wp_path = std::path::Path::new("docs/workplans").join(file);
-        if !wp_path.exists() {
-            anyhow::bail!("Workplan not found: {} (also tried docs/workplans/{})", file, file);
-        }
-        wp_path
-    };
+    let path = resolve_workplan_path(file)?;
 
     // Parse and validate the workplan
     let content = std::fs::read_to_string(&path)?;
@@ -1869,15 +1910,7 @@ async fn list_plans() -> anyhow::Result<()> {
 
 /// Show detailed status of a workplan.
 async fn show_plan_status(file: &str) -> anyhow::Result<()> {
-    let path = Path::new("docs/workplans").join(file);
-    if !path.exists() {
-        // Try adding .json
-        let with_ext = Path::new("docs/workplans").join(format!("{}.json", file));
-        if with_ext.exists() {
-            return show_plan_file(&with_ext).await;
-        }
-        anyhow::bail!("Workplan not found: {}", path.display());
-    }
+    let path = resolve_workplan_path(file)?;
     show_plan_file(&path).await
 }
 
@@ -2958,4 +2991,80 @@ async fn gc_drafts(days: u64) -> anyhow::Result<()> {
         days
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod resolve_workplan_path_tests {
+    use super::resolve_workplan_path;
+    use std::fs;
+
+    /// Pins the bug behind `brain-task:test-visible-pending`: when the
+    /// daemon is launched outside the project root and is handed a
+    /// `docs/workplans/<file>` payload, the resolver must NOT produce
+    /// `docs/workplans/docs/workplans/<file>`.
+    #[test]
+    fn does_not_double_prefix_when_input_already_under_docs_workplans() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let wp_dir = root.join("docs/workplans");
+        fs::create_dir_all(&wp_dir).unwrap();
+        let wp = wp_dir.join("wp-resolver-probe.json");
+        fs::write(&wp, "{}").unwrap();
+
+        let nested = root.join("hex-cli/src");
+        fs::create_dir_all(&nested).unwrap();
+        let _guard = CwdGuard::change_to(&nested);
+
+        let resolved = resolve_workplan_path("docs/workplans/wp-resolver-probe.json")
+            .expect("resolve via walk-up");
+        let resolved_str = resolved.to_string_lossy();
+        assert!(
+            !resolved_str.contains("docs/workplans/docs/workplans"),
+            "double-prefix regression: {}",
+            resolved_str
+        );
+        assert!(resolved.ends_with("docs/workplans/wp-resolver-probe.json"));
+    }
+
+    #[test]
+    fn finds_via_legacy_basename_prefix_from_project_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        fs::create_dir_all(root.join("docs/workplans")).unwrap();
+        fs::write(root.join("docs/workplans/wp-foo.json"), "{}").unwrap();
+        let _guard = CwdGuard::change_to(root);
+
+        let resolved = resolve_workplan_path("wp-foo.json").expect("legacy basename");
+        assert!(resolved.ends_with("docs/workplans/wp-foo.json"));
+    }
+
+    #[test]
+    fn errors_on_truly_missing_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _guard = CwdGuard::change_to(tmp.path());
+        assert!(resolve_workplan_path("docs/workplans/nope.json").is_err());
+    }
+
+    /// Serialize cwd-mutating tests: `std::env::set_current_dir` is process
+    /// global. Hold this for the duration of a test that changes cwd.
+    struct CwdGuard {
+        prev: std::path::PathBuf,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl CwdGuard {
+        fn change_to(dir: &std::path::Path) -> Self {
+            static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let prev = std::env::current_dir().expect("cwd");
+            std::env::set_current_dir(dir).expect("set cwd");
+            Self { prev, _lock: lock }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.prev);
+        }
+    }
 }

@@ -648,10 +648,17 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
 
         "hex_plan_status" => {
             let file = args.get("file").and_then(|v| v.as_str()).unwrap_or("");
-            let path = std::path::Path::new("docs/workplans").join(file);
-            match std::fs::read_to_string(&path) {
-                Ok(contents) => serde_json::from_str::<Value>(&contents).map_err(|e| format!("Parse error: {}", e)),
-                Err(e) => Err(format!("Cannot read {}: {}", path.display(), e)),
+            // Use the same resolver as `hex plan execute` so callers can pass
+            // either a bare slug (`wp-foo`), a basename (`wp-foo.json`), or a
+            // full repo-relative path (`docs/workplans/wp-foo.json`) without
+            // the path being double-prefixed when CWD ≠ repo root.
+            match crate::commands::plan::resolve_workplan_path(file) {
+                Err(e) => Err(format!("{}", e)),
+                Ok(path) => match std::fs::read_to_string(&path) {
+                    Ok(contents) => serde_json::from_str::<Value>(&contents)
+                        .map_err(|e| format!("Parse error: {}", e)),
+                    Err(e) => Err(format!("Cannot read {}: {}", path.display(), e)),
+                },
             }
         }
 
