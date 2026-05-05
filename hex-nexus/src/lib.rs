@@ -632,6 +632,15 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         orchestration::brain_dispatch_reconciler::BrainDispatchReconciler::spawn(reconciler_state);
     }
 
+    // Brain progress streamer: posts mid-flight heartbeat updates from
+    // in-flight brain-chat dispatches into their originating threads so
+    // the operator sees ⏱ progress lines instead of silence between
+    // enqueue and final result.
+    {
+        let streamer_state = state.clone();
+        orchestration::brain_progress_streamer::BrainProgressStreamer::spawn(streamer_state);
+    }
+
     // Background sched self-improvement service (ADR-2604102200):
     // Tests local models periodically, records outcomes to RL engine.
     {
