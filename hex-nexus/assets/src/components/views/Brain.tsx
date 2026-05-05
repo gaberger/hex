@@ -1102,6 +1102,46 @@ interface SupervisorEvent {
   handled: boolean;
 }
 
+/// Extract 8-char hex dispatch ids referenced in a chat bubble's text.
+/// Format: backtick-wrapped 8-char hex like `cedaffc6` (or `cedaffc6` after
+/// "dispatch", "task"). Conservative — must be 8 hex chars surrounded by
+/// non-alphanumeric or backticks. Returns deduped ordered ids.
+function extractDispatchIds(text: string): string[] {
+  if (!text) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  // Pattern 1: backtick-wrapped 8-hex
+  const re1 = /`([0-9a-f]{8})`/gi;
+  // Pattern 2: "dispatch <8-hex>" or "task <8-hex>" (lower)
+  const re2 = /(?:dispatch|task)\s+([0-9a-f]{8})\b/gi;
+  for (const re of [re1, re2]) {
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const id = m[1].toLowerCase();
+      if (!seen.has(id)) {
+        seen.add(id);
+        out.push(id);
+      }
+    }
+  }
+  return out;
+}
+
+interface DispatchSource {
+  id: string;
+  role: string;
+  phase: string;
+  prompt: string;
+  status: string;
+  agentId: string;
+  threadId?: string;
+  workplanId: string;
+  result: string;
+  error: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /// Heuristic: should this agent reply offer a "Convert to workplan" button?
 /// Matches phrasing the agent typically uses when recommending workplan
 /// creation (adr-reviewer especially: "Phases X-Y should be tracked in a
@@ -1628,6 +1668,24 @@ const ChatPanel: Component<{
   const input = props.externalInput;
   const setInput = props.setExternalInput;
   const [history, setHistory] = createSignal<ChatMessage[]>([WELCOME]);
+  // Source-modal state — when a chat bubble references a dispatch id and
+  // the operator clicks "→ source", we fetch the dispatch's full record
+  // (prompt + result + agent + thread) and render it inline. Stops the
+  // operator from having to dig via `curl` or `spacetime sql` to find
+  // out what the worker actually saw.
+  const [sourceDispatch, setSourceDispatch] = createSignal<DispatchSource | null>(null);
+  const [sourceLoading, setSourceLoading] = createSignal(false);
+  const openSource = async (id: string) => {
+    setSourceLoading(true);
+    try {
+      const resp = await restClient.get<DispatchSource>(`/api/brain/dispatches/${encodeURIComponent(id)}`);
+      setSourceDispatch(resp);
+    } catch (e) {
+      alert(`source lookup failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSourceLoading(false);
+    }
+  };
   // Active thread id — persisted in localStorage so a refresh resumes the
   // same conversation. Messages themselves live in STDB.
   const [activeThreadId, setActiveThreadId] = createSignal<string | null>(
@@ -2177,6 +2235,22 @@ const ChatPanel: Component<{
                     {msg.model}
                   </span>
                 </Show>
+                {/* "→ source" button — surfaces when the bubble's text
+                    references one or more dispatch ids (e.g. "dispatch
+                    cedaffc6" or `cedaffc6`). One click opens a modal with
+                    the FULL prompt + result + agent + thread for that
+                    dispatch — operator no longer has to scroll back or
+                    curl the API to find out what the worker actually saw. */}
+                <For each={extractDispatchIds(msg.text)}>
+                  {(did) => (
+                    <button
+                      type="button"
+                      class="text-[9px] px-1.5 py-0.5 rounded bg-purple-900 hover:bg-purple-800 text-purple-200 ml-1 font-mono"
+                      title={`Show full source for dispatch ${did} — original prompt + worker result + thread context`}
+                      onClick={(e) => { e.stopPropagation(); openSource(did); }}
+                    >→ source {did}</button>
+                  )}
+                </For>
                 {/* "Convert to workplan" button — surfaces only on agent
                     replies whose text contains workplan-creation language
                     ("create or update a workplan", "should be tracked",
@@ -2343,6 +2417,116 @@ const ChatPanel: Component<{
           </button>
         </div>
       </footer>
+      {/* Source modal — shown when operator clicks any "→ source <id>"
+          button. Renders the dispatch's full prompt (so "Please do the
+          following three things:" with no list reveals itself as
+          truncated-at-source) + the worker's result + agent + thread.
+          Backdrop click dismisses; explicit Close + Reuse-prompt buttons. */}
+      <Show when={sourceDispatch()}>
+        {(d) => (
+          <div
+            class="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-6"
+            onClick={(e) => { if (e.currentTarget === e.target) setSourceDispatch(null); }}
+          >
+            <div class="bg-gray-950 border border-gray-700 rounded-lg max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl">
+              <header class="px-4 py-3 border-b border-gray-800 flex items-center gap-3">
+                <span class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-purple-700 text-purple-300 bg-purple-900/40">
+                  source
+                </span>
+                <span class="text-xs text-gray-200 font-mono">{d().id.slice(0, 12)}…</span>
+                <span class="text-[10px] text-gray-400">@{d().role}</span>
+                <span class={`text-[10px] px-1.5 py-0.5 rounded ${
+                  d().status === "Completed" ? "bg-green-900 text-green-300"
+                  : d().status === "InProgress" ? "bg-cyan-900 text-cyan-300 animate-pulse"
+                  : d().status === "Failed" ? "bg-red-900 text-red-300"
+                  : "bg-gray-800 text-gray-300"
+                }`}>{d().status}</span>
+                <button
+                  type="button"
+                  onClick={() => setSourceDispatch(null)}
+                  class="ml-auto text-gray-400 hover:text-gray-200 text-lg leading-none px-1"
+                  title="Close"
+                >×</button>
+              </header>
+              <div class="overflow-y-auto px-4 py-3 flex-1 text-xs">
+                <div class="mb-3">
+                  <div class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Prompt the worker received</div>
+                  <pre class="bg-gray-900 border border-gray-800 rounded p-3 text-gray-200 whitespace-pre-wrap font-mono text-[11px]">{d().prompt || "(empty prompt)"}</pre>
+                  <Show when={!d().prompt || d().prompt.trim().length < 30}>
+                    <div class="text-[10px] text-yellow-400 italic mt-1">
+                      ⚠ Prompt is empty or extremely short — likely truncated at the source. Re-issue with the full task list.
+                    </div>
+                  </Show>
+                </div>
+                <Show when={d().result}>
+                  <div class="mb-3">
+                    <div class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Worker result</div>
+                    <pre class="bg-gray-900 border border-gray-800 rounded p-3 text-gray-200 whitespace-pre-wrap font-mono text-[11px]">{d().result}</pre>
+                  </div>
+                </Show>
+                <Show when={d().error}>
+                  <div class="mb-3">
+                    <div class="text-[10px] font-bold uppercase tracking-wider text-red-400 mb-1">Worker error</div>
+                    <pre class="bg-red-900/20 border border-red-800 rounded p-3 text-red-200 whitespace-pre-wrap font-mono text-[11px]">{d().error}</pre>
+                  </div>
+                </Show>
+                <div class="grid grid-cols-2 gap-3 text-[10px] text-gray-400 mt-3">
+                  <div>agent: <span class="font-mono text-gray-300">{d().agentId || "—"}</span></div>
+                  <div>thread: <span class="font-mono text-gray-300">{d().threadId || "—"}</span></div>
+                  <div>workplan: <span class="font-mono text-gray-300">{d().workplanId}</span></div>
+                  <div>created: <span class="font-mono text-gray-300">{d().createdAt}</span></div>
+                </div>
+              </div>
+              <footer class="px-4 py-3 border-t border-gray-800 flex items-center gap-2">
+                <button
+                  type="button"
+                  class="px-3 py-1.5 rounded bg-cyan-900 hover:bg-cyan-700 text-cyan-100 text-xs font-semibold"
+                  onClick={() => {
+                    setInput(d().prompt);
+                    setSourceDispatch(null);
+                  }}
+                  title="Pre-fill the chat input with this prompt so you can edit and re-dispatch"
+                >Re-use prompt</button>
+                <Show when={d().threadId}>
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 rounded bg-purple-900 hover:bg-purple-700 text-purple-100 text-xs"
+                    onClick={async () => {
+                      const tid = d().threadId!;
+                      try {
+                        const resp = await restClient.post<{ id: string }>(
+                          `/api/brain/threads/by-key/${encodeURIComponent(tid)}`,
+                          { title: `dispatch ${d().id.slice(0, 8)}` },
+                        );
+                        if (resp?.id) {
+                          localStorage.setItem(ACTIVE_THREAD_KEY, resp.id);
+                          window.dispatchEvent(new CustomEvent("hex-brain-thread-switch", {
+                            detail: { threadId: resp.id },
+                          }));
+                          setSourceDispatch(null);
+                        }
+                      } catch { /* ignore */ }
+                    }}
+                    title="Switch the chat panel to this dispatch's thread"
+                  >Open thread ↗</button>
+                </Show>
+                <span class="ml-auto">
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs"
+                    onClick={() => setSourceDispatch(null)}
+                  >Close</button>
+                </span>
+              </footer>
+            </div>
+          </div>
+        )}
+      </Show>
+      <Show when={sourceLoading()}>
+        <div class="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center text-gray-300 text-sm">
+          Loading dispatch source…
+        </div>
+      </Show>
     </aside>
   );
 };

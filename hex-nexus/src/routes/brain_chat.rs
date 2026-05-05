@@ -1485,6 +1485,62 @@ pub async fn message_to_workplan(
     })))
 }
 
+/// GET /api/brain/dispatches/{id} — full dispatch record (prompt, result,
+/// error, agentId, threadId, status, kind). Operator-facing: when a chat
+/// reply references a dispatch by 8-char prefix, the dashboard "→ source"
+/// button uses this to show the full prompt + result inline.
+///
+/// Accepts both full UUID and 8-char prefix. Returns first match.
+pub async fn get_brain_dispatch(
+    state: State<crate::state::SharedState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let port = match state.state_port.as_ref() {
+        Some(p) => p,
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "no state port" }))),
+    };
+    let lookup = id.trim().to_ascii_lowercase();
+    if lookup.is_empty() || lookup.len() < 4 {
+        return (StatusCode::BAD_REQUEST, Json(json!({
+            "error": "id must be at least 4 chars (full UUID or prefix)",
+        })));
+    }
+    let rows = match port.inference_task_list_all().await {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+            "error": format!("inference_task_list_all: {}", e),
+        }))),
+    };
+    let matched = rows.into_iter().find(|t| {
+        let row = t.id.to_ascii_lowercase();
+        row == lookup || row.starts_with(&lookup)
+    });
+    match matched {
+        Some(t) => {
+            let thread_id = t.workplan_id
+                .strip_prefix("brain-chat:")
+                .map(|s| s.split(':').next().unwrap_or(s).to_string());
+            (StatusCode::OK, Json(json!({
+                "id": t.id,
+                "role": t.role,
+                "phase": t.phase,
+                "prompt": t.prompt,
+                "status": t.status,
+                "agentId": t.agent_id,
+                "threadId": thread_id,
+                "workplanId": t.workplan_id,
+                "result": t.result,
+                "error": t.error,
+                "createdAt": t.created_at,
+                "updatedAt": t.updated_at,
+            })))
+        }
+        None => (StatusCode::NOT_FOUND, Json(json!({
+            "error": format!("no dispatch matching `{}`", lookup),
+        }))),
+    }
+}
+
 /// POST /api/brain/dispatches/{id}/promote — flip PendingReview → Pending.
 /// Used by the dashboard's "Approve" button on critical-path-gated dispatches.
 pub async fn promote_brain_dispatch(
