@@ -554,11 +554,40 @@ function decisionThreadKey(decisionId: string): string {
     .slice(0, 180);
 }
 
+interface PreviewState {
+  id: string;
+  kind: string;
+  path: string;
+  markdown: string;
+  truncated: boolean;
+  bytes: number;
+}
+
 const DecisionsPanel: Component<{
   data: () => DecisionsResponse | null;
   onSendToChat: (text: string, role?: string, opts?: { autoSend?: boolean; threadKey?: string }) => void;
   onResolved?: () => void;
 }> = (props) => {
+  const [preview, setPreview] = createSignal<PreviewState | null>(null);
+  const [previewLoading, setPreviewLoading] = createSignal(false);
+  const openPreview = async (item: DecisionItem) => {
+    setPreviewLoading(true);
+    try {
+      const resp = await restClient.get<PreviewState>(
+        `/api/decisions/preview?id=${encodeURIComponent(item.id)}`,
+      );
+      setPreview(resp);
+    } catch (e) {
+      alert(`preview failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+  const sendPreviewToPipeline = (item: DecisionItem) => {
+    const a = decisionAction(item);
+    setPreview(null);
+    props.onSendToChat(a.prompt, a.role, { threadKey: decisionThreadKey(item.id) });
+  };
   const resolveBlocked = async (id: string, action: "unblock" | "complete" | "abandon", evt: MouseEvent) => {
     evt.stopPropagation();
     if (action === "complete" && !confirm("Mark this task DONE? Only do this if work is actually completed.")) return;
@@ -628,20 +657,20 @@ const DecisionsPanel: Component<{
             {(item) => (
               <li
                 onClick={() => {
-                  // Open/resume the per-decision thread so all conversation
-                  // about THIS subject stays grouped — clicking ADR-047
-                  // twice opens the same thread, not a new uuid each time.
-                  const threadKey = decisionThreadKey(item.id);
+                  // In-flight: don't preview, just ask for status (different
+                  // intent than reviewing the ADR/task itself).
                   if (item.inFlight) {
                     props.onSendToChat(
                       `Status of dispatch ${item.inFlight.dispatchId.slice(0, 8)} (@${item.inFlight.role})?`,
                       item.inFlight.role,
-                      { threadKey },
+                      { threadKey: decisionThreadKey(item.id) },
                     );
                     return;
                   }
-                  const a = decisionAction(item);
-                  props.onSendToChat(a.prompt, a.role, { threadKey });
+                  // Otherwise: open the markdown preview modal first so the
+                  // operator sees the underlying ADR/task content before
+                  // committing to a chat dispatch.
+                  openPreview(item);
                 }}
                 class="flex items-start gap-2 text-xs px-2 py-1.5 rounded cursor-pointer hover:bg-gray-800/50 transition group"
                 classList={{ "opacity-60": !!item.inFlight }}
@@ -723,6 +752,103 @@ const DecisionsPanel: Component<{
             </Show>
           </button>
         </Show>
+      </Show>
+      {/* Markdown preview modal — opens on decision click. Renders the
+          underlying ADR or workplan markdown, with action buttons that
+          (a) send the existing decision-action prompt into chat (with
+          per-decision threadKey), or (b) accept/reject the decision
+          directly via the resolve endpoints (for ADRs only). */}
+      <Show when={preview()}>
+        {(p) => (
+          <div
+            class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6"
+            onClick={(e) => { if (e.currentTarget === e.target) setPreview(null); }}
+          >
+            <div class="bg-gray-950 border border-gray-700 rounded-lg max-w-4xl w-full max-h-[85vh] flex flex-col shadow-2xl">
+              <header class="px-4 py-3 border-b border-gray-800 flex items-center gap-3">
+                <span class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-gray-700 text-gray-300">
+                  {p().kind}
+                </span>
+                <span class="text-xs text-gray-200 font-mono truncate flex-1" title={p().path}>
+                  {p().path}
+                </span>
+                <span class="text-[10px] text-gray-400 font-mono">{p().bytes}B</span>
+                <button
+                  type="button"
+                  onClick={() => setPreview(null)}
+                  class="text-gray-400 hover:text-gray-200 text-lg leading-none px-1"
+                  title="Close"
+                >×</button>
+              </header>
+              <div class="overflow-y-auto px-4 py-3 flex-1 prose prose-invert prose-sm max-w-none">
+                <MarkdownContent content={p().markdown} />
+                <Show when={p().truncated}>
+                  <p class="text-[10px] text-yellow-400 italic mt-2">
+                    Truncated to 64KB. Open the file directly for full content.
+                  </p>
+                </Show>
+              </div>
+              <footer class="px-4 py-3 border-t border-gray-800 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  class="px-3 py-1.5 rounded bg-cyan-700 hover:bg-cyan-600 text-white text-xs font-semibold"
+                  onClick={() => {
+                    const matching = (props.data()?.items ?? []).find((it) => it.id === p().id);
+                    if (matching) sendPreviewToPipeline(matching);
+                    else setPreview(null);
+                  }}
+                  title="Pre-fill chat with the standard decision question for this subject"
+                >→ Send to chat / pipeline</button>
+                <Show when={p().kind === "adr"}>
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 rounded bg-green-800 hover:bg-green-700 text-green-100 text-xs"
+                    onClick={async () => {
+                      if (!confirm("Accept this ADR? Status flips to Accepted.")) return;
+                      try {
+                        await restClient.post(`/api/decisions/adr/resolve`, {
+                          id: p().id, action: "accept",
+                        });
+                        setPreview(null);
+                        props.onResolved?.();
+                      } catch (e) {
+                        alert(`accept failed: ${e instanceof Error ? e.message : String(e)}`);
+                      }
+                    }}
+                  >Accept</button>
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 rounded bg-red-900 hover:bg-red-800 text-red-100 text-xs"
+                    onClick={async () => {
+                      if (!confirm("Reject this ADR?")) return;
+                      try {
+                        await restClient.post(`/api/decisions/adr/resolve`, {
+                          id: p().id, action: "reject",
+                        });
+                        setPreview(null);
+                        props.onResolved?.();
+                      } catch (e) {
+                        alert(`reject failed: ${e instanceof Error ? e.message : String(e)}`);
+                      }
+                    }}
+                  >Reject</button>
+                </Show>
+                <span class="ml-auto flex gap-2">
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs"
+                    onClick={() => setPreview(null)}
+                  >Close</button>
+                </span>
+              </footer>
+            </div>
+          </div>
+        )}
+      </Show>
+      <Show when={previewLoading()}>
+        <div class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center text-gray-300 text-sm">
+          Loading preview…
+        </div>
       </Show>
     </section>
   );

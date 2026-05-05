@@ -526,6 +526,7 @@ pub fn build_router(state: SharedState) -> Router {
         // POST /api/decisions/{id} (resolve_decision) is registered later.
         .route("/api/decisions", get(decisions::list_decisions))
         .route("/api/decisions/blocked-task/resolve", post(decisions::resolve_blocked_task))
+        .route("/api/decisions/preview", get(decisions::preview_decision))
         .route("/api/decisions/adr/resolve", post(decisions::resolve_adr))
         // Brain-dashboard chat dispatch (wp-brain-dashboard M3):
         // POST { role, message } → loads YAML persona → calls inference → returns content.

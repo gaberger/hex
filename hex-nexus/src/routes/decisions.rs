@@ -118,6 +118,66 @@ pub async fn resolve_decision(
     )
 }
 
+/// GET /api/decisions/preview?id=<decision-id> — return the markdown content
+/// of the underlying ADR or workplan task for inline preview in the dashboard.
+///
+/// Decision id parsed:
+///   adr:ADR-XXX-...           → docs/adrs/ADR-XXX-....md
+///   blocked:wp-foo:P1.1       → docs/workplans/wp-foo.json (whole file)
+///
+/// Capped at 64KB so a runaway file doesn't choke the dashboard. Returns
+/// `{ kind, path, markdown, truncated, bytes }`.
+#[derive(Debug, Deserialize)]
+pub struct PreviewQuery {
+    pub id: String,
+}
+
+pub async fn preview_decision(
+    State(_state): State<SharedState>,
+    Query(q): Query<PreviewQuery>,
+) -> (StatusCode, Json<Value>) {
+    let id = q.id.trim();
+    if id.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "id query param required" })));
+    }
+    let scan_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    let (kind, file_path) = if let Some(stripped) = id.strip_prefix("adr:") {
+        ("adr", scan_root.join("docs/adrs").join(format!("{}.md", stripped)))
+    } else if let Some(stripped) = id.strip_prefix("blocked:") {
+        let (wp_id, _task) = stripped.rsplit_once(':')
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .unwrap_or((stripped.to_string(), "".to_string()));
+        ("blocked-task", scan_root.join("docs/workplans").join(format!("{}.json", wp_id)))
+    } else {
+        return (StatusCode::BAD_REQUEST, Json(json!({
+            "error": format!("unsupported decision kind for id `{}`", id),
+        })));
+    };
+
+    let raw = match std::fs::read_to_string(&file_path) {
+        Ok(s) => s,
+        Err(e) => return (StatusCode::NOT_FOUND, Json(json!({
+            "error": format!("preview source not found at {}: {}", file_path.display(), e),
+        }))),
+    };
+    let bytes = raw.len();
+    let cap = 64 * 1024;
+    let (markdown, truncated) = if raw.len() > cap {
+        (format!("{}\n\n*…truncated to {}KB ({}B total)*", &raw[..cap], cap / 1024, bytes), true)
+    } else {
+        (raw, false)
+    };
+    (StatusCode::OK, Json(json!({
+        "id": id,
+        "kind": kind,
+        "path": file_path.strip_prefix(&scan_root).unwrap_or(&file_path).display().to_string(),
+        "markdown": markdown,
+        "truncated": truncated,
+        "bytes": bytes,
+    })))
+}
+
 /// POST /api/decisions/blocked-task/resolve — resolve a blocked workplan task.
 ///
 /// Body: { "id": "blocked:wp-foo:P1.1", "action": "unblock" | "complete" | "abandon", "note": "..." }
