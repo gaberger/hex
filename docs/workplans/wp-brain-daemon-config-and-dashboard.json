@@ -1,0 +1,67 @@
+{
+  "adr": "ADR-2604132300",
+  "created_at": "2026-05-05T14:55:00Z",
+  "created_by": "agent",
+  "description": "Closes the two remaining open phases of ADR-2604132300 (Brain Daemon — Supervisor Loop): P4 finishes the .hex/daemon.toml schema with per-check toggles + interval; P5 wires brain_tick events into the Solid.js dashboard so operators get a live supervisor-health view.",
+  "feature": "Brain Daemon — Config Toggles + Dashboard Stream (ADR P4 + P5)",
+  "id": "wp-brain-daemon-config-and-dashboard",
+  "phases": [
+    {
+      "description": "Extend .hex/daemon.toml beyond [notify] to cover the [daemon] interval/backoff knobs and the [checks] per-check toggles described in ADR-2604132300 §3. Daemon reads config at startup; missing file → defaults (everything on, 60s interval); unknown keys ignored.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "test"
+      },
+      "id": "P4",
+      "name": "Per-check toggles + interval in .hex/daemon.toml",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "In hex-cli/src/commands/sched.rs: extend DaemonTomlFile with optional [daemon] (interval_secs, max_consecutive_failures, backoff_on_failure) and [checks] sections (binary_freshness, workplan_reconcile, worktree_cleanup, architecture_grade — all bool, default true). Add a load_daemon_config() helper alongside load_notify_config(). The daemon tick reads check toggles before running each step and skips disabled ones with tracing::debug!. CLI flags --interval and --max-failures continue to win over the file. Non-breaking: missing sections → defaults.",
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P4.1",
+          "layer": "primary",
+          "name": "Extend DaemonTomlFile schema + per-check gating",
+          "status": "pending",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "description": "Add a brain_tick consumer to the Solid.js dashboard so operators see live supervisor health. Polls/streams the existing /api/events endpoint filtered by event_type=brain_tick, displays last tick timestamp, last duration_ms, recent issues count, auto-fixes applied, and a sparkline of tick cadence.",
+      "gate": {
+        "blocking": true,
+        "command": "cd hex-nexus && cargo build --release",
+        "type": "test"
+      },
+      "id": "P5",
+      "name": "Dashboard live brain_tick stream",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P4.1"
+          ],
+          "description": "Add a Solid.js view component under hex-nexus/assets/src/components/views/ (e.g. BrainSupervisor.tsx) that calls GET /api/events?event_type=brain_tick on a 2s poll (mirrors the existing pattern in `hex brain watch`). Render: last tick (relative time), tick interval, last duration_ms, issues_found, auto_fixed counts, and a 20-tick rolling sparkline. Wire into the dashboard route table. Rebuild hex-nexus/release binary so rust-embed picks up the new asset.",
+          "files": [
+            "hex-nexus/assets/src/components/views/BrainSupervisor.tsx",
+            "hex-nexus/assets/src/App.tsx"
+          ],
+          "id": "P5.1",
+          "layer": "primary",
+          "name": "BrainSupervisor dashboard view",
+          "status": "pending",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 2
+    }
+  ],
+  "priority": "medium",
+  "status": "pending"
+}

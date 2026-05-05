@@ -1,6 +1,6 @@
 # ADR-2604132300: Brain Daemon — The Missing Supervisor Loop
 
-**Status:** Proposed
+**Status:** Accepted (2026-05-05)
 **Date:** 2026-04-13
 **Drivers:** hex has a nexus daemon, SpacetimeDB, cleanup services, and agent pollers — but NO supervisor loop that continuously validates, auto-fixes, and advances project state. Without it, hex is a collection of tools, not an operating system. An AIOS needs an init process.
 
@@ -109,15 +109,21 @@ Dashboard subscribes to `brain_tick` for live supervisor status.
 
 | Phase | Description | Status |
 |-------|------------|--------|
-| P1 | `hex brain daemon` command with foreground loop + interval | Pending |
-| P2 | Tick writes `brain_tick` to SpacetimeDB | Pending |
-| P3 | Background mode with PID file + stop command | Pending |
-| P4 | Config file support + per-check toggles | Pending |
-| P5 | Dashboard integration (live brain_tick stream) | Pending |
+| P1 | `hex brain daemon` command with foreground loop + interval | Done (wp-brain-daemon P1.1) |
+| P2 | Tick writes `brain_tick` event (POST `/api/events`) | Done (wp-brain-daemon P2.1) |
+| P3 | Background mode with PID file + stop command | Done (wp-brain-daemon P3.1) |
+| P4 | Config file support + per-check toggles | Partial — `.hex/daemon.toml` has `[notify]` verbosity only; per-check toggles + interval not yet wired (wp-brain-daemon-config-and-dashboard P4.1) |
+| P5 | Dashboard integration (live brain_tick stream) | Pending — `brain_tick` is emitted but no Solid.js consumer in `hex-nexus/assets/` (wp-brain-daemon-config-and-dashboard P5.1) |
+
+### Surface drift from original proposal
+
+The ADR proposed `hex brain daemon stop` / `daemon status` as space-separated subcommands. The shipped CLI uses kebab-case sibling commands (`hex brain daemon-stop`, `hex brain daemon-status`, plus `daemon-restart`) because clap binds the subcommand tree on the parent verb. Functionally equivalent; intentional and considered the canonical surface going forward. `hex brain` itself is now a deprecated alias for `hex sched` per ADR-2604150000 — both forms route to the same code in `hex-cli/src/commands/sched.rs`.
 
 ## References
 
 - ADR-2604131945: Brain Self-Consistency Daemon (validate checks)
 - ADR-2604131500: AIOS Developer Experience (ambient UX)
+- ADR-2604150000: `hex brain` → `hex sched` rename (deprecation)
+- `docs/workplans/wp-brain-daemon.json` (status: done — covers P1–P3)
 - Claude cronjobs + Ralph loops (inspirations)
 - Unix init(1), Kubernetes kubelet (supervisor patterns)
