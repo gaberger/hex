@@ -1489,7 +1489,12 @@ const ChatPanel: Component<{
     setHistory((h) => [...h, userMsg]);
     setInput("");
     setShowSuggestions(false);
-    persistMessage(userMsg);
+    // CRITICAL: await thread creation + user-message persist BEFORE the
+    // chat dispatch. Without this, brain_chat fires with thread_id=undefined
+    // (or with stale thread state) and short replies like "yes" / "do it"
+    // can't find the agent's prior reply to confirm. Also makes activeThreadId
+    // populated for the dispatch below.
+    await persistMessage(userMsg);
 
     // Resolve project context to send to the backend. Empty string means
     // "no scope"; backend falls back to nexus cwd for context-free dispatch.
@@ -1597,11 +1602,16 @@ const ChatPanel: Component<{
         costUsd?: number;
         contextWindow?: number;
       };
+      // Ensure thread exists (defense-in-depth — persistMessage above
+      // should have created it, but if that failed the dispatch must
+      // still have a thread to load history from for short-confirmation
+      // rewrites).
+      const tid = await ensureThread();
       const resp = await restClient.post<ChatResp>("/api/brain/chat", {
         role: targetRole,
         message: messageBody,
         project_id: projectId || undefined,
-        thread_id: activeThreadId() || undefined,
+        thread_id: tid,
       });
       const finalMsg: ChatMessage = {
         from: resp.role,
