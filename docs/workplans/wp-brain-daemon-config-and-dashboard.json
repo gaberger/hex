@@ -2,7 +2,7 @@
   "adr": "ADR-2604132300",
   "created_at": "2026-05-05T14:55:00Z",
   "created_by": "agent",
-  "description": "Closes the two remaining open phases of ADR-2604132300 (Brain Daemon — Supervisor Loop): P4 finishes the .hex/daemon.toml schema with per-check toggles + interval; P5 wires brain_tick events into the Solid.js dashboard so operators get a live supervisor-health view.",
+  "description": "Closes the two remaining open phases of ADR-2604132300 (Brain Daemon — Supervisor Loop): P4 finishes the .hex/daemon.toml schema with per-check toggles + interval; P5 wires brain_tick events into the Solid.js dashboard so operators get a live supervisor-health view. Execution: P4.1 edits hex-cli/src/commands/sched.rs which is on the SafeFileWriter protected-files list, so this workplan does NOT auto-enqueue under `hex brain enqueue workplan` — it requires a human-supervised run (interactive coder agent or direct edit). P5.1 only touches dashboard assets and could be promoted to a standalone enqueueable workplan if P5 wants to ship ahead of P4.",
   "feature": "Brain Daemon — Config Toggles + Dashboard Stream (ADR P4 + P5)",
   "id": "wp-brain-daemon-config-and-dashboard",
   "phases": [
