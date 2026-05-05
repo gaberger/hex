@@ -760,6 +760,7 @@ pub async fn dispatch_brain_chat(
     // "user". System messages from the welcome bubble are skipped. Cap at the
     // last 20 messages so token costs stay bounded — older context falls off.
     let mut messages: Vec<serde_json::Value> = Vec::new();
+    let mut last_assistant_text: Option<String> = None;
     if let Some(tid) = req.thread_id.as_deref().filter(|s| !s.is_empty()) {
         let port_handle = state.0.state_port.clone();
         if let Some(port) = port_handle {
@@ -780,6 +781,13 @@ pub async fn dispatch_brain_chat(
                         {
                             continue;
                         }
+                        if m.from != "you" && m.model.as_deref() != Some("worker-progress")
+                            && m.model.as_deref() != Some("worker-result")
+                        {
+                            // Track the most recent agent reply (skip system/worker
+                            // messages — those aren't conversation turns).
+                            last_assistant_text = Some(m.text.clone());
+                        }
                         messages.push(json!({
                             "role": if m.from == "you" { "user" } else { "assistant" },
                             "content": if m.from == "you" {
@@ -793,8 +801,41 @@ pub async fn dispatch_brain_chat(
             }
         }
     }
-    // Final turn: the operator's current message.
-    messages.push(json!({ "role": "user", "content": req.message.clone() }));
+
+    // SHORT-CONFIRMATION REWRITE: when the operator's message is a bare
+    // "yes"/"do it"/"go"/etc. AND we have the agent's last reply in
+    // history, rewrite the user message to make the confirmation explicit.
+    // Without this, frontier models (especially Sonnet) sometimes refuse
+    // to interpret short replies despite having full thread context.
+    let trimmed_lower = req.message.trim().to_ascii_lowercase();
+    let is_confirmation = matches!(
+        trimmed_lower.as_str(),
+        "yes" | "y" | "yep" | "yeah" | "sure" | "ok" | "okay" | "do it" | "go" |
+        "go ahead" | "proceed" | "please do" | "please" | "fine" | "approved" |
+        "👍" | "+1"
+    );
+    let final_user_message = if is_confirmation {
+        if let Some(prev) = last_assistant_text.as_ref() {
+            // Cap at 2KB so we don't double the request size for huge prior replies.
+            let prev_clipped = if prev.len() > 2048 {
+                format!("{}…", &prev[..2048])
+            } else {
+                prev.clone()
+            };
+            format!(
+                "OPERATOR CONFIRMATION (\"{}\") — Execute the action you most recently proposed in your previous reply, quoted below for context. Do not ask what they're confirming; the answer is your previous message. Carry it out now.\n\n--- Your previous reply ---\n{}\n--- end previous reply ---",
+                req.message.trim(),
+                prev_clipped
+            )
+        } else {
+            req.message.clone()
+        }
+    } else {
+        req.message.clone()
+    };
+
+    // Final turn: the operator's current message (rewritten if confirmation).
+    messages.push(json!({ "role": "user", "content": final_user_message }));
 
     let inference_req = InferenceCompleteRequest {
         model: Some(model_id.clone()),
