@@ -118,14 +118,14 @@ Verification column format: `code:<path>, test:<command>`
 
 ## Implementation
 
-| Phase | Description | Status |
-|-------|------------|--------|
-| P1 | Add verification column schema to TEMPLATE.md | Pending |
-| P2 | Add `hex adr verify` CLI command | Pending |
-| P3 | Add MCP tool `hex_adr_verify` | Pending |
-| P4 | Add verification to hex-nexus REST API | Pending |
-| P5 | Dashboard: verification status panel | Pending |
-| P6 | Auto-suggest status change when all phases verify | Pending |
+| Phase | Description | Status | Verification |
+|-------|------------|--------|--------------|
+| P1 | Add verification column schema to TEMPLATE.md | Done | code:docs/adrs/TEMPLATE.md |
+| P2 | Add `hex adr verify` CLI command | Pending | |
+| P3 | Add MCP tool `hex_adr_verify` | Pending | |
+| P4 | Add verification to hex-nexus REST API | Pending | |
+| P5 | Dashboard: verification status panel | Pending | |
+| P6 | Auto-suggest status change when all phases verify | Pending | |
 
 ## References
 

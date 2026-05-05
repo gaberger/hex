@@ -42,10 +42,18 @@ Include:
 
 {Optional: specific implementation guidance}
 
-| Phase | Description | Status |
-|-------|------------|--------|
-| P1 | {First step} | {Pending/Done} |
-| P2 | {Second step} | {Pending/Done} |
+| Phase | Description | Status | Verification |
+|-------|------------|--------|--------------|
+| P1 | {First step} | {Pending/Done} | code:{path}, test:{command} |
+| P2 | {Second step} | {Pending/Done} | code:{path}, test:{command} |
+
+<!--
+Verification column format: `code:<path>, test:<command>` (per ADR-2603312340)
+- code:<path>   — file path that must exist when phase is Done (e.g. code:hex-cli/src/commands/foo.rs)
+- test:<command> — shell command that must succeed (e.g. test:cargo test -p hex-cli foo)
+Either field is optional. Leave the column blank for phases without automated verification.
+-->
+
 
 ## References
 
