@@ -729,6 +729,7 @@ pub async fn dispatch_brain_chat(
     system_lines.push("- DO NOT contradict LIVE STATE. If LIVE STATE says '2 registered, 1 online' and the operator says 'agents are offline', the truth is in LIVE STATE — explain what online/stale/dead actually mean in the registry.".to_string());
     system_lines.push("- AUTO-DISPATCH DEPTH: If you see this reply is itself a delegation (the user message starts with 'Inbound delegation from @...'), execute the task directly. Don't bounce it back up the chain by re-mentioning the sender's role — that's a loop the system will break, but it wastes a turn.".to_string());
     system_lines.push("- INBOUND-DELEGATION HANDLING: When you receive an 'Inbound delegation from @<sender>' brief: (a) if you have the capability to do the task in this surface — DO IT and reply with the result; (b) if the brief is incomplete or garbled (truncated mid-sentence, no clear task verb, references missing context) — return ONE clarifying question to @<sender> only, do NOT re-delegate to a different role guessing at intent; (c) only fan out further with @<another-role> if your role legitimately requires that other role's domain (e.g. @planner → @hex-coder for impl). Never delegate JUST because you lack tool access — say what you'd do and let the supervisor enqueue it as a worker task. Re-delegation cascades waste tokens and drift from the original ask.".to_string());
+    system_lines.push("- SHORT REPLIES (yes/no/go/do it/sure): The operator is confirming the most recent question YOU asked in the conversation history above. Look at YOUR last assistant message in the history — if it ended with a yes/no question (e.g. 'Want me to draft the X?' / 'Should I proceed?'), treat the short reply as a confirmation/refusal of THAT question and act on it directly. ONLY say 'I'm not sure what you're confirming' if your last message was NOT a question (e.g. you just shipped a result and the operator typed 'yes' out of context).".to_string());
     let system_prompt = system_lines.join("\n");
 
     // Brain chat ALWAYS routes to a frontier model — the operator wants
@@ -883,12 +884,14 @@ pub async fn dispatch_brain_chat(
     // Only fires at depth=0 (operator-initiated) so deep recursive replies
     // don't spawn cascading followups. Only one followup per dispatch.
     //
-    // SAFETY GATE: status defaults to "PendingReview" so a worker cannot
-    // auto-claim. Operator must explicitly approve via the chat footer
-    // button OR the BrainDispatchesPanel Approve button. This makes
-    // chat-driven development safe-by-default — every code-touching task
-    // gets a one-click human review before it runs.
-    if depth == 0 {
+    // PREEMPTION: if auto-resolve fired (the agent rendered a clear
+    // verdict on the operator's decision), skip auto-followup entirely —
+    // the decision is closed, no need to spin up a worker on speculation.
+    // Without this guard the same reply that says "Recommend: Accept" can
+    // ALSO trigger a hex-coder dispatch on words like "abandoned" used
+    // negatively ("not abandoned"). Two systems firing on the same reply
+    // = wasted work.
+    if depth == 0 && auto_resolved.is_empty() {
         if let Some((subject, summary)) = detect_open_followup(&content) {
             let task_id = uuid::Uuid::new_v4().to_string();
             let workplan_id = format!(
@@ -1427,21 +1430,43 @@ fn detect_decision_verdicts(operator_msg: &str, agent_reply: &str) -> Vec<(Strin
         let mut reject_hits = 0;
         let mut abandon_hits = 0;
         let mut in_code = false;
+        // Helper: a pattern hit on a line is negated when the substring
+        // immediately preceding the match is one of "not ", "n't ", "but not ",
+        // "isn't ", "wasn't ", "wasnt ", "doesn't ", "doesnt ", "don't ".
+        // Stops "not ready to accept" / "isn't ready to ship" from triggering accept.
+        let negation_prefixes = [
+            "not ", "n't ", "but not ", "isn't ", "wasn't ", "wasnt ",
+            "doesn't ", "doesnt ", "don't ", "no ", "never ",
+        ];
+        let pattern_hit_unnegated = |line: &str, pat: &str| -> bool {
+            let mut search_from = 0usize;
+            while let Some(idx) = line[search_from..].find(pat) {
+                let abs = search_from + idx;
+                let before = &line[..abs];
+                let negated = negation_prefixes.iter().any(|p| before.ends_with(p));
+                if !negated { return true; }
+                search_from = abs + pat.len();
+            }
+            false
+        };
         for line in reply_lower.lines() {
             let t = line.trim_start();
             if t.starts_with("```") { in_code = !in_code; continue; }
             if in_code { continue; }
-            // Skip lines saying "should not be X" / "do not X" / "no X needed"
-            if t.contains("should not")
-                || t.contains("do not")
-                || t.contains("don't")
-                || t.contains("not warranted")
-                || t.contains("not needed")
-                || t.contains("would be premature")
+            // Quoted lines (markdown blockquotes) are typically the agent
+            // citing the ADR's own text — not a verdict statement.
+            if t.starts_with("> ") { continue; }
+            // Coarse line-level skips: things that mean "no action" wholesale.
+            if t.contains("would be premature")
+                || t.contains("not ready to")
+                || t.contains("not yet ready")
+                || t.contains("keep status")
+                || t.contains("keep as proposed")
+                || t.contains("remain in proposed")
             { continue; }
-            if accept_pats.iter().any(|p| t.contains(p)) { accept_hits += 1; }
-            if reject_pats.iter().any(|p| t.contains(p)) { reject_hits += 1; }
-            if abandon_pats.iter().any(|p| t.contains(p)) { abandon_hits += 1; }
+            if accept_pats.iter().any(|p| pattern_hit_unnegated(t, p)) { accept_hits += 1; }
+            if reject_pats.iter().any(|p| pattern_hit_unnegated(t, p)) { reject_hits += 1; }
+            if abandon_pats.iter().any(|p| pattern_hit_unnegated(t, p)) { abandon_hits += 1; }
         }
         // Single dominant verdict — return only if exactly one type fired.
         let total = accept_hits + reject_hits + abandon_hits;
@@ -1464,20 +1489,30 @@ fn detect_decision_verdicts(operator_msg: &str, agent_reply: &str) -> Vec<(Strin
               "should be deprecated", "should be superseded"],
         );
         if let Some(action) = verdict {
-            // Skip "remain accepted" cases — the ADR is ALREADY accepted, no
-            // resolve action would change anything. resolve_adr looks for a
-            // "Status: Proposed" line; if status is already Accepted, the
-            // call returns 404 / no-op, but it's noise to make the call.
-            // Heuristic: only fire if the reply ALSO says the ADR is
-            // currently Proposed (i.e. there's an action to take).
-            let reply_says_proposed = lower_reply.contains("status: proposed")
+            // For "accept": fire only if the reply implies the ADR is currently
+            // NOT accepted (otherwise it's a noisy no-op against the resolve_adr
+            // "no Status: Proposed line" path). Broader signals than before:
+            // explicit "currently Proposed" OR action-language like "flip status
+            // to accepted", "before accepting", "change status to accepted".
+            // For reject/abandon: always fire (operator may want to close
+            // even an Accepted ADR).
+            let reply_implies_action_needed = lower_reply.contains("status: proposed")
                 || lower_reply.contains("currently proposed")
                 || lower_reply.contains("in proposed")
-                || lower_reply.contains("status set to proposed");
-            // For accept: only act if currently Proposed. For reject/abandon:
-            // act regardless (operator wants to close even if Accepted).
-            if action == "accept" && !reply_says_proposed {
-                // No-op: avoid the noisy "no Status: Proposed line" 404.
+                || lower_reply.contains("status set to proposed")
+                || lower_reply.contains("flip status to accepted")
+                || lower_reply.contains("flip status to acceptd")
+                || lower_reply.contains("flip the status")
+                || lower_reply.contains("change status to accepted")
+                || lower_reply.contains("set status to accepted")
+                || lower_reply.contains("before accepting")
+                || lower_reply.contains("before the status is flipped")
+                || lower_reply.contains("before the status is changed")
+                || lower_reply.contains("ready to ship")
+                || lower_reply.contains("ready to accept")
+                || lower_reply.contains("good to accept");
+            if action == "accept" && !reply_implies_action_needed {
+                // No-op
             } else {
                 out.push(("adr".to_string(), normalized_id, action.to_string()));
             }
@@ -1546,7 +1581,27 @@ fn detect_open_followup(text: &str) -> Option<(String, String)> {
         "unstarted", "not started", "implementation gap", "not done",
         "not complete", "yet to be", "still to be", "yet to do",
     ];
-    let has_open_signal = signals.iter().any(|s| lower.contains(s));
+    // Per-line check that ALSO filters lines using the signal in a NEGATIVE
+    // sense ("not abandoned", "this was not abandoned", "no longer pending").
+    // Without this, a "should accept" reply that says "this ADR was NOT
+    // abandoned" matches and spawns a spurious hex-coder followup.
+    let line_negates = |line_lower: &str| -> bool {
+        line_lower.contains("not abandoned")
+            || line_lower.contains("never abandoned")
+            || line_lower.contains("wasn't abandoned")
+            || line_lower.contains("wasnt abandoned")
+            || line_lower.contains("not closed")
+            || line_lower.contains("not deprecated")
+            || line_lower.contains("not superseded")
+            || line_lower.contains("not pending")
+            || line_lower.contains("no longer pending")
+            || line_lower.contains("not incomplete")
+            || line_lower.contains("not unfinished")
+    };
+    let has_open_signal = lower.lines().any(|line| {
+        let lo = line.trim();
+        signals.iter().any(|s| lo.contains(s)) && !line_negates(lo)
+    });
     if !has_open_signal { return None; }
     // Must NOT signal that no work at all is wanted. Note: "no status change"
     // is NOT a suppressor — an ADR can stay Accepted while phases 3-5 still
@@ -1580,13 +1635,15 @@ fn detect_open_followup(text: &str) -> Option<(String, String)> {
     };
 
     // Summary: up to 3 lines that include open-work keywords from the reply.
+    // Same negation filter as has_open_signal — skip lines that say "not X"
+    // even if they contain a signal word.
     let mut summary_lines: Vec<&str> = Vec::new();
     for line in text.lines() {
         let lo = line.to_ascii_lowercase();
-        if signals.iter().any(|s| lo.contains(s)) {
-            summary_lines.push(line.trim());
-            if summary_lines.len() >= 3 { break; }
-        }
+        if !signals.iter().any(|s| lo.contains(s)) { continue; }
+        if line_negates(&lo) { continue; }
+        summary_lines.push(line.trim());
+        if summary_lines.len() >= 3 { break; }
     }
     let summary = if summary_lines.is_empty() {
         subject.clone()
