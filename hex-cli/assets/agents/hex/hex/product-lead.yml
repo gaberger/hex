@@ -53,3 +53,25 @@ delegation:
 output:
   reports: daily
   format: feature_status
+
+communication:
+  channels:
+    - "#leads"
+    - "#product-team"
+  peers:
+    - engineering-lead   # Primary coordination
+    - qa-lead            # Acceptance criteria
+    - backend-lead
+    - frontend-lead
+  can_dm:
+    - cpo                # Manager
+    - pm-agent           # Direct reports
+    - behavioral-spec-writer
+    - planner
+  team_meetings:
+    - name: "daily-standup"
+      attendees: ["pm-agent", "behavioral-spec-writer", "planner"]
+      schedule: "daily"
+    - name: "weekly-eng-handoff"
+      attendees: ["engineering-lead", "qa-lead"]
+      schedule: "weekly"

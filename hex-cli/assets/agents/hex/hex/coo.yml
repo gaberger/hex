@@ -62,3 +62,22 @@ output:
     - defect_rate
     - test_pass_rate
     - deployment_success_rate
+
+communication:
+  channels:
+    - "#c-suite"
+    - "#quality-team"
+  peers:
+    - cto
+    - cpo
+    - chief-visionary
+    - cmo
+  can_dm:
+    - qa-lead
+    - security-lead
+    - architecture-lead
+    - "*-lead"
+  team_meetings:
+    - name: "weekly-qa-sync"
+      attendees: ["qa-lead", "security-lead", "architecture-lead"]
+      schedule: "weekly"

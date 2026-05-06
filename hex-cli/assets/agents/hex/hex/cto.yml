@@ -54,6 +54,25 @@ delegation:
     - cpo  # Product alignment
     - coo  # Operational impact
 
+communication:
+  channels:
+    - "#c-suite"           # All executives
+    - "#eng-team"          # Engineering division
+  peers:
+    - cpo                  # Product-tech alignment
+    - coo                  # Ops-tech coordination
+    - chief-visionary      # Innovation feasibility
+    - cmo                  # Tech capabilities
+  can_dm:
+    - engineering-lead     # Direct reports
+    - backend-lead
+    - frontend-lead
+    - "*-lead"             # Any lead for cross-functional
+  team_meetings:
+    - name: "weekly-eng-sync"
+      attendees: ["engineering-lead", "backend-lead", "frontend-lead"]
+      schedule: "weekly"
+
 output:
   reports: weekly
   format: tech_health_report

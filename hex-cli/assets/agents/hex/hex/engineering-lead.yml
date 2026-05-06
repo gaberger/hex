@@ -55,3 +55,29 @@ delegation:
 output:
   reports: daily
   format: engineering_status
+
+communication:
+  channels:
+    - "#leads"
+    - "#eng-team"
+  peers:
+    - product-lead       # Coordination
+    - qa-lead            # Quality handoff
+    - backend-lead       # Peer within eng
+    - frontend-lead      # Peer within eng
+  can_dm:
+    - cto                # Manager
+    - feature-developer  # Direct reports
+    - swarm-coordinator
+    - backend-lead
+    - frontend-lead
+    - hex-coder          # ICs in division
+    - hex-fixer
+    - integrator
+  team_meetings:
+    - name: "daily-standup"
+      attendees: ["backend-lead", "frontend-lead", "feature-developer"]
+      schedule: "daily"
+    - name: "weekly-planning"
+      attendees: ["backend-lead", "frontend-lead", "product-lead"]
+      schedule: "weekly"

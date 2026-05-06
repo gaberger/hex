@@ -55,3 +55,20 @@ output:
     - experiments_run
     - adoption_rate
     - roi_estimate
+
+communication:
+  channels:
+    - "#c-suite"
+    - "#research-team"
+  peers:
+    - cto
+    - cpo
+    - coo
+    - cmo
+  can_dm:
+    - research-lead
+    - "*-lead"
+  team_meetings:
+    - name: "monthly-innovation-review"
+      attendees: ["research-lead", "cto", "cpo"]
+      schedule: "monthly"

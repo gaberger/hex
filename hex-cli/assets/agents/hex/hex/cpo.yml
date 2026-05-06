@@ -58,3 +58,20 @@ output:
     - features_shipped
     - user_satisfaction
     - roadmap_completion
+
+communication:
+  channels:
+    - "#c-suite"
+    - "#product-team"
+  peers:
+    - cto
+    - coo
+    - chief-visionary
+    - cmo
+  can_dm:
+    - product-lead
+    - "*-lead"
+  team_meetings:
+    - name: "weekly-product-sync"
+      attendees: ["product-lead", "pm-agent", "behavioral-spec-writer", "planner"]
+      schedule: "weekly"
