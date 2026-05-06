@@ -30,7 +30,7 @@ impl SpacetimeAgentCommAdapter {
     }
 
     async fn call_reducer(&self, reducer: &str, args: Value) -> Result<(), AgentCommError> {
-        let url = format!("{}/database/call/{}/{}", self.host, self.database, reducer);
+        let url = format!("{}/v1/database/{}/call/{}", self.host, self.database, reducer);
 
         let res = self
             .http
