@@ -399,3 +399,118 @@ fn parse_from_filesystem(dir: &std::path::Path) -> Result<Vec<AgentOrgNode>, Str
 
     Ok(nodes)
 }
+
+/// POST /api/org/agent/start — start an offline agent by role name
+#[derive(Debug, Deserialize)]
+pub struct StartAgentRequest {
+    pub name: String,
+}
+
+pub async fn start_agent(
+    Json(body): Json<StartAgentRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use std::process::Command;
+    use serde_json::json;
+
+    // Find hex-agent binary
+    let agent_binary = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("hex-agent")))
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Cannot locate hex-agent binary"})),
+            )
+        })?;
+
+    if !agent_binary.exists() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "hex-agent binary not found"})),
+        ));
+    }
+
+    let nexus_host = std::env::var("NEXUS_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let nexus_port = std::env::var("NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
+
+    let pid_dir = dirs::home_dir()
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Cannot determine home directory"})),
+            )
+        })?
+        .join(".hex/agents/pids");
+    let log_dir = dirs::home_dir()
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Cannot determine home directory"})),
+            )
+        })?
+        .join(".hex/agents/logs");
+
+    std::fs::create_dir_all(&pid_dir).ok();
+    std::fs::create_dir_all(&log_dir).ok();
+
+    let pid_file = pid_dir.join(format!("{}.pid", body.name));
+    let log_file = log_dir.join(format!("{}.log", body.name));
+
+    // Check if already running
+    if pid_file.exists() {
+        if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                if unsafe { libc::kill(pid, 0) } == 0 {
+                    return Ok(Json(json!({
+                        "status": "already_running",
+                        "pid": pid
+                    })));
+                }
+            }
+        }
+    }
+
+    // Start agent daemon
+    let child = Command::new(&agent_binary)
+        .arg("daemon")
+        .arg("--agent-id")
+        .arg(&body.name)
+        .arg("--nexus-host")
+        .arg(&nexus_host)
+        .arg("--nexus-port")
+        .arg(&nexus_port)
+        .stdout(
+            std::fs::File::create(&log_file)
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({"error": format!("Failed to create log file: {}", e)})),
+                    )
+                })?
+        )
+        .stderr(
+            std::fs::File::create(&log_file)
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({"error": format!("Failed to create log file: {}", e)})),
+                    )
+                })?
+        )
+        .spawn()
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Failed to start agent: {}", e)})),
+            )
+        })?;
+
+    let pid = child.id();
+    std::fs::write(&pid_file, format!("{}", pid)).ok();
+
+    Ok(Json(json!({
+        "status": "started",
+        "pid": pid,
+        "name": body.name
+    })))
+}

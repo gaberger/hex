@@ -40,6 +40,7 @@ const OrgChart: Component = () => {
   const [selectedAgent, setSelectedAgent] = createSignal<AgentOrgNode | null>(null);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
+  const [starting, setStarting] = createSignal<string | null>(null);
 
   const fetchPersonas = async () => {
     try {
@@ -56,6 +57,21 @@ const OrgChart: Component = () => {
       console.error('[OrgChart] Error fetching personas:', err);
       setError(err instanceof Error ? err.message : "Failed to load org chart");
       setLoading(false);
+    }
+  };
+
+  const startAgent = async (name: string) => {
+    setStarting(name);
+    try {
+      await restClient.post("/api/org/agent/start", { name });
+      // Refresh after a short delay to allow agent to register
+      setTimeout(() => {
+        fetchPersonas();
+        setStarting(null);
+      }, 2000);
+    } catch (err) {
+      console.error('[OrgChart] Failed to start agent:', err);
+      setStarting(null);
     }
   };
 
@@ -166,13 +182,22 @@ const OrgChart: Component = () => {
             cursor-pointer transition-all p-3 rounded border-2 min-w-[200px] relative
             ${tierColor(props.agent.tier)}
             ${isSelected() ? "ring-2 ring-cyan-400 scale-105" : "hover:scale-102"}
+            ${props.agent.status === 'offline' ? 'opacity-60 hover:opacity-100' : ''}
           `}
-          onClick={() => setSelectedAgent(props.agent!)}
+          onClick={(e) => {
+            if (props.agent.status === 'offline') {
+              e.stopPropagation();
+              startAgent(props.agent.name);
+            } else {
+              setSelectedAgent(props.agent!);
+            }
+          }}
         >
           <Show when={props.agent.status}>
             <div class={`absolute top-2 right-2 w-2 h-2 rounded-full ${
-              props.agent.status === 'online' ? 'bg-green-400 shadow-green-400/50 shadow-lg' : 'bg-gray-600'
-            }`} title={props.agent.status}></div>
+              props.agent.status === 'online' ? 'bg-green-400 shadow-green-400/50 shadow-lg' :
+              starting() === props.agent.name ? 'bg-yellow-400 animate-pulse' : 'bg-gray-600'
+            }`} title={starting() === props.agent.name ? 'starting...' : props.agent.status}></div>
           </Show>
           <div class="font-semibold text-sm text-white">{props.agent.name}</div>
           <div class="text-xs text-gray-400 mt-1">{props.agent.role}</div>

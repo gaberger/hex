@@ -488,6 +488,7 @@ pub fn build_router(state: SharedState) -> Router {
         // Org chart — hierarchical agent visualization
         .route("/api/org/chart", get(org_chart::get_org_chart))
         .route("/api/org/personas", get(org_chart::get_persona_status))
+        .route("/api/org/agent/start", post(org_chart::start_agent))
         // Org comms — hierarchical message routing
         .route("/api/org/send-message", post(org_comms::send_message))
         .route("/api/org/conversation/{id}", get(org_comms::get_conversation))
