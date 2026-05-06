@@ -74,6 +74,10 @@ pub enum AgentAction {
     WorktreeAudit,
     /// Evict dead/stale agents from the registry
     Evict,
+    /// Start all persona agents from YAML files
+    StartAll,
+    /// Stop all running persona agents
+    StopAll,
     /// Send an event to a running agent session (steering)
     Event {
         /// Session ID
@@ -230,6 +234,8 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
         AgentAction::Fleet => fleet().await,
         AgentAction::Overview { json } => overview(json).await,
         AgentAction::Evict => evict().await,
+        AgentAction::StartAll => start_all().await,
+        AgentAction::StopAll => stop_all().await,
         AgentAction::Audit => audit().await,
         AgentAction::WorktreeAudit => super::agent_audit::run().await,
         AgentAction::Event { session_id, event } => send_event(&session_id, &event).await,
@@ -1004,6 +1010,160 @@ async fn evict() -> anyhow::Result<()> {
             }
         }
     }
+
+    Ok(())
+}
+
+/// Start all persona agents from YAML files
+async fn start_all() -> anyhow::Result<()> {
+    use std::process::Command;
+    use std::path::PathBuf;
+    use std::fs;
+
+    let agent_binary = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Cannot find hex-agent binary"))?
+        .join("hex-agent");
+
+    if !agent_binary.exists() {
+        anyhow::bail!("hex-agent binary not found at {:?}. Run: cargo build -p hex-agent --release", agent_binary);
+    }
+
+    let yaml_dir = PathBuf::from("hex-cli/assets/agents/hex/hex");
+    if !yaml_dir.exists() {
+        anyhow::bail!("Agent YAML directory not found: {:?}", yaml_dir);
+    }
+
+    let nexus_host = std::env::var("NEXUS_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let nexus_port = std::env::var("NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
+
+    let pid_dir = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?
+        .join(".hex/agents/pids");
+    let log_dir = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?
+        .join(".hex/agents/logs");
+
+    fs::create_dir_all(&pid_dir)?;
+    fs::create_dir_all(&log_dir)?;
+
+    let mut started = 0;
+    let mut skipped = 0;
+
+    println!("{} Starting all agents...", "\u{2b21}".cyan());
+    println!();
+
+    for entry in fs::read_dir(&yaml_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.extension().and_then(|s| s.to_str()) != Some("yml") {
+            continue;
+        }
+
+        let agent_name = path.file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| anyhow::anyhow!("Invalid filename: {:?}", path))?;
+
+        let pid_file = pid_dir.join(format!("{}.pid", agent_name));
+        let log_file = log_dir.join(format!("{}.log", agent_name));
+
+        // Check if already running
+        if pid_file.exists() {
+            if let Ok(pid_str) = fs::read_to_string(&pid_file) {
+                if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                    // Check if process exists
+                    if unsafe { libc::kill(pid, 0) } == 0 {
+                        println!("  {} {} already running (PID {})", "\u{2713}".green(), agent_name, pid);
+                        skipped += 1;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Start agent daemon
+        let child = Command::new(&agent_binary)
+            .arg("daemon")
+            .arg("--agent-id")
+            .arg(agent_name)
+            .arg("--nexus-host")
+            .arg(&nexus_host)
+            .arg("--nexus-port")
+            .arg(&nexus_port)
+            .stdout(fs::File::create(&log_file)?)
+            .stderr(fs::File::create(&log_file)?)
+            .spawn()?;
+
+        fs::write(&pid_file, format!("{}", child.id()))?;
+        println!("  {} Started {} (PID {})", "\u{2713}".green(), agent_name, child.id());
+        started += 1;
+    }
+
+    println!();
+    println!("Started: {} agents", started);
+    println!("Skipped: {} agents (already running)", skipped);
+    println!();
+    println!("Logs: {:?}", log_dir);
+    println!("PIDs: {:?}", pid_dir);
+    println!();
+    println!("Commands:");
+    println!("  hex agent list          # Check agent status");
+    println!("  hex agent stop-all      # Stop all agents");
+
+    Ok(())
+}
+
+/// Stop all running persona agents
+async fn stop_all() -> anyhow::Result<()> {
+    use std::fs;
+
+    let pid_dir = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?
+        .join(".hex/agents/pids");
+
+    if !pid_dir.exists() {
+        println!("{} No agent PIDs found", "\u{2b21}".yellow());
+        return Ok(());
+    }
+
+    let mut stopped = 0;
+    let mut missing = 0;
+
+    println!("{} Stopping all agents...", "\u{2b21}".cyan());
+    println!();
+
+    for entry in fs::read_dir(&pid_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.extension().and_then(|s| s.to_str()) != Some("pid") {
+            continue;
+        }
+
+        let agent_name = path.file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| anyhow::anyhow!("Invalid filename: {:?}", path))?;
+
+        if let Ok(pid_str) = fs::read_to_string(&path) {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                // Try to kill the process
+                if unsafe { libc::kill(pid, libc::SIGTERM) } == 0 {
+                    println!("  {} Stopped {} (PID {})", "\u{2713}".green(), agent_name, pid);
+                    stopped += 1;
+                } else {
+                    println!("  {} {} not running (stale PID {})", "\u{2717}".red(), agent_name, pid);
+                    missing += 1;
+                }
+            }
+        }
+
+        fs::remove_file(&path)?;
+    }
+
+    println!();
+    println!("Stopped: {} agents", stopped);
+    println!("Missing: {} agents (stale PIDs cleaned)", missing);
 
     Ok(())
 }
