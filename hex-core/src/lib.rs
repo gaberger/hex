@@ -60,6 +60,7 @@ pub const STDB_MODULE_DATABASES: &[(&str, &str)] = &[
     ("inference-gateway", "inference-gateway"),
     ("secret-grant", "secret-grant"),
     // Tier 2: Coordination
+    ("agent-comms", "agent-comms"),
     ("chat-relay", "chat-relay"),
     ("rl-engine", "rl-engine"),
     // Tier 3: Research

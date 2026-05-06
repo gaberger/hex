@@ -7,6 +7,7 @@ pub mod docker_sandbox;
 pub mod env_secret;
 pub mod ssh_tunnel;
 pub mod ws_transport;
+pub mod spacetime_agent_comm;
 pub mod spacetime_chat;
 pub mod spacetime_composition;
 pub mod spacetime_inference;
@@ -19,6 +20,7 @@ pub mod inference_router;
 pub mod adr_review;
 pub mod events;
 pub mod in_memory_experiment;
+pub mod spacetime_experiment;
 pub mod stash_experiment;
 
 #[cfg(test)]

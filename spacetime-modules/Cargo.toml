@@ -4,6 +4,7 @@ members = [
     "agent-registry",
     "inference-gateway",
     "secret-grant",
+    "agent-comms",
     "rl-engine",
     "chat-relay",
     "neural-lab",

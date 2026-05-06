@@ -79,6 +79,8 @@ pub struct AppState {
     pub inference_stdb: Option<Arc<SpacetimeInferenceClient>>,
     // SpacetimeDB chat-relay client
     pub chat_stdb: Option<Arc<SpacetimeChatClient>>,
+    // SpacetimeDB agent-comms client (agent-to-agent communication)
+    pub agent_comm_stdb: Option<Arc<crate::adapters::spacetime_agent_comm::SpacetimeAgentCommAdapter>>,
     // Session persistence (ADR-036 / ADR-042 P2.5) — chat conversation history
     // SpacetimeDB only.
     pub session_port: Option<Arc<dyn ISessionPort>>,
@@ -166,6 +168,7 @@ impl AppState {
             secret_shadow_router: None,
             inference_stdb: None,
             chat_stdb: None,
+            agent_comm_stdb: None,
             session_port: None,
             live_context: None,
             context_pressure: Arc::new(Mutex::new(HashMap::new())),

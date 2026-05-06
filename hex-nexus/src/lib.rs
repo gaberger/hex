@@ -297,6 +297,8 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             .unwrap_or_else(|_| hex_core::stdb_database_for_module("inference-gateway").to_string());
         let chat_db = std::env::var("HEX_CHAT_STDB_DATABASE")
             .unwrap_or_else(|_| hex_core::stdb_database_for_module("chat-relay").to_string());
+        let agent_comm_db = std::env::var("HEX_AGENT_COMM_STDB_DATABASE")
+            .unwrap_or_else(|_| hex_core::stdb_database_for_module("agent-comms").to_string());
 
         let inference_client =
             adapters::spacetime_inference::SpacetimeInferenceClient::new(
@@ -304,7 +306,9 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 inference_db,
             );
         let chat_client =
-            adapters::spacetime_chat::SpacetimeChatClient::new(stdb_host, chat_db);
+            adapters::spacetime_chat::SpacetimeChatClient::new(stdb_host.clone(), chat_db);
+        let agent_comm_client =
+            adapters::spacetime_agent_comm::SpacetimeAgentCommAdapter::new(stdb_host, agent_comm_db);
 
         // Push resolved API keys into inference-gateway's private `inference_api_key` table.
         // This is required for `execute_inference` to include auth headers — the table is
@@ -337,7 +341,8 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
 
         app_state.inference_stdb = Some(Arc::new(inference_client));
         app_state.chat_stdb = Some(Arc::new(chat_client));
-        tracing::info!("SpacetimeDB inference-gateway + chat-relay clients initialized");
+        app_state.agent_comm_stdb = Some(Arc::new(agent_comm_client));
+        tracing::info!("SpacetimeDB inference-gateway + chat-relay + agent-comms clients initialized");
 
         // P4: Background stale-model prune pass (ADR-2603311000).
         // Test each registered OpenRouter provider with a minimal prompt.
