@@ -26,7 +26,7 @@
           "id": "P4.1",
           "layer": "primary",
           "name": "Extend DaemonTomlFile schema + per-check gating",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         }
       ],
@@ -55,7 +55,7 @@
           "id": "P5.1",
           "layer": "primary",
           "name": "BrainSupervisor dashboard view",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         }
       ],

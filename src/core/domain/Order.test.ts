@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'bun:test';
 import {
   createOrder,
+  createItemId,
   transitionOrderStatus,
   updateOrder,
   isValidStatusTransition,
@@ -11,7 +12,7 @@ import { createMoney } from './Money.js';
 
 describe('Order Domain', () => {
   const validOrderItem: OrderItem = {
-    itemId: 'item-1',
+    itemId: createItemId('item-1'),
     name: 'Pizza Margherita',
     quantity: 2,
     unitPrice: createMoney(12.99, 'USD'),

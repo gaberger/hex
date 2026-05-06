@@ -1,11 +1,11 @@
 /**
- * OrgChart.tsx — Hierarchical agent organization visualization
+ * OrgChart.tsx — Role Hierarchy visualization
  *
- * Displays agent hierarchy parsed from YAML files:
- * - CEO/Executives at top
- * - Leads in middle
- * - ICs at bottom
+ * Displays persona hierarchy parsed from YAML files:
+ * - Personas are static role definitions (not live agents)
+ * - Shows CEO/Executives → Leads → ICs
  * - Communication channels and reporting lines
+ * - Template for how agents should organize when spawned
  */
 
 import { Component, For, Show, createSignal, onMount, createMemo } from "solid-js";
@@ -231,9 +231,9 @@ const OrgChart: Component = () => {
   return (
     <div class="p-6 bg-gray-950 min-h-screen">
       <div class="mb-6">
-        <h1 class="text-2xl font-bold text-white mb-2">Agent Organization</h1>
+        <h1 class="text-2xl font-bold text-white mb-2">Role Hierarchy</h1>
         <p class="text-gray-400">
-          Hierarchical structure and communication channels
+          Persona definitions and communication channels (not live agents)
         </p>
       </div>
 

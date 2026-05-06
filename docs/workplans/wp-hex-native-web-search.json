@@ -181,7 +181,7 @@
           "id": "P3.4",
           "layer": "secondary",
           "name": "Contract tests: Brave + DDG against wiremock fixtures",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         }
       ],

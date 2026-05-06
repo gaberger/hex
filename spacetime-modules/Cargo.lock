@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "agent-comms"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "spacetimedb",
+]
+
+[[package]]
 name = "agent-registry"
 version = "0.1.0"
 dependencies = [

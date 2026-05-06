@@ -9,7 +9,7 @@
         {
           "id": "P1.1",
           "title": "Add `POST /api/inference/calibrate/{id}` in hex-nexus/src/routes/inference.rs that runs a 2-prompt probe (identity + short reasoning) through the same in-process inference pipeline used by inference_complete (NOT a fresh outbound HTTP call) so vault-only secrets resolve. Compute quality_score = (0.70 + latency_bonus + sanity_bonus).clamp(0,1) using the same formula as the existing inference.rs:1088 path. PATCH the endpoint record with the new quality_score and healthCheckedAt. Return JSON {id, latency_ms, quality_score, sanity_ok, model, sample_reply}.",
-          "status": "failed",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/routes/inference.rs"
@@ -22,7 +22,7 @@
         {
           "id": "P1.2",
           "title": "Add `POST /api/inference/calibrate-all` that lists all registered endpoints, calls calibrate_endpoint serially with a 5s gap between calls (rate-limit safety), skips entries with status=disabled, and returns a JSON array of summaries.",
-          "status": "failed",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/routes/inference.rs"
@@ -35,7 +35,7 @@
         {
           "id": "P1.3",
           "title": "Register both routes in the axum router builder (the same module that already registers /api/inference/complete and /api/inference/health).",
-          "status": "failed",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/routes/inference.rs"

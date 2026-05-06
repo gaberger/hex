@@ -191,7 +191,7 @@ const BrainDecisions: Component = () => {
             <Show
               when={filteredItems().length > 0}
               fallback={
-                <div class="text-center py-12 text-gray-500">
+                <div class="text-center py-12 text-gray-300">
                   <div class="text-4xl mb-2">✓</div>
                   <p class="text-lg">No decisions pending — you're caught up.</p>
                 </div>
@@ -210,10 +210,10 @@ const BrainDecisions: Component = () => {
                             >
                               {item.severity}
                             </span>
-                            <span class="text-xs text-gray-500 uppercase tracking-wide">
+                            <span class="text-xs text-gray-300 uppercase tracking-wide">
                               {item.kind.replace(/_/g, " ")}
                             </span>
-                            <span class="text-xs text-gray-600 ml-auto flex-shrink-0">
+                            <span class="text-xs text-gray-400 ml-auto flex-shrink-0">
                               {formatAge(item.ageSeconds)}
                             </span>
                           </div>
@@ -235,7 +235,7 @@ const BrainDecisions: Component = () => {
               </ul>
             </Show>
 
-            <div class="text-xs text-gray-600 mt-6 text-right">
+            <div class="text-xs text-gray-400 mt-6 text-right">
               Last fetched: {new Date(d().generatedAt).toLocaleTimeString()}
             </div>
           </>

@@ -1,4 +1,4 @@
-use super::PathRule;
+use super::path_rule::PathRule;
 
 #[cfg(test)]
 mod tests {

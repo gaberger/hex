@@ -1,4 +1,7 @@
-//! Org chart API — parses agent YAML files to build hierarchical structure.
+//! Role Hierarchy API — parses persona YAML files to build organizational structure.
+//!
+//! NOTE: This shows persona definitions (static role templates), not live agents.
+//! For runtime agent state, see /api/hex-agents (agent_registry table).
 
 use axum::{extract::State, http::StatusCode, response::Json};
 use serde::{Deserialize, Serialize};
@@ -29,7 +32,8 @@ pub struct OrgChartResponse {
 
 /// GET /api/org/chart
 ///
-/// Returns hierarchical agent organization parsed from YAML files.
+/// Returns hierarchical persona organization parsed from YAML files.
+/// These are static role definitions, not live agent instances.
 pub async fn get_org_chart(
     State(_state): State<Arc<crate::state::AppState>>,
 ) -> Result<Json<OrgChartResponse>, StatusCode> {

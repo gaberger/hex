@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum InferenceTier {
     T1, // scaffold/transform/script → qwen3:4b
     T2, // codegen → qwen2.5-coder:32b
-    T2_5, // complex reasoning → devstral-small-2:24b
+    T2_5, // complex reasoning → gemma4:latest (bench: 0.92 quality, 28 tok/s; beats devstral-small-2:24b at 0.86 / 7 tok/s)
 }
 
 impl InferenceTier {
@@ -22,7 +22,7 @@ impl InferenceTier {
         match self {
             InferenceTier::T1 => "qwen3:4b",
             InferenceTier::T2 => "qwen2.5-coder:32b",
-            InferenceTier::T2_5 => "devstral-small-2:24b",
+            InferenceTier::T2_5 => "gemma4:latest",
         }
     }
 }

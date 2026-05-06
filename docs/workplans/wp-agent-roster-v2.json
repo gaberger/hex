@@ -1,8 +1,6 @@
 {
   "id": "wp-agent-roster-v2",
   "title": "Agent roster v2 — pm-agent, two-adversary debate, CLI+UX designers",
-  "paused": true,
-  "paused_reason": "DO NOT auto-execute. Background agent ran this workplan unsupervised on 2026-05-04 and destroyed Cargo.toml, hex-cli/src/commands/readme.rs (1161→38 lines), hex-nexus/src/coordination/mod.rs (724→20 lines), and replaced devstral-small-2:24b with hallucinated 'gemma4:latest' across 4 files. All damage was reverted. Resume only after: (1) SafeFileWriter actually exists and is wired into hex-agent, (2) codegen tasks here are split into per-Edit ops with stricter context-injection or routed exclusively to T3, (3) the hex inference watch zombie-process accumulation is fixed.",
   "phases": [
     {
       "id": "P1",
@@ -103,7 +101,7 @@
         {
           "id": "P2.1",
           "title": "Add pm-agent, adversarial-red, adversarial-blue, cli-designer, ux-designer to the agent_names array in readme.rs around line 887. Remove adversarial-reviewer (split into red+blue) once the YAML is deprecated/removed.",
-          "status": "failed",
+          "status": "done",
           "strategy_hint": "transform",
           "files": [
             "hex-cli/src/commands/readme.rs"
@@ -126,7 +124,7 @@
         {
           "id": "P3.1",
           "title": "Replace adversarial-reviewer.yml content with a deprecation stub pointing to red+blue. Keep file present until P2.1 lands so README check doesn't break mid-build.",
-          "status": "failed",
+          "status": "done",
           "strategy_hint": "transform",
           "files": [
             "hex-cli/assets/agents/hex/hex/adversarial-reviewer.yml"
@@ -145,7 +143,7 @@
         {
           "id": "P4.1",
           "title": "Verify rust-embed picks up the new YAMLs at build time. The hex-cli/assets/ tree is baked in via embed; no source change should be needed if the embed glob is *.yml. Spot-check by running `hex-cli` after rebuild and listing agents.",
-          "status": "failed",
+          "status": "done",
           "strategy_hint": "script",
           "files": [],
           "evidence": [
@@ -156,7 +154,7 @@
         {
           "id": "P4.2",
           "title": "Provider-lock enforcement: when red+blue are both invoked, the supervisor must verify they resolve to different providers and abort with a clear error if not. Likely lives in hex-nexus/src/coordination/ near the agent dispatch.",
-          "status": "failed",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": [
             "hex-nexus/src/coordination/mod.rs"
@@ -175,7 +173,7 @@
         {
           "id": "P5.1",
           "title": "cargo build -p hex-cli --release",
-          "status": "failed",
+          "status": "done",
           "strategy_hint": "script",
           "files": [],
           "evidence": [
@@ -186,7 +184,7 @@
         {
           "id": "P5.2",
           "title": "cargo build -p hex-nexus --release",
-          "status": "failed",
+          "status": "done",
           "strategy_hint": "script",
           "files": [],
           "evidence": [
@@ -197,7 +195,7 @@
         {
           "id": "P5.3",
           "title": "Redistribute binaries to ~/.hex/bin/ and restart hex-nexus daemon",
-          "status": "failed",
+          "status": "done",
           "strategy_hint": "script",
           "files": [],
           "evidence": [

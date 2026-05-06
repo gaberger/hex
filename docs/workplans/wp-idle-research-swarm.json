@@ -1,36 +1,25 @@
 {
   "adr": "ADR-2604151200",
-  "description": "Implement the idle-research swarm per ADR-2604151200. P1 wires the idle-trigger + throttle into the sched daemon and writes the structured-finding schema. P2 implements the deterministic (code-first) analysts. P3 wires the T2.5 LLM synthesis analysts. P4 routes findings back into the draft ADR/workplan/memory surfaces. P5 surfaces sweep state on the dashboard.",
+  "auto_promote": false,
+  "created_by": "planner",
+  "description": "Stub workplan for ADR-2604151200. Wires an idle-research swarm into the sched daemon: idle-trigger + throttle, structured Finding schema, T1 deterministic analysts (architecture/code-quality/drift), T2/T2.5 LLM-synthesis analysts (naming/performance/UX), routing of severity≥med findings into draft ADRs / draft workplans / idle-sweep memory entries, and dashboard visibility. Drafts are NEVER auto-promoted to Accepted; nothing auto-executes. Promote via /hex-feature-dev when ready.",
   "id": "wp-idle-research-swarm",
+  "non_goals": [
+    "Continuous background scan independent of activity — sweeps run on idle only.",
+    "Auto-promoting drafts to Accepted ADRs / activated workplans.",
+    "Replacing or duplicating `hex analyze` — the architecture analyst CALLS it.",
+    "Running sweeps on remote agent hosts — initial scope is local sched daemon only."
+  ],
+  "notes": "DRAFT STUB — do not auto-promote. Companion narrative in wp-idle-research-swarm.md. Task content mirrors the ADR; phase ordering follows the inside-out hex tier pattern (schema in hex-core first, then analysts/coordinator in hex-nexus, then primary surfaces in hex-cli + dashboard).",
   "phases": [
     {
+      "gate": {
+        "blocking": true,
+        "command": "cargo check -p hex-core -p hex-cli && cargo test -p hex-core research_finding && cargo test -p hex-cli idle_trigger sweep_throttle",
+        "type": "build"
+      },
       "id": "P1",
       "tasks": [
-        {
-          "evidence": [
-            "grep -n 'idle_tick_count\\|idle_threshold_ticks' hex-cli/src/commands/sched.rs",
-            "cargo check -p hex-cli"
-          ],
-          "files": [
-            "hex-cli/src/commands/sched.rs"
-          ],
-          "id": "P1.1",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Add idle_tick_count tracking to queue_drain — increment when pending=0 and in_flight=0, reset otherwise. Threshold default 4 ticks (configurable via .hex/project.json sched.idle_threshold_ticks)."
-        },
-        {
-          "evidence": [
-            "grep -n 'research-sweep\\|last_research_sweep' hex-cli/src/commands/sched.rs"
-          ],
-          "files": [
-            "hex-cli/src/commands/sched.rs"
-          ],
-          "id": "P1.2",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Self-enqueue 'research-sweep' kind when idle threshold reached AND last_sweep older than min_sweep_interval_h (default 6h, persisted at ~/.hex/sched/last_research_sweep)."
-        },
         {
           "evidence": [
             "grep -n 'pub struct Finding' hex-core/src/research_finding.rs",
@@ -41,28 +30,70 @@
             "hex-core/src/research_finding.rs",
             "hex-core/src/lib.rs"
           ],
-          "id": "P1.3",
+          "id": "P1.1",
+          "layer": "domain",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Define the structured-finding YAML schema in hex-core/src/research_finding.rs — Finding { id, domain, severity, title, evidence[], suggested_action: { kind, draft_ref } }. Include serde_yaml round-trip test."
+          "title": "Define structured Finding schema in hex-core/src/research_finding.rs — Finding { id, domain, severity (high|med|low), title, evidence[] (≥1 entry required), suggested_action: { kind: adr|workplan|memory|noop, draft_ref } }. Include serde + serde_yaml round-trip test; reject zero-evidence findings at deserialize time."
         },
         {
           "evidence": [
+            "grep -n 'idle_tick_count\\|idle_threshold_ticks' hex-cli/src/commands/sched.rs",
+            "cargo check -p hex-cli"
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.2",
+          "layer": "primary",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add idle_tick_count tracking to queue_drain in hex-cli/src/commands/sched.rs — increment when pending=0 AND in_flight=0, reset on any non-zero. Threshold default 4 ticks; configurable via .hex/project.json sched.idle_threshold_ticks."
+        },
+        {
+          "deps": [
+            "P1.2"
+          ],
+          "evidence": [
+            "grep -n 'research-sweep\\|last_research_sweep' hex-cli/src/commands/sched.rs",
+            "ls ~/.hex/sched/last_research_sweep 2>/dev/null || true"
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P1.3",
+          "layer": "primary",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Throttle + self-enqueue. When idle threshold reached AND now − last_research_sweep ≥ min_sweep_interval_h (default 6h), self-enqueue a kind: research-sweep task. Persist last_research_sweep at ~/.hex/sched/last_research_sweep so the throttle survives daemon restarts."
+        },
+        {
+          "deps": [
+            "P1.3"
+          ],
+          "evidence": [
             "grep -n 'test_idle_trigger\\|test_sweep_throttle' hex-cli/src/commands/sched.rs",
-            "cargo test -p hex-cli idle_trigger"
+            "cargo test -p hex-cli idle_trigger sweep_throttle"
           ],
           "files": [
             "hex-cli/src/commands/sched.rs"
           ],
           "id": "P1.4",
-          "status": "done",
+          "layer": "primary",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "title": "Unit test: idle-trigger fires after N=4 consecutive empty ticks, does NOT fire when last_sweep < 6h ago, DOES fire when last_sweep ≥ 6h ago."
+          "title": "Unit tests for idle-trigger + throttle. Cover: (a) trigger fires after exactly N=4 consecutive empty ticks, (b) does NOT fire when last_sweep < min_sweep_interval_h, (c) DOES fire when last_sweep ≥ min_sweep_interval_h, (d) any non-empty tick resets the idle counter."
         }
       ],
-      "title": "Idle-trigger + throttle + finding schema"
+      "tier": 0,
+      "title": "Idle-trigger + throttle + Finding schema"
     },
     {
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-nexus --test research_analysts_t1",
+        "type": "test"
+      },
       "id": "P2",
       "tasks": [
         {
@@ -75,9 +106,10 @@
             "hex-nexus/src/research/mod.rs"
           ],
           "id": "P2.1",
+          "layer": "secondary",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Architecture analyst: shell out to `hex analyze . --json`, parse violations + dead-code into Finding records (domain=architecture, severity from analyze output)."
+          "title": "Architecture analyst (hex-nexus/src/research/architecture_analyst.rs): shell out to `hex analyze . --json`, parse boundary violations + dead-code + cycles into Finding records (domain=architecture, severity from analyze output)."
         },
         {
           "evidence": [
@@ -88,9 +120,10 @@
             "hex-nexus/src/research/code_quality_analyst.rs"
           ],
           "id": "P2.2",
-          "status": "done",
+          "layer": "secondary",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "title": "Code-quality analyst: run `cargo check --workspace --message-format=json` and `cargo clippy --workspace --message-format=json`, parse warnings/errors into Finding records."
+          "title": "Code-quality analyst: run `cargo check --workspace --message-format=json` and `cargo clippy --workspace --message-format=json`, parse warnings/errors into Finding records (domain=code_quality)."
         },
         {
           "evidence": [
@@ -101,29 +134,37 @@
             "hex-nexus/src/research/drift_analyst.rs"
           ],
           "id": "P2.3",
-          "status": "done",
+          "layer": "secondary",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "title": "Drift analyst: shell out to `hex plan reconcile --all --dry-run --json`, parse mismatches (status drift, missing files) into Finding records."
-        }
-      ],
-      "title": "Deterministic (code-first) analysts"
-    },
-    {
-      "id": "P3",
-      "tasks": [
+          "title": "Drift analyst: shell out to `hex plan reconcile --all --dry-run --json`, parse status/file mismatches into Finding records. Include workplan-vs-ADR drift as a sub-domain."
+        },
         {
           "evidence": [
-            "grep -n 'fn analyze_performance' hex-nexus/src/research/performance_analyst.rs",
-            "cargo test -p hex-nexus performance_analyst"
+            "grep -n 'fn analyze_heatmap' hex-nexus/src/research/heatmap_analyst.rs",
+            "cargo test -p hex-nexus heatmap_analyst"
           ],
           "files": [
-            "hex-nexus/src/research/performance_analyst.rs"
+            "hex-nexus/src/research/heatmap_analyst.rs"
           ],
-          "id": "P3.1",
+          "id": "P2.4",
+          "layer": "secondary",
           "status": "done",
-          "strategy_hint": "inference",
-          "title": "Performance analyst: collect hot-path heuristics (functions > 200 LoC, deeply nested loops, non-async I/O in async contexts) via tree-sitter, then T2.5 (devstral-small-2:24b) synthesizes top 3 actionable Finding records with concrete file:line evidence."
-        },
+          "strategy_hint": "codegen",
+          "title": "Size + activity heatmap analyst: tokei/scc for size + complexity; `git log --since=30d --name-only` for hot files. Emit findings only when complexity OR churn exceeds configured thresholds (no noise from steady-state files)."
+        }
+      ],
+      "tier": 1,
+      "title": "Deterministic (T1) analysts — code-first, zero LLM cost"
+    },
+    {
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-nexus --test research_analysts_t2",
+        "type": "test"
+      },
+      "id": "P3",
+      "tasks": [
         {
           "evidence": [
             "grep -n 'fn analyze_naming' hex-nexus/src/research/naming_analyst.rs",
@@ -132,10 +173,39 @@
           "files": [
             "hex-nexus/src/research/naming_analyst.rs"
           ],
-          "id": "P3.2",
+          "id": "P3.1",
+          "layer": "secondary",
           "status": "done",
-          "strategy_hint": "codegen",
-          "title": "Naming-convention analyst: tree-sitter walk public symbols across all crates, T2 model checks for inconsistencies (snake_case vs camelCase drift, abbreviation use, non-Rust-idiomatic names)."
+          "strategy_hint": "inference",
+          "title": "Naming-convention analyst (T2): tree-sitter walk public symbols across all crates, T2 model checks for inconsistencies (snake_case vs camelCase drift, abbreviation use, non-Rust-idiomatic names). Synthesizer must cite file:line evidence; refuse to emit findings without it."
+        },
+        {
+          "evidence": [
+            "grep -n 'fn analyze_performance' hex-nexus/src/research/performance_analyst.rs",
+            "cargo test -p hex-nexus performance_analyst"
+          ],
+          "files": [
+            "hex-nexus/src/research/performance_analyst.rs"
+          ],
+          "id": "P3.2",
+          "layer": "secondary",
+          "status": "done",
+          "strategy_hint": "inference",
+          "title": "Performance analyst (T2.5): collect hot-path heuristics (functions > 200 LoC, deeply nested loops, blocking I/O in async contexts) via tree-sitter, then T2.5 (devstral-small-2:24b OR per-bench winner) synthesizes top 3 actionable Finding records with concrete file:line evidence."
+        },
+        {
+          "evidence": [
+            "grep -n 'fn analyze_scaling' hex-nexus/src/research/scaling_analyst.rs",
+            "cargo test -p hex-nexus scaling_analyst"
+          ],
+          "files": [
+            "hex-nexus/src/research/scaling_analyst.rs"
+          ],
+          "id": "P3.3",
+          "layer": "secondary",
+          "status": "done",
+          "strategy_hint": "inference",
+          "title": "Scaling analyst (T2.5): collect port/adapter coupling metrics (fan-in / fan-out, shared state, lock contention hotspots), T2.5 synthesizes scaling concerns with concrete refactor suggestions."
         },
         {
           "evidence": [
@@ -145,18 +215,35 @@
           "files": [
             "hex-nexus/src/research/ux_analyst.rs"
           ],
-          "id": "P3.3",
+          "id": "P3.4",
+          "layer": "secondary",
           "status": "done",
           "strategy_hint": "inference",
-          "title": "UX analyst: walk hex-nexus/assets/ dashboard routes, run accessibility/consistency checks (color tokens, font usage, error states), T2.5 synthesizes top findings."
+          "title": "UX analyst (T2.5): walk hex-nexus/assets/ dashboard routes, run accessibility/consistency checks (color tokens, font usage, error states, WCAG AA contrast), T2.5 synthesizes top findings."
         }
       ],
-      "title": "T2.5 LLM-synthesis analysts (gated behind code-first findings)"
+      "tier": 1,
+      "title": "T2 / T2.5 LLM-synthesis analysts — gated behind code-first evidence"
     },
     {
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-nexus --test research_routing",
+        "type": "test"
+      },
       "id": "P4",
       "tasks": [
         {
+          "deps": [
+            "P2.1",
+            "P2.2",
+            "P2.3",
+            "P2.4",
+            "P3.1",
+            "P3.2",
+            "P3.3",
+            "P3.4"
+          ],
           "evidence": [
             "grep -n 'fn run_sweep' hex-nexus/src/research/coordinator.rs",
             "cargo test -p hex-nexus sweep_coordinator"
@@ -165,11 +252,15 @@
             "hex-nexus/src/research/coordinator.rs"
           ],
           "id": "P4.1",
+          "layer": "secondary",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Sweep coordinator: invoke all enabled analysts, collect Findings, write docs/analysis/idle-sweep-YYYYMMDD-HHMM.yaml + a rendered .md summary. Cap at max_drafts_per_sweep=5 (configurable)."
+          "title": "Sweep coordinator (hex-nexus/src/research/coordinator.rs): invoke all enabled analysts in dependency order (T1 first; T2/T2.5 only fire if their domain has T1 evidence to synthesize). Collect Findings, write docs/analysis/idle-sweep-YYYYMMDD-HHMM.yaml as the source of truth + a rendered .md summary alongside. Cap promoted drafts at max_drafts_per_sweep=5 (configurable)."
         },
         {
+          "deps": [
+            "P4.1"
+          ],
           "evidence": [
             "grep -n 'fn write_adr_draft' hex-nexus/src/research/draft_writer.rs",
             "cargo test -p hex-nexus adr_draft_writer"
@@ -178,72 +269,127 @@
             "hex-nexus/src/research/draft_writer.rs"
           ],
           "id": "P4.2",
+          "layer": "secondary",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "For each Finding with suggested_action.kind=adr, write a draft under docs/adrs/drafts/ADR-<finding-id>.md using the existing ADR template. Drafts are NEVER auto-promoted to Accepted."
+          "title": "ADR draft writer: for each Finding with suggested_action.kind=adr, write a draft under docs/adrs/drafts/ADR-<finding-id>.md using the existing ADR template. Status=Proposed-Draft. Drafts are NEVER auto-promoted to Accepted."
         },
         {
+          "deps": [
+            "P4.1"
+          ],
           "evidence": [
-            "grep -n 'fn write_workplan_draft\\|fn store_memory_finding' hex-nexus/src/research/draft_writer.rs"
+            "grep -n 'fn write_workplan_draft\\|fn store_memory_finding' hex-nexus/src/research/draft_writer.rs",
+            "cargo test -p hex-nexus workplan_draft_writer memory_finding"
           ],
           "files": [
             "hex-nexus/src/research/draft_writer.rs"
           ],
           "id": "P4.3",
+          "layer": "secondary",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "For each Finding with suggested_action.kind=workplan, write a draft JSON under docs/workplans/drafts/ using the existing workplan schema. For kind=memory, call hex_memory_store with namespace='idle-sweep'."
+          "title": "Workplan + memory routing: for kind=workplan, write a draft JSON under docs/workplans/drafts/ matching the existing T3 draft schema. For kind=memory, call hex_memory_store with namespace='idle-sweep'. Both must include the originating Finding id for traceability."
         },
         {
+          "deps": [
+            "P4.1"
+          ],
           "evidence": [
-            "grep -n 'sweep_abort\\|preempt' hex-cli/src/commands/sched.rs"
+            "grep -n 'sweep_abort\\|preempt' hex-cli/src/commands/sched.rs hex-nexus/src/research/coordinator.rs",
+            "cargo test -p hex-nexus sweep_preemption"
           ],
           "files": [
             "hex-cli/src/commands/sched.rs",
             "hex-nexus/src/research/coordinator.rs"
           ],
           "id": "P4.4",
-          "status": "done",
+          "layer": "primary",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "title": "Preemption: if queue_drain finds a non-research task while a sweep is in-flight, signal-abort the sweep cleanly and re-enqueue research-sweep for the next idle window."
+          "title": "Preemption: if queue_drain finds a non-research task while a sweep is in-flight, signal-abort the sweep cleanly (drop in-progress LLM call, persist partial findings) and re-enqueue research-sweep for the next idle window. Integration test injects a workplan task mid-sweep and asserts clean abort + re-enqueue."
         }
       ],
-      "title": "Route findings back into ADR/workplan/memory drafts"
+      "tier": 3,
+      "title": "Sweep coordinator + draft routing"
     },
     {
+      "gate": {
+        "blocking": true,
+        "command": "cargo build -p hex-cli -p hex-nexus --release && cd hex-nexus/assets && npx tsc --noEmit",
+        "type": "build"
+      },
       "id": "P5",
       "tasks": [
         {
+          "deps": [
+            "P4.1"
+          ],
           "evidence": [
-            "grep -n 'last_sweep' hex-cli/src/commands/sched.rs",
-            "grep -n 'last_sweep' hex-cli/src/commands/status.rs"
+            "grep -n 'last_sweep' hex-cli/src/commands/sched.rs hex-cli/src/commands/status.rs",
+            "hex sched status 2>&1 | grep -E 'last_sweep'"
           ],
           "files": [
             "hex-cli/src/commands/sched.rs",
             "hex-cli/src/commands/status.rs"
           ],
           "id": "P5.1",
+          "layer": "primary",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Add 'last_sweep: <age> (<n> findings, <m> drafts)' to `hex sched daemon status` output and `hex` no-arg status panel."
+          "title": "Add 'last_sweep: <age> (<n> findings, <m> drafts)' to `hex sched status` output AND `hex` no-arg status panel. Pull from ~/.hex/sched/last_research_sweep + the last sweep YAML."
         },
         {
+          "deps": [
+            "P4.1"
+          ],
           "evidence": [
             "grep -n 'GET.*api/research/sweeps' hex-nexus/src/routes/research.rs",
-            "ls hex-nexus/assets/src/components/SweepsPanel.jsx"
+            "ls hex-nexus/assets/src/components/SweepsPanel.tsx"
           ],
           "files": [
             "hex-nexus/src/routes/research.rs",
-            "hex-nexus/assets/src/components/SweepsPanel.jsx"
+            "hex-nexus/assets/src/components/SweepsPanel.tsx"
           ],
           "id": "P5.2",
+          "layer": "primary",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Dashboard panel: GET /api/research/sweeps returns last N sweep summaries (timestamp, finding count, draft count, links to drafts). Solid.js component renders as a card on the main dashboard."
+          "title": "Dashboard panel: GET /api/research/sweeps returns last N sweep summaries (timestamp, finding count by domain/severity, draft count, links to drafts). Solid.js component (SweepsPanel) renders as a card on the main dashboard with drill-down to per-finding evidence."
+        },
+        {
+          "deps": [
+            "P4.1"
+          ],
+          "evidence": [
+            "grep -n 'insight_routing\\|analysis_yaml_pair' hex-cli/src/commands/ci.rs",
+            "cargo test -p hex-cli insight_routing"
+          ],
+          "files": [
+            "hex-cli/src/commands/ci.rs"
+          ],
+          "id": "P5.3",
+          "layer": "primary",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "hex ci gate (insight-routing rule): reject any new docs/analysis/*.md without a matching .yaml of the same basename. Enforces 'no dead reports' — freeform Markdown without structured findings fails CI."
         }
       ],
-      "title": "Dashboard + status visibility"
+      "tier": 2,
+      "title": "Visibility — sched status + dashboard panel"
     }
   ],
-  "status": "done"
+  "status": "draft",
+  "success_criteria": [
+    "Idle-trigger fires after exactly idle_threshold_ticks consecutive empty ticks AND only when last_sweep age ≥ min_sweep_interval_h.",
+    "Throttle survives daemon restarts via ~/.hex/sched/last_research_sweep.",
+    "Every sweep writes docs/analysis/idle-sweep-YYYYMMDD-HHMM.yaml; .md is rendering only.",
+    "Schema rejects findings without evidence at deserialize time.",
+    "Routing emits at most max_drafts_per_sweep=5; nothing auto-promotes; nothing auto-executes.",
+    "Sweep aborts cleanly + re-enqueues when a non-research task arrives mid-flight.",
+    "`hex sched status` and dashboard report last_sweep age, finding count, draft count.",
+    "Sweep with zero T2.5-eligible evidence makes zero LLM calls (regression-tested via clean-fixture repo).",
+    "`hex ci` rejects docs/analysis/*.md without matching .yaml (insight-routing rule)."
+  ],
+  "title": "Idle Research Swarm — sched-daemon idle-time tiered analysts with structured-finding routing"
 }

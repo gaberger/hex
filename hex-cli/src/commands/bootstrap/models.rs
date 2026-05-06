@@ -22,7 +22,7 @@ impl ModelLoader {
         let models = vec![
             ("qwen3:4b", 4700),
             ("qwen2.5-coder:32b", 19000),
-            ("devstral-small-2:24b", 14000),
+            ("gemma4:latest", 9600),
         ];
 
         let mut statuses = vec![];

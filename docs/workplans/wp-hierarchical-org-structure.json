@@ -1,177 +1,209 @@
 {
-  "id": "wp-hierarchical-org-structure",
-  "title": "Implement Hierarchical Organization Structure",
-  "objective": "Transform flat agent system into hierarchical org with C-suite, leads, and ICs",
-  "priority": "P0",
-  "created": "2026-05-06T00:00:00Z",
   "adr_scope": "ADR-060,ADR-027",
+  "created": "2026-05-06T00:00:00Z",
+  "id": "wp-hierarchical-org-structure",
+  "objective": "Transform flat agent system into hierarchical org with C-suite, leads, and ICs",
   "phases": [
     {
       "id": "P1",
-      "title": "Create Executive Layer Agents",
       "tasks": [
         {
-          "id": "P1.1",
-          "title": "Create Chief Visionary Officer agent definition",
           "adapter": "hex-cli/assets/agents/hex/hex/chief-visionary.yml",
+          "dependencies": [],
           "done_command": "test -f hex-cli/assets/agents/hex/hex/chief-visionary.yml",
+          "id": "P1.1",
+          "status": "done",
           "strategy_hint": "scaffold",
-          "dependencies": []
+          "title": "Create Chief Visionary Officer agent definition"
         },
         {
-          "id": "P1.2",
-          "title": "Create CPO (Chief Product Officer) agent",
           "adapter": "hex-cli/assets/agents/hex/hex/cpo.yml",
+          "dependencies": [],
           "done_command": "test -f hex-cli/assets/agents/hex/hex/cpo.yml",
+          "id": "P1.2",
+          "status": "done",
           "strategy_hint": "scaffold",
-          "dependencies": []
+          "title": "Create CPO (Chief Product Officer) agent"
         },
         {
-          "id": "P1.3",
-          "title": "Create CTO (Chief Technology Officer) agent",
           "adapter": "hex-cli/assets/agents/hex/hex/cto.yml",
+          "dependencies": [],
           "done_command": "test -f hex-cli/assets/agents/hex/hex/cto.yml",
+          "id": "P1.3",
+          "status": "done",
           "strategy_hint": "scaffold",
-          "dependencies": []
+          "title": "Create CTO (Chief Technology Officer) agent"
         },
         {
-          "id": "P1.4",
-          "title": "Create COO (Chief Operations Officer) agent",
           "adapter": "hex-cli/assets/agents/hex/hex/coo.yml",
+          "dependencies": [],
           "done_command": "test -f hex-cli/assets/agents/hex/hex/coo.yml",
+          "id": "P1.4",
           "strategy_hint": "scaffold",
-          "dependencies": []
+          "title": "Create COO (Chief Operations Officer) agent"
         },
         {
-          "id": "P1.5",
-          "title": "Create CMO (Chief Marketing Officer) agent",
           "adapter": "hex-cli/assets/agents/hex/hex/cmo.yml",
+          "dependencies": [],
           "done_command": "test -f hex-cli/assets/agents/hex/hex/cmo.yml",
+          "id": "P1.5",
           "strategy_hint": "scaffold",
-          "dependencies": []
+          "title": "Create CMO (Chief Marketing Officer) agent"
         }
-      ]
+      ],
+      "title": "Create Executive Layer Agents"
     },
     {
       "id": "P2",
-      "title": "Create Lead Layer Agents",
       "tasks": [
         {
-          "id": "P2.1",
-          "title": "Create Product Lead agent",
           "adapter": "hex-cli/assets/agents/hex/hex/product-lead.yml",
+          "dependencies": [
+            "P1.2"
+          ],
           "done_command": "test -f hex-cli/assets/agents/hex/hex/product-lead.yml",
+          "id": "P2.1",
+          "status": "done",
           "strategy_hint": "scaffold",
-          "dependencies": ["P1.2"]
+          "title": "Create Product Lead agent"
         },
         {
-          "id": "P2.2",
-          "title": "Create Engineering Lead agent",
           "adapter": "hex-cli/assets/agents/hex/hex/engineering-lead.yml",
+          "dependencies": [
+            "P1.3"
+          ],
           "done_command": "test -f hex-cli/assets/agents/hex/hex/engineering-lead.yml",
+          "id": "P2.2",
           "strategy_hint": "scaffold",
-          "dependencies": ["P1.3"]
+          "title": "Create Engineering Lead agent"
         },
         {
-          "id": "P2.3",
-          "title": "Create Backend Lead agent",
           "adapter": "hex-cli/assets/agents/hex/hex/backend-lead.yml",
+          "dependencies": [
+            "P1.3"
+          ],
           "done_command": "test -f hex-cli/assets/agents/hex/hex/backend-lead.yml",
+          "id": "P2.3",
           "strategy_hint": "scaffold",
-          "dependencies": ["P1.3"]
+          "title": "Create Backend Lead agent"
         },
         {
-          "id": "P2.4",
-          "title": "Create Frontend Lead agent",
           "adapter": "hex-cli/assets/agents/hex/hex/frontend-lead.yml",
+          "dependencies": [
+            "P1.3"
+          ],
           "done_command": "test -f hex-cli/assets/agents/hex/hex/frontend-lead.yml",
+          "id": "P2.4",
           "strategy_hint": "scaffold",
-          "dependencies": ["P1.3"]
+          "title": "Create Frontend Lead agent"
         },
         {
-          "id": "P2.5",
-          "title": "Create QA Lead agent",
           "adapter": "hex-cli/assets/agents/hex/hex/qa-lead.yml",
+          "dependencies": [
+            "P1.4"
+          ],
           "done_command": "test -f hex-cli/assets/agents/hex/hex/qa-lead.yml",
+          "id": "P2.5",
           "strategy_hint": "scaffold",
-          "dependencies": ["P1.4"]
+          "title": "Create QA Lead agent"
         },
         {
-          "id": "P2.6",
-          "title": "Create Security Lead agent",
           "adapter": "hex-cli/assets/agents/hex/hex/security-lead.yml",
+          "dependencies": [
+            "P1.4"
+          ],
           "done_command": "test -f hex-cli/assets/agents/hex/hex/security-lead.yml",
+          "id": "P2.6",
           "strategy_hint": "scaffold",
-          "dependencies": ["P1.4"]
+          "title": "Create Security Lead agent"
         },
         {
-          "id": "P2.7",
-          "title": "Create Architecture Lead agent",
           "adapter": "hex-cli/assets/agents/hex/hex/architecture-lead.yml",
+          "dependencies": [
+            "P1.4"
+          ],
           "done_command": "test -f hex-cli/assets/agents/hex/hex/architecture-lead.yml",
+          "id": "P2.7",
           "strategy_hint": "scaffold",
-          "dependencies": ["P1.4"]
+          "title": "Create Architecture Lead agent"
         },
         {
-          "id": "P2.8",
-          "title": "Create Research Lead agent",
           "adapter": "hex-cli/assets/agents/hex/hex/research-lead.yml",
+          "dependencies": [
+            "P1.1"
+          ],
           "done_command": "test -f hex-cli/assets/agents/hex/hex/research-lead.yml",
+          "id": "P2.8",
           "strategy_hint": "scaffold",
-          "dependencies": ["P1.1"]
+          "title": "Create Research Lead agent"
         }
-      ]
+      ],
+      "title": "Create Lead Layer Agents"
     },
     {
       "id": "P3",
-      "title": "Update Brain Dashboard with Org Chart",
       "tasks": [
         {
-          "id": "P3.1",
-          "title": "Add hierarchical org chart view to Brain dashboard",
           "adapter": "hex-nexus/assets/src/components/views/OrgChart.tsx",
+          "dependencies": [
+            "P2.8"
+          ],
           "done_command": "test -f hex-nexus/assets/src/components/views/OrgChart.tsx",
+          "id": "P3.1",
+          "status": "done",
           "strategy_hint": "codegen",
-          "dependencies": ["P2.8"]
+          "title": "Add hierarchical org chart view to Brain dashboard"
         },
         {
-          "id": "P3.2",
-          "title": "Update TeamRail to show hierarchy instead of flat list",
           "adapter": "hex-nexus/assets/src/components/views/Brain.tsx",
+          "dependencies": [
+            "P3.1"
+          ],
           "done_command": "grep -q 'C-SUITE\\|LEADS' hex-nexus/assets/src/components/views/Brain.tsx",
+          "id": "P3.2",
+          "status": "done",
           "strategy_hint": "transform",
-          "dependencies": ["P3.1"]
+          "title": "Update TeamRail to show hierarchy instead of flat list"
         }
-      ]
+      ],
+      "title": "Update Brain Dashboard with Org Chart"
     },
     {
       "id": "P4",
-      "title": "Implement Delegation System",
       "tasks": [
         {
-          "id": "P4.1",
-          "title": "Add delegation routing in hex-nexus orchestration",
           "adapter": "hex-nexus/src/orchestration/delegation.rs",
+          "dependencies": [
+            "P2.8"
+          ],
           "done_command": "test -f hex-nexus/src/orchestration/delegation.rs",
+          "id": "P4.1",
+          "status": "done",
           "strategy_hint": "codegen",
-          "dependencies": ["P2.8"]
+          "title": "Add delegation routing in hex-nexus orchestration"
         },
         {
-          "id": "P4.2",
-          "title": "Update existing IC agents with reports_to field",
           "adapter": "hex-cli/assets/agents/hex/hex/*.yml",
+          "dependencies": [
+            "P4.1"
+          ],
           "done_command": "grep -l 'reports_to:' hex-cli/assets/agents/hex/hex/hex-coder.yml",
+          "id": "P4.2",
+          "status": "done",
           "strategy_hint": "transform",
-          "dependencies": ["P4.1"]
+          "title": "Update existing IC agents with reports_to field"
         }
-      ]
+      ],
+      "title": "Implement Delegation System"
     }
   ],
+  "priority": "P0",
   "success_criteria": [
     "All C-suite agents defined and tested",
     "All lead agents defined with direct_reports",
     "Brain dashboard shows org chart",
     "Tasks route through hierarchy (CEO → C-suite → Leads → ICs)",
     "Existing IC agents updated with reporting structure"
-  ]
+  ],
+  "title": "Implement Hierarchical Organization Structure"
 }

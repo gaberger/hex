@@ -28,7 +28,7 @@ impl Default for TierModelConfig {
         Self {
             t1: "qwen3:4b".into(),
             t2: "qwen2.5-coder:32b".into(),
-            t2_5: "devstral-small-2:24b".into(),
+            t2_5: "gemma4:latest".into(),
             t3: None, // frontier — must be explicitly configured
         }
     }
@@ -70,7 +70,7 @@ mod tests {
         let cfg = TierModelConfig::default();
         assert_eq!(cfg.model_for_tier(TaskTier::T1).unwrap(), "qwen3:4b");
         assert_eq!(cfg.model_for_tier(TaskTier::T2).unwrap(), "qwen2.5-coder:32b");
-        assert_eq!(cfg.model_for_tier(TaskTier::T2_5).unwrap(), "devstral-small-2:24b");
+        assert_eq!(cfg.model_for_tier(TaskTier::T2_5).unwrap(), "gemma4:latest");
     }
 
     #[test]

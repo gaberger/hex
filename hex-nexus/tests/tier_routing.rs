@@ -135,11 +135,11 @@ fn default_tier_config_maps_t2_to_qwen25_coder() {
 }
 
 #[test]
-fn default_tier_config_maps_t2_5_to_devstral() {
+fn default_tier_config_maps_t2_5_to_gemma4() {
     let config = TierModelConfig::default();
     assert_eq!(
         config.model_for_tier(TaskTier::T2_5).unwrap(),
-        "devstral-small-2:24b"
+        "gemma4:latest"
     );
 }
 

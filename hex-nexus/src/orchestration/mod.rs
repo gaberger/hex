@@ -6,6 +6,7 @@ pub mod supervisor_subscriber;
 pub mod brain_dispatch_reconciler;
 pub mod brain_progress_streamer;
 pub mod swarm_task_drainer;
+pub mod swarm_task_bridge;
 pub mod constraint_enforcer;
 pub mod context_pressure;
 pub mod directive;

@@ -26,11 +26,13 @@
           "id": "P1.1",
           "layer": "primary",
           "name": "Write agent_steering_e2e integration test",
-          "status": "pending"
+          "status": "done"
         },
         {
           "agent": "hex-coder",
-          "deps": ["P1.1"],
+          "deps": [
+            "P1.1"
+          ],
           "description": "Once the e2e test is green, flip ADR-2604102100 P5 status to Done with the test path as evidence and remove the post-acceptance follow-up note.",
           "files": [
             "docs/adrs/ADR-2604102100-agentic-steerable-loop.md"
@@ -38,7 +40,7 @@
           "id": "P1.2",
           "layer": "docs",
           "name": "Mark ADR-2604102100 P5 Done",
-          "status": "pending"
+          "status": "done"
         }
       ]
     }

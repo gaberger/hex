@@ -26,7 +26,7 @@
           "id": "P1.1",
           "layer": "tooling",
           "name": "Enumerate script imports into /tmp inventory",
-          "status": "pending"
+          "status": "done"
         },
         {
           "agent": "hex-coder",
@@ -40,7 +40,7 @@
           "id": "P1.2",
           "layer": "docs",
           "name": "Write the audit report at canonical path",
-          "status": "pending"
+          "status": "done"
         },
         {
           "agent": "hex-coder",
@@ -54,7 +54,7 @@
           "id": "P1.3",
           "layer": "verification",
           "name": "Verify the recommended dep set against real scripts",
-          "status": "pending"
+          "status": "done"
         }
       ],
       "tier": 0
