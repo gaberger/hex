@@ -44,10 +44,8 @@ export function startHexFloMonitor() {
         const title = task.title ?? task.name ?? 'task';
         const prevStatus = prevTaskMap.get(id);
 
-        // Toast on failures
-        if (prevStatus && prevStatus !== status && status === 'failed') {
-          addToast("error", `Task failed: ${title}`);
-        }
+        // Don't toast on failures - let them show in activity feed only
+        // Toasting every background task failure is too noisy
       }
 
       prevTaskMap = new Map(tasks.map((t: any) => [t.id ?? t.task_id ?? '', t.status ?? 'pending']));

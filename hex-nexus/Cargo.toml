@@ -30,6 +30,7 @@ http = "1"
 url = "2"
 urlencoding = "2"
 uuid = { version = "1", features = ["v4"] }
+regex = "1"
 libc = "0.2.183"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 russh = "0.60"

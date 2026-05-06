@@ -587,6 +587,7 @@ impl AgentManager {
         &self,
         hub_url: &str,
         project_dir: &std::path::Path,
+        role: Option<&str>,
     ) -> Result<u32, String> {
         let agent_bin = crate::find_agent_binary()
             .ok_or_else(|| "hex-agent binary not found (checked sibling dir, ~/.hex/bin/, PATH, cargo target)".to_string())?;
@@ -595,14 +596,32 @@ impl AgentManager {
         let now = chrono::Utc::now().to_rfc3339();
         let project_dir_str = project_dir.to_string_lossy().to_string();
 
-        let child = std::process::Command::new(&agent_bin)
+        // Parse nexus host/port from hub_url
+        let nexus_host = hub_url
+            .trim_start_matches("http://")
+            .trim_start_matches("https://")
+            .split(':')
+            .next()
+            .unwrap_or("127.0.0.1");
+        let nexus_port = hub_url
+            .split(':')
+            .last()
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(5555);
+
+        let mut cmd = std::process::Command::new(&agent_bin);
+        cmd.arg("daemon")
             .args([
-                "--hub-url", hub_url,
-                "--project-dir", &project_dir_str,
-                "--no-preflight",
+                "--agent-id", &id,
+                "--nexus-host", nexus_host,
+                "--nexus-port", &nexus_port.to_string(),
             ])
+            .current_dir(project_dir)
+            .env("HEX_AGENT_ROLE", role.unwrap_or(""))
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        let child = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn hex-agent at {}: {}", agent_bin.display(), e))?;
 

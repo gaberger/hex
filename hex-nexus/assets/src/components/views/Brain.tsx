@@ -3172,6 +3172,20 @@ const Brain: Component = () => {
         >
           Role Hierarchy
         </button>
+        <button
+          onClick={() => navigate({ page: "org-comms" })}
+          class="text-[10px] px-2 py-1 bg-blue-900 hover:bg-blue-800 border border-blue-600 rounded text-blue-100 transition-colors"
+          title="View communication flow through the organization"
+        >
+          Communication Flow
+        </button>
+        <button
+          onClick={() => navigate({ page: "team" })}
+          class="text-[10px] px-2 py-1 bg-cyan-900 hover:bg-cyan-800 border border-cyan-600 rounded text-cyan-100 transition-colors"
+          title="Interactive dashboard to talk to your team"
+        >
+          Team Dashboard
+        </button>
         {/* Project filter — scopes Kanban + Swarms to one project. Decisions
             currently come from cwd's docs/workplans so they're already
             scoped server-side. */}

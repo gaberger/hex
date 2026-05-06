@@ -298,7 +298,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         let chat_db = std::env::var("HEX_CHAT_STDB_DATABASE")
             .unwrap_or_else(|_| hex_core::stdb_database_for_module("chat-relay").to_string());
         let agent_comm_db = std::env::var("HEX_AGENT_COMM_STDB_DATABASE")
-            .unwrap_or_else(|_| hex_core::stdb_database_for_module("agent-comms").to_string());
+            .unwrap_or_else(|_| "c200a65681232ad58e2bc33eefb64d8ff72804348c58f2ca074733b53b266ed4".to_string());
 
         let inference_client =
             adapters::spacetime_inference::SpacetimeInferenceClient::new(
@@ -800,7 +800,7 @@ pub async fn start_server(config: HubConfig) {
         if let Some(ref agent_mgr) = _state.agent_manager {
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             let hub_url = format!("http://127.0.0.1:{}", config.port);
-            match agent_mgr.spawn_local_agent(&hub_url, &cwd).await {
+            match agent_mgr.spawn_local_agent(&hub_url, &cwd, None).await {
                 Ok(pid) => {
                     tracing::info!(
                         pid = pid,

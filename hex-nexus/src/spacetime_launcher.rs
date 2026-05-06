@@ -594,6 +594,7 @@ pub const MODULE_TIERS: &[&[&str]] = &[
         "chat-relay",
         "rl-engine",
         "neural-lab",
+        "agent-comms",
     ],
 ];
 

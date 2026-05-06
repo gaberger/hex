@@ -1,0 +1,10 @@
+{
+  "adr": "ADR-2604271100",
+  "created_at": "2026-05-03T15:29:16.271873717-04:00",
+  "id": "draft-260503152916-generate-tests-for-src-core-0c76b7",
+  "kind": "workplan-draft",
+  "notes": "Auto-drafted by the improver act phase from a detector_health or q_starvation hypothesis. The improver couldn't fix the underlying surface (broken CLI, ineffective action mapping) automatically, so it captured the work as a draft for the operator (or a downstream planner agent) to pick up.",
+  "origin": "improver-auto-act",
+  "prompt": "Generate tests for `src/core/domain/OrderStatus.ts` (currently no_test_file). Use the project's existing test framework (vitest/jest for TS, cargo test for Rust). Cover: happy-path execution, input validation, error cases, and any state-transition rules visible in the source. Match the file-naming convention (sibling `<name>.test.<ext>`). Each test should assert observable behavior, not implementation details. Tier T2 (codegen) is appropriate.",
+  "status": "pending-planner"
+}

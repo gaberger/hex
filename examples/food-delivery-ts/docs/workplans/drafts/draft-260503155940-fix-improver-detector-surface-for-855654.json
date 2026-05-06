@@ -1,0 +1,10 @@
+{
+  "adr": "ADR-2604271100",
+  "created_at": "2026-05-03T15:59:40.251002742-04:00",
+  "id": "draft-260503155940-fix-improver-detector-surface-for-855654",
+  "kind": "workplan-draft",
+  "notes": "Auto-drafted by the improver act phase from a detector_health or q_starvation hypothesis. The improver couldn't fix the underlying surface (broken CLI, ineffective action mapping) automatically, so it captured the work as a draft for the operator (or a downstream planner agent) to pick up.",
+  "origin": "improver-auto-act",
+  "prompt": "Fix improver detector surface for source InboxStale: command `hex inbox list --stale --json` doesn't produce parseable JSON. Detail: detector exited exit status: 1 with empty stdout (likely TOML/CLI drift): Error: Could not resolve agent ID. Try: hex agent connect <nexus-url>, or set HEX_AGENT_ID env var. See: hex agent id. Either add the missing CLI flag in hex-cli, point detectors.toml at a working command, or relax the detector contract. The detector currently emits a synthetic detector_health hypothesis on every tick; resolving this clears that drift signal.",
+  "status": "pending-planner"
+}

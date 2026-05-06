@@ -1,0 +1,10 @@
+{
+  "adr": "ADR-2604271100",
+  "created_at": "2026-05-03T15:02:18.709333281-04:00",
+  "id": "draft-2605031502-fix-typescript-typecheck-failures-in",
+  "kind": "workplan-draft",
+  "notes": "Auto-drafted by the improver act phase from a detector_health or q_starvation hypothesis. The improver couldn't fix the underlying surface (broken CLI, ineffective action mapping) automatically, so it captured the work as a draft for the operator (or a downstream planner agent) to pick up.",
+  "origin": "improver-auto-act",
+  "prompt": "Fix typescript `typecheck` failures in this typescript project. Compiler/test output:\n\nsrc/adapters/primary/HttpServer.ts(3,10): error TS2459: Module '\"../../core/domain/Order.js\"' declares 'OrderStatus' locally, but it is not exported.\nsrc/core/usecases/CreateOrder.ts(2,17): error TS2459: Module '\"../domain/Order.js\"' declares 'OrderStatus' locally, but it is not exported.\nsrc/core/usecases/CreateOrder.ts(16,40): error TS2339: Property 'times' does not exist on type 'Money'.\nsrc/core/usecases/CreateOrder.ts(17,13): error TS2339: Property 'zero' does not exist on type 'typeof Money'.\nsrc/core/usecases/CreateOrder.ts(19,19): error TS2693: 'Order' only refers to a type, but is being used as a value here.\nsrc/core/usecases/UpdateOrderStatus.ts(2,10): error TS2459: Module '\"../domain/Order.js\"' declares 'OrderStatus' locally, but it is not exported.\n\nWork should resolve each error in turn, re-run the gate after each fix, and target zero violations before completion. Tier T2 (codegen) for straightforward type errors; T2.5 (complex reasoning) for cross-adapter or interface-redesign issues.",
+  "status": "pending-planner"
+}

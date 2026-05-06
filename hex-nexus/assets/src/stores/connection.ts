@@ -12,6 +12,19 @@
  *   import { swarms, tasks, agents, connected } from "../stores/connection";
  *   // In a component:  <For each={swarms()}>{(s) => ...}</For>
  */
+
+// Suppress SpacetimeDB SDK's internal "send was called before connect" errors
+// These occur when the SDK tries to send logs during disconnect - safe to ignore
+if (typeof window !== 'undefined') {
+  const originalError = console.error;
+  console.error = (...args: any[]) => {
+    const msg = args[0]?.toString() || '';
+    if (msg.includes('send was called before connect')) {
+      return; // Suppress this specific SDK internal error
+    }
+    originalError.apply(console, args);
+  };
+}
 import {
   createSignal,
   createRoot,
@@ -34,9 +47,17 @@ import {
 /** Resolve SpacetimeDB URI: localStorage override > window.location fallback. */
 function resolveSpacetimeDbUri(): string {
   const stored = localStorage.getItem("hex-stdb-uri");
-  if (stored) return stored;
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${window.location.hostname}:3033`;
+  if (stored) {
+    console.log("[stdb] Using stored URI:", stored);
+    return stored;
+  }
+
+  // Always use the hostname from the browser URL - works for both local and remote access
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  const uri = `${proto}://${window.location.hostname}:3033`;
+
+  console.log("[stdb] Resolved URI:", uri);
+  return uri;
 }
 
 const SPACETIMEDB_URI = resolveSpacetimeDbUri();
@@ -142,6 +163,7 @@ function connectModule(opts: ConnectOpts) {
   let retryCount = 0;
 
   function attempt() {
+    console.log(`[stdb:${opts.module}] attempting connection to ${SPACETIMEDB_URI}/${opts.module}`);
     try {
       // SpacetimeDB SDK v2.0: DbConnection.builder() returns DbConnectionBuilder
       // Chain: .withUri() → .withDatabaseName() → .withToken() → .onConnect() → .build()
@@ -149,6 +171,8 @@ function connectModule(opts: ConnectOpts) {
         .withUri(SPACETIMEDB_URI)
         .withDatabaseName(opts.module)
         .onConnect((ctx: any, _identity: any, token: string) => {
+          console.log(`[stdb:${opts.module}] onConnect callback fired`);
+
           localStorage.setItem(tokenKey, token);
           retryCount = 0;
 
@@ -160,6 +184,7 @@ function connectModule(opts: ConnectOpts) {
                 console.log(`[stdb:${opts.module}] subscription applied (${opts.subscribeQueries.length} queries)`);
                 opts.setConn(ctx);
                 opts.setConnected(true);
+                console.log(`[stdb:${opts.module}] connection status set to true`);
               })
               .onError((_errCtx: any, err: Error) => {
                 console.error(`[stdb:${opts.module}] subscription error:`, err);
@@ -172,13 +197,17 @@ function connectModule(opts: ConnectOpts) {
             opts.setConnected(true);
           }
         })
-        .onDisconnect((_ctx: any, _error?: Error) => {
+        .onDisconnect((_ctx: any, error?: Error) => {
+          console.warn(`[stdb:${opts.module}] disconnected:`, error);
+          // Set disconnected state immediately to prevent send() calls
           opts.setConnected(false);
           opts.setConn(null);
-          scheduleRetry();
+          // Use setTimeout to avoid issues during disconnect handler
+          setTimeout(() => scheduleRetry(), 0);
         })
         .onConnectError((_ctx: any, err: Error) => {
           console.error(`[stdb:${opts.module}] connect error:`, err);
+          console.error(`[stdb:${opts.module}] error details:`, err.message, err.stack);
           // Clear stale token on auth failure and retry without it
           if (savedToken && retryCount === 0) {
             console.warn(`[stdb:${opts.module}] clearing stale token and retrying...`);

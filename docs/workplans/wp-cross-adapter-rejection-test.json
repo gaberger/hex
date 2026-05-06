@@ -1,0 +1,147 @@
+{
+  "adr": "ADR-2604171000",
+  "created_at": "2026-05-05T00:00:00Z",
+  "created_by": "planner",
+  "description": "Implement ADR-2604171000: add a hermetic regression test asserting `hex analyze` rejects cross-adapter, ports→adapter, and domain→adapter imports. Closes the last gap in docs/EVIDENCE.md §1 — the rejection path of the boundary analyzer becomes automated rather than a 3-step manual procedure.",
+  "feature": "Cross-adapter rejection regression test",
+  "id": "wp-cross-adapter-rejection-test",
+  "phases": [
+    {
+      "description": "Create hex-cli/tests/fixtures/boundary-violation/ with a minimal hex-shaped Rust project: domain/mod.rs (empty), ports/mod.rs (imports domain only), adapters/primary/cli.rs and adapters/secondary/db.rs (each imports ports only), main.rs as composition root, Cargo.toml stub. Fixture is the baseline that all five test cases mutate from.",
+      "gate": {
+        "blocking": true,
+        "command": "test -f hex-cli/tests/fixtures/boundary-violation/Cargo.toml && test -f hex-cli/tests/fixtures/boundary-violation/src/domain/mod.rs && test -f hex-cli/tests/fixtures/boundary-violation/src/ports/mod.rs && test -f hex-cli/tests/fixtures/boundary-violation/src/adapters/primary/cli.rs && test -f hex-cli/tests/fixtures/boundary-violation/src/adapters/secondary/db.rs && test -f hex-cli/tests/fixtures/boundary-violation/src/main.rs",
+        "type": "shell"
+      },
+      "id": "P1",
+      "name": "Phase 1 — author hermetic fixture",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Author the 6-file minimal hex-layout fixture under hex-cli/tests/fixtures/boundary-violation/ exactly as specified in ADR-2604171000 §Test shape. domain/mod.rs is empty; ports/mod.rs has only `use crate::domain::*;`; primary/cli.rs and secondary/db.rs each `use crate::ports::*;` only; main.rs is the composition root that pulls in all four layers; Cargo.toml is a [package] stub sufficient for `hex analyze` to walk the tree (no build needed).",
+          "files": [
+            "hex-cli/tests/fixtures/boundary-violation/Cargo.toml",
+            "hex-cli/tests/fixtures/boundary-violation/src/domain/mod.rs",
+            "hex-cli/tests/fixtures/boundary-violation/src/ports/mod.rs",
+            "hex-cli/tests/fixtures/boundary-violation/src/adapters/primary/cli.rs",
+            "hex-cli/tests/fixtures/boundary-violation/src/adapters/secondary/db.rs",
+            "hex-cli/tests/fixtures/boundary-violation/src/main.rs"
+          ],
+          "id": "P1.1",
+          "layer": "test",
+          "name": "Create boundary-violation fixture tree",
+          "status": "done"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "description": "Author hex-cli/tests/analyze_rejects_violation.rs with five cases: baseline_passes, cross_adapter_import_rejected, ports_imports_adapter_rejected, domain_imports_adapter_rejected, baseline_passes_after_revert. Each case copies the fixture into a tempfile::tempdir(), applies its mutation (or none), invokes the hex binary via the same hex_bin() helper pattern as hex-cli/tests/reconcile_evidence.rs, and asserts on exit code + stderr substrings (file stem + layer name, per ADR §Mitigations). Each violation case re-runs baseline_passes first to catch fixture corruption.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo build -p hex-cli --tests",
+        "type": "build"
+      },
+      "id": "P2",
+      "name": "Phase 2 — write the regression test",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1"
+          ],
+          "description": "Implement the 5 #[test] functions matching the ADR's table. Reuse the hex_bin() resolution logic from reconcile_evidence.rs (target/debug/hex → target/release/hex → which hex). Use tempfile::tempdir() per test for isolation. Match stderr on stable tokens only — the file stem (`primary/cli.rs`, `ports/mod.rs`, `domain/mod.rs`) and the layer name (`adapters/secondary`) — NOT whole error strings.",
+          "files": [
+            "hex-cli/tests/analyze_rejects_violation.rs"
+          ],
+          "id": "P2.1",
+          "layer": "test",
+          "name": "Author analyze_rejects_violation.rs with 5 test cases",
+          "status": "done"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "description": "Run the new integration test locally and confirm: 4 violation cases reject (non-zero exit, expected stderr tokens), 1 baseline case passes, total wall time under 5s. If any case fails, root-cause whether the fixture, the test assertions, or the analyzer itself is wrong before adjusting.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-cli --test analyze_rejects_violation",
+        "type": "test"
+      },
+      "id": "P3",
+      "name": "Phase 3 — local verification",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P2.1"
+          ],
+          "description": "Execute `cargo test -p hex-cli --test analyze_rejects_violation` and confirm 5 passed / 0 failed. Capture timing — must stay under 5s on a reference dev box per ADR §CI wiring. Failure here means either the fixture is wrong (P1) or the test assertions are wrong (P2); fix at the source.",
+          "files": [],
+          "id": "P3.1",
+          "layer": "test",
+          "name": "Run analyze_rejects_violation locally and verify all 5 cases",
+          "status": "done"
+        }
+      ],
+      "tier": 4
+    },
+    {
+      "description": "Inspect .github/workflows/ci.yml and confirm the existing `cargo test --workspace` step picks up the new test without any workflow edit (ADR §CI wiring states no new job needed). If the workspace step does not include hex-cli's tests/ dir, escalate — do NOT add a new CI job; that's a separate ADR.",
+      "gate": {
+        "blocking": true,
+        "command": "grep -E 'cargo test --workspace|cargo test -p hex-cli' .github/workflows/ci.yml",
+        "type": "shell"
+      },
+      "id": "P4",
+      "name": "Phase 4 — confirm CI auto-pickup",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P3.1"
+          ],
+          "description": "Read .github/workflows/ci.yml. Confirm `cargo test --workspace` (or an equivalent step that includes hex-cli) is present. No edits expected. If absent, halt and report — adding CI infrastructure is out of scope for this ADR.",
+          "files": [
+            ".github/workflows/ci.yml"
+          ],
+          "id": "P4.1",
+          "layer": "test",
+          "name": "Verify ci.yml workspace test step covers the new file",
+          "status": "done"
+        }
+      ],
+      "tier": 4
+    },
+    {
+      "description": "Replace the manual 3-step `cd examples/hex-weather && echo … && hex analyze . && git checkout` block in docs/EVIDENCE.md §1 with the canonical reproducer `cargo test -p hex-cli --test analyze_rejects_violation`. Keep the manual sequence below it as a human-readable illustration.",
+      "gate": {
+        "blocking": true,
+        "command": "grep -q 'cargo test -p hex-cli --test analyze_rejects_violation' docs/EVIDENCE.md",
+        "type": "shell"
+      },
+      "id": "P5",
+      "name": "Phase 5 — update EVIDENCE.md",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P3.1"
+          ],
+          "description": "Edit docs/EVIDENCE.md §1 (Tree-sitter hexagonal boundary analyzer). Insert the `cargo test -p hex-cli --test analyze_rejects_violation` invocation as the authoritative reproducer ABOVE the existing manual block. Demote the manual block to an illustrative human-readable sequence.",
+          "files": [
+            "docs/EVIDENCE.md"
+          ],
+          "id": "P5.1",
+          "layer": "doc",
+          "name": "Cite the automated test as primary reproducer in EVIDENCE.md §1",
+          "status": "done"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal"
+}

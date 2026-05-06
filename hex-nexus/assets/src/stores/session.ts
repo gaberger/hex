@@ -57,8 +57,18 @@ export async function loadSessions(): Promise<void> {
     console.warn("[session] failed to load sessions:", e.message);
     // Seed a local-only session so the UI is usable
     if (sessions().length === 0) {
+      const generateUUID = () => {
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+          return crypto.randomUUID();
+        }
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+          const r = (Math.random() * 16) | 0;
+          const v = c === 'x' ? r : (r & 0x3) | 0x8;
+          return v.toString(16);
+        });
+      };
       const fallback: Session = {
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         name: "Local Session",
         createdAt: new Date().toISOString(),
         messageCount: 0,

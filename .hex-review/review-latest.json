@@ -1,0 +1,11 @@
+{
+  "verdict": "PASS",
+  "issues": [],
+  "model_used": "qwen2.5-coder:32b",
+  "tokens": 0,
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "cost_usd": 0.0,
+  "duration_ms": 72,
+  "reviewer_skipped": true
+}

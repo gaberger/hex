@@ -1,0 +1,10 @@
+{
+  "adr": "ADR-2604271100",
+  "created_at": "2026-05-03T14:26:16.995407669-04:00",
+  "id": "draft-2605031426-add-missing-hexagonal-architecture-layer",
+  "kind": "workplan-draft",
+  "notes": "Auto-drafted by the improver act phase from a detector_health or q_starvation hypothesis. The improver couldn't fix the underlying surface (broken CLI, ineffective action mapping) automatically, so it captured the work as a draft for the operator (or a downstream planner agent) to pick up.",
+  "origin": "improver-auto-act",
+  "prompt": "Add missing hexagonal-architecture layer `usecases` to this project. create the usecases layer at one of: src/core/usecases. Each task should follow the existing layer conventions (file naming, imports, hexagonal boundary rules). Tier T2 is appropriate; the work is mostly scaffolding + adapter wiring with established patterns.",
+  "status": "pending-planner"
+}

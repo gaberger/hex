@@ -49,6 +49,7 @@ atty = "0.2"
 # SpacetimeDB subscription support (optional — only stdb_inference.rs uses this)
 spacetimedb-sdk = { version = "2.0", optional = true }
 hex-nexus = { path = "../hex-nexus", optional = true, features = ["spacetimedb"] }
+gethostname = "1.1.0"
 
 [dev-dependencies]
 tempfile = "3"

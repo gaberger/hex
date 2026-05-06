@@ -12,6 +12,10 @@ export default defineConfig({
     host: '0.0.0.0', // expose to LAN (matches `hex nexus start --bind 0.0.0.0`)
     port: 5174,
     strictPort: true,
+    hmr: {
+      host: '192.168.30.162',
+      port: 5174,
+    },
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:5555',

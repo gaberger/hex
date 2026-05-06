@@ -1,0 +1,10 @@
+{
+  "adr": "ADR-2604271100",
+  "created_at": "2026-05-05T10:31:55.525506441-04:00",
+  "id": "draft-260505103155-fix-improver-detector-surface-for-f0156a",
+  "kind": "workplan-draft",
+  "notes": "Auto-drafted by the improver act phase from a detector_health or q_starvation hypothesis. The improver couldn't fix the underlying surface (broken CLI, ineffective action mapping) automatically, so it captured the work as a draft for the operator (or a downstream planner agent) to pick up.",
+  "origin": "improver-auto-act",
+  "prompt": "Fix improver detector surface for source EscalationReport: command `hex inference escalation-report --json` doesn't produce parseable JSON. Detail: detector exited exit status: 1 with empty stdout (likely TOML/CLI drift): Error: Cannot reach hex-nexus at http://127.0.0.1:5555\n  Start it with: hex nexus start\n  Or set HEX_NEXUS_URL if running on a different address. Either add the missing CLI flag in hex-cli, point detectors.toml at a working command, or relax the detector contract. The detector currently emits a synthetic detector_health hypothesis on every tick; resolving this clears that drift signal.",
+  "status": "pending-planner"
+}

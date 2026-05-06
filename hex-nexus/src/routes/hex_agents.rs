@@ -25,6 +25,7 @@ pub struct ConnectRequest {
     pub project_dir: Option<String>,
     pub model: Option<String>,
     pub session_id: Option<String>,
+    pub role: Option<String>,
     pub capabilities: Option<Value>,
 }
 
@@ -52,6 +53,7 @@ pub async fn connect_agent(
     let project_dir = body.project_dir.unwrap_or_default();
     let model = body.model.unwrap_or_default();
     let session_id = body.session_id.unwrap_or_default();
+    let role = body.role.unwrap_or_default();
     let caps = body.capabilities.map(|c| c.to_string()).unwrap_or_else(|| "{}".to_string());
 
     // ADR-065 P1: auto-register project from project_dir if not already known
@@ -86,6 +88,8 @@ pub async fn connect_agent(
     port.hex_agent_connect(&id, &name, &host, &project_id, &project_dir, &model, &session_id, &caps)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+
+    // Role extracted from agent name in org_chart.rs for persona matching
 
     // Write session file for the agent
     let sessions_dir = std::env::var("HOME")

@@ -2445,7 +2445,7 @@ async fn send_heartbeat() -> Result<()> {
     }
 
     let client = nexus_client(2)?;
-    let url = nexus_url(&format!("/api/agents/{}/heartbeat", state.agent_id));
+    let url = nexus_url(&format!("/api/hex-agents/{}/heartbeat", state.agent_id));
 
     let now = chrono::Utc::now().to_rfc3339();
     let _ = client

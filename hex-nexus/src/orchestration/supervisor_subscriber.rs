@@ -227,7 +227,7 @@ impl SupervisorSubscriber {
             pool_id, role
         );
         let pid = mgr
-            .spawn_local_agent(&hub_url, &project_dir)
+            .spawn_local_agent(&hub_url, &project_dir, Some(&role))
             .await
             .map_err(|e| format!("spawn_local_agent: {}", e))?;
 

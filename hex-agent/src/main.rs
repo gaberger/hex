@@ -1,6 +1,11 @@
 use hex_agent::{domain, ports, adapters, usecases, worker, workplan_executor::execute_workplan_autonomous};
 
+mod agent_comms_subscriber;
+
+use agent_comms_subscriber::{subscribe_and_listen, AgentCommsConfig};
+use anyhow::Context;
 use clap::Parser;
+use uuid::Uuid;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -171,6 +176,59 @@ fn generate_agent_name(agent_id: &str) -> String {
     format!("hex-{}-{}-{}", adj, noun, suffix)
 }
 
+/// Subscribe to agent-comms WebSocket for CEO messages
+async fn subscribe_agent_comms(
+    agent_id: String,
+    shutdown: Arc<AtomicBool>,
+) -> anyhow::Result<()> {
+    // Fetch agent-comms database identity from registry
+    let nexus_host = std::env::var("NEXUS_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:5555".to_string());
+
+    let client = reqwest::Client::builder()
+        .build()
+        .context("Failed to build reqwest client")?;
+    let registry_url = format!("{}/api/stdb/registry", nexus_host);
+
+    let response = client.get(&registry_url).send().await
+        .context("Failed to fetch registry")?;
+    let registry: serde_json::Value = response.json().await?;
+
+    let agent_comms_db = registry["agent_comms"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("agent_comms not found in registry"))?
+        .to_string();
+
+    let stdb_host = std::env::var("SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+
+    // Extract role from agent_id
+    // Agent IDs can be:
+    // - Simple names: "ceo", "cto", "hex-coder"
+    // - With suffix: "ceo-clean", "hex-coder-bazzite.lan"
+    // Always strip trailing suffix but keep "hex-" prefix if present
+    let role = if agent_id.starts_with("hex-") {
+        agent_id.split('-').take(2).collect::<Vec<_>>().join("-")
+    } else {
+        agent_id.split('-').next().unwrap_or(&agent_id).to_string()
+    };
+
+    tracing::info!(
+        agent_id = %agent_id,
+        role = %role,
+        database = %agent_comms_db,
+        "Starting agent-comms subscriber"
+    );
+
+    let config = AgentCommsConfig {
+        stdb_host,
+        database: agent_comms_db,
+        agent_role: role,
+    };
+
+    subscribe_and_listen(config, shutdown).await
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let mut args = Args::parse();
@@ -237,6 +295,33 @@ async fn main() -> anyhow::Result<()> {
         poller.initialize().await;
         poller.init_project(&args.project_dir).await;
 
+        // Register with hex-nexus as a hex_agent
+        let agent_id = std::env::var("HEX_AGENT_ID").unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+        let role = std::env::var("HEX_AGENT_ROLE").unwrap_or_default();
+        let nexus_url = format!(
+            "http://{}:{}",
+            std::env::var("NEXUS_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
+            std::env::var("NEXUS_PORT").unwrap_or_else(|_| "5555".into())
+        );
+
+        // Register via hex-nexus connect endpoint with role
+        let client = reqwest::Client::new();
+        let hostname = gethostname::gethostname().to_string_lossy().to_string();
+        let _register_result = client
+            .post(format!("{}/api/hex-agents/connect", nexus_url))
+            .json(&serde_json::json!({
+                "agent_id": agent_id,
+                "name": format!("hex-agent-{}", role),
+                "host": hostname,
+                "project_dir": std::env::var("HEX_PROJECT_DIR").unwrap_or_else(|_| ".".into()),
+                "model": "default",
+                "session_id": format!("daemon-{}", role),
+                "role": role,
+                "capabilities": {}
+            }))
+            .send()
+            .await;
+
         // P3: CodePhaseWorker — direct code phase, no inner pipeline
         let worker = CodePhaseWorker::from_env().await;
 
@@ -250,6 +335,21 @@ async fn main() -> anyhow::Result<()> {
             shutdown_clone.store(true, Ordering::SeqCst);
         });
 
+        // Heartbeat task — send heartbeat every 30s
+        let heartbeat_shutdown = shutdown.clone();
+        let heartbeat_nexus_url = nexus_url.clone();
+        let heartbeat_agent_id = agent_id.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            while !heartbeat_shutdown.load(Ordering::SeqCst) {
+                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                let _ = client
+                    .post(format!("{}/api/hex-agents/{}/heartbeat", heartbeat_nexus_url, heartbeat_agent_id))
+                    .send()
+                    .await;
+            }
+        });
+
         // P3.1 (ADR-2604141200): remote-shell worker runs alongside the
         // HexFlo task poller so a single `hex-agent daemon` can service
         // both workplan dispatch and operator-issued `hex hey ... on <host>`
@@ -258,6 +358,15 @@ async fn main() -> anyhow::Result<()> {
         let rs_shutdown = shutdown.clone();
         tokio::spawn(async move {
             worker::run_loop(rs_worker, rs_shutdown).await;
+        });
+
+        // Spawn agent-comms WebSocket subscriber for CEO messages
+        let shutdown_comms = shutdown.clone();
+        tokio::spawn(async move {
+            if let Err(e) = subscribe_agent_comms(agent_id.clone(), shutdown_comms).await {
+                eprintln!("[hex-agent] agent-comms subscriber error: {e:?}");
+                tracing::error!(error = ?e, "agent-comms subscriber failed");
+            }
         });
 
         while !shutdown.load(Ordering::SeqCst) {

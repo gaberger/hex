@@ -39,6 +39,8 @@ const ActivityPanel = lazy(() => import('../components/views/ActivityPanel'));
 const BrainDecisions = lazy(() => import('../components/views/BrainDecisions'));
 const Brain = lazy(() => import('../components/views/Brain'));
 const OrgChart = lazy(() => import('../components/views/OrgChart'));
+const OrgComms = lazy(() => import('../components/views/OrgComms'));
+const TeamDashboard = lazy(() => import('../components/views/TeamDashboard'));
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
 
@@ -247,13 +249,17 @@ const App: Component = () => {
     window.removeEventListener('keydown', handleKeyboard);
   });
 
-  // Brain takes the entire viewport — no sidebar, no breadcrumbs, no
-  // bottom bar. The Brain component itself contains the three-pane layout
-  // (TEAM rail · KANBAN+DECISIONS+SWARMS+HEALTH · CHAT) plus its own
-  // top bar and event-feed strip.
-  if (route().page === "brain") {
-    return (
-      <>
+  // Brain and OrgChart take the entire viewport — no sidebar, no breadcrumbs, no
+  // bottom bar. Use Show for reactivity since route changes after onMount.
+  const isBrainPage = () => route().page === "brain";
+  const isOrgChartPage = () => route().page === "org-chart";
+  const isOrgCommsPage = () => route().page === "org-comms";
+  const isTeamPage = () => route().page === "team";
+
+  return (
+    <>
+      {/* Full-screen Brain page */}
+      <Show when={isBrainPage()}>
         <ConnectionStatusBanner />
         <Brain />
         <SpawnDialog />
@@ -261,14 +267,37 @@ const App: Component = () => {
         <CommandPalette />
         <ToastContainer />
         <ShortcutsOverlay />
-      </>
-    );
-  }
+      </Show>
 
-  return (
-    <div class="flex h-screen flex-col bg-gray-950 text-gray-100">
-      {/* Connection status banner — shown when nexus or SpacetimeDB is unavailable */}
-      <ConnectionStatusBanner />
+      {/* Full-screen OrgChart page */}
+      <Show when={isOrgChartPage()}>
+        <ConnectionStatusBanner />
+        <OrgChart />
+        <ToastContainer />
+        <ShortcutsOverlay />
+      </Show>
+
+      {/* Full-screen OrgComms page */}
+      <Show when={isOrgCommsPage()}>
+        <ConnectionStatusBanner />
+        <OrgComms />
+        <ToastContainer />
+        <ShortcutsOverlay />
+      </Show>
+
+      {/* Full-screen Team Dashboard */}
+      <Show when={isTeamPage()}>
+        <ConnectionStatusBanner />
+        <TeamDashboard />
+        <ToastContainer />
+        <ShortcutsOverlay />
+      </Show>
+
+      {/* Standard layout with sidebar for all other pages */}
+      <Show when={!isBrainPage() && !isOrgChartPage() && !isOrgCommsPage() && !isTeamPage()}>
+        <div class="flex h-screen flex-col bg-gray-950 text-gray-100">
+          {/* Connection status banner — shown when nexus or SpacetimeDB is unavailable */}
+          <ConnectionStatusBanner />
       {/* TopBar */}
       <header class="flex h-12 shrink-0 items-center justify-between border-b border-gray-800 bg-gray-900 px-4">
         <div class="flex items-center gap-3">
@@ -803,14 +832,16 @@ const App: Component = () => {
         </button>
       </div>
 
-      {/* Modal overlays */}
-      <SpawnDialog open={spawnDialogOpen()} onClose={() => setSpawnDialogOpen(false)} />
-      <SwarmInitDialog open={swarmInitDialogOpen()} onClose={() => setSwarmInitDialogOpen(false)} />
-      <CommandPalette open={commandPaletteOpen()} onClose={() => setCommandPaletteOpen(false)} />
-      <ShortcutsOverlay open={shortcutsOpen()} onClose={() => setShortcutsOpen(false)} />
-      <ToastContainer />
-      <CommandOutputPanel />
-    </div>
+          {/* Modal overlays */}
+          <SpawnDialog open={spawnDialogOpen()} onClose={() => setSpawnDialogOpen(false)} />
+          <SwarmInitDialog open={swarmInitDialogOpen()} onClose={() => setSwarmInitDialogOpen(false)} />
+          <CommandPalette open={commandPaletteOpen()} onClose={() => setCommandPaletteOpen(false)} />
+          <ShortcutsOverlay open={shortcutsOpen()} onClose={() => setShortcutsOpen(false)} />
+          <ToastContainer />
+          <CommandOutputPanel />
+        </div>
+      </Show>
+    </>
   );
 };
 
