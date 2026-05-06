@@ -1,23 +1,10 @@
 //! Agent Communications Subscriber
 //!
-//! WebSocket subscription to SpacetimeDB agent-comms for real-time DMs and channel messages.
+//! Polls agent-comms REST API for messages directed at this agent.
 
 use anyhow::{Context, Result};
-use futures::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentMessage {
-    pub id: u64,
-    pub from_agent: String,
-    pub to_agent: Option<String>,
-    pub channel: Option<String>,
-    pub message: String,
-    pub thread_id: Option<String>,
-    pub timestamp: String,
-    pub read_by: Vec<String>,
-}
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 #[derive(Debug, Clone)]
 pub struct AgentCommsConfig {
@@ -26,127 +13,113 @@ pub struct AgentCommsConfig {
     pub agent_role: String,
 }
 
-/// Subscribe to agent-comms and process incoming messages
+/// Poll agent-comms for messages and respond
 pub async fn subscribe_and_listen(
     config: AgentCommsConfig,
-    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    shutdown: Arc<AtomicBool>,
 ) -> Result<()> {
-    let ws_url = format!(
-        "{}/database/subscribe/{}",
-        config.stdb_host.replace("http://", "ws://").replace("https://", "wss://"),
-        config.database
-    );
-
     tracing::info!(
         role = %config.agent_role,
-        url = %ws_url,
-        "Connecting to agent-comms WebSocket"
+        database = %config.database,
+        "Starting agent-comms REST poller"
     );
 
-    let (ws_stream, _) = connect_async(&ws_url)
-        .await
-        .context("Failed to connect to SpacetimeDB WebSocket")?;
+    let client = reqwest::Client::new();
+    let mut last_message_id: u64 = 0;
 
-    let (mut write, mut read) = ws_stream.split();
-
-    // Subscribe to messages where to_agent = our role
-    let subscribe_query = serde_json::json!({
-        "subscribe": {
-            "query_strings": [
-                format!("SELECT * FROM agent_messages WHERE to_agent = '{}'", config.agent_role)
-            ]
-        }
-    });
-
-    write
-        .send(Message::Text(subscribe_query.to_string()))
-        .await
-        .context("Failed to send subscription")?;
-
-    tracing::info!(
-        role = %config.agent_role,
-        "Subscribed to agent_messages for role"
-    );
-
-    // Listen for messages
     while !shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-        tokio::select! {
-            msg = read.next() => {
-                match msg {
-                    Some(Ok(Message::Text(text))) => {
-                        if let Err(e) = handle_message(&text, &config).await {
-                            tracing::error!(error = %e, "Failed to handle message");
+        // Poll for new messages
+        let query_url = format!(
+            "{}/database/sql/{}",
+            config.stdb_host, config.database
+        );
+
+        let sql = format!(
+            "SELECT * FROM agent_messages WHERE to_agent = '{}' AND id > {} ORDER BY id ASC",
+            config.agent_role, last_message_id
+        );
+
+        match client
+            .post(&query_url)
+            .body(sql)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => {
+                if let Ok(rows) = response.json::<Vec<serde_json::Value>>().await {
+                    for row in rows {
+                        if let Some(id) = row.get("id").and_then(|v| v.as_u64()) {
+                            last_message_id = last_message_id.max(id);
+
+                            let from = row.get("from_agent")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            let message = row.get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let thread_id = row.get("thread_id")
+                                .and_then(|v| v.as_str());
+
+                            tracing::info!(
+                                from = %from,
+                                message = %message,
+                                "Received agent message"
+                            );
+
+                            // Process and respond
+                            let role = config.agent_role.clone();
+                            let from = from.to_string();
+                            let message = message.to_string();
+                            let thread_id = thread_id.map(|s| s.to_string());
+                            let db = config.database.clone();
+                            let host = config.stdb_host.clone();
+
+                            tokio::spawn(async move {
+                                if let Err(e) = process_and_respond(&role, &from, &message, thread_id.as_deref(), &db, &host).await {
+                                    tracing::error!(error = ?e, "Failed to process message");
+                                }
+                            });
                         }
                     }
-                    Some(Ok(Message::Close(_))) => {
-                        tracing::warn!("WebSocket closed by server");
-                        break;
-                    }
-                    Some(Err(e)) => {
-                        tracing::error!(error = %e, "WebSocket error");
-                        break;
-                    }
-                    None => break,
-                    _ => {}
                 }
             }
-            _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {}
+            Err(e) => {
+                tracing::warn!(error = ?e, "Failed to poll agent-comms");
+            }
+            _ => {}
         }
+
+        // Poll every 2 seconds
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }
 
-    tracing::info!("Agent-comms subscriber shutting down");
+    tracing::info!("Agent-comms poller shutting down");
     Ok(())
 }
 
-async fn handle_message(text: &str, config: &AgentCommsConfig) -> Result<()> {
-    // Parse SpacetimeDB subscription update
-    let update: serde_json::Value = serde_json::from_str(text)
-        .context("Failed to parse WebSocket message")?;
-
-    // Check if this is a table update with new rows
-    if let Some(table_updates) = update.get("table_updates") {
-        for table_update in table_updates.as_array().unwrap_or(&vec![]) {
-            if let Some(inserts) = table_update.get("inserts") {
-                for insert in inserts.as_array().unwrap_or(&vec![]) {
-                    // Parse as AgentMessage
-                    let msg: AgentMessage = serde_json::from_value(insert.clone())
-                        .context("Failed to parse agent message")?;
-
-                    tracing::info!(
-                        from = %msg.from_agent,
-                        to = ?msg.to_agent,
-                        message = %msg.message,
-                        "Received agent message"
-                    );
-
-                    // Process and respond
-                    if let Err(e) = process_and_respond(&msg, config).await {
-                        tracing::error!(error = %e, "Failed to process message");
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn process_and_respond(msg: &AgentMessage, config: &AgentCommsConfig) -> Result<()> {
+async fn process_and_respond(
+    role: &str,
+    from_agent: &str,
+    message: &str,
+    thread_id: Option<&str>,
+    database: &str,
+    stdb_host: &str,
+) -> Result<()> {
     // Generate response based on agent role and message content
-    let response = generate_response(msg, &config.agent_role)?;
+    let response = generate_llm_response(message, role).await?;
 
-    // Send response back via HTTP reducer call
+    // Send response back via send_dm reducer
     let client = reqwest::Client::new();
     let reducer_url = format!(
         "{}/database/call/{}/send_dm",
-        config.stdb_host, config.database
+        stdb_host, database
     );
 
     let payload = serde_json::json!({
-        "from": config.agent_role,
-        "to": msg.from_agent,
+        "from": role,
+        "to": from_agent,
         "message": response,
-        "thread_id": msg.thread_id,
+        "thread_id": thread_id,
     });
 
     client
@@ -157,35 +130,15 @@ async fn process_and_respond(msg: &AgentMessage, config: &AgentCommsConfig) -> R
         .context("Failed to send response")?;
 
     tracing::info!(
-        from = %config.agent_role,
-        to = %msg.from_agent,
+        from = %role,
+        to = %from_agent,
         "Sent response via agent-comms"
     );
 
     Ok(())
 }
 
-fn generate_response(msg: &AgentMessage, role: &str) -> Result<String> {
-    // Use blocking runtime since we're in sync context
-    let rt = tokio::runtime::Handle::try_current()
-        .ok()
-        .or_else(|| {
-            tokio::runtime::Runtime::new()
-                .ok()
-                .map(|rt| rt.handle().clone())
-        });
-
-    if let Some(handle) = rt {
-        handle.block_on(async {
-            generate_llm_response(msg, role).await
-        })
-    } else {
-        // Fallback if no runtime
-        Ok(format!("Acknowledged. I received: \"{}\" - Runtime unavailable", msg.message))
-    }
-}
-
-async fn generate_llm_response(msg: &AgentMessage, role: &str) -> Result<String> {
+async fn generate_llm_response(msg: &str, role: &str) -> Result<String> {
     let client = reqwest::Client::new();
 
     let system_prompt = format!(
@@ -193,15 +146,9 @@ async fn generate_llm_response(msg: &AgentMessage, role: &str) -> Result<String>
         role.replace('-', " ")
     );
 
-    let user_prompt = format!(
-        "Message from {}: {}",
-        msg.from_agent,
-        msg.message
-    );
-
     let payload = serde_json::json!({
         "model": "nemotron-mini",
-        "prompt": format!("System: {}\n\nUser: {}\n\nAssistant:", system_prompt, user_prompt),
+        "prompt": format!("System: {}\n\nUser: {}\n\nAssistant:", system_prompt, msg),
         "stream": false,
         "options": {
             "temperature": 0.7,
