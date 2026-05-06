@@ -85,11 +85,9 @@ pub async fn connect_agent(
         std::env::var("HEX_PROJECT_ID").unwrap_or_default()
     };
 
-    port.hex_agent_connect(&id, &name, &host, &project_id, &project_dir, &model, &session_id, &caps)
+    port.hex_agent_connect(&id, &name, &host, &project_id, &project_dir, &model, &session_id, &role, &caps)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
-
-    // Role extracted from agent name in org_chart.rs for persona matching
 
     // Write session file for the agent
     let sessions_dir = std::env::var("HOME")

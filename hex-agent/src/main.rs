@@ -183,12 +183,15 @@ async fn subscribe_agent_comms(
 ) -> anyhow::Result<()> {
     // Fetch agent-comms database identity from registry
     let nexus_host = std::env::var("NEXUS_HOST")
-        .unwrap_or_else(|_| "http://127.0.0.1:5555".to_string());
+        .unwrap_or_else(|_| "127.0.0.1".to_string());
+    let nexus_port = std::env::var("NEXUS_PORT")
+        .unwrap_or_else(|_| "5555".to_string());
+    let nexus_url = format!("http://{}:{}", nexus_host, nexus_port);
 
     let client = reqwest::Client::builder()
         .build()
         .context("Failed to build reqwest client")?;
-    let registry_url = format!("{}/api/stdb/registry", nexus_host);
+    let registry_url = format!("{}/api/stdb/registry", nexus_url);
 
     let response = client.get(&registry_url).send().await
         .context("Failed to fetch registry")?;
@@ -296,8 +299,9 @@ async fn main() -> anyhow::Result<()> {
         poller.init_project(&args.project_dir).await;
 
         // Register with hex-nexus as a hex_agent
-        let agent_id = std::env::var("HEX_AGENT_ID").unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
-        let role = std::env::var("HEX_AGENT_ROLE").unwrap_or_default();
+        // The agent_id from CLI args is actually the role name (ceo, cto, hex-coder, etc.)
+        let role_name = std::env::var("HEX_AGENT_ID").unwrap_or_else(|_| "unknown".to_string());
+        let agent_uuid = uuid::Uuid::new_v4().to_string();
         let nexus_url = format!(
             "http://{}:{}",
             std::env::var("NEXUS_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
@@ -305,18 +309,20 @@ async fn main() -> anyhow::Result<()> {
         );
 
         // Register via hex-nexus connect endpoint with role
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .build()
+            .context("Failed to build HTTP client")?;
         let hostname = gethostname::gethostname().to_string_lossy().to_string();
         let _register_result = client
             .post(format!("{}/api/hex-agents/connect", nexus_url))
             .json(&serde_json::json!({
-                "agent_id": agent_id,
-                "name": format!("hex-agent-{}", role),
+                "agent_id": agent_uuid,
+                "name": role_name.clone(),
                 "host": hostname,
                 "project_dir": std::env::var("HEX_PROJECT_DIR").unwrap_or_else(|_| ".".into()),
                 "model": "default",
-                "session_id": format!("daemon-{}", role),
-                "role": role,
+                "session_id": format!("daemon-{}", role_name),
+                "role": role_name,
                 "capabilities": {}
             }))
             .send()
@@ -338,13 +344,13 @@ async fn main() -> anyhow::Result<()> {
         // Heartbeat task — send heartbeat every 30s
         let heartbeat_shutdown = shutdown.clone();
         let heartbeat_nexus_url = nexus_url.clone();
-        let heartbeat_agent_id = agent_id.clone();
+        let heartbeat_agent_uuid = agent_uuid.clone();
         tokio::spawn(async move {
             let client = reqwest::Client::new();
             while !heartbeat_shutdown.load(Ordering::SeqCst) {
                 tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
                 let _ = client
-                    .post(format!("{}/api/hex-agents/{}/heartbeat", heartbeat_nexus_url, heartbeat_agent_id))
+                    .post(format!("{}/api/hex-agents/{}/heartbeat", heartbeat_nexus_url, heartbeat_agent_uuid))
                     .send()
                     .await;
             }
@@ -362,8 +368,9 @@ async fn main() -> anyhow::Result<()> {
 
         // Spawn agent-comms WebSocket subscriber for CEO messages
         let shutdown_comms = shutdown.clone();
+        let role_for_comms = role_name.clone();
         tokio::spawn(async move {
-            if let Err(e) = subscribe_agent_comms(agent_id.clone(), shutdown_comms).await {
+            if let Err(e) = subscribe_agent_comms(role_for_comms, shutdown_comms).await {
                 eprintln!("[hex-agent] agent-comms subscriber error: {e:?}");
                 tracing::error!(error = ?e, "agent-comms subscriber failed");
             }
