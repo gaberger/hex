@@ -22,6 +22,7 @@ export type Route =
   | { page: "swaps" }
   | { page: "brain" }
   | { page: "brain-decisions" }
+  | { page: "org-chart" }
   | { page: "workplans" }
   // Project-scoped
   | { page: "project"; projectId: string }

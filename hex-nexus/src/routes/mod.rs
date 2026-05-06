@@ -48,6 +48,7 @@ pub mod steer;
 pub mod classifier;
 pub mod taste;
 pub mod trust;
+pub mod org_chart;
 // pub mod workplan; // removed stub module
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
@@ -482,6 +483,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/trust", get(trust::get_trust).post(trust::set_trust))
         .route("/api/trust/history", get(trust::get_trust_history))
         .route("/api/trust/{scope}/pin", patch(trust::pin_trust))
+        // Org chart — hierarchical agent visualization
+        .route("/api/org/chart", get(org_chart::get_org_chart))
         // Per-project queries (browser reads)
         .route("/api/{project_id}/health", get(query::get_health))
         .route("/api/{project_id}/tokens/overview", get(query::get_tokens_overview))

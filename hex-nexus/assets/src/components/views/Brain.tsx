@@ -3165,6 +3165,13 @@ const Brain: Component = () => {
         <span class="text-[11px] text-gray-300">
           {PERSONAS.length} personas · {swarms().length} active swarms · {decisions()?.total ?? 0} decisions
         </span>
+        <button
+          onClick={() => navigate({ page: "org-chart" })}
+          class="text-[10px] px-2 py-1 bg-purple-900 hover:bg-purple-800 border border-purple-600 rounded text-purple-100 transition-colors"
+          title="View agent organization chart"
+        >
+          Org Chart
+        </button>
         {/* Project filter — scopes Kanban + Swarms to one project. Decisions
             currently come from cwd's docs/workplans so they're already
             scoped server-side. */}

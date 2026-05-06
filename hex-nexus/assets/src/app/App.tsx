@@ -38,6 +38,7 @@ const SwapsView = lazy(() => import('../components/swaps/SwapsView'));
 const ActivityPanel = lazy(() => import('../components/views/ActivityPanel'));
 const BrainDecisions = lazy(() => import('../components/views/BrainDecisions'));
 const Brain = lazy(() => import('../components/views/Brain'));
+const OrgChart = lazy(() => import('../components/views/OrgChart'));
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
 
@@ -626,6 +627,7 @@ const App: Component = () => {
             <Match when={route().page === "swaps"}><SwapsView /></Match>
             <Match when={route().page === "brain-decisions"}><BrainDecisions /></Match>
             <Match when={route().page === "brain"}><Brain /></Match>
+            <Match when={route().page === "org-chart"}><OrgChart /></Match>
           </Switch>
           {/* BottomBar -- inside center content so it doesn't span under sidebar */}
           <BottomBar />
