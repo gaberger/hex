@@ -592,7 +592,9 @@ impl AgentManager {
         let agent_bin = crate::find_agent_binary()
             .ok_or_else(|| "hex-agent binary not found (checked sibling dir, ~/.hex/bin/, PATH, cargo target)".to_string())?;
 
-        let id = Uuid::new_v4().to_string();
+        // Use role as agent_id (hex-agent expects role name, not UUID)
+        let agent_id_arg = role.unwrap_or("hex-agent");
+        let process_id = Uuid::new_v4().to_string();  // UUID for tracking only
         let now = chrono::Utc::now().to_rfc3339();
         let project_dir_str = project_dir.to_string_lossy().to_string();
 
@@ -612,12 +614,11 @@ impl AgentManager {
         let mut cmd = std::process::Command::new(&agent_bin);
         cmd.arg("daemon")
             .args([
-                "--agent-id", &id,
+                "--agent-id", agent_id_arg,
                 "--nexus-host", nexus_host,
                 "--nexus-port", &nexus_port.to_string(),
             ])
             .current_dir(project_dir)
-            .env("HEX_AGENT_ROLE", role.unwrap_or(""))
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped());
 
@@ -629,8 +630,8 @@ impl AgentManager {
 
         // Register via state port so `hex agent list` shows it
         let info = AgentInfo {
-            id: id.clone(),
-            name: "hex-agent (local)".to_string(),
+            id: process_id.clone(),
+            name: format!("hex-agent ({})", agent_id_arg),
             project_id: String::new(),
             project_dir: project_dir_str.clone(),
             model: "default".to_string(),
@@ -642,11 +643,11 @@ impl AgentManager {
         }
 
         // Track PID
-        self.pid_map.lock().await.insert(id.clone(), pid);
+        self.pid_map.lock().await.insert(process_id.clone(), pid);
 
         // Store child handle for lifecycle management
         self.local_children.lock().await.push(LocalAgent {
-            id,
+            id: process_id,
             pid,
             child,
             project_dir: project_dir_str,
