@@ -46,17 +46,18 @@ import {
 
 /** Resolve SpacetimeDB URI: localStorage override > window.location fallback. */
 function resolveSpacetimeDbUri(): string {
-  const stored = localStorage.getItem("hex-stdb-uri");
-  if (stored) {
-    console.log("[stdb] Using stored URI:", stored);
-    return stored;
+  const override = localStorage.getItem("stdb_uri_override");
+  if (override) {
+    console.log(`[stdb] Using localStorage override: ${override}`);
+    return override;
   }
 
-  // Always use the hostname from the browser URL - works for both local and remote access
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  const uri = `${proto}://${window.location.hostname}:3033`;
-
-  console.log("[stdb] Resolved URI:", uri);
+  // Use window.location to construct WebSocket URL dynamically
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const host = window.location.hostname;
+  const port = 3033;
+  const uri = `${proto}//${host}:${port}`;
+  console.log(`[stdb] Connecting to SpacetimeDB at ${uri}`);
   return uri;
 }
 
@@ -313,20 +314,12 @@ export function initConnections() {
   if (_connectionsInitialized) return;
   _connectionsInitialized = true;
 
-  // Clear stale tokens after module schema changes (e.g., spacetime publish --clear-database).
-  // The SDK caches tokens in localStorage; stale tokens cause DataView deserialization crashes.
-  // TODO: Replace with schema version check once SDK supports it.
-  const SCHEMA_VERSION = "10"; // Bump when re-publishing any module with --clear-database
-  if (localStorage.getItem("stdb_schema_version") !== SCHEMA_VERSION) {
-    Object.keys(localStorage)
-      .filter((k) => k.startsWith(TOKEN_KEY_PREFIX))
-      .forEach((k) => localStorage.removeItem(k));
-    localStorage.setItem("stdb_schema_version", SCHEMA_VERSION);
-    console.log("[stdb] Cleared stale tokens after schema version change");
+  if (!SPACETIMEDB_URI) {
+    console.warn("[stdb] No SpacetimeDB URI - connections disabled");
+    return;
   }
 
-  // hexflo-coordination: swarms, tasks, agents, memory
-  // Database name is "hex" (ADR-2603231500: hexflo-coordination publishes to "hex" for backward compat)
+  // hexflo-coordination (main coordination database)
   connectModule({
     module: "hex",
     builder: HexfloDbConnection,
@@ -343,12 +336,12 @@ export function initConnections() {
       "SELECT * FROM agent_definition",
       "SELECT * FROM hex_agent",
       "SELECT * FROM agent_inbox",
-      "SELECT * FROM compute_node",
       "SELECT * FROM remote_agent",
+      "SELECT * FROM compute_node",
     ],
   });
 
-  // inference-gateway: providers, requests
+  // inference-gateway
   connectModule({
     module: "inference-gateway",
     builder: InferenceGatewayDbConnection,
@@ -359,10 +352,6 @@ export function initConnections() {
       "SELECT * FROM inference_request",
     ],
   });
-
-  // ADR-2604050900: fleet-state module deleted; compute_node now in hexflo-coordination
-  // fleetConnected mirrors hexfloConnected since the data comes from the same connection
-  fleetConnected = hexfloConnected;
 }
 
 // ---------------------------------------------------------------------------

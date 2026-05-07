@@ -1,5 +1,5 @@
 {
-  "host": "http://127.0.0.1:3033",
+  "host": "http://192.168.30.162:3033",
   "database": "hex",
   "databases": {
     "hexflo_coordination": "hex",

@@ -27,7 +27,7 @@ export function createProjectChatTransport(projectId: string): ProjectChatTransp
     if (ws && ws.readyState < 2) return;
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = location.host || 'localhost:5555';
+    const host = location.host;
     const params = new URLSearchParams();
     params.set('project_id', projectId);
 

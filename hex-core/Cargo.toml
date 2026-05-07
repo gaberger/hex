@@ -1,8 +1,8 @@
 [package]
 name = "hex-core"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "26.4.31"
+edition = "2021"
+license = "MIT"
 description = "Shared domain types and port traits for the hex hexagonal architecture framework"
 
 [lib]

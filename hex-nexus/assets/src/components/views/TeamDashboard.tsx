@@ -53,12 +53,75 @@ const TeamDashboard: Component = () => {
 
   onMount(async () => {
     try {
-      const response = await restClient.get("/api/org/personas");
-      setNodes(response.personas || response.nodes || []);
+      // Use /api/hex-agents since /api/org/personas doesn't exist in current binary
+      const response = await restClient.get("/api/hex-agents");
+      const agents = response.agents || [];
+
+      // Tier mapping based on role names
+      const getTier = (role: string): string => {
+        const executives = ["ceo", "cto", "coo", "cpo", "ciso", "chief-visionary"];
+        const leads = ["engineering-lead", "product-lead", "sre-lead"];
+
+        if (executives.includes(role)) return "executive";
+        if (leads.includes(role)) return "lead";
+        return "individual-contributor";
+      };
+
+      // Model info from persona YAMLs (hardcoded until we have API endpoint)
+      const modelInfo: Record<string, { preferred: string; fallback: string; pricing: string }> = {
+        "cto": { preferred: "opus-4-6", fallback: "sonnet-4-6", pricing: "$15/$75 per 1M tokens" },
+        "coo": { preferred: "opus-4-6", fallback: "sonnet-4-6", pricing: "$15/$75 per 1M tokens" },
+        "cpo": { preferred: "opus-4-6", fallback: "sonnet-4-6", pricing: "$15/$75 per 1M tokens" },
+        "ciso": { preferred: "opus-4-6", fallback: "sonnet-4-6", pricing: "$15/$75 per 1M tokens" },
+        "chief-visionary": { preferred: "opus-4-6", fallback: "sonnet-4-6", pricing: "$15/$75 per 1M tokens" },
+        "engineering-lead": { preferred: "sonnet-4-6", fallback: "haiku-4-5", pricing: "$3/$15 per 1M tokens" },
+        "product-lead": { preferred: "sonnet-4-6", fallback: "haiku-4-5", pricing: "$3/$15 per 1M tokens" },
+        "sre-lead": { preferred: "sonnet-4-6", fallback: "haiku-4-5", pricing: "$3/$15 per 1M tokens" },
+      };
+
+      // Transform to AgentOrgNode format, filter online only, deduplicate by role
+      const onlineAgents = agents.filter((a: any) => a.status === "online");
+
+      // Deduplicate by role - keep the most recent registration
+      const uniqueByRole = new Map<string, any>();
+      onlineAgents.forEach((a: any) => {
+        const role = a.role || a.name || "unknown";
+        if (role === "ceo") return; // Skip CEO - user is the CEO
+
+        const existing = uniqueByRole.get(role);
+        if (!existing || a.registered_at > existing.registered_at) {
+          uniqueByRole.set(role, a);
+        }
+      });
+
+      const transformed = Array.from(uniqueByRole.values()).map((a: any) => {
+        const role = a.role || a.name || "unknown";
+        const tier = getTier(role);
+        const modelData = modelInfo[role] || { preferred: "default", fallback: "free", pricing: "free" };
+
+        return {
+          name: role,
+          role: role,
+          tier: tier,
+          status: a.status || "offline",
+          last_heartbeat: a.last_heartbeat,
+          reports_to: null,
+          direct_reports: [],
+          model: {
+            preferred: modelData.preferred,
+            fallback: modelData.fallback,
+            upgrade_threshold: 0.8,
+          },
+          context_level: tier === "executive" ? "L3" : "L2",
+          pricing: modelData.pricing,
+        };
+      });
+
+      setNodes(transformed);
       setLoading(false);
 
       // Mark agents with status "online" as active
-      const active = (response.personas || [])
+      const active = transformed
         .filter((p: AgentOrgNode) => p.status === "online")
         .map((p: AgentOrgNode) => p.name);
       setActiveAgents(active);
@@ -431,17 +494,12 @@ const TeamDashboard: Component = () => {
             </div>
 
             <div>
-              <div class="text-xs text-gray-500 uppercase tracking-wider mb-2">Individual Contributors ({nodes().filter(n => n.tier === "ic").length})</div>
+              <div class="text-xs text-gray-500 uppercase tracking-wider mb-2">Individual Contributors ({nodes().filter(n => n.tier === "individual-contributor").length})</div>
               <div class="grid grid-cols-2 gap-2">
-                <For each={nodes().filter(n => n.tier === "ic").slice(0, 6)}>
+                <For each={nodes().filter(n => n.tier === "individual-contributor")}>
                   {(agent) => <AgentCard agent={agent} />}
                 </For>
               </div>
-              <Show when={nodes().filter(n => n.tier === "ic").length > 6}>
-                <div class="text-gray-500 text-sm mt-2">
-                  +{nodes().filter(n => n.tier === "ic").length - 6} more ICs
-                </div>
-              </Show>
             </div>
           </div>
         </Show>

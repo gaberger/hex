@@ -28,7 +28,7 @@ class ChatWebSocketService implements IChatTransport {
     if (token) localStorage.setItem('hex-auth-token', token);
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = location.host || 'localhost:5555';
+    const host = location.host;
     const url = token
       ? `${proto}//${host}/ws/chat?token=${encodeURIComponent(token)}`
       : `${proto}//${host}/ws/chat`;
