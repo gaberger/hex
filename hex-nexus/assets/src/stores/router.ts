@@ -26,6 +26,10 @@ export type Route =
   | { page: "org-comms" }
   | { page: "team" }
   | { page: "workplans" }
+  // ADR-2605081126 surfaces (merge gate, personas, thoughts)
+  | { page: "merge-gate" }
+  | { page: "persona-health" }
+  | { page: "thoughts" }
   // Project-scoped
   | { page: "project"; projectId: string }
   | { page: "project-agents"; projectId: string }
@@ -245,6 +249,12 @@ function routeToHash(r: Route): string {
       return "#/org-comms";
     case "team":
       return "#/team";
+    case "merge-gate":
+      return "#/merge-gate";
+    case "persona-health":
+      return "#/persona-health";
+    case "thoughts":
+      return "#/thoughts";
     case "project":
       return `#/project/${r.projectId}`;
     case "project-agents":
@@ -300,6 +310,9 @@ function hashToRoute(hash: string): Route {
   if (parts[0] === "org-chart") return { page: "org-chart" };
   if (parts[0] === "org-comms") return { page: "org-comms" };
   if (parts[0] === "team") return { page: "team" };
+  if (parts[0] === "merge-gate") return { page: "merge-gate" };
+  if (parts[0] === "persona-health") return { page: "persona-health" };
+  if (parts[0] === "thoughts") return { page: "thoughts" };
 
   // Project-scoped routes: /project/:id/...
   if (parts[0] === "project" && parts[1]) {

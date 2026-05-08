@@ -51,6 +51,7 @@ pub mod trust;
 pub mod org_chart;
 pub mod stdb_registry;
 pub mod org_comms;
+pub mod merge_gate;
 // pub mod workplan; // removed stub module
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
@@ -491,7 +492,15 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/org/agent/start", post(org_chart::start_agent))
         // Org comms — hierarchical message routing
         .route("/api/org/send-message", post(org_comms::send_message))
+        .route("/api/org/messages", get(org_comms::list_messages))
         .route("/api/org/conversation/{id}", get(org_comms::get_conversation))
+        // ── ADR-2605081126 dashboard surfaces ──────────────────────────
+        .route("/api/merge/requests", get(merge_gate::list_merge_requests))
+        .route("/api/merge/approve", post(merge_gate::approve_merge_request))
+        .route("/api/merge/reject", post(merge_gate::reject_merge_request))
+        .route("/api/merge/personas", get(merge_gate::list_personas))
+        .route("/api/merge/thoughts", get(merge_gate::list_thoughts))
+        .route("/api/merge/persona-events/{role}", get(merge_gate::list_persona_events))
         // SpacetimeDB registry — database identities
         .route("/api/stdb/registry", get(stdb_registry::get_registry))
         // Per-project queries (browser reads)

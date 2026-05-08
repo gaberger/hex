@@ -41,6 +41,9 @@ const Brain = lazy(() => import('../components/views/Brain'));
 const OrgChart = lazy(() => import('../components/views/OrgChart'));
 const OrgComms = lazy(() => import('../components/views/OrgComms'));
 const TeamDashboard = lazy(() => import('../components/views/TeamDashboard'));
+const MergeGate = lazy(() => import('../components/views/MergeGate'));
+const PersonaHealth = lazy(() => import('../components/views/PersonaHealth'));
+const Thoughts = lazy(() => import('../components/views/Thoughts'));
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
 
@@ -255,6 +258,9 @@ const App: Component = () => {
   const isOrgChartPage = () => route().page === "org-chart";
   const isOrgCommsPage = () => route().page === "org-comms";
   const isTeamPage = () => route().page === "team";
+  const isMergeGatePage = () => route().page === "merge-gate";
+  const isPersonaHealthPage = () => route().page === "persona-health";
+  const isThoughtsPage = () => route().page === "thoughts";
 
   return (
     <>
@@ -293,8 +299,32 @@ const App: Component = () => {
         <ShortcutsOverlay />
       </Show>
 
+      {/* Full-screen Merge Gate (ADR-2605081126) */}
+      <Show when={isMergeGatePage()}>
+        <ConnectionStatusBanner />
+        <MergeGate />
+        <ToastContainer />
+        <ShortcutsOverlay />
+      </Show>
+
+      {/* Full-screen Persona Health */}
+      <Show when={isPersonaHealthPage()}>
+        <ConnectionStatusBanner />
+        <PersonaHealth />
+        <ToastContainer />
+        <ShortcutsOverlay />
+      </Show>
+
+      {/* Full-screen Thought stream */}
+      <Show when={isThoughtsPage()}>
+        <ConnectionStatusBanner />
+        <Thoughts />
+        <ToastContainer />
+        <ShortcutsOverlay />
+      </Show>
+
       {/* Standard layout with sidebar for all other pages */}
-      <Show when={!isBrainPage() && !isOrgChartPage() && !isOrgCommsPage() && !isTeamPage()}>
+      <Show when={!isBrainPage() && !isOrgChartPage() && !isOrgCommsPage() && !isTeamPage() && !isMergeGatePage() && !isPersonaHealthPage() && !isThoughtsPage()}>
         <div class="flex h-screen flex-col bg-gray-950 text-gray-100">
           {/* Connection status banner — shown when nexus or SpacetimeDB is unavailable */}
           <ConnectionStatusBanner />
@@ -592,6 +622,64 @@ const App: Component = () => {
                 <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
               </svg>
               <Show when={!sidebarCollapsed()}>Decisions</Show>
+            </button>
+            {/* Merge Gate (ADR-2605081126) */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              classList={{
+                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "merge-gate",
+                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "merge-gate",
+                "justify-center px-0": sidebarCollapsed(),
+              }}
+              aria-label={sidebarCollapsed() ? "Merge Gate" : undefined}
+              aria-current={route().page === "merge-gate" ? "page" : undefined}
+              onClick={() => { navigate({ page: "merge-gate" }); setMobileDrawerOpen(false); }}
+            >
+              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                classList={{ "text-cyan-400": route().page === "merge-gate" }}>
+                <circle cx="6" cy="6" r="3" />
+                <circle cx="6" cy="18" r="3" />
+                <circle cx="18" cy="6" r="3" />
+                <path d="M6 9v6" />
+                <path d="M9 6h6" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Merge Gate</Show>
+            </button>
+            {/* Persona Health */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              classList={{
+                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "persona-health",
+                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "persona-health",
+                "justify-center px-0": sidebarCollapsed(),
+              }}
+              aria-label={sidebarCollapsed() ? "Persona Health" : undefined}
+              aria-current={route().page === "persona-health" ? "page" : undefined}
+              onClick={() => { navigate({ page: "persona-health" }); setMobileDrawerOpen(false); }}
+            >
+              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                classList={{ "text-cyan-400": route().page === "persona-health" }}>
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Personas</Show>
+            </button>
+            {/* Thoughts */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              classList={{
+                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "thoughts",
+                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "thoughts",
+                "justify-center px-0": sidebarCollapsed(),
+              }}
+              aria-label={sidebarCollapsed() ? "Thoughts" : undefined}
+              aria-current={route().page === "thoughts" ? "page" : undefined}
+              onClick={() => { navigate({ page: "thoughts" }); setMobileDrawerOpen(false); }}
+            >
+              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                classList={{ "text-cyan-400": route().page === "thoughts" }}>
+                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Thoughts</Show>
             </button>
             {/* Substrate Swaps (ADR-2604261500) */}
             <button

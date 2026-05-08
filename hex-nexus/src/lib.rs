@@ -306,7 +306,17 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 inference_db,
             );
         let chat_client =
-            adapters::spacetime_chat::SpacetimeChatClient::new(stdb_host.clone(), chat_db);
+            adapters::spacetime_chat::SpacetimeChatClient::new(stdb_host.clone(), chat_db.clone());
+        // hex db (hexflo-coordination) — where persona_pool / persona_health live.
+        let hex_db_for_persona = std::env::var("HEX_STDB_DATABASE")
+            .unwrap_or_else(|_| hex_core::stdb_database_for_module("hexflo-coordination").to_string());
+        let persona_supervisor = Arc::new(
+            adapters::spacetime_persona::SpacetimePersonaSupervisor::new(
+                stdb_host.clone(),
+                hex_db_for_persona,
+            )
+            .with_chat_relay(chat_db.clone()),
+        );
         let agent_comm_client =
             adapters::spacetime_agent_comm::SpacetimeAgentCommAdapter::new(stdb_host, agent_comm_db);
 
@@ -343,6 +353,95 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         app_state.chat_stdb = Some(Arc::new(chat_client));
         app_state.agent_comm_stdb = Some(Arc::new(agent_comm_client));
         tracing::info!("SpacetimeDB inference-gateway + chat-relay + agent-comms clients initialized");
+
+        // Initialise repo grounding (ADR catalog + dashboard URLs) before
+        // the responder spawns. This prevents personas from fabricating
+        // "I sent it to your secure channel" non-answers.
+        {
+            let repo_root = std::env::var("HEX_REPO_ROOT")
+                .ok()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| {
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                });
+            crate::orchestration::repo_grounding::init(&repo_root);
+            if let Some(facts) = crate::orchestration::repo_grounding::facts() {
+                tracing::info!(
+                    adr_count = facts.adrs.len(),
+                    repo_root = %facts.repo_root.display(),
+                    "repo_grounding initialised"
+                );
+            }
+        }
+
+        // Executive auto-responder (CEO-DM → persona reply via inference).
+        // STDB-side persona supervisor (persona_pool / persona_health / persona_tick)
+        // keeps the team online; this responder writes the actual replies.
+        let responder_disabled = std::env::var("HEX_DISABLE_ORG_RESPONDER")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if responder_disabled {
+            tracing::info!("org_responder disabled via HEX_DISABLE_ORG_RESPONDER");
+        } else if let Some(comm) = app_state.agent_comm_stdb.clone() {
+            crate::orchestration::org_responder::spawn(
+                comm,
+                persona_supervisor.clone(),
+                config.port,
+            );
+        }
+
+        // ADR-2605081126 P4 — integrator subscriber drives merge-team voting:
+        // polls merge_request rows, dispatches validation-judge (cargo check),
+        // tallies via the STDB reducer, runs `hex worktree merge` on approved.
+        // Disabled with HEX_DISABLE_INTEGRATOR_SUBSCRIBER=1.
+        {
+            let stdb_host_for_integrator = std::env::var("HEX_SPACETIMEDB_HOST")
+                .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+            let hex_db_for_integrator = std::env::var("HEX_STDB_DATABASE").unwrap_or_else(|_| {
+                hex_core::stdb_database_for_module("hexflo-coordination").to_string()
+            });
+            crate::orchestration::integrator_subscriber::spawn(
+                stdb_host_for_integrator.clone(),
+                hex_db_for_integrator.clone(),
+            );
+
+            // Auto-seed merge-team default policy + persona pools.
+            // STDB schema-change semantics on republish wipe row data,
+            // so we re-init on every nexus startup. Reducers are idempotent —
+            // existing rows are skipped, operator customizations preserved.
+            //
+            // Disabled via HEX_DISABLE_AUTO_INIT=1 if you want to bring up
+            // an empty system for testing.
+            if std::env::var("HEX_DISABLE_AUTO_INIT").is_err() {
+                let host_init = stdb_host_for_integrator.clone();
+                let db_init = hex_db_for_integrator.clone();
+                tokio::spawn(async move {
+                    // Wait for STDB to finish accepting writes after publish.
+                    tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+                    let client = match reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(10))
+                        .build()
+                    {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "auto-init: client build failed");
+                            return;
+                        }
+                    };
+                    for reducer in &["merge_team_init", "persona_init"] {
+                        let url = format!("{}/v1/database/{}/call/{}", host_init, db_init, reducer);
+                        match client.post(&url).json(&serde_json::json!([])).send().await {
+                            Ok(r) if r.status().is_success() => {
+                                tracing::info!(reducer, "auto-init: seeded");
+                            }
+                            Ok(r) => tracing::debug!(reducer, status = %r.status(), "auto-init: non-success"),
+                            Err(e) => tracing::debug!(reducer, error = %e, "auto-init: transport error"),
+                        }
+                    }
+                });
+            }
+        }
 
         // P4: Background stale-model prune pass (ADR-2603311000).
         // Test each registered OpenRouter provider with a minimal prompt.
