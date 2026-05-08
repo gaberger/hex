@@ -63,15 +63,35 @@ const verdictColor = (v: string) => {
 };
 
 const tally = (req: MergeRequest) => {
+  // Tally the trio (judge + red + blue) only — operator votes are an
+  // override path and are NOT counted toward quorum (matches the STDB
+  // merge_decision_tally reducer's allow_operator_override branch).
   let pass = 0,
     fail = 0,
     abstain = 0;
   for (const v of req.votes) {
+    if (v.voter === "operator") continue;
     if (v.verdict === "pass") pass++;
     else if (v.verdict === "fail") fail++;
     else if (v.verdict === "abstain") abstain++;
   }
   return { pass, fail, abstain };
+};
+
+// True when this row reached merged/approved via the operator-override path
+// instead of through the trio quorum. Surfaces "merged with no real votes".
+const isOperatorOverride = (req: MergeRequest): boolean => {
+  if (req.status !== "merged" && req.status !== "approved") return false;
+  const operatorPass = req.votes.some((v) => v.voter === "operator" && v.verdict === "pass");
+  if (!operatorPass) return false;
+  const trioPass = req.votes.some(
+    (v) =>
+      (v.voter === "validation-judge" ||
+        v.voter === "adversarial-red" ||
+        v.voter === "adversarial-blue") &&
+      v.verdict === "pass",
+  );
+  return !trioPass;
 };
 
 const MergeGate: Component = () => {
@@ -169,6 +189,7 @@ const MergeGate: Component = () => {
         <For each={requests()}>
           {(req) => {
             const t = tally(req);
+            const override = isOperatorOverride(req);
             return (
               <div class="border border-gray-800 rounded-lg bg-gray-900/50 p-4">
                 <div class="flex items-start justify-between gap-4">
@@ -182,6 +203,14 @@ const MergeGate: Component = () => {
                       >
                         {req.status}
                       </span>
+                      <Show when={override}>
+                        <span
+                          class="px-2 py-0.5 rounded text-xs border bg-yellow-950 text-yellow-300 border-yellow-700"
+                          title="merged via operator override — NO trio votes were cast"
+                        >
+                          operator override
+                        </span>
+                      </Show>
                       <span class="text-xs text-gray-500">role {req.role}</span>
                     </div>
                     <div class="text-gray-500 text-xs font-mono truncate">
@@ -233,14 +262,14 @@ const MergeGate: Component = () => {
 
                 <div class="mt-3 grid grid-cols-3 gap-3 text-xs">
                   <div class="rounded bg-gray-950 border border-gray-800 p-2">
-                    <div class="text-gray-500 uppercase tracking-wide">tally</div>
+                    <div class="text-gray-500 uppercase tracking-wide">trio tally</div>
                     <div class="mt-1">
                       <span class="text-green-400">+{t.pass}</span>{" "}
                       <span class="text-red-400">−{t.fail}</span>{" "}
                       <span class="text-gray-500">∅{t.abstain}</span>
                     </div>
-                    <div class="text-gray-500 mt-1">
-                      quorum 2/{REQUIRED_VOTERS.length}
+                    <div class={override ? "text-yellow-400 mt-1" : "text-gray-500 mt-1"}>
+                      {override ? "quorum bypassed" : `quorum 2/${REQUIRED_VOTERS.length}`}
                     </div>
                   </div>
 

@@ -173,6 +173,7 @@ const App: Component = () => {
   initConnectionStore();    // must be first — creates signals other stores depend on
   initProjectStore();       // depends on registeredProjects from connection
   initRouterStore();        // depends on projects from project store
+  initRouter();             // seed route from window.location.hash BEFORE first render so reload preserves the page
   initWorkplanStore();      // independent — REST-backed, no store dependencies
 
   onMount(() => {
@@ -181,7 +182,6 @@ const App: Component = () => {
     startNexusHealthPoll();
     initChatConnection();
     startHexFloMonitor();
-    initRouter();
     document.documentElement.setAttribute('data-theme', theme());
   });
 

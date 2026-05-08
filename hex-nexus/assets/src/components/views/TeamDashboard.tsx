@@ -8,9 +8,9 @@
  * - Real-time delegation chain display
  */
 
-import { Component, For, Show, createSignal, onMount, createEffect, createMemo } from "solid-js";
+import { Component, For, Show, createSignal, onMount, onCleanup, createEffect, createMemo } from "solid-js";
 import { restClient } from "../../services/rest-client";
-import { orgCommsClient, type SendMessageResponse, type ConversationMessage } from "../../services/org-comms";
+import { orgCommsClient, type SendMessageResponse, type ConversationMessage, type DmMessage } from "../../services/org-comms";
 import { projects } from "../../stores/projects";
 import { hexfloConnected, swarmTasks, swarmAgents } from "../../stores/connection";
 
@@ -29,6 +29,16 @@ interface AgentOrgNode {
     upgrade_threshold?: number;
   };
   context_level?: string;
+}
+
+// agent-comms reducer currently stores `""` for timestamp; fall back to a
+// sentinel rather than rendering "Invalid Date" until the WASM module is
+// republished with a real `ctx.timestamp` write.
+function formatChatTime(ts: string | null | undefined): string {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString();
 }
 
 interface MessageAnimation {
@@ -50,6 +60,79 @@ const TeamDashboard: Component = () => {
   const [autocompleteOptions, setAutocompleteOptions] = createSignal<string[]>([]);
   const [autocompleteType, setAutocompleteType] = createSignal<"agent" | "project">("agent");
   const [cursorPosition, setCursorPosition] = createSignal(0);
+
+  // ── Debug drawer state ──────────────────────────────────────────────────
+  const [showDebug, setShowDebug] = createSignal(true);
+  const [lastSendResponse, setLastSendResponse] = createSignal<SendMessageResponse | null>(null);
+  const [lastSendError, setLastSendError] = createSignal<string | null>(null);
+  const [polledMessages, setPolledMessages] = createSignal<DmMessage[]>([]);
+  const [pollStatus, setPollStatus] = createSignal<{ ok: boolean; at: string; msg: string }>({ ok: false, at: "—", msg: "idle" });
+  const [debugLog, setDebugLog] = createSignal<{ ts: string; tag: string; text: string }[]>([]);
+  const seenMessageIds = new Set<number>();
+
+  // ── Chat persistence + "new chat" ─────────────────────────────────────────
+  // chat_since_id is the server message id BELOW which polled messages should
+  // be hidden from the thread. "New chat" sets it to the current max id.
+  // Persisted in localStorage so reload preserves the conversation boundary.
+  const SINCE_KEY = "hex.team.chatSinceId";
+  const initialSince = (() => {
+    try { return Number(localStorage.getItem(SINCE_KEY) || "0") || 0; }
+    catch { return 0; }
+  })();
+  const [chatSinceId, setChatSinceIdRaw] = createSignal<number>(initialSince);
+  const setChatSinceId = (n: number) => {
+    setChatSinceIdRaw(n);
+    try { localStorage.setItem(SINCE_KEY, String(n)); } catch {}
+  };
+
+  const log = (tag: string, text: string) => {
+    const ts = new Date().toLocaleTimeString();
+    setDebugLog(prev => [...prev.slice(-49), { ts, tag, text }]);
+  };
+
+  // Poll real DMs to ceo every 2s and merge into chat thread.
+  let pollTimer: number | undefined;
+  // First poll seeds history both directions (so reload restores the user's
+  // own outbound msgs); subsequent polls only show inbound replies, since the
+  // user's session-sent msgs are rendered optimistically by handleSend.
+  let firstPoll = true;
+  const pollMessages = async () => {
+    try {
+      const resp = await orgCommsClient.listMessages("ceo", 100);
+      const msgs = resp.messages.slice().reverse(); // backend returns DESC; show oldest first
+      setPolledMessages(msgs);
+      setPollStatus({ ok: true, at: new Date().toLocaleTimeString(), msg: `${msgs.length} DM(s)` });
+
+      // Merge new messages into the chat thread, deduped by server id.
+      // First poll: seed BOTH directions to restore reload context.
+      // Later polls: skip ceo→agent (optimistic local render handles those).
+      let appended = 0;
+      const since = chatSinceId();
+      for (const m of msgs) {
+        if (m.id == null || seenMessageIds.has(m.id)) continue;
+        seenMessageIds.add(m.id);
+        if (m.id <= since) continue; // hidden by "new chat" boundary
+        if (!firstPoll && m.from === "ceo") continue;
+        appended += 1;
+        const ts = m.timestamp && !isNaN(new Date(m.timestamp).getTime())
+          ? m.timestamp
+          : new Date().toISOString();
+        setMessages(prev => [...prev, {
+          id: `dm-${m.id}`,
+          from: m.from,
+          to: m.to ?? "ceo",
+          content: m.content,
+          timestamp: ts,
+          status: "completed",
+        }]);
+      }
+      if (appended > 0) log(firstPoll ? "history" : "inbox", `+${appended} message(s) merged`);
+      firstPoll = false;
+    } catch (err: any) {
+      setPollStatus({ ok: false, at: new Date().toLocaleTimeString(), msg: err?.message || String(err) });
+      log("inbox-err", err?.message || String(err));
+    }
+  };
 
   onMount(async () => {
     try {
@@ -125,10 +208,19 @@ const TeamDashboard: Component = () => {
         .filter((p: AgentOrgNode) => p.status === "online")
         .map((p: AgentOrgNode) => p.name);
       setActiveAgents(active);
+
+      // Start inbox polling for real DMs to ceo.
+      log("init", `polling /api/org/messages?agent=ceo every 2s`);
+      pollMessages();
+      pollTimer = window.setInterval(pollMessages, 2000);
     } catch (err) {
       console.error("Failed to load org chart:", err);
       setLoading(false);
     }
+  });
+
+  onCleanup(() => {
+    if (pollTimer !== undefined) window.clearInterval(pollTimer);
   });
 
   // Extract @mentions from message
@@ -230,7 +322,7 @@ const TeamDashboard: Component = () => {
     const userMsg: ConversationMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       from: "ceo",
-      to: mentionList.length > 0 ? mentionList[0] : "system",
+      to: mentionList.length > 0 ? mentionList[0] : "(all-execs)",
       content: text,
       timestamp: new Date().toISOString(),
       status: "sent",
@@ -238,24 +330,21 @@ const TeamDashboard: Component = () => {
     setMessages(prev => [...prev, userMsg]);
     setMessage("");
 
-    if (mentionList.length === 0) {
-      // No mentions - just echo
-      return;
-    }
+    log("send", `POST /api/org/send-message — mentions=[${mentionList.join(",") || "none → board meeting"}]`);
 
     try {
-      // Send through org routing
       const response = await orgCommsClient.sendMessage({
         from: "ceo",
         content: text,
       });
+      setLastSendResponse(response);
+      setLastSendError(null);
+      log("ok", `routed_to=[${response.routed_to.join(",")}] msg_id=${response.message_id}`);
 
-      // Animate routing to each agent
+      // Routing animation only (no fake reply — real replies come via inbox poll).
       response.routed_to.forEach((agent, idx) => {
         setTimeout(() => {
           setActiveAgents(prev => [...prev, agent]);
-
-          // Create animation
           const anim: MessageAnimation = {
             id: `anim-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
             from: "ceo",
@@ -265,48 +354,25 @@ const TeamDashboard: Component = () => {
           };
           setAnimations(prev => [...prev, anim]);
 
-          // Animate progress
           let progress = 0;
           const interval = setInterval(() => {
             progress += 5;
-            setAnimations(prev =>
-              prev.map(a => a.id === anim.id ? { ...a, progress } : a)
-            );
-
+            setAnimations(prev => prev.map(a => a.id === anim.id ? { ...a, progress } : a));
             if (progress >= 100) {
               clearInterval(interval);
-              setAnimations(prev =>
-                prev.map(a => a.id === anim.id ? { ...a, status: "processing" } : a)
-              );
-
-              // Simulate agent "thinking"
+              setAnimations(prev => prev.map(a => a.id === anim.id ? { ...a, status: "completed" } : a));
+              setActiveAgents(prev => prev.filter(a => a !== agent));
               setTimeout(() => {
-                setAnimations(prev =>
-                  prev.map(a => a.id === anim.id ? { ...a, status: "completed" } : a)
-                );
-                setActiveAgents(prev => prev.filter(a => a !== agent));
-
-                // Add agent response (placeholder)
-                const agentMsg: ConversationMessage = {
-                  id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-                  from: agent,
-                  to: "ceo",
-                  content: `[${agent}] Acknowledged. Processing your request...`,
-                  timestamp: new Date().toISOString(),
-                  status: "completed",
-                };
-                setMessages(prev => [...prev, agentMsg]);
-
-                // Remove animation after 2s
-                setTimeout(() => {
-                  setAnimations(prev => prev.filter(a => a.id !== anim.id));
-                }, 2000);
+                setAnimations(prev => prev.filter(a => a.id !== anim.id));
               }, 2000);
             }
           }, 30);
-        }, idx * 200); // Stagger animations
+        }, idx * 200);
       });
-    } catch (err) {
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      setLastSendError(msg);
+      log("send-err", msg);
       console.error("Failed to send message:", err);
     }
   };
@@ -509,11 +575,27 @@ const TeamDashboard: Component = () => {
       <div class="flex-1 flex flex-col">
         {/* Header */}
         <div class="p-6 border-b border-gray-800">
-          <h1 class="text-2xl font-bold text-white">CEO Command Center</h1>
-          <p class="text-gray-400 mt-1">
-            Use @mentions to route messages: <span class="text-cyan-400">@cto</span>, <span class="text-purple-400">@cpo</span>, <span class="text-blue-400">@coo</span>.
-            No @mentions → all executives (board meeting). Use <span class="text-green-400">#project-name</span> to scope.
-          </p>
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <h1 class="text-2xl font-bold text-white">CEO Command Center</h1>
+              <p class="text-gray-400 mt-1">
+                Use @mentions to route messages: <span class="text-cyan-400">@cto</span>, <span class="text-purple-400">@cpo</span>, <span class="text-blue-400">@coo</span>.
+                No @mentions → all executives (board meeting). Use <span class="text-green-400">#project-name</span> to scope.
+              </p>
+            </div>
+            <button
+              class="shrink-0 px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-200 text-sm border border-gray-700"
+              title="Hide all prior messages from this thread. Past messages remain in STDB and the boundary persists across reloads."
+              onClick={() => {
+                const maxId = polledMessages().reduce((acc, m) => (m.id != null && m.id > acc ? m.id : acc), 0);
+                setChatSinceId(maxId);
+                setMessages([]);
+                log("new-chat", `boundary moved to msg_id=${maxId}`);
+              }}
+            >
+              New chat
+            </button>
+          </div>
         </div>
 
         {/* Messages */}
@@ -533,7 +615,7 @@ const TeamDashboard: Component = () => {
                       {msg.from === "ceo" ? "You (CEO)" : msg.from}
                     </div>
                     <div class="text-xs text-gray-400">
-                      {new Date(msg.timestamp).toLocaleTimeString()}
+                      {formatChatTime(msg.timestamp)}
                     </div>
                   </div>
                   <div class="text-sm">{msg.content}</div>
@@ -597,46 +679,144 @@ const TeamDashboard: Component = () => {
         </div>
       </div>
 
-      {/* Right: Activity Feed */}
-      <div class="w-80 border-l border-gray-800 p-6 overflow-y-auto">
-        <h3 class="text-lg font-semibold text-white mb-4">Activity Feed</h3>
-
-        <div class="space-y-3">
-          <For each={animations()}>
-            {(anim) => (
-              <div class="bg-gray-800 rounded-lg p-3">
-                <div class="flex items-center justify-between mb-2">
-                  <div class="text-sm text-gray-300">
-                    {anim.from} → {anim.to}
-                  </div>
-                  <div class={`
-                    text-xs px-2 py-0.5 rounded
-                    ${anim.status === "routing" ? "bg-yellow-900 text-yellow-300" :
-                      anim.status === "processing" ? "bg-blue-900 text-blue-300" :
-                      "bg-green-900 text-green-300"}
-                  `}>
-                    {anim.status}
-                  </div>
-                </div>
-
-                {/* Progress bar */}
-                <div class="w-full bg-gray-700 rounded-full h-1.5">
-                  <div
-                    class="bg-cyan-500 h-1.5 rounded-full transition-all duration-300"
-                    style={`width: ${anim.progress}%`}
-                  ></div>
-                </div>
-              </div>
-            )}
-          </For>
-
-          <Show when={animations().length === 0 && messages().length === 0}>
-            <div class="text-gray-500 text-sm text-center py-8">
-              No activity yet.<br />
-              Start by messaging your team.
-            </div>
-          </Show>
+      {/* Right: Debug / Activity drawer */}
+      <div class="w-96 border-l border-gray-800 p-4 overflow-y-auto bg-gray-950">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-lg font-semibold text-white">{showDebug() ? "Message Flow Debug" : "Activity Feed"}</h3>
+          <button
+            onClick={() => setShowDebug(!showDebug())}
+            class="text-xs px-2 py-1 rounded bg-gray-800 text-gray-300 hover:bg-gray-700"
+            title="Toggle debug panel"
+          >
+            {showDebug() ? "Activity" : "Debug"}
+          </button>
         </div>
+
+        <Show when={showDebug()}>
+          {/* Inbox poll status */}
+          <div class="mb-4 bg-gray-900 rounded-lg p-3 border border-gray-800">
+            <div class="flex items-center justify-between text-xs mb-1">
+              <span class="text-gray-400">GET /api/org/messages?agent=ceo</span>
+              <span class={pollStatus().ok ? "text-green-400" : "text-red-400"}>
+                {pollStatus().ok ? "OK" : "ERR"}
+              </span>
+            </div>
+            <div class="text-xs text-gray-500">last poll: {pollStatus().at} • {pollStatus().msg}</div>
+          </div>
+
+          {/* Last send-message response */}
+          <div class="mb-4 bg-gray-900 rounded-lg p-3 border border-gray-800">
+            <div class="text-xs text-gray-400 mb-2">Last POST /api/org/send-message</div>
+            <Show when={lastSendError()}>
+              <pre class="text-xs text-red-300 whitespace-pre-wrap break-words">{lastSendError()}</pre>
+            </Show>
+            <Show when={!lastSendError() && lastSendResponse()}>
+              <pre class="text-xs text-green-300 whitespace-pre-wrap break-words">{JSON.stringify(lastSendResponse(), null, 2)}</pre>
+            </Show>
+            <Show when={!lastSendError() && !lastSendResponse()}>
+              <div class="text-xs text-gray-600 italic">no requests yet</div>
+            </Show>
+          </div>
+
+          {/* Recipient online status */}
+          <div class="mb-4 bg-gray-900 rounded-lg p-3 border border-gray-800">
+            <div class="text-xs text-gray-400 mb-2">Recipient status (from REST org chart)</div>
+            <Show when={lastSendResponse() && lastSendResponse()!.routed_to.length > 0} fallback={
+              <div class="text-xs text-gray-600 italic">send a message to see routing</div>
+            }>
+              <For each={lastSendResponse()!.routed_to}>
+                {(name) => {
+                  const node = nodes().find(n => n.name === name);
+                  const online = node?.status === "online";
+                  return (
+                    <div class="flex items-center justify-between text-xs py-0.5">
+                      <span class="text-gray-300">{name}</span>
+                      <span class={online ? "text-green-400" : "text-gray-500"}>
+                        {online ? "● online" : "○ offline (no reply expected)"}
+                      </span>
+                    </div>
+                  );
+                }}
+              </For>
+            </Show>
+          </div>
+
+          {/* Real DMs to ceo (raw) */}
+          <div class="mb-4 bg-gray-900 rounded-lg p-3 border border-gray-800">
+            <div class="text-xs text-gray-400 mb-2">DMs to ceo (real, from agent_messages)</div>
+            <Show when={polledMessages().length > 0} fallback={
+              <div class="text-xs text-gray-600 italic">no DMs yet — agents have not replied</div>
+            }>
+              <div class="space-y-2 max-h-64 overflow-y-auto">
+                <For each={polledMessages()}>
+                  {(m) => (
+                    <div class="text-xs border-l-2 border-cyan-700 pl-2">
+                      <div class="text-gray-400">
+                        <span class="text-cyan-400">{m.from}</span>
+                        <span class="text-gray-600"> → </span>
+                        <span class="text-gray-300">{m.to ?? "(channel)"}</span>
+                        <span class="text-gray-600"> · {m.timestamp.split("T")[1]?.slice(0, 8) ?? m.timestamp}</span>
+                      </div>
+                      <div class="text-gray-200 break-words">{m.content}</div>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
+
+          {/* Wire log */}
+          <div class="bg-gray-900 rounded-lg p-3 border border-gray-800">
+            <div class="text-xs text-gray-400 mb-2">Wire log</div>
+            <div class="space-y-0.5 max-h-48 overflow-y-auto font-mono">
+              <Show when={debugLog().length > 0} fallback={
+                <div class="text-xs text-gray-600 italic">no events yet</div>
+              }>
+                <For each={debugLog().slice().reverse()}>
+                  {(entry) => (
+                    <div class="text-xs">
+                      <span class="text-gray-600">{entry.ts}</span>
+                      <span class={`mx-2 ${
+                        entry.tag === "ok" ? "text-green-400" :
+                        entry.tag.endsWith("-err") ? "text-red-400" :
+                        entry.tag === "send" ? "text-cyan-400" :
+                        "text-gray-500"
+                      }`}>{entry.tag}</span>
+                      <span class="text-gray-300">{entry.text}</span>
+                    </div>
+                  )}
+                </For>
+              </Show>
+            </div>
+          </div>
+        </Show>
+
+        <Show when={!showDebug()}>
+          <div class="space-y-3">
+            <For each={animations()}>
+              {(anim) => (
+                <div class="bg-gray-800 rounded-lg p-3">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="text-sm text-gray-300">{anim.from} → {anim.to}</div>
+                    <div class={`text-xs px-2 py-0.5 rounded ${
+                      anim.status === "routing" ? "bg-yellow-900 text-yellow-300" :
+                      anim.status === "processing" ? "bg-blue-900 text-blue-300" :
+                      "bg-green-900 text-green-300"
+                    }`}>{anim.status}</div>
+                  </div>
+                  <div class="w-full bg-gray-700 rounded-full h-1.5">
+                    <div class="bg-cyan-500 h-1.5 rounded-full transition-all duration-300" style={`width: ${anim.progress}%`}></div>
+                  </div>
+                </div>
+              )}
+            </For>
+            <Show when={animations().length === 0 && messages().length === 0}>
+              <div class="text-gray-500 text-sm text-center py-8">
+                No activity yet.<br />Start by messaging your team.
+              </div>
+            </Show>
+          </div>
+        </Show>
       </div>
     </div>
   );
