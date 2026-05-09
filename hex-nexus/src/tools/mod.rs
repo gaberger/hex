@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 pub mod cargo_check;
+pub mod code_patch;
 pub mod escalate_to_operator;
 pub mod adr_draft;
 pub mod repo_grep;
@@ -125,6 +126,7 @@ impl Default for ToolRegistry {
         reg.register(Arc::new(web_search::WebSearch));
         reg.register(Arc::new(adr_draft::AdrDraft));
         reg.register(Arc::new(spec_draft::SpecDraft));
+        reg.register(Arc::new(code_patch::CodePatch));
         reg.register(Arc::new(escalate_to_operator::EscalateToOperator));
         reg
     }

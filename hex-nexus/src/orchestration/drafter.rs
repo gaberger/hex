@@ -8,8 +8,12 @@
 use std::time::Duration;
 
 const POLL_INTERVAL_SECS: u64 = 30;
-const DRAFT_MAX_TOKENS: u32 = 4096;
-const CONTENT_CAP_BYTES: usize = 50 * 1024;
+// CPO cost-spec 2026-05-09 — halved from 4096 to 2048; truncation already handled below.
+const DRAFT_MAX_TOKENS: u32 = 2048;
+// CTO ADR-2605082600 — halved from 50KB to 24KB; staying under upstream BSATN
+// `len too long` panic threshold (websocket_building.rs:180:57). Watchdog
+// recovers if the cap is breached, but this prevents the crash entirely.
+const CONTENT_CAP_BYTES: usize = 24 * 1024;
 
 pub fn spawn(stdb_host: String, hex_db: String, port: u16) {
     if std::env::var("HEX_DISABLE_DRAFTER").is_ok() {
@@ -261,6 +265,15 @@ async fn draft_one(
         return Ok(());
     }
     if content.len() > CONTENT_CAP_BYTES {
+        // CTO ADR-2605082600 — surface truncation so operator can detect
+        // patterns + coach personas to produce shorter drafts upfront.
+        tracing::warn!(
+            commitment_id = c.id,
+            role = %c.role,
+            original_len = content.len(),
+            cap = CONTENT_CAP_BYTES,
+            "drafter: content truncated — persona may need to produce a shorter draft"
+        );
         content.truncate(CONTENT_CAP_BYTES);
         content.push_str("\n\n[truncated by drafter — CONTENT_CAP_BYTES]\n");
     }
