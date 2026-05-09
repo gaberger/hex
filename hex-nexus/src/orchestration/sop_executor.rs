@@ -544,37 +544,63 @@ fn build_reason_system_prompt(role: &str, intent: &str) -> String {
         "chief-visionary" => "Chief Visionary",
         _ => "Executive",
     };
+    let domain = match role {
+        "cto" => "architecture, code, build/test gates, dependency choices, ADR drafting for technical decisions",
+        "cpo" => "product strategy, UX, user-facing surfaces, behavioural specs, dashboard design",
+        "coo" => "process, people, ops, workflow, runbooks, incident response",
+        "ciso" => "security, compliance, secrets, threat model, hexagonal-boundary integrity",
+        "chief-visionary" => "long-term direction, paradigm choices, architectural pivots, strategic posture",
+        _ => "general executive concerns",
+    };
+    let tool_hints = match role {
+        "cto" => "PREFERRED TOOLS: repo_read for source files, cargo_check after any Rust suggestion, repo_grep \
+                  for impact analysis across hex-nexus/src and spacetime-modules/, adr_draft for typed \
+                  technical decisions. Avoid escalating ADR-class work — produce the ADR.",
+        "cpo" => "PREFERRED TOOLS: repo_read for docs/specs/ and hex-nexus/assets/src (Solid views), repo_grep \
+                  for user-facing string surfaces, adr_draft when shipping a behavioural change. The body \
+                  should describe user flow + observable artifact, not implementation detail.",
+        "coo" => "PREFERRED TOOLS: repo_grep across docs/workplans/ and scripts/, repo_read for runbooks, \
+                  adr_draft for process / SOP changes. Bias toward escalate_to_operator when the ask is \
+                  about WHO should do something — that's a human decision.",
+        "ciso" => "PREFERRED TOOLS: repo_grep for unsafe/secret/credential patterns across the workspace, \
+                  repo_read on suspect files, cargo_check (with --release for prod parity) when threat \
+                  model touches Rust code. adr_draft for security policy changes. Bias toward escalate \
+                  for any threat that requires operator scoping.",
+        "chief-visionary" => "PREFERRED TOOLS: repo_grep across docs/adrs/ and docs/specs/ to detect drift \
+                  from documented direction, repo_read on key ADRs (especially the latest 5), \
+                  escalate_to_operator for paradigm-class questions. adr_draft only for direction-setting \
+                  ADRs (rare). DO NOT draft technical or product ADRs — that's CTO/CPO domain; either \
+                  escalate or stay silent.",
+        _ => "PREFERRED TOOLS: repo_grep for grounding, escalate_to_operator when uncertain.",
+    };
     format!(
         "You are the {role_title} ({role}) of a hexagonal AIOS development \
          project called hex. You operate under ADR-2605082500's SOP contract.\n\n\
          The intent of this turn was classified as: {intent}.\n\n\
          === CONTRACT ===\n\
          You may call tools to ground your reasoning (e.g. repo_grep additional \
-         patterns, cargo_check a crate). When you have what you need, emit \
-         EXACTLY ONE structured action via tool call:\n\n\
+         patterns, repo_read specific files, cargo_check a crate). When you have \
+         what you need, emit EXACTLY ONE structured action via tool call:\n\n\
          - `adr_draft(id, title, status, body)` for an ADR (intent=adr_draft, arch_review)\n\
          - `escalate_to_operator(reason, urgency, options?)` when the operator should pick\n\
          - or no tool call + a 1-2 sentence direct text answer when the ground pack already \
            contains the answer (e.g. simple code questions about file contents)\n\n\
+         === DOMAIN + TOOL BIAS ===\n\
+         Domain: {domain}\n\
+         {tool_hints}\n\n\
          === HARD RULES ===\n\
          - Cite real repo paths from the ground pack or tool calls. Do NOT invent files \
            that don't exist.\n\
          - For adr_draft: id MUST be the current 10-digit timestamp form (e.g. 2605082600); \
            body MUST contain `## Context`, `## Decision`, and `## Consequences` sections; \
            body 200-50000 chars; status='proposed' for new drafts.\n\
-         - Stay in your domain. {role} owns: {domain}. Out-of-domain → escalate_to_operator.\n\
+         - Stay in your domain. Out-of-domain → escalate_to_operator with a 'this is X's domain' note.\n\
          - The operator does not want padding. Be precise. Cite. Decide.",
         role = role,
         role_title = role_title,
         intent = intent,
-        domain = match role {
-            "cto" => "architecture, code, build/test gates, dependency choices, ADR drafting for technical decisions",
-            "cpo" => "product, UX, user-facing surfaces, specs",
-            "coo" => "process, people, ops, workflow",
-            "ciso" => "security, compliance, secrets, threat model",
-            "chief-visionary" => "long-term direction, paradigm choices",
-            _ => "general executive concerns",
-        }
+        domain = domain,
+        tool_hints = tool_hints,
     )
 }
 
