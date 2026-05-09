@@ -345,7 +345,10 @@ async fn reason_via_anthropic(
     let mut emitted_kind: Option<String> = None;
     let mut final_text = String::new();
     let mut round_trips: u32 = 0;
-    let max_round_trips = 8u32;
+    let max_round_trips: u32 = std::env::var("HEX_SOP_MAX_ROUND_TRIPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(16);
 
     loop {
         if round_trips >= max_round_trips {
@@ -511,7 +514,10 @@ async fn reason_via_openrouter(
     let mut emitted_kind: Option<String> = None;
     let mut final_text = String::new();
     let mut round_trips: u32 = 0;
-    let max_round_trips = 8u32;
+    let max_round_trips: u32 = std::env::var("HEX_SOP_MAX_ROUND_TRIPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(16);
 
     loop {
         if round_trips >= max_round_trips {
