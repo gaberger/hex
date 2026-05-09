@@ -62,6 +62,7 @@ Tier is driven by WorkplanTask `strategy_hint` (`scaffold`/`transform`/`script` 
    | restoring trunk after hijacker damage by hand | `hex worktree status` + `hex worktree approve|reject` |
    | spawning STDB / nexus directly | `hex stdb start`, `hex nexus start/stop/status` |
    | `pkill -9 hex-nexus` | `hex nexus stop` |
+   | Claude `/memory` write for persona-relevant lessons | `hex memory store lesson:<topic> "<text>"` (STDB-backed; queryable from SOP GROUND phase by personas — Claude memory is per-machine-per-account and invisible to the factory) |
 
    The two only-bypass-when-necessary exceptions: (a) bootstrap when hex-nexus itself is broken and you need raw cargo to rebuild it; (b) emergencies where the hex surface is unreachable and the operator explicitly tells you to bypass. Everything else: route through hex. If a hex verb is missing, **build the verb** before doing the work — that's how the platform grows.
 
