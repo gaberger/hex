@@ -31,6 +31,7 @@ pub mod embed;
 pub mod middleware;
 pub mod orchestration;
 pub mod ports;
+pub mod tools;
 pub mod remote;
 pub mod research;
 pub mod routes;
