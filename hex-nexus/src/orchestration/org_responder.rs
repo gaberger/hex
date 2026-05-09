@@ -179,21 +179,38 @@ async fn process_role(
         let content = msg.message.clone();
         let thread_id = msg.thread_id.clone();
 
-        tracing::info!(role = %role, msg_id, from = %from, "org_responder: replying to unanswered DM");
+        tracing::info!(
+            role = %role, msg_id, from = %from, thread = ?thread_id,
+            "org_responder: replying to unanswered DM"
+        );
 
-        // Build conversation history with `from`. Without this the persona
-        // sees only the current DM and can't resolve back-references like
-        // "where is it" → which "it"?  Pull every prior message between
-        // these two parties (already in `messages`), order ascending by id,
-        // exclude the current message, take the last HISTORY_TURNS.
-        let history = build_conversation_history(&messages, role, &from, msg_id);
+        // History assembly:
+        //  - Threaded DM (board meeting / multi-mention group): pull EVERY
+        //    message in the thread (CEO + each peer's reply) so the CTO
+        //    can see what the CPO said and respond to peers, not just to
+        //    the CEO. Other-role replies are tagged 'user' with a "from:"
+        //    prefix so the LLM can tell who said what.
+        //  - Bilateral DM: just the prior turns between this role and the
+        //    counterparty.
+        let history = if let Some(ref tid) = thread_id {
+            match build_thread_history(comm, tid, role, msg_id).await {
+                Ok(h) => h,
+                Err(e) => {
+                    tracing::debug!(role = %role, error = %e, "org_responder: thread history fetch failed; falling back to bilateral");
+                    build_conversation_history(&messages, role, &from, msg_id)
+                }
+            }
+        } else {
+            build_conversation_history(&messages, role, &from, msg_id)
+        };
 
         // Persona's recent thoughts — the audit trail of WHY it said what
         // it said in past replies. Injecting these as a system-prompt
         // appendix lets the persona reference its own prior reasoning.
         let thoughts = persona.recent_thoughts(role, 5).await;
 
-        let reply = match generate_reply(http, inference_url, role, &content, &history, &thoughts).await {
+        let is_board = thread_id.as_deref().map(|t| t.starts_with("board-")).unwrap_or(false);
+        let reply = match generate_reply(http, inference_url, role, &content, &history, &thoughts, is_board).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(role = %role, msg_id, error = %e, "org_responder: inference failed; will retry");
@@ -276,6 +293,7 @@ async fn generate_reply(
     content: &str,
     history: &[ChatTurn],
     thoughts: &[(String, String)],
+    is_board: bool,
 ) -> Result<String, String> {
     // Assemble messages array: [history…, current user turn].
     // History entries already encode role=user|assistant for the persona's POV.
@@ -296,6 +314,19 @@ async fn generate_reply(
     // Augment system prompt with the persona's recent thoughts so it
     // can reference its own prior reasoning ("why did I say X earlier").
     let mut system = persona_prompt(role);
+    if is_board {
+        system.push_str(
+            "\n\nBOARD MEETING MODE — the CEO sent this to ALL executives. \
+             Your peer executives (cto, cpo, coo, ciso, chief-visionary) \
+             are responding in the SAME thread; their replies appear in \
+             history as `[role→to]: ...`. You CAN address peers directly \
+             ('@cpo I disagree because…', 'building on what cto said…') \
+             and you SHOULD acknowledge or push back on their positions \
+             when relevant instead of pretending only the CEO spoke. \
+             Stay concise (1-3 sentences). Do not just repeat what a peer \
+             already said.",
+        );
+    }
     if !thoughts.is_empty() {
         system.push_str("\n\nYour recent reasoning (newest first):\n");
         for (kind, body) in thoughts.iter().take(5) {
@@ -378,6 +409,51 @@ fn build_conversation_history(
             content: m.message.clone(),
         })
         .collect()
+}
+
+/// Build conversation history from EVERY message in `thread_id`. Messages
+/// authored by `me` are tagged "assistant"; everyone else is "user", and
+/// for non-`from`-counterparty turns the speaker name is prefixed inline
+/// ("[cpo→ceo]: ...") so the LLM can tell who said what when more than
+/// two parties share the thread.
+async fn build_thread_history(
+    comm: &Arc<SpacetimeAgentCommAdapter>,
+    thread_id: &str,
+    me: &str,
+    current_msg_id: u64,
+) -> Result<Vec<ChatTurn>, String> {
+    let mut msgs = comm
+        .query_thread_messages(thread_id.to_string(), Some(80))
+        .await
+        .map_err(|e| format!("query_thread_messages: {}", e))?;
+    msgs.retain(|m| m.id.is_some() && m.id != Some(current_msg_id));
+    msgs.sort_by_key(|m| m.id.unwrap_or(0));
+
+    let n = msgs.len();
+    let start = n.saturating_sub(HISTORY_TURNS * 2); // multi-party threads need wider window
+
+    Ok(msgs[start..]
+        .iter()
+        .map(|m| {
+            if m.from_agent == me {
+                ChatTurn {
+                    role: "assistant".to_string(),
+                    content: m.message.clone(),
+                }
+            } else {
+                let speaker = &m.from_agent;
+                let to_label = m
+                    .to_agent
+                    .as_deref()
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or("all");
+                ChatTurn {
+                    role: "user".to_string(),
+                    content: format!("[{}→{}]: {}", speaker, to_label, m.message),
+                }
+            }
+        })
+        .collect())
 }
 
 /// Ask the persona for a 1-line reasoning summary. Returns the raw content;

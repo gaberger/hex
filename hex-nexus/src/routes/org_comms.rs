@@ -57,33 +57,59 @@ pub async fn send_message(
     let mut routed_to = Vec::new();
 
     if mentions.is_empty() {
-        // No @mentions - route to all executives (board meeting)
-        tracing::info!("No @mentions detected, routing to all executives");
+        // No @mentions - route to all executives (board meeting). All
+        // recipients share ONE thread_id so the org_responder can build
+        // the prompt from the full discussion (CEO + every exec reply)
+        // and the CTO can see what the CPO said.
+        let board_thread = format!(
+            "board-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_micros())
+                .unwrap_or(0)
+        );
+        tracing::info!(thread = %board_thread, "No @mentions detected, routing to all executives");
 
         for agent in org_chart.iter() {
             if agent.tier == "executive" {
-                route_to_agent(&req.from, &req.content, agent, &state).await?;
+                route_to_agent(&req.from, &req.content, agent, Some(board_thread.clone()), &state).await?;
                 routed_to.push(agent.name.clone());
 
                 tracing::info!(
                     from = %req.from,
                     to = %agent.name,
                     tier = %agent.tier,
+                    thread = %board_thread,
                     "Routed to executive (board meeting)"
                 );
             }
         }
     } else {
-        // Specific @mentions - route to those agents
+        // Specific @mentions - route to those agents. Use a shared
+        // thread_id when multiple are mentioned so they can see each
+        // other's replies; single mention also gets a thread_id to make
+        // multi-turn DMs threadable.
+        let group_thread = if mentions.len() > 1 {
+            Some(format!(
+                "group-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_micros())
+                    .unwrap_or(0)
+            ))
+        } else {
+            None
+        };
         for mention in mentions {
             if let Some(agent) = org_chart.iter().find(|a| a.name == mention) {
-                route_to_agent(&req.from, &req.content, agent, &state).await?;
+                route_to_agent(&req.from, &req.content, agent, group_thread.clone(), &state).await?;
                 routed_to.push(agent.name.clone());
 
                 tracing::info!(
                     from = %req.from,
                     to = %agent.name,
                     tier = %agent.tier,
+                    thread = ?group_thread,
                     "Routed message through org hierarchy"
                 );
             } else {
@@ -98,6 +124,74 @@ pub async fn send_message(
         status: "routed".to_string(),
         project_scope,
     }))
+}
+
+/// GET /api/org/messages?agent=<name>&limit=<n>
+///
+/// Returns DMs sent TO the given agent (i.e. responses an agent received).
+/// Used by the dashboard debug drawer to show real message flow rather than
+/// the simulated acknowledgements.
+#[derive(Debug, Deserialize)]
+pub struct MessagesQuery {
+    pub agent: Option<String>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MessagesResponse {
+    pub agent: String,
+    pub messages: Vec<DmMessage>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DmMessage {
+    pub id: Option<u64>,
+    pub from: String,
+    pub to: Option<String>,
+    pub channel: Option<String>,
+    pub content: String,
+    pub thread_id: Option<String>,
+    pub timestamp: String,
+    pub read_by: Vec<String>,
+}
+
+pub async fn list_messages(
+    State(state): State<Arc<crate::state::AppState>>,
+    axum::extract::Query(params): axum::extract::Query<MessagesQuery>,
+) -> Result<Json<MessagesResponse>, StatusCode> {
+    let agent = params.agent.unwrap_or_else(|| "ceo".to_string());
+    let limit = params.limit.or(Some(100));
+
+    let agent_comm = state
+        .agent_comm_stdb
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    use hex_core::ports::agent_comm::IAgentCommPort;
+
+    let raw = agent_comm
+        .query_messages(agent.clone(), limit)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, agent = %agent, "query_messages failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let messages = raw
+        .into_iter()
+        .map(|m| DmMessage {
+            id: m.id,
+            from: m.from_agent,
+            to: m.to_agent,
+            channel: m.channel,
+            content: m.message,
+            thread_id: m.thread_id,
+            timestamp: m.timestamp,
+            read_by: m.read_by,
+        })
+        .collect();
+
+    Ok(Json(MessagesResponse { agent, messages }))
 }
 
 /// GET /api/org/conversation/:conversation_id
@@ -181,6 +275,7 @@ async fn route_to_agent(
     from: &str,
     content: &str,
     agent: &AgentMention,
+    thread_id: Option<String>,
     state: &Arc<crate::state::AppState>,
 ) -> Result<(), StatusCode> {
     tracing::info!(
@@ -207,7 +302,7 @@ async fn route_to_agent(
             from.to_string(),
             agent.name.clone(),
             content.to_string(),
-            None, // thread_id
+            thread_id.clone(),
         )
         .await
     {
