@@ -1,0 +1,79 @@
+{
+  "id": "wp-typed-tool-library",
+  "title": "Typed tool library + SOP execution (the missing spine)",
+  "adr": "ADR-2605082500",
+  "status": "in_progress",
+  "paused": false,
+  "target": "by morning 2026-05-09",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Tool registry skeleton + schema export",
+      "status": "in_progress",
+      "tasks": [
+        "hex-nexus/src/tools/mod.rs — Tool trait, ToolRegistry struct",
+        "hex-nexus/src/tools/schema.rs — Anthropic function-calling JSON schema generator",
+        "Tool execute path: takes JSON args, returns JSON result + status",
+        "Registry singleton initialized at boot"
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "First 4 tool primitives",
+      "status": "pending",
+      "tasks": [
+        "tools/cargo_check.rs — wrap `cargo check --workspace --message-format=json`",
+        "tools/repo_grep.rs — wrap ripgrep with timeout + size cap",
+        "tools/adr_draft.rs — emit proposed_action(kind=file_write) for docs/adrs/<id>-<slug>.md",
+        "tools/escalate_to_operator.rs — insert inbox_notification row priority=2"
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "Inference function-calling wiring",
+      "status": "pending",
+      "tasks": [
+        "Extend inference/complete request to pass `tools` array (Anthropic schema)",
+        "Parse `tool_use` blocks from response",
+        "Tool-call execution loop: call tool → feed result back to model as tool_result → continue until model emits non-tool reply",
+        "Cap tool call depth at 8 to bound runaway loops"
+      ]
+    },
+    {
+      "id": "P4",
+      "title": "SOP executor in org_responder",
+      "status": "pending",
+      "tasks": [
+        "orchestration/sop_executor.rs — phase state machine",
+        "Phase CLASSIFY: regex-based intent detection (adr_draft|arch_review|code_question|bug_triage|roadmap|paradigm_question)",
+        "Phase GROUND: parallel tool calls (repo_grep + adr_search if available)",
+        "Phase REASON: single inference with tool registry attached, parses structured action from tool_use",
+        "Phase VERIFY: per-action-kind validator (adr_schema_validate today)",
+        "Phase EMIT: write proposed_action + structured chat card",
+        "Feature flag HEX_SOP_PERSONAS (CSV); cto-only at first"
+      ]
+    },
+    {
+      "id": "P5",
+      "title": "End-to-end demo",
+      "status": "pending",
+      "tasks": [
+        "Build + deploy nexus",
+        "Send: '@cto draft an ADR for the typed tool library'",
+        "Verify: phase trace logged, ADR file exists with on-topic content (not enterprise CI/CD LARP)",
+        "Verify: cargo_check called as a tool during reasoning",
+        "Verify: chat card rendered (not free prose)"
+      ]
+    },
+    {
+      "id": "P6",
+      "title": "Memory + commit",
+      "status": "pending",
+      "tasks": [
+        "feedback_typed_tool_pivot.md — what we learned tonight",
+        "project_sop_executor_live.md — operational notes for follow-on",
+        "Commit + tag work as wp-typed-tool-library/morning-1"
+      ]
+    }
+  ]
+}
