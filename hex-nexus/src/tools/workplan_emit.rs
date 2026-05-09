@@ -66,11 +66,16 @@ impl Tool for WorkplanEmit {
                                 "type": "array",
                                 "items": {
                                     "type": "object",
-                                    "required": ["id", "name", "layer"],
+                                    "required": ["id", "name", "layer", "files"],
                                     "properties": {
                                         "id":    { "type": "string", "description": "Task id, e.g. P0.1" },
                                         "name":  { "type": "string", "description": "Concrete deliverable" },
-                                        "layer": { "type": "string", "enum": ["domain","ports","usecases","primary","secondary","infrastructure","integration"] }
+                                        "layer": { "type": "string", "enum": ["domain","ports","usecases","primary","secondary","infrastructure","integration"] },
+                                        "files": {
+                                            "type": "array",
+                                            "items": { "type": "string" },
+                                            "description": "Repo-relative file paths this task creates or modifies. Required by ADR-2604142200 for hex plan reconcile to verify done-condition. Use forward slashes; no globs."
+                                        }
                                     }
                                 }
                             }
@@ -131,9 +136,19 @@ impl Tool for WorkplanEmit {
                 let tid = t.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 let tname = t.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let tlayer = t.get("layer").and_then(|v| v.as_str()).unwrap_or("");
+                let tfiles: Vec<String> = t.get("files")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                    .unwrap_or_default();
                 if tid.is_empty() || tname.is_empty() || tlayer.is_empty() {
                     return ToolResult::err(
                         format!("phase[{}].tasks[{}] requires id+name+layer", pi, ti),
+                        start.elapsed().as_millis() as u64,
+                    );
+                }
+                if tfiles.is_empty() {
+                    return ToolResult::err(
+                        format!("phase[{}].tasks[{}] '{}' requires files[] (ADR-2604142200 reconcile evidence)", pi, ti, tid),
                         start.elapsed().as_millis() as u64,
                     );
                 }
@@ -141,6 +156,7 @@ impl Tool for WorkplanEmit {
                     "id":     tid,
                     "name":   tname,
                     "layer":  tlayer,
+                    "files":  tfiles,
                     "status": "pending",
                 }));
             }

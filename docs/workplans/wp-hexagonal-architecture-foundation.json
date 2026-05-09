@@ -1,0 +1,28 @@
+{
+  "adr": "ADR-001",
+  "created_at": "2026-05-09T11:51:02.533163007+00:00",
+  "created_by": "hex-coder",
+  "feature": "Establish hexagonal architecture pattern as foundational structure",
+  "id": "wp-hexagonal-architecture-foundation",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Documentation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "docs/adrs/ADR-001-hexagonal-architecture.md"
+          ],
+          "id": "P0.1",
+          "layer": "infrastructure",
+          "name": "ADR documenting hexagonal architecture decision",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

@@ -175,10 +175,15 @@ async fn derive_one(
          - Phases are dependency-ordered. Use P0 for domain/ports work, P1 for \
            secondary adapters, P2 for primary, P3 for usecases, P4 for integration\n\
          - Each phase has 1-5 concrete tasks; each task has id (e.g. P0.1), name \
-           (concrete deliverable), and layer (one of: domain|ports|usecases|primary|secondary|infrastructure|integration)\n\
+           (concrete deliverable), layer (domain|ports|usecases|primary|secondary|infrastructure|integration), \
+           AND files[] (1+ repo-relative paths the task creates or modifies — REQUIRED for hex plan reconcile).\n\
          - Map the ADR's Decision section into 1-3 phases minimum. Don't over-decompose.\n\
+         - For files[]: extract concrete paths from the ADR text. Examples:\n\
+           * 'modify hex-nexus/src/orchestration/drafter.rs' → files: ['hex-nexus/src/orchestration/drafter.rs']\n\
+           * 'add new tool foo' → files: ['hex-nexus/src/tools/foo.rs']\n\
+           * 'doc-only ADR with no code' → files: ['docs/adrs/ADR-{adr_id}-*.md'] for the ADR itself\n\
          - If the ADR is a pure-doc decision (no code work), emit ONE phase 'P0 Documentation' \
-           with one task layer=infrastructure. The reconciler will mark it done immediately.\n\
+           with one task layer=infrastructure files=['docs/adrs/ADR-{adr_id}-*.md']. Reconciler marks done immediately.\n\
          You MUST call workplan_emit exactly once. Do not chat. Do not call other tools.",
         adr_id = adr_id,
     );
