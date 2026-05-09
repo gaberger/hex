@@ -105,15 +105,26 @@ pub fn parse(reply: &str) -> Vec<ExtractedCommitment> {
         let lower = lt.to_ascii_lowercase();
         if lower.starts_with("confirm:") || lower.starts_with("confirm ") {
             let body = lt.split_once(':').map(|(_, r)| r.trim()).unwrap_or(lt);
-            let (action, deadline_micros) = split_action_and_deadline(body);
-            // For a Confirm without an artifact we still record it but
-            // tag artifact_kind=none so the operator can spot the gap.
+            // Split out the success: clause if present (per ADR-2605082400 contract).
+            //   "Confirm: I will X by Y — success: docs/specs/foo.md"
+            // The dash before success can be `—`, `-`, `--`, or just whitespace.
+            let (body_no_success, success_artifact) = split_success_clause(body);
+            let (action, deadline_micros) = split_action_and_deadline(body_no_success);
+            let artifact_kind = if success_artifact.is_empty() {
+                "none".to_string()
+            } else {
+                classify_artifact(&success_artifact)
+            };
             out.push(ExtractedCommitment {
                 raw_text: lt.to_string(),
-                action: if action.is_empty() { body.to_string() } else { action },
+                action: if action.is_empty() {
+                    body_no_success.to_string()
+                } else {
+                    action
+                },
                 deadline_micros,
-                success_artifact: String::new(),
-                artifact_kind: "none".to_string(),
+                success_artifact,
+                artifact_kind,
             });
         }
     }
@@ -223,6 +234,25 @@ fn extract_plan_block(reply: &str) -> Option<String> {
     Some(lines[s..(s + 8).min(lines.len())].join("\n"))
 }
 
+/// Split a Confirm body on the `success:` token. Handles the dashed
+/// variants the strict prompt produces ("— success:", "- success:",
+/// "-- success:") plus bare "success:".
+fn split_success_clause(body: &str) -> (&str, String) {
+    let lower = body.to_ascii_lowercase();
+    // Search for the literal "success:" token; backtrack to consume
+    // any preceding dash + whitespace from the action half.
+    let pos = match lower.find("success:") {
+        Some(p) => p,
+        None => return (body, String::new()),
+    };
+    let action_end = body[..pos].trim_end();
+    // Strip trailing dash separators (—, --, -) and whitespace.
+    let action_end = action_end
+        .trim_end_matches(|c: char| c.is_whitespace() || c == '—' || c == '-' || c == '–');
+    let success_raw = body[pos + "success:".len()..].trim();
+    (action_end, success_raw.to_string())
+}
+
 fn classify_artifact(s: &str) -> String {
     let lower = s.to_ascii_lowercase();
     if lower.contains("requires-operator-action")
@@ -275,5 +305,33 @@ mod tests {
     fn empty_promise_yields_nothing() {
         let r = "I'll communicate with the engineering lead and ensure clarity.";
         assert!(parse(r).is_empty());
+    }
+
+    #[test]
+    fn parse_confirm_with_success_dash() {
+        let r = "Confirm: I (cto) will document foo by EOD — success: docs/specs/foo.md";
+        let cs = parse(r);
+        assert_eq!(cs.len(), 1);
+        assert_eq!(cs[0].artifact_kind, "verifiable_path");
+        assert_eq!(cs[0].success_artifact, "docs/specs/foo.md");
+        assert!(cs[0].action.contains("document foo"));
+        assert!(!cs[0].action.contains("success:"));
+        assert!(!cs[0].action.ends_with('—'));
+    }
+
+    #[test]
+    fn parse_confirm_with_success_no_dash() {
+        let r = "Confirm: I will draft the spec by tomorrow success: src/foo.rs";
+        let cs = parse(r);
+        assert_eq!(cs.len(), 1);
+        assert_eq!(cs[0].success_artifact, "src/foo.rs");
+    }
+
+    #[test]
+    fn parse_confirm_requires_operator_action() {
+        let r = "Confirm: I (coo) will run a security audit — success: requires-operator-action — call legal";
+        let cs = parse(r);
+        assert_eq!(cs.len(), 1);
+        assert_eq!(cs[0].artifact_kind, "operator_action");
     }
 }
