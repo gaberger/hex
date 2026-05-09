@@ -22,6 +22,7 @@ pub mod repo_grounding;
 pub mod resource_observer;
 pub mod sop_executor;
 pub mod twin_reviewer;
+pub mod workplan_auto_emitter;
 pub mod regression;
 pub mod promote_orchestrator;
 pub mod promotion_judge;

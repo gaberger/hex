@@ -14,14 +14,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+pub mod adr_draft;
+pub mod adr_status_set;
 pub mod cargo_check;
 pub mod code_patch;
 pub mod escalate_to_operator;
-pub mod adr_draft;
 pub mod repo_grep;
 pub mod repo_read;
 pub mod spec_draft;
 pub mod web_search;
+pub mod workplan_emit;
 
 /// Output envelope for every tool call. JSON shape preserved across all
 /// tools so the SOP executor can handle errors uniformly without per-tool
@@ -127,6 +129,8 @@ impl Default for ToolRegistry {
         reg.register(Arc::new(adr_draft::AdrDraft));
         reg.register(Arc::new(spec_draft::SpecDraft));
         reg.register(Arc::new(code_patch::CodePatch));
+        reg.register(Arc::new(workplan_emit::WorkplanEmit));
+        reg.register(Arc::new(adr_status_set::AdrStatusSet));
         reg.register(Arc::new(escalate_to_operator::EscalateToOperator));
         reg
     }

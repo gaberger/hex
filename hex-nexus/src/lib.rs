@@ -448,6 +448,12 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 );
             }
 
+            // ADR → workplan auto-bridge (closes the self-managing loop)
+            crate::orchestration::workplan_auto_emitter::spawn(
+                stdb_host_for_integrator.clone(),
+                hex_db_for_integrator.clone(),
+            );
+
             // Auto-seed merge-team default policy + persona pools.
             // STDB schema-change semantics on republish wipe row data,
             // so we re-init on every nexus startup. Reducers are idempotent —
