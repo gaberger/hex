@@ -48,12 +48,31 @@ Tier is driven by WorkplanTask `strategy_hint` (`scaffold`/`transform`/`script` 
 
 ### Autonomous Operation (HARD RULES)
 
+0. **EVERYTHING ROUTES THROUGH HEX. PERIOD.** (Added 2026-05-09 after a session of bypass.) The agent factory exists; use it. If you find yourself doing something by hand that the system can do for itself, **stop and route it through hex**. Concretely:
+
+   | Don't bypass with… | Use the hex surface… |
+   |---|---|
+   | `cargo build --release` direct | `hex dev validate` (chains build + test + analyze + 38 specs) |
+   | `cargo check` direct | the `cargo_check` tool inside the SOP path; or `hex dev analyze` |
+   | `curl /api/...` to test | `hex chat` for chat; `hex inbox` for notifications; the dashboard compose box for board asks |
+   | manual `Edit`/`Write` to hex source | dispatch a board ask to the appropriate persona; let SOP + `code_patch` apply via twin auto-approve + executor |
+   | `TaskCreate` (Claude-side todo) | `hex task create <swarm-id> <title>` — local todos do not survive the session and the swarm coordinator can't see them |
+   | `mkdir docs/workplans/wp-X.json` by hand | `hex plan draft <prompt>` then approve, OR let `workplan_auto_emitter` derive from a persona-authored ADR |
+   | `git checkout <branch> -- <file>` | `hex worktree merge` (ADR-2604131930) |
+   | restoring trunk after hijacker damage by hand | `hex worktree status` + `hex worktree approve|reject` |
+   | spawning STDB / nexus directly | `hex stdb start`, `hex nexus start/stop/status` |
+   | `pkill -9 hex-nexus` | `hex nexus stop` |
+
+   The two only-bypass-when-necessary exceptions: (a) bootstrap when hex-nexus itself is broken and you need raw cargo to rebuild it; (b) emergencies where the hex surface is unreachable and the operator explicitly tells you to bypass. Everything else: route through hex. If a hex verb is missing, **build the verb** before doing the work — that's how the platform grows.
+
+   When uncertain which surface to use: `hex --help` lists the verbs. `hex go` will suggest the next right action. `hex hey <intent>` will route a natural-language ask to the correct verb.
+
 1. **Enqueue, never defer to "next session".** Any outstanding work goes on the queue now:
    ```bash
    hex brain enqueue hex-command -- "worktree cleanup --force"
    hex brain enqueue workplan docs/workplans/wp-foo.json
    ```
-2. **Rebuild release binaries after commits touching hex-cli/hex-nexus/hex-agent.** Run `cargo build --release` without asking.
+2. **Rebuild release binaries after commits touching hex-cli/hex-nexus/hex-agent.** Use `hex dev validate` (which chains the build); only fall back to `cargo build --release` if `hex dev` itself is broken.
 3. **Use `hex worktree merge`, NEVER `git checkout <branch> -- <file>`** — raw checkout silently drops parallel-worktree code (ADR-2604131930).
 4. **Prefer `hex hey <intent>`** over raw commands when the task maps to natural language.
 5. **Start the brain daemon at session start** if not running: `hex brain daemon --background --interval 30`. Check with `hex brain daemon-status`.
@@ -62,6 +81,7 @@ Tier is driven by WorkplanTask `strategy_hint` (`scaffold`/`transform`/`script` 
 8. **Never end with a menu of options.** Ship the highest-ROI item now, enqueue the rest. Close with what shipped + what's queued. Per-item permission prompts stall autonomous sessions.
 9. **`hey hex <question>` is answer-AND-act**, not answer-and-wait. Recommendation questions → analysis → apply rule 8.
 10. **No `echo FIXME` stub tasks.** Real work → workplan JSON; not-yet-actionable → ADR or TODO comment. `hex brain enqueue shell` rejects these at the CLI.
+11. **Persona work routes through SOP, not direct file edits.** When a persona-domain change is needed (security audit, ADR draft, spec, refactor, even a one-const code change), send the ask to the right persona via `/api/org/send-message` (or the Mission Control compose box) and let the SOP path emit the artifact via typed tools (`adr_draft`, `spec_draft`, `code_patch`, `workplan_emit`, `adr_status_set`). The system catches its own gaps via escalation; you fill the gap then re-fire. Bypassing this loop with manual edits is theater — the operator wants to see the factory working, not you.
 
 ### Legacy Rules
 
