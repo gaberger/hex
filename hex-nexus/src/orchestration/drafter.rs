@@ -77,6 +77,7 @@ struct OpenCommitment {
     role: String,
     action: String,
     success_artifact: String,
+    thread_id: String,
 }
 
 async fn fetch_open_path_commitments(
@@ -85,7 +86,7 @@ async fn fetch_open_path_commitments(
     hex_db: &str,
 ) -> Result<Vec<OpenCommitment>, String> {
     let url = format!("{}/v1/database/{}/sql", stdb_host, hex_db);
-    let body = "SELECT id, role, action, success_artifact, artifact_kind, status FROM commitment";
+    let body = "SELECT id, role, action, success_artifact, artifact_kind, status, thread_id FROM commitment";
     let resp = http
         .post(&url)
         .header("Content-Type", "text/plain")
@@ -110,7 +111,7 @@ async fn fetch_open_path_commitments(
             Some(c) => c,
             None => continue,
         };
-        if cols.len() < 6 {
+        if cols.len() < 7 {
             continue;
         }
         let kind = cols.get(4).and_then(|x| x.as_str()).unwrap_or("");
@@ -127,6 +128,7 @@ async fn fetch_open_path_commitments(
             role: cols.get(1).and_then(|x| x.as_str()).unwrap_or("").to_string(),
             action: cols.get(2).and_then(|x| x.as_str()).unwrap_or("").to_string(),
             success_artifact: extract_path(path),
+            thread_id: cols.get(6).and_then(|x| x.as_str()).unwrap_or("").to_string(),
         });
     }
     Ok(out)
@@ -180,21 +182,47 @@ async fn draft_one(
     inference_url: &str,
     c: &OpenCommitment,
 ) -> Result<(), String> {
+    // Pull the originating CEO message so the persona drafts the actual
+    // requested artifact, not a generic doc that matches the path pattern.
+    let ceo_ask = if c.thread_id.is_empty() {
+        String::new()
+    } else {
+        fetch_originating_ask(http, &c.thread_id)
+            .await
+            .unwrap_or_default()
+    };
+    let ceo_ask_block = if ceo_ask.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nOriginal CEO request (this is what the file must answer):\n>>> {}\n", ceo_ask.trim())
+    };
+
     let system = format!(
-        "You are the {role} persona. You previously promised:\n  Action: {action}\n  Success artifact: {artifact}\n\
-         Produce the ACTUAL FULL CONTENTS of `{artifact}` now. Output ONLY the file body — no preamble, no \
-         markdown fence, no explanation. Aim for a one-pager (under 20 KB). Use Markdown if the path ends \
-         in .md. Use the appropriate language syntax otherwise. Be concrete and reference real repo paths.",
+        "You are the {role} persona. The CEO asked you for a specific artifact and you committed to producing it.\n\
+         Your committed action: {action}\n\
+         Required success artifact: {artifact}{ceo_ask}\n\n\
+         Produce the ACTUAL FULL CONTENTS of `{artifact}` NOW.\n\n\
+         Rules:\n\
+         - The file MUST directly answer the CEO request above. Do NOT drift to a generic 'enterprise tooling' \
+           or off-topic document — match the SPECIFIC question the CEO asked.\n\
+         - Output ONLY the file body — no preamble, no markdown code fence, no explanation about what you are doing.\n\
+         - Aim for a one-pager (under 10 KB).\n\
+         - Use Markdown if the path ends in .md, the appropriate language syntax otherwise.\n\
+         - Reference real repo paths and concrete entities. Do not invent.\n\
+         - If you genuinely cannot produce a useful draft (the CEO's request is ambiguous or requires \
+           information you do not have), output ONLY the literal string `INSUFFICIENT_CONTEXT: <one-line reason>` \
+           and nothing else.",
         role = c.role,
         action = c.action,
         artifact = c.success_artifact,
+        ceo_ask = ceo_ask_block,
     );
 
     let body = serde_json::json!({
         "messages": [{
             "role": "user",
             "content": format!(
-                "Write the contents of `{}` per your earlier commitment.",
+                "Write the contents of `{}` per your earlier commitment, answering the CEO request above.",
                 c.success_artifact
             ),
         }],
@@ -220,6 +248,17 @@ async fn draft_one(
         .to_string();
     if content.trim().is_empty() {
         return Err("empty draft".to_string());
+    }
+    if content.trim_start().starts_with("INSUFFICIENT_CONTEXT") {
+        // Persona refused to invent. Don't write a proposed_action; the
+        // commitment will go overdue and the operator sees the gap. This
+        // is the correct failure mode (silent honest abstain).
+        tracing::info!(
+            commitment_id = c.id,
+            role = %c.role,
+            "drafter: persona returned INSUFFICIENT_CONTEXT — leaving commitment open"
+        );
+        return Ok(());
     }
     if content.len() > CONTENT_CAP_BYTES {
         content.truncate(CONTENT_CAP_BYTES);
@@ -258,6 +297,77 @@ async fn draft_one(
         "drafter: queued proposed_action(file_write)"
     );
     Ok(())
+}
+
+/// Fetch the FIRST message in a thread (typically CEO's broadcast / DM
+/// that started the conversation). Used to give the drafter the original
+/// ask so it doesn't drift into generic content matching only the path
+/// pattern.
+async fn fetch_originating_ask(
+    http: &reqwest::Client,
+    thread_id: &str,
+) -> Result<String, String> {
+    let host = std::env::var("HEX_SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+    let chat_db = std::env::var("HEX_AGENT_COMMS_DATABASE")
+        .unwrap_or_else(|_| hex_core::stdb_database_for_module("agent-comms").to_string());
+    let url = format!("{}/v1/database/{}/sql", host, chat_db);
+    let safe = thread_id.replace('\'', "''");
+    let q = format!(
+        "SELECT id, from_agent, message FROM agent_messages WHERE thread_id = '{}'",
+        safe
+    );
+    let resp = http
+        .post(&url)
+        .header("Content-Type", "text/plain")
+        .body(q)
+        .send()
+        .await
+        .map_err(|e| format!("http: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| format!("json: {}", e))?;
+    let rows = v
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|t| t.get("rows"))
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
+    // The first message in a thread is the originating ask. Pick the
+    // smallest id (oldest) where from_agent == "ceo" (or fall back to
+    // the smallest id regardless).
+    let mut from_ceo: Option<(u64, String)> = None;
+    let mut any_oldest: Option<(u64, String)> = None;
+    for r in rows {
+        let cols = match r.as_array() {
+            Some(c) => c,
+            None => continue,
+        };
+        let id = cols.first().and_then(|x| x.as_u64()).unwrap_or(0);
+        let from = cols.get(1).and_then(|x| x.as_str()).unwrap_or("");
+        let msg = cols.get(2).and_then(|x| x.as_str()).unwrap_or("");
+        if msg.is_empty() || id == 0 {
+            continue;
+        }
+        match &any_oldest {
+            None => any_oldest = Some((id, msg.to_string())),
+            Some((cid, _)) if id < *cid => any_oldest = Some((id, msg.to_string())),
+            _ => {}
+        }
+        if from == "ceo" {
+            match &from_ceo {
+                None => from_ceo = Some((id, msg.to_string())),
+                Some((cid, _)) if id < *cid => from_ceo = Some((id, msg.to_string())),
+                _ => {}
+            }
+        }
+    }
+    Ok(from_ceo
+        .or(any_oldest)
+        .map(|(_, m)| m)
+        .unwrap_or_default())
 }
 
 /// Extract a bare path from artifact text. Personas write things like
