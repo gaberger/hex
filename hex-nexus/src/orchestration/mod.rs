@@ -16,6 +16,7 @@ pub mod grammars;
 pub mod inference_strategy_builder;
 pub mod org_responder;
 pub mod repo_grounding;
+pub mod resource_observer;
 pub mod regression;
 pub mod promote_orchestrator;
 pub mod promotion_judge;

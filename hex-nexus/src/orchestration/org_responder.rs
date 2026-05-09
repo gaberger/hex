@@ -14,8 +14,11 @@
 //! that prompts the persona for a one-line reasoning summary and writes a
 //! `kind=decision` row to chat-relay.agent_thought via SpacetimePersonaSupervisor.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
+
+use tokio::sync::Mutex;
 
 use crate::adapters::spacetime_agent_comm::SpacetimeAgentCommAdapter;
 use crate::adapters::spacetime_persona::SpacetimePersonaSupervisor;
@@ -59,11 +62,37 @@ fn persona_prompt(role: &str) -> String {
     )
 }
 
+/// In-process dedup of (role, msg_id) pairs we've already replied to this
+/// session. STDB `mark_read` is best-effort + eventually-consistent; the
+/// poll interval (4s) is shorter than the inference round-trip in many
+/// cases, so without this set the same DM gets answered 2–3 times before
+/// `read_by` propagates back. Cleared per-tick to bound memory.
+#[derive(Default)]
+struct RepliedTracker {
+    set: HashSet<(String, u64)>,
+}
+
+impl RepliedTracker {
+    fn mark(&mut self, role: &str, msg_id: u64) {
+        self.set.insert((role.to_string(), msg_id));
+    }
+    fn contains(&self, role: &str, msg_id: u64) -> bool {
+        self.set.contains(&(role.to_string(), msg_id))
+    }
+    /// Cap memory. Keep the most-recent 4096 entries (~ 64 KB).
+    fn maybe_trim(&mut self) {
+        if self.set.len() > 4096 {
+            self.set.clear();
+        }
+    }
+}
+
 pub fn spawn(
     comm: Arc<SpacetimeAgentCommAdapter>,
     persona: Arc<SpacetimePersonaSupervisor>,
     port: u16,
 ) {
+    let replied = Arc::new(Mutex::new(RepliedTracker::default()));
     tokio::spawn(async move {
         let http = match reqwest::Client::builder()
             .timeout(Duration::from_secs(120))
@@ -88,10 +117,11 @@ pub fn spawn(
         loop {
             ticker.tick().await;
             for role in RESPONDER_ROLES {
-                if let Err(e) = process_role(role, &comm, &persona, &http, &inference_url).await {
+                if let Err(e) = process_role(role, &comm, &persona, &http, &inference_url, &replied).await {
                     tracing::debug!(role = %role, error = %e, "org_responder: tick error");
                 }
             }
+            replied.lock().await.maybe_trim();
         }
     });
 }
@@ -102,6 +132,7 @@ async fn process_role(
     persona: &Arc<SpacetimePersonaSupervisor>,
     http: &reqwest::Client,
     inference_url: &str,
+    replied: &Arc<Mutex<RepliedTracker>>,
 ) -> Result<(), String> {
     let role_string = role.to_string();
     let messages = comm
@@ -120,6 +151,18 @@ async fn process_role(
             Some(id) => id,
             None => continue,
         };
+
+        // In-process dedup. STDB read_by takes a few seconds to propagate
+        // so without this the next 4s tick will re-answer the same DM
+        // (we caught the COO sending the same reply 3× to a single ping).
+        // Reserve the slot BEFORE inference so concurrent ticks short-circuit.
+        {
+            let mut g = replied.lock().await;
+            if g.contains(role, msg_id) {
+                continue;
+            }
+            g.mark(role, msg_id);
+        }
 
         // Circuit-breaker check (STDB persona_health). If banned, skip this
         // role entirely — the ban will lift on its own. Crucially DON'T

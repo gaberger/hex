@@ -52,6 +52,7 @@ pub mod org_chart;
 pub mod stdb_registry;
 pub mod org_comms;
 pub mod merge_gate;
+pub mod resources;
 // pub mod workplan; // removed stub module
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
@@ -501,6 +502,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/merge/personas", get(merge_gate::list_personas))
         .route("/api/merge/thoughts", get(merge_gate::list_thoughts))
         .route("/api/merge/persona-events/{role}", get(merge_gate::list_persona_events))
+        // ── ADR-2605082200 resource supervisor ─────────────────────────
+        .route("/api/resources", get(resources::list_processes))
+        .route("/api/resources/anomalies", get(resources::list_anomalies))
+        .route("/api/resources/anomalies/ack", post(resources::ack_anomaly))
         // SpacetimeDB registry — database identities
         .route("/api/stdb/registry", get(stdb_registry::get_registry))
         // Per-project queries (browser reads)

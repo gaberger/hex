@@ -17,8 +17,16 @@ use std::time::Instant;
 /// Snapshot of repo state injected into every persona prompt.
 pub struct RepoFacts {
     pub adrs: Vec<AdrSummary>,
+    pub personas: Vec<PersonaSummary>,
     pub generated_at: Instant,
     pub repo_root: PathBuf,
+}
+
+#[derive(Clone)]
+pub struct PersonaSummary {
+    pub role: String,
+    pub tier: String,    // executive | lead | ic | scaffolding
+    pub one_line: String, // first non-comment description-ish line, if any
 }
 
 #[derive(Clone)]
@@ -48,11 +56,78 @@ fn load(repo_root: &Path) -> RepoFacts {
     } else {
         Vec::new()
     };
+    let persona_dir = repo_root.join("hex-cli/assets/agents/hex/hex");
+    let personas = if persona_dir.is_dir() {
+        scan_personas(&persona_dir)
+    } else {
+        Vec::new()
+    };
     RepoFacts {
         adrs,
+        personas,
         generated_at: Instant::now(),
         repo_root: repo_root.to_path_buf(),
     }
+}
+
+fn scan_personas(dir: &Path) -> Vec<PersonaSummary> {
+    let exec = ["ceo", "cto", "cpo", "coo", "ciso", "chief-visionary"];
+    let lead = ["engineering-lead", "product-lead", "sre-lead"];
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    let mut out: Vec<PersonaSummary> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("yml") {
+            continue;
+        }
+        let role = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let tier = if exec.contains(&role.as_str()) {
+            "executive"
+        } else if lead.contains(&role.as_str()) {
+            "lead"
+        } else if role.starts_with("hex-") || role == "scaffold-validator" {
+            "scaffolding"
+        } else {
+            "ic"
+        }
+        .to_string();
+        let one_line = read_yaml_description(&path);
+        out.push(PersonaSummary {
+            role,
+            tier,
+            one_line,
+        });
+    }
+    // Sort: executives first, then leads, then everything else; alpha within tier.
+    out.sort_by(|a, b| {
+        let order = |t: &str| match t {
+            "executive" => 0,
+            "lead" => 1,
+            "ic" => 2,
+            _ => 3,
+        };
+        order(&a.tier)
+            .cmp(&order(&b.tier))
+            .then_with(|| a.role.cmp(&b.role))
+    });
+    out
+}
+
+fn read_yaml_description(path: &Path) -> String {
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    for line in content.lines().take(60) {
+        let lt = line.trim_start();
+        if let Some(rest) = lt.strip_prefix("description:") {
+            return rest.trim().trim_matches('"').trim_matches('\'').to_string();
+        }
+    }
+    String::new()
 }
 
 fn scan_adrs(dir: &Path) -> Vec<AdrSummary> {
@@ -164,15 +239,48 @@ pub fn grounding_block(max_adrs: usize) -> String {
         }
     }
 
+    if !f.personas.is_empty() {
+        s.push_str("\nOrg roster (the only roles that exist — do NOT invent others):\n");
+        for p in &f.personas {
+            // Skip 'ceo' (the operator) and any role that is not user-addressable
+            // (scaffolding agents) so the executive narrative stays tight.
+            if p.role == "ceo" || p.tier == "scaffolding" {
+                continue;
+            }
+            let desc = if p.one_line.is_empty() {
+                String::new()
+            } else {
+                let mut d = p.one_line.clone();
+                if d.len() > 110 {
+                    d.truncate(110);
+                    d.push('…');
+                }
+                format!(" — {}", d)
+            };
+            s.push_str(&format!("- {} [{}]{}\n", p.role, p.tier, desc));
+        }
+    }
+
     s.push_str(
-        "\n--- ANTI-FABRICATION RULE ---\n\
-         Never claim you have sent, attached, queued, or routed a document to \
-         a 'secure channel' or 'internal system'. The CEO has direct repo and \
-         dashboard access. To share a document, give the OPERATOR-RUNNABLE \
-         file path (e.g. `docs/adrs/ADR-2605081126-...md`), or the dashboard \
-         hashroute (e.g. `#/merge-gate`). If the asked-for artifact does not \
-         appear in REPO FACTS above, say so plainly and ask which artifact \
-         the CEO wants — do not invent one.\n",
+        "\n--- ANTI-FABRICATION RULE (HARD) ---\n\
+         1. Never claim you have sent, attached, queued, or routed a document \
+            to a 'secure channel', 'internal system', 'audit log', or any \
+            other invented delivery surface. The CEO has direct repo and \
+            dashboard access. To share something, give the OPERATOR-RUNNABLE \
+            file path (e.g. `docs/adrs/ADR-2605081126-...md`) or the dashboard \
+            hashroute (e.g. `#/merge-gate`).\n\
+         2. Never invent roles, titles, names, or teams that do not appear \
+            in 'Org roster' above. There is no 'head of engineering' — the \
+            engineering lead is `engineering-lead`. There is no 'product \
+            team' separate from `product-lead` and `cpo`. If the right \
+            person to delegate to is not in the roster, say so and ask the \
+            CEO who to bring in instead of fabricating one.\n\
+         3. If the asked-for artifact does not appear in REPO FACTS, say so \
+            plainly and ask which artifact the CEO wants — do not invent one.\n\
+         4. Never promise time-bound followups ('I'll update you in 5 \
+            minutes', 'shortly', 'immediately') unless you can name the \
+            concrete next action and the file/dashboard surface it will \
+            land on.\n",
     );
     s
 }

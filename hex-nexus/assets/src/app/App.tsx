@@ -44,6 +44,7 @@ const TeamDashboard = lazy(() => import('../components/views/TeamDashboard'));
 const MergeGate = lazy(() => import('../components/views/MergeGate'));
 const PersonaHealth = lazy(() => import('../components/views/PersonaHealth'));
 const Thoughts = lazy(() => import('../components/views/Thoughts'));
+const Resources = lazy(() => import('../components/views/Resources'));
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
 
@@ -261,6 +262,7 @@ const App: Component = () => {
   const isMergeGatePage = () => route().page === "merge-gate";
   const isPersonaHealthPage = () => route().page === "persona-health";
   const isThoughtsPage = () => route().page === "thoughts";
+  const isResourcesPage = () => route().page === "resources";
 
   return (
     <>
@@ -323,8 +325,16 @@ const App: Component = () => {
         <ShortcutsOverlay />
       </Show>
 
+      {/* Full-screen Resources */}
+      <Show when={isResourcesPage()}>
+        <ConnectionStatusBanner />
+        <Resources />
+        <ToastContainer />
+        <ShortcutsOverlay />
+      </Show>
+
       {/* Standard layout with sidebar for all other pages */}
-      <Show when={!isBrainPage() && !isOrgChartPage() && !isOrgCommsPage() && !isTeamPage() && !isMergeGatePage() && !isPersonaHealthPage() && !isThoughtsPage()}>
+      <Show when={!isBrainPage() && !isOrgChartPage() && !isOrgCommsPage() && !isTeamPage() && !isMergeGatePage() && !isPersonaHealthPage() && !isThoughtsPage() && !isResourcesPage()}>
         <div class="flex h-screen flex-col bg-gray-950 text-gray-100">
           {/* Connection status banner — shown when nexus or SpacetimeDB is unavailable */}
           <ConnectionStatusBanner />
@@ -680,6 +690,26 @@ const App: Component = () => {
                 <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
               </svg>
               <Show when={!sidebarCollapsed()}>Thoughts</Show>
+            </button>
+            {/* Resources (ADR-2605082200) */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              classList={{
+                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "resources",
+                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "resources",
+                "justify-center px-0": sidebarCollapsed(),
+              }}
+              aria-label={sidebarCollapsed() ? "Resources" : undefined}
+              aria-current={route().page === "resources" ? "page" : undefined}
+              onClick={() => { navigate({ page: "resources" }); setMobileDrawerOpen(false); }}
+            >
+              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                classList={{ "text-cyan-400": route().page === "resources" }}>
+                <rect x="2" y="3" width="20" height="14" rx="2" />
+                <line x1="8" y1="21" x2="16" y2="21" />
+                <line x1="12" y1="17" x2="12" y2="21" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Resources</Show>
             </button>
             {/* Substrate Swaps (ADR-2604261500) */}
             <button

@@ -406,6 +406,16 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 hex_db_for_integrator.clone(),
             );
 
+            // ADR-2605082200 — /proc walker upserts process_observation
+            // every 15s; the STDB-side resource_supervisor_tick (60s)
+            // emits resource_anomaly rows the operator sees in /resources.
+            if std::env::var("HEX_DISABLE_RESOURCE_OBSERVER").is_err() {
+                crate::orchestration::resource_observer::spawn(
+                    stdb_host_for_integrator.clone(),
+                    hex_db_for_integrator.clone(),
+                );
+            }
+
             // Auto-seed merge-team default policy + persona pools.
             // STDB schema-change semantics on republish wipe row data,
             // so we re-init on every nexus startup. Reducers are idempotent —
@@ -429,7 +439,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                             return;
                         }
                     };
-                    for reducer in &["merge_team_init", "persona_init"] {
+                    for reducer in &["merge_team_init", "persona_init", "resource_supervisor_init"] {
                         let url = format!("{}/v1/database/{}/call/{}", host_init, db_init, reducer);
                         match client.post(&url).json(&serde_json::json!([])).send().await {
                             Ok(r) if r.status().is_success() => {

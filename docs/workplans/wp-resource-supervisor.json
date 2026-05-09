@@ -1,0 +1,71 @@
+{
+  "id": "wp-resource-supervisor",
+  "title": "Resource-aware supervisor (process_observation + tick + observer)",
+  "adr": "ADR-2605082200",
+  "status": "in_progress",
+  "paused": false,
+  "phases": [
+    {
+      "id": "P1",
+      "title": "STDB schema + reducers",
+      "status": "in_progress",
+      "tasks": [
+        "Add process_observation table (pid pk, host, argv_sha, argv_first, state, ppid, started_micros, rss_kb, cpu_pct, observed_at)",
+        "Add resource_anomaly table (id auto pk, detected_at, kind, severity, pids JSON, note, handled, handled_at, handled_by)",
+        "Add resource_supervisor_tick_schedule (scheduled reducer anchor)",
+        "Reducer process_observation_upsert",
+        "Reducer process_observation_prune(stale_seconds)",
+        "Reducer resource_supervisor_init (idempotent)",
+        "Reducer resource_supervisor_tick (60s) — duplicate_argv / rss_oversize / zombie / cpu_pin",
+        "Reducer resource_anomaly_ack(id, handled_by)"
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "WASM rebuild + publish",
+      "status": "pending",
+      "tasks": [
+        "scripts/build-wasm.sh hexflo-coordination",
+        "Verify wasm bytes baked into hex-cli/assets/wasm/",
+        "Restart nexus to republish module"
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "Nexus /proc walker",
+      "status": "pending",
+      "tasks": [
+        "orchestration::resource_observer tokio task",
+        "Tick interval 15s, env override HEX_RESOURCE_OBSERVER_INTERVAL",
+        "Linux-only; non-Linux logs warn-once and exits gracefully",
+        "Allowlist comm prefixes (hex-nexus, hex-agent, ollama, spacetimedb-stand, claude); env override HEX_RESOURCE_OBSERVER_ALLOW",
+        "CPU% computed as delta of (utime+stime) clock ticks per second between observations",
+        "lib.rs schedules resource_supervisor_init() at boot (alongside merge_team_init / persona_init)"
+      ]
+    },
+    {
+      "id": "P4",
+      "title": "REST + dashboard view",
+      "status": "pending",
+      "tasks": [
+        "GET /api/resources (latest observations)",
+        "GET /api/resources/anomalies?status=open|all",
+        "POST /api/resources/anomalies/ack",
+        "Solid view #/resources: sortable table, anomaly badges, ack buttons",
+        "Sidebar nav entry"
+      ]
+    },
+    {
+      "id": "P5",
+      "title": "Build + deploy + verify",
+      "status": "pending",
+      "tasks": [
+        "vite build",
+        "cargo build -p hex-nexus --release",
+        "Atomic deploy via cp+mv to /home/gary/.local/bin/hex-nexus",
+        "Smoke: curl /api/resources returns >0 observations within 30s",
+        "Smoke: spawn duplicate hex-agent → curl /api/resources/anomalies shows duplicate_argv within 75s"
+      ]
+    }
+  ]
+}

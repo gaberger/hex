@@ -1,5 +1,5 @@
 #![allow(clippy::too_many_arguments)]
-use spacetimedb::{reducer, table, ReducerContext, ScheduleAt, Table};
+use spacetimedb::{reducer, table, ReducerContext, ScheduleAt, Table, Timestamp};
 
 // ============================================================
 //  Tables
@@ -4689,4 +4689,1069 @@ pub fn supervisor_tick(
     }
 
     Ok(())
+}
+
+// ============================================================
+//  Persona Supervisor (OTP-style for executive personas)
+//
+//  Mirrors the worker_pool_intent / supervisor_tick design above, but for
+//  VIRTUAL agents (cto, cpo, coo, ciso, chief-visionary, engineering-lead,
+//  product-lead, sre-lead). Personas are conversation entities answered by
+//  hex-nexus's org_responder — they have no process. Instead of emitting
+//  spawn_request events, persona_tick directly upserts hex_agent rows and
+//  refreshes their last_heartbeat to keep the persona "online" in the
+//  dashboard / `hex agent list`.
+//
+//  persona_health gives the org_responder an inference circuit-breaker:
+//  3 failures in 60s → 5 minute ban. Persistent across nexus restarts.
+// ============================================================
+
+pub const PERSONA_TICK_INTERVAL_SECS: u64 = 25;
+pub const PERSONA_FAILURE_THRESHOLD: u32 = 3;
+pub const PERSONA_FAILURE_WINDOW_SECS: i64 = 60;
+pub const PERSONA_BAN_DURATION_SECS: i64 = 300;
+
+#[table(name = persona_pool, public)]
+#[derive(Clone, Debug)]
+pub struct PersonaPool {
+    #[primary_key]
+    pub role: String,
+    pub display_name: String,
+    pub tier: String,
+    pub paused: bool,
+    pub last_tick_at: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[table(name = persona_health, public)]
+#[derive(Clone, Debug)]
+pub struct PersonaHealth {
+    #[primary_key]
+    pub role: String,
+    pub recent_failures: u32,
+    pub last_failure_at: String,
+    pub last_failure_model: String,
+    pub last_failure_status: u32,
+    pub banned_until: String,
+}
+
+#[table(name = persona_event, public)]
+#[derive(Clone, Debug)]
+pub struct PersonaEvent {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub ts: String,
+    pub kind: String,
+    pub role: String,
+    pub payload: String,
+}
+
+#[table(name = persona_tick_schedule, public, scheduled(persona_tick))]
+#[derive(Clone, Debug)]
+pub struct PersonaTickSchedule {
+    #[primary_key]
+    #[auto_inc]
+    pub scheduled_id: u64,
+    pub scheduled_at: ScheduleAt,
+}
+
+#[reducer]
+pub fn persona_pool_set(
+    ctx: &ReducerContext,
+    role: String,
+    display_name: String,
+    tier: String,
+    paused: bool,
+) -> Result<(), String> {
+    if role.is_empty() {
+        return Err("role is required".into());
+    }
+    let now = format!("{:?}", ctx.timestamp);
+    let existing = ctx.db.persona_pool().role().find(&role);
+    let row = PersonaPool {
+        role: role.clone(),
+        display_name,
+        tier,
+        paused,
+        last_tick_at: existing
+            .as_ref()
+            .map(|e| e.last_tick_at.clone())
+            .unwrap_or_default(),
+        created_at: existing
+            .as_ref()
+            .map(|e| e.created_at.clone())
+            .unwrap_or_else(|| now.clone()),
+        updated_at: now,
+    };
+    if existing.is_some() {
+        ctx.db.persona_pool().role().update(row);
+    } else {
+        ctx.db.persona_pool().insert(row);
+    }
+    Ok(())
+}
+
+#[reducer]
+pub fn persona_pool_set_paused(
+    ctx: &ReducerContext,
+    role: String,
+    paused: bool,
+) -> Result<(), String> {
+    let mut row = ctx
+        .db
+        .persona_pool()
+        .role()
+        .find(&role)
+        .ok_or_else(|| format!("persona pool '{}' not found", role))?;
+    row.paused = paused;
+    row.updated_at = format!("{:?}", ctx.timestamp);
+    ctx.db.persona_pool().role().update(row);
+    ctx.db.persona_event().insert(PersonaEvent {
+        id: 0,
+        ts: format!("{:?}", ctx.timestamp),
+        kind: if paused { "pause" } else { "resume" }.to_string(),
+        role,
+        payload: String::new(),
+    });
+    Ok(())
+}
+
+#[reducer]
+pub fn persona_record_inference_failure(
+    ctx: &ReducerContext,
+    role: String,
+    model_id: String,
+    status_code: u32,
+) -> Result<(), String> {
+    let now_str = format!("{:?}", ctx.timestamp);
+    let now_micros = parse_persona_ts_micros(&now_str).unwrap_or(0);
+    let window_micros = PERSONA_FAILURE_WINDOW_SECS * 1_000_000;
+
+    let existing = ctx.db.persona_health().role().find(&role);
+    let recent = match &existing {
+        Some(h) => {
+            let last = parse_persona_ts_micros(&h.last_failure_at).unwrap_or(0);
+            if now_micros > 0 && last > 0 && (now_micros - last) > window_micros {
+                1
+            } else {
+                h.recent_failures + 1
+            }
+        }
+        None => 1,
+    };
+
+    let banned_until = if recent >= PERSONA_FAILURE_THRESHOLD {
+        let ban_until_micros = now_micros + (PERSONA_BAN_DURATION_SECS * 1_000_000);
+        format!(
+            "Timestamp {{ __timestamp_micros_since_unix_epoch__: {} }}",
+            ban_until_micros
+        )
+    } else {
+        existing
+            .as_ref()
+            .map(|h| h.banned_until.clone())
+            .unwrap_or_default()
+    };
+
+    let row = PersonaHealth {
+        role: role.clone(),
+        recent_failures: recent,
+        last_failure_at: now_str.clone(),
+        last_failure_model: model_id.clone(),
+        last_failure_status: status_code,
+        banned_until: banned_until.clone(),
+    };
+    if existing.is_some() {
+        ctx.db.persona_health().role().update(row);
+    } else {
+        ctx.db.persona_health().insert(row);
+    }
+
+    if recent >= PERSONA_FAILURE_THRESHOLD {
+        ctx.db.persona_event().insert(PersonaEvent {
+            id: 0,
+            ts: now_str,
+            kind: "ban".to_string(),
+            role,
+            payload: format!(
+                r#"{{"model":"{}","status":{},"recent_failures":{},"banned_until":"{}"}}"#,
+                model_id, status_code, recent, banned_until
+            ),
+        });
+    }
+    Ok(())
+}
+
+#[reducer]
+pub fn persona_record_inference_success(
+    ctx: &ReducerContext,
+    role: String,
+) -> Result<(), String> {
+    if let Some(mut h) = ctx.db.persona_health().role().find(&role) {
+        h.recent_failures = 0;
+        h.banned_until = String::new();
+        ctx.db.persona_health().role().update(h);
+    }
+    Ok(())
+}
+
+#[reducer]
+pub fn persona_init(ctx: &ReducerContext) -> Result<(), String> {
+    let now = format!("{:?}", ctx.timestamp);
+    let seeds: &[(&str, &str, &str)] = &[
+        ("cto", "Chief Technology Officer", "executive"),
+        ("cpo", "Chief Product Officer", "executive"),
+        ("coo", "Chief Operating Officer", "executive"),
+        ("ciso", "Chief Information Security Officer", "executive"),
+        ("chief-visionary", "Chief Visionary", "executive"),
+        ("engineering-lead", "Engineering Lead", "lead"),
+        ("product-lead", "Product Lead", "lead"),
+        ("sre-lead", "SRE Lead", "lead"),
+    ];
+    for (role, name, tier) in seeds {
+        if ctx.db.persona_pool().role().find(&role.to_string()).is_none() {
+            ctx.db.persona_pool().insert(PersonaPool {
+                role: role.to_string(),
+                display_name: name.to_string(),
+                tier: tier.to_string(),
+                paused: false,
+                last_tick_at: String::new(),
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            });
+        }
+    }
+
+    let already = ctx.db.persona_tick_schedule().iter().next().is_some();
+    if !already {
+        let interval = ScheduleAt::Interval(
+            std::time::Duration::from_secs(PERSONA_TICK_INTERVAL_SECS).into(),
+        );
+        ctx.db.persona_tick_schedule().insert(PersonaTickSchedule {
+            scheduled_id: 0,
+            scheduled_at: interval,
+        });
+        log::info!(
+            "persona_init: tick scheduled every {}s",
+            PERSONA_TICK_INTERVAL_SECS
+        );
+    }
+    Ok(())
+}
+
+#[reducer]
+pub fn persona_tick(
+    ctx: &ReducerContext,
+    _schedule: PersonaTickSchedule,
+) -> Result<(), String> {
+    let now_str = format!("{:?}", ctx.timestamp);
+    let pools: Vec<PersonaPool> = ctx.db.persona_pool().iter().collect();
+
+    for mut pool in pools {
+        if pool.paused {
+            continue;
+        }
+
+        let agent_id = format!("persona-{}", pool.role);
+
+        if let Some(existing) = ctx.db.hex_agent().id().find(&agent_id) {
+            ctx.db.hex_agent().id().update(HexAgent {
+                status: "online".to_string(),
+                last_heartbeat: now_str.clone(),
+                ..existing
+            });
+        } else {
+            let caps = format!(
+                r#"{{"persona":true,"tier":"{}","display_name":"{}"}}"#,
+                pool.tier, pool.display_name
+            );
+            ctx.db.hex_agent().insert(HexAgent {
+                id: agent_id.clone(),
+                name: pool.role.clone(),
+                host: "stdb-supervised".to_string(),
+                project_id: String::new(),
+                project_dir: String::new(),
+                model: String::new(),
+                session_id: String::new(),
+                status: "online".to_string(),
+                swarm_id: String::new(),
+                role: pool.role.clone(),
+                worktree_path: String::new(),
+                registered_at: now_str.clone(),
+                last_heartbeat: now_str.clone(),
+                capabilities_json: caps,
+            });
+            ctx.db.persona_event().insert(PersonaEvent {
+                id: 0,
+                ts: now_str.clone(),
+                kind: "register".to_string(),
+                role: pool.role.clone(),
+                payload: format!(r#"{{"agent_id":"{}"}}"#, agent_id),
+            });
+        }
+
+        pool.last_tick_at = now_str.clone();
+        ctx.db.persona_pool().role().update(pool);
+    }
+    Ok(())
+}
+
+fn parse_persona_ts_micros(s: &str) -> Option<i64> {
+    let key = "__timestamp_micros_since_unix_epoch__:";
+    let pos = s.find(key)?;
+    let tail = &s[pos + key.len()..];
+    let end = tail
+        .find(|c: char| !c.is_ascii_digit() && c != '-' && c != ' ')
+        .unwrap_or(tail.len());
+    tail[..end].trim().parse::<i64>().ok()
+}
+
+// ============================================================
+//  Merge-Team Safety Gate (ADR-2605081126 P1)
+//
+//  No agent writes to trunk. Every change to a hex-internal source file
+//  originates inside a git worktree, opens a merge_request, accumulates
+//  merge_vote rows from validation-judge + adversarial-red + adversarial-blue,
+//  and lands via `hex worktree merge` only when the integrator subscriber
+//  observes 2-of-3 PASS plus validation-judge=pass.
+//
+//  Per-pool quorum policies live in merge_quorum_policy: high-trust pools
+//  can drop to 1-of-3, low-trust pools can require 3-of-3. Operator override
+//  via `hex worktree approve` writes voter=operator verdict=pass and bypasses
+//  the quorum (logged in merge_vote for audit).
+// ============================================================
+
+/// One merge request — opened by the daemon at end of CODE phase, consumed
+/// by the integrator subscriber that orchestrates voting + merge.
+///
+/// `worktree_path` is the absolute path to the git worktree directory; used
+/// as the primary key because each worktree carries at most one open merge
+/// request at a time.
+///
+/// `status` lifecycle: pending → voting → (approved | rejected) → merged.
+/// Once merged or rejected, the row is retained for audit (TTL purge can
+/// be added later if `merge_request` grows large).
+#[table(name = merge_request, public)]
+#[derive(Clone, Debug)]
+pub struct MergeRequest {
+    #[primary_key]
+    pub worktree_path: String,
+    pub branch: String,
+    /// Persona role that produced the change (e.g. "hex-coder", "rust-refactorer").
+    pub role: String,
+    pub opened_at: String,
+    /// "pending" | "voting" | "approved" | "rejected" | "merged"
+    pub status: String,
+    /// Workplan id that drove the change, empty if ad-hoc.
+    pub related_workplan: String,
+    /// hex_agent.id of the agent that opened the request — for audit + alerting
+    /// when a request stalls and needs an operator nudge.
+    pub agent_id: String,
+}
+
+/// Open a merge request. Idempotent on `worktree_path` — re-opening just
+/// updates the metadata + resets status to "pending" (voters can still
+/// re-vote).
+#[reducer]
+pub fn merge_request_open(
+    ctx: &ReducerContext,
+    worktree_path: String,
+    branch: String,
+    role: String,
+    related_workplan: String,
+    agent_id: String,
+) -> Result<(), String> {
+    if worktree_path.is_empty() {
+        return Err("worktree_path is required".into());
+    }
+    if branch.is_empty() {
+        return Err("branch is required".into());
+    }
+    let now = format!("{:?}", ctx.timestamp);
+    let row = MergeRequest {
+        worktree_path: worktree_path.clone(),
+        branch,
+        role,
+        opened_at: now,
+        status: "pending".to_string(),
+        related_workplan,
+        agent_id,
+    };
+    if ctx.db.merge_request().worktree_path().find(&worktree_path).is_some() {
+        ctx.db.merge_request().worktree_path().update(row);
+    } else {
+        ctx.db.merge_request().insert(row);
+    }
+    Ok(())
+}
+
+/// Update merge request status — called by the integrator subscriber as
+/// votes accumulate. Allowed transitions enforced here so the integrator
+/// can't mark something merged that wasn't approved.
+#[reducer]
+pub fn merge_request_set_status(
+    ctx: &ReducerContext,
+    worktree_path: String,
+    new_status: String,
+) -> Result<(), String> {
+    let mut row = ctx
+        .db
+        .merge_request()
+        .worktree_path()
+        .find(&worktree_path)
+        .ok_or_else(|| format!("merge_request '{}' not found", worktree_path))?;
+    let allowed = matches!(
+        (row.status.as_str(), new_status.as_str()),
+        ("pending", "voting")
+            | ("voting", "approved")
+            | ("voting", "rejected")
+            | ("approved", "merged")
+            | ("pending", "rejected") // operator reject before voting starts
+    );
+    if !allowed {
+        return Err(format!(
+            "invalid transition: {} → {}",
+            row.status, new_status
+        ));
+    }
+    row.status = new_status;
+    ctx.db.merge_request().worktree_path().update(row);
+    Ok(())
+}
+
+/// One vote on a merge request. STDB lacks composite primary keys via the
+/// `#[primary_key]` attribute, so we synthesize a string key
+/// `<worktree_path>::<voter>` and enforce the (worktree, voter) uniqueness
+/// at the reducer level. This pattern matches `(swarm, role)` keys
+/// elsewhere in this module.
+///
+/// `voter`: "validation-judge" | "adversarial-red" | "adversarial-blue"
+///        | "integrator" | "operator"
+/// `verdict`: "pass" | "fail" | "abstain"
+#[table(name = merge_vote, public)]
+#[derive(Clone, Debug)]
+pub struct MergeVote {
+    /// Synthetic composite key: format!("{worktree_path}::{voter}").
+    #[primary_key]
+    pub key: String,
+    pub worktree_path: String,
+    pub voter: String,
+    pub verdict: String,
+    /// Free-form reason — judge writes spec failures here, adversarials
+    /// write the boundary/correctness concern, operator writes override
+    /// rationale. Cap at 4 KB at the reducer.
+    pub reason: String,
+    pub voted_at: String,
+}
+
+/// Cast a vote. Idempotent on (worktree_path, voter) — re-casting overwrites.
+/// Validates voter + verdict against allowed sets; rejects unknown values
+/// so the integrator never has to handle phantom roles.
+#[reducer]
+pub fn merge_vote_cast(
+    ctx: &ReducerContext,
+    worktree_path: String,
+    voter: String,
+    verdict: String,
+    reason: String,
+) -> Result<(), String> {
+    if worktree_path.is_empty() {
+        return Err("worktree_path is required".into());
+    }
+    let valid_voters = [
+        "validation-judge",
+        "adversarial-red",
+        "adversarial-blue",
+        "integrator",
+        "operator",
+    ];
+    if !valid_voters.contains(&voter.as_str()) {
+        return Err(format!(
+            "invalid voter '{}': must be one of {:?}",
+            voter, valid_voters
+        ));
+    }
+    let valid_verdicts = ["pass", "fail", "abstain"];
+    if !valid_verdicts.contains(&verdict.as_str()) {
+        return Err(format!(
+            "invalid verdict '{}': must be one of {:?}",
+            verdict, valid_verdicts
+        ));
+    }
+    if reason.len() > 4096 {
+        return Err(format!(
+            "reason too large: {} bytes (max 4096)",
+            reason.len()
+        ));
+    }
+    // Verify the merge_request exists — voting on a phantom worktree is
+    // either a bug or a hijack attempt; either way we want to surface it.
+    if ctx.db.merge_request().worktree_path().find(&worktree_path).is_none() {
+        return Err(format!(
+            "no merge_request open for worktree '{}'",
+            worktree_path
+        ));
+    }
+    let key = format!("{}::{}", worktree_path, voter);
+    let now = format!("{:?}", ctx.timestamp);
+    let row = MergeVote {
+        key: key.clone(),
+        worktree_path,
+        voter,
+        verdict,
+        reason,
+        voted_at: now,
+    };
+    if ctx.db.merge_vote().key().find(&key).is_some() {
+        ctx.db.merge_vote().key().update(row);
+    } else {
+        ctx.db.merge_vote().insert(row);
+    }
+    Ok(())
+}
+
+/// Per-pool quorum policy. Default policy is encoded as `pool_id="*"` row.
+/// Specific pool policies override the default. The integrator subscriber
+/// reads policy by pool_id when tallying votes.
+///
+/// `min_pass_votes`: how many "pass" verdicts are required for approval.
+///   Default 2 (out of 3 voters: judge + red + blue).
+///
+/// `require_judge_pass`: when true, validation-judge MUST vote pass.
+///   Even if 3-of-3 adversarials pass, a judge=fail blocks merge.
+///   Default true — the judge runs behavioral specs, that's load-bearing.
+///
+/// `allow_operator_override`: when true, voter=operator with verdict=pass
+///   bypasses the quorum (the operator is acknowledging risk).
+///   Default true; settable false for high-trust pools where override
+///   would defeat the gate.
+#[table(name = merge_quorum_policy, public)]
+#[derive(Clone, Debug)]
+pub struct MergeQuorumPolicy {
+    /// `*` = default, otherwise matches worker_pool_intent.id or persona role.
+    #[primary_key]
+    pub pool_id: String,
+    pub min_pass_votes: u32,
+    pub require_judge_pass: bool,
+    pub allow_operator_override: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Set or replace a quorum policy for a pool. Idempotent.
+#[reducer]
+pub fn merge_quorum_policy_set(
+    ctx: &ReducerContext,
+    pool_id: String,
+    min_pass_votes: u32,
+    require_judge_pass: bool,
+    allow_operator_override: bool,
+) -> Result<(), String> {
+    if pool_id.is_empty() {
+        return Err("pool_id is required (use '*' for default)".into());
+    }
+    if min_pass_votes == 0 || min_pass_votes > 5 {
+        return Err(format!(
+            "min_pass_votes={} out of range (1-5)",
+            min_pass_votes
+        ));
+    }
+    let now = format!("{:?}", ctx.timestamp);
+    let existing = ctx.db.merge_quorum_policy().pool_id().find(&pool_id);
+    let row = MergeQuorumPolicy {
+        pool_id: pool_id.clone(),
+        min_pass_votes,
+        require_judge_pass,
+        allow_operator_override,
+        created_at: existing
+            .as_ref()
+            .map(|e| e.created_at.clone())
+            .unwrap_or_else(|| now.clone()),
+        updated_at: now,
+    };
+    if existing.is_some() {
+        ctx.db.merge_quorum_policy().pool_id().update(row);
+    } else {
+        ctx.db.merge_quorum_policy().insert(row);
+    }
+    Ok(())
+}
+
+/// One-shot init: seed the default merge_quorum_policy row (`*` →
+/// 2-of-3 with judge=pass required, operator override allowed). Idempotent.
+/// Operators tune per-pool policies via merge_quorum_policy_set after init.
+#[reducer]
+pub fn merge_team_init(ctx: &ReducerContext) -> Result<(), String> {
+    if ctx
+        .db
+        .merge_quorum_policy()
+        .pool_id()
+        .find(&"*".to_string())
+        .is_none()
+    {
+        let now = format!("{:?}", ctx.timestamp);
+        ctx.db.merge_quorum_policy().insert(MergeQuorumPolicy {
+            pool_id: "*".to_string(),
+            min_pass_votes: 2,
+            require_judge_pass: true,
+            allow_operator_override: true,
+            created_at: now.clone(),
+            updated_at: now,
+        });
+        log::info!("merge_team_init: seeded default policy (2-of-3, judge=pass required)");
+    }
+    Ok(())
+}
+
+/// Compute the merge decision for a worktree based on current votes vs
+/// applicable quorum policy, and write it back to `merge_request.status`.
+///
+/// Status transitions on call:
+///   pending/voting → "voting"            (votes still needed)
+///   pending/voting → "approved"          (quorum + judge=pass)
+///   pending/voting → "rejected"          (judge=fail OR pass quorum unreachable)
+///
+/// Caller side-effects:
+///   - Integrator subscriber polls `merge_request WHERE status = 'approved'`
+///     and runs `hex worktree merge`, then transitions to "merged".
+///   - Operator override (voter=operator verdict=pass with policy allowing
+///     it) writes status="approved" with reason embedded so the integrator
+///     can audit the override path distinctly.
+///
+/// Idempotent — calling multiple times with no new votes yields the same
+/// status. Already-merged or already-rejected requests are not transitioned.
+#[reducer]
+pub fn merge_decision_tally(
+    ctx: &ReducerContext,
+    worktree_path: String,
+) -> Result<(), String> {
+    let mr = ctx
+        .db
+        .merge_request()
+        .worktree_path()
+        .find(&worktree_path)
+        .ok_or_else(|| format!("merge_request '{}' not found", worktree_path))?;
+
+    // Terminal states are sticky.
+    if mr.status == "merged" || mr.status == "rejected" {
+        return Ok(());
+    }
+
+    // Resolve policy: pool-specific row first, fall back to default.
+    let policy = ctx
+        .db
+        .merge_quorum_policy()
+        .pool_id()
+        .find(&mr.role)
+        .or_else(|| {
+            ctx.db
+                .merge_quorum_policy()
+                .pool_id()
+                .find(&"*".to_string())
+        })
+        .ok_or_else(|| {
+            "no merge_quorum_policy configured (call merge_team_init)".to_string()
+        })?;
+
+    let votes: Vec<MergeVote> = ctx
+        .db
+        .merge_vote()
+        .iter()
+        .filter(|v| v.worktree_path == worktree_path)
+        .collect();
+
+    let mut pass_count: u32 = 0;
+    let mut fail_count: u32 = 0;
+    let mut judge_verdict: Option<String> = None;
+    let mut operator_pass = false;
+    let mut operator_fail = false;
+
+    for v in &votes {
+        match v.verdict.as_str() {
+            "pass" => pass_count += 1,
+            "fail" => fail_count += 1,
+            _ => {}
+        }
+        if v.voter == "validation-judge" {
+            judge_verdict = Some(v.verdict.clone());
+        }
+        if v.voter == "operator" && v.verdict == "pass" {
+            operator_pass = true;
+        }
+        if v.voter == "operator" && v.verdict == "fail" {
+            operator_fail = true;
+        }
+    }
+
+    let new_status = if operator_fail {
+        "rejected"
+    } else if operator_pass && policy.allow_operator_override {
+        "approved"
+    } else if policy.require_judge_pass && judge_verdict.as_deref() == Some("fail") {
+        "rejected"
+    } else if pass_count >= policy.min_pass_votes
+        && (!policy.require_judge_pass || judge_verdict.as_deref() == Some("pass"))
+    {
+        "approved"
+    } else {
+        // Can the request still possibly approve? max 4 voters (judge+red+blue+integrator).
+        let max_voters: u32 = 4;
+        let remaining = max_voters.saturating_sub(pass_count + fail_count);
+        if pass_count + remaining < policy.min_pass_votes {
+            "rejected"
+        } else {
+            "voting"
+        }
+    };
+
+    if new_status != mr.status {
+        let mut updated = mr.clone();
+        updated.status = new_status.to_string();
+        ctx.db.merge_request().worktree_path().update(updated);
+        log::info!(
+            "merge_decision_tally: {} → {} (passes={}, fails={}, judge={:?})",
+            mr.status,
+            new_status,
+            pass_count,
+            fail_count,
+            judge_verdict
+        );
+    }
+    Ok(())
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// ADR-2605082200 — Resource-aware supervisor
+//
+// Adds /proc-derived process observations (RSS, CPU, ppid, state, argv
+// signature) plus a 60s tick that emits resource_anomaly rows for
+// duplicates, oversize RSS, zombies, and CPU pin. No auto-kill.
+// ──────────────────────────────────────────────────────────────────────
+
+#[table(name = process_observation, public)]
+#[derive(Clone, Debug)]
+pub struct ProcessObservation {
+    /// OS pid. One row per live PID.
+    #[primary_key]
+    pub pid: u32,
+    /// Hostname the observation came from. Multi-host stretch goal.
+    pub host: String,
+    /// SHA-256 of the full argv joined by NUL — the "this is the same
+    /// program invocation" key for duplicate detection.
+    pub argv_sha: String,
+    /// First ~120 chars of the argv, for human readability.
+    pub argv_first: String,
+    /// /proc/<pid>/stat field 3 — R, S, D, Z, T, …
+    pub state: String,
+    pub ppid: u32,
+    /// Process start time (Unix micros). Stable identity for the PID.
+    pub started_micros: i64,
+    pub rss_kb: u64,
+    /// CPU % over the last observation window (0..n_cores*100).
+    pub cpu_pct: f32,
+    /// When this row was last upserted. Used by prune.
+    pub observed_at: Timestamp,
+}
+
+#[table(name = resource_anomaly, public)]
+#[derive(Clone, Debug)]
+pub struct ResourceAnomaly {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub detected_at: Timestamp,
+    /// duplicate_argv | rss_oversize | zombie | cpu_pin
+    pub kind: String,
+    /// info | warn | critical
+    pub severity: String,
+    /// JSON list of involved PIDs.
+    pub pids: String,
+    /// Human-readable explanation (argv excerpt, threshold crossed, …).
+    pub note: String,
+    pub handled: bool,
+    pub handled_at: String,
+    pub handled_by: String,
+}
+
+/// Schedule anchor for `resource_supervisor_tick`.
+#[table(name = resource_supervisor_tick_schedule, public, scheduled(resource_supervisor_tick))]
+#[derive(Clone, Debug)]
+pub struct ResourceSupervisorTickSchedule {
+    #[primary_key]
+    #[auto_inc]
+    pub scheduled_id: u64,
+    pub scheduled_at: ScheduleAt,
+}
+
+/// Upsert one process observation. Called by the nexus /proc walker.
+/// Identity is `pid` — STDB keeps one row per PID.
+#[reducer]
+pub fn process_observation_upsert(
+    ctx: &ReducerContext,
+    pid: u32,
+    host: String,
+    argv_sha: String,
+    argv_first: String,
+    state: String,
+    ppid: u32,
+    started_micros: i64,
+    rss_kb: u64,
+    cpu_pct: f32,
+) -> Result<(), String> {
+    let now = ctx.timestamp;
+    let row = ProcessObservation {
+        pid,
+        host,
+        argv_sha,
+        argv_first,
+        state,
+        ppid,
+        started_micros,
+        rss_kb,
+        cpu_pct,
+        observed_at: now,
+    };
+    if ctx.db.process_observation().pid().find(&pid).is_some() {
+        ctx.db.process_observation().pid().update(row);
+    } else {
+        ctx.db.process_observation().insert(row);
+    }
+    Ok(())
+}
+
+/// Drop process_observation rows whose `observed_at` is older than
+/// `stale_seconds`. Caller invokes this each tick — by definition any
+/// PID whose entry isn't refreshed has either died or fallen out of the
+/// observer's allow-list.
+#[reducer]
+pub fn process_observation_prune(
+    ctx: &ReducerContext,
+    stale_seconds: u32,
+) -> Result<(), String> {
+    let now_micros = parse_ts_micros_resource(&format!("{:?}", ctx.timestamp)).unwrap_or(0);
+    let cutoff = now_micros - (stale_seconds as i64 * 1_000_000);
+    let stale_pids: Vec<u32> = ctx
+        .db
+        .process_observation()
+        .iter()
+        .filter(|p| {
+            parse_ts_micros_resource(&format!("{:?}", p.observed_at))
+                .map(|m| m < cutoff)
+                .unwrap_or(false)
+        })
+        .map(|p| p.pid)
+        .collect();
+    for pid in &stale_pids {
+        ctx.db.process_observation().pid().delete(pid);
+    }
+    if !stale_pids.is_empty() {
+        log::info!("process_observation_prune: dropped {} stale PIDs", stale_pids.len());
+    }
+    Ok(())
+}
+
+/// Idempotent init for the resource supervisor schedule. Calls from
+/// nexus on every boot — duplicate inserts are guarded.
+#[reducer]
+pub fn resource_supervisor_init(ctx: &ReducerContext) -> Result<(), String> {
+    if ctx.db.resource_supervisor_tick_schedule().iter().next().is_some() {
+        log::info!("resource_supervisor_init: schedule already exists, skipping");
+        return Ok(());
+    }
+    let interval = ScheduleAt::Interval(std::time::Duration::from_secs(60).into());
+    ctx.db.resource_supervisor_tick_schedule().insert(ResourceSupervisorTickSchedule {
+        scheduled_id: 0,
+        scheduled_at: interval,
+    });
+    log::info!("resource_supervisor_init: tick scheduled every 60s");
+    Ok(())
+}
+
+/// THE resource tick. Fires every 60 s.
+///
+///   1. Prune observations older than 120 s (PID gone).
+///   2. Group live observations by argv_sha. Any sha with > 1 alive
+///      pid → duplicate_argv anomaly (severity warn).
+///   3. RSS thresholds: > 30 GiB → critical, > 20 GiB → warn.
+///   4. state == "Z" → zombie critical.
+///   5. cpu_pct > 800 % → cpu_pin warn.
+///
+/// Anomaly de-dup: before inserting, scan the most recent UNHANDLED
+/// anomaly of (kind, sorted_pids) tuple. If one exists within the last
+/// 5 minutes, suppress the new emit. This keeps the inbox quiet while
+/// the operator is investigating.
+#[reducer]
+pub fn resource_supervisor_tick(
+    ctx: &ReducerContext,
+    _schedule: ResourceSupervisorTickSchedule,
+) -> Result<(), String> {
+    process_observation_prune(ctx, 120)?;
+
+    let now = ctx.timestamp;
+    let now_micros = parse_ts_micros_resource(&format!("{:?}", now)).unwrap_or(0);
+    let suppress_window_micros: i64 = 5 * 60 * 1_000_000;
+
+    let observations: Vec<ProcessObservation> = ctx.db.process_observation().iter().collect();
+    let recent_anomalies: Vec<ResourceAnomaly> = ctx
+        .db
+        .resource_anomaly()
+        .iter()
+        .filter(|a| {
+            !a.handled
+                && parse_ts_micros_resource(&format!("{:?}", a.detected_at))
+                    .map(|m| (now_micros - m) < suppress_window_micros)
+                    .unwrap_or(false)
+        })
+        .collect();
+
+    let already_open = |kind: &str, pids: &[u32]| -> bool {
+        let mut sorted = pids.to_vec();
+        sorted.sort_unstable();
+        let key = sorted
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        recent_anomalies.iter().any(|a| {
+            a.kind == kind
+                && {
+                    // a.pids is `[1,2,3]` or `[]` JSON; cheap exact match
+                    let want = format!("[{}]", key);
+                    a.pids == want
+                }
+        })
+    };
+
+    let mut to_emit: Vec<(String, String, Vec<u32>, String)> = Vec::new();
+
+    // Duplicate argv detection.
+    use std::collections::HashMap;
+    let mut by_sha: HashMap<String, Vec<&ProcessObservation>> = HashMap::new();
+    for o in &observations {
+        by_sha.entry(o.argv_sha.clone()).or_default().push(o);
+    }
+    for (sha, group) in &by_sha {
+        if group.len() <= 1 {
+            continue;
+        }
+        let pids: Vec<u32> = group.iter().map(|p| p.pid).collect();
+        if already_open("duplicate_argv", &pids) {
+            continue;
+        }
+        let argv_excerpt = group
+            .first()
+            .map(|p| p.argv_first.clone())
+            .unwrap_or_default();
+        to_emit.push((
+            "duplicate_argv".to_string(),
+            "warn".to_string(),
+            pids,
+            format!("{} processes share argv_sha={} argv={}", group.len(), sha, argv_excerpt),
+        ));
+    }
+
+    for o in &observations {
+        let single = vec![o.pid];
+
+        if o.state == "Z" && !already_open("zombie", &single) {
+            to_emit.push((
+                "zombie".to_string(),
+                "critical".to_string(),
+                single.clone(),
+                format!("zombie PID {} (parent {}) — needs reaping", o.pid, o.ppid),
+            ));
+        }
+
+        let rss_gib = (o.rss_kb as f64) / (1024.0 * 1024.0);
+        if rss_gib > 30.0 && !already_open("rss_oversize", &single) {
+            to_emit.push((
+                "rss_oversize".to_string(),
+                "critical".to_string(),
+                single.clone(),
+                format!("PID {} RSS {:.1} GiB ({})", o.pid, rss_gib, o.argv_first),
+            ));
+        } else if rss_gib > 20.0 && !already_open("rss_oversize", &single) {
+            to_emit.push((
+                "rss_oversize".to_string(),
+                "warn".to_string(),
+                single.clone(),
+                format!("PID {} RSS {:.1} GiB ({})", o.pid, rss_gib, o.argv_first),
+            ));
+        }
+
+        if o.cpu_pct > 800.0 && !already_open("cpu_pin", &single) {
+            to_emit.push((
+                "cpu_pin".to_string(),
+                "warn".to_string(),
+                single.clone(),
+                format!("PID {} CPU {:.0}% ({})", o.pid, o.cpu_pct, o.argv_first),
+            ));
+        }
+    }
+
+    let emit_count = to_emit.len();
+    for (kind, severity, pids, note) in to_emit {
+        let mut sorted = pids.clone();
+        sorted.sort_unstable();
+        let pids_json = format!(
+            "[{}]",
+            sorted
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        ctx.db.resource_anomaly().insert(ResourceAnomaly {
+            id: 0,
+            detected_at: now,
+            kind,
+            severity,
+            pids: pids_json,
+            note,
+            handled: false,
+            handled_at: String::new(),
+            handled_by: String::new(),
+        });
+    }
+    if emit_count > 0 {
+        log::info!("resource_supervisor_tick: emitted {} anomalies", emit_count);
+    }
+    Ok(())
+}
+
+#[reducer]
+pub fn resource_anomaly_ack(
+    ctx: &ReducerContext,
+    id: u64,
+    handled_by: String,
+) -> Result<(), String> {
+    let mut row = ctx
+        .db
+        .resource_anomaly()
+        .id()
+        .find(&id)
+        .ok_or_else(|| format!("resource_anomaly id={} not found", id))?;
+    if row.handled {
+        return Ok(());
+    }
+    row.handled = true;
+    row.handled_at = format!("{:?}", ctx.timestamp);
+    row.handled_by = handled_by;
+    ctx.db.resource_anomaly().id().update(row);
+    Ok(())
+}
+
+/// Local helper — same shape as the supervisor_tick parser, kept private
+/// so this module owns its own ts parsing in case the upstream one
+/// changes.
+fn parse_ts_micros_resource(s: &str) -> Option<i64> {
+    let key = "__timestamp_micros_since_unix_epoch__:";
+    let pos = s.find(key)?;
+    let tail = &s[pos + key.len()..];
+    let end = tail
+        .find(|c: char| !c.is_ascii_digit() && c != '-' && c != ' ')
+        .unwrap_or(tail.len());
+    tail[..end].trim().parse::<i64>().ok()
 }
