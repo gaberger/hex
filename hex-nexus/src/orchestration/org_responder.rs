@@ -233,6 +233,37 @@ async fn process_role(
             "org_responder: replying to unanswered DM"
         );
 
+        // ADR-2605082500: SOP-enabled personas route to the new typed
+        // tool path instead of the free-prose Confirm/Silent contract.
+        if crate::orchestration::sop_executor::is_sop_persona(role) {
+            let repo_root = std::env::var("HEX_REPO_ROOT")
+                .unwrap_or_else(|_| "/home/gary/hex-intf".to_string());
+            let sop_result = crate::orchestration::sop_executor::run(role, &content, &repo_root).await;
+            tracing::info!(
+                role = %role, msg_id,
+                intent = %sop_result.intent,
+                emitted = ?sop_result.emitted_action_kind,
+                trace = ?sop_result.phase_trace,
+                "org_responder: SOP run complete"
+            );
+            // Send the structured chat card back to the operator.
+            if let Err(e) = comm
+                .send_dm(
+                    role_string.clone(),
+                    from.clone(),
+                    sop_result.chat_card.clone(),
+                    thread_id.clone(),
+                )
+                .await
+            {
+                tracing::warn!(role = %role, msg_id, error = %e, "org_responder: SOP send_dm failed");
+            }
+            if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
+                tracing::debug!(role = %role, msg_id, error = %e, "mark_read after SOP failed");
+            }
+            continue;
+        }
+
         // History assembly:
         //  - Threaded DM (board meeting / multi-mention group): pull EVERY
         //    message in the thread (CEO + each peer's reply) so the CTO

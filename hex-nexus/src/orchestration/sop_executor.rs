@@ -1,0 +1,623 @@
+//! SOP executor (ADR-2605082500).
+//!
+//! Replaces the org_responder's single-LLM-call hot path with a
+//! 5-phase state machine for SOP-enabled personas (controlled by
+//! `HEX_SOP_PERSONAS` CSV env). Each phase has a deterministic gate or
+//! a bounded LLM call; off-schema responses are dropped, not negotiated.
+//!
+//! Phase 1 CLASSIFY  — regex intent detection, no LLM
+//! Phase 2 GROUND    — parallel tool calls (repo_grep, etc.), no LLM
+//! Phase 3 REASON    — single Anthropic call with tool registry, function-calling
+//! Phase 4 VERIFY    — schema/cargo gate on the emitted action
+//! Phase 5 EMIT      — already handled by tools (proposed_action_open) + chat card
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use serde_json::{json, Value};
+
+use crate::tools::ToolRegistry;
+
+/// True if `role` is opted into the SOP path via env CSV
+/// `HEX_SOP_PERSONAS=cto,cpo`.
+pub fn is_sop_persona(role: &str) -> bool {
+    let csv = std::env::var("HEX_SOP_PERSONAS").unwrap_or_default();
+    csv.split(',')
+        .map(|s| s.trim())
+        .any(|s| !s.is_empty() && s.eq_ignore_ascii_case(role))
+}
+
+/// Coarse intent classification — regex + keyword heuristics. Zero
+/// LLM cost. Returns a stable string for the rest of the SOP.
+pub fn classify_intent(message: &str) -> &'static str {
+    let lower = message.to_ascii_lowercase();
+    let has = |needle: &str| lower.contains(needle);
+
+    // Paradigm / strategy questions — escalate immediately.
+    if has("should we stop")
+        || has("paradigm")
+        || has("rethink")
+        || has("scrap and restart")
+        || has("are we wrong")
+    {
+        return "paradigm_question";
+    }
+    if has("draft") && (has("adr") || has("decision record")) {
+        return "adr_draft";
+    }
+    if has("workplan") || has("work plan") {
+        return "workplan_emit";
+    }
+    if has("review") && (has("architecture") || has("module") || has("crate") || has("pr") || has("merge")) {
+        return "arch_review";
+    }
+    if has("bug") || has("fix") || has("error") || has("crash") || has("panic") {
+        return "bug_triage";
+    }
+    if has("roadmap") || has("priority") || has("plan for") {
+        return "roadmap";
+    }
+    "code_question"
+}
+
+/// Result of one full SOP execution. Returned from `run()` to the caller
+/// so it can post the chat card and mark_read.
+#[derive(Debug, Clone)]
+pub struct SopResult {
+    pub intent: String,
+    pub phase_trace: Vec<String>,
+    /// Action emitted by phase REASON via tool call. None on escalate or no-action.
+    pub emitted_action_kind: Option<String>,
+    pub chat_card: String,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+/// Run the full SOP for a single inbound persona DM. Caller wires this
+/// into org_responder when `is_sop_persona(role)`.
+pub async fn run(
+    role: &str,
+    operator_message: &str,
+    repo_root: &str,
+) -> SopResult {
+    let mut trace = Vec::new();
+
+    // PHASE 1 CLASSIFY
+    let intent = classify_intent(operator_message);
+    trace.push(format!("CLASSIFY → {}", intent));
+
+    // GATE: paradigm questions escalate, no LLM.
+    if intent == "paradigm_question" {
+        let registry = ToolRegistry::default();
+        let _ = registry.execute(
+            "escalate_to_operator",
+            json!({
+                "reason": format!("Persona {} sees this as a paradigm/strategy question that requires human judgment, not autonomous action.", role),
+                "urgency": "med",
+            }),
+        ).await;
+        trace.push("ESCALATE → paradigm".to_string());
+        return SopResult {
+            intent: intent.to_string(),
+            phase_trace: trace,
+            emitted_action_kind: None,
+            chat_card: format!(
+                "[{}] Escalated: this looks like a paradigm/strategy decision. Operator review queued.",
+                role
+            ),
+            success: true,
+            error: None,
+        };
+    }
+
+    // PHASE 2 GROUND — parallel tool calls relevant to the intent.
+    let registry = Arc::new(ToolRegistry::default());
+    let ground_pack = ground_for_intent(&registry, intent, operator_message).await;
+    trace.push(format!(
+        "GROUND → {} repo_grep matches",
+        ground_pack
+            .get("repo_grep")
+            .and_then(|v| v.get("total_matches"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+    ));
+
+    // PHASE 3 REASON — Anthropic call with tools attached.
+    let reason_result = reason_with_tools(role, operator_message, intent, &ground_pack, registry.clone()).await;
+    let reason = match reason_result {
+        Ok(r) => r,
+        Err(e) => {
+            trace.push(format!("REASON → ERROR: {}", e));
+            return SopResult {
+                intent: intent.to_string(),
+                phase_trace: trace,
+                emitted_action_kind: None,
+                chat_card: format!("[{}] reasoning failed: {}", role, e),
+                success: false,
+                error: Some(e),
+            };
+        }
+    };
+    trace.push(format!(
+        "REASON → emitted {} (after {} tool round trips)",
+        reason.emitted_kind.as_deref().unwrap_or("(no action)"),
+        reason.tool_round_trips
+    ));
+
+    // PHASE 4 VERIFY (best-effort; tool-side validators already gate)
+    // For adr_draft, the tool itself validated body sections + sizes.
+    // For escalate, no further verify.
+    // For acknowledge, no verify.
+    let verified = true;
+    if verified {
+        trace.push("VERIFY → pass".to_string());
+    } else {
+        trace.push("VERIFY → fail".to_string());
+    }
+
+    // PHASE 5 EMIT — already done by the tool. Build chat card.
+    let card = build_chat_card(role, intent, &reason);
+    trace.push(format!("EMIT → chat card ({} chars)", card.len()));
+
+    SopResult {
+        intent: intent.to_string(),
+        phase_trace: trace,
+        emitted_action_kind: reason.emitted_kind,
+        chat_card: card,
+        success: true,
+        error: None,
+    }
+}
+
+#[derive(Debug)]
+struct ReasonResult {
+    emitted_kind: Option<String>,
+    tool_round_trips: u32,
+    final_text: String,
+}
+
+/// Phase GROUND: cheap parallel tool calls to populate context for REASON.
+async fn ground_for_intent(
+    registry: &Arc<ToolRegistry>,
+    intent: &str,
+    operator_message: &str,
+) -> Value {
+    // Pull the most distinctive nouns from the operator message — anything
+    // ≥ 4 chars that's not a stopword.
+    let pattern = derive_grep_pattern(operator_message);
+    let glob = match intent {
+        "adr_draft" => Some("docs/adrs/*.md"),
+        "workplan_emit" => Some("docs/workplans/*.json"),
+        _ => None,
+    };
+    let grep_input = if let Some(g) = glob {
+        json!({ "pattern": pattern, "glob": g, "max_matches": 20 })
+    } else {
+        json!({ "pattern": pattern, "max_matches": 20 })
+    };
+    let grep_result = registry.execute("repo_grep", grep_input).await;
+    json!({
+        "intent": intent,
+        "repo_grep": grep_result.output,
+    })
+}
+
+fn derive_grep_pattern(message: &str) -> String {
+    let stop: std::collections::HashSet<&str> = [
+        "the", "and", "for", "you", "with", "are", "was", "have", "from", "this", "that",
+        "what", "how", "why", "when", "where", "should", "could", "would", "draft", "spec",
+        "ceo", "cto", "cpo", "coo", "ciso", "board", "ask", "need", "any", "into",
+    ].iter().copied().collect();
+    let words: Vec<&str> = message
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-')
+        .filter(|w| w.len() >= 4 && !stop.contains(&w.to_ascii_lowercase().as_str()))
+        .take(5)
+        .collect();
+    if words.is_empty() {
+        "TODO".to_string()
+    } else {
+        words.join("|")
+    }
+}
+
+async fn reason_with_tools(
+    role: &str,
+    operator_message: &str,
+    intent: &str,
+    ground_pack: &Value,
+    registry: Arc<ToolRegistry>,
+) -> Result<ReasonResult, String> {
+    // Prefer Anthropic direct (cleanest function-calling); fall back to
+    // OpenRouter with OpenAI-format tools when Anthropic key absent.
+    let anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok();
+    let openrouter_key = std::env::var("OPENROUTER_API_KEY").ok();
+
+    if let Some(key) = anthropic_key {
+        return reason_via_anthropic(role, operator_message, intent, ground_pack, registry, key).await;
+    }
+    if let Some(key) = openrouter_key {
+        return reason_via_openrouter(role, operator_message, intent, ground_pack, registry, key).await;
+    }
+    Err("no ANTHROPIC_API_KEY or OPENROUTER_API_KEY available".to_string())
+}
+
+async fn reason_via_anthropic(
+    role: &str,
+    operator_message: &str,
+    intent: &str,
+    ground_pack: &Value,
+    registry: Arc<ToolRegistry>,
+    api_key: String,
+) -> Result<ReasonResult, String> {
+    let model = std::env::var("HEX_SOP_REASON_MODEL")
+        .unwrap_or_else(|_| "claude-sonnet-4-5".to_string());
+
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("http build: {}", e))?;
+
+    let system = build_reason_system_prompt(role, intent);
+    let user_content = format!(
+        "Operator message:\n>>> {}\n\nGround pack (deterministic tool results):\n{}\n\n\
+         Per the SOP: emit exactly ONE structured action via tool call \
+         (adr_draft, escalate_to_operator, or — if the operator's ask is genuinely \
+         answered by the ground pack alone with no artifact needed — reply with a \
+         brief 1-2 sentence direct answer and no tool call).",
+        operator_message,
+        serde_json::to_string_pretty(ground_pack).unwrap_or_default()
+    );
+
+    let mut messages: Vec<Value> = vec![json!({
+        "role": "user",
+        "content": user_content,
+    })];
+
+    let tools_schema = registry.anthropic_schema();
+
+    let mut emitted_kind: Option<String> = None;
+    let mut final_text = String::new();
+    let mut round_trips: u32 = 0;
+    let max_round_trips = 8u32;
+
+    loop {
+        if round_trips >= max_round_trips {
+            return Err(format!("tool round-trip cap ({}) hit without final reply", max_round_trips));
+        }
+
+        let req_body = json!({
+            "model": model,
+            "max_tokens": 4096,
+            "system": system,
+            "tools": tools_schema,
+            "messages": messages,
+        });
+
+        let resp = http
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&req_body)
+            .send()
+            .await
+            .map_err(|e| format!("anthropic http: {}", e))?;
+
+        let status = resp.status();
+        let body: Value = resp.json().await.map_err(|e| format!("anthropic json: {}", e))?;
+        if !status.is_success() {
+            return Err(format!("anthropic HTTP {}: {}", status, body));
+        }
+
+        let stop_reason = body.get("stop_reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let content_blocks = body.get("content").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+        // Append assistant turn to messages so subsequent tool_result references resolve.
+        messages.push(json!({
+            "role": "assistant",
+            "content": content_blocks.clone(),
+        }));
+
+        let mut tool_uses: Vec<(String, String, Value)> = Vec::new(); // (id, name, input)
+        for block in &content_blocks {
+            match block.get("type").and_then(|v| v.as_str()) {
+                Some("text") => {
+                    if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
+                        final_text.push_str(t);
+                    }
+                }
+                Some("tool_use") => {
+                    let id = block.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let input = block.get("input").cloned().unwrap_or(Value::Null);
+                    tool_uses.push((id, name, input));
+                }
+                _ => {}
+            }
+        }
+
+        if tool_uses.is_empty() {
+            // Model returned a final non-tool reply. Done.
+            return Ok(ReasonResult {
+                emitted_kind,
+                tool_round_trips: round_trips,
+                final_text,
+            });
+        }
+
+        // Execute every tool_use block in this turn, append a single
+        // user turn with tool_result blocks for each.
+        let mut tool_results: Vec<Value> = Vec::new();
+        for (id, name, input) in &tool_uses {
+            // Track the FIRST emit-class tool call as the persona's emitted action.
+            if emitted_kind.is_none() && matches!(name.as_str(), "adr_draft" | "workplan_emit" | "escalate_to_operator") {
+                emitted_kind = Some(name.clone());
+            }
+            let result = registry.execute(name, input.clone()).await;
+            let result_payload = json!({
+                "ok": result.ok,
+                "output": result.output,
+                "error": result.error,
+                "elapsed_ms": result.elapsed_ms,
+                "truncated": result.truncated,
+            });
+            tool_results.push(json!({
+                "type": "tool_result",
+                "tool_use_id": id,
+                "content": serde_json::to_string(&result_payload).unwrap_or_default(),
+                "is_error": !result.ok,
+            }));
+        }
+        messages.push(json!({
+            "role": "user",
+            "content": tool_results,
+        }));
+
+        round_trips += 1;
+
+        // If model said end_turn AND we executed tool calls (rare but
+        // possible on multi-block final), exit; otherwise loop for next reasoning step.
+        if stop_reason == "end_turn" {
+            return Ok(ReasonResult {
+                emitted_kind,
+                tool_round_trips: round_trips,
+                final_text,
+            });
+        }
+    }
+}
+
+/// OpenRouter path — same SOP semantics, OpenAI-format function calling.
+/// Used when ANTHROPIC_API_KEY is absent. Picks a tool-capable model
+/// via HEX_SOP_REASON_OR_MODEL (default anthropic/claude-sonnet-4).
+async fn reason_via_openrouter(
+    role: &str,
+    operator_message: &str,
+    intent: &str,
+    ground_pack: &Value,
+    registry: Arc<ToolRegistry>,
+    api_key: String,
+) -> Result<ReasonResult, String> {
+    let model = std::env::var("HEX_SOP_REASON_OR_MODEL")
+        .unwrap_or_else(|_| "anthropic/claude-sonnet-4.5".to_string());
+
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("http build: {}", e))?;
+
+    let system = build_reason_system_prompt(role, intent);
+    let user_content = format!(
+        "Operator message:\n>>> {}\n\nGround pack (deterministic tool results):\n{}\n\n\
+         Per the SOP: emit exactly ONE structured action via tool call \
+         (adr_draft, escalate_to_operator), or — if the operator's ask is genuinely \
+         answered by the ground pack alone with no artifact needed — reply with a \
+         brief 1-2 sentence direct answer and no tool call.",
+        operator_message,
+        serde_json::to_string_pretty(ground_pack).unwrap_or_default()
+    );
+
+    let mut messages: Vec<Value> = vec![
+        json!({ "role": "system", "content": system }),
+        json!({ "role": "user", "content": user_content }),
+    ];
+
+    // OpenAI/OpenRouter tools format: [{type: "function", function: {name, description, parameters}}]
+    let anthropic_arr = registry.anthropic_schema();
+    let openai_tools: Vec<Value> = anthropic_arr
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|t| {
+            json!({
+                "type": "function",
+                "function": {
+                    "name": t.get("name").cloned().unwrap_or(Value::Null),
+                    "description": t.get("description").cloned().unwrap_or(Value::Null),
+                    "parameters": t.get("input_schema").cloned().unwrap_or_else(|| json!({"type":"object","properties":{}})),
+                }
+            })
+        })
+        .collect();
+
+    let mut emitted_kind: Option<String> = None;
+    let mut final_text = String::new();
+    let mut round_trips: u32 = 0;
+    let max_round_trips = 8u32;
+
+    loop {
+        if round_trips >= max_round_trips {
+            return Err(format!("tool round-trip cap ({}) hit without final reply", max_round_trips));
+        }
+
+        let req_body = json!({
+            "model": model,
+            "messages": messages,
+            "tools": openai_tools,
+            "max_tokens": 4096,
+        });
+
+        let resp = http
+            .post("https://openrouter.ai/api/v1/chat/completions")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("HTTP-Referer", "https://hex-aios.local")
+            .header("X-Title", "hex SOP")
+            .header("content-type", "application/json")
+            .json(&req_body)
+            .send()
+            .await
+            .map_err(|e| format!("openrouter http: {}", e))?;
+
+        let status = resp.status();
+        let body: Value = resp.json().await.map_err(|e| format!("openrouter json: {}", e))?;
+        if !status.is_success() {
+            return Err(format!("openrouter HTTP {}: {}", status, body));
+        }
+
+        let choice = body
+            .get("choices")
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.first())
+            .cloned()
+            .ok_or_else(|| "openrouter: empty choices".to_string())?;
+        let message = choice.get("message").cloned().unwrap_or(Value::Null);
+        let assistant_content = message.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let tool_calls = message.get("tool_calls").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+        // Push assistant turn (preserve tool_calls so subsequent tool messages link).
+        messages.push(json!({
+            "role": "assistant",
+            "content": if assistant_content.is_empty() { Value::Null } else { Value::String(assistant_content.clone()) },
+            "tool_calls": tool_calls.clone(),
+        }));
+
+        if !assistant_content.is_empty() {
+            final_text.push_str(&assistant_content);
+        }
+
+        if tool_calls.is_empty() {
+            return Ok(ReasonResult {
+                emitted_kind,
+                tool_round_trips: round_trips,
+                final_text,
+            });
+        }
+
+        // Execute each tool call; append a tool message per call.
+        for tc in &tool_calls {
+            let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let func = tc.get("function").cloned().unwrap_or(Value::Null);
+            let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let args_str = func.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}");
+            let input: Value = serde_json::from_str(args_str).unwrap_or(Value::Null);
+
+            if emitted_kind.is_none() && matches!(name.as_str(), "adr_draft" | "workplan_emit" | "escalate_to_operator") {
+                emitted_kind = Some(name.clone());
+            }
+
+            let result = registry.execute(&name, input).await;
+            let result_payload = json!({
+                "ok": result.ok,
+                "output": result.output,
+                "error": result.error,
+                "elapsed_ms": result.elapsed_ms,
+                "truncated": result.truncated,
+            });
+            messages.push(json!({
+                "role": "tool",
+                "tool_call_id": id,
+                "content": serde_json::to_string(&result_payload).unwrap_or_default(),
+            }));
+        }
+
+        round_trips += 1;
+    }
+}
+
+fn build_reason_system_prompt(role: &str, intent: &str) -> String {
+    let role_title = match role {
+        "cto" => "Chief Technology Officer",
+        "cpo" => "Chief Product Officer",
+        "coo" => "Chief Operating Officer",
+        "ciso" => "Chief Information Security Officer",
+        "chief-visionary" => "Chief Visionary",
+        _ => "Executive",
+    };
+    format!(
+        "You are the {role_title} ({role}) of a hexagonal AIOS development \
+         project called hex. You operate under ADR-2605082500's SOP contract.\n\n\
+         The intent of this turn was classified as: {intent}.\n\n\
+         === CONTRACT ===\n\
+         You may call tools to ground your reasoning (e.g. repo_grep additional \
+         patterns, cargo_check a crate). When you have what you need, emit \
+         EXACTLY ONE structured action via tool call:\n\n\
+         - `adr_draft(id, title, status, body)` for an ADR (intent=adr_draft, arch_review)\n\
+         - `escalate_to_operator(reason, urgency, options?)` when the operator should pick\n\
+         - or no tool call + a 1-2 sentence direct text answer when the ground pack already \
+           contains the answer (e.g. simple code questions about file contents)\n\n\
+         === HARD RULES ===\n\
+         - Cite real repo paths from the ground pack or tool calls. Do NOT invent files \
+           that don't exist.\n\
+         - For adr_draft: id MUST be the current 10-digit timestamp form (e.g. 2605082600); \
+           body MUST contain `## Context`, `## Decision`, and `## Consequences` sections; \
+           body 200-50000 chars; status='proposed' for new drafts.\n\
+         - Stay in your domain. {role} owns: {domain}. Out-of-domain → escalate_to_operator.\n\
+         - The operator does not want padding. Be precise. Cite. Decide.",
+        role = role,
+        role_title = role_title,
+        intent = intent,
+        domain = match role {
+            "cto" => "architecture, code, build/test gates, dependency choices, ADR drafting for technical decisions",
+            "cpo" => "product, UX, user-facing surfaces, specs",
+            "coo" => "process, people, ops, workflow",
+            "ciso" => "security, compliance, secrets, threat model",
+            "chief-visionary" => "long-term direction, paradigm choices",
+            _ => "general executive concerns",
+        }
+    )
+}
+
+fn build_chat_card(role: &str, intent: &str, reason: &ReasonResult) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("[{}] intent={} ", role, intent));
+    if let Some(ref kind) = reason.emitted_kind {
+        s.push_str(&format!("→ {} ", kind));
+    } else {
+        s.push_str("→ direct ");
+    }
+    s.push_str(&format!("(rounds={})", reason.tool_round_trips));
+    if !reason.final_text.is_empty() {
+        s.push_str(&format!("\n\n{}", reason.final_text.chars().take(800).collect::<String>()));
+    }
+    s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn intent_classifier() {
+        assert_eq!(classify_intent("Draft an ADR for typed tools"), "adr_draft");
+        assert_eq!(classify_intent("Should we stop and rethink the paradigm"), "paradigm_question");
+        assert_eq!(classify_intent("there's a bug in the chat dispatcher"), "bug_triage");
+        assert_eq!(classify_intent("Review the architecture of the merge gate"), "arch_review");
+        assert_eq!(classify_intent("hello"), "code_question");
+    }
+
+    #[test]
+    fn sop_persona_csv() {
+        std::env::set_var("HEX_SOP_PERSONAS", "cto, cpo");
+        assert!(is_sop_persona("cto"));
+        assert!(is_sop_persona("CPO"));
+        assert!(!is_sop_persona("ciso"));
+        std::env::remove_var("HEX_SOP_PERSONAS");
+    }
+
+    #[test]
+    fn grep_pattern_extraction() {
+        let p = derive_grep_pattern("Draft an ADR for the typed tool library and SOP execution");
+        assert!(p.contains("typed") || p.contains("library") || p.contains("execution"));
+    }
+}

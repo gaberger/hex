@@ -271,13 +271,16 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 .ok().flatten()
                 .or_else(|| std::env::var("OPENROUTER_API_KEY").ok());
 
-            if anthropic_key.is_some() {
+            if let Some(ref k) = anthropic_key {
                 tracing::info!("ANTHROPIC_API_KEY resolved from vault");
-                app_state.anthropic_api_key = anthropic_key;
+                // Re-export so SOP executor + other in-process modules can pick it up.
+                std::env::set_var("ANTHROPIC_API_KEY", k);
+                app_state.anthropic_api_key = anthropic_key.clone();
             }
-            if openrouter_key.is_some() {
+            if let Some(ref k) = openrouter_key {
                 tracing::info!("OPENROUTER_API_KEY resolved from vault");
-                app_state.openrouter_api_key = openrouter_key;
+                std::env::set_var("OPENROUTER_API_KEY", k);
+                app_state.openrouter_api_key = openrouter_key.clone();
             }
 
             app_state.spacetime_secrets = Some(Arc::new(client));
