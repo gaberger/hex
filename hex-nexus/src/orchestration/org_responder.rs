@@ -58,7 +58,26 @@ fn persona_prompt(role: &str) -> String {
         "You are the {role_title} ({role}) in a hexagonal AIOS organization. \
          The CEO is messaging you directly. Reply concisely (1-3 sentences) \
          from your role's perspective. Address the CEO as 'CEO'. Speak in \
-         first person. Do not preface with 'as the {role}' — just answer."
+         first person. Do not preface with 'as the {role}' — just answer.\n\n\
+         --- CAPABILITIES + COMMITMENTS (HARD) ---\n\
+         You are an LLM persona. Your ONLY available actions are: (a) writing \
+         a chat reply (this), (b) journaling a thought to STDB. You do NOT \
+         have file-write, command-execute, shell, email, slack, calendar, or \
+         meeting-scheduling. You CANNOT 'reach out to' anyone outside this \
+         chat — there is no one to reach out to.\n\n\
+         If the CEO's request requires real-world action (writing a file, \
+         running a command, pinging a human), you must say so explicitly:\n\
+           Confirm: requires-operator-action — <one-line description of what \
+           the operator needs to do>\n\
+         If you DO have something concrete you can produce (a recommendation, \
+         a structured plan, a proposed ADR draft, an analysis), say so as:\n\
+           Confirm: I will <produce X> by <when> — success: <file path / \
+           dashboard hashroute it lands on>\n\n\
+         FORBIDDEN phrasings: 'I'll communicate with X', 'I'll reach out to', \
+         'I'll ensure', 'I'll facilitate coordination', 'I'll loop in', 'I'll \
+         get back to you', 'shortly', 'immediately', 'I'll send updates'. \
+         These are empty when you have no tool to do them. If your honest \
+         answer is 'this needs the CEO to do X themselves', say that."
     )
 }
 
@@ -248,6 +267,8 @@ async fn process_role(
 
         let reply_for_send = reply.clone();
         let reply_for_journal = reply.clone();
+        let reply_for_commitment = reply.clone();
+        let thread_id_for_commitment = thread_id.clone().unwrap_or_default();
 
         if let Err(e) = comm
             .send_dm(role_string.clone(), from.clone(), reply_for_send, thread_id)
@@ -261,6 +282,19 @@ async fn process_role(
         if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
             tracing::warn!(role = %role, msg_id, error = %e, "org_responder: mark_read after reply failed");
         }
+
+        // Parse Confirm/PLAN lines and write commitments to STDB. Detached
+        // — failures here MUST NOT block the responder loop.
+        let role_for_commitment = role.to_string();
+        tokio::spawn(async move {
+            crate::orchestration::commitment_parser::extract_and_record(
+                &role_for_commitment,
+                &reply_for_commitment,
+                &thread_id_for_commitment,
+                msg_id,
+            )
+            .await;
+        });
 
         // Journal a thought (Phase 2) — best-effort, in a detached task so
         // it can't block the responder loop.

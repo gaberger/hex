@@ -444,6 +444,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                         "persona_init",
                         "resource_supervisor_init",
                         "supervisor_init",
+                        "commitment_init",
                     ] {
                         let url = format!("{}/v1/database/{}/call/{}", host_init, db_init, reducer);
                         match client.post(&url).json(&serde_json::json!([])).send().await {

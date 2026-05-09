@@ -506,6 +506,9 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/resources", get(resources::list_processes))
         .route("/api/resources/anomalies", get(resources::list_anomalies))
         .route("/api/resources/anomalies/ack", post(resources::ack_anomaly))
+        .route("/api/commitments", get(resources::list_commitments))
+        .route("/api/commitments/satisfy", post(resources::satisfy_commitment))
+        .route("/api/commitments/abandon", post(resources::abandon_commitment))
         // SpacetimeDB registry — database identities
         .route("/api/stdb/registry", get(stdb_registry::get_registry))
         // Per-project queries (browser reads)

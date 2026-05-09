@@ -14,6 +14,7 @@ pub mod directive;
 pub mod errors;
 pub mod grammars;
 pub mod inference_strategy_builder;
+pub mod commitment_parser;
 pub mod org_responder;
 pub mod repo_grounding;
 pub mod resource_observer;

@@ -45,6 +45,7 @@ const MergeGate = lazy(() => import('../components/views/MergeGate'));
 const PersonaHealth = lazy(() => import('../components/views/PersonaHealth'));
 const Thoughts = lazy(() => import('../components/views/Thoughts'));
 const Resources = lazy(() => import('../components/views/Resources'));
+const Commitments = lazy(() => import('../components/views/Commitments'));
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
 
@@ -263,6 +264,7 @@ const App: Component = () => {
   const isPersonaHealthPage = () => route().page === "persona-health";
   const isThoughtsPage = () => route().page === "thoughts";
   const isResourcesPage = () => route().page === "resources";
+  const isCommitmentsPage = () => route().page === "commitments";
 
   return (
     <>
@@ -333,8 +335,16 @@ const App: Component = () => {
         <ShortcutsOverlay />
       </Show>
 
+      {/* Full-screen Commitments */}
+      <Show when={isCommitmentsPage()}>
+        <ConnectionStatusBanner />
+        <Commitments />
+        <ToastContainer />
+        <ShortcutsOverlay />
+      </Show>
+
       {/* Standard layout with sidebar for all other pages */}
-      <Show when={!isBrainPage() && !isOrgChartPage() && !isOrgCommsPage() && !isTeamPage() && !isMergeGatePage() && !isPersonaHealthPage() && !isThoughtsPage() && !isResourcesPage()}>
+      <Show when={!isBrainPage() && !isOrgChartPage() && !isOrgCommsPage() && !isTeamPage() && !isMergeGatePage() && !isPersonaHealthPage() && !isThoughtsPage() && !isResourcesPage() && !isCommitmentsPage()}>
         <div class="flex h-screen flex-col bg-gray-950 text-gray-100">
           {/* Connection status banner — shown when nexus or SpacetimeDB is unavailable */}
           <ConnectionStatusBanner />
@@ -710,6 +720,25 @@ const App: Component = () => {
                 <line x1="12" y1="17" x2="12" y2="21" />
               </svg>
               <Show when={!sidebarCollapsed()}>Resources</Show>
+            </button>
+            {/* Commitments */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              classList={{
+                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "commitments",
+                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "commitments",
+                "justify-center px-0": sidebarCollapsed(),
+              }}
+              aria-label={sidebarCollapsed() ? "Commitments" : undefined}
+              aria-current={route().page === "commitments" ? "page" : undefined}
+              onClick={() => { navigate({ page: "commitments" }); setMobileDrawerOpen(false); }}
+            >
+              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                classList={{ "text-cyan-400": route().page === "commitments" }}>
+                <path d="M9 11l3 3L22 4" />
+                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Commitments</Show>
             </button>
             {/* Substrate Swaps (ADR-2604261500) */}
             <button

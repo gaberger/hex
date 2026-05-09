@@ -184,6 +184,112 @@ pub async fn list_anomalies(
     Ok(Json(json!({ "anomalies": anomalies })))
 }
 
+// ─── GET /api/commitments ────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct CommitmentsQuery {
+    /// "open" | "all" | "overdue". Defaults to all-open-or-overdue.
+    pub status: Option<String>,
+    pub role: Option<String>,
+    pub limit: Option<u32>,
+}
+
+pub async fn list_commitments(
+    State(_state): State<SharedState>,
+    Query(q): Query<CommitmentsQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let rows = sql(
+        "SELECT id, role, raw_text, action, deadline_micros, success_artifact, artifact_kind, thread_id, related_msg_id, created_at, status, last_checked, note FROM commitment",
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))))?;
+
+    let want = q.status.as_deref().unwrap_or("active");
+    let role_filter = q.role.clone();
+
+    let mut commitments: Vec<Value> = rows
+        .into_iter()
+        .filter_map(|r| {
+            if r.len() < 13 {
+                return None;
+            }
+            let role = r[1].as_str().unwrap_or("").to_string();
+            let status = r[10].as_str().unwrap_or("").to_string();
+            if let Some(ref f) = role_filter {
+                if &role != f {
+                    return None;
+                }
+            }
+            let keep = match want {
+                "all" => true,
+                "open" => status == "open",
+                "overdue" => status == "overdue",
+                "active" | _ => status == "open" || status == "overdue",
+            };
+            if !keep {
+                return None;
+            }
+            Some(json!({
+                "id":               r[0].as_u64().unwrap_or(0),
+                "role":             role,
+                "raw_text":         r[2].as_str().unwrap_or(""),
+                "action":           r[3].as_str().unwrap_or(""),
+                "deadline_micros":  r[4].as_i64().unwrap_or(0),
+                "success_artifact": r[5].as_str().unwrap_or(""),
+                "artifact_kind":    r[6].as_str().unwrap_or(""),
+                "thread_id":        r[7].as_str().unwrap_or(""),
+                "related_msg_id":   r[8].as_u64().unwrap_or(0),
+                "created_at":       r[9].as_str().unwrap_or(""),
+                "status":           status,
+                "last_checked":     r[11].as_str().unwrap_or(""),
+                "note":             r[12].as_str().unwrap_or(""),
+            }))
+        })
+        .collect();
+    commitments.sort_by(|a, b| {
+        b.get("id")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            .cmp(&a.get("id").and_then(|v| v.as_u64()).unwrap_or(0))
+    });
+    if let Some(n) = q.limit {
+        commitments.truncate(n as usize);
+    }
+    Ok(Json(json!({ "commitments": commitments })))
+}
+
+#[derive(Deserialize)]
+pub struct SatisfyBody {
+    pub id: u64,
+    pub evidence: String,
+}
+
+pub async fn satisfy_commitment(
+    State(_state): State<SharedState>,
+    Json(body): Json<SatisfyBody>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    call_reducer("commitment_satisfy", json!([body.id, body.evidence]))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))))?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct AbandonBody {
+    pub id: u64,
+    pub reason: String,
+}
+
+pub async fn abandon_commitment(
+    State(_state): State<SharedState>,
+    Json(body): Json<AbandonBody>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    call_reducer("commitment_abandon", json!([body.id, body.reason]))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))))?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 // ─── POST /api/resources/anomalies/ack ───────────────────────────────
 
 #[derive(Deserialize)]

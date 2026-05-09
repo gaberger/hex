@@ -5755,3 +5755,204 @@ fn parse_ts_micros_resource(s: &str) -> Option<i64> {
         .unwrap_or(tail.len());
     tail[..end].trim().parse::<i64>().ok()
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// Commitment ledger
+//
+// Every persona "Confirm: I will X by Y, success = Z" reply in a board /
+// group thread is parsed by nexus and written here. The 10-minute
+// commitment_check_tick flips overdue rows so the operator sees who
+// said-but-didn't on the dashboard, and emits a resource_anomaly so
+// nothing slips silently.
+// ──────────────────────────────────────────────────────────────────────
+
+#[table(name = commitment, public)]
+#[derive(Clone, Debug)]
+pub struct Commitment {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    /// Persona role that made the promise.
+    pub role: String,
+    /// Verbatim Confirm/PLAN line as written by the persona — operator
+    /// audit trail.
+    pub raw_text: String,
+    /// Extracted action ("draft ADR-XXX", "post status update", …).
+    pub action: String,
+    /// Unix micros. 0 = no explicit deadline (default 1h applied at check).
+    pub deadline_micros: i64,
+    /// What "done" looks like: file path, dashboard hashroute, STDB
+    /// table name, or the literal "requires-operator-action".
+    pub success_artifact: String,
+    /// "verifiable_path" | "verifiable_route" | "operator_action" | "none"
+    pub artifact_kind: String,
+    pub thread_id: String,
+    pub related_msg_id: u64,
+    pub created_at: Timestamp,
+    /// "open" | "satisfied" | "overdue" | "abandoned"
+    pub status: String,
+    pub last_checked: Timestamp,
+    pub note: String,
+}
+
+#[table(name = commitment_check_schedule, public, scheduled(commitment_check_tick))]
+#[derive(Clone, Debug)]
+pub struct CommitmentCheckSchedule {
+    #[primary_key]
+    #[auto_inc]
+    pub scheduled_id: u64,
+    pub scheduled_at: ScheduleAt,
+}
+
+#[reducer]
+pub fn commitment_init(ctx: &ReducerContext) -> Result<(), String> {
+    if ctx.db.commitment_check_schedule().iter().next().is_some() {
+        log::info!("commitment_init: schedule already exists, skipping");
+        return Ok(());
+    }
+    let interval = ScheduleAt::Interval(std::time::Duration::from_secs(600).into());
+    ctx.db.commitment_check_schedule().insert(CommitmentCheckSchedule {
+        scheduled_id: 0,
+        scheduled_at: interval,
+    });
+    log::info!("commitment_init: tick scheduled every 600s");
+    Ok(())
+}
+
+#[reducer]
+pub fn commitment_open(
+    ctx: &ReducerContext,
+    role: String,
+    raw_text: String,
+    action: String,
+    deadline_micros: i64,
+    success_artifact: String,
+    artifact_kind: String,
+    thread_id: String,
+    related_msg_id: u64,
+) -> Result<(), String> {
+    let now = ctx.timestamp;
+    ctx.db.commitment().insert(Commitment {
+        id: 0,
+        role,
+        raw_text,
+        action,
+        deadline_micros,
+        success_artifact,
+        artifact_kind,
+        thread_id,
+        related_msg_id,
+        created_at: now,
+        status: "open".to_string(),
+        last_checked: now,
+        note: String::new(),
+    });
+    Ok(())
+}
+
+#[reducer]
+pub fn commitment_satisfy(
+    ctx: &ReducerContext,
+    id: u64,
+    evidence: String,
+) -> Result<(), String> {
+    let mut row = ctx
+        .db
+        .commitment()
+        .id()
+        .find(&id)
+        .ok_or_else(|| format!("commitment id={} not found", id))?;
+    if row.status == "satisfied" {
+        return Ok(());
+    }
+    row.status = "satisfied".to_string();
+    row.note = evidence;
+    row.last_checked = ctx.timestamp;
+    ctx.db.commitment().id().update(row);
+    Ok(())
+}
+
+#[reducer]
+pub fn commitment_abandon(
+    ctx: &ReducerContext,
+    id: u64,
+    reason: String,
+) -> Result<(), String> {
+    let mut row = ctx
+        .db
+        .commitment()
+        .id()
+        .find(&id)
+        .ok_or_else(|| format!("commitment id={} not found", id))?;
+    if row.status == "abandoned" {
+        return Ok(());
+    }
+    row.status = "abandoned".to_string();
+    row.note = reason;
+    row.last_checked = ctx.timestamp;
+    ctx.db.commitment().id().update(row);
+    Ok(())
+}
+
+/// Scheduled every 600s. For each open commitment whose deadline has
+/// passed (or whose default 1h grace expired), flip to "overdue" and
+/// emit a resource_anomaly so the operator sees it without checking the
+/// commitments page.
+#[reducer]
+pub fn commitment_check_tick(
+    ctx: &ReducerContext,
+    _schedule: CommitmentCheckSchedule,
+) -> Result<(), String> {
+    let now = ctx.timestamp;
+    let now_micros = parse_ts_micros_resource(&format!("{:?}", now)).unwrap_or(0);
+    let default_grace_micros: i64 = 60 * 60 * 1_000_000; // 1h fallback
+
+    let open: Vec<Commitment> = ctx
+        .db
+        .commitment()
+        .iter()
+        .filter(|c| c.status == "open")
+        .collect();
+
+    let mut flipped = 0u32;
+    for c in open {
+        let effective_deadline = if c.deadline_micros > 0 {
+            c.deadline_micros
+        } else {
+            // No explicit deadline — give 1h from creation, then flag.
+            parse_ts_micros_resource(&format!("{:?}", c.created_at))
+                .map(|m| m + default_grace_micros)
+                .unwrap_or(0)
+        };
+        if effective_deadline > 0 && now_micros > effective_deadline {
+            let mut row = c.clone();
+            row.status = "overdue".to_string();
+            row.last_checked = now;
+            ctx.db.commitment().id().update(row);
+            flipped += 1;
+
+            // Surface in the same anomaly inbox the operator already
+            // watches — keep one alerting surface.
+            let pids = format!("[{}]", c.id);
+            let note = format!(
+                "{} promised: {} (artifact={}, thread={})",
+                c.role, c.action, c.success_artifact, c.thread_id
+            );
+            ctx.db.resource_anomaly().insert(ResourceAnomaly {
+                id: 0,
+                detected_at: now,
+                kind: "overdue_commitment".to_string(),
+                severity: "warn".to_string(),
+                pids,
+                note,
+                handled: false,
+                handled_at: String::new(),
+                handled_by: String::new(),
+            });
+        }
+    }
+    if flipped > 0 {
+        log::info!("commitment_check_tick: flipped {} commitments to overdue", flipped);
+    }
+    Ok(())
+}
