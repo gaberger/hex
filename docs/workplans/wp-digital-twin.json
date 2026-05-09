@@ -1,0 +1,80 @@
+{
+  "id": "wp-digital-twin",
+  "title": "Digital-twin auto-validator (operator stand-in for proposed actions)",
+  "adr": "ADR-2605082300",
+  "status": "in_progress",
+  "paused": false,
+  "phases": [
+    {
+      "id": "P1",
+      "title": "STDB action queue",
+      "status": "in_progress",
+      "tasks": [
+        "proposed_action table (id auto, kind, payload_json, proposed_by, related_commitment_id, status, twin_verdict, twin_rationale, escalate_reason, proposed_at, decided_at, executed_at)",
+        "executed_action append-only audit table",
+        "Reducers: proposed_action_open, proposed_action_twin_decide, proposed_action_mark_executed, proposed_action_mark_failed, proposed_action_operator_override",
+        "twin_review_schedule scheduled reducer (30s) — placeholder; nexus-side consumer drives the work"
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "Drafter — commitment to file_write payload",
+      "status": "pending",
+      "tasks": [
+        "orchestration::drafter tokio task polls commitment WHERE artifact_kind='verifiable_path' AND status='open' AND no proposed_action exists yet",
+        "Inference proposer with prompt 'You committed to <action> with success=<artifact>. Produce the actual content of <artifact> now.'",
+        "Write proposed_action(kind='file_write', payload={path,content}, proposed_by=role, related_commitment_id=id)",
+        "Cap content size 50 KB; truncate + warn if exceeded"
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "Digital-twin reviewer",
+      "status": "pending",
+      "tasks": [
+        "orchestration::twin_reviewer tokio task polls proposed_action WHERE status='pending'",
+        "Loads operator memory dir verbatim (~/.claude/projects/.../memory/*.md, capped 32 KB)",
+        "Loads last 10 commitment satisfy/abandon decisions",
+        "Builds JSON-mode inference call (frontier model when available, else Tier 2.5)",
+        "Parses {verdict, rationale, escalate_reason?} into proposed_action_twin_decide reducer",
+        "On escalate: posts inbox notification priority=2 + leaves status=escalated",
+        "Drift detector: if operator overrides twin >25% in 1h sliding window, pause twin via env-mediated kill switch"
+      ]
+    },
+    {
+      "id": "P4",
+      "title": "Action executor (file_write sink)",
+      "status": "pending",
+      "tasks": [
+        "orchestration::action_executor::file_write polls proposed_action WHERE status='approved'",
+        "Hard deny-list: trunk Cargo.toml, Cargo.lock, /etc/, /root/, anything outside repo, anything matching active hijacker damage list",
+        "Use existing SafeFileWriter (composition-root path)",
+        "On success: proposed_action_mark_executed + commitment_satisfy(evidence=path)",
+        "On failure: proposed_action_mark_failed with reason"
+      ]
+    },
+    {
+      "id": "P5",
+      "title": "REST + Actions dashboard view",
+      "status": "pending",
+      "tasks": [
+        "GET /api/actions?status=pending|approved|escalated|executed|all",
+        "POST /api/actions/override {id, verdict, reason}  (operator manual override)",
+        "POST /api/actions/execute {id}  (operator force-execute escalated)",
+        "#/actions Solid view: action card with twin verdict, rationale, content preview, override buttons"
+      ]
+    },
+    {
+      "id": "P6",
+      "title": "Build + deploy + smoke",
+      "status": "pending",
+      "tasks": [
+        "scripts/build-wasm.sh hexflo-coordination",
+        "cargo build -p hex-nexus --release",
+        "Deploy + restart",
+        "Re-send the persona-tooling-gap.md board ask",
+        "Verify: commitments(5) → drafter produces 5 proposed_actions within 60s → twin verdicts within 90s → at least one approved → file written → commitment satisfied"
+      ]
+    }
+  ]
+}

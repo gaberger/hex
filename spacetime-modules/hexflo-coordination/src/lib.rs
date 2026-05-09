@@ -5956,3 +5956,195 @@ pub fn commitment_check_tick(
     }
     Ok(())
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// Digital-twin action queue (ADR-2605082300)
+//
+// Personas can't write files. The drafter task picks up open commitments
+// with verifiable_path artifacts, asks the proposer for the actual
+// content, and writes a proposed_action row. The twin reviews, approves
+// or rejects against operator memory + standards. The executor runs
+// approved actions. Escalations land in the inbox.
+// ──────────────────────────────────────────────────────────────────────
+
+#[table(name = proposed_action, public)]
+#[derive(Clone, Debug)]
+pub struct ProposedAction {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    /// "file_write" today; "shell_exec" / "dm_send" / etc. in follow-on ADRs.
+    pub kind: String,
+    /// JSON-encoded action payload. For file_write: {"path":"...","content":"..."}.
+    pub payload_json: String,
+    pub proposed_by: String,
+    /// 0 if not derived from a commitment.
+    pub related_commitment_id: u64,
+    /// "pending" | "approved" | "rejected" | "escalated" | "executed" | "execution_failed"
+    pub status: String,
+    /// Twin verdict ("approve"/"reject"/"escalate") + rationale.
+    pub twin_verdict: String,
+    pub twin_rationale: String,
+    pub escalate_reason: String,
+    pub proposed_at: Timestamp,
+    pub decided_at: String,
+    pub executed_at: String,
+    /// Operator overrode the twin? (audit trail)
+    pub operator_override: bool,
+    pub operator_reason: String,
+}
+
+#[table(name = executed_action, public)]
+#[derive(Clone, Debug)]
+pub struct ExecutedAction {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub proposed_action_id: u64,
+    pub kind: String,
+    pub payload_json: String,
+    pub success: bool,
+    pub error: String,
+    pub executed_at: Timestamp,
+    /// What evidence was written back to the commitment.
+    pub evidence: String,
+}
+
+#[reducer]
+pub fn proposed_action_open(
+    ctx: &ReducerContext,
+    kind: String,
+    payload_json: String,
+    proposed_by: String,
+    related_commitment_id: u64,
+) -> Result<(), String> {
+    // Idempotency: if a pending row for the same (related_commitment_id,
+    // kind) exists, no-op. Prevents the drafter from racing itself.
+    if related_commitment_id > 0 {
+        let dup = ctx
+            .db
+            .proposed_action()
+            .iter()
+            .any(|p| {
+                p.related_commitment_id == related_commitment_id
+                    && p.kind == kind
+                    && (p.status == "pending" || p.status == "approved" || p.status == "executed")
+            });
+        if dup {
+            return Ok(());
+        }
+    }
+    ctx.db.proposed_action().insert(ProposedAction {
+        id: 0,
+        kind,
+        payload_json,
+        proposed_by,
+        related_commitment_id,
+        status: "pending".to_string(),
+        twin_verdict: String::new(),
+        twin_rationale: String::new(),
+        escalate_reason: String::new(),
+        proposed_at: ctx.timestamp,
+        decided_at: String::new(),
+        executed_at: String::new(),
+        operator_override: false,
+        operator_reason: String::new(),
+    });
+    Ok(())
+}
+
+#[reducer]
+pub fn proposed_action_twin_decide(
+    ctx: &ReducerContext,
+    id: u64,
+    verdict: String,
+    rationale: String,
+    escalate_reason: String,
+) -> Result<(), String> {
+    let mut row = ctx
+        .db
+        .proposed_action()
+        .id()
+        .find(&id)
+        .ok_or_else(|| format!("proposed_action id={} not found", id))?;
+    if row.status != "pending" {
+        return Ok(()); // already decided
+    }
+    let new_status = match verdict.as_str() {
+        "approve" => "approved",
+        "reject" => "rejected",
+        "escalate" => "escalated",
+        other => return Err(format!("invalid verdict: {}", other)),
+    };
+    row.status = new_status.to_string();
+    row.twin_verdict = verdict;
+    row.twin_rationale = rationale;
+    row.escalate_reason = escalate_reason;
+    row.decided_at = format!("{:?}", ctx.timestamp);
+    ctx.db.proposed_action().id().update(row);
+    Ok(())
+}
+
+#[reducer]
+pub fn proposed_action_mark_executed(
+    ctx: &ReducerContext,
+    id: u64,
+    success: bool,
+    error: String,
+    evidence: String,
+) -> Result<(), String> {
+    let mut row = ctx
+        .db
+        .proposed_action()
+        .id()
+        .find(&id)
+        .ok_or_else(|| format!("proposed_action id={} not found", id))?;
+    row.status = if success {
+        "executed".to_string()
+    } else {
+        "execution_failed".to_string()
+    };
+    row.executed_at = format!("{:?}", ctx.timestamp);
+    let kind = row.kind.clone();
+    let payload = row.payload_json.clone();
+    ctx.db.proposed_action().id().update(row);
+
+    ctx.db.executed_action().insert(ExecutedAction {
+        id: 0,
+        proposed_action_id: id,
+        kind,
+        payload_json: payload,
+        success,
+        error,
+        executed_at: ctx.timestamp,
+        evidence,
+    });
+    Ok(())
+}
+
+#[reducer]
+pub fn proposed_action_operator_override(
+    ctx: &ReducerContext,
+    id: u64,
+    new_status: String,
+    reason: String,
+) -> Result<(), String> {
+    let mut row = ctx
+        .db
+        .proposed_action()
+        .id()
+        .find(&id)
+        .ok_or_else(|| format!("proposed_action id={} not found", id))?;
+    if !matches!(
+        new_status.as_str(),
+        "approved" | "rejected" | "pending" | "escalated"
+    ) {
+        return Err(format!("invalid override status: {}", new_status));
+    }
+    row.status = new_status;
+    row.operator_override = true;
+    row.operator_reason = reason;
+    row.decided_at = format!("{:?}", ctx.timestamp);
+    ctx.db.proposed_action().id().update(row);
+    Ok(())
+}
