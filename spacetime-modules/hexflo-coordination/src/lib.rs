@@ -6148,3 +6148,52 @@ pub fn proposed_action_operator_override(
     ctx.db.proposed_action().id().update(row);
     Ok(())
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// Persona turn claim (ADR-2605082400)
+//
+// Closes the 5-PLANs-simultaneously race. The first persona to call
+// commitment_thread_claim wins the right to emit a Confirm row for that
+// thread; subsequent claimants get an error and stay silent. STDB
+// unique-on-thread_id enforces this atomically — no read-by lag matters.
+// ──────────────────────────────────────────────────────────────────────
+
+#[table(name = commitment_thread_claim, public)]
+#[derive(Clone, Debug)]
+pub struct CommitmentThreadClaim {
+    /// One row per thread; PK enforces single-claim.
+    #[primary_key]
+    pub thread_id: String,
+    pub claimed_by: String,
+    pub claimed_at: Timestamp,
+    /// The CEO message id that started the thread, for audit + dashboard.
+    pub originating_msg_id: u64,
+}
+
+#[reducer]
+pub fn claim_persona_turn(
+    ctx: &ReducerContext,
+    thread_id: String,
+    claimed_by: String,
+    originating_msg_id: u64,
+) -> Result<(), String> {
+    if thread_id.is_empty() {
+        return Err("empty thread_id".to_string());
+    }
+    if ctx
+        .db
+        .commitment_thread_claim()
+        .thread_id()
+        .find(&thread_id)
+        .is_some()
+    {
+        return Err(format!("thread {} already claimed", thread_id));
+    }
+    ctx.db.commitment_thread_claim().insert(CommitmentThreadClaim {
+        thread_id,
+        claimed_by,
+        claimed_at: ctx.timestamp,
+        originating_msg_id,
+    });
+    Ok(())
+}

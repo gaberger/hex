@@ -42,6 +42,10 @@ const RESPONDER_ROLES: &[&str] = &[
 ];
 
 /// Persona-flavoured system prompt for replies.
+///
+/// Per ADR-2605082400, personas are commitment-creators, not artifact-
+/// producers. Output is restricted to ONE Confirm: line OR the literal
+/// string "Silent". Anything else is dropped at the parser.
 fn persona_prompt(role: &str) -> String {
     let role_title = match role {
         "cto" => "Chief Technology Officer",
@@ -52,32 +56,38 @@ fn persona_prompt(role: &str) -> String {
         "engineering-lead" => "Engineering Lead",
         "product-lead" => "Product Lead",
         "sre-lead" => "SRE Lead",
+        "sre-engineer" => "SRE Engineer",
         _ => "Executive",
     };
     format!(
         "You are the {role_title} ({role}) in a hexagonal AIOS organization. \
-         The CEO is messaging you directly. Reply concisely (1-3 sentences) \
-         from your role's perspective. Address the CEO as 'CEO'. Speak in \
-         first person. Do not preface with 'as the {role}' — just answer.\n\n\
-         --- CAPABILITIES + COMMITMENTS (HARD) ---\n\
-         You are an LLM persona. Your ONLY available actions are: (a) writing \
-         a chat reply (this), (b) journaling a thought to STDB. You do NOT \
-         have file-write, command-execute, shell, email, slack, calendar, or \
-         meeting-scheduling. You CANNOT 'reach out to' anyone outside this \
-         chat — there is no one to reach out to.\n\n\
-         If the CEO's request requires real-world action (writing a file, \
-         running a command, pinging a human), you must say so explicitly:\n\
-           Confirm: requires-operator-action — <one-line description of what \
-           the operator needs to do>\n\
-         If you DO have something concrete you can produce (a recommendation, \
-         a structured plan, a proposed ADR draft, an analysis), say so as:\n\
-           Confirm: I will <produce X> by <when> — success: <file path / \
-           dashboard hashroute it lands on>\n\n\
-         FORBIDDEN phrasings: 'I'll communicate with X', 'I'll reach out to', \
-         'I'll ensure', 'I'll facilitate coordination', 'I'll loop in', 'I'll \
-         get back to you', 'shortly', 'immediately', 'I'll send updates'. \
-         These are empty when you have no tool to do them. If your honest \
-         answer is 'this needs the CEO to do X themselves', say that."
+         The CEO sent a message addressed to you or your role tier.\n\n\
+         === STRICT OUTPUT CONTRACT (HARD — replies that don't match are silently dropped) ===\n\n\
+         Emit EXACTLY ONE of the following two outputs and nothing else:\n\n\
+         (A) `Confirm: I (<role>) will <one-line concrete action> by <deadline> — success: <artifact>`\n\n\
+            Where <artifact> is one of:\n\
+              - a repo file path under docs/, src/, tests/, examples/, scripts/, hex-nexus/assets/src/\n\
+                (the digital-twin loop will draft it, review it, and write it for you)\n\
+              - a dashboard hashroute (e.g. #/merge-gate, #/resources, #/commitments)\n\
+              - the literal string `requires-operator-action — <one-line of what the operator must do>`\n\
+                (when the action genuinely cannot be automated)\n\n\
+            Pick ONE concrete deliverable. Keep the action under 25 words. The deadline can be `EOD`, \
+            `EOW`, `tomorrow`, `in 2h`, etc.\n\n\
+         (B) `Silent`\n\n\
+            Choose this when:\n\
+              - You have no specific role in this request (a peer is better-fit)\n\
+              - The CEO's ask is too vague to produce a concrete Confirm\n\
+              - You would otherwise be padding (\"I'll facilitate\", \"I'll ensure\", etc.)\n\n\
+         === FORBIDDEN ===\n\
+         - Free prose, multi-line replies, paragraphs, bullet lists, PLAN: blocks\n\
+         - Acknowledgments (\"Got it CEO\", \"Understood\")\n\
+         - Status updates (\"shortly\", \"immediately\", \"I'll get back to you\")\n\
+         - Proposing peer coordination (\"@cpo and I will sync\") — that's not your tool\n\
+         - Multiple Confirm lines — pick ONE\n\
+         - Any output whose first non-whitespace character is not `C` (for Confirm) or `S` (for Silent)\n\n\
+         You have NO tools beyond emitting this Confirm row. The factory pipeline (drafter→twin→\
+         executor) will consume your Confirm and produce the artifact. If you write Silent, no \
+         artifact is produced — that is correct when you genuinely have nothing concrete to add."
     )
 }
 
@@ -183,6 +193,26 @@ async fn process_role(
             g.mark(role, msg_id);
         }
 
+        // ADR-2605082400 atomic-claim: only the first persona to call
+        // claim_persona_turn(thread_id) gets to emit a Confirm. Others
+        // mark the message read and stay silent — no inference burned.
+        // Bilateral DMs (no thread_id) skip the claim and proceed.
+        if let Some(ref tid) = msg.thread_id {
+            if !tid.is_empty() {
+                let claimed = try_claim_thread(tid, role, msg_id).await;
+                if !claimed {
+                    tracing::info!(
+                        role = %role, msg_id, thread = %tid,
+                        "org_responder: thread already claimed by peer; staying silent"
+                    );
+                    if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
+                        tracing::debug!(role = %role, error = %e, "mark_read after silent claim failed");
+                    }
+                    continue;
+                }
+            }
+        }
+
         // Circuit-breaker check (STDB persona_health). If banned, skip this
         // role entirely — the ban will lift on its own. Crucially DON'T
         // mark_read here, so when the ban lifts the message gets answered.
@@ -244,21 +274,42 @@ async fn process_role(
             continue;
         }
 
+        // ADR-2605082400 strict output filter. Drop anything that isn't
+        // exactly a `Confirm: ...` line or the literal `Silent`. Off-
+        // contract output is logged + the message marked read so we
+        // don't loop on it. The persona is not punished — it just had
+        // nothing valid to say.
+        let trimmed_reply = reply.trim();
+        let first = trimmed_reply
+            .lines()
+            .next()
+            .map(|l| l.trim_start())
+            .unwrap_or("");
+        let is_confirm = first.to_ascii_lowercase().starts_with("confirm:");
+        let is_silent_token = trimmed_reply.eq_ignore_ascii_case("silent")
+            || trimmed_reply.eq_ignore_ascii_case("silent.")
+            || first.to_ascii_lowercase().starts_with("silent");
+        if !is_confirm && !is_silent_token {
+            tracing::warn!(
+                role = %role,
+                msg_id,
+                preview = %trimmed_reply.chars().take(80).collect::<String>(),
+                "org_responder: off-contract reply dropped (not Confirm: or Silent)"
+            );
+            persona.record_success(role).await;
+            if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
+                tracing::debug!(role = %role, error = %e, "mark_read after off-contract failed");
+            }
+            continue;
+        }
+
         // Inference succeeded — clear any pending ban + failure counter.
         persona.record_success(role).await;
 
-        // Board-mode "Silent" sentinel: persona signals it has no concrete
-        // role in the plan. Mark_read so the same DM doesn't keep firing
-        // inference each tick, but DON'T post a DM (silence is signal).
-        let trimmed = reply.trim();
-        let is_silent = is_board
-            && (trimmed.eq_ignore_ascii_case("silent")
-                || trimmed.eq_ignore_ascii_case("silent.")
-                || trimmed.starts_with("[silent")
-                || trimmed.starts_with("Silent —")
-                || trimmed.starts_with("Silent:"));
-        if is_silent {
-            tracing::info!(role = %role, msg_id, "org_responder: persona chose Silent (no role in plan)");
+        // ADR-2605082400 Silent sentinel — applies to ALL DMs now, not just
+        // board threads. Mark_read + skip send_dm.
+        if is_silent_token {
+            tracing::info!(role = %role, msg_id, "org_responder: persona chose Silent");
             if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
                 tracing::warn!(role = %role, msg_id, error = %e, "org_responder: mark_read after silent failed");
             }
@@ -366,60 +417,18 @@ async fn generate_reply(
     // Augment system prompt with the persona's recent thoughts so it
     // can reference its own prior reasoning ("why did I say X earlier").
     let mut system = persona_prompt(role);
+    // ADR-2605082400 retired the board-meeting PLAN/Amend/Silent protocol.
+    // Atomic claim_persona_turn now ensures only one persona inferences per
+    // thread; that single persona uses the strict Confirm/Silent prompt
+    // from persona_prompt(). is_board is preserved for one minor hint only.
     if is_board {
-        // Detect whether a PLAN has already been posted in this thread.
-        // History entries from peers are tagged `[role→to]: ...`; the
-        // facilitator-style PLAN reply starts with the literal `PLAN:` token.
-        let plan_exists = history.iter().any(|t| {
-            t.role == "user" && {
-                let s = t.content.trim_start();
-                // Skip past any `[role→to]:` prefix
-                let after_prefix = s
-                    .find("]:")
-                    .map(|i| s[i + 2..].trim_start())
-                    .unwrap_or(s);
-                after_prefix.starts_with("PLAN:")
-            }
-        });
-
         system.push_str(
-            "\n\n--- BOARD MEETING — CONVERGENCE PROTOCOL (HARD) ---\n\
-             The CEO sent this objective to ALL executives. Peers \
-             (cto, cpo, coo, ciso, chief-visionary) are in the SAME thread; \
-             their replies appear in history as `[role→to]: ...`. The board \
-             must SELF-ORGANIZE around the objective — not all volunteer the \
-             same generic 'I will coordinate / facilitate / ensure clarity' \
-             reply.\n\n",
+            "\n\nNOTE: this thread is a board broadcast (CEO addressed all execs). \
+             You won the atomic-claim race for this turn — your peers will stay \
+             silent. Pick the action best suited to YOUR role's domain. If the \
+             ask isn't really yours (better fit for another exec), reply Silent \
+             and the operator will re-address it.",
         );
-
-        if !plan_exists {
-            system.push_str(
-                "STATE: no PLAN exists in the thread yet. YOU ARE THE FIRST \
-                 RESPONDER. Reply in EXACTLY this format and nothing else:\n\n\
-                 PLAN:\n\
-                 OBJECTIVE: <one-sentence restatement of what the CEO is asking for>\n\
-                 OWNER: <pick ONE role from {cto, cpo, coo, ciso, chief-visionary} who is best fit>\n\
-                 CONTRIBUTORS: <role>: <one-line specific contribution> (one per line, omit if none)\n\
-                 FIRST ACTION: <concrete next step + the repo path or dashboard hashroute it lands on>\n\
-                 SUCCESS: <observable artifact: a file path, a #/route, a STDB row, etc.>\n\n\
-                 Pick OWNER honestly (CPO for product/UX, CTO for architecture/code, COO for process/people, \
-                 CISO for security/risk, chief-visionary for strategy). It is FINE to nominate yourself or a peer.",
-            );
-        } else {
-            system.push_str(
-                "STATE: a PLAN already exists in the thread. You are a CONTRIBUTOR (not the planner). \
-                 Reply in EXACTLY ONE of these forms:\n\n\
-                 (a) `Confirm: I (<your role>) will <specific action> by <when>` — only if the PLAN \
-                     names you as OWNER or in CONTRIBUTORS.\n\
-                 (b) `Amend: <FIELD> should be <new value> because <one-line reason>` — only if you \
-                     have a specific objection or improvement; do not amend cosmetically.\n\
-                 (c) `Silent` — the literal word, alone — if you have no concrete role here. Silence is \
-                     a valid and respected answer. Do NOT pad with 'I'm available to help' or 'happy to \
-                     support'; that is forbidden and indistinguishable from noise.\n\n\
-                 NEVER restate the OBJECTIVE. NEVER claim you will 'facilitate coordination' or \
-                 'ensure clear assignments' — that is empty. Be concrete or be silent.",
-            );
-        }
     }
     if !thoughts.is_empty() {
         system.push_str("\n\nYour recent reasoning (newest first):\n");
@@ -609,6 +618,29 @@ fn truncate(s: &str, n: usize) -> String {
         end -= 1;
     }
     format!("{}…", &s[..end])
+}
+
+/// Atomic claim of a thread for a single persona (ADR-2605082400).
+/// Returns true if THIS role won the claim; false if a peer already
+/// holds it (caller should stay silent + mark_read).
+async fn try_claim_thread(thread_id: &str, role: &str, originating_msg_id: u64) -> bool {
+    let host = std::env::var("HEX_SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+    let db = std::env::var("HEX_STDB_DATABASE")
+        .unwrap_or_else(|_| hex_core::stdb_database_for_module("hexflo-coordination").to_string());
+    let url = format!("{}/v1/database/{}/call/claim_persona_turn", host, db);
+    let body = serde_json::json!([thread_id, role, originating_msg_id]);
+    let http = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return true, // fail-open: if STDB is down, let the persona reply
+    };
+    match http.post(&url).json(&body).send().await {
+        Ok(resp) => resp.status().is_success(),
+        Err(_) => true, // fail-open on transport
+    }
 }
 
 /// Pull HTTP status + model id out of generate_reply's error string.

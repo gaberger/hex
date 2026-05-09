@@ -473,6 +473,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                         "resource_supervisor_init",
                         "supervisor_init",
                         "commitment_init",
+                        // claim_persona_turn has no init — it's per-thread on demand
                     ] {
                         let url = format!("{}/v1/database/{}/call/{}", host_init, db_init, reducer);
                         match client.post(&url).json(&serde_json::json!([])).send().await {
