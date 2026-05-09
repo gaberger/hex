@@ -46,6 +46,7 @@ const PersonaHealth = lazy(() => import('../components/views/PersonaHealth'));
 const Thoughts = lazy(() => import('../components/views/Thoughts'));
 const Resources = lazy(() => import('../components/views/Resources'));
 const Commitments = lazy(() => import('../components/views/Commitments'));
+const MissionControl = lazy(() => import('../components/views/MissionControl'));
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
 
@@ -265,6 +266,7 @@ const App: Component = () => {
   const isThoughtsPage = () => route().page === "thoughts";
   const isResourcesPage = () => route().page === "resources";
   const isCommitmentsPage = () => route().page === "commitments";
+  const isMissionControlPage = () => route().page === "mission-control";
 
   return (
     <>
@@ -343,8 +345,16 @@ const App: Component = () => {
         <ShortcutsOverlay />
       </Show>
 
+      {/* Full-screen Mission Control */}
+      <Show when={isMissionControlPage()}>
+        <ConnectionStatusBanner />
+        <MissionControl />
+        <ToastContainer />
+        <ShortcutsOverlay />
+      </Show>
+
       {/* Standard layout with sidebar for all other pages */}
-      <Show when={!isBrainPage() && !isOrgChartPage() && !isOrgCommsPage() && !isTeamPage() && !isMergeGatePage() && !isPersonaHealthPage() && !isThoughtsPage() && !isResourcesPage() && !isCommitmentsPage()}>
+      <Show when={!isBrainPage() && !isOrgChartPage() && !isOrgCommsPage() && !isTeamPage() && !isMergeGatePage() && !isPersonaHealthPage() && !isThoughtsPage() && !isResourcesPage() && !isCommitmentsPage() && !isMissionControlPage()}>
         <div class="flex h-screen flex-col bg-gray-950 text-gray-100">
           {/* Connection status banner — shown when nexus or SpacetimeDB is unavailable */}
           <ConnectionStatusBanner />
@@ -604,6 +614,26 @@ const App: Component = () => {
                 <path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
               </svg>
               <Show when={!sidebarCollapsed()}>Research Lab</Show>
+            </button>
+            {/* Mission Control — operator's primary landing */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              classList={{
+                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "mission-control",
+                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "mission-control",
+                "justify-center px-0": sidebarCollapsed(),
+              }}
+              aria-label={sidebarCollapsed() ? "Mission Control" : undefined}
+              aria-current={route().page === "mission-control" ? "page" : undefined}
+              onClick={() => { navigate({ page: "mission-control" }); setMobileDrawerOpen(false); }}
+            >
+              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                classList={{ "text-cyan-400": route().page === "mission-control" }}>
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="2" x2="12" y2="22" />
+                <path d="M2 12h20" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Mission Control</Show>
             </button>
             {/* Brain — full three-pane (TEAM | KANBAN+DECISIONS+SWARMS+HEALTH | CHAT) */}
             <button

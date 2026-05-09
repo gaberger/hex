@@ -52,6 +52,7 @@ pub mod org_chart;
 pub mod stdb_registry;
 pub mod org_comms;
 pub mod merge_gate;
+pub mod mission_control;
 pub mod resources;
 // pub mod workplan; // removed stub module
 
@@ -509,6 +510,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/commitments", get(resources::list_commitments))
         .route("/api/commitments/satisfy", post(resources::satisfy_commitment))
         .route("/api/commitments/abandon", post(resources::abandon_commitment))
+        .route("/api/mission-control", get(mission_control::get_mission_control))
         // SpacetimeDB registry — database identities
         .route("/api/stdb/registry", get(stdb_registry::get_registry))
         // Per-project queries (browser reads)

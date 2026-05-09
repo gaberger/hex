@@ -32,6 +32,7 @@ export type Route =
   | { page: "thoughts" }
   | { page: "resources" }
   | { page: "commitments" }
+  | { page: "mission-control" }
   // Project-scoped
   | { page: "project"; projectId: string }
   | { page: "project-agents"; projectId: string }
@@ -261,6 +262,8 @@ function routeToHash(r: Route): string {
       return "#/resources";
     case "commitments":
       return "#/commitments";
+    case "mission-control":
+      return "#/mission-control";
     case "project":
       return `#/project/${r.projectId}`;
     case "project-agents":
@@ -321,6 +324,7 @@ function hashToRoute(hash: string): Route {
   if (parts[0] === "thoughts") return { page: "thoughts" };
   if (parts[0] === "resources") return { page: "resources" };
   if (parts[0] === "commitments") return { page: "commitments" };
+  if (parts[0] === "mission-control" || parts[0] === "mission") return { page: "mission-control" };
 
   // Project-scoped routes: /project/:id/...
   if (parts[0] === "project" && parts[1]) {
@@ -376,9 +380,9 @@ function hashToRoute(hash: string): Route {
     }
   }
 
-  // Default landing — Brain is the operator's home. The legacy ControlPlane
-  // remains accessible via the sidebar but is no longer the default.
-  return { page: "brain" };
+  // Default landing — Mission Control is the operator's primary surface
+  // (per ADR-2605091200). Brain remains accessible via the sidebar.
+  return { page: "mission-control" };
 }
 
 // ── Initialization ──────────────────────────────────────────────────────────
