@@ -83,8 +83,35 @@ pub fn spawn(stdb_host: String, hex_db: String) {
         let mut ticker = tokio::time::interval(Duration::from_secs(interval));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+        // Back-off state for when STDB is unreachable — quiet log spam while
+        // it recovers. After 5 consecutive transport failures we skip ticks
+        // until ping returns. Resets on first success.
+        let stdb_ping_url = format!("{}/v1/ping", stdb_host);
+        let mut consecutive_failures: u32 = 0;
+        let mut backoff_logged = false;
+
         loop {
             ticker.tick().await;
+
+            if consecutive_failures >= 5 {
+                match http.get(&stdb_ping_url).send().await {
+                    Ok(r) if r.status().is_success() => {
+                        tracing::info!("resource_observer: STDB recovered, resuming");
+                        consecutive_failures = 0;
+                        backoff_logged = false;
+                    }
+                    _ => {
+                        if !backoff_logged {
+                            tracing::warn!(
+                                "resource_observer: STDB unreachable, backing off (silent retries every {}s)",
+                                interval
+                            );
+                            backoff_logged = true;
+                        }
+                        continue;
+                    }
+                }
+            }
 
             let entries = match scan_proc(&allow) {
                 Ok(e) => e,
@@ -134,17 +161,24 @@ pub fn spawn(stdb_host: String, hex_db: String) {
                 ]);
 
                 match http.post(&url).json(&body).send().await {
-                    Ok(r) if r.status().is_success() => upserted += 1,
+                    Ok(r) if r.status().is_success() => {
+                        upserted += 1;
+                        consecutive_failures = 0;
+                        backoff_logged = false;
+                    }
                     Ok(r) => tracing::debug!(
                         status = %r.status(),
                         pid = entry.pid,
                         "resource_observer: upsert non-2xx"
                     ),
-                    Err(e) => tracing::debug!(
-                        error = %e,
-                        pid = entry.pid,
-                        "resource_observer: upsert transport error"
-                    ),
+                    Err(e) => {
+                        consecutive_failures = consecutive_failures.saturating_add(1);
+                        tracing::debug!(
+                            error = %e,
+                            pid = entry.pid,
+                            "resource_observer: upsert transport error"
+                        );
+                    }
                 }
             }
 

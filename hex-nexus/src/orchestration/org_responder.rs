@@ -228,6 +228,24 @@ async fn process_role(
         // Inference succeeded — clear any pending ban + failure counter.
         persona.record_success(role).await;
 
+        // Board-mode "Silent" sentinel: persona signals it has no concrete
+        // role in the plan. Mark_read so the same DM doesn't keep firing
+        // inference each tick, but DON'T post a DM (silence is signal).
+        let trimmed = reply.trim();
+        let is_silent = is_board
+            && (trimmed.eq_ignore_ascii_case("silent")
+                || trimmed.eq_ignore_ascii_case("silent.")
+                || trimmed.starts_with("[silent")
+                || trimmed.starts_with("Silent —")
+                || trimmed.starts_with("Silent:"));
+        if is_silent {
+            tracing::info!(role = %role, msg_id, "org_responder: persona chose Silent (no role in plan)");
+            if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
+                tracing::warn!(role = %role, msg_id, error = %e, "org_responder: mark_read after silent failed");
+            }
+            continue;
+        }
+
         let reply_for_send = reply.clone();
         let reply_for_journal = reply.clone();
 
@@ -315,17 +333,59 @@ async fn generate_reply(
     // can reference its own prior reasoning ("why did I say X earlier").
     let mut system = persona_prompt(role);
     if is_board {
+        // Detect whether a PLAN has already been posted in this thread.
+        // History entries from peers are tagged `[role→to]: ...`; the
+        // facilitator-style PLAN reply starts with the literal `PLAN:` token.
+        let plan_exists = history.iter().any(|t| {
+            t.role == "user" && {
+                let s = t.content.trim_start();
+                // Skip past any `[role→to]:` prefix
+                let after_prefix = s
+                    .find("]:")
+                    .map(|i| s[i + 2..].trim_start())
+                    .unwrap_or(s);
+                after_prefix.starts_with("PLAN:")
+            }
+        });
+
         system.push_str(
-            "\n\nBOARD MEETING MODE — the CEO sent this to ALL executives. \
-             Your peer executives (cto, cpo, coo, ciso, chief-visionary) \
-             are responding in the SAME thread; their replies appear in \
-             history as `[role→to]: ...`. You CAN address peers directly \
-             ('@cpo I disagree because…', 'building on what cto said…') \
-             and you SHOULD acknowledge or push back on their positions \
-             when relevant instead of pretending only the CEO spoke. \
-             Stay concise (1-3 sentences). Do not just repeat what a peer \
-             already said.",
+            "\n\n--- BOARD MEETING — CONVERGENCE PROTOCOL (HARD) ---\n\
+             The CEO sent this objective to ALL executives. Peers \
+             (cto, cpo, coo, ciso, chief-visionary) are in the SAME thread; \
+             their replies appear in history as `[role→to]: ...`. The board \
+             must SELF-ORGANIZE around the objective — not all volunteer the \
+             same generic 'I will coordinate / facilitate / ensure clarity' \
+             reply.\n\n",
         );
+
+        if !plan_exists {
+            system.push_str(
+                "STATE: no PLAN exists in the thread yet. YOU ARE THE FIRST \
+                 RESPONDER. Reply in EXACTLY this format and nothing else:\n\n\
+                 PLAN:\n\
+                 OBJECTIVE: <one-sentence restatement of what the CEO is asking for>\n\
+                 OWNER: <pick ONE role from {cto, cpo, coo, ciso, chief-visionary} who is best fit>\n\
+                 CONTRIBUTORS: <role>: <one-line specific contribution> (one per line, omit if none)\n\
+                 FIRST ACTION: <concrete next step + the repo path or dashboard hashroute it lands on>\n\
+                 SUCCESS: <observable artifact: a file path, a #/route, a STDB row, etc.>\n\n\
+                 Pick OWNER honestly (CPO for product/UX, CTO for architecture/code, COO for process/people, \
+                 CISO for security/risk, chief-visionary for strategy). It is FINE to nominate yourself or a peer.",
+            );
+        } else {
+            system.push_str(
+                "STATE: a PLAN already exists in the thread. You are a CONTRIBUTOR (not the planner). \
+                 Reply in EXACTLY ONE of these forms:\n\n\
+                 (a) `Confirm: I (<your role>) will <specific action> by <when>` — only if the PLAN \
+                     names you as OWNER or in CONTRIBUTORS.\n\
+                 (b) `Amend: <FIELD> should be <new value> because <one-line reason>` — only if you \
+                     have a specific objection or improvement; do not amend cosmetically.\n\
+                 (c) `Silent` — the literal word, alone — if you have no concrete role here. Silence is \
+                     a valid and respected answer. Do NOT pad with 'I'm available to help' or 'happy to \
+                     support'; that is forbidden and indistinguishable from noise.\n\n\
+                 NEVER restate the OBJECTIVE. NEVER claim you will 'facilitate coordination' or \
+                 'ensure clear assignments' — that is empty. Be concrete or be silent.",
+            );
+        }
     }
     if !thoughts.is_empty() {
         system.push_str("\n\nYour recent reasoning (newest first):\n");

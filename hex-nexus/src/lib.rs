@@ -439,7 +439,12 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                             return;
                         }
                     };
-                    for reducer in &["merge_team_init", "persona_init", "resource_supervisor_init"] {
+                    for reducer in &[
+                        "merge_team_init",
+                        "persona_init",
+                        "resource_supervisor_init",
+                        "supervisor_init",
+                    ] {
                         let url = format!("{}/v1/database/{}/call/{}", host_init, db_init, reducer);
                         match client.post(&url).json(&serde_json::json!([])).send().await {
                             Ok(r) if r.status().is_success() => {
