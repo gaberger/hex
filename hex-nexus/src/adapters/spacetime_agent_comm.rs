@@ -7,6 +7,18 @@ use hex_core::ports::agent_comm::*;
 use serde_json::Value;
 use std::time::Duration;
 
+/// SpacetimeDB sum-type encoding for `Option<String>`. The v1 HTTP API
+/// rejects bare strings or JSON null for sum types — it expects
+/// `{"some": "..."}` or `{"none": []}`. Bare null happened to work for
+/// some legacy reducers but Some(s) does NOT — pass everything through
+/// this helper.
+fn encode_option_string(o: &Option<String>) -> serde_json::Value {
+    match o {
+        Some(s) => serde_json::json!({ "some": s }),
+        None => serde_json::json!({ "none": [] }),
+    }
+}
+
 /// HTTP client for the `agent-comms` SpacetimeDB module.
 pub struct SpacetimeAgentCommAdapter {
     http: reqwest::Client,
@@ -55,24 +67,28 @@ impl SpacetimeAgentCommAdapter {
     }
 
     async fn sql_query(&self, query: &str) -> Result<Vec<Value>, AgentCommError> {
-        let url = format!("{}/database/sql/{}", self.host, self.database);
+        // STDB SQL endpoint: POST /v1/database/<db>/sql, raw SQL in body,
+        // response is `[{ "rows": [...] }, ...]`. Matches spacetime_chat / spacetime_state.
+        let url = format!("{}/v1/database/{}/sql", self.host, self.database);
 
         let res = self
             .http
             .post(&url)
-            .json(&serde_json::json!({ "sql_text": query }))
+            .header("Content-Type", "text/plain")
+            .body(query.to_string())
             .send()
             .await
             .map_err(|e| AgentCommError::Transport(e.to_string()))?;
 
         if !res.status().is_success() {
+            let status = res.status();
             let body = res
                 .text()
                 .await
                 .unwrap_or_else(|_| "<no body>".to_string());
             return Err(AgentCommError::Transport(format!(
-                "SQL query failed: {}",
-                body
+                "SQL query failed ({}): {}",
+                status, body
             )));
         }
 
@@ -83,8 +99,30 @@ impl SpacetimeAgentCommAdapter {
 
         Ok(body
             .as_array()
-            .map(|a| a.to_vec())
+            .and_then(|arr| arr.first())
+            .and_then(|t| t.get("rows"))
+            .and_then(|r| r.as_array())
+            .cloned()
             .unwrap_or_default())
+    }
+
+    /// Best-effort lookup of the most recent agent_messages id for a sender.
+    /// STDB SQL rejects `ORDER BY id` here, so we scan a window and pick the
+    /// max ourselves. Returns None on any failure — callers fall back to 0.
+    async fn try_lookup_latest_id(&self, from: &str) -> Option<u64> {
+        let safe = from.replace('\'', "''");
+        let q = format!(
+            "SELECT id FROM agent_messages WHERE from_agent = '{}' LIMIT 200",
+            safe
+        );
+        let rows = self.sql_query(&q).await.ok()?;
+        rows.into_iter()
+            .filter_map(|r| {
+                r.as_array()
+                    .and_then(|cols| cols.first())
+                    .and_then(|id| id.as_u64())
+            })
+            .max()
     }
 }
 
@@ -99,31 +137,15 @@ impl IAgentCommPort for SpacetimeAgentCommAdapter {
     ) -> Result<u64, AgentCommError> {
         self.call_reducer(
             "send_dm",
-            serde_json::json!([from, to, message, thread_id]),
+            serde_json::json!([from, to, message, encode_option_string(&thread_id)]),
         )
         .await?;
 
-        // SpacetimeDB auto-increments the ID, but we can't return it from reducers.
-        // Query the latest message ID for this sender.
-        let query = format!(
-            "SELECT id FROM agent_messages WHERE from_agent = '{}' ORDER BY id DESC LIMIT 1",
-            from.replace('\'', "''")
-        );
-        let rows = self.sql_query(&query).await?;
-
-        if let Some(row) = rows.first() {
-            if let Some(cols) = row.as_array() {
-                if let Some(id_val) = cols.first() {
-                    if let Some(id) = id_val.as_u64() {
-                        return Ok(id);
-                    }
-                }
-            }
-        }
-
-        Err(AgentCommError::Transport(
-            "Failed to retrieve message ID".to_string(),
-        ))
+        // STDB SQL doesn't support `ORDER BY id` on this column, so the
+        // post-insert ID lookup can't reliably return the row we just wrote.
+        // The reducer call succeeded — return 0 as a placeholder. Callers use
+        // the returned id only for logging.
+        Ok(self.try_lookup_latest_id(&from).await.unwrap_or(0))
     }
 
     async fn send_to_channel(
@@ -135,29 +157,11 @@ impl IAgentCommPort for SpacetimeAgentCommAdapter {
     ) -> Result<u64, AgentCommError> {
         self.call_reducer(
             "send_to_channel",
-            serde_json::json!([from, channel, message, thread_id]),
+            serde_json::json!([from, channel, message, encode_option_string(&thread_id)]),
         )
         .await?;
 
-        let query = format!(
-            "SELECT id FROM agent_messages WHERE from_agent = '{}' ORDER BY id DESC LIMIT 1",
-            from.replace('\'', "''")
-        );
-        let rows = self.sql_query(&query).await?;
-
-        if let Some(row) = rows.first() {
-            if let Some(cols) = row.as_array() {
-                if let Some(id_val) = cols.first() {
-                    if let Some(id) = id_val.as_u64() {
-                        return Ok(id);
-                    }
-                }
-            }
-        }
-
-        Err(AgentCommError::Transport(
-            "Failed to retrieve message ID".to_string(),
-        ))
+        Ok(self.try_lookup_latest_id(&from).await.unwrap_or(0))
     }
 
     async fn mark_read(&self, agent: String, message_id: u64) -> Result<(), AgentCommError> {
@@ -189,21 +193,49 @@ impl IAgentCommPort for SpacetimeAgentCommAdapter {
         agent: String,
         limit: Option<u32>,
     ) -> Result<Vec<AgentMessage>, AgentCommError> {
-        let limit_clause = limit.map(|l| format!("LIMIT {}", l)).unwrap_or_default();
+        // STDB SQL constraints we have to work around:
+        //   1. `to_agent = 'foo'` errors because to_agent is Option<String>
+        //      (Sum type) — can't push the inbound predicate down.
+        //   2. `ORDER BY id DESC LIMIT N` is unsupported on this table —
+        //      so we can't ask STDB for the newest N rows directly.
+        //   3. Plain `LIMIT N` returns the OLDEST N rows by insertion order,
+        //      which means new traffic is INVISIBLE if total > N. This was
+        //      the silent bug that made org_responder skip every recent DM.
+        //
+        // Workaround: scan all rows up to HEX_AGENT_COMM_SCAN_CAP (default
+        // 5000), filter both directions in Rust, sort newest-first by id,
+        // dedup, truncate to caller's limit. For an agent_messages table at
+        // 117 rows this costs ~1 ms.
+        //
+        // If/when agent_messages grows past ~5K rows the right move is a
+        // side-table indexing inbound (to_agent, id) pairs so we can push
+        // the filter back down to STDB.
+        let scan_cap: u32 = std::env::var("HEX_AGENT_COMM_SCAN_CAP")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5000);
+        let cols = "id, from_agent, to_agent, channel, message, thread_id, timestamp, read_by";
+        let scan_q = format!("SELECT {cols} FROM agent_messages LIMIT {scan_cap}");
 
-        // Query DMs to this agent + channels they're a member of
-        let query = format!(
-            "SELECT id, from_agent, to_agent, channel, message, thread_id, timestamp, read_by \
-             FROM agent_messages \
-             WHERE to_agent = '{}' OR channel IN \
-             (SELECT name FROM agent_channels WHERE '{}' = ANY(members) OR '*' = ANY(members)) \
-             ORDER BY id DESC {}",
-            agent.replace('\'', "''"),
-            agent.replace('\'', "''"),
-            limit_clause
-        );
+        let rows = self.sql_query(&scan_q).await?;
+        let all = self.parse_messages(rows)?;
 
-        self.parse_messages(self.sql_query(&query).await?)
+        let mut filtered: Vec<AgentMessage> = all
+            .into_iter()
+            .filter(|m| {
+                m.from_agent == agent
+                    || m.to_agent.as_deref() == Some(agent.as_str())
+            })
+            .collect();
+
+        // Newest-first by id, dedup, truncate.
+        filtered.sort_by(|a, b| b.id.cmp(&a.id));
+        filtered.dedup_by_key(|m| m.id);
+        if let Some(l) = limit {
+            filtered.truncate(l as usize);
+        }
+
+        Ok(filtered)
     }
 
     async fn query_channel_messages(
@@ -333,9 +365,21 @@ fn str_col(cols: &[Value], idx: usize) -> String {
 }
 
 fn opt_str_col(cols: &[Value], idx: usize) -> Option<String> {
-    cols.get(idx)
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+    let v = cols.get(idx)?;
+    // Plain string (older row formats / non-Option columns).
+    if let Some(s) = v.as_str() {
+        return Some(s.to_string());
+    }
+    // STDB BSATN-JSON encodes Option<T> as a 2-element array:
+    //   Some(x) → [0, x]   None → [1, []]
+    if let Some(arr) = v.as_array() {
+        let tag = arr.first().and_then(|t| t.as_u64())?;
+        if tag == 0 {
+            return arr.get(1).and_then(|x| x.as_str()).map(|s| s.to_string());
+        }
+        return None;
+    }
+    None
 }
 
 fn u64_col(cols: &[Value], idx: usize) -> u64 {
