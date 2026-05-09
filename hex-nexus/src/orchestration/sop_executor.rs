@@ -177,11 +177,41 @@ struct ReasonResult {
 }
 
 /// Phase GROUND: cheap parallel tool calls to populate context for REASON.
+///
+/// Path-bypass for upstream PII redaction: any path-like token in the
+/// operator message gets pre-read here. The LLM consumes file CONTENT
+/// (which is not redacted) instead of file NAMES (which can be).
 async fn ground_for_intent(
     registry: &Arc<ToolRegistry>,
     intent: &str,
     operator_message: &str,
 ) -> Value {
+    // Pre-read any explicit paths the operator mentioned. This sidesteps
+    // upstream PII redaction (e.g. "MissionControl.tsx" → "[PERSON_NAME]").
+    let paths = extract_repo_paths(operator_message);
+    let mut prefetched: Vec<Value> = Vec::new();
+    for p in paths.iter().take(6) {
+        let result = registry
+            .execute(
+                "repo_read",
+                json!({ "path": p, "max_bytes": 16 * 1024 }),
+            )
+            .await;
+        if result.ok {
+            prefetched.push(json!({
+                "path": p,
+                "content": result.output.get("content").cloned().unwrap_or(Value::Null),
+                "byte_len": result.output.get("byte_len").cloned().unwrap_or(Value::Null),
+                "total_lines": result.output.get("total_lines").cloned().unwrap_or(Value::Null),
+            }));
+        } else {
+            prefetched.push(json!({
+                "path": p,
+                "error": result.error,
+            }));
+        }
+    }
+
     // Pull the most distinctive nouns from the operator message — anything
     // ≥ 4 chars that's not a stopword.
     let pattern = derive_grep_pattern(operator_message);
@@ -198,8 +228,45 @@ async fn ground_for_intent(
     let grep_result = registry.execute("repo_grep", grep_input).await;
     json!({
         "intent": intent,
+        "prefetched_paths": prefetched,
         "repo_grep": grep_result.output,
     })
+}
+
+/// Extract path-like tokens from the operator message. Looks for tokens
+/// containing '/' that end in a known file extension. Stops short of
+/// general filename matching to avoid false positives on prose.
+fn extract_repo_paths(message: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for tok in message.split(|c: char| {
+        c.is_ascii_whitespace()
+            || c == ','
+            || c == ';'
+            || c == '"'
+            || c == '\''
+            || c == '`'
+            || c == '('
+            || c == ')'
+    }) {
+        let t = tok.trim_matches(|c: char| matches!(c, '.' | ':' | ';' | '!' | '?'));
+        if !t.contains('/') {
+            continue;
+        }
+        if t.starts_with('/') || t.starts_with("..") {
+            continue;
+        }
+        let lower = t.to_ascii_lowercase();
+        let extensions = [
+            ".rs", ".ts", ".tsx", ".md", ".json", ".yaml", ".yml", ".toml",
+            ".sh", ".py", ".js", ".css", ".html", ".sql",
+        ];
+        if extensions.iter().any(|e| lower.ends_with(e)) {
+            if !out.iter().any(|s: &String| s == t) {
+                out.push(t.to_string());
+            }
+        }
+    }
+    out
 }
 
 fn derive_grep_pattern(message: &str) -> String {
@@ -645,5 +712,29 @@ mod tests {
     fn grep_pattern_extraction() {
         let p = derive_grep_pattern("Draft an ADR for the typed tool library and SOP execution");
         assert!(p.contains("typed") || p.contains("library") || p.contains("execution"));
+    }
+
+    #[test]
+    fn path_extraction_finds_real_paths() {
+        let m = "Use repo_read on hex-nexus/src/tools/cargo_check.rs and \
+                 hex-nexus/assets/src/components/views/MissionControl.tsx, \
+                 then call adr_draft.";
+        let paths = extract_repo_paths(m);
+        assert!(paths.contains(&"hex-nexus/src/tools/cargo_check.rs".to_string()));
+        assert!(paths.contains(&"hex-nexus/assets/src/components/views/MissionControl.tsx".to_string()));
+    }
+
+    #[test]
+    fn path_extraction_rejects_absolute_and_traversal() {
+        let m = "Read /etc/passwd or ../../../secrets.toml";
+        let paths = extract_repo_paths(m);
+        assert!(paths.is_empty(), "expected no paths, got {:?}", paths);
+    }
+
+    #[test]
+    fn path_extraction_ignores_prose_with_slashes() {
+        let m = "split the work 50/50 between teams and report by EOD";
+        let paths = extract_repo_paths(m);
+        assert!(paths.is_empty());
     }
 }
