@@ -19,6 +19,8 @@ pub mod escalate_to_operator;
 pub mod adr_draft;
 pub mod repo_grep;
 pub mod repo_read;
+pub mod spec_draft;
+pub mod web_search;
 
 /// Output envelope for every tool call. JSON shape preserved across all
 /// tools so the SOP executor can handle errors uniformly without per-tool
@@ -120,7 +122,9 @@ impl Default for ToolRegistry {
         reg.register(Arc::new(cargo_check::CargoCheck));
         reg.register(Arc::new(repo_grep::RepoGrep));
         reg.register(Arc::new(repo_read::RepoRead));
+        reg.register(Arc::new(web_search::WebSearch));
         reg.register(Arc::new(adr_draft::AdrDraft));
+        reg.register(Arc::new(spec_draft::SpecDraft));
         reg.register(Arc::new(escalate_to_operator::EscalateToOperator));
         reg
     }
@@ -137,7 +141,9 @@ mod tests {
         assert!(names.contains(&"cargo_check"), "cargo_check missing");
         assert!(names.contains(&"repo_grep"), "repo_grep missing");
         assert!(names.contains(&"repo_read"), "repo_read missing");
+        assert!(names.contains(&"web_search"), "web_search missing");
         assert!(names.contains(&"adr_draft"), "adr_draft missing");
+        assert!(names.contains(&"spec_draft"), "spec_draft missing");
         assert!(names.contains(&"escalate_to_operator"), "escalate_to_operator missing");
     }
 
