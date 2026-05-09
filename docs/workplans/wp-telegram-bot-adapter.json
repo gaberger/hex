@@ -1,0 +1,169 @@
+{
+  "adr": "ADR-[PHONE]",
+  "created_at": "2026-05-09T12:01:48.828823691+00:00",
+  "created_by": "hex-coder",
+  "feature": "Telegram notification and remote-control adapter",
+  "id": "wp-telegram-bot-adapter",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Secondary adapter scaffold + outbound notifications",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/Cargo.toml",
+            "hex-nexus/src/adapters/mod.rs",
+            "hex-nexus/src/adapters/telegram_bot.rs"
+          ],
+          "id": "P0.1",
+          "layer": "infrastructure",
+          "name": "Add teloxide dependency and telegram_bot adapter module",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/telegram_bot.rs"
+          ],
+          "id": "P0.2",
+          "layer": "secondary",
+          "name": "Implement TelegramBotAdapter struct with secret-grant token retrieval",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/state.rs",
+            "hex-nexus/src/routes/inbox.rs"
+          ],
+          "id": "P0.3",
+          "layer": "infrastructure",
+          "name": "Add notification broadcast channel to AppState",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/telegram_bot.rs",
+            "hex-nexus/src/main.rs"
+          ],
+          "id": "P0.4",
+          "layer": "secondary",
+          "name": "Implement long-polling loop and P2 notification forwarding",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P1",
+      "name": "Inbound command handlers + authentication",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/telegram_bot.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement chat_id allowlist loader from .hex/telegram.toml",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/telegram_bot.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Add rate limiter (5 commands/min per chat_id)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/telegram_bot.rs"
+          ],
+          "id": "P1.3",
+          "layer": "secondary",
+          "name": "Implement /status command (nexus uptime, inbox count)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/telegram_bot.rs"
+          ],
+          "id": "P1.4",
+          "layer": "secondary",
+          "name": "Implement /inbox and /ack commands",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/telegram_bot.rs"
+          ],
+          "id": "P1.5",
+          "layer": "secondary",
+          "name": "Implement /queue command (hex hey integration)",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "CLI tooling and configuration surface",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-cli/src/commands/telegram.rs",
+            "hex-cli/src/commands/mod.rs",
+            "hex-cli/src/main.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Add hex telegram subcommand (enable/disable/status)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/config/telegram.rs",
+            "hex-nexus/src/config/mod.rs"
+          ],
+          "id": "P2.2",
+          "layer": "infrastructure",
+          "name": "Add .hex/telegram.toml config schema and loader",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P3",
+      "name": "Integration tests and kill switch",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/telegram_bot.rs",
+            "hex-nexus/src/main.rs"
+          ],
+          "id": "P3.1",
+          "layer": "infrastructure",
+          "name": "Add HEX_DISABLE_TELEGRAM kill switch check",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/telegram_bot.rs",
+            "hex-nexus/tests/telegram_integration_test.rs"
+          ],
+          "id": "P3.2",
+          "layer": "integration",
+          "name": "Add integration test with mock Telegram API",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}
