@@ -317,6 +317,23 @@ async fn review_one(
         .await;
     }
 
+    // ADR-2605082500: actions from the SOP path (proposed_by="tool:*") are
+    // already verified by the SOP's own Phase 4 + the tool's input schema.
+    // The twin would just be a redundant LLM-judges-LLM gate that the ADR
+    // explicitly killed. Auto-approve and let the executor consume it.
+    if action.proposed_by.starts_with("tool:") {
+        return decide(
+            http,
+            stdb_host,
+            hex_db,
+            action.id,
+            "approve",
+            "auto-approved: SOP-emitted action (already passed typed Phase 4 verifier)",
+            "",
+        )
+        .await;
+    }
+
     let payload_preview = if action.payload_json.len() > PAYLOAD_PREVIEW_BYTES {
         format!(
             "{}\n[truncated — {} bytes total]",
