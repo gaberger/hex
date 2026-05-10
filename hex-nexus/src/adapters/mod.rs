@@ -23,6 +23,7 @@ pub mod events;
 pub mod in_memory_experiment;
 pub mod spacetime_experiment;
 pub mod stash_experiment;
+pub mod telegram_notifier;
 
 #[cfg(test)]
 mod state_tests;
