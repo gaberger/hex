@@ -265,6 +265,31 @@ pub async fn inference_complete(
             return model.to_string();
         }
         if model.starts_with("claude-") {
+            // Anthropic-direct uses dashes + 8-digit date suffix
+            // (e.g. "claude-haiku-4-5-20251001", "claude-sonnet-4-6").
+            // OpenRouter uses dotted version, no date (e.g. "claude-haiku-4.5",
+            // "claude-3.7-sonnet"). Convert here so callers can use either form.
+            let mut parts: Vec<&str> = model.split('-').collect();
+            if parts.last().is_some_and(|p| p.len() == 8 && p.chars().all(|c| c.is_ascii_digit())) {
+                parts.pop();
+            }
+            let n = parts.len();
+            // Pattern A: claude-FAMILY-MAJOR-MINOR  → anthropic/claude-FAMILY-MAJOR.MINOR
+            if n >= 4
+                && parts[n-1].chars().all(|c| c.is_ascii_digit())
+                && parts[n-2].chars().all(|c| c.is_ascii_digit())
+            {
+                let prefix = parts[..n-2].join("-");
+                return format!("anthropic/{}-{}.{}", prefix, parts[n-2], parts[n-1]);
+            }
+            // Pattern B: claude-MAJOR-MINOR-FAMILY  → anthropic/claude-MAJOR.MINOR-FAMILY
+            if n >= 4
+                && parts[1].chars().all(|c| c.is_ascii_digit())
+                && parts[2].chars().all(|c| c.is_ascii_digit())
+            {
+                let suffix = parts[3..].join("-");
+                return format!("anthropic/claude-{}.{}-{}", parts[1], parts[2], suffix);
+            }
             format!("anthropic/{}", model)
         } else if model.starts_with("gpt-") || model.starts_with("o1") || model.starts_with("o3") || model.starts_with("o4") {
             format!("openai/{}", model)

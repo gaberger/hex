@@ -31,6 +31,8 @@ const EXEMPT_PATHS: &[&str] = &[
     "/api/config/sync",            // Config bootstrap
     "/ws",                         // WebSocket upgrade
     "/secrets/",                   // Secret broker (has own auth)
+    "/api/org/",                   // Org comms — user (CEO) messages
+    "/api/brain/",                 // Brain chat — user interactions
 ];
 
 /// Enforcement middleware for hex-nexus REST API.
