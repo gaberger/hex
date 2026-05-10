@@ -120,7 +120,7 @@ async fn run_one(
                 let abs = i + idx + 4;
                 let tail = &content[abs..];
                 let end = tail.find(|c: char| !c.is_ascii_digit()).unwrap_or(tail.len());
-                if end >= 8 {
+                if end >= 3 {
                     covered_adr_ids.insert(tail[..end].to_string());
                 }
                 i = abs + 1;

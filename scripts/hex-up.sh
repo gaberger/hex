@@ -19,6 +19,20 @@ STDB_BIN=${HEX_STDB_BIN:-$HOME/.local/bin/spacetimedb-standalone}
 LOG_DIR=${HEX_LOG_DIR:-$HOME/.hex}
 mkdir -p "$LOG_DIR"
 
+# Enable the typed-tool SOP path for executive personas (ADR-2605082500).
+# Without this, is_sop_persona() returns false and personas fall back to
+# the OLD commitment-creator contract (no code_patch emission, just
+# "Confirm: I will fix..." text replies). Set BEFORE starting nexus so
+# the daemon process inherits it.
+export HEX_SOP_PERSONAS=${HEX_SOP_PERSONAS:-cto,cpo,coo,ciso,chief-visionary}
+
+# Ensure cargo + rustup binaries are reachable for the cargo_check tool
+# spawn. nexus runtime PATH otherwise excludes ~/.cargo/bin.
+case ":$PATH:" in
+  *":$HOME/.cargo/bin:"*) ;;
+  *) export PATH="$HOME/.cargo/bin:$PATH" ;;
+esac
+
 NO_SCHED=0
 REBUILD=0
 RESTART=0

@@ -42,6 +42,15 @@ pub fn classify_intent(message: &str) -> &'static str {
     {
         return "paradigm_question";
     }
+    // Explicit code_patch directive wins over keyword matches — operator
+    // can force the SOP path to route through the code_patch tool.
+    if has("intent=code_patch")
+        || has("emit code_patch")
+        || has("via code_patch")
+        || has("self-fix ask")
+    {
+        return "code_patch";
+    }
     if has("draft") && (has("adr") || has("decision record")) {
         return "adr_draft";
     }
@@ -328,9 +337,11 @@ async fn reason_via_anthropic(
     let user_content = format!(
         "Operator message:\n>>> {}\n\nGround pack (deterministic tool results):\n{}\n\n\
          Per the SOP: emit exactly ONE structured action via tool call \
-         (adr_draft, escalate_to_operator, or — if the operator's ask is genuinely \
-         answered by the ground pack alone with no artifact needed — reply with a \
-         brief 1-2 sentence direct answer and no tool call).",
+         (adr_draft, spec_draft, workplan_emit, code_patch, adr_status_set, escalate_to_operator), \
+         or — if the operator's ask is genuinely answered by the ground pack alone with no \
+         artifact needed — reply with a brief 1-2 sentence direct answer and no tool call. \
+         For code-modifying asks (intent=code_patch, bug_triage, 'fix the X'): emit code_patch \
+         after grounding the exact file:line via repo_read.",
         operator_message,
         serde_json::to_string_pretty(ground_pack).unwrap_or_default()
     );
@@ -420,7 +431,7 @@ async fn reason_via_anthropic(
         let mut tool_results: Vec<Value> = Vec::new();
         for (id, name, input) in &tool_uses {
             // Track the FIRST emit-class tool call as the persona's emitted action.
-            if emitted_kind.is_none() && matches!(name.as_str(), "adr_draft" | "workplan_emit" | "escalate_to_operator") {
+            if emitted_kind.is_none() && matches!(name.as_str(), "adr_draft" | "workplan_emit" | "spec_draft" | "code_patch" | "adr_status_set" | "escalate_to_operator") {
                 emitted_kind = Some(name.clone());
             }
             let result = registry.execute(name, input.clone()).await;
@@ -480,9 +491,11 @@ async fn reason_via_openrouter(
     let user_content = format!(
         "Operator message:\n>>> {}\n\nGround pack (deterministic tool results):\n{}\n\n\
          Per the SOP: emit exactly ONE structured action via tool call \
-         (adr_draft, escalate_to_operator), or — if the operator's ask is genuinely \
-         answered by the ground pack alone with no artifact needed — reply with a \
-         brief 1-2 sentence direct answer and no tool call.",
+         (adr_draft, spec_draft, workplan_emit, code_patch, adr_status_set, escalate_to_operator), \
+         or — if the operator's ask is genuinely answered by the ground pack alone with no \
+         artifact needed — reply with a brief 1-2 sentence direct answer and no tool call. \
+         For code-modifying asks (intent=code_patch, bug_triage, 'fix the X'): emit code_patch \
+         after grounding the exact file:line via repo_read.",
         operator_message,
         serde_json::to_string_pretty(ground_pack).unwrap_or_default()
     );
@@ -585,7 +598,7 @@ async fn reason_via_openrouter(
             let args_str = func.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}");
             let input: Value = serde_json::from_str(args_str).unwrap_or(Value::Null);
 
-            if emitted_kind.is_none() && matches!(name.as_str(), "adr_draft" | "workplan_emit" | "escalate_to_operator") {
+            if emitted_kind.is_none() && matches!(name.as_str(), "adr_draft" | "workplan_emit" | "spec_draft" | "code_patch" | "adr_status_set" | "escalate_to_operator") {
                 emitted_kind = Some(name.clone());
             }
 
@@ -655,9 +668,18 @@ fn build_reason_system_prompt(role: &str, intent: &str) -> String {
          patterns, repo_read specific files, cargo_check a crate). When you have \
          what you need, emit EXACTLY ONE structured action via tool call:\n\n\
          - `adr_draft(id, title, status, body)` for an ADR (intent=adr_draft, arch_review)\n\
+         - `spec_draft(slug, body)` for a docs/specs/<slug>.md design spec\n\
+         - `workplan_emit(id, body_json)` for a docs/workplans/wp-<slug>.json work plan\n\
+         - `code_patch(path, mode, ...)` to modify a source file (intent=code_patch, bug_triage). \
+           Allowed paths: hex-*/src/, examples/, scripts/, docs/, spacetime-modules/, tests/. \
+           Modes: replace_lines (line range), replace_string (anchored), append, create.\n\
+         - `adr_status_set(adr_id, new_status)` to flip an ADR's Status header\n\
          - `escalate_to_operator(reason, urgency, options?)` when the operator should pick\n\
          - or no tool call + a 1-2 sentence direct text answer when the ground pack already \
            contains the answer (e.g. simple code questions about file contents)\n\n\
+         For code_patch / bug_triage / fix asks: GROUND the exact file:line via repo_read \
+         FIRST, then emit code_patch. Do NOT reply with a 'Confirm: I will fix...' commitment \
+         when the operator asked for a code_patch — that is the wrong contract for this turn.\n\n\
          === DOMAIN + TOOL BIAS ===\n\
          Domain: {domain}\n\
          {tool_hints}\n\n\

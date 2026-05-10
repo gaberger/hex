@@ -58,6 +58,7 @@ impl Tool for CargoCheck {
             cmd.arg("--release");
         }
         cmd.current_dir(&repo_root);
+        cmd.env("PATH", format!("{}/.cargo/bin:{}", std::env::var("HOME").unwrap_or_default(), std::env::var("PATH").unwrap_or_default()));
         cmd.env("HEX_HUB_BUILD_HASH", "tool-cargo-check");
 
         let fut = cmd.output();

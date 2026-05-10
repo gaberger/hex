@@ -95,11 +95,15 @@ impl Tool for CodePatch {
         let allowed_prefixes = [
             "hex-nexus/src/", "hex-cli/src/", "hex-core/src/", "hex-agent/src/",
             "hex-parser/src/", "hex-analyzer/src/", "hex-desktop/src/",
+            "hex-cli/assets/", "hex-nexus/assets/",
             "examples/", "scripts/", "docs/", "spacetime-modules/", "tests/",
         ];
-        if !allowed_prefixes.iter().any(|p| rel_path.starts_with(p)) {
+        if !allowed_prefixes.iter().any(|p| rel_path.starts_with(p))
+            && !rel_path.ends_with("/Cargo.toml")
+            && rel_path != "Cargo.toml"
+        {
             return ToolResult::err(
-                format!("path '{}' outside allowed prefixes (hex-*/src/, examples/, scripts/, docs/, spacetime-modules/, tests/)", rel_path),
+                format!("path '{}' outside allowed prefixes (hex-*/src/, hex-*/assets/, examples/, scripts/, docs/, spacetime-modules/, tests/, */Cargo.toml)", rel_path),
                 start.elapsed().as_millis() as u64,
             );
         }

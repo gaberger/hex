@@ -495,13 +495,24 @@ fn hard_deny(kind: &str, payload: &str) -> Option<String> {
             }
         }
         // Outside known doc / asset / src directories.
+        // Aligned with code_patch tool allowlist (hex-nexus/src/tools/code_patch.rs)
+        // so the twin doesn't double-reject paths the typed tool already accepts.
         let allowed_prefixes = [
             "docs/",
             "src/",
             "tests/",
             "examples/",
             "scripts/",
+            "hex-nexus/src/",
+            "hex-cli/src/",
+            "hex-core/src/",
+            "hex-agent/src/",
+            "hex-parser/src/",
+            "hex-analyzer/src/",
+            "hex-desktop/src/",
             "hex-nexus/assets/src/",
+            "hex-cli/assets/",
+            "spacetime-modules/",
         ];
         if !allowed_prefixes.iter().any(|p| path.starts_with(p)) {
             return Some(format!("path outside allowed prefixes: {}", path));
