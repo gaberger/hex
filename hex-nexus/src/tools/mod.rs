@@ -18,11 +18,14 @@ pub mod adr_draft;
 pub mod adr_status_set;
 pub mod cargo_check;
 pub mod code_patch;
+pub mod cost_meter;
+pub mod dep_audit;
 pub mod escalate_to_operator;
 pub mod repo_grep;
 pub mod repo_read;
 pub mod secret_scan;
 pub mod spec_draft;
+pub mod tool_register;
 pub mod web_search;
 pub mod workplan_emit;
 
@@ -124,6 +127,7 @@ impl Default for ToolRegistry {
     fn default() -> Self {
         let mut reg = Self::new();
         reg.register(Arc::new(cargo_check::CargoCheck));
+        reg.register(Arc::new(dep_audit::DepAudit));
         reg.register(Arc::new(repo_grep::RepoGrep));
         reg.register(Arc::new(repo_read::RepoRead));
         reg.register(Arc::new(secret_scan::SecretScan));
@@ -131,8 +135,10 @@ impl Default for ToolRegistry {
         reg.register(Arc::new(adr_draft::AdrDraft));
         reg.register(Arc::new(spec_draft::SpecDraft));
         reg.register(Arc::new(code_patch::CodePatch));
+        reg.register(Arc::new(cost_meter::CostMeter));
         reg.register(Arc::new(workplan_emit::WorkplanEmit));
         reg.register(Arc::new(adr_status_set::AdrStatusSet));
+        reg.register(Arc::new(tool_register::ToolRegister));
         reg.register(Arc::new(escalate_to_operator::EscalateToOperator));
         reg
     }
