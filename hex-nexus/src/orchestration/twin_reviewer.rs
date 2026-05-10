@@ -302,6 +302,43 @@ async fn review_one(
     memory: &str,
     action: &PendingAction,
 ) -> Result<(), String> {
+    // SOURCE-CODE GUARD (post-mortem of 2026-05-10 17:0x runaway):
+    // Only the typed `code_patch` tool (proposed_by="tool:code_patch")
+    // may write to hex-*/src/ or spacetime-modules/*/src/. The drafter
+    // produces commitment-driven LLM stubs that pass the LLM-judge's
+    // permissive `src/` pattern and clobber real source files. This
+    // guard runs BEFORE hard_deny so the rejection rationale is
+    // specific instead of generic.
+    if action.kind == "file_write" {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&action.payload_json) {
+            let path = v.get("path").and_then(|x| x.as_str()).unwrap_or("");
+            let touches_source = path.starts_with("hex-nexus/src/")
+                || path.starts_with("hex-cli/src/")
+                || path.starts_with("hex-core/src/")
+                || path.starts_with("hex-agent/src/")
+                || path.starts_with("hex-parser/src/")
+                || path.starts_with("hex-analyzer/src/")
+                || path.starts_with("hex-desktop/src/")
+                || (path.starts_with("spacetime-modules/") && path.contains("/src/"));
+            if touches_source && action.proposed_by != "tool:code_patch" {
+                return decide(
+                    http,
+                    stdb_host,
+                    hex_db,
+                    action.id,
+                    "reject",
+                    &format!(
+                        "hard deny: only code_patch tool may write source files; \
+                         got proposed_by='{}' for path '{}'",
+                        action.proposed_by, path
+                    ),
+                    "",
+                )
+                .await;
+            }
+        }
+    }
+
     // Hard deny-list before we even ask the model. Cheaper than inference
     // and never wrong.
     if let Some(reason) = hard_deny(&action.kind, &action.payload_json) {
