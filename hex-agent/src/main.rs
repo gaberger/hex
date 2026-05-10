@@ -286,6 +286,48 @@ async fn main() -> anyhow::Result<()> {
         use adapters::secondary::stdb_task_poller::{StdbTaskPoller, TaskPayload};
         use adapters::secondary::code_phase_worker::CodePhaseWorker;
         use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+
+        // ADR-2605081126 P2.1 — refuse to run from trunk. Hijacker damage in
+        // 2026-05-07 came from daemons writing to `/home/gary/hex-intf` directly;
+        // this guard enforces the worktree-mandatory rule before any other work.
+        match hex_agent::worktree_guard::check_cwd() {
+            hex_agent::worktree_guard::GuardOutcome::RefuseTrunk { trunk_path } => {
+                eprintln!("{}", hex_agent::worktree_guard::refuse_message(&trunk_path));
+                std::process::exit(2);
+            }
+            hex_agent::worktree_guard::GuardOutcome::Indeterminate { reason } => {
+                eprintln!(
+                    "hex-agent daemon: could not determine git state ({}). \
+                     Set HEXFLO_WORKTREE_REQUIRED=0 to bypass.",
+                    reason
+                );
+                if std::env::var("HEXFLO_WORKTREE_REQUIRED")
+                    .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false")))
+                    .unwrap_or(true)
+                {
+                    std::process::exit(2);
+                }
+            }
+            hex_agent::worktree_guard::GuardOutcome::Ok { worktree_path, is_trunk } => {
+                std::env::set_var(
+                    hex_agent::worktree_guard::ENV_WORKTREE_PATH,
+                    worktree_path.display().to_string(),
+                );
+                if is_trunk {
+                    eprintln!(
+                        "hex-agent daemon: HEXFLO_WORKTREE_REQUIRED=0 override active; \
+                         running from trunk {} (operator-mode)",
+                        worktree_path.display()
+                    );
+                } else {
+                    tracing::info!(
+                        worktree = %worktree_path.display(),
+                        "hex-agent daemon: worktree-guard OK"
+                    );
+                }
+            }
+        }
+
         // CLI args override env vars
         if let Some(id) = agent_id  { std::env::set_var("HEX_AGENT_ID", id); }
         if let Some(id) = task_id   { std::env::set_var("HEX_SWARM_ID", id); }

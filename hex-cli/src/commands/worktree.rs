@@ -40,6 +40,30 @@ pub enum WorktreeAction {
         #[arg(long)]
         force: bool,
     },
+    /// Show pending merge requests + vote tallies (ADR-2605081126)
+    Status {
+        /// Emit JSON instead of the colorized table
+        #[arg(long)]
+        json: bool,
+    },
+    /// Operator override: approve a merge request and let the integrator merge
+    Approve {
+        /// Worktree path of the merge request to approve
+        #[arg(value_name = "PATH")]
+        path: String,
+        /// Reason for the override (logged in merge_vote.reason)
+        #[arg(long, default_value = "operator approval")]
+        reason: String,
+    },
+    /// Reject a merge request — voter=operator verdict=fail
+    Reject {
+        /// Worktree path of the merge request to reject
+        #[arg(value_name = "PATH")]
+        path: String,
+        /// Reason explaining the rejection (free text)
+        #[arg(value_name = "REASON")]
+        reason: String,
+    },
 }
 
 pub async fn run(action: WorktreeAction) -> anyhow::Result<()> {
@@ -47,6 +71,9 @@ pub async fn run(action: WorktreeAction) -> anyhow::Result<()> {
         WorktreeAction::List { stale, json } => list(stale, json).await,
         WorktreeAction::Merge { pattern, all, force } => merge(pattern, all, force).await,
         WorktreeAction::Cleanup { force } => cleanup(force).await,
+        WorktreeAction::Status { json } => merge_team_status(json).await,
+        WorktreeAction::Approve { path, reason } => merge_team_approve(path, reason).await,
+        WorktreeAction::Reject { path, reason } => merge_team_reject(path, reason).await,
     }
 }
 
@@ -725,4 +752,274 @@ async fn cleanup(force: bool) -> anyhow::Result<()> {
 
     println!("\n  Removed {} worktree(s).", removed);
     Ok(())
+}
+
+// ============================================================
+//  Merge-team CLI surface (ADR-2605081126 P5)
+// ============================================================
+
+const STDB_HOST_DEFAULT: &str = "http://127.0.0.1:3033";
+
+fn stdb_host() -> String {
+    std::env::var("HEX_SPACETIMEDB_HOST").unwrap_or_else(|_| STDB_HOST_DEFAULT.to_string())
+}
+
+fn hex_db() -> String {
+    std::env::var("HEX_STDB_DATABASE")
+        .unwrap_or_else(|_| hex_core::stdb_database_for_module("hexflo-coordination").to_string())
+}
+
+#[derive(Debug, Clone)]
+struct MergeRequestRow {
+    worktree_path: String,
+    branch: String,
+    role: String,
+    opened_at: String,
+    status: String,
+    related_workplan: String,
+}
+
+#[derive(Debug, Clone)]
+struct MergeVoteRow {
+    voter: String,
+    verdict: String,
+    reason: String,
+}
+
+async fn merge_team_status(json: bool) -> anyhow::Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+    let requests = fetch_merge_requests(&client).await?;
+    let votes = fetch_merge_votes(&client).await?;
+
+    if json {
+        let payload = serde_json::json!({
+            "requests": requests
+                .iter()
+                .map(|r| {
+                    let v: Vec<serde_json::Value> = votes
+                        .iter()
+                        .filter(|(p, _)| p == &r.worktree_path)
+                        .map(|(_, v)| serde_json::json!({
+                            "voter": v.voter,
+                            "verdict": v.verdict,
+                            "reason": v.reason,
+                        }))
+                        .collect();
+                    serde_json::json!({
+                        "worktree_path": r.worktree_path,
+                        "branch": r.branch,
+                        "role": r.role,
+                        "status": r.status,
+                        "related_workplan": r.related_workplan,
+                        "votes": v,
+                    })
+                })
+                .collect::<Vec<_>>()
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
+
+    if requests.is_empty() {
+        println!("  No active merge requests.");
+        return Ok(());
+    }
+
+    println!(
+        "{}",
+        format!("⬡ Merge requests ({})", requests.len()).bold()
+    );
+    println!();
+    for r in &requests {
+        let status_color = match r.status.as_str() {
+            "pending" => r.status.yellow(),
+            "voting" => r.status.cyan(),
+            "approved" => r.status.green(),
+            "rejected" => r.status.red(),
+            "merged" => r.status.dimmed(),
+            _ => r.status.normal(),
+        };
+        println!(
+            "  {} {}  {}",
+            r.worktree_path.bold(),
+            format!("[{}]", r.branch).dimmed(),
+            status_color
+        );
+        println!(
+            "    role={}  workplan={}  opened={}",
+            r.role, r.related_workplan.dimmed(), r.opened_at[..r.opened_at.len().min(60)].dimmed()
+        );
+        let role_votes: Vec<&(String, MergeVoteRow)> = votes
+            .iter()
+            .filter(|(p, _)| p == &r.worktree_path)
+            .collect();
+        if role_votes.is_empty() {
+            println!("    {}", "(no votes yet)".dimmed());
+        } else {
+            for (_, v) in role_votes {
+                let v_color = match v.verdict.as_str() {
+                    "pass" => v.verdict.green(),
+                    "fail" => v.verdict.red(),
+                    "abstain" => v.verdict.yellow(),
+                    _ => v.verdict.normal(),
+                };
+                let reason_short = v.reason.chars().take(80).collect::<String>();
+                println!(
+                    "    {:18} {} {}",
+                    v.voter,
+                    v_color,
+                    if reason_short.is_empty() {
+                        String::new()
+                    } else {
+                        format!("— {}", reason_short.dimmed())
+                    }
+                );
+            }
+        }
+        println!();
+    }
+
+    println!(
+        "  Tip: `hex worktree approve <path>` overrides; `hex worktree reject <path> <reason>` rejects."
+    );
+    Ok(())
+}
+
+async fn merge_team_approve(path: String, reason: String) -> anyhow::Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+    cast_operator_vote(&client, &path, "pass", &reason).await?;
+    println!(
+        "  {} Operator override recorded for {} ({})",
+        "\u{2713}".green(),
+        path.bold(),
+        reason.dimmed()
+    );
+    println!(
+        "  Integrator subscriber will pick up status=approved on next tick (~5s) and run hex worktree merge."
+    );
+    Ok(())
+}
+
+async fn merge_team_reject(path: String, reason: String) -> anyhow::Result<()> {
+    if reason.trim().is_empty() {
+        anyhow::bail!("reject requires a non-empty reason");
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+    cast_operator_vote(&client, &path, "fail", &reason).await?;
+    println!(
+        "  {} Rejected {} — {}",
+        "\u{2717}".red(),
+        path.bold(),
+        reason
+    );
+    Ok(())
+}
+
+async fn cast_operator_vote(
+    client: &reqwest::Client,
+    path: &str,
+    verdict: &str,
+    reason: &str,
+) -> anyhow::Result<()> {
+    let url = format!("{}/v1/database/{}/call/merge_vote_cast", stdb_host(), hex_db());
+    let body = serde_json::json!([path, "operator", verdict, reason]);
+    let resp = client.post(&url).json(&body).send().await?;
+    if !resp.status().is_success() {
+        let body_text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("merge_vote_cast HTTP {}: {}", body_text, body_text);
+    }
+    // Trigger the tally so status flips immediately.
+    let tally_url = format!(
+        "{}/v1/database/{}/call/merge_decision_tally",
+        stdb_host(),
+        hex_db()
+    );
+    let _ = client.post(&tally_url).json(&[path]).send().await;
+    Ok(())
+}
+
+async fn fetch_merge_requests(client: &reqwest::Client) -> anyhow::Result<Vec<MergeRequestRow>> {
+    let q = "SELECT worktree_path, branch, role, opened_at, status, related_workplan FROM merge_request";
+    let url = format!("{}/v1/database/{}/sql", stdb_host(), hex_db());
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "text/plain")
+        .body(q)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("merge_request query HTTP {}", resp.status());
+    }
+    let body: serde_json::Value = resp.json().await?;
+    let rows = body
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|t| t.get("rows"))
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let cols = match row.as_array() {
+            Some(a) if a.len() >= 6 => a,
+            _ => continue,
+        };
+        out.push(MergeRequestRow {
+            worktree_path: cols[0].as_str().unwrap_or("").to_string(),
+            branch: cols[1].as_str().unwrap_or("").to_string(),
+            role: cols[2].as_str().unwrap_or("").to_string(),
+            opened_at: cols[3].as_str().unwrap_or("").to_string(),
+            status: cols[4].as_str().unwrap_or("").to_string(),
+            related_workplan: cols[5].as_str().unwrap_or("").to_string(),
+        });
+    }
+    out.sort_by(|a, b| a.worktree_path.cmp(&b.worktree_path));
+    Ok(out)
+}
+
+async fn fetch_merge_votes(
+    client: &reqwest::Client,
+) -> anyhow::Result<Vec<(String, MergeVoteRow)>> {
+    let q = "SELECT worktree_path, voter, verdict, reason FROM merge_vote";
+    let url = format!("{}/v1/database/{}/sql", stdb_host(), hex_db());
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "text/plain")
+        .body(q)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Ok(Vec::new()); // table may be empty / not yet populated
+    }
+    let body: serde_json::Value = resp.json().await?;
+    let rows = body
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|t| t.get("rows"))
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let cols = match row.as_array() {
+            Some(a) if a.len() >= 4 => a,
+            _ => continue,
+        };
+        let path = cols[0].as_str().unwrap_or("").to_string();
+        out.push((
+            path,
+            MergeVoteRow {
+                voter: cols[1].as_str().unwrap_or("").to_string(),
+                verdict: cols[2].as_str().unwrap_or("").to_string(),
+                reason: cols[3].as_str().unwrap_or("").to_string(),
+            },
+        ));
+    }
+    Ok(out)
 }
