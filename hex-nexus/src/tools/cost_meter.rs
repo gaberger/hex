@@ -122,16 +122,17 @@ impl Tool for CostMeter {
             }
         };
 
-        // Parse STDB response. Expected shape: { "rows": [[key, inp, out, cost], ...] }
-        let rows = match json_resp.get("rows").and_then(|v| v.as_array()) {
-            Some(r) => r,
-            None => {
-                return ToolResult::err(
-                    "STDB response missing 'rows' array",
-                    start.elapsed().as_millis() as u64,
-                );
-            }
-        };
+        // STDB response shape: [{ "schema": {...}, "rows": [[...], ...], ... }]
+        // The top-level is an array (one entry per result set).
+        let rows_owned: Vec<Value> = json_resp
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|first| first.get("rows"))
+            .and_then(|r| r.as_array())
+            .cloned()
+            .or_else(|| json_resp.get("rows").and_then(|v| v.as_array()).cloned())
+            .unwrap_or_default();
+        let rows = &rows_owned;
 
         // Aggregate in Rust: STDB SQL doesn't have SUM/GROUP BY. Each row is
         // [group_key, input_tokens, output_tokens, cost_usd, created_at].
