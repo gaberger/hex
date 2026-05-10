@@ -973,7 +973,13 @@ fn build_chat_card(role: &str, intent: &str, reason: &ReasonResult) -> String {
     }
     s.push_str(&format!("(rounds={})", reason.tool_round_trips));
     if !reason.final_text.is_empty() {
-        s.push_str(&format!("\n\n{}", reason.final_text.chars().take(800).collect::<String>()));
+        // Was 800; bumped to 4000 so status reports / arch reviews don't get
+        // cut at section 2. Override via HEX_SOP_CHAT_CARD_MAX_CHARS.
+        let cap: usize = std::env::var("HEX_SOP_CHAT_CARD_MAX_CHARS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4000);
+        s.push_str(&format!("\n\n{}", reason.final_text.chars().take(cap).collect::<String>()));
     }
     s
 }
