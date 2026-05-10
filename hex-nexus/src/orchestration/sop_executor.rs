@@ -555,16 +555,26 @@ async fn reason_via_openrouter(
             .send()
             .await
             .map_err(|e| format!("openrouter http: {}", e))?;
-
         let status = resp.status();
         let body: Value = resp.json().await.map_err(|e| format!("openrouter json: {}", e))?;
+
+        // Ollama fallback on content-filter 403 or redaction errors (post-mortem of [PHONE] redaction breaking CTO outputs)
         if !status.is_success() {
+            let body_str = serde_json::to_string(&body).unwrap_or_default().to_lowercase();
+            let is_content_filter = status.as_u16() == 403 && (body_str.contains("content filter") || body_str.contains("redaction"));
+            if is_content_filter {
+                tracing::warn!(
+                    role = %role, intent = %intent,
+                    "openrouter content filter blocked REASON phase; retrying via local ollama"
+                );
+                return reason_via_ollama_fallback(role, operator_message, intent, ground_pack, registry).await;
+            }
             return Err(format!("openrouter HTTP {}: {}", status, body));
         }
 
         let choice = body
             .get("choices")
-            .and_then(|c| c.as_array())
+            .and_then(|v| v.as_array())
             .and_then(|a| a.first())
             .cloned()
             .ok_or_else(|| "openrouter: empty choices".to_string())?;
@@ -642,6 +652,196 @@ async fn reason_via_openrouter(
 
             // If code_patch succeeded, record the path to block subsequent
             // same-file patches this round.
+            if result.ok {
+                if let Some(p) = patched_path {
+                    paths_written_this_round.insert(p);
+                }
+            }
+
+            let result_payload = json!({
+                "ok": result.ok,
+                "output": result.output,
+                "error": result.error,
+                "elapsed_ms": result.elapsed_ms,
+                "truncated": result.truncated,
+            });
+            messages.push(json!({
+                "role": "tool",
+                "tool_call_id": id,
+                "content": serde_json::to_string(&result_payload).unwrap_or_default(),
+            }));
+        }
+
+        round_trips += 1;
+    }
+}
+
+/// Ollama fallback for content-filtered OpenRouter requests.
+/// Mirrors reason_via_openrouter but posts to local Ollama endpoint with
+/// HEX_SOP_OLLAMA_MODEL (default qwen2.5-coder:32b).
+async fn reason_via_ollama_fallback(
+    role: &str,
+    operator_message: &str,
+    intent: &str,
+    ground_pack: &Value,
+    registry: Arc<ToolRegistry>,
+) -> Result<ReasonResult, String> {
+    let model = std::env::var("HEX_SOP_OLLAMA_MODEL")
+        .unwrap_or_else(|_| "qwen2.5-coder:32b".to_string());
+    let ollama_url = std::env::var("HEX_SOP_OLLAMA_URL")
+        .unwrap_or_else(|_| "http://localhost:11434".to_string());
+
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("http build: {}", e))?;
+
+    let system = build_reason_system_prompt(role, intent);
+    let user_content = format!(
+        "Operator message:\n>>> {}\n\nGround pack (deterministic tool results):\n{}\n\n\
+         Per the SOP: emit exactly ONE structured action via tool call \
+         (adr_draft, spec_draft, workplan_emit, code_patch, adr_status_set, escalate_to_operator), \
+         or — if the operator's ask is genuinely answered by the ground pack alone with no \
+         artifact needed — reply with a brief 1-2 sentence direct answer and no tool call. \
+         For code-modifying asks (intent=code_patch, bug_triage, 'fix the X'): emit code_patch \
+         after grounding the exact file:line via repo_read.",
+        operator_message,
+        serde_json::to_string_pretty(ground_pack).unwrap_or_default()
+    );
+
+    let mut messages: Vec<Value> = vec![
+        json!({ "role": "system", "content": system }),
+        json!({ "role": "user", "content": user_content }),
+    ];
+
+    // OpenAI/Ollama tools format
+    let anthropic_arr = registry.anthropic_schema();
+    let openai_tools: Vec<Value> = anthropic_arr
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|t| {
+            json!({
+                "type": "function",
+                "function": {
+                    "name": t.get("name").cloned().unwrap_or(Value::Null),
+                    "description": t.get("description").cloned().unwrap_or(Value::Null),
+                    "parameters": t.get("input_schema").cloned().unwrap_or_else(|| json!({"type":"object","properties":{}})),
+                }
+            })
+        })
+        .collect();
+
+    let mut emitted_kind: Option<String> = None;
+    let mut final_text = String::new();
+    let mut round_trips: u32 = 0;
+    let max_round_trips: u32 = std::env::var("HEX_SOP_MAX_ROUND_TRIPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(16);
+
+    loop {
+        if round_trips >= max_round_trips {
+            return Err(format!("tool round-trip cap ({}) hit without final reply", max_round_trips));
+        }
+
+        let req_body = json!({
+            "model": model,
+            "messages": messages,
+            "tools": openai_tools,
+            "max_tokens": 4096,
+        });
+
+        let resp = http
+            .post(format!("{}/v1/chat/completions", ollama_url))
+            .header("content-type", "application/json")
+            .json(&req_body)
+            .send()
+            .await
+            .map_err(|e| format!("ollama http: {}", e))?;
+
+        let status = resp.status();
+        let body: Value = resp.json().await.map_err(|e| format!("ollama json: {}", e))?;
+        if !status.is_success() {
+            return Err(format!("ollama HTTP {}: {}", status, body));
+        }
+
+        let choice = body
+            .get("choices")
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.first())
+            .cloned()
+            .ok_or_else(|| "ollama: empty choices".to_string())?;
+        let message = choice.get("message").cloned().unwrap_or(Value::Null);
+        let assistant_content = message.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let tool_calls = message.get("tool_calls").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+        messages.push(json!({
+            "role": "assistant",
+            "content": if assistant_content.is_empty() { Value::Null } else { Value::String(assistant_content.clone()) },
+            "tool_calls": tool_calls.clone(),
+        }));
+
+        if !assistant_content.is_empty() {
+            final_text.push_str(&assistant_content);
+        }
+
+        if tool_calls.is_empty() {
+            return Ok(ReasonResult {
+                emitted_kind,
+                tool_round_trips: round_trips,
+                final_text,
+            });
+        }
+
+        // Execute each tool call; append a tool message per call.
+        let mut paths_written_this_round: HashSet<String> = HashSet::new();
+        for tc in &tool_calls {
+            let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let func = tc.get("function").cloned().unwrap_or(Value::Null);
+            let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let args_str = func.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}");
+            let input: Value = serde_json::from_str(args_str).unwrap_or(Value::Null);
+
+            if emitted_kind.is_none() && matches!(name.as_str(), "adr_draft" | "workplan_emit" | "spec_draft" | "code_patch" | "adr_status_set" | "escalate_to_operator") {
+                emitted_kind = Some(name.clone());
+            }
+
+            // Same-file serializer (same logic as openrouter path)
+            if name == "code_patch" {
+                if let Some(path_val) = input.get("path") {
+                    if let Some(path_str) = path_val.as_str() {
+                        if paths_written_this_round.contains(path_str) {
+                            let err_payload = json!({
+                                "ok": false,
+                                "output": {},
+                                "error": format!(
+                                    "race detected: path '{}' was already patched this round; re-read the current file via repo_read and emit a replace_string patch in the next round trip",
+                                    path_str
+                                ),
+                                "elapsed_ms": 0,
+                                "truncated": false,
+                            });
+                            messages.push(json!({
+                                "role": "tool",
+                                "tool_call_id": id,
+                                "content": serde_json::to_string(&err_payload).unwrap_or_default(),
+                            }));
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            let patched_path: Option<String> = if name == "code_patch" {
+                input.get("path").and_then(|v| v.as_str()).map(String::from)
+            } else {
+                None
+            };
+
+            let result = registry.execute(&name, input).await;
+
             if result.ok {
                 if let Some(p) = patched_path {
                     paths_written_this_round.insert(p);
