@@ -410,8 +410,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 hex_db_for_integrator.clone(),
             );
 
-            // ADR-2605082200 — /proc walker upserts process_observation
-            // every 15s; the STDB-side resource_supervisor_tick (60s)
+            // ADR-[PHONE] — /proc monitor: samples CPU/mem every 15s; the STDB-side resource_supervisor_tick (60s)
             // emits resource_anomaly rows the operator sees in /resources.
             if std::env::var("HEX_DISABLE_RESOURCE_OBSERVER").is_err() {
                 crate::orchestration::resource_observer::spawn(
@@ -419,6 +418,19 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                     hex_db_for_integrator.clone(),
                 );
             }
+
+            // Cost watchdog: polls cost_meter every N mins, escalates if burn exceeds threshold.
+            // Disabled with HEX_DISABLE_COST_WATCHDOG=1.
+            if std::env::var("HEX_DISABLE_COST_WATCHDOG").is_err() {
+                let stdb_host_cost = stdb_host_for_integrator.clone();
+                let hex_db_cost = hex_db_for_integrator.clone();
+                tokio::spawn(async move {
+                    crate::orchestration::cost_watchdog::run(stdb_host_cost, hex_db_cost).await;
+                });
+                tracing::info!("cost_watchdog spawned — monitoring inference burn rate");
+            }
+
+            // ADR-[PHONE] — digital-twin loop. drafter turns
 
             // ADR-2605082300 — digital-twin loop. drafter turns
             // commitments into proposed_action(file_write); twin reviews

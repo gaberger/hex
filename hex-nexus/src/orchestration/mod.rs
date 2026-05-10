@@ -10,6 +10,7 @@ pub mod swarm_task_drainer;
 pub mod swarm_task_bridge;
 pub mod constraint_enforcer;
 pub mod context_pressure;
+pub mod cost_watchdog;
 pub mod directive;
 pub mod errors;
 pub mod grammars;
