@@ -112,6 +112,20 @@ impl Tool for EscalateToOperator {
         let _ = url; // suppress unused warning for now
 
         let elapsed = start.elapsed().as_millis() as u64;
+
+        // Fire-and-forget Telegram notification if configured
+        let notifier = crate::adapters::telegram_notifier::TelegramNotifier::from_env();
+        let telegram_message = format!(
+            "🚨 hex escalation: {} | urgency={} priority={}",
+            reason, urgency, priority
+        );
+        if let Err(e) = notifier.send(&telegram_message).await {
+            tracing::warn!(
+                error = %e,
+                "telegram_notifier send failed; escalation still recorded locally"
+            );
+        }
+
         ToolResult::ok(
             json!({
                 "ok": true,
