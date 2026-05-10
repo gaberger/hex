@@ -11,6 +11,7 @@
 //! Phase 4 VERIFY    — schema/cargo gate on the emitted action
 //! Phase 5 EMIT      — already handled by tools (proposed_action_open) + chat card
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -591,6 +592,7 @@ async fn reason_via_openrouter(
         }
 
         // Execute each tool call; append a tool message per call.
+        let mut paths_written_this_round: HashSet<String> = HashSet::new();
         for tc in &tool_calls {
             let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let func = tc.get("function").cloned().unwrap_or(Value::Null);
@@ -602,7 +604,50 @@ async fn reason_via_openrouter(
                 emitted_kind = Some(name.clone());
             }
 
+            // Same-file serializer: if code_patch targets a path already
+            // patched this round, skip execution and synthesize error.
+            if name == "code_patch" {
+                if let Some(path_val) = input.get("path") {
+                    if let Some(path_str) = path_val.as_str() {
+                        if paths_written_this_round.contains(path_str) {
+                            let err_payload = json!({
+                                "ok": false,
+                                "output": {},
+                                "error": format!(
+                                    "race detected: path '{}' was already patched this round; re-read the current file via repo_read and emit a replace_string patch in the next round trip",
+                                    path_str
+                                ),
+                                "elapsed_ms": 0,
+                                "truncated": false,
+                            });
+                            messages.push(json!({
+                                "role": "tool",
+                                "tool_call_id": id,
+                                "content": serde_json::to_string(&err_payload).unwrap_or_default(),
+                            }));
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // Snapshot the path BEFORE moving input into execute().
+            let patched_path: Option<String> = if name == "code_patch" {
+                input.get("path").and_then(|v| v.as_str()).map(String::from)
+            } else {
+                None
+            };
+
             let result = registry.execute(&name, input).await;
+
+            // If code_patch succeeded, record the path to block subsequent
+            // same-file patches this round.
+            if result.ok {
+                if let Some(p) = patched_path {
+                    paths_written_this_round.insert(p);
+                }
+            }
+
             let result_payload = json!({
                 "ok": result.ok,
                 "output": result.output,
