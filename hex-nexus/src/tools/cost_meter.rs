@@ -73,8 +73,9 @@ impl Tool for CostMeter {
         );
 
         // Query STDB via HTTP POST /v1/database/hex/sql with text/plain body
-        let stdb_url = std::env::var("SPACETIME_URL")
-            .unwrap_or_else(|_| "http://localhost:3000".to_string());
+        let stdb_url = std::env::var("HEX_SPACETIMEDB_HOST")
+            .or_else(|_| std::env::var("SPACETIME_URL"))
+            .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
         let url = format!("{}/v1/database/hex/sql", stdb_url);
 
         let client = match Client::builder()
