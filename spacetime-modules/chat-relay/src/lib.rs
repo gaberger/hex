@@ -373,3 +373,93 @@ pub fn session_insert_forked(
     });
     Ok(())
 }
+
+// ============================================================
+//  Agent Thought Memory (Phase 2 of supervisor-durability spec)
+//
+//  First-class persona reasoning store. After every successful org_responder
+//  reply, the persona is prompted for a 1-line summary of WHY it replied
+//  that way. That summary lands here as `kind=decision`. Other kinds let
+//  agents journal observations, plans, frustrations, learnings, commitments
+//  — the improver loop's ThoughtPattern detector watches for clusters.
+//
+//  Why a separate table from `message`: messages are the user-visible
+//  conversation surface; thoughts are the agent's INTERNAL state.
+// ============================================================
+
+#[table(name = agent_thought, public)]
+#[derive(Clone, Debug)]
+pub struct AgentThought {
+    #[primary_key]
+    #[auto_inc]
+    pub thought_id: u64,
+    pub agent_role: String,
+    /// One of: decision, observation, plan, frustration, learning, commitment.
+    pub kind: String,
+    pub content: String,
+    /// Empty = no linked task.
+    pub related_task_id: String,
+    /// 0 = no linked message.
+    pub related_msg_id: u64,
+    /// Optional confidence ∈ [0.0, 1.0]. 0.0 = no signal.
+    pub confidence: f32,
+    pub created_at: String,
+}
+
+pub const VALID_THOUGHT_KINDS: &[&str] = &[
+    "decision",
+    "observation",
+    "plan",
+    "frustration",
+    "learning",
+    "commitment",
+];
+
+pub const THOUGHT_CONTENT_MAX_BYTES: usize = 4096;
+
+#[reducer]
+pub fn journal_thought(
+    ctx: &ReducerContext,
+    agent_role: String,
+    kind: String,
+    content: String,
+    related_task_id: String,
+    related_msg_id: u64,
+    confidence: f32,
+) -> Result<(), String> {
+    if agent_role.is_empty() {
+        return Err("agent_role is required".into());
+    }
+    if !VALID_THOUGHT_KINDS.contains(&kind.as_str()) {
+        return Err(format!(
+            "invalid thought kind '{}': must be one of {:?}",
+            kind, VALID_THOUGHT_KINDS
+        ));
+    }
+    if content.is_empty() {
+        return Err("content is required".into());
+    }
+    if content.len() > THOUGHT_CONTENT_MAX_BYTES {
+        return Err(format!(
+            "content too large: {} bytes (max {})",
+            content.len(),
+            THOUGHT_CONTENT_MAX_BYTES
+        ));
+    }
+    let conf = if !(0.0..=1.0).contains(&confidence) {
+        0.0
+    } else {
+        confidence
+    };
+    ctx.db.agent_thought().insert(AgentThought {
+        thought_id: 0, // auto_inc
+        agent_role,
+        kind,
+        content,
+        related_task_id,
+        related_msg_id,
+        confidence: conf,
+        created_at: format!("{:?}", ctx.timestamp),
+    });
+    Ok(())
+}

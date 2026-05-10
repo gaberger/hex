@@ -114,6 +114,67 @@ impl SpacetimePersonaSupervisor {
         }
     }
 
+    /// Read the persona's most recent N thoughts for context injection.
+    /// Returns (kind, content) tuples ordered newest-first. Empty on any
+    /// failure — failures here MUST NOT block the responder.
+    pub async fn recent_thoughts(&self, role: &str, limit: usize) -> Vec<(String, String)> {
+        let Some(ref db) = self.chat_relay_database else {
+            return Vec::new();
+        };
+        let safe_role = role.replace('\'', "''");
+        // STDB SQL doesn't reliably support ORDER BY DESC LIMIT here, so we
+        // pull a bounded recent window and sort in Rust. agent_thought is
+        // append-only and small per-persona; cheap.
+        let q = format!(
+            "SELECT thought_id, kind, content FROM agent_thought WHERE agent_role = '{}' LIMIT 200",
+            safe_role
+        );
+        let url = format!("{}/v1/database/{}/sql", self.host, db);
+        let resp = match self
+            .http
+            .post(&url)
+            .header("Content-Type", "text/plain")
+            .body(q)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+        if !resp.status().is_success() {
+            return Vec::new();
+        }
+        let body: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(_) => return Vec::new(),
+        };
+        let rows = match body
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|t| t.get("rows"))
+            .and_then(|r| r.as_array())
+        {
+            Some(r) => r.clone(),
+            None => return Vec::new(),
+        };
+        let mut parsed: Vec<(u64, String, String)> = rows
+            .into_iter()
+            .filter_map(|r| {
+                let cols = r.as_array()?;
+                let id = cols.first()?.as_u64()?;
+                let kind = cols.get(1)?.as_str()?.to_string();
+                let content = cols.get(2)?.as_str()?.to_string();
+                Some((id, kind, content))
+            })
+            .collect();
+        parsed.sort_by(|a, b| b.0.cmp(&a.0));
+        parsed
+            .into_iter()
+            .take(limit)
+            .map(|(_, k, c)| (k, c))
+            .collect()
+    }
+
     /// Journal an agent thought (kind=decision/observation/plan/frustration/learning/commitment).
     /// Best-effort: failures here MUST NOT block the responder. Silently
     /// no-ops if `chat_relay_database` is not configured.

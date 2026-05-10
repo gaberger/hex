@@ -11,6 +11,7 @@ pub mod spacetime_agent_comm;
 pub mod spacetime_chat;
 pub mod spacetime_composition;
 pub mod spacetime_inference;
+pub mod spacetime_persona;
 pub mod spacetime_secrets;
 pub mod spacetime_session;
 pub mod spacetime_state;
