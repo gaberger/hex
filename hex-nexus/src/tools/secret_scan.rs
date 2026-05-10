@@ -115,7 +115,7 @@ impl Tool for SecretScan {
             .unwrap_or(MAX_FILES_DEFAULT as u64) as usize;
 
         let repo_root = std::env::var("HEX_REPO_ROOT")
-            .unwrap_or_else(|_| "/home/[PERSON_NAME]/hex-intf".to_string());
+            .unwrap_or_else(|_| "/home/gary/hex-intf".to_string());
         let repo_path = PathBuf::from(&repo_root);
 
         let patterns = build_patterns();

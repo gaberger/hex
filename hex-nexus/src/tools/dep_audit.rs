@@ -54,7 +54,7 @@ impl Tool for DepAudit {
             .unwrap_or("");
 
         let repo_root = std::env::var("HEX_REPO_ROOT")
-            .unwrap_or_else(|_| "/home/operator/hex-intf".to_string());
+            .unwrap_or_else(|_| "/home/gary/hex-intf".to_string());
 
         let mut cmd = Command::new("cargo");
         cmd.arg("audit").arg("--json");
