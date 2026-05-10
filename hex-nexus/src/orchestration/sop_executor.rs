@@ -533,6 +533,12 @@ async fn reason_via_openrouter(
         .and_then(|v| v.parse().ok())
         .unwrap_or(16);
 
+    // Conversation-wide serializer: persist across ALL round trips of this
+    // REASON loop, not just within one tool_uses batch. Prevents the cross-round
+    // race where round N's patch was based on file state before round N-1's
+    // write committed.
+    let mut paths_written_this_conversation: HashSet<String> = HashSet::new();
+
     loop {
         if round_trips >= max_round_trips {
             return Err(format!("tool round-trip cap ({}) hit without final reply", max_round_trips));
@@ -602,7 +608,6 @@ async fn reason_via_openrouter(
         }
 
         // Execute each tool call; append a tool message per call.
-        let mut paths_written_this_round: HashSet<String> = HashSet::new();
         for tc in &tool_calls {
             let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let func = tc.get("function").cloned().unwrap_or(Value::Null);
@@ -619,7 +624,7 @@ async fn reason_via_openrouter(
             if name == "code_patch" {
                 if let Some(path_val) = input.get("path") {
                     if let Some(path_str) = path_val.as_str() {
-                        if paths_written_this_round.contains(path_str) {
+                        if paths_written_this_conversation.contains(path_str) {
                             let err_payload = json!({
                                 "ok": false,
                                 "output": {},
@@ -654,7 +659,7 @@ async fn reason_via_openrouter(
             // same-file patches this round.
             if result.ok {
                 if let Some(p) = patched_path {
-                    paths_written_this_round.insert(p);
+                    paths_written_this_conversation.insert(p);
                 }
             }
 
@@ -741,6 +746,12 @@ async fn reason_via_ollama_fallback(
         .and_then(|v| v.parse().ok())
         .unwrap_or(16);
 
+    // Conversation-wide serializer: persist across ALL round trips of this
+    // REASON loop, not just within one tool_uses batch. Prevents the cross-round
+    // race where round N's patch was based on file state before round N-1's
+    // write committed.
+    let mut paths_written_this_conversation: HashSet<String> = HashSet::new();
+
     loop {
         if round_trips >= max_round_trips {
             return Err(format!("tool round-trip cap ({}) hit without final reply", max_round_trips));
@@ -796,7 +807,6 @@ async fn reason_via_ollama_fallback(
         }
 
         // Execute each tool call; append a tool message per call.
-        let mut paths_written_this_round: HashSet<String> = HashSet::new();
         for tc in &tool_calls {
             let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let func = tc.get("function").cloned().unwrap_or(Value::Null);
@@ -812,7 +822,7 @@ async fn reason_via_ollama_fallback(
             if name == "code_patch" {
                 if let Some(path_val) = input.get("path") {
                     if let Some(path_str) = path_val.as_str() {
-                        if paths_written_this_round.contains(path_str) {
+                        if paths_written_this_conversation.contains(path_str) {
                             let err_payload = json!({
                                 "ok": false,
                                 "output": {},
@@ -844,7 +854,7 @@ async fn reason_via_ollama_fallback(
 
             if result.ok {
                 if let Some(p) = patched_path {
-                    paths_written_this_round.insert(p);
+                    paths_written_this_conversation.insert(p);
                 }
             }
 
