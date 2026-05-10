@@ -25,6 +25,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use super::{Tool, ToolResult};
+use crate::tools::cargo_check::CargoCheck;
 
 const STDB_HOST_DEFAULT: &str = "http://127.0.0.1:3033";
 const MAX_NEW_CONTENT: usize = 16 * 1024;
@@ -246,6 +247,55 @@ impl Tool for CodePatch {
                 start.elapsed().as_millis() as u64,
             );
         }
+
+        // Chain cargo_check for Rust files to catch compile errors immediately
+        let cargo_check_result = if rel_path.ends_with(".rs") {
+            // Infer crate from path prefix
+            let crate_name = if rel_path.starts_with("hex-nexus/src/") {
+                "hex-nexus"
+            } else if rel_path.starts_with("hex-cli/src/") {
+                "hex-cli"
+            } else if rel_path.starts_with("hex-agent/src/") {
+                "hex-agent"
+            } else if rel_path.starts_with("hex-core/src/") {
+                "hex-core"
+            } else if rel_path.starts_with("hex-parser/src/") {
+                "hex-parser"
+            } else if rel_path.starts_with("hex-analyzer/src/") {
+                "hex-analyzer"
+            } else if rel_path.starts_with("hex-desktop/src/") {
+                "hex-desktop"
+            } else {
+                ""
+            };
+            
+            let check_tool = CargoCheck;
+            let check_input = json!({
+                "crate": crate_name,
+            });
+            let check_result = check_tool.execute(check_input).await;
+            
+            // Truncate stderr/errors to 4KB to avoid STDB payload bloat
+            if let Some(output) = check_result.output.as_object() {
+                let mut truncated = output.clone();
+                if let Some(errors) = truncated.get_mut("errors").and_then(|e| e.as_array_mut()) {
+                    errors.truncate(10);
+                }
+                if let Some(warnings) = truncated.get_mut("warnings").and_then(|w| w.as_array_mut()) {
+                    warnings.truncate(10);
+                }
+                if let Some(stderr) = truncated.get_mut("stderr_tail").and_then(|s| s.as_str()) {
+                    let truncated_stderr: String = stderr.chars().take(4096).collect();
+                    truncated.insert("stderr_tail".to_string(), Value::String(truncated_stderr));
+                }
+                Some(Value::Object(truncated))
+            } else {
+                Some(check_result.output)
+            }
+        } else {
+            None
+        };
+
         ToolResult::ok(
             json!({
                 "ok": true,
@@ -253,7 +303,8 @@ impl Tool for CodePatch {
                 "mode": mode,
                 "rationale": rationale,
                 "byte_len": final_content.len(),
-                "note": "proposed_action queued; twin auto-approves tool:* per ADR-2605082500; executor writes via SafeFileWriter; cargo_check is the post-write verifier",
+                "cargo_check": cargo_check_result,
+                "note": "proposed_action queued; twin auto-approves tool:code_patch; executor writes via SafeFileWriter; cargo_check inline shows compile status",
             }),
             start.elapsed().as_millis() as u64,
         )
