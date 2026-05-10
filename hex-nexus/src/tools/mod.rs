@@ -21,6 +21,7 @@ pub mod code_patch;
 pub mod escalate_to_operator;
 pub mod repo_grep;
 pub mod repo_read;
+pub mod secret_scan;
 pub mod spec_draft;
 pub mod web_search;
 pub mod workplan_emit;
@@ -125,6 +126,7 @@ impl Default for ToolRegistry {
         reg.register(Arc::new(cargo_check::CargoCheck));
         reg.register(Arc::new(repo_grep::RepoGrep));
         reg.register(Arc::new(repo_read::RepoRead));
+        reg.register(Arc::new(secret_scan::SecretScan));
         reg.register(Arc::new(web_search::WebSearch));
         reg.register(Arc::new(adr_draft::AdrDraft));
         reg.register(Arc::new(spec_draft::SpecDraft));
