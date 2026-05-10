@@ -24,7 +24,7 @@ mkdir -p "$LOG_DIR"
 # the OLD commitment-creator contract (no code_patch emission, just
 # "Confirm: I will fix..." text replies). Set BEFORE starting nexus so
 # the daemon process inherits it.
-export HEX_SOP_PERSONAS=${HEX_SOP_PERSONAS:-cto,cpo,coo,ciso,chief-visionary}
+export HEX_SOP_PERSONAS=${HEX_SOP_PERSONAS:-cto,cpo,coo,ciso,chief-visionary,chief-architect}
 
 # Ensure cargo + rustup binaries are reachable for the cargo_check tool
 # spawn. nexus runtime PATH otherwise excludes ~/.cargo/bin.

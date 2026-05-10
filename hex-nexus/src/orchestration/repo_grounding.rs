@@ -71,7 +71,7 @@ fn load(repo_root: &Path) -> RepoFacts {
 }
 
 fn scan_personas(dir: &Path) -> Vec<PersonaSummary> {
-    let exec = ["ceo", "cto", "cpo", "coo", "ciso", "chief-visionary"];
+    let exec = ["ceo", "cto", "cpo", "coo", "ciso", "chief-visionary", "chief-architect"];
     let lead = ["engineering-lead", "product-lead", "sre-lead"];
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,

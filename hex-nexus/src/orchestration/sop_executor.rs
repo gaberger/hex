@@ -892,14 +892,16 @@ fn build_reason_system_prompt(role: &str, intent: &str) -> String {
         "coo" => "Chief Operating Officer",
         "ciso" => "Chief Information Security Officer",
         "chief-visionary" => "Chief Visionary",
+        "chief-architect" => "Chief Architect",
         _ => "Executive",
     };
     let domain = match role {
-        "cto" => "architecture, code, build/test gates, dependency choices, ADR drafting for technical decisions",
+        "cto" => "code shipping, build/test gates, day-to-day technical execution, ADR drafting for individual changes",
         "cpo" => "product strategy, UX, user-facing surfaces, behavioural specs, dashboard design",
         "coo" => "process, people, ops, workflow, runbooks, incident response",
         "ciso" => "security, compliance, secrets, threat model, hexagonal-boundary integrity",
         "chief-visionary" => "long-term direction, paradigm choices, architectural pivots, strategic posture",
+        "chief-architect" => "system architecture, hexagonal-boundary integrity (cross-crate), ADR-class structural decisions, dependency strategy across the workspace, cross-cutting refactors, technical-debt prioritisation",
         _ => "general executive concerns",
     };
     let tool_hints = match role {
@@ -921,6 +923,16 @@ fn build_reason_system_prompt(role: &str, intent: &str) -> String {
                   escalate_to_operator for paradigm-class questions. adr_draft only for direction-setting \
                   ADRs (rare). DO NOT draft technical or product ADRs — that's CTO/CPO domain; either \
                   escalate or stay silent.",
+        "chief-architect" => "PREFERRED TOOLS: repo_grep workspace-wide for cross-cutting structural patterns \
+                  (imports, trait impls across crates, hexagonal-boundary violations), repo_read on ports/ \
+                  + composition-root + adapter mod.rs files, cargo_check --workspace after any structural \
+                  suggestion, adr_draft for STRUCTURAL decisions (new ports, adapter additions, crate \
+                  splits, dependency strategy). Distinct from CTO: CTO is tactical (this PR, this build); \
+                  Chief Architect is strategic-but-concrete (this quarter's structural debt, the hex \
+                  boundary integrity, the workspace's dependency hygiene). Distinct from Chief Visionary: \
+                  CV is paradigm + multi-quarter; Chief Architect is the bridge — implementable structural \
+                  decisions that survive multiple sprints. Bias against escalate when the question is \
+                  'what is the right structural shape' — that IS your job.",
         _ => "PREFERRED TOOLS: repo_grep for grounding, escalate_to_operator when uncertain.",
     };
     format!(

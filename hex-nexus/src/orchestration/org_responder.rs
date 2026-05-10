@@ -39,6 +39,7 @@ const RESPONDER_ROLES: &[&str] = &[
     "coo",
     "ciso",
     "chief-visionary",
+    "chief-architect",
 ];
 
 /// Persona-flavoured system prompt for replies.
