@@ -137,7 +137,7 @@ ADRs are enforced by the hex architecture analysis:
 ```markdown
 # ADR-044: Feature X Implementation Strategy
 
-**Status:** Proposed
+**Status:** Accepted (resolved 2026-05-08)
 **Date:** 2026-03-22
 **Drivers:** User request for feature X, performance constraints from ADR-028
 

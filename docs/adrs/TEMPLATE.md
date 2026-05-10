@@ -1,6 +1,6 @@
 # ADR-{YYMMDDHHMM}: {Title}
 
-**Status:** {Proposed | Accepted | Deprecated | Superseded}
+**Status:** Accepted (resolved 2026-05-08)
 **Date:** {YYYY-MM-DD}
 **Drivers:** {What triggered this decision — a bug, a requirement, a constraint}
 **Supersedes:** {ADR-YYMMDDHHMM if replacing an earlier decision}

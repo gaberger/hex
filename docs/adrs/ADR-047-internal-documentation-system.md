@@ -102,7 +102,7 @@ ADRs continue in `docs/adrs/` but with improved structure:
    ```yaml
    ---
    id: ADR-047
-   status: proposed | accepted | deprecated | superseded | rejected
+Status: Accepted (resolved 2026-05-08)
    date: 2026-03-21
    supersedes: []          # ADR IDs this replaces
    superseded_by: null     # ADR ID that replaces this

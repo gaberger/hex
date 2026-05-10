@@ -1,0 +1,203 @@
+{
+  "adr": "ADR-[PHONE]",
+  "created_at": "2026-05-10T13:34:50.972715799+00:00",
+  "created_by": "hex-coder",
+  "feature": "Cost and Token Efficiency",
+  "id": "wp-cost-and-token-efficiency",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "STDB schema + cost policy loader",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "spacetime-modules/src/lib.rs"
+          ],
+          "id": "P0.1",
+          "layer": "infrastructure",
+          "name": "Add inference_log columns: input_tokens_billed, output_tokens_billed, cost_usd to STDB schema",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/quant_router.rs"
+          ],
+          "id": "P0.2",
+          "layer": "infrastructure",
+          "name": "Create ~/.hex/cost-policy.yml schema + load_persona_tier() helper in quant_router.rs",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "SOP executor cost gates + tier routing",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/sop_executor.rs"
+          ],
+          "id": "P1.1",
+          "layer": "usecases",
+          "name": "Add cost gate pre-flight check to sop_executor.rs reason_with_tools() — estimate max_cost, block if > HEX_SOP_COST_GATE_USD, emit escalate_to_operator",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/sop_executor.rs"
+          ],
+          "id": "P1.2",
+          "layer": "usecases",
+          "name": "Wire cost-policy.yml persona tier override into sop_executor.rs reason_via_anthropic() — call load_persona_tier(), respect tier floor, escalate on complexity_high/cargo_check_failure",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/sop_executor.rs"
+          ],
+          "id": "P1.3",
+          "layer": "usecases",
+          "name": "Reduce SOP REASON max_tokens from 4096 to 3072 in sop_executor.rs, add HEX_SOP_MAX_TOKENS_{ROLE} env override",
+          "status": "done"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P2",
+      "name": "Twin/drafter token optimizations + caching",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/twin_reviewer.rs"
+          ],
+          "id": "P2.1",
+          "layer": "usecases",
+          "name": "Move operator memory load outside action loop in twin_reviewer.rs run_one() — cache memory snapshot per tick, reuse for all actions in batch",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/drafter.rs"
+          ],
+          "id": "P2.2",
+          "layer": "usecases",
+          "name": "Reduce DRAFT_MAX_TOKENS from 4096 to 2048 in drafter.rs for one-pagers, add HEX_DRAFT_MAX_TOKENS env override",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/cache/file_content.rs",
+            "hex-nexus/src/tools/repo_read.rs"
+          ],
+          "id": "P2.3",
+          "layer": "infrastructure",
+          "name": "Create hex-nexus/src/cache/file_content.rs — LRU cache for repo_read tool with (path, mtime) key, 5min TTL, wire into repo_read tool",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/sop_executor.rs"
+          ],
+          "id": "P2.4",
+          "layer": "usecases",
+          "name": "Enable Anthropic prompt caching in sop_executor.rs reason_via_anthropic() — set cache_control ephemeral on system prompt + ground pack",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P3",
+      "name": "Mission Control cost dashboard view",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/routes/cost_metrics.rs",
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "id": "P3.1",
+          "layer": "primary",
+          "name": "Create hex-nexus/src/routes/cost_metrics.rs — GET /api/cost-metrics aggregates inference_log by persona/tool/date, returns daily/MTD spend, 7-day sparkline data",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/assets/src/components/views/CostMetrics.tsx"
+          ],
+          "id": "P3.2",
+          "layer": "primary",
+          "name": "Create hex-nexus/assets/src/components/views/CostMetrics.tsx — SolidJS view at #/cost-metrics, table [Persona | Today $ | MTD $ | Avg $/run], 7-day sparkline, alert banner when > HEX_DAILY_COST_LIMIT_USD",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/assets/src/components/views/MissionControl.tsx"
+          ],
+          "id": "P3.3",
+          "layer": "primary",
+          "name": "Add per-action cost preview to proposed_action detail view — estimate input/output tokens, show estimated_cost_usd + model_used before operator approval",
+          "status": "done"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P4",
+      "name": "Verify cost gates + routing + dashboard integration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/sop_executor.rs",
+            "hex-nexus/src/orchestration/twin_reviewer.rs",
+            "hex-nexus/src/orchestration/drafter.rs",
+            "hex-nexus/src/quant_router.rs",
+            "hex-nexus/src/cache/file_content.rs",
+            "hex-nexus/src/routes/cost_metrics.rs"
+          ],
+          "id": "P4.1",
+          "layer": "integration",
+          "name": "cargo check hex-nexus — verify Rust changes compile",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/sop_executor.rs"
+          ],
+          "id": "P4.2",
+          "layer": "integration",
+          "name": "Manual test: create ~/.hex/cost-policy.yml with cto: sop_reason_tier: haiku, trigger CTO SOP run, verify haiku used + cost < $0.10",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/sop_executor.rs",
+            "hex-nexus/assets/src/components/views/MissionControl.tsx"
+          ],
+          "id": "P4.3",
+          "layer": "integration",
+          "name": "Manual test: set HEX_SOP_COST_GATE_USD=0.10, trigger high-cost SOP, verify escalate_to_operator emitted + dashboard shows override button",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/assets/src/components/views/CostMetrics.tsx"
+          ],
+          "id": "P4.4",
+          "layer": "integration",
+          "name": "Manual test: navigate to #/cost-metrics, verify table renders with Today/MTD columns, sparkline displays, alert banner appears when daily limit exceeded",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

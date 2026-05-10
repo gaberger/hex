@@ -1,0 +1,152 @@
+{
+  "adr": "ADR-2605100800",
+  "created_at": "2026-05-10T13:41:59.571505190+00:00",
+  "created_by": "hex-coder",
+  "feature": "CISO Daily Security Sweep — unsafe-block + secret-pattern + ADR-disk-reconciliation audit",
+  "id": "wp-ciso-daily-security-sweep",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Unsafe-block sweep with diff-since-yesterday delta",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/security_sweep.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "repo_grep unsafe-block sweep: pattern='unsafe' glob='hex-nexus/src/**/*.rs,hex-cli/src/**/*.rs'. Write results to /tmp/unsafe-sweep-<date>.txt",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/security_sweep.rs"
+          ],
+          "id": "P0.2",
+          "layer": "domain",
+          "name": "Delta detection: if yesterday's /tmp/unsafe-sweep-<yesterday>.txt exists, diff against today. Surface new unsafe blocks as findings.",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secret-pattern audit (AWS/GCP/Anthropic key shapes)",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/security_sweep.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "repo_grep -P secret patterns: AWS keys (AKIA[0-9A-Z]{16}), GCP service-account JSON (@.*\\.iam\\.gserviceaccount\\.com), Anthropic keys (sk-ant-[a-zA-Z0-9-_]{32,}). Write to /tmp/secret-audit-<date>.txt",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/security_sweep.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "False-positive filtering: exclude docs/examples/, test fixtures, commented-out patterns. Surface high-confidence leaks only.",
+          "status": "done"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "ADR-vs-disk reconciliation (phantom-ADR detection)",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/security_sweep.rs"
+          ],
+          "id": "P2.1",
+          "layer": "secondary",
+          "name": "repo_grep pattern='ADR-[0-9]{10}' glob='docs/**/*.md' to collect all ADR references. Write to /tmp/adr-refs-<date>.txt",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/security_sweep.rs"
+          ],
+          "id": "P2.2",
+          "layer": "secondary",
+          "name": "For each unique ADR-XXXXXXXXXX, attempt repo_read('docs/adrs/ADR-XXXXXXXXXX-*.md'). Log phantom ADRs (grep match, repo_read file-not-found) to /tmp/phantom-adrs-<date>.txt",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/security_sweep.rs"
+          ],
+          "id": "P2.3",
+          "layer": "secondary",
+          "name": "Cross-check STDB proposed_action table (when stdb_query tool ships) to distinguish 'pending in STDB' vs 'truly phantom'.",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P3",
+      "name": "Write findings to docs/specs/security-sweep-<date>.md",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/security_sweep.rs",
+            "docs/specs/security-sweep-YYYY-MM-DD.md"
+          ],
+          "id": "P3.1",
+          "layer": "primary",
+          "name": "Aggregate findings from P0/P1/P2 tmp files. Render as docs/specs/security-sweep-<YYYY-MM-DD>.md with sections: Summary, Unsafe Blocks (delta), Secret Patterns, Phantom ADRs, Recommendations.",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/security_sweep.rs",
+            "docs/specs/security-sweep-YYYY-MM-DD.yaml"
+          ],
+          "id": "P3.2",
+          "layer": "primary",
+          "name": "Emit structured YAML companion: docs/specs/security-sweep-<YYYY-MM-DD>.yaml with finding_count, severity distribution, actionable_items[] for dashboard ingestion.",
+          "status": "done"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P4",
+      "name": "Daily enqueue via 'hex brain enqueue workplan docs/workplans/wp-ciso-daily-security-sweep.json'",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "docs/runbooks/ciso-daily-sweep.md"
+          ],
+          "id": "P4.1",
+          "layer": "integration",
+          "name": "Document enqueue command in docs/runbooks/ciso-daily-sweep.md: 'hex brain enqueue workplan docs/workplans/wp-ciso-daily-security-sweep.json' to run daily at 0800 UTC.",
+          "status": "done"
+        },
+        {
+          "files": [
+            "docs/runbooks/ciso-daily-sweep.md"
+          ],
+          "id": "P4.2",
+          "layer": "integration",
+          "name": "Future integration: when leaking-abstraction reverify reducer ships (CTO parallel investigation), modify P2 to consume it for ADR-vs-implementation drift detection.",
+          "status": "done"
+        }
+      ],
+      "tier": 3
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

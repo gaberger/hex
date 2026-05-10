@@ -1,0 +1,28 @@
+{
+  "adr": "ADR-001",
+  "created_at": "2026-05-10T15:54:42.910975164+00:00",
+  "created_by": "hex-coder",
+  "feature": "Adopt Hexagonal Architecture (Ports & Adapters) as foundational pattern",
+  "id": "wp-hexagonal-architecture",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Documentation and Architecture Decision",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "docs/adrs/ADR-001-hexagonal-architecture.md"
+          ],
+          "id": "P0.1",
+          "layer": "infrastructure",
+          "name": "Record ADR-001 hexagonal architecture decision",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

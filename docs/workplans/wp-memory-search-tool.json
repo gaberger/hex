@@ -1,0 +1,117 @@
+{
+  "adr": "ADR-[PHONE]",
+  "created_at": "2026-05-10T13:47:53.726546990+00:00",
+  "created_by": "hex-coder",
+  "feature": "memory_search typed SOP tool",
+  "id": "wp-memory-search-tool",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Create memory_search tool + wire into tool registry",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/tools/memory_search.rs"
+          ],
+          "id": "P0.1",
+          "layer": "ports",
+          "name": "Implement memory_search.rs tool with AppState dependency",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/tools/mod.rs"
+          ],
+          "id": "P0.2",
+          "layer": "infrastructure",
+          "name": "Register memory_search in mod.rs pub mod block",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Wire memory_search into SOP executor GROUND phase",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/sop_executor.rs"
+          ],
+          "id": "P1.1",
+          "layer": "usecases",
+          "name": "Pass Arc<AppState> into sop_executor::run() signature",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/sop_executor.rs"
+          ],
+          "id": "P1.2",
+          "layer": "usecases",
+          "name": "Inject MemorySearch into registry clone in reason_with_tools()",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/sop_executor.rs"
+          ],
+          "id": "P1.3",
+          "layer": "usecases",
+          "name": "Auto-call memory_search in ground_for_intent() before returning ground_pack",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/routes/org_chat.rs"
+          ],
+          "id": "P1.4",
+          "layer": "primary",
+          "name": "Update org_responder caller to pass state into sop_executor::run()",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "Verify + observable trace",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "Cargo.toml",
+            "hex-nexus/Cargo.toml"
+          ],
+          "id": "P2.1",
+          "layer": "integration",
+          "name": "Run cargo check --workspace",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/tools/mod.rs"
+          ],
+          "id": "P2.2",
+          "layer": "integration",
+          "name": "Add test: ToolRegistry lists memory_search",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "docs/adrs/ADR-[PHONE]-memory-search-typed-tool-for-sop-persona-context-enrichment.md"
+          ],
+          "id": "P2.3",
+          "layer": "integration",
+          "name": "Manual acceptance: send @cto ADR draft ask, confirm memory_search in SOP trace",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

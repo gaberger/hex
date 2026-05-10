@@ -1,0 +1,243 @@
+{
+  "id": "wp-worktree-mandatory-merge-team",
+  "paused": true,
+  "paused_reason": "Foundation freeze workplan (ADR-2605081126). Resume only when operator manually unpauses; this workplan BUILDS the merge gate that all subsequent work depends on, so it must be executed deliberately by a single operator-controlled agent, not picked up by the brain queue. See docs/STATE-OF-HEX-2026-05-08.md.",
+  "title": "Worktree-Mandatory Development with Merge-Team Safety Gate",
+  "adr_ref": "ADR-2605081126",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "STDB schema — merge_request + merge_vote tables",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "Add merge_request table to hexflo-coordination: { worktree_path (pk), branch, role, opened_at, status (pending|voting|approved|rejected|merged), related_workplan, agent_id }. Plus merge_request_open(worktree_path, branch, role, related_workplan, agent_id) reducer.",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs"
+          ],
+          "evidence": [
+            "grep -q 'pub struct MergeRequest' spacetime-modules/hexflo-coordination/src/lib.rs",
+            "grep -q 'fn merge_request_open' spacetime-modules/hexflo-coordination/src/lib.rs",
+            "cd spacetime-modules/hexflo-coordination && cargo check --target wasm32-unknown-unknown"
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Add merge_vote table: { (worktree_path, voter) pk, voter (validation-judge|adversarial-red|adversarial-blue|integrator|operator), verdict (pass|fail|abstain), reason, voted_at }. Plus merge_vote_cast(worktree_path, voter, verdict, reason) reducer.",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs"
+          ],
+          "evidence": [
+            "grep -q 'pub struct MergeVote' spacetime-modules/hexflo-coordination/src/lib.rs",
+            "grep -q 'fn merge_vote_cast' spacetime-modules/hexflo-coordination/src/lib.rs"
+          ]
+        },
+        {
+          "id": "P1.3",
+          "title": "Extend supervisor_event kinds with 'merge_request' (already a reusable event channel). Decision tally reducer merge_decision_tally(worktree_path) writes back to merge_request.status (approved/rejected/voting) based on quorum policy from merge_quorum_policy table (default 2-of-3 plus validation-judge=pass; operator-override allowed).",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs"
+          ],
+          "evidence": [
+            "grep -q 'fn merge_decision_tally' spacetime-modules/hexflo-coordination/src/lib.rs",
+            "grep -q 'pub struct MergeQuorumPolicy' spacetime-modules/hexflo-coordination/src/lib.rs"
+          ]
+        },
+        {
+          "id": "P1.4",
+          "title": "Build + publish hexflo-coordination WASM with new tables. Verify via direct STDB SQL. Three behavioral specs validated: 2-of-3 quorum approves (judge+red pass, blue fail), judge=fail rejects (override of 2 passes), operator override approves (judge=fail + operator=pass).",
+          "status": "done",
+          "strategy_hint": "script",
+          "evidence": [
+            "cd spacetime-modules/hexflo-coordination && cargo build --target wasm32-unknown-unknown --release",
+            "cd spacetime-modules && spacetime publish --bin-path target/wasm32-unknown-unknown/release/hexflo_coordination.wasm hex",
+            "curl -sS -X POST http://127.0.0.1:3033/v1/database/hex/sql -H 'Content-Type: text/plain' -d 'SELECT worktree_path FROM merge_request LIMIT 0' | grep -v 'no such table'",
+            "curl -sS -X POST http://127.0.0.1:3033/v1/database/hex/sql -H 'Content-Type: text/plain' -d 'SELECT voter FROM merge_vote LIMIT 0' | grep -v 'no such table'"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "hex-agent daemon refuses trunk",
+      "tasks": [
+        {
+          "id": "P2.1",
+          "title": "HEXFLO_WORKTREE_REQUIRED guard added at daemon entry point in hex-agent/src/main.rs. New module hex-agent/src/worktree_guard.rs uses `git rev-parse --show-toplevel` + `git worktree list --porcelain` to detect trunk; refuses with exit code 2 + remediation message when CWD == trunk. Symlink-safe via fs::canonicalize (handles Bazzite /home → /var/home). Sets HEXFLO_WORKTREE_PATH env for children. NOTE: auto-create-worktree-on-task-claim deferred to a follow-on phase (Layer 1 hardening; needs `hex worktree create` CLI which currently doesn't exist as a subcommand). Trunk-refuse alone closes the hijacker hole observed 2026-05-07.",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-agent/src/main.rs",
+            "hex-agent/src/daemon.rs"
+          ],
+          "evidence": [
+            "grep -q 'HEXFLO_WORKTREE_REQUIRED' hex-agent/src/daemon.rs",
+            "grep -q 'is_trunk' hex-agent/src/daemon.rs",
+            "cd hex-agent && cargo build --release"
+          ]
+        },
+        {
+          "id": "P2.2",
+          "title": "Behavioral test in hex-agent/tests/daemon_worktree_required.rs covers three cases: (1) trunk → exit 2 + 'refusing to run from trunk' (BS-1); (2) HEXFLO_WORKTREE_REQUIRED=0 → daemon proceeds with 'override active' log; (3) inside worktree → 'worktree-guard OK' + daemon proceeds. All three pass on cargo test --release.",
+          "status": "done",
+          "strategy_hint": "script",
+          "files": [
+            "hex-agent/tests/daemon_worktree_required.rs"
+          ],
+          "evidence": [
+            "cd hex-agent && cargo test --release --test daemon_worktree_required"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "SafeFileWriter switches to trunk-detect predicate",
+      "tasks": [
+        {
+          "id": "P3.1",
+          "title": "SafeFileWriter now has TWO layers: (1) the existing static is_critical_path() allowlist; (2) new trunk-detect predicate. Layer 2 calls discover_trunk() (via `git worktree list --porcelain`) and cwd_is_trunk() (via `git rev-parse --show-toplevel`); if equal AND !operator_mode_active(), deny. Symlink-safe via fs::canonicalize. operator_mode_active() reads HEX_OPERATOR_MODE=1 BUT runs has_hex_agent_daemon_ancestor() (walks /proc/self up via PPID, looking for hex-agent + daemon argv) — if a daemon is in the ancestor chain, the override is rejected and a warning is logged.",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/safe_file_writer.rs"
+          ],
+          "evidence": [
+            "grep -q 'fn trunk_root' hex-cli/src/safe_file_writer.rs",
+            "grep -q 'fn current_worktree_root' hex-cli/src/safe_file_writer.rs",
+            "grep -q 'hex-agent daemon' hex-cli/src/safe_file_writer.rs"
+          ]
+        },
+        {
+          "id": "P3.2",
+          "title": "7 unit tests in hex-agent/src/adapters/safe_file_writer.rs cover: layer 1 critical-path block (3 tests), layer 2 trunk-write block (1), discover_trunk() finds workspace (1), footgun guard correctly returns false for non-daemon process (1), HEX_OPERATOR_MODE activates when set + no daemon ancestor (1). Run with --test-threads=1 to avoid env-var races; all 7 pass.",
+          "status": "done",
+          "strategy_hint": "script",
+          "files": [
+            "hex-cli/tests/safe_file_writer_trunk.rs"
+          ],
+          "evidence": [
+            "cd hex-cli && cargo test --release --test safe_file_writer_trunk"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "title": "Nexus integrator subscriber",
+      "tasks": [
+        {
+          "id": "P4.1",
+          "title": "integrator_subscriber.rs polls merge_request by status: pending → voting + dispatch validation-judge (cargo check, configurable via HEX_JUDGE_CARGO_ARGS); voting → call merge_decision_tally (reducer transitions); approved → run `hex worktree merge`; rejected → log (operator inbox notify deferred). 5s tick, 10s startup delay. Adversarial-red + adversarial-blue voters NOT yet automated — quorum policy must be tuned (min_pass_votes=1, require_judge_pass=true) until they ship. Cargo binary resolved via CARGO env / $HOME/.cargo/bin / PATH. End-to-end verified: pending → voting → judge runs `cargo check --workspace` → casts vote with build output as reason → tally transitions to rejected on judge=fail.",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/src/orchestration/integrator_subscriber.rs",
+            "hex-nexus/src/orchestration/mod.rs",
+            "hex-nexus/src/lib.rs"
+          ],
+          "evidence": [
+            "grep -q 'pub mod integrator_subscriber' hex-nexus/src/orchestration/mod.rs",
+            "grep -q 'fn dispatch_voters' hex-nexus/src/orchestration/integrator_subscriber.rs",
+            "cd hex-nexus && cargo check --release"
+          ]
+        },
+        {
+          "id": "P4.2",
+          "title": "Wired into lib.rs after the org_responder spawn site. spawn(stdb_host, hex_db) takes resolved hex db identity from hex_core::stdb_database_for_module(\"hexflo-coordination\"). HEX_DISABLE_INTEGRATOR_SUBSCRIBER=1 disables. Verified: nexus startup logs 'integrator_subscriber: started' and the subscriber begins polling merge_request within 10s of nexus boot.",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/src/lib.rs"
+          ],
+          "evidence": [
+            "grep -q 'integrator_subscriber::spawn' hex-nexus/src/lib.rs"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "title": "hex worktree status / approve / reject CLI",
+      "tasks": [
+        {
+          "id": "P5.1",
+          "title": "hex worktree status — lists every merge_request with role / workplan / opened_at / status (color-coded: pending=yellow, voting=cyan, approved=green, rejected=red, merged=dim). Per-row vote tally with verdict colors + first 80 chars of reason. JSON mode via --json. Direct STDB SQL queries via reqwest (no port-trait surface needed).",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/worktree/mod.rs",
+            "hex-cli/src/commands/worktree/status.rs"
+          ],
+          "evidence": [
+            "hex worktree status --help | grep -q 'merge'",
+            "cd hex-cli && cargo build --release"
+          ]
+        },
+        {
+          "id": "P5.2",
+          "title": "hex worktree approve <path> --reason <text>: cast operator vote=pass + immediate merge_decision_tally (status flips to approved → integrator picks up next tick → hex worktree merge runs). hex worktree reject <path> <reason>: cast operator vote=fail + tally → status=rejected. Both verified end-to-end: approve → merged; reject → rejected.",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/worktree/approve.rs",
+            "hex-cli/src/commands/worktree/reject.rs"
+          ],
+          "evidence": [
+            "hex worktree approve --help | grep -q 'override'",
+            "hex worktree reject --help | grep -q 'reason'"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P6",
+      "title": "Hijack regression test",
+      "tasks": [
+        {
+          "id": "P6.1",
+          "title": "hex-nexus/tests/hijack_regression.rs creates a worktree, overwrites lib.rs with a 30-line detector stub, commits, opens merge_request via STDB call endpoint, polls status up to 120s, asserts status=rejected AND trunk lib.rs SHA-256 unchanged. Verified live: judge ran cargo check (46s), failed, voted fail, tally → rejected, trunk untouched. Test gated on HEX_GATE_E2E=1 to keep cargo test cheap.",
+          "status": "done",
+          "strategy_hint": "script",
+          "files": [
+            "hex-nexus/tests/hijack_regression.rs"
+          ],
+          "evidence": [
+            "cd hex-nexus && cargo test --release --test hijack_regression"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P7",
+      "title": "Unfreeze",
+      "tasks": [
+        {
+          "id": "P7.1",
+          "title": "All 17 evidence checks across P1-P6 verified passing on 2026-05-08. STATE-OF-HEX-2026-05-08.md updated with the foundation-completed section + per-phase code/test references. project_freeze_state.md flipped to UNFROZEN with reference to BS-4.",
+          "status": "done",
+          "strategy_hint": "script",
+          "evidence": [
+            "grep -q 'Unfreeze procedure ran' docs/STATE-OF-HEX-2026-05-08.md"
+          ]
+        },
+        {
+          "id": "P7.2",
+          "title": "Soft unfreeze 2026-05-08: hex sched daemon restarted (pid live, queue draining, integrator+adr-doctor cycles running cleanly). End-to-end gate proven by BS-4 synthetic hijack regression in P6 (54s wall clock; trunk SHA-256 unchanged after stub-rewrite worktree gets rejected). Existing 108 pre-freeze workplans REMAIN QUARANTINED via per-workplan paused=true on the load-bearing one + operator triage as the explicit next workstream. New workplans created post-freeze go through the live merge gate.",
+          "status": "done",
+          "strategy_hint": "script",
+          "evidence": [
+            "pgrep -af 'hex sched daemon' | grep -q sched",
+            "curl -sS -X POST http://127.0.0.1:3033/v1/database/hex/sql -H 'Content-Type: text/plain' -d 'SELECT count(*) FROM merge_vote' | grep -v 'no such table'"
+          ]
+        }
+      ]
+    }
+  ]
+}

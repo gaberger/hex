@@ -1,0 +1,10 @@
+[
+    {
+        "name": "agent1",
+        "command": "path/to/agent1_executable"
+    },
+    {
+        "name": "agent2",
+        "command": "path/to/agent2_executable"
+    }
+]

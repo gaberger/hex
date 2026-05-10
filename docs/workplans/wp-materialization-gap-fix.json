@@ -1,0 +1,127 @@
+{
+  "adr": "ADR-[PHONE]",
+  "created_at": "2026-05-10T13:30:53.941711170+00:00",
+  "created_by": "hex-coder",
+  "feature": "Spec→Code Materialization Gap Fix (ADR-[PHONE])",
+  "id": "wp-materialization-gap-fix",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Diagnostic + Immediate Fail-Loud Fix",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/lib.rs"
+          ],
+          "id": "P0.1",
+          "layer": "infrastructure",
+          "name": "Add startup env-var diagnostics to hex-nexus/src/lib.rs before drafter/twin_reviewer/action_executor spawn calls",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/drafter.rs"
+          ],
+          "id": "P0.2",
+          "layer": "infrastructure",
+          "name": "Replace silent return with panic-unless-confirmed in drafter.rs spawn function",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/twin_reviewer.rs"
+          ],
+          "id": "P0.3",
+          "layer": "infrastructure",
+          "name": "Replace silent return with panic-unless-confirmed in twin_reviewer.rs spawn function",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/action_executor.rs"
+          ],
+          "id": "P0.4",
+          "layer": "infrastructure",
+          "name": "Replace silent return with panic-unless-confirmed in action_executor.rs spawn function",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "docs/specs/cost-ops-runbook.md"
+          ],
+          "id": "P0.5",
+          "layer": "infrastructure",
+          "name": "Update docs/specs/cost-ops-runbook.md kill-switch section to document HEX_CONFIRM_DISABLE_* requirement",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Observability — /api/loops/status Endpoint",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/mod.rs"
+          ],
+          "id": "P1.1",
+          "layer": "infrastructure",
+          "name": "Add SharedLoopState struct with Arc<RwLock<>> timestamps for drafter/twin_reviewer/action_executor last-tick",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/drafter.rs",
+            "hex-nexus/src/orchestration/twin_reviewer.rs",
+            "hex-nexus/src/orchestration/action_executor.rs"
+          ],
+          "id": "P1.2",
+          "layer": "infrastructure",
+          "name": "Modify drafter/twin_reviewer/action_executor loops to update shared last_tick timestamp on each successful tick",
+          "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/routes.rs"
+          ],
+          "id": "P1.3",
+          "layer": "primary",
+          "name": "Add GET /api/loops/status route in hex-nexus/src/routes.rs returning JSON with enabled + last_tick + queue counts",
+          "status": "done"
+        }
+      ],
+      "tier": 4
+    },
+    {
+      "id": "P2",
+      "name": "Verification + Documentation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "scripts/test-materialization-fix.sh"
+          ],
+          "id": "P2.1",
+          "layer": "integration",
+          "name": "Add test case in examples/ or scripts/ that sets HEX_DISABLE_TWIN=true without HEX_CONFIRM and expects panic",
+          "status": "done"
+        },
+        {
+          "files": [
+            "docs/specs/materialization-fix-verification.md"
+          ],
+          "id": "P2.2",
+          "layer": "infrastructure",
+          "name": "Add verification spec docs/specs/materialization-fix-verification.md describing manual test protocol",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}
