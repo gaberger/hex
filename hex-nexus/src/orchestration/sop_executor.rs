@@ -578,12 +578,21 @@ async fn reason_via_openrouter(
             return Err(format!("openrouter HTTP {}: {}", status, body));
         }
 
-        let choice = body
+        let choice = match body
             .get("choices")
             .and_then(|v| v.as_array())
             .and_then(|a| a.first())
             .cloned()
-            .ok_or_else(|| "openrouter: empty choices".to_string())?;
+        {
+            Some(c) => c,
+            None => {
+                tracing::warn!(
+                    role = %role, intent = %intent,
+                    "openrouter empty choices array; retrying via local ollama"
+                );
+                return reason_via_ollama_fallback(role, operator_message, intent, ground_pack, registry).await;
+            }
+        };
         let message = choice.get("message").cloned().unwrap_or(Value::Null);
         let assistant_content = message.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let tool_calls = message.get("tool_calls").and_then(|v| v.as_array()).cloned().unwrap_or_default();
