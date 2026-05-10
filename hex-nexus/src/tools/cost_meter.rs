@@ -61,15 +61,11 @@ impl Tool for CostMeter {
             );
         }
 
-        // Build SQL query: SELECT group_by_col, sum(input_tokens), sum(output_tokens), sum(cost_usd)
-        // FROM inference_log WHERE timestamp >= now() - window_secs GROUP BY group_by_col
+        // STDB SQL doesn't support SUM/NOW/INTERVAL/GROUP BY — pull recent rows
+        // and aggregate in Rust. Bounded by LIMIT to avoid runaway scans.
         let sql = format!(
-            "SELECT {}, SUM(input_tokens), SUM(output_tokens), SUM(cost_usd) \
-             FROM inference_log \
-             WHERE timestamp >= NOW() - INTERVAL '{} seconds' \
-             GROUP BY {} \
-             ORDER BY SUM(cost_usd) DESC",
-            group_by, window_secs, group_by
+            "SELECT {}, input_tokens, output_tokens, cost_usd, created_at FROM inference_log LIMIT 5000",
+            group_by
         );
 
         // Query STDB via HTTP POST /v1/database/hex/sql with text/plain body
@@ -137,42 +133,87 @@ impl Tool for CostMeter {
             }
         };
 
-        let mut groups: Vec<Value> = Vec::new();
+        // Aggregate in Rust: STDB SQL doesn't have SUM/GROUP BY. Each row is
+        // [group_key, input_tokens, output_tokens, cost_usd, created_at].
+        // cost_usd is stored as String (parse to f64). Time-window filter via
+        // string-prefix compare on ISO-8601 created_at.
+        use std::collections::HashMap;
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let cutoff_secs = now_secs.saturating_sub(window_secs as i64);
+
+        let mut agg: HashMap<String, (u64, u64, f64)> = HashMap::new();
         let mut total_input = 0u64;
         let mut total_output = 0u64;
         let mut total_cost = 0.0f64;
 
-        for row in rows.iter().take(MAX_GROUPS) {
+        for row in rows.iter() {
             let arr = match row.as_array() {
-                Some(a) if a.len() >= 4 => a,
+                Some(a) if a.len() >= 5 => a,
                 _ => continue,
             };
-            let key = arr[0].as_str().unwrap_or("(unknown)");
+            // Best-effort window filter: created_at is ISO-8601 string;
+            // parse to unix secs if possible, otherwise include in window.
+            let created_at = arr[4].as_str().unwrap_or("");
+            let row_secs = chrono::DateTime::parse_from_rfc3339(created_at)
+                .map(|dt| dt.timestamp())
+                .unwrap_or(now_secs);
+            if row_secs < cutoff_secs {
+                continue;
+            }
+            let key = arr[0].as_str().unwrap_or("(unknown)").to_string();
             let inp = arr[1].as_u64().unwrap_or(0);
             let out = arr[2].as_u64().unwrap_or(0);
-            let cost = arr[3].as_f64().unwrap_or(0.0);
+            // cost_usd stored as String per inference_log schema
+            let cost: f64 = arr[3].as_str().and_then(|s| s.parse().ok()).unwrap_or(0.0);
 
             total_input += inp;
             total_output += out;
             total_cost += cost;
 
-            groups.push(json!({
-                "key": key,
-                "input_tokens": inp,
-                "output_tokens": out,
-                "cost_usd": cost,
-            }));
+            let entry = agg.entry(key).or_insert((0, 0, 0.0));
+            entry.0 += inp;
+            entry.1 += out;
+            entry.2 += cost;
         }
+
+        let mut groups: Vec<Value> = agg
+            .into_iter()
+            .map(|(key, (inp, out, cost))| {
+                json!({
+                    "key": key,
+                    "input_tokens": inp,
+                    "output_tokens": out,
+                    "cost_usd": cost,
+                })
+            })
+            .collect();
+        // Sort descending by cost
+        groups.sort_by(|a, b| {
+            let ac = a.get("cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let bc = b.get("cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            bc.partial_cmp(&ac).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        groups.truncate(MAX_GROUPS);
 
         let elapsed = start.elapsed().as_millis() as u64;
         let result = json!({
             "groups": groups,
+            "totals": {
+                "input_tokens": total_input,
+                "output_tokens": total_output,
+                "cost_usd": total_cost,
+            },
+            // Back-compat aliases for older callers
             "total_input_tokens": total_input,
             "total_output_tokens": total_output,
             "total_cost_usd": total_cost,
             "window_secs": window_secs,
             "group_by": group_by,
-            "truncated": rows.len() > MAX_GROUPS,
+            "rows_scanned": rows.len(),
+            "rows_truncated": rows.len() >= 5000,
         });
 
         if rows.len() > MAX_GROUPS {
