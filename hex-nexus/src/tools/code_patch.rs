@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 
 use super::{Tool, ToolResult};
 use crate::tools::cargo_check::CargoCheck;
+use crate::tools::module_register::ModuleRegister;
 
 const STDB_HOST_DEFAULT: &str = "http://127.0.0.1:3033";
 const MAX_NEW_CONTENT: usize = 16 * 1024;
@@ -296,6 +297,30 @@ impl Tool for CodePatch {
             None
         };
 
+        // Auto-call module_register for newly-created tool/adapter files
+        // so the persona doesn't have to remember the pub mod + reg.register
+        // dance. Only runs on mode=create for hex-nexus/src/{tools,adapters}/*.rs
+        // (excluding mod.rs itself). Idempotent: module_register skips if
+        // pub mod already present.
+        let module_register_result: Option<Value> = if mode == "create"
+            && rel_path.ends_with(".rs")
+            && (rel_path.starts_with("hex-nexus/src/tools/")
+                || rel_path.starts_with("hex-nexus/src/adapters/"))
+            && rel_path != "hex-nexus/src/tools/mod.rs"
+            && rel_path != "hex-nexus/src/adapters/mod.rs"
+        {
+            let reg_tool = ModuleRegister;
+            let reg_input = json!({ "path": rel_path });
+            let reg_result = reg_tool.execute(reg_input).await;
+            Some(json!({
+                "ok": reg_result.ok,
+                "output": reg_result.output,
+                "error": reg_result.error,
+            }))
+        } else {
+            None
+        };
+
         ToolResult::ok(
             json!({
                 "ok": true,
@@ -304,7 +329,8 @@ impl Tool for CodePatch {
                 "rationale": rationale,
                 "byte_len": final_content.len(),
                 "cargo_check": cargo_check_result,
-                "note": "proposed_action queued; twin auto-approves tool:code_patch; executor writes via SafeFileWriter; cargo_check inline shows compile status",
+                "module_register": module_register_result,
+                "note": "proposed_action queued; twin auto-approves tool:code_patch; executor writes via SafeFileWriter; cargo_check inline shows compile status; module_register auto-runs for new tools/adapters",
             }),
             start.elapsed().as_millis() as u64,
         )
