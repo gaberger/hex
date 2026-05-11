@@ -93,14 +93,69 @@ const budgetEstimate = (m: MissionSummary | MissionDetail): number => {
   return (summary.tasks ?? 0) + 2 * (summary.phases ?? 0);
 };
 
+// Clickable column header that toggles sort key/direction.
+interface SortHeaderProps {
+  label: string;
+  k: SortKey;
+  sortKey: () => SortKey;
+  sortDir: () => "asc" | "desc";
+  onClick: (k: SortKey) => void;
+  class?: string;
+  title?: string;
+}
+const SortHeader: Component<SortHeaderProps> = (p) => {
+  const active = () => p.sortKey() === p.k;
+  return (
+    <th
+      onClick={() => p.onClick(p.k)}
+      title={p.title}
+      class={`px-2 py-2 cursor-pointer select-none font-medium hover:text-gray-300 ${p.class ?? "text-left"}`}
+    >
+      <span class={active() ? "text-cyan-300" : ""}>{p.label}</span>
+      <span class="ml-1 text-gray-600">
+        {active() ? (p.sortDir() === "asc" ? "↑" : "↓") : ""}
+      </span>
+    </th>
+  );
+};
+
 // ── List view ───────────────────────────────────────────────────────────────
+
+type SortKey = "status" | "priority" | "title" | "milestones" | "features" | "budget" | "created";
+
+const PRIORITY_ORDER: Record<string, number> = {
+  "P0-BLOCKER": 0,
+  high: 1,
+  normal: 2,
+  "": 3,
+};
+
+const STATUS_ORDER: Record<string, number> = {
+  in_progress: 0,
+  planned: 1,
+  blocked: 2,
+  done: 3,
+  superseded: 4,
+  "": 5,
+};
 
 const MissionsList: Component = () => {
   const [missions, setMissions] = createSignal<MissionSummary[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [filter, setFilter] = createSignal<"all" | "in_progress" | "planned" | "done">("all");
   const [search, setSearch] = createSignal("");
+  const [sortKey, setSortKey] = createSignal<SortKey>("priority");
+  const [sortDir, setSortDir] = createSignal<"asc" | "desc">("asc");
   let timer: ReturnType<typeof setInterval> | null = null;
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey() === key) {
+      setSortDir(sortDir() === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir(key === "milestones" || key === "features" || key === "budget" || key === "created" ? "desc" : "asc");
+    }
+  };
 
   const fetchMissions = async () => {
     try {
@@ -138,6 +193,35 @@ const MissionsList: Component = () => {
     if (filter() !== "all") {
       out = out.filter((m) => (m.status ?? "planned") === filter());
     }
+    const key = sortKey();
+    const dir = sortDir() === "asc" ? 1 : -1;
+    out = [...out].sort((a, b) => {
+      let cmp = 0;
+      switch (key) {
+        case "status":
+          cmp = (STATUS_ORDER[a.status ?? ""] ?? 5) - (STATUS_ORDER[b.status ?? ""] ?? 5);
+          break;
+        case "priority":
+          cmp = (PRIORITY_ORDER[a.priority ?? ""] ?? 3) - (PRIORITY_ORDER[b.priority ?? ""] ?? 3);
+          break;
+        case "title":
+          cmp = (a.title || a.feature || a.id).localeCompare(b.title || b.feature || b.id);
+          break;
+        case "milestones":
+          cmp = a.phases - b.phases;
+          break;
+        case "features":
+          cmp = a.tasks - b.tasks;
+          break;
+        case "budget":
+          cmp = budgetEstimate(a) - budgetEstimate(b);
+          break;
+        case "created":
+          cmp = (a.created_at || "").localeCompare(b.created_at || "");
+          break;
+      }
+      return cmp * dir;
+    });
     return out;
   });
 
@@ -197,42 +281,65 @@ const MissionsList: Component = () => {
             No missions match the current filter.
           </div>
         }>
-          <div class="space-y-2">
-            <For each={filtered()}>
-              {(m) => (
-                <button
-                  onClick={() => navigate({ page: "mission-detail", missionId: m.id })}
-                  class="w-full text-left bg-gray-900 border border-gray-800 hover:border-cyan-800 rounded-lg p-4 transition-colors group"
-                >
-                  <div class="flex items-start justify-between gap-4">
-                    <div class="flex-1 min-w-0">
-                      <div class="flex items-center gap-2 mb-1 flex-wrap">
-                        <span class={`text-xs px-2 py-0.5 rounded border ${statusClass(m.status)}`}>
+          <div class="text-xs text-gray-500 mb-2">
+            {filtered().length} of {missions().length} missions
+            {sortKey() && <span> · sorted by <span class="text-gray-300">{sortKey()}</span> {sortDir() === "asc" ? "↑" : "↓"}</span>}
+          </div>
+          <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-950 text-xs uppercase tracking-wide text-gray-500">
+                <tr>
+                  <SortHeader label="Status" k="status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} class="w-24" />
+                  <SortHeader label="Pri" k="priority" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} class="w-24" />
+                  <SortHeader label="Mission" k="title" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                  <SortHeader label="M" k="milestones" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} class="w-14 text-right" title="Milestones" />
+                  <SortHeader label="F" k="features" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} class="w-14 text-right" title="Features" />
+                  <SortHeader label="Budget" k="budget" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} class="w-20 text-right" title="Factory budget formula: features + 2 × milestones" />
+                  <th class="px-2 py-2 text-left w-32 font-medium">ADR</th>
+                  <SortHeader label="Created" k="created" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} class="w-24 text-left" />
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-850">
+                <For each={filtered()}>
+                  {(m) => (
+                    <tr
+                      onClick={() => navigate({ page: "mission-detail", missionId: m.id })}
+                      class="cursor-pointer hover:bg-gray-850 transition-colors group"
+                    >
+                      <td class="px-2 py-1.5">
+                        <span class={`text-[10px] px-1.5 py-0.5 rounded border ${statusClass(m.status)}`}>
                           {m.status ?? "planned"}
                         </span>
-                        <Show when={m.priority}>
-                          <span class={`text-xs px-2 py-0.5 rounded border ${priorityClass(m.priority)}`}>
+                      </td>
+                      <td class="px-2 py-1.5">
+                        <Show when={m.priority && m.priority !== "normal"} fallback={
+                          <span class="text-[10px] text-gray-600">{m.priority || "—"}</span>
+                        }>
+                          <span class={`text-[10px] px-1.5 py-0.5 rounded border ${priorityClass(m.priority)}`}>
                             {m.priority}
                           </span>
                         </Show>
-                        <Show when={m.related_adrs?.length > 0}>
-                          <span class="text-xs text-gray-500">{m.related_adrs.join(", ")}</span>
-                        </Show>
-                      </div>
-                      <h3 class="text-base font-semibold text-gray-100 group-hover:text-cyan-300 truncate">
-                        {m.title || m.feature || m.id}
-                      </h3>
-                      <div class="text-xs text-gray-500 mt-1 font-mono truncate">{m.id}</div>
-                    </div>
-                    <div class="flex flex-col items-end text-xs text-gray-400 shrink-0">
-                      <div><span class="text-gray-200 font-mono">{m.phases}</span> milestones</div>
-                      <div><span class="text-gray-200 font-mono">{m.tasks}</span> features</div>
-                      <div class="text-gray-600 mt-1">budget ≈ {budgetEstimate(m)} runs</div>
-                    </div>
-                  </div>
-                </button>
-              )}
-            </For>
+                      </td>
+                      <td class="px-2 py-1.5 min-w-0">
+                        <div class="truncate text-gray-100 group-hover:text-cyan-300">
+                          {m.title || m.feature || m.id}
+                        </div>
+                        <div class="truncate text-[11px] text-gray-600 font-mono">{m.id}</div>
+                      </td>
+                      <td class="px-2 py-1.5 text-right font-mono text-gray-300">{m.phases}</td>
+                      <td class="px-2 py-1.5 text-right font-mono text-gray-300">{m.tasks}</td>
+                      <td class="px-2 py-1.5 text-right font-mono text-gray-500">{budgetEstimate(m)}</td>
+                      <td class="px-2 py-1.5 text-xs text-gray-500 truncate">
+                        {m.related_adrs?.join(", ") || "—"}
+                      </td>
+                      <td class="px-2 py-1.5 text-xs text-gray-600 whitespace-nowrap">
+                        {m.created_at ? m.created_at.split("T")[0] : "—"}
+                      </td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
           </div>
         </Show>
       </Show>
