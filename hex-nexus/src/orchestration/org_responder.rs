@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 
 use crate::adapters::spacetime_agent_comm::SpacetimeAgentCommAdapter;
 use crate::adapters::spacetime_persona::SpacetimePersonaSupervisor;
@@ -30,6 +30,16 @@ const REPLY_MAX_TOKENS: u32 = 512;
 /// Token cap for the secondary "why this reply" prompt. Kept short — these
 /// thoughts are journal entries, not analyses.
 const THOUGHT_MAX_TOKENS: u32 = 96;
+/// Model pinned for responder calls. The default router selects T2
+/// (qwen2.5-coder:32b, 18 GB) by complexity — way too slow for short
+/// conversational replies and would timeout the http client. Pinning a
+/// small fast model keeps the chat loop snappy and lets us actually
+/// fan out across personas without saturating the GPU/CPU.
+/// Override with HEX_RESPONDER_MODEL.
+const REPLY_MODEL_DEFAULT: &str = "qwen3:4b";
+/// Cap concurrent inference calls so we don't queue 9 simultaneous
+/// requests at Ollama for a 4B model. Override with HEX_RESPONDER_CONCURRENCY.
+const REPLY_CONCURRENCY_DEFAULT: usize = 3;
 
 /// Roles the responder will reply on behalf of. Matches the personas under
 /// `hex-cli/assets/agents/hex/hex/`. Add a role here to enable auto-replies.
@@ -199,7 +209,19 @@ pub fn spawn(
     port: u16,
 ) {
     let replied = Arc::new(Mutex::new(RepliedTracker::default()));
+    let concurrency = std::env::var("HEX_RESPONDER_CONCURRENCY")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|n| *n > 0 && *n <= 32)
+        .unwrap_or(REPLY_CONCURRENCY_DEFAULT);
+    let model = std::env::var("HEX_RESPONDER_MODEL").unwrap_or_else(|_| REPLY_MODEL_DEFAULT.to_string());
+    let sem = Arc::new(Semaphore::new(concurrency));
     tokio::spawn(async move {
+        tracing::info!(
+            concurrency = concurrency,
+            model = %model,
+            "org_responder: parallelism + pinned model"
+        );
         let http = match reqwest::Client::builder()
             .timeout(Duration::from_secs(120))
             .build()
@@ -222,10 +244,29 @@ pub fn spawn(
 
         loop {
             ticker.tick().await;
+            // Fan out roles in parallel — previously sequential, which meant
+            // one slow inference (up to the 120s http timeout) pinned every
+            // downstream role for that whole tick. Now each role processes
+            // its own message queue concurrently. Messages within a single
+            // role are still serial to keep that persona's conversation
+            // linear.
+            let mut handles = Vec::with_capacity(RESPONDER_ROLES.len());
             for role in RESPONDER_ROLES {
-                if let Err(e) = process_role(role, &comm, &persona, &http, &inference_url, &replied).await {
-                    tracing::debug!(role = %role, error = %e, "org_responder: tick error");
-                }
+                let comm = comm.clone();
+                let persona = persona.clone();
+                let http = http.clone();
+                let inference_url = inference_url.clone();
+                let replied = replied.clone();
+                let sem = sem.clone();
+                let model = model.clone();
+                handles.push(tokio::spawn(async move {
+                    if let Err(e) = process_role(role, &comm, &persona, &http, &inference_url, &replied, &sem, &model).await {
+                        tracing::debug!(role = %role, error = %e, "org_responder: tick error");
+                    }
+                }));
+            }
+            for h in handles {
+                let _ = h.await;
             }
             replied.lock().await.maybe_trim();
         }
@@ -239,6 +280,8 @@ async fn process_role(
     http: &reqwest::Client,
     inference_url: &str,
     replied: &Arc<Mutex<RepliedTracker>>,
+    sem: &Arc<Semaphore>,
+    model: &str,
 ) -> Result<(), String> {
     let role_string = role.to_string();
     let messages = comm
@@ -372,7 +415,13 @@ async fn process_role(
         // parser. Without this, every Mission Control chat-panel ask was
         // dropped as off-contract and the operator saw silence.
         let chat_mode = !is_board && is_conversational(&content);
-        let reply = match generate_reply(http, inference_url, role, &content, &history, &thoughts, is_board, chat_mode).await {
+        // Acquire a concurrency slot before firing inference so we don't
+        // queue 9 simultaneous calls at a small local model.
+        let _permit = match sem.clone().acquire_owned().await {
+            Ok(p) => p,
+            Err(_) => continue, // semaphore closed — bail
+        };
+        let reply = match generate_reply(http, inference_url, role, &content, &history, &thoughts, is_board, chat_mode, model).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(role = %role, msg_id, error = %e, "org_responder: inference failed; will retry");
@@ -510,6 +559,7 @@ async fn generate_reply(
     thoughts: &[(String, String)],
     is_board: bool,
     chat_mode: bool,
+    model: &str,
 ) -> Result<String, String> {
     // Assemble messages array: [history…, current user turn].
     // History entries already encode role=user|assistant for the persona's POV.
@@ -559,6 +609,7 @@ async fn generate_reply(
     }
 
     let body = serde_json::json!({
+        "model": model,
         "messages": chat_messages,
         "system": system,
         "max_tokens": REPLY_MAX_TOKENS,
