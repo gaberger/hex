@@ -11,7 +11,7 @@
 //! eating context budget.
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Snapshot of repo state injected into every persona prompt.
@@ -37,16 +37,47 @@ pub struct AdrSummary {
     pub path: String,
 }
 
-static FACTS: OnceLock<RepoFacts> = OnceLock::new();
+// Refreshable cache. Previous OnceLock froze at startup which broke after
+// the ADR rename refactor (2026-05-11) — personas kept citing pre-rename
+// ADR IDs because the cache never re-scanned the directory.
+static FACTS: Mutex<Option<Arc<RepoFacts>>> = Mutex::new(None);
 
-/// Initialise the facts cache. Best-effort — failures fall back to an empty
-/// fact set (the persona prompt still works, just without grounding).
+const REFRESH_SECS: u64 = 60;
+
+/// Initialise the facts cache and spawn a background refresh task that
+/// re-scans every 60s. Best-effort — failures leave the cache empty
+/// (persona prompt still works, just without grounding).
 pub fn init(repo_root: &Path) {
-    let _ = FACTS.set(load(repo_root));
+    let facts = Arc::new(load(repo_root));
+    if let Ok(mut g) = FACTS.lock() {
+        *g = Some(facts);
+    }
+    let root = repo_root.to_path_buf();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(REFRESH_SECS));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // First tick fires immediately — we just loaded, skip it.
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let new_facts = Arc::new(load(&root));
+            if let Ok(mut g) = FACTS.lock() {
+                *g = Some(new_facts);
+            }
+        }
+    });
 }
 
-pub fn facts() -> Option<&'static RepoFacts> {
-    FACTS.get()
+pub fn facts() -> Option<Arc<RepoFacts>> {
+    FACTS.lock().ok().and_then(|g| g.clone())
+}
+
+/// Force an immediate reload of the facts cache (test + post-rename hook).
+pub fn refresh_now(repo_root: &Path) {
+    let new_facts = Arc::new(load(repo_root));
+    if let Ok(mut g) = FACTS.lock() {
+        *g = Some(new_facts);
+    }
 }
 
 fn load(repo_root: &Path) -> RepoFacts {
@@ -130,6 +161,34 @@ fn read_yaml_description(path: &Path) -> String {
     String::new()
 }
 
+/// Extract the full ADR ID (without the leading "ADR-" prefix) from a
+/// filename stem. Mirrors routes/adrs.rs::extract_id but returns just the
+/// id portion since the grounding format pre-pends "ADR-" when rendering.
+///
+///   "ADR-059-foo"                  → "059"               (legacy sequential)
+///   "ADR-2026-05-08-1126-foo"      → "2026-05-08-1126"   (hyphenated timestamp)
+///   "ADR-2603221500-foo"           → "2603221500"        (legacy 10-digit)
+fn extract_adr_id(stem: &str) -> String {
+    let rest = match stem.strip_prefix("ADR-").or_else(|| stem.strip_prefix("adr-")) {
+        Some(r) => r,
+        None => return stem.to_string(),
+    };
+    let parts: Vec<&str> = rest.splitn(5, '-').collect();
+    if parts.len() >= 4
+        && parts[0].len() == 4 && parts[0].chars().all(|c| c.is_ascii_digit())
+        && parts[1].len() == 2 && parts[1].chars().all(|c| c.is_ascii_digit())
+        && parts[2].len() == 2 && parts[2].chars().all(|c| c.is_ascii_digit())
+        && parts[3].len() == 4 && parts[3].chars().all(|c| c.is_ascii_digit())
+    {
+        return format!("{}-{}-{}-{}", parts[0], parts[1], parts[2], parts[3]);
+    }
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if !digits.is_empty() {
+        return digits;
+    }
+    rest.to_string()
+}
+
 fn scan_adrs(dir: &Path) -> Vec<AdrSummary> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -149,11 +208,7 @@ fn scan_adrs(dir: &Path) -> Vec<AdrSummary> {
         if !stem_lower.starts_with("adr-") {
             continue;
         }
-        let id = stem
-            .split_once('-')
-            .map(|(_, rest)| rest.split('-').next().unwrap_or(rest))
-            .unwrap_or(stem)
-            .to_string();
+        let id = extract_adr_id(stem);
         let (title, status) = read_header(&path);
         out.push(AdrSummary {
             id,
@@ -210,7 +265,7 @@ fn read_header(path: &Path) -> (String, String) {
 /// Produce the grounding block appended to every persona system prompt.
 /// Returns an empty string if facts haven't been initialised.
 pub fn grounding_block(max_adrs: usize) -> String {
-    let f = match FACTS.get() {
+    let f = match facts() {
         Some(f) => f,
         None => return String::new(),
     };
