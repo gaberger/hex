@@ -114,17 +114,16 @@ fn conversational_prompt(role: &str) -> String {
          The operator (CEO) is asking you a question via the Mission Control \
          chat panel. This is a CONVERSATION, not a directive — answer directly.\n\n\
          === OUTPUT GUIDELINES ===\n\n\
-         - Give a clear, concrete answer in 1–4 short paragraphs.\n\
+         - HARD CAP: 120 words. 4 sentences max. Bullet points OK.\n\
          - Ground every claim in real artifacts: file paths under docs/, src/, \
            tests/, hex-nexus/, hex-cli/, spacetime-modules/; ADR IDs in the form \
            ADR-YYYY-MM-DD-HHMM or ADR-NNN; commit SHAs; dashboard hashroutes \
            (e.g. #/merge-gate, #/missions, #/resources).\n\
-         - If you don't know, say so plainly. Suggest who would (peer name) or \
-           where the answer lives (file path, log, dashboard, STDB table).\n\
+         - If you don't know, say so plainly in ONE sentence. Suggest who would \
+           (peer name) or where the answer lives (file path, log, dashboard).\n\
          - NO fabrication. NO claims about systems you haven't grounded against.\n\
-         - Be brief. Be specific. Bullet points fine.\n\
-         - DO NOT use the `Confirm:` format — that's for directives, not chats. \
-           If the operator wants you to commit to action, they'll ask explicitly."
+         - Be brief. Be specific. Stop when you've answered.\n\
+         - DO NOT use the `Confirm:` format — that's for directives, not chats."
     )
 }
 
@@ -183,9 +182,14 @@ fn persona_prompt(role: &str) -> String {
 /// poll interval (4s) is shorter than the inference round-trip in many
 /// cases, so without this set the same DM gets answered 2–3 times before
 /// `read_by` propagates back. Cleared per-tick to bound memory.
+/// Also tracks per-(role, msg_id) failure counts so a single stuck inference
+/// can't loop forever and starve new asks from the same role.
+const MAX_FAILURES_BEFORE_DROP: u32 = 3;
+
 #[derive(Default)]
 struct RepliedTracker {
     set: HashSet<(String, u64)>,
+    failures: std::collections::HashMap<(String, u64), u32>,
 }
 
 impl RepliedTracker {
@@ -195,10 +199,26 @@ impl RepliedTracker {
     fn contains(&self, role: &str, msg_id: u64) -> bool {
         self.set.contains(&(role.to_string(), msg_id))
     }
+    /// Increment failure count; returns true if the message has hit the
+    /// circuit-breaker threshold and should be dropped from further attempts.
+    fn record_failure(&mut self, role: &str, msg_id: u64) -> bool {
+        let entry = self.failures.entry((role.to_string(), msg_id)).or_insert(0);
+        *entry += 1;
+        *entry >= MAX_FAILURES_BEFORE_DROP
+    }
+    fn clear_failures(&mut self, role: &str, msg_id: u64) {
+        self.failures.remove(&(role.to_string(), msg_id));
+    }
+    fn failure_count(&self, role: &str, msg_id: u64) -> u32 {
+        self.failures.get(&(role.to_string(), msg_id)).copied().unwrap_or(0)
+    }
     /// Cap memory. Keep the most-recent 4096 entries (~ 64 KB).
     fn maybe_trim(&mut self) {
         if self.set.len() > 4096 {
             self.set.clear();
+        }
+        if self.failures.len() > 4096 {
+            self.failures.clear();
         }
     }
 }
@@ -284,10 +304,18 @@ async fn process_role(
     model: &str,
 ) -> Result<(), String> {
     let role_string = role.to_string();
-    let messages = comm
+    let mut messages = comm
         .query_messages(role_string.clone(), Some(MAX_RECENT_DMS))
         .await
         .map_err(|e| format!("query_messages: {}", e))?;
+
+    // Process NEWEST messages first within a role. Previously the iteration
+    // order was query-order, which (combined with our 120s-timeout retry
+    // loop) meant a single stuck old message could starve every new ask
+    // because the role kept burning its tick budget on the same old DM.
+    // Sorting newest-first ensures the operator's most recent ask gets the
+    // first inference slot every tick.
+    messages.sort_by(|a, b| b.id.cmp(&a.id));
 
     for msg in &messages {
         if msg.to_agent.as_deref() != Some(role) {
@@ -300,6 +328,23 @@ async fn process_role(
             Some(id) => id,
             None => continue,
         };
+
+        // Circuit-breaker: if this message has failed MAX_FAILURES_BEFORE_DROP
+        // times, mark it read and stop attempting. Prevents a single bad
+        // message (oversize history, content-filter trip, etc.) from looping
+        // forever and starving fresh asks.
+        let fails = replied.lock().await.failure_count(role, msg_id);
+        if fails >= MAX_FAILURES_BEFORE_DROP {
+            tracing::warn!(
+                role = %role, msg_id, fails,
+                "org_responder: circuit-breaker — dropping after repeated failures"
+            );
+            if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
+                tracing::debug!(role = %role, error = %e, "mark_read after circuit-break failed");
+            }
+            replied.lock().await.clear_failures(role, msg_id);
+            continue;
+        }
 
         // In-process dedup. STDB read_by takes a few seconds to propagate
         // so without this the next 4s tick will re-answer the same DM
@@ -424,7 +469,8 @@ async fn process_role(
         let reply = match generate_reply(http, inference_url, role, &content, &history, &thoughts, is_board, chat_mode, model).await {
             Ok(r) => r,
             Err(e) => {
-                tracing::warn!(role = %role, msg_id, error = %e, "org_responder: inference failed; will retry");
+                let dropped = replied.lock().await.record_failure(role, msg_id);
+                tracing::warn!(role = %role, msg_id, error = %e, dropped, "org_responder: inference failed; will retry");
                 let (status_code, model_id) = parse_inference_error(&e);
                 persona.record_failure(role, &model_id, status_code).await;
                 continue;
@@ -463,8 +509,10 @@ async fn process_role(
             continue;
         }
 
-        // Inference succeeded — clear any pending ban + failure counter.
+        // Inference succeeded — clear any pending ban + failure counter
+        // (both the persona-level supervisor counter and our per-message one).
         persona.record_success(role).await;
+        replied.lock().await.clear_failures(role, msg_id);
 
         // ADR-2026-05-08-2400 Silent sentinel — applies to commitment-mode
         // DMs only. Conversational replies ship verbatim even if they happen

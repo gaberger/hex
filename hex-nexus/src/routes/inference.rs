@@ -1166,9 +1166,19 @@ async fn stream_inference(
         }
         ("https://openrouter.ai/api/v1/chat/completions".to_string(), b)
     } else if is_ollama {
+        // Ollama's chat API takes generation limits under `options.num_predict`,
+        // not `max_tokens`. Previously we dropped the cap entirely — every
+        // call ran unbounded until the model stopped itself, producing 4000+
+        // tokens for 200-token asks and blocking parallel inferences behind
+        // the slow generation.
         (
             format!("{}/api/chat", ep.url.trim_end_matches('/')),
-            json!({ "model": ep.model, "messages": messages, "stream": true }),
+            json!({
+                "model": ep.model,
+                "messages": messages,
+                "stream": true,
+                "options": { "num_predict": max_tokens },
+            }),
         )
     } else {
         let mut b = json!({ "model": ep.model, "messages": messages, "max_tokens": max_tokens, "stream": true });

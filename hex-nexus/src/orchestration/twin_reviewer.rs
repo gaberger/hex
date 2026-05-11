@@ -432,7 +432,12 @@ async fn review_one(
         payload = payload_preview,
     );
 
+    // Pin a small fast model so we don't pile onto the 32B path the default
+    // router picks. Twin verdicts are short structured output — qwen3:4b is
+    // plenty. Override with HEX_TWIN_MODEL.
+    let twin_model = std::env::var("HEX_TWIN_MODEL").unwrap_or_else(|_| "qwen3:4b".to_string());
     let body = serde_json::json!({
+        "model": twin_model,
         "messages": [{ "role": "user", "content": user_msg }],
         "system": system,
         "max_tokens": TWIN_MAX_TOKENS,

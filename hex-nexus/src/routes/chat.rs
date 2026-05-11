@@ -734,10 +734,17 @@ pub(crate) async fn call_inference_endpoint(
         match ep.provider.as_str() {
             "ollama" => {
                 let url = format!("{}/api/chat", ep.url);
+                // Ollama takes generation caps under `options.num_predict`.
+                // Previously omitted → unbounded → 4000+ tokens for tiny asks
+                // and 90s per call. 1024 is plenty for chat replies, ADR/spec
+                // drafts, and twin verdicts. Override via HEX_OLLAMA_NUM_PREDICT.
+                let num_predict: u32 = std::env::var("HEX_OLLAMA_NUM_PREDICT")
+                    .ok().and_then(|s| s.parse().ok()).unwrap_or(1024);
                 let body = json!({
                     "model": model,
                     "messages": messages,
                     "stream": false,
+                    "options": { "num_predict": num_predict },
                 });
                 (url, body)
             }

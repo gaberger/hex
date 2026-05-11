@@ -222,7 +222,13 @@ async fn draft_one(
         ceo_ask = ceo_ask_block,
     );
 
+    // Pin a small fast model. Drafter writes file content; for the kinds
+    // of artifacts personas commit to (specs, runbooks, short markdown)
+    // qwen3:4b is fine. Override with HEX_DRAFTER_MODEL when a beefier
+    // model is genuinely needed.
+    let drafter_model = std::env::var("HEX_DRAFTER_MODEL").unwrap_or_else(|_| "qwen3:4b".to_string());
     let body = serde_json::json!({
+        "model": drafter_model,
         "messages": [{
             "role": "user",
             "content": format!(
