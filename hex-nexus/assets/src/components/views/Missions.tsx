@@ -642,20 +642,50 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
   };
 
   // Flat feature list across all workplans for this ADR.
+  //
+  // Workplan task shapes in the wild:
+  //   A) full object: { id, name, status, files[], layer }
+  //   B) plain string: "src/foo.rs — implement Foo trait"
+  //   C) partial object: { id, status } with no name
+  // And phase headers may use { name } OR { title }. Normalize all of them.
   const features = createMemo<FeatureRow[]>(() => {
     const out: FeatureRow[] = [];
     for (const wp of workplans()) {
       wp.phases?.forEach((p, idx) => {
-        for (const t of p.tasks ?? []) {
+        const phaseAny = p as any;
+        const phaseName = phaseAny.name || phaseAny.title || `M${idx + 1}`;
+        const phaseStatus = p.status || "";
+        const rawTasks = (p.tasks ?? []) as any[];
+        rawTasks.forEach((raw, taskIdx) => {
+          let normalized: TaskDetail;
+          if (typeof raw === "string") {
+            // Try to split "path/to/file.rs — description" form to extract files.
+            const m = raw.match(/^(\S+\.[a-zA-Z]+)\s*[—–-]\s*(.+)$/);
+            normalized = {
+              id: `${p.id}.${taskIdx + 1}`,
+              name: m ? m[2] : raw,
+              status: phaseStatus || "planned",
+              files: m ? [m[1]] : undefined,
+              layer: undefined,
+            };
+          } else {
+            normalized = {
+              id: raw.id ?? `${p.id}.${taskIdx + 1}`,
+              name: raw.name ?? raw.title ?? raw.description ?? "",
+              status: raw.status ?? phaseStatus ?? "planned",
+              files: raw.files,
+              layer: raw.layer,
+            };
+          }
           out.push({
-            ...t,
+            ...normalized,
             workplanId: wp.id,
             workplanTitle: wp.feature || wp.id,
             phaseId: p.id,
-            phaseName: p.name,
+            phaseName,
             phaseIdx: idx,
           });
-        }
+        });
       });
     }
     return out;
