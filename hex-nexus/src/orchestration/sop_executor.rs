@@ -369,7 +369,7 @@ async fn reason_via_anthropic(
 
         let req_body = json!({
             "model": model,
-            "max_tokens": 4096,
+            "max_tokens": std::env::var("HEX_SOP_MAX_TOKENS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(8192),
             "system": system,
             "tools": tools_schema,
             "messages": messages,
@@ -548,7 +548,7 @@ async fn reason_via_openrouter(
             "model": model,
             "messages": messages,
             "tools": openai_tools,
-            "max_tokens": 4096,
+            "max_tokens": std::env::var("HEX_SOP_MAX_TOKENS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(8192),
         });
 
         let resp = http
@@ -779,7 +779,7 @@ async fn reason_via_ollama_fallback(
             "model": model,
             "messages": messages,
             "tools": openai_tools,
-            "max_tokens": 4096,
+            "max_tokens": std::env::var("HEX_SOP_MAX_TOKENS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(8192),
         });
 
         let resp = http
