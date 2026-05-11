@@ -41,6 +41,54 @@ function formatChatTime(ts: string | null | undefined): string {
   return d.toLocaleTimeString();
 }
 
+// SOP supervisor wraps every persona reply with a routing prefix like:
+//   [cto] intent=code_question → spec_draft (rounds=3)  <real answer>
+// or pure status stubs like:
+//   [chief-visionary] Escalated: paradigm/strategy decision queued.
+//   [cto] reasoning failed: openrouter HTTP 402 ...
+// Mission Control rendered the raw content so the operator saw plumbing,
+// not answers. Strip the prefix and classify status for a badge.
+type ReplyStatus = "ok" | "escalated" | "failed";
+interface ParsedReply {
+  status: ReplyStatus;
+  body: string;
+  raw: string;
+}
+function parseReply(content: string | null | undefined): ParsedReply {
+  const raw = content ?? "";
+  // Match: [persona] ...→ ... (rounds=N) <body>
+  const routed = raw.match(/^\[[\w-]+\][^\n]*?→[^\n]*?\(rounds=\d+\)\s*([\s\S]*)$/);
+  if (routed) return { status: "ok", body: routed[1].trim() || "(empty reply)", raw };
+  // Match: [persona] reasoning failed: ...
+  const failed = raw.match(/^\[[\w-]+\]\s*reasoning failed:\s*([\s\S]*)$/i);
+  if (failed) return { status: "failed", body: failed[1].trim(), raw };
+  // Match: [persona] Escalated: ...
+  const escalated = raw.match(/^\[[\w-]+\]\s*Escalated:\s*([\s\S]*)$/i);
+  if (escalated) return { status: "escalated", body: escalated[1].trim(), raw };
+  // Match: bare [persona] prefix with no routing
+  const bare = raw.match(/^\[[\w-]+\]\s*([\s\S]*)$/);
+  if (bare) return { status: "ok", body: bare[1].trim(), raw };
+  return { status: "ok", body: raw, raw };
+}
+
+const ReplyBody: Component<{ content: string | null | undefined }> = (props) => {
+  const parsed = () => parseReply(props.content);
+  return (
+    <div>
+      <Show when={parsed().status !== "ok"}>
+        <span class={`inline-block text-[10px] px-1.5 py-0.5 rounded mr-2 align-middle ${
+          parsed().status === "failed"
+            ? "bg-red-900 text-red-200"
+            : "bg-yellow-900 text-yellow-200"
+        }`}>
+          {parsed().status === "failed" ? "✗ failed" : "⤴ escalated"}
+        </span>
+      </Show>
+      <span class="whitespace-pre-wrap break-words">{parsed().body}</span>
+    </div>
+  );
+};
+
 interface MessageAnimation {
   id: string;
   from: string;
@@ -618,7 +666,7 @@ const TeamDashboard: Component = () => {
                       {formatChatTime(msg.timestamp)}
                     </div>
                   </div>
-                  <div class="text-sm">{msg.content}</div>
+                  <div class="text-sm"><ReplyBody content={msg.content} /></div>
                 </div>
               </div>
             )}
@@ -757,7 +805,7 @@ const TeamDashboard: Component = () => {
                         <span class="text-gray-300">{m.to ?? "(channel)"}</span>
                         <span class="text-gray-600"> · {m.timestamp.split("T")[1]?.slice(0, 8) ?? m.timestamp}</span>
                       </div>
-                      <div class="text-gray-200 break-words">{m.content}</div>
+                      <div class="text-gray-200 break-words"><ReplyBody content={m.content} /></div>
                     </div>
                   )}
                 </For>
