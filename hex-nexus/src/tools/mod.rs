@@ -29,6 +29,7 @@ pub mod tool_register;
 pub mod web_search;
 pub mod workplan_emit;
 pub mod module_register;
+pub mod workspace_boundary_check;
 
 /// Output envelope for every tool call. JSON shape preserved across all
 /// tools so the SOP executor can handle errors uniformly without per-tool
@@ -141,6 +142,7 @@ impl Default for ToolRegistry {
         reg.register(Arc::new(adr_status_set::AdrStatusSet));
         reg.register(Arc::new(tool_register::ToolRegister));
         reg.register(Arc::new(module_register::ModuleRegister));
+        reg.register(Arc::new(workspace_boundary_check::WorkspaceBoundaryCheck));
         reg.register(Arc::new(escalate_to_operator::EscalateToOperator));
         reg
     }
