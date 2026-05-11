@@ -1151,3 +1151,59 @@ mod tests {
         assert!(paths.is_empty());
     }
 }
+
+/// Query the RL engine for the highest-q_value model known for this intent.
+/// Returns None on any failure or no scores. Exploit-only (no exploration)
+/// since this drives live persona work — RL exploration happens elsewhere
+/// in sched_service::run_improvement_cycle.
+///
+/// Wires the existing rl_q_entry table (state_key, action='model:NAME', q_value)
+/// — see hex-nexus/src/sched_service.rs::select_model_for_cycle for the
+/// reference pattern.
+pub async fn pick_model_via_rl(intent: &str) -> Option<String> {
+    let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+    let state_key = format!("sop:{}", intent);
+    let sql = format!(
+        "SELECT action, q_value FROM rl_q_entry WHERE state_key = '{}'",
+        state_key.replace('\'', "''")
+    );
+    let url = format!("{}/v1/database/{}/sql", stdb_host, hex_core::STDB_DATABASE_RL);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(1))
+        .build()
+        .ok()?;
+    let resp = client
+        .post(&url)
+        .header("content-type", "text/plain")
+        .body(sql)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let parsed: Value = resp.json().await.ok()?;
+    let rows = parsed
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|t| t.get("rows"))
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut best: Option<(String, f64)> = None;
+    for r in rows {
+        let arr = r.as_array()?;
+        let action = arr.first()?.as_str()?;
+        let q = arr.get(1)?.as_f64()?;
+        if let Some(model) = action.strip_prefix("model:") {
+            if best.as_ref().map(|(_, bq)| q > *bq).unwrap_or(true) {
+                best = Some((model.to_string(), q));
+            }
+        }
+    }
+    best.map(|(m, q)| {
+        tracing::info!(intent = %intent, model = %m, q_value = q, "pick_model_via_rl: selected");
+        m
+    })
+}
