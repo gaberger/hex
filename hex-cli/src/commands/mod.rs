@@ -33,6 +33,7 @@ pub mod neural_lab;
 pub mod nexus;
 pub mod opencode;
 pub mod plan;
+pub mod plan_health;
 pub mod report;
 pub mod project;
 pub mod pulse;

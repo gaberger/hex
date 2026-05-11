@@ -184,6 +184,11 @@ pub enum PlanAction {
         #[arg(long)]
         json: bool,
     },
+    /// COO observability baseline — runs 6 deterministic audit queries:
+    /// persona SOP failure rate, workplan drift, cost burn vs MA, STDB
+    /// reducer ticks, twin rejection rate, tool health. Exits 1 if any
+    /// metric exceeds amber threshold (docs/specs/coo-observability-baseline.md).
+    Health,
 }
 
 /// Subcommands for `hex plan drafts` — manage auto-generated draft workplans.
@@ -429,6 +434,7 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::Layers { json } => layers_check(json).await,
         PlanAction::Ready { json, no_tests } => ready_check(json, no_tests).await,
         PlanAction::Tests { json } => tests_check(json).await,
+        PlanAction::Health => crate::commands::plan_health::run().await,
     }
 }
 
