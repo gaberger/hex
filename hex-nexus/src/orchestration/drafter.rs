@@ -5,9 +5,10 @@
 //! the content of the named artifact, and writes a proposed_action row
 //! the digital twin can then review.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use std::collections::HashMap;
 use tokio::sync::Mutex;
 
 const POLL_INTERVAL_SECS: u64 = 30;
@@ -24,12 +25,13 @@ const CONTENT_CAP_BYTES: usize = 24 * 1024;
 /// loop forever and starve the queue.
 const STUB_AFTER_FAILURES: u32 = 2;
 
-pub fn spawn(stdb_host: String, hex_db: String, port: u16) {
+pub fn spawn(stdb_host: String, hex_db: String, port: u16, repo_root: PathBuf) {
     if std::env::var("HEX_DISABLE_DRAFTER").is_ok() {
         tracing::info!("drafter disabled via HEX_DISABLE_DRAFTER");
         return;
     }
     let failures = Arc::new(Mutex::new(HashMap::<u64, u32>::new()));
+    let repo_root = Arc::new(repo_root);
     tokio::spawn(async move {
         let http = match reqwest::Client::builder()
             .timeout(Duration::from_secs(180))
@@ -53,7 +55,7 @@ pub fn spawn(stdb_host: String, hex_db: String, port: u16) {
 
         loop {
             ticker.tick().await;
-            if let Err(e) = run_one(&http, &stdb_host, &hex_db, &inference_url, &failures).await {
+            if let Err(e) = run_one(&http, &stdb_host, &hex_db, &inference_url, &failures, &repo_root).await {
                 tracing::debug!(error = %e, "drafter: tick error");
             }
         }
@@ -66,6 +68,7 @@ async fn run_one(
     hex_db: &str,
     inference_url: &str,
     failures: &Arc<Mutex<HashMap<u64, u32>>>,
+    repo_root: &PathBuf,
 ) -> Result<(), String> {
     let commitments = fetch_open_path_commitments(http, stdb_host, hex_db).await?;
     if commitments.is_empty() {
@@ -93,7 +96,7 @@ async fn run_one(
                         commitment_id = c.id, role = %c.role, fails = count,
                         "drafter: circuit-breaker — writing stub artifact so commitment can close"
                     );
-                    if let Err(e) = write_stub_artifact(http, stdb_host, hex_db, &c).await {
+                    if let Err(e) = write_stub_artifact(http, stdb_host, hex_db, &c, repo_root).await {
                         tracing::warn!(commitment_id = c.id, error = %e, "drafter: stub write failed");
                     } else {
                         failures.lock().await.remove(&c.id);
@@ -124,14 +127,15 @@ enum DraftOutcome {
 }
 
 /// When a persona has refused N times to draft an artifact, write a stub
-/// so the commitment can close and the operator can triage. The stub
-/// captures the commitment, the originating ask, and a clear "TRIAGE
-/// REQUIRED" banner so it's not mistaken for a real artifact.
+/// directly to disk and abandon the commitment. Bypasses twin review on
+/// purpose — the stub is an operator-triage marker, not a persona-produced
+/// artifact. Twin would (correctly) reject it as off-topic / fabrication.
 async fn write_stub_artifact(
     http: &reqwest::Client,
     stdb_host: &str,
     hex_db: &str,
     c: &OpenCommitment,
+    repo_root: &PathBuf,
 ) -> Result<(), String> {
     let ceo_ask = if c.thread_id.is_empty() {
         String::new()
@@ -158,13 +162,15 @@ async fn write_stub_artifact(
          One of:\n\n\
          1. **Fill it in by hand** — edit this file with the actual content \
             you want for `{artifact}`.\n\
-         2. **Reject the commitment as overreach** — delete this file and \
-            close the commitment in the dashboard (`#/commitments`).\n\
+         2. **Delete this stub** — the commitment is already marked abandoned \
+            in STDB so nothing will retry.\n\
          3. **Re-ask with more context** — DM `@{role}` with a more specific \
             prompt and let the responder + drafter pipeline try again.\n\n\
          ---\n\n\
-         *This stub was written by the drafter circuit-breaker. The original \
-         commitment_id is `{cid}`. See `hex-nexus/src/orchestration/drafter.rs`.*\n",
+         *Stub written directly by the drafter circuit-breaker. Bypassed \
+         twin review because stubs are an operator-triage signal, not a \
+         persona artifact. Commitment_id `{cid}` was abandoned with the \
+         abandon reason pointing here. See `hex-nexus/src/orchestration/drafter.rs`.*\n",
         artifact = c.success_artifact,
         n = STUB_AFTER_FAILURES,
         now = now,
@@ -174,31 +180,60 @@ async fn write_stub_artifact(
         cid = c.id,
     );
 
-    let payload = serde_json::json!({
-        "path": c.success_artifact,
-        "content": stub,
-    });
-    let url = format!("{}/v1/database/{}/call/proposed_action_open", stdb_host, hex_db);
-    let body = serde_json::json!([
-        "file_write",
-        payload.to_string(),
-        c.role,
-        c.id,
-    ]);
+    // Resolve target path safely against repo_root — refuse anything that
+    // escapes the tree via .. or symlinks.
+    let target = repo_root.join(&c.success_artifact);
+    let canonical_root = repo_root
+        .canonicalize()
+        .map_err(|e| format!("canonicalise repo_root: {}", e))?;
+    let parent = target.parent().ok_or("target has no parent")?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("create parent dir {}: {}", parent.display(), e))?;
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|e| format!("canonicalise parent: {}", e))?;
+    if !canonical_parent.starts_with(&canonical_root) {
+        return Err(format!(
+            "stub refused: {} resolves outside repo root",
+            target.display()
+        ));
+    }
+
+    // Atomic write via temp + rename.
+    let tmp = target.with_extension("stubwrite-tmp");
+    std::fs::write(&tmp, &stub).map_err(|e| format!("tmp write: {}", e))?;
+    std::fs::rename(&tmp, &target).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("rename to target: {}", e)
+    })?;
+
+    // Mark the commitment abandoned in STDB with a clear evidence pointer.
+    let abandon_reason = format!(
+        "auto-stub after {} drafter attempts — see {} for operator triage",
+        STUB_AFTER_FAILURES, c.success_artifact
+    );
+    let url = format!("{}/v1/database/{}/call/commitment_abandon", stdb_host, hex_db);
+    let body = serde_json::json!([c.id, abandon_reason]);
     let resp = http
         .post(&url)
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("stub http: {}", e))?;
+        .map_err(|e| format!("abandon http: {}", e))?;
     if !resp.status().is_success() {
-        return Err(format!("stub HTTP {}", resp.status()));
+        // The file is on disk regardless — don't lose that. Log but treat
+        // success since the operator-visible side ran.
+        tracing::warn!(
+            commitment_id = c.id,
+            status = %resp.status(),
+            "drafter: commitment_abandon HTTP non-2xx (stub still on disk)"
+        );
     }
     tracing::info!(
         commitment_id = c.id,
         role = %c.role,
         path = %c.success_artifact,
-        "drafter: stub proposed_action queued (commitment unblocked)"
+        "drafter: stub written directly + commitment abandoned (twin bypassed)"
     );
     Ok(())
 }

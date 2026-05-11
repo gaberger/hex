@@ -436,27 +436,28 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             // commitments into proposed_action(file_write); twin reviews
             // against operator memory; executor writes the file via
             // SafeFileWriter and satisfies the commitment.
-            crate::orchestration::drafter::spawn(
-                stdb_host_for_integrator.clone(),
-                hex_db_for_integrator.clone(),
-                config.port,
-            );
-            crate::orchestration::twin_reviewer::spawn(
-                stdb_host_for_integrator.clone(),
-                hex_db_for_integrator.clone(),
-                config.port,
-            );
             {
-                let repo_root = std::env::var("HEX_REPO_ROOT")
+                let drafter_repo_root = std::env::var("HEX_REPO_ROOT")
                     .ok()
                     .map(std::path::PathBuf::from)
                     .unwrap_or_else(|| {
                         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
                     });
+                crate::orchestration::drafter::spawn(
+                    stdb_host_for_integrator.clone(),
+                    hex_db_for_integrator.clone(),
+                    config.port,
+                    drafter_repo_root.clone(),
+                );
+                crate::orchestration::twin_reviewer::spawn(
+                    stdb_host_for_integrator.clone(),
+                    hex_db_for_integrator.clone(),
+                    config.port,
+                );
                 crate::orchestration::action_executor::spawn(
                     stdb_host_for_integrator.clone(),
                     hex_db_for_integrator.clone(),
-                    repo_root,
+                    drafter_repo_root,
                 );
             }
 
