@@ -177,6 +177,10 @@ impl Tool for ModuleRegister {
 
         // (a) Add pub mod line alphabetically
         // Find the last pub mod line for alphabetical insertion
+        let code_patch = CodePatch;
+
+        // (a) Add pub mod line alphabetically
+        // Find the last pub mod line for alphabetical insertion
         let last_pub_mod_line = mod_content
             .lines()
             .enumerate()
@@ -215,10 +219,22 @@ impl Tool for ModuleRegister {
         }
 
         // (b) If kind=tool, add registration line in ToolRegistry::default()
+        // MUST read the file again after the pub mod patch
         let registration_line = if kind == "tool" {
             let reg_line = format!("        reg.register(Arc::new({}::{}));", basename, struct_name);
 
-            let last_register_line = mod_content
+            // Re-read mod.rs after first patch
+            let mod_content_updated = match std::fs::read_to_string(&mod_rs_full) {
+                Ok(c) => c,
+                Err(e) => {
+                    return ToolResult::err(
+                        format!("re-read {} after pub mod patch: {}", mod_rs_path, e),
+                        start.elapsed().as_millis() as u64,
+                    )
+                }
+            };
+
+            let last_register_line = mod_content_updated
                 .lines()
                 .enumerate()
                 .filter(|(_, line)| line.trim_start().starts_with("reg.register(Arc::new("))
@@ -226,7 +242,7 @@ impl Tool for ModuleRegister {
                 .last();
 
             let reg_patch_result = if let Some(last_idx) = last_register_line {
-                let lines: Vec<&str> = mod_content.lines().collect();
+                let lines: Vec<&str> = mod_content_updated.lines().collect();
                 let anchor = lines[last_idx];
                 code_patch
                     .execute(json!({
