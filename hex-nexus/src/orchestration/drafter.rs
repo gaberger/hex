@@ -5,7 +5,10 @@
 //! the content of the named artifact, and writes a proposed_action row
 //! the digital twin can then review.
 
+use std::sync::Arc;
 use std::time::Duration;
+use std::collections::HashMap;
+use tokio::sync::Mutex;
 
 const POLL_INTERVAL_SECS: u64 = 30;
 // CPO cost-spec 2026-05-09 — halved from 4096 to 2048; truncation already handled below.
@@ -14,12 +17,19 @@ const DRAFT_MAX_TOKENS: u32 = 2048;
 // `len too long` panic threshold (websocket_building.rs:180:57). Watchdog
 // recovers if the cap is breached, but this prevents the crash entirely.
 const CONTENT_CAP_BYTES: usize = 24 * 1024;
+/// After N INSUFFICIENT_CONTEXT or empty-draft results, write a stub
+/// artifact so the commitment closes and the operator can triage.
+/// Without this, commitments where the persona over-committed (e.g.
+/// promised a standup spec when CEO just asked "what's your priority")
+/// loop forever and starve the queue.
+const STUB_AFTER_FAILURES: u32 = 2;
 
 pub fn spawn(stdb_host: String, hex_db: String, port: u16) {
     if std::env::var("HEX_DISABLE_DRAFTER").is_ok() {
         tracing::info!("drafter disabled via HEX_DISABLE_DRAFTER");
         return;
     }
+    let failures = Arc::new(Mutex::new(HashMap::<u64, u32>::new()));
     tokio::spawn(async move {
         let http = match reqwest::Client::builder()
             .timeout(Duration::from_secs(180))
@@ -43,7 +53,7 @@ pub fn spawn(stdb_host: String, hex_db: String, port: u16) {
 
         loop {
             ticker.tick().await;
-            if let Err(e) = run_one(&http, &stdb_host, &hex_db, &inference_url).await {
+            if let Err(e) = run_one(&http, &stdb_host, &hex_db, &inference_url, &failures).await {
                 tracing::debug!(error = %e, "drafter: tick error");
             }
         }
@@ -55,6 +65,7 @@ async fn run_one(
     stdb_host: &str,
     hex_db: &str,
     inference_url: &str,
+    failures: &Arc<Mutex<HashMap<u64, u32>>>,
 ) -> Result<(), String> {
     let commitments = fetch_open_path_commitments(http, stdb_host, hex_db).await?;
     if commitments.is_empty() {
@@ -67,11 +78,128 @@ async fn run_one(
             continue; // drafter already ran for this commitment
         }
         // Bound concurrency by handling one per tick; LLM calls are slow.
-        if let Err(e) = draft_one(http, stdb_host, hex_db, inference_url, &c).await {
-            tracing::warn!(commitment_id = c.id, error = %e, "drafter: draft_one failed");
+        match draft_one(http, stdb_host, hex_db, inference_url, &c).await {
+            Ok(DraftOutcome::ProposedAction) => {
+                failures.lock().await.remove(&c.id);
+            }
+            Ok(DraftOutcome::PersonaAbstained) => {
+                let mut g = failures.lock().await;
+                let n = g.entry(c.id).or_insert(0);
+                *n += 1;
+                let count = *n;
+                drop(g);
+                if count >= STUB_AFTER_FAILURES {
+                    tracing::warn!(
+                        commitment_id = c.id, role = %c.role, fails = count,
+                        "drafter: circuit-breaker — writing stub artifact so commitment can close"
+                    );
+                    if let Err(e) = write_stub_artifact(http, stdb_host, hex_db, &c).await {
+                        tracing::warn!(commitment_id = c.id, error = %e, "drafter: stub write failed");
+                    } else {
+                        failures.lock().await.remove(&c.id);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(commitment_id = c.id, error = %e, "drafter: draft_one failed");
+                // Transient errors also count toward the stub threshold so
+                // repeated inference failures don't leave the commitment
+                // open indefinitely.
+                let mut g = failures.lock().await;
+                let n = g.entry(c.id).or_insert(0);
+                *n += 1;
+            }
         }
         return Ok(());
     }
+    Ok(())
+}
+
+/// Outcome of attempting to draft a commitment's artifact.
+enum DraftOutcome {
+    /// A proposed_action(file_write) was queued for twin review.
+    ProposedAction,
+    /// Persona returned INSUFFICIENT_CONTEXT (or empty) — no action queued.
+    PersonaAbstained,
+}
+
+/// When a persona has refused N times to draft an artifact, write a stub
+/// so the commitment can close and the operator can triage. The stub
+/// captures the commitment, the originating ask, and a clear "TRIAGE
+/// REQUIRED" banner so it's not mistaken for a real artifact.
+async fn write_stub_artifact(
+    http: &reqwest::Client,
+    stdb_host: &str,
+    hex_db: &str,
+    c: &OpenCommitment,
+) -> Result<(), String> {
+    let ceo_ask = if c.thread_id.is_empty() {
+        String::new()
+    } else {
+        fetch_originating_ask(http, &c.thread_id).await.unwrap_or_default()
+    };
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let stub = format!(
+        "# {artifact} — STUB (operator triage required)\n\n\
+         **Status:** stub — auto-generated after {n} drafter attempts\n\
+         **Generated:** {now}\n\
+         **Committed by:** `{role}`\n\
+         **Commitment:** {action}\n\n\
+         ## Why this is a stub\n\n\
+         The persona `{role}` committed to producing this artifact, but on \
+         {n} drafter attempts returned `INSUFFICIENT_CONTEXT` or an empty \
+         draft. Most likely the persona over-committed during a \
+         conversational reply — promising a structured artifact when the \
+         CEO's original ask was open-ended.\n\n\
+         ## Originating ask\n\n\
+         ```\n{ask}\n```\n\n\
+         ## What to do\n\n\
+         One of:\n\n\
+         1. **Fill it in by hand** — edit this file with the actual content \
+            you want for `{artifact}`.\n\
+         2. **Reject the commitment as overreach** — delete this file and \
+            close the commitment in the dashboard (`#/commitments`).\n\
+         3. **Re-ask with more context** — DM `@{role}` with a more specific \
+            prompt and let the responder + drafter pipeline try again.\n\n\
+         ---\n\n\
+         *This stub was written by the drafter circuit-breaker. The original \
+         commitment_id is `{cid}`. See `hex-nexus/src/orchestration/drafter.rs`.*\n",
+        artifact = c.success_artifact,
+        n = STUB_AFTER_FAILURES,
+        now = now,
+        role = c.role,
+        action = c.action,
+        ask = if ceo_ask.is_empty() { "(no thread linkage — DM had no thread_id)".to_string() } else { ceo_ask.trim().to_string() },
+        cid = c.id,
+    );
+
+    let payload = serde_json::json!({
+        "path": c.success_artifact,
+        "content": stub,
+    });
+    let url = format!("{}/v1/database/{}/call/proposed_action_open", stdb_host, hex_db);
+    let body = serde_json::json!([
+        "file_write",
+        payload.to_string(),
+        c.role,
+        c.id,
+    ]);
+    let resp = http
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("stub http: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("stub HTTP {}", resp.status()));
+    }
+    tracing::info!(
+        commitment_id = c.id,
+        role = %c.role,
+        path = %c.success_artifact,
+        "drafter: stub proposed_action queued (commitment unblocked)"
+    );
     Ok(())
 }
 
@@ -185,7 +313,7 @@ async fn draft_one(
     hex_db: &str,
     inference_url: &str,
     c: &OpenCommitment,
-) -> Result<(), String> {
+) -> Result<DraftOutcome, String> {
     // Pull the originating CEO message so the persona drafts the actual
     // requested artifact, not a generic doc that matches the path pattern.
     let ceo_ask = if c.thread_id.is_empty() {
@@ -257,18 +385,22 @@ async fn draft_one(
         .unwrap_or("")
         .to_string();
     if content.trim().is_empty() {
-        return Err("empty draft".to_string());
+        // Treat as abstain so the circuit-breaker can promote to stub
+        // after N attempts. Previously this errored, looping the commitment
+        // forever without progress.
+        tracing::info!(
+            commitment_id = c.id, role = %c.role,
+            "drafter: empty draft — treating as abstain"
+        );
+        return Ok(DraftOutcome::PersonaAbstained);
     }
     if content.trim_start().starts_with("INSUFFICIENT_CONTEXT") {
-        // Persona refused to invent. Don't write a proposed_action; the
-        // commitment will go overdue and the operator sees the gap. This
-        // is the correct failure mode (silent honest abstain).
         tracing::info!(
             commitment_id = c.id,
             role = %c.role,
-            "drafter: persona returned INSUFFICIENT_CONTEXT — leaving commitment open"
+            "drafter: persona returned INSUFFICIENT_CONTEXT — abstain"
         );
-        return Ok(());
+        return Ok(DraftOutcome::PersonaAbstained);
     }
     if content.len() > CONTENT_CAP_BYTES {
         // CTO ADR-2026-05-08-2600 — surface truncation so operator can detect
@@ -315,7 +447,7 @@ async fn draft_one(
         bytes = content.len(),
         "drafter: queued proposed_action(file_write)"
     );
-    Ok(())
+    Ok(DraftOutcome::ProposedAction)
 }
 
 /// Fetch the FIRST message in a thread (typically CEO's broadcast / DM
