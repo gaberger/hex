@@ -231,9 +231,9 @@ async fn ground_for_intent(
         _ => None,
     };
     let grep_input = if let Some(g) = glob {
-        json!({ "pattern": pattern, "glob": g, "max_matches": 20 })
+        json!({ "pattern": pattern, "glob": g, "max_matches": std::env::var("HEX_GROUND_MATCH_CAP").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(8) })
     } else {
-        json!({ "pattern": pattern, "max_matches": 20 })
+        json!({ "pattern": pattern, "max_matches": std::env::var("HEX_GROUND_MATCH_CAP").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(8) })
     };
     let grep_result = registry.execute("repo_grep", grep_input).await;
     json!({
@@ -304,10 +304,28 @@ async fn reason_with_tools(
     ground_pack: &Value,
     registry: Arc<ToolRegistry>,
 ) -> Result<ReasonResult, String> {
-    // Prefer Anthropic direct (cleanest function-calling); fall back to
-    // OpenRouter with OpenAI-format tools when Anthropic key absent.
     let anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok();
     let openrouter_key = std::env::var("OPENROUTER_API_KEY").ok();
+
+    // Cost governance: prefer local Ollama when HEX_SOP_REASON_PREFER_OLLAMA=1
+    // OR for cheap intents (code_question, arch_review) regardless of env.
+    // Falls back to paid (OR/Anthropic) only if Ollama fails. Costs roughly 0
+    // for routine work; paid tier is reserved for quality-critical emissions.
+    let cheap_intents = ["code_question", "arch_review", "roadmap"];
+    let prefer_ollama = std::env::var("HEX_SOP_REASON_PREFER_OLLAMA")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+        || cheap_intents.contains(&intent);
+    if prefer_ollama {
+        tracing::info!(role = %role, intent = %intent, "reason_with_tools: preferring local Ollama (cost governance)");
+        match reason_via_ollama_fallback(role, operator_message, intent, ground_pack, registry.clone()).await {
+            Ok(r) => return Ok(r),
+            Err(e) => {
+                tracing::warn!(error = %e, "Ollama-first failed; escalating to paid tier");
+                // Fall through to paid
+            }
+        }
+    }
 
     if let Some(key) = anthropic_key {
         return reason_via_anthropic(role, operator_message, intent, ground_pack, registry, key).await;
