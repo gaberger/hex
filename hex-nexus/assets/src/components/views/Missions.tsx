@@ -19,7 +19,7 @@
  */
 
 import {
-  Component, For, Show, createSignal, onMount, onCleanup, createMemo,
+  Component, For, Show, createSignal, onMount, onCleanup, createMemo, createEffect,
 } from "solid-js";
 import { restClient } from "../../services/rest-client";
 import { route, navigate } from "../../stores/router";
@@ -216,6 +216,25 @@ const SortHeader: Component<{
   );
 };
 
+// Persist catalog sort + filter across reloads / navigation. Keys are
+// flat strings under localStorage so multiple browser tabs share state.
+const LS_KEYS = {
+  sortKey: "hex.missions.sortKey",
+  sortDir: "hex.missions.sortDir",
+  filter: "hex.missions.filter",
+  search: "hex.missions.search",
+} as const;
+
+const lsGet = <T extends string>(key: string, fallback: T): T => {
+  try {
+    const v = localStorage.getItem(key);
+    return v !== null ? (v as T) : fallback;
+  } catch { return fallback; }
+};
+const lsSet = (key: string, value: string): void => {
+  try { localStorage.setItem(key, value); } catch { /* private mode etc. */ }
+};
+
 const MissionsList: Component = () => {
   const [adrs, setAdrs] = createSignal<AdrSummary[]>([]);
   const [workplans, setWorkplans] = createSignal<WorkplanSummary[]>([]);
@@ -223,11 +242,25 @@ const MissionsList: Component = () => {
   // for visible rows so 81 workplans don't all load eagerly.
   const [wpDetails, setWpDetails] = createSignal<Map<string, WorkplanDetail>>(new Map());
   const [loading, setLoading] = createSignal(true);
-  const [filter, setFilter] = createSignal<"all" | "in_flight" | "accepted" | "proposed" | "stale">("all");
-  const [search, setSearch] = createSignal("");
-  const [sortKey, setSortKey] = createSignal<SortKey>("id");
-  const [sortDir, setSortDir] = createSignal<"asc" | "desc">("desc");
+  const [filter, setFilter] = createSignal<"all" | "in_flight" | "accepted" | "proposed" | "stale">(
+    lsGet(LS_KEYS.filter, "all"),
+  );
+  const [search, setSearch] = createSignal(lsGet(LS_KEYS.search, ""));
+  const [sortKey, setSortKey] = createSignal<SortKey>(lsGet(LS_KEYS.sortKey, "progress"));
+  const [sortDir, setSortDir] = createSignal<"asc" | "desc">(lsGet(LS_KEYS.sortDir, "desc"));
   let timer: ReturnType<typeof setInterval> | null = null;
+
+  // Mirror sort/filter to localStorage on change. Search is debounced lightly
+  // so we don't write on every keystroke.
+  createEffect(() => lsSet(LS_KEYS.sortKey, sortKey()));
+  createEffect(() => lsSet(LS_KEYS.sortDir, sortDir()));
+  createEffect(() => lsSet(LS_KEYS.filter, filter()));
+  let searchT: ReturnType<typeof setTimeout> | null = null;
+  createEffect(() => {
+    const v = search();
+    if (searchT) clearTimeout(searchT);
+    searchT = setTimeout(() => lsSet(LS_KEYS.search, v), 300);
+  });
 
   const toggleSort = (key: SortKey) => {
     if (sortKey() === key) {
