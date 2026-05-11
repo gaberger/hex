@@ -347,12 +347,53 @@ const MissionsList: Component = () => {
   );
 };
 
-// ── Detail view ─────────────────────────────────────────────────────────────
+// ── Detail / Ops Console view ───────────────────────────────────────────────
+
+interface EventRow {
+  id: number;
+  event_type: string;
+  tool_name: string | null;
+  session_id: string | null;
+  created_at: string;
+  input_json?: string | null;
+  exit_code?: number | null;
+  duration_ms?: number | null;
+}
+
+// Status dot in features list. Matches Factory's screenshot:
+//   ● in flight (orange/cyan), ✓ done (green), × failed (red),
+//   ○ planned (gray), − skipped/blocked (gray dim)
+const StatusDot: Component<{ status: string }> = (p) => {
+  const map: Record<string, { sym: string; cls: string }> = {
+    in_progress: { sym: "●", cls: "text-orange-400" },
+    done: { sym: "✓", cls: "text-green-400" },
+    failed: { sym: "×", cls: "text-red-400" },
+    blocked: { sym: "⚠", cls: "text-yellow-400" },
+    planned: { sym: "○", cls: "text-gray-600" },
+    pending: { sym: "○", cls: "text-gray-600" },
+    skipped: { sym: "−", cls: "text-gray-700" },
+  };
+  const v = () => map[p.status] ?? { sym: "○", cls: "text-gray-600" };
+  return <span class={`font-mono text-sm shrink-0 ${v().cls}`}>{v().sym}</span>;
+};
+
+// Compact relative-time formatter (Factory uses "<1m ago", "23h ago")
+const relTime = (iso: string): string => {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return "—";
+  const sec = Math.floor((Date.now() - t) / 1000);
+  if (sec < 60) return "<1m ago";
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+  return `${Math.floor(sec / 86400)}d ago`;
+};
 
 const MissionDetailView: Component<{ missionId: string }> = (props) => {
   const [mission, setMission] = createSignal<MissionDetail | null>(null);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
+  const [events, setEvents] = createSignal<EventRow[]>([]);
   let timer: ReturnType<typeof setInterval> | null = null;
 
   const fetchDetail = async () => {
@@ -368,147 +409,308 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
     }
   };
 
+  const fetchEvents = async () => {
+    try {
+      const resp: any = await restClient.get("/api/events?limit=50");
+      setEvents(resp.events ?? []);
+    } catch (e) {
+      // ignore — events are an enhancement, not blocking
+    }
+  };
+
   onMount(() => {
     fetchDetail();
-    timer = setInterval(fetchDetail, REFRESH_MS);
+    fetchEvents();
+    timer = setInterval(() => {
+      fetchDetail();
+      fetchEvents();
+    }, REFRESH_MS);
   });
   onCleanup(() => {
     if (timer) clearInterval(timer);
   });
 
-  const progress = createMemo(() => {
+  // Flat list of features (tasks) with milestone context, for the right pane.
+  const features = createMemo<(TaskDetail & { phaseId: string; phaseName: string; phaseIdx: number })[]>(() => {
     const m = mission();
-    if (!m?.phases) return { done: 0, total: 0, pct: 0 };
-    let done = 0;
-    let total = 0;
-    for (const p of m.phases) {
+    if (!m?.phases) return [];
+    const out: (TaskDetail & { phaseId: string; phaseName: string; phaseIdx: number })[] = [];
+    m.phases.forEach((p, idx) => {
       for (const t of p.tasks ?? []) {
-        total++;
-        if (t.status === "done") done++;
+        out.push({ ...t, phaseId: p.id, phaseName: p.name, phaseIdx: idx });
       }
-    }
-    return { done, total, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
+    });
+    return out;
   });
 
+  const counts = createMemo(() => {
+    const fs = features();
+    const c = { total: fs.length, done: 0, in_progress: 0, failed: 0, planned: 0, blocked: 0 };
+    for (const f of fs) {
+      const s = (f.status || "planned") as keyof typeof c;
+      if (s in c) (c as any)[s]++;
+    }
+    return c;
+  });
+
+  // The first in_progress task, else the first planned/pending one.
+  const currentFeature = createMemo(() => {
+    const fs = features();
+    return fs.find((f) => f.status === "in_progress")
+      ?? fs.find((f) => f.status === "planned" || f.status === "pending")
+      ?? null;
+  });
+
+  const isRunning = () => counts().in_progress > 0;
+  const isComplete = () => counts().total > 0 && counts().done === counts().total;
+
+  const pct = () => {
+    const c = counts();
+    return c.total > 0 ? Math.round((c.done / c.total) * 100) : 0;
+  };
+
   return (
-    <div class="p-6 max-w-6xl mx-auto">
-      <button
-        onClick={() => navigate({ page: "missions" })}
-        class="text-sm text-gray-500 hover:text-cyan-400 mb-4"
-      >
-        ← All missions
-      </button>
+    <div class="h-screen flex flex-col bg-gray-950 text-gray-100">
+      {/* Header bar */}
+      <div class="shrink-0 border-b border-gray-800 px-4 py-3">
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex items-center gap-3 min-w-0">
+            <button
+              onClick={() => navigate({ page: "missions" })}
+              class="text-xs text-gray-500 hover:text-cyan-400 shrink-0"
+              title="All missions (Esc)"
+            >
+              ← All
+            </button>
+            <span class="text-sm font-semibold text-gray-200 shrink-0">Mission Control</span>
+            <Show when={mission()}>
+              <span class="text-xs text-gray-500 truncate">
+                Mission: <span class="font-mono text-gray-300">{props.missionId}</span>
+              </span>
+            </Show>
+          </div>
+          <Show when={mission()}>
+            <div class="flex items-center gap-4 text-xs text-gray-500 shrink-0">
+              <span>ADR: <span class="text-gray-300">{mission()!.adr}</span></span>
+              <span>{counts().total} features</span>
+              <span>{mission()!.phases.length} milestones</span>
+              <span>budget ≈ {budgetEstimate(mission()!)}</span>
+            </div>
+          </Show>
+        </div>
+        <Show when={mission()}>
+          <div class="mt-2 text-base font-semibold text-white truncate">{mission()!.feature}</div>
+        </Show>
+      </div>
+
+      {/* Status / progress bar */}
+      <Show when={mission()}>
+        <div class="shrink-0 border-b border-gray-800 px-4 py-2 flex items-center gap-3">
+          <Show when={isRunning()} fallback={
+            <Show when={isComplete()} fallback={
+              <span class="text-xs px-2 py-0.5 rounded border bg-gray-800 text-gray-400 border-gray-700">
+                ○ {mission()!.status || "planned"}
+              </span>
+            }>
+              <span class="text-xs px-2 py-0.5 rounded border bg-green-900 text-green-200 border-green-700">
+                ✓ Complete
+              </span>
+            </Show>
+          }>
+            <span class="text-xs px-2 py-0.5 rounded border bg-orange-900 text-orange-200 border-orange-700">
+              ● Running
+            </span>
+          </Show>
+          <div class="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+            <div
+              class={`h-full transition-all ${isRunning() ? "bg-orange-500" : "bg-cyan-600"}`}
+              style={{ width: `${pct()}%` }}
+            />
+          </div>
+          <span class="text-xs font-mono text-gray-400 shrink-0 w-32 text-right">
+            {counts().done}/{counts().total}
+            {counts().failed > 0 && <span class="text-red-400"> ({counts().failed} failed)</span>}
+          </span>
+        </div>
+      </Show>
 
       <Show when={loading()}>
-        <div class="text-gray-500">Loading mission…</div>
+        <div class="p-6 text-gray-500">Loading mission…</div>
       </Show>
       <Show when={error()}>
-        <div class="bg-red-950 border border-red-800 rounded-lg p-4 text-red-200">
+        <div class="m-4 bg-red-950 border border-red-800 rounded-lg p-4 text-red-200">
           Failed to load mission: {error()}
         </div>
       </Show>
+
       <Show when={mission()}>
-        {(m) => (
-          <>
-            <div class="mb-6">
-              <div class="flex items-center gap-2 mb-2 flex-wrap">
-                <span class={`text-xs px-2 py-0.5 rounded border ${statusClass(m().status)}`}>
-                  {m().status}
-                </span>
-                <span class={`text-xs px-2 py-0.5 rounded border ${priorityClass(m().priority)}`}>
-                  {m().priority || "normal"}
-                </span>
-                <span class="text-xs text-gray-500">{m().adr}</span>
-              </div>
-              <h1 class="text-2xl font-bold text-white">{m().feature}</h1>
-              <div class="text-xs text-gray-600 mt-1 font-mono">{m().id}</div>
-              <Show when={m().description}>
-                <p class="mt-2 text-sm text-gray-400">{m().description}</p>
-              </Show>
+        <div class="flex-1 min-h-0 grid grid-cols-12 gap-3 p-3">
+          {/* Left: Current Feature */}
+          <div class="col-span-5 bg-gray-900 border border-orange-900/40 rounded-lg overflow-hidden flex flex-col">
+            <div class="px-4 py-2 border-b border-gray-800 text-xs uppercase tracking-wide text-orange-300/80">
+              Current Feature
             </div>
+            <Show when={currentFeature()} fallback={
+              <div class="p-6 text-sm text-gray-500">
+                <Show when={isComplete()} fallback="No feature in flight.">
+                  Mission complete — all {counts().total} features done.
+                </Show>
+              </div>
+            }>
+              {(f) => (
+                <div class="p-4 overflow-y-auto flex-1 text-sm">
+                  <div class="text-base font-semibold text-gray-100 mb-3">{f().name}</div>
+                  <div class="space-y-2 text-xs">
+                    <div>
+                      <span class="text-gray-500 mr-2">status</span>
+                      <StatusDot status={f().status} />
+                      <span class="ml-1 text-gray-300">{f().status}</span>
+                    </div>
+                    <div>
+                      <span class="text-gray-500 mr-2">feature id</span>
+                      <span class="font-mono text-gray-300">{f().id}</span>
+                    </div>
+                    <div>
+                      <span class="text-gray-500 mr-2">milestone</span>
+                      <span class="text-gray-300">M{f().phaseIdx + 1} · {f().phaseName}</span>
+                    </div>
+                    <Show when={f().layer}>
+                      <div>
+                        <span class="text-gray-500 mr-2">layer</span>
+                        <span class="text-gray-300">{f().layer}</span>
+                      </div>
+                    </Show>
+                    <Show when={f().files && f().files!.length > 0}>
+                      <div>
+                        <div class="text-gray-500 mb-1">files</div>
+                        <ul class="font-mono text-gray-300 space-y-0.5 pl-2">
+                          <For each={f().files!}>
+                            {(file) => <li class="truncate">{file}</li>}
+                          </For>
+                        </ul>
+                      </div>
+                    </Show>
+                  </div>
+                </div>
+              )}
+            </Show>
+          </div>
 
-            {/* Progress bar */}
-            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-6">
-              <div class="flex items-center justify-between mb-2">
-                <span class="text-sm text-gray-300">
-                  {progress().done} of {progress().total} features done · {m().phases.length} milestones
+          {/* Right: Features list + Progress Log stacked */}
+          <div class="col-span-7 flex flex-col gap-3 min-h-0">
+            {/* Features list */}
+            <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden flex flex-col min-h-0 flex-1">
+              <div class="px-4 py-2 border-b border-gray-800 flex items-center justify-between text-xs">
+                <span class="uppercase tracking-wide text-gray-500">Features</span>
+                <span class="font-mono text-gray-400">
+                  {counts().done}/{counts().total}
+                  <Show when={counts().failed > 0}>
+                    <span class="text-red-400 ml-2">{counts().failed} failed</span>
+                  </Show>
                 </span>
-                <span class="text-sm font-mono text-cyan-300">{progress().pct}%</span>
               </div>
-              <div class="h-2 bg-gray-800 rounded-full overflow-hidden">
-                <div
-                  class="h-full bg-cyan-600 transition-all"
-                  style={{ width: `${progress().pct}%` }}
-                />
-              </div>
-              <div class="text-xs text-gray-600 mt-2">
-                budget estimate ≈ {budgetEstimate(m())} worker runs
-                {" "}({progress().total} features + 2 × {m().phases.length} milestones, Factory formula)
-              </div>
-            </div>
-
-            {/* Milestones */}
-            <div class="space-y-4">
-              <For each={m().phases}>
-                {(phase, phaseIdx) => {
-                  const phaseProgress = () => {
-                    const done = (phase.tasks ?? []).filter((t) => t.status === "done").length;
-                    const total = (phase.tasks ?? []).length;
-                    return { done, total, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
-                  };
-                  return (
-                    <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
-                      <div class="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
-                        <div class="flex items-center gap-2">
-                          <span class="text-xs text-gray-600 font-mono">M{phaseIdx() + 1}</span>
-                          <span class={`text-xs px-2 py-0.5 rounded border ${statusClass(phase.status)}`}>
-                            {phase.status}
-                          </span>
-                          <h3 class="text-sm font-semibold text-gray-200">{phase.name}</h3>
-                          <Show when={phase.tier !== undefined}>
-                            <span class="text-xs text-gray-600">tier {phase.tier}</span>
-                          </Show>
-                        </div>
-                        <span class="text-xs text-gray-500 font-mono">
-                          {phaseProgress().done}/{phaseProgress().total}
+              <div class="overflow-y-auto flex-1 divide-y divide-gray-850">
+                <For each={features()}>
+                  {(f) => {
+                    const isCurrent = () => currentFeature()?.id === f.id;
+                    return (
+                      <div
+                        class={`px-3 py-1.5 flex items-center gap-2 text-sm hover:bg-gray-850 ${
+                          isCurrent() ? "bg-orange-950/40" : ""
+                        }`}
+                      >
+                        <StatusDot status={f.status} />
+                        <span class={`truncate ${isCurrent() ? "text-orange-200" : "text-gray-300"}`}>
+                          {f.name}
+                        </span>
+                        <span class="ml-auto text-[10px] text-gray-600 font-mono shrink-0">
+                          M{f.phaseIdx + 1}
                         </span>
                       </div>
-                      <div class="divide-y divide-gray-800">
-                        <For each={phase.tasks ?? []}>
-                          {(task) => (
-                            <div class="px-4 py-2.5 flex items-start gap-3 hover:bg-gray-850">
-                              <span class={`text-[10px] mt-0.5 px-1.5 py-0.5 rounded border shrink-0 ${statusClass(task.status)}`}>
-                                {task.status}
-                              </span>
-                              <div class="flex-1 min-w-0">
-                                <div class="text-sm text-gray-200">
-                                  <span class="text-gray-600 font-mono mr-2">{task.id}</span>
-                                  {task.name}
-                                </div>
-                                <Show when={task.layer || (task.files && task.files.length > 0)}>
-                                  <div class="text-xs text-gray-600 mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-                                    <Show when={task.layer}>
-                                      <span>layer: <span class="text-gray-500">{task.layer}</span></span>
-                                    </Show>
-                                    <Show when={task.files && task.files.length > 0}>
-                                      <For each={task.files}>
-                                        {(f) => <span class="text-gray-500 font-mono">{f}</span>}
-                                      </For>
-                                    </Show>
-                                  </div>
-                                </Show>
-                              </div>
-                            </div>
-                          )}
-                        </For>
+                    );
+                  }}
+                </For>
+              </div>
+            </div>
+
+            {/* Progress Log */}
+            <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden flex flex-col min-h-0 flex-1">
+              <div class="px-4 py-2 border-b border-gray-800 flex items-center justify-between text-xs">
+                <span class="uppercase tracking-wide text-gray-500">Progress Log</span>
+                <span class="font-mono text-gray-600">{events().length} events</span>
+              </div>
+              <div class="overflow-y-auto flex-1 divide-y divide-gray-850 font-mono text-xs">
+                <Show when={events().length > 0} fallback={
+                  <div class="p-3 text-gray-600 italic">No recent events.</div>
+                }>
+                  <For each={events()}>
+                    {(e) => (
+                      <div class="px-3 py-1.5 flex items-start gap-2 hover:bg-gray-850">
+                        <span class="text-gray-600 w-16 shrink-0">{relTime(e.created_at)}</span>
+                        <span class={
+                          e.event_type === "PostToolUse" ? "text-green-400 shrink-0" :
+                          e.event_type === "PreToolUse" ? "text-cyan-400 shrink-0" :
+                          "text-gray-500 shrink-0"
+                        }>
+                          {e.event_type === "PostToolUse" ? "✓" :
+                            e.event_type === "PreToolUse" ? "●" : "·"}
+                        </span>
+                        <span class="text-gray-400 shrink-0">{e.event_type}</span>
+                        <Show when={e.tool_name}>
+                          <span class="text-gray-300">{e.tool_name}</span>
+                        </Show>
+                        <Show when={e.duration_ms !== null && e.duration_ms !== undefined}>
+                          <span class="text-gray-600 ml-auto shrink-0">{e.duration_ms}ms</span>
+                        </Show>
                       </div>
+                    )}
+                  </For>
+                </Show>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom: raw event stream */}
+        <div class="shrink-0 border-t border-gray-800 bg-gray-950 max-h-48 overflow-y-auto">
+          <div class="px-4 py-2 border-b border-gray-800 text-xs uppercase tracking-wide text-gray-500 sticky top-0 bg-gray-950">
+            Raw stream
+          </div>
+          <div class="font-mono text-[11px] leading-relaxed p-2">
+            <Show when={events().length > 0} fallback={
+              <div class="text-gray-700 italic">No raw events yet.</div>
+            }>
+              <For each={events()}>
+                {(e) => {
+                  const payload = () => {
+                    try {
+                      const parsed = JSON.parse(e.input_json ?? "{}");
+                      const cmd = parsed.command ?? parsed.description ?? parsed.tool ?? "";
+                      return typeof cmd === "string" ? cmd.replace(/\n/g, " ") : JSON.stringify(parsed);
+                    } catch {
+                      return e.input_json ?? "";
+                    }
+                  };
+                  return (
+                    <div class="text-gray-400 truncate">
+                      <span class="text-gray-600">→</span>{" "}
+                      <span class="text-gray-500">[{e.tool_name ?? e.event_type}]</span>{" "}
+                      {payload()}
                     </div>
                   );
                 }}
               </For>
-            </div>
-          </>
-        )}
+            </Show>
+          </div>
+        </div>
+
+        {/* Footer keyboard hint bar */}
+        <div class="shrink-0 border-t border-gray-800 px-4 py-1.5 text-[11px] text-gray-600 flex gap-4">
+          <span><span class="text-gray-400">Esc</span> Back</span>
+          <span><span class="text-gray-400">F</span> Features</span>
+          <span><span class="text-gray-400">L</span> Log</span>
+          <span><span class="text-gray-600">P: Pause · M: Models · Tab: Next View (TODO)</span></span>
+        </div>
       </Show>
     </div>
   );
