@@ -115,7 +115,7 @@ const STATUS_COLORS: Record<string, string> = {
   in_progress: "bg-cyan-900 text-cyan-200 border-cyan-700",
   planned: "bg-gray-800 text-gray-300 border-gray-700",
   done: "bg-green-900 text-green-200 border-green-700",
-  superseded: "bg-gray-900 text-gray-500 border-gray-800",
+  superseded: "bg-gray-900 text-gray-300 border-gray-700",
   pending: "bg-gray-800 text-gray-400 border-gray-700",
   failed: "bg-red-900 text-red-200 border-red-700",
   blocked: "bg-yellow-900 text-yellow-200 border-yellow-700",
@@ -131,7 +131,7 @@ const ADR_STATUS_COLOR = (status: string): string => {
   const s = (status || "").toLowerCase();
   if (s.startsWith("accepted")) return "bg-green-900 text-green-200 border-green-700";
   if (s.startsWith("proposed")) return "bg-cyan-900 text-cyan-200 border-cyan-700";
-  if (s.startsWith("superseded")) return "bg-gray-900 text-gray-500 border-gray-800";
+  if (s.startsWith("superseded")) return "bg-gray-900 text-gray-300 border-gray-700";
   if (s.startsWith("rejected")) return "bg-red-900 text-red-200 border-red-700";
   if (s.startsWith("deprecated")) return "bg-yellow-900 text-yellow-200 border-yellow-700";
   return "bg-gray-800 text-gray-400 border-gray-700";
@@ -149,15 +149,15 @@ const priorityClass = (p: string | undefined): string =>
 const StatusDot: Component<{ status: string }> = (p) => {
   const map: Record<string, { sym: string; cls: string }> = {
     in_progress: { sym: "●", cls: "text-orange-400" },
-    done: { sym: "✓", cls: "text-green-400" },
-    failed: { sym: "×", cls: "text-red-400" },
-    blocked: { sym: "⚠", cls: "text-yellow-400" },
-    planned: { sym: "○", cls: "text-gray-600" },
-    pending: { sym: "○", cls: "text-gray-600" },
-    skipped: { sym: "−", cls: "text-gray-700" },
+    done:        { sym: "✓", cls: "text-emerald-400" },
+    failed:      { sym: "✕", cls: "text-red-400" },
+    blocked:     { sym: "⚠", cls: "text-amber-400" },
+    planned:     { sym: "○", cls: "text-gray-400" },
+    pending:     { sym: "○", cls: "text-gray-400" },
+    skipped:     { sym: "−", cls: "text-gray-300" },
   };
-  const v = () => map[p.status] ?? { sym: "○", cls: "text-gray-600" };
-  return <span class={`font-mono text-sm shrink-0 ${v().cls}`}>{v().sym}</span>;
+  const v = () => map[p.status] ?? { sym: "○", cls: "text-gray-400" };
+  return <span class={`font-mono text-base shrink-0 leading-none ${v().cls}`}>{v().sym}</span>;
 };
 
 const relTime = (iso: string): string => {
@@ -211,7 +211,7 @@ const SortHeader: Component<{
       class={`px-2 py-2 cursor-pointer select-none font-medium hover:text-gray-300 ${p.class ?? "text-left"}`}
     >
       <span class={active() ? "text-cyan-300" : ""}>{p.label}</span>
-      <span class="ml-1 text-gray-600">{active() ? (p.sortDir() === "asc" ? "↑" : "↓") : ""}</span>
+      <span class="ml-1 text-gray-400">{active() ? (p.sortDir() === "asc" ? "↑" : "↓") : ""}</span>
     </th>
   );
 };
@@ -437,11 +437,11 @@ const MissionsList: Component = () => {
               class={`px-3 py-1.5 text-sm rounded-md border transition-colors ${
                 filter() === key
                   ? "bg-cyan-900 text-cyan-100 border-cyan-700"
-                  : "bg-gray-900 text-gray-400 border-gray-800 hover:border-gray-600"
+                  : "bg-gray-900 text-gray-400 border-gray-700 hover:border-gray-600"
               }`}
             >
               {label}
-              <span class="ml-1 text-xs text-gray-500">({counts()[key]})</span>
+              <span class="ml-1 text-xs text-gray-300">({counts()[key]})</span>
             </button>
           )}
         </For>
@@ -450,23 +450,23 @@ const MissionsList: Component = () => {
           placeholder="Filter by ADR id, title, or filename…"
           value={search()}
           onInput={(e) => setSearch(e.currentTarget.value)}
-          class="flex-1 min-w-[200px] bg-gray-900 border border-gray-800 rounded-md px-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:border-cyan-700 focus:outline-none"
+          class="flex-1 min-w-[200px] bg-gray-900 border border-gray-700 rounded-md px-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:border-cyan-700 focus:outline-none"
         />
       </div>
 
-      <Show when={!loading()} fallback={<div class="text-gray-500">Loading missions…</div>}>
+      <Show when={!loading()} fallback={<div class="text-gray-300">Loading missions…</div>}>
         <Show when={filtered().length > 0} fallback={
-          <div class="bg-gray-900 border border-gray-800 rounded-lg p-8 text-center text-gray-500">
+          <div class="bg-gray-900 border border-gray-700 rounded-lg p-8 text-center text-gray-300">
             No ADRs match the current filter.
           </div>
         }>
-          <div class="text-xs text-gray-500 mb-2">
+          <div class="text-xs text-gray-300 mb-2">
             {filtered().length} of {rows().length} missions
             <span> · sorted by <span class="text-gray-300">{sortKey()}</span> {sortDir() === "asc" ? "↑" : "↓"}</span>
           </div>
-          <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+          <div class="bg-gray-900 border border-gray-700 rounded-lg overflow-hidden">
             <table class="w-full text-sm">
-              <thead class="bg-gray-950 text-xs uppercase tracking-wide text-gray-500">
+              <thead class="bg-gray-950 text-xs uppercase tracking-wider text-gray-300 font-semibold">
                 <tr>
                   <SortHeader label="Status" k="status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} class="w-32" />
                   <SortHeader label="ADR" k="id" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} class="w-32 font-mono" />
@@ -476,12 +476,12 @@ const MissionsList: Component = () => {
                   <SortHeader label="Progress" k="progress" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} class="w-32 text-right" />
                 </tr>
               </thead>
-              <tbody class="divide-y divide-gray-850">
+              <tbody class="divide-y divide-gray-800">
                 <For each={filtered()}>
                   {(r) => (
                     <tr
                       onClick={() => navigate({ page: "mission-detail", missionId: r.id })}
-                      class="cursor-pointer hover:bg-gray-850 transition-colors group"
+                      class="cursor-pointer hover:bg-gray-800 transition-colors group"
                     >
                       <td class="px-2 py-1.5">
                         <Show when={r.inFlight > 0}>
@@ -515,7 +515,7 @@ const MissionsList: Component = () => {
                                 style={{ width: `${r.pct}%` }}
                               />
                             </div>
-                            <span class="text-[11px] font-mono text-gray-500 w-9 text-right">{r.pct}%</span>
+                            <span class="text-[11px] font-mono text-gray-300 w-9 text-right">{r.pct}%</span>
                           </div>
                         </Show>
                       </td>
@@ -817,26 +817,26 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
       </Show>
 
       {/* Header */}
-      <div class="shrink-0 border-b border-gray-800 px-4 py-2">
+      <div class="shrink-0 border-b border-gray-700 px-4 py-2">
         <div class="flex items-center justify-between gap-4">
           <div class="flex items-center gap-3 min-w-0">
             <button
               onClick={() => navigate({ page: "missions" })}
-              class="text-xs text-gray-500 hover:text-cyan-400 shrink-0"
+              class="text-xs text-gray-300 hover:text-cyan-400 shrink-0"
               title="All missions (Esc)"
             >← All</button>
             <span class="text-sm font-semibold text-gray-200 shrink-0">Mission Control</span>
-            <span class="text-xs text-gray-500 truncate font-mono">{props.missionId}</span>
+            <span class="text-xs text-gray-300 truncate font-mono">{props.missionId}</span>
           </div>
-          <div class="flex items-center gap-4 text-xs text-gray-500 shrink-0">
+          <div class="flex items-center gap-4 text-xs text-gray-300 shrink-0">
             <span title="Workplans referencing this ADR">{workplans().length} workplans</span>
             <span title="Total features across all workplans">{counts().total} features</span>
             <Show when={tokenSummary().n > 0}>
               <span title={`${tokenSummary().n} inference calls observed`}>
                 tokens: <span class="text-gray-300">{tokenSummary().inp}</span>
-                <span class="text-gray-600"> in · </span>
+                <span class="text-gray-400"> in · </span>
                 <span class="text-gray-300">{tokenSummary().out}</span>
-                <span class="text-gray-600"> out</span>
+                <span class="text-gray-400"> out</span>
               </span>
             </Show>
           </div>
@@ -848,14 +848,14 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
               {adr()!.status || "—"}
             </span>
             <Show when={adr()!.date}>
-              <span class="text-xs text-gray-600">{adr()!.date}</span>
+              <span class="text-xs text-gray-400">{adr()!.date}</span>
             </Show>
           </div>
         </Show>
       </div>
 
       {/* Action bar + progress */}
-      <div class="shrink-0 border-b border-gray-800 px-4 py-2 flex items-center gap-3">
+      <div class="shrink-0 border-b border-gray-700 px-4 py-2 flex items-center gap-3">
         <Show when={isRunning()} fallback={
           <Show when={isComplete()} fallback={
             <span class="text-xs px-2 py-0.5 rounded border bg-gray-800 text-gray-400 border-gray-700">○ idle</span>
@@ -883,23 +883,23 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
           <button
             onClick={() => doAction("pause")}
             disabled={!!actionInFlight() || workplans().length === 0}
-            class="px-2 py-1 text-xs rounded border bg-gray-900 border-gray-700 text-gray-300 hover:bg-gray-800 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            class="px-2.5 py-1 text-xs font-semibold rounded border bg-gray-800 border-gray-600 text-gray-100 hover:bg-gray-700 hover:border-gray-500 hover:text-white active:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
             title="P · Pause all workplans under this mission"
           >
-            {actionInFlight() === "pause" ? "…" : "Pause"} <span class="text-gray-600 ml-1">P</span>
+            {actionInFlight() === "pause" ? "…" : "Pause"} <span class="text-gray-400 ml-1">P</span>
           </button>
           <button
             onClick={() => doAction("resume")}
             disabled={!!actionInFlight() || workplans().length === 0}
-            class="px-2 py-1 text-xs rounded border bg-gray-900 border-gray-700 text-gray-300 hover:bg-gray-800 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            class="px-2.5 py-1 text-xs font-semibold rounded border bg-gray-800 border-gray-600 text-gray-100 hover:bg-gray-700 hover:border-gray-500 hover:text-white active:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
             title="R · Resume all workplans under this mission"
           >
-            {actionInFlight() === "resume" ? "…" : "Resume"} <span class="text-gray-600 ml-1">R</span>
+            {actionInFlight() === "resume" ? "…" : "Resume"} <span class="text-gray-400 ml-1">R</span>
           </button>
           <button
             onClick={() => doAction("mark-current-complete")}
             disabled={!!actionInFlight() || !currentFeature()}
-            class="px-2 py-1 text-xs rounded border bg-gray-900 border-gray-700 text-gray-300 hover:bg-gray-800 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            class="px-2.5 py-1 text-xs font-semibold rounded border bg-gray-800 border-gray-600 text-gray-100 hover:bg-gray-700 hover:border-gray-500 hover:text-white active:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
             title="Mark current feature complete (sent as directive to orchestrator persona — B7 backend pending)"
           >
             {actionInFlight() === "mark-current-complete" ? "…" : "Mark done"}
@@ -907,7 +907,7 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
           <button
             onClick={() => doAction("re-assess")}
             disabled={!!actionInFlight()}
-            class="px-2 py-1 text-xs rounded border bg-gray-900 border-gray-700 text-gray-300 hover:bg-gray-800 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            class="px-2.5 py-1 text-xs font-semibold rounded border bg-gray-800 border-gray-600 text-gray-100 hover:bg-gray-700 hover:border-gray-500 hover:text-white active:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
             title="Ask orchestrator to re-assess remaining work (B7 backend pending)"
           >
             {actionInFlight() === "re-assess" ? "…" : "Re-assess"}
@@ -916,7 +916,7 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
       </div>
 
       <Show when={loading()}>
-        <div class="p-6 text-gray-500">Loading mission…</div>
+        <div class="p-6 text-gray-300">Loading mission…</div>
       </Show>
       <Show when={error()}>
         <div class="m-4 bg-red-950 border border-red-800 rounded-lg p-4 text-red-200">
@@ -929,11 +929,11 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
         {/* Left: Current Feature */}
         <div ref={currentPaneRef} data-pane="current"
           class="col-span-4 bg-gray-900 border border-orange-900/40 rounded-lg overflow-hidden flex flex-col transition-shadow">
-          <div class="px-4 py-2 border-b border-gray-800 text-xs uppercase tracking-wide text-orange-300/80">
+          <div class="px-4 py-2 border-b border-gray-700 text-xs uppercase tracking-wider text-orange-400 font-semibold">
             Current Feature
           </div>
           <Show when={currentFeature()} fallback={
-            <div class="p-6 text-sm text-gray-500">
+            <div class="p-6 text-sm text-gray-300">
               <Show when={isComplete()} fallback={
                 <Show when={workplans().length === 0} fallback="No feature in flight.">
                   No workplan references this ADR yet.
@@ -950,31 +950,31 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
                 </div>
                 <div class="space-y-2 text-xs">
                   <div>
-                    <span class="text-gray-500 mr-2">status</span>
+                    <span class="text-gray-300 mr-2">status</span>
                     <StatusDot status={f().status} />
                     <span class="ml-1 text-gray-300">{f().status}</span>
                   </div>
                   <div>
-                    <span class="text-gray-500 mr-2">feature id</span>
+                    <span class="text-gray-300 mr-2">feature id</span>
                     <span class="font-mono text-gray-300">{f().id}</span>
                   </div>
                   <div>
-                    <span class="text-gray-500 mr-2">workplan</span>
+                    <span class="text-gray-300 mr-2">workplan</span>
                     <span class="text-gray-300 font-mono">{f().workplanId}</span>
                   </div>
                   <div>
-                    <span class="text-gray-500 mr-2">milestone</span>
+                    <span class="text-gray-300 mr-2">milestone</span>
                     <span class="text-gray-300">M{f().phaseIdx + 1} · {f().phaseName}</span>
                   </div>
                   <Show when={f().layer}>
                     <div>
-                      <span class="text-gray-500 mr-2">layer</span>
+                      <span class="text-gray-300 mr-2">layer</span>
                       <span class="text-gray-300">{f().layer}</span>
                     </div>
                   </Show>
                   <Show when={f().files && f().files!.length > 0}>
                     <div>
-                      <div class="text-gray-500 mb-1">files</div>
+                      <div class="text-gray-300 mb-1">files</div>
                       <ul class="font-mono text-gray-300 space-y-0.5 pl-2">
                         <For each={f().files!}>{(file) => <li class="truncate">{file}</li>}</For>
                       </ul>
@@ -983,7 +983,7 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
                 </div>
                 <Show when={adr()?.body}>
                   <details class="mt-4 text-xs">
-                    <summary class="text-gray-500 cursor-pointer hover:text-gray-300">ADR body</summary>
+                    <summary class="text-gray-300 cursor-pointer hover:text-gray-300">ADR body</summary>
                     <pre class="mt-2 text-[11px] text-gray-400 whitespace-pre-wrap leading-relaxed">{adr()!.body!.slice(0, 1200)}{adr()!.body!.length > 1200 ? "…" : ""}</pre>
                   </details>
                 </Show>
@@ -995,9 +995,9 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
         {/* Middle: Features + Progress Log stacked */}
         <div class="col-span-5 flex flex-col gap-3 min-h-0">
           <div ref={featuresPaneRef} data-pane="features"
-            class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden flex flex-col min-h-0 flex-1 transition-shadow">
-            <div class="px-4 py-2 border-b border-gray-800 flex items-center justify-between text-xs">
-              <span class="uppercase tracking-wide text-gray-500">Features</span>
+            class="bg-gray-900 border border-gray-700 rounded-lg overflow-hidden flex flex-col min-h-0 flex-1 transition-shadow">
+            <div class="px-4 py-2 border-b border-gray-700 flex items-center justify-between text-xs">
+              <span class="uppercase tracking-wider text-gray-300 font-semibold">Features</span>
               <span class="font-mono text-gray-400">
                 {counts().done}/{counts().total}
                 <Show when={counts().failed > 0}><span class="text-red-400 ml-2">{counts().failed} failed</span></Show>
@@ -1006,10 +1006,10 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
             </div>
             <div class="overflow-y-auto flex-1">
               <Show when={features().length > 0} fallback={
-                <div class="p-3 text-xs text-gray-600 italic">No features yet — this ADR has no workplan.</div>
+                <div class="p-3 text-xs text-gray-400 italic">No features yet — this ADR has no workplan.</div>
               }>
                 <table class="w-full text-sm">
-                  <thead class="sticky top-0 bg-gray-950 text-[10px] uppercase tracking-wide text-gray-600">
+                  <thead class="sticky top-0 bg-gray-950 text-[10px] uppercase tracking-wide text-gray-400">
                     <tr>
                       <th class="px-2 py-1 text-left w-6"></th>
                       <th class="px-2 py-1 text-left w-16 font-medium">ID</th>
@@ -1018,7 +1018,7 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
                       <th class="px-2 py-1 text-right w-10 font-medium">M</th>
                     </tr>
                   </thead>
-                  <tbody class="divide-y divide-gray-850">
+                  <tbody class="divide-y divide-gray-800">
                     <For each={features()}>
                       {(f) => {
                         const key = `${f.workplanId}:${f.id}`;
@@ -1037,12 +1037,12 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
                         return (
                           <tr
                             onClick={() => setSelectedFeatureId(key)}
-                            class={`cursor-pointer hover:bg-gray-850 ${isCurrent() ? "bg-orange-950/40" : ""}`}
+                            class={`cursor-pointer hover:bg-gray-800 ${isCurrent() ? "bg-orange-500/15 border-l-2 border-l-orange-500" : ""}`}
                           >
                             <td class="px-2 py-1 align-top">
                               <StatusDot status={f.status} />
                             </td>
-                            <td class="px-2 py-1 align-top font-mono text-[11px] text-gray-500 whitespace-nowrap">
+                            <td class="px-2 py-1 align-top font-mono text-[11px] text-gray-300 whitespace-nowrap">
                               {f.id}
                             </td>
                             <td class="px-2 py-1 align-top">
@@ -1051,13 +1051,13 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
                                 {display()}
                               </div>
                               <Show when={!f.name && f.files && f.files.length > 1}>
-                                <div class="text-[10px] text-gray-600 font-mono">+{f.files!.length - 1} more file{f.files!.length - 1 > 1 ? "s" : ""}</div>
+                                <div class="text-[10px] text-gray-400 font-mono">+{f.files!.length - 1} more file{f.files!.length - 1 > 1 ? "s" : ""}</div>
                               </Show>
                             </td>
-                            <td class="px-2 py-1 align-top text-[11px] text-gray-500 truncate" title={f.layer}>
+                            <td class="px-2 py-1 align-top text-[11px] text-gray-300 truncate" title={f.layer}>
                               {f.layer || "—"}
                             </td>
-                            <td class="px-2 py-1 align-top text-right text-[10px] text-gray-600 font-mono whitespace-nowrap">
+                            <td class="px-2 py-1 align-top text-right text-[10px] text-gray-400 font-mono whitespace-nowrap">
                               M{f.phaseIdx + 1}
                             </td>
                           </tr>
@@ -1071,36 +1071,36 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
           </div>
 
           <div ref={logPaneRef} data-pane="log"
-            class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden flex flex-col min-h-0 flex-1 transition-shadow">
-            <div class="px-4 py-2 border-b border-gray-800 flex items-center justify-between text-xs">
-              <span class="uppercase tracking-wide text-gray-500">Progress Log</span>
+            class="bg-gray-900 border border-gray-700 rounded-lg overflow-hidden flex flex-col min-h-0 flex-1 transition-shadow">
+            <div class="px-4 py-2 border-b border-gray-700 flex items-center justify-between text-xs">
+              <span class="uppercase tracking-wider text-gray-300 font-semibold">Progress Log</span>
               <div class="flex items-center gap-2">
                 <button
                   onClick={() => { setShowHeartbeats(!showHeartbeats()); fetchEvents(); }}
                   class={`text-[10px] px-2 py-0.5 rounded border ${
                     showHeartbeats()
                       ? "bg-gray-800 text-gray-300 border-gray-700"
-                      : "bg-gray-950 text-gray-600 border-gray-800 hover:text-gray-400"
+                      : "bg-gray-950 text-gray-400 border-gray-700 hover:text-gray-400"
                   }`}
                   title="Show / hide heartbeat ticks (brain_tick, adr_doctor_tick, etc.)"
                 >
                   {showHeartbeats() ? "noise on" : "noise off"}
                 </button>
-                <span class="font-mono text-gray-600">{events().length} events</span>
+                <span class="font-mono text-gray-400">{events().length} events</span>
               </div>
             </div>
-            <div class="overflow-y-auto flex-1 divide-y divide-gray-850 font-mono text-xs">
+            <div class="overflow-y-auto flex-1 divide-y divide-gray-800 font-mono text-xs">
               <Show when={events().length > 0} fallback={
-                <div class="p-3 text-gray-600 italic">No recent events.</div>
+                <div class="p-3 text-gray-400 italic">No recent events.</div>
               }>
                 <For each={events()}>
                   {(e) => (
-                    <div class="px-3 py-1.5 flex items-start gap-2 hover:bg-gray-850">
-                      <span class="text-gray-600 w-16 shrink-0">{relTime(e.created_at)}</span>
+                    <div class="px-3 py-1.5 flex items-start gap-2 hover:bg-gray-800">
+                      <span class="text-gray-400 w-16 shrink-0">{relTime(e.created_at)}</span>
                       <span class={
                         e.event_type === "PostToolUse" ? "text-green-400 shrink-0" :
                         e.event_type === "PreToolUse" ? "text-cyan-400 shrink-0" :
-                        "text-gray-500 shrink-0"
+                        "text-gray-300 shrink-0"
                       }>
                         {e.event_type === "PostToolUse" ? "✓" : e.event_type === "PreToolUse" ? "●" : "·"}
                       </span>
@@ -1109,7 +1109,7 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
                         <span class="text-gray-300 truncate">{e.tool_name}</span>
                       </Show>
                       <Show when={e.duration_ms !== null && e.duration_ms !== undefined}>
-                        <span class="text-gray-600 ml-auto shrink-0">{e.duration_ms}ms</span>
+                        <span class="text-gray-400 ml-auto shrink-0">{e.duration_ms}ms</span>
                       </Show>
                     </div>
                   )}
@@ -1121,13 +1121,13 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
 
         {/* Right: Orchestrator chat */}
         <div ref={chatPaneRef} data-pane="chat"
-          class="col-span-3 bg-gray-900 border border-gray-800 rounded-lg overflow-hidden flex flex-col min-h-0 transition-shadow">
-          <div class="px-3 py-2 border-b border-gray-800 flex items-center justify-between gap-2 text-xs">
-            <span class="uppercase tracking-wide text-gray-500">Orchestrator</span>
+          class="col-span-3 bg-gray-900 border border-gray-700 rounded-lg overflow-hidden flex flex-col min-h-0 transition-shadow">
+          <div class="px-3 py-2 border-b border-gray-700 flex items-center justify-between gap-2 text-xs">
+            <span class="uppercase tracking-wider text-gray-300 font-semibold">Orchestrator</span>
             <select
               value={chatPersona()}
               onChange={(e) => setChatPersona(e.currentTarget.value as any)}
-              class="bg-gray-950 border border-gray-800 rounded px-1 py-0.5 text-xs text-gray-300"
+              class="bg-gray-950 border border-gray-700 rounded px-1 py-0.5 text-xs text-gray-300"
             >
               <option value="engineering-lead">@engineering-lead</option>
               <option value="cto">@cto</option>
@@ -1137,16 +1137,16 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
           </div>
           <div class="overflow-y-auto flex-1 p-2 space-y-2 text-xs">
             <Show when={chatMessages().length > 0} fallback={
-              <div class="text-gray-600 italic">No conversation yet for this mission.</div>
+              <div class="text-gray-400 italic">No conversation yet for this mission.</div>
             }>
               <For each={chatMessages()}>
                 {(m) => (
                   <div class={`p-2 rounded border ${
                     m.from === "ceo"
                       ? "bg-cyan-950/40 border-cyan-900/40 ml-4"
-                      : "bg-gray-950 border-gray-800 mr-4"
+                      : "bg-gray-950 border-gray-700 mr-4"
                   }`}>
-                    <div class="text-[10px] text-gray-500 mb-0.5">
+                    <div class="text-[10px] text-gray-300 mb-0.5">
                       {m.from === "ceo" ? "You" : m.from} → {m.to}
                     </div>
                     <div class="text-gray-200 whitespace-pre-wrap break-words">
@@ -1157,7 +1157,7 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
               </For>
             </Show>
           </div>
-          <div class="border-t border-gray-800 p-2">
+          <div class="border-t border-gray-700 p-2">
             <textarea
               value={chatInput()}
               onInput={(e) => setChatInput(e.currentTarget.value)}
@@ -1169,7 +1169,7 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
               }}
               rows={2}
               placeholder={`Message @${chatPersona()}… (⌘↵)`}
-              class="w-full bg-gray-950 border border-gray-800 rounded px-2 py-1 text-xs text-gray-200 placeholder-gray-600 resize-none focus:border-cyan-700 focus:outline-none"
+              class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 placeholder-gray-600 resize-none focus:border-cyan-700 focus:outline-none"
             />
             <button
               onClick={sendChat}
@@ -1183,12 +1183,12 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
       </div>
 
       {/* Bottom: raw stream */}
-      <div class="shrink-0 border-t border-gray-800 bg-gray-950 max-h-40 overflow-y-auto">
-        <div class="px-4 py-1.5 border-b border-gray-800 text-xs uppercase tracking-wide text-gray-500 sticky top-0 bg-gray-950">
+      <div class="shrink-0 border-t border-gray-700 bg-gray-950 max-h-40 overflow-y-auto">
+        <div class="px-4 py-1.5 border-b border-gray-700 text-xs uppercase tracking-wider text-gray-300 font-semibold sticky top-0 bg-gray-950">
           Raw stream
         </div>
         <div class="font-mono text-[11px] leading-relaxed p-2">
-          <Show when={events().length > 0} fallback={<div class="text-gray-700 italic">No raw events yet.</div>}>
+          <Show when={events().length > 0} fallback={<div class="text-gray-300 italic">No raw events yet.</div>}>
             <For each={events()}>
               {(e) => {
                 const payload = () => {
@@ -1202,8 +1202,8 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
                 };
                 return (
                   <div class="text-gray-400 truncate">
-                    <span class="text-gray-600">→</span>{" "}
-                    <span class="text-gray-500">[{e.tool_name ?? e.event_type}]</span>{" "}
+                    <span class="text-gray-400">→</span>{" "}
+                    <span class="text-gray-300">[{e.tool_name ?? e.event_type}]</span>{" "}
                     {payload()}
                   </div>
                 );
@@ -1214,7 +1214,7 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
       </div>
 
       {/* Footer keyboard hint bar (truth-only) */}
-      <div class="shrink-0 border-t border-gray-800 px-4 py-1 text-[11px] text-gray-600 flex gap-4">
+      <div class="shrink-0 border-t border-gray-700 px-4 py-1 text-[11px] text-gray-400 flex gap-4">
         <span><span class="text-gray-400">Esc</span> back</span>
         <span><span class="text-gray-400">F</span> features</span>
         <span><span class="text-gray-400">L</span> log</span>
