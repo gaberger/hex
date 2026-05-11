@@ -184,6 +184,16 @@ async fn execute_file_write(
         .await;
     }
 
+    // ADR-2605110700 R1 — capture pre-write state so we can roll back if
+    // cargo_check rejects the patch. Without this, autonomous SOP runs
+    // accumulate broken state overnight (5 of 6 cycles on 2026-05-10 failed
+    // cargo_check after this gate was advisory-only).
+    let pre_write_backup: Option<String> = if target.exists() {
+        std::fs::read_to_string(&target).ok()
+    } else {
+        None
+    };
+
     // Atomic write via temp + rename.
     let tmp = target.with_extension("twinwrite-tmp");
     if let Err(e) = std::fs::write(&tmp, content) {
@@ -206,6 +216,68 @@ async fn execute_file_write(
             &format!("rename to target: {}", e),
         )
         .await;
+    }
+
+    // ADR-2605110700 R1 — hard verifier gate for Rust source files.
+    // Run cargo_check on the affected crate immediately after write. If
+    // errors, roll back to pre-write state and mark action failed. This
+    // turns the cargo_check chain from advisory into authoritative.
+    //
+    // Disable via HEX_DISABLE_CARGO_GATE=1 for forensic situations.
+    let gate_enabled = std::env::var("HEX_DISABLE_CARGO_GATE")
+        .map(|v| v != "1" && !v.eq_ignore_ascii_case("true"))
+        .unwrap_or(true);
+    if gate_enabled && rel_path.ends_with(".rs") {
+        if let Some(crate_name) = infer_rust_crate(rel_path) {
+            let check_tool = crate::tools::cargo_check::CargoCheck;
+            let check_input = serde_json::json!({ "crate": crate_name });
+            use crate::tools::Tool;
+            let check_result = check_tool.execute(check_input).await;
+            let has_errors = check_result
+                .output
+                .get("errors")
+                .and_then(|e| e.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false);
+            if has_errors {
+                // Roll back
+                let errors_summary = check_result
+                    .output
+                    .get("errors")
+                    .and_then(|e| e.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .take(3)
+                            .map(|v| v.to_string())
+                            .collect::<Vec<_>>()
+                            .join(" | ")
+                    })
+                    .unwrap_or_default();
+                if let Some(backup) = pre_write_backup {
+                    let _ = std::fs::write(&target, backup);
+                } else {
+                    let _ = std::fs::remove_file(&target);
+                }
+                tracing::warn!(
+                    action_id = action.id,
+                    path = %target.display(),
+                    crate_name = crate_name,
+                    "action_executor: cargo_check rejected patch — rolled back"
+                );
+                return mark_failed(
+                    http,
+                    stdb_host,
+                    hex_db,
+                    action.id,
+                    &format!(
+                        "ADR-2605110700 R1: cargo_check failed on {} after write — rolled back. Errors: {}",
+                        crate_name,
+                        errors_summary.chars().take(800).collect::<String>()
+                    ),
+                )
+                .await;
+            }
+        }
     }
 
     let evidence = format!(
@@ -283,4 +355,17 @@ async fn mark_failed(
     }
     tracing::warn!(action_id = id, error, "action_executor: marked failed");
     Ok(())
+}
+
+/// ADR-2605110700 R1 helper — derive workspace crate name from a repo-
+/// relative path so we can scope cargo_check to one crate.
+fn infer_rust_crate(rel_path: &str) -> Option<&'static str> {
+    if rel_path.starts_with("hex-nexus/src/") { Some("hex-nexus") }
+    else if rel_path.starts_with("hex-cli/src/") { Some("hex-cli") }
+    else if rel_path.starts_with("hex-agent/src/") { Some("hex-agent") }
+    else if rel_path.starts_with("hex-core/src/") { Some("hex-core") }
+    else if rel_path.starts_with("hex-parser/src/") { Some("hex-parser") }
+    else if rel_path.starts_with("hex-analyzer/src/") { Some("hex-analyzer") }
+    else if rel_path.starts_with("hex-desktop/src/") { Some("hex-desktop") }
+    else { None }
 }
