@@ -80,13 +80,17 @@ const statusClass = (s: string | undefined): string =>
 const priorityClass = (p: string | undefined): string =>
   PRIORITY_COLORS[p ?? ""] ?? "bg-gray-800 text-gray-400 border-gray-700";
 
-// Factory's budget formula: total runs ≈ #features + 2 × #milestones
+// Factory's budget formula: total runs ≈ #features + 2 × #milestones.
+// List summary has phases:number + tasks:number.
+// Detail has phases:PhaseDetail[] (tasks live inside each phase).
 const budgetEstimate = (m: MissionSummary | MissionDetail): number => {
-  const features = (m as MissionDetail).phases
-    ? (m as MissionDetail).phases.reduce((n, p) => n + (p.tasks?.length ?? 0), 0)
-    : (m as MissionSummary).tasks;
-  const milestones = (m as MissionDetail).phases?.length ?? (m as MissionSummary).phases;
-  return features + 2 * milestones;
+  if (Array.isArray((m as MissionDetail).phases)) {
+    const detail = m as MissionDetail;
+    const features = detail.phases.reduce((n, p) => n + (p.tasks?.length ?? 0), 0);
+    return features + 2 * detail.phases.length;
+  }
+  const summary = m as MissionSummary;
+  return (summary.tasks ?? 0) + 2 * (summary.phases ?? 0);
 };
 
 // ── List view ───────────────────────────────────────────────────────────────
