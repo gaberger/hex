@@ -595,7 +595,16 @@ async fn reason_via_openrouter(
         };
         let message = choice.get("message").cloned().unwrap_or(Value::Null);
         let assistant_content = message.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let tool_calls = message.get("tool_calls").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let mut tool_calls = message.get("tool_calls").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+        // Small-model fallback: some OpenRouter models return tool calls as
+        // literal text content `{"name":"foo","arguments":{...}}` instead of
+        // structured `tool_calls` blocks. Parse and synthesise tool_call
+        // entries so the rest of the loop dispatches correctly. Affects
+        // chief-architect + chief-visionary in current routing.
+        if tool_calls.is_empty() && !assistant_content.is_empty() {
+            tool_calls = parse_text_tool_calls(&assistant_content);
+        }
 
         // Push assistant turn (preserve tool_calls so subsequent tool messages link).
         messages.push(json!({
@@ -883,6 +892,74 @@ async fn reason_via_ollama_fallback(
 
         round_trips += 1;
     }
+}
+
+/// Small-model fallback: scan assistant text content for tool-call shapes
+/// that some OpenRouter models emit as content instead of structured
+/// `tool_calls`. Returns synthesised tool_call array entries.
+///
+/// Accepts forms:
+///   {"name": "foo", "arguments": {...}}
+///   {"name": "foo", "arguments": "{\"path\":\"...\"}"}
+///   `tool_use foo({"path": "..."})`
+///   `foo(path="...")` (best-effort — only the JSON forms parse cleanly)
+fn parse_text_tool_calls(content: &str) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    // Strategy: scan for `{` followed by JSON that contains both "name"
+    // and "arguments" keys. Brace-balanced extraction.
+    let bytes = content.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            // Find matching close brace, respecting nesting + strings
+            let mut depth = 0i32;
+            let mut in_string = false;
+            let mut escape = false;
+            let mut end = i;
+            for j in i..bytes.len() {
+                let c = bytes[j];
+                if escape { escape = false; continue; }
+                if c == b'\\' && in_string { escape = true; continue; }
+                if c == b'"' { in_string = !in_string; continue; }
+                if in_string { continue; }
+                if c == b'{' { depth += 1; }
+                else if c == b'}' {
+                    depth -= 1;
+                    if depth == 0 { end = j + 1; break; }
+                }
+            }
+            if end > i {
+                let candidate = &content[i..end];
+                if candidate.contains("\"name\"") && candidate.contains("\"arguments\"") {
+                    if let Ok(v) = serde_json::from_str::<Value>(candidate) {
+                        if let (Some(name), Some(args)) =
+                            (v.get("name").and_then(|x| x.as_str()),
+                             v.get("arguments"))
+                        {
+                            // arguments may be a string-encoded JSON or a JSON object
+                            let args_str = if let Some(s) = args.as_str() {
+                                s.to_string()
+                            } else {
+                                args.to_string()
+                            };
+                            out.push(json!({
+                                "id": format!("synth_{}", out.len()),
+                                "type": "function",
+                                "function": {
+                                    "name": name,
+                                    "arguments": args_str,
+                                }
+                            }));
+                        }
+                    }
+                }
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
 }
 
 fn build_reason_system_prompt(role: &str, intent: &str) -> String {

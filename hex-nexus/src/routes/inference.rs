@@ -69,6 +69,7 @@ pub async fn inference_complete(
     Json(body): Json<InferenceCompleteRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let work = async move {
+    let started = std::time::Instant::now();
 
     // Score complexity before consuming body.messages (ADR-2603271000).
     let prompt_text = body.messages.iter()
@@ -701,8 +702,48 @@ pub async fn inference_complete(
                 "output_tokens": output_tokens,
             });
             if !openrouter_cost.is_empty() {
-                resp["openrouter_cost_usd"] = json!(openrouter_cost);
+                resp["openrouter_cost_usd"] = json!(openrouter_cost.clone());
             }
+            // Fire-and-forget inference_log write — closes CTO commitment 12294.
+            // Never blocks the response; tokio::spawn isolates any STDB failure.
+            let log_model = model.clone();
+            let log_cost = openrouter_cost.clone();
+            let duration_ms = started.elapsed().as_millis() as u64;
+            tokio::spawn(async move {
+                let session_id = std::env::var("CLAUDE_SESSION_ID")
+                    .unwrap_or_else(|_| "nexus-bg".to_string());
+                let provider = if log_model.starts_with("anthropic/") || log_model.starts_with("claude") {
+                    "anthropic"
+                } else if log_model.starts_with("ollama/") || log_model.contains(":") {
+                    "ollama"
+                } else {
+                    "openrouter"
+                };
+                let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
+                    .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+                let url = format!("{}/v1/database/hex/call/inference_log_create", stdb_host);
+                let body = serde_json::json!([
+                    uuid::Uuid::new_v4().to_string(),
+                    session_id,
+                    "chat",
+                    log_model,
+                    provider,
+                    input_tokens,
+                    output_tokens,
+                    log_cost,
+                    duration_ms,
+                    0u64,
+                    "",
+                    "success",
+                    chrono::Utc::now().to_rfc3339(),
+                ]);
+                let _ = reqwest::Client::new()
+                    .post(&url)
+                    .json(&body)
+                    .timeout(std::time::Duration::from_secs(3))
+                    .send()
+                    .await;
+            });
             (StatusCode::OK, Json(resp))
         }
         Err(e) => {
