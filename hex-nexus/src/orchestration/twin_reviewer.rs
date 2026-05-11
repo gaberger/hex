@@ -339,25 +339,15 @@ async fn review_one(
         }
     }
 
-    // Hard deny-list before we even ask the model. Cheaper than inference
-    // and never wrong.
-    if let Some(reason) = hard_deny(&action.kind, &action.payload_json) {
-        return decide(
-            http,
-            stdb_host,
-            hex_db,
-            action.id,
-            "reject",
-            &format!("hard deny: {}", reason),
-            "",
-        )
-        .await;
-    }
-
     // ADR-2605082500: actions from the SOP path (proposed_by="tool:*") are
     // already verified by the SOP's own Phase 4 + the tool's input schema.
     // The twin would just be a redundant LLM-judges-LLM gate that the ADR
     // explicitly killed. Auto-approve and let the executor consume it.
+    //
+    // Moved BEFORE hard_deny (was after) so tool:code_patch can write
+    // Cargo.toml when its own allowlist permits — hard_deny's
+    // trunk_blocklist was the wrong abstraction for the post-source-guard
+    // era (the source-guard above already gates non-tool drafter writes).
     if action.proposed_by.starts_with("tool:") {
         return decide(
             http,
@@ -366,6 +356,20 @@ async fn review_one(
             action.id,
             "approve",
             "auto-approved: SOP-emitted action (already passed typed Phase 4 verifier)",
+            "",
+        )
+        .await;
+    }
+
+    // Hard deny-list — applies to drafter / non-tool writes that fall through.
+    if let Some(reason) = hard_deny(&action.kind, &action.payload_json) {
+        return decide(
+            http,
+            stdb_host,
+            hex_db,
+            action.id,
+            "reject",
+            &format!("hard deny: {}", reason),
             "",
         )
         .await;
