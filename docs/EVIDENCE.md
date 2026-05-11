@@ -138,7 +138,7 @@ The dashboard at `http://localhost:5555` subscribes to SpacetimeDB and shows tas
 
 ## 6. Standalone mode (no Claude Code)
 
-**Claim:** When `CLAUDE_SESSION_ID` is unset, hex composes with an Ollama adapter + HexFlo dispatch and runs the same workplans. Source: ADR-2604112000.
+**Claim:** When `CLAUDE_SESSION_ID` is unset, hex composes with an Ollama adapter + HexFlo dispatch and runs the same workplans. Source: ADR-2026-04-11-2000.
 
 **Hermetic — composition tests:**
 ```bash

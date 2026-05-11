@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604142200",
+  "adr": "ADR-2026-04-14-2200",
   "created_at": "2026-04-14T21:25:00Z",
   "created_by": "human+agent",
   "description": "Fix hex plan reconcile to require positive file evidence (file exists + declared symbol present + commit id match) before promoting a task to done. Remove passive reconcile triggers (hooks, daemon ticks, file watchers) — reconcile mutates only on explicit invocation. Add observability: brain queue history, reconcile --dry-run / --why / --force. Surfaced live during wp-hex-native-web-search: daemon correctly ran P1.1+P1.2 (commits 19928ffc, 1d1e40b9) then reconcile marked 11 downstream tasks done despite their files not existing; a passive loop re-asserted the false state after manual edits.",

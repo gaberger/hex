@@ -1,4 +1,4 @@
-//! Worktree-mandatory guard for `hex-agent daemon` (ADR-2605081126 P2.1).
+//! Worktree-mandatory guard for `hex-agent daemon` (ADR-2026-05-08-1126 P2.1).
 //!
 //! No agent writes to trunk. Ever. On startup the daemon refuses to run if
 //! its CWD resolves to the trunk (the bare repo root), unless
@@ -110,7 +110,7 @@ fn paths_equal(a: &Path, b: &Path) -> bool {
 /// Operator-friendly error message for the RefuseTrunk case.
 pub fn refuse_message(trunk: &Path) -> String {
     format!(
-        "hex-agent daemon: refusing to run from trunk ({}). Per ADR-2605081126 \
+        "hex-agent daemon: refusing to run from trunk ({}). Per ADR-2026-05-08-1126 \
          agents must run inside a git worktree. Either:\n  \
          1) cd into a worktree and re-run, or\n  \
          2) `hex worktree create feat/<task-id>/<role>` then run from there, or\n  \

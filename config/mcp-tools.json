@@ -615,7 +615,7 @@
     {
       "name": "hex_enforce_prompt",
       "category": "enforcement",
-      "description": "Generate the enforcement system prompt for non-MCP models (ADR-2603221959 P6)",
+      "description": "Generate the enforcement system prompt for non-MCP models (ADR-2026-03-22-1959 P6)",
       "route": { "method": "LOCAL", "path": "embedded:templates/enforcement-system-prompt.md" },
       "inputSchema": {
         "type": "object",
@@ -677,7 +677,7 @@
     {
       "name": "hex_session_start",
       "category": "lifecycle",
-      "description": "Start a hex session — register agent, load context. Use this instead of hooks for non-Claude providers (ADR-2603221959)",
+      "description": "Start a hex session — register agent, load context. Use this instead of hooks for non-Claude providers (ADR-2026-03-22-1959)",
       "route": { "method": "POST", "path": "/api/hex-agents/connect" },
       "inputSchema": {
         "type": "object",
@@ -690,7 +690,7 @@
     {
       "name": "hex_session_heartbeat",
       "category": "lifecycle",
-      "description": "Send heartbeat and check inbox. Call periodically to keep agent alive (ADR-2603221959)",
+      "description": "Send heartbeat and check inbox. Call periodically to keep agent alive (ADR-2026-03-22-1959)",
       "route": { "method": "POST", "path": "/api/hex-agents/heartbeat" },
       "inputSchema": {
         "type": "object",
@@ -700,7 +700,7 @@
     {
       "name": "hex_workplan_activate",
       "category": "lifecycle",
-      "description": "Set the active workplan for this session. Required before mutating operations in mandatory mode (ADR-2603221959)",
+      "description": "Set the active workplan for this session. Required before mutating operations in mandatory mode (ADR-2026-03-22-1959)",
       "route": { "method": "POST", "path": "/api/hexflo/memory" },
       "inputSchema": {
         "type": "object",
@@ -1442,7 +1442,7 @@
     {
       "name": "hex_brief",
       "category": "aios",
-      "description": "Developer briefing: pending decisions, recent activity, project health (ADR-2604131500)",
+      "description": "Developer briefing: pending decisions, recent activity, project health (ADR-2026-04-13-1500)",
       "route": { "method": "GET", "path": "/api/briefing" },
       "inputSchema": {
         "type": "object",
@@ -1555,7 +1555,7 @@
       "name": "hex_new",
       "category": "aios",
       "cli": "hex new <path> [--name <name>] [--description <desc>] [--taste-from <project>]",
-      "description": "Structured project intake: create or adopt a directory, register the project, seed trust at suggest level, and optionally copy taste preferences (ADR-2604131500 §2).",
+      "description": "Structured project intake: create or adopt a directory, register the project, seed trust at suggest level, and optionally copy taste preferences (ADR-2026-04-13-1500 §2).",
       "route": { "method": "POST", "path": "/api/projects/register" },
       "inputSchema": {
         "type": "object",
@@ -1572,7 +1572,7 @@
       "name": "hex_pause",
       "category": "aios",
       "cli": "hex pause",
-      "description": "Emergency pause: halt the active workplan. In-flight agents finish their current task but no new tasks are dispatched. AIOS Override layer (ADR-2604131500 §1 Layer 4).",
+      "description": "Emergency pause: halt the active workplan. In-flight agents finish their current task but no new tasks are dispatched. AIOS Override layer (ADR-2026-04-13-1500 §1 Layer 4).",
       "route": { "method": "POST", "path": "/api/workplan/pause" },
       "inputSchema": {
         "type": "object",
@@ -1584,7 +1584,7 @@
       "name": "hex_resume",
       "category": "aios",
       "cli": "hex resume",
-      "description": "Resume a paused workplan. Dispatches the next tier of tasks. AIOS Override layer (ADR-2604131500 §1 Layer 4).",
+      "description": "Resume a paused workplan. Dispatches the next tier of tasks. AIOS Override layer (ADR-2026-04-13-1500 §1 Layer 4).",
       "route": { "method": "POST", "path": "/api/workplan/resume" },
       "inputSchema": {
         "type": "object",
@@ -1596,7 +1596,7 @@
       "name": "hex_override",
       "category": "aios",
       "cli": "hex override <project> <instruction>",
-      "description": "Emergency override: send a priority-2 notification to all agents in a project. Agents must acknowledge before continuing. AIOS Override layer (ADR-2604131500 §1 Layer 4).",
+      "description": "Emergency override: send a priority-2 notification to all agents in a project. Agents must acknowledge before continuing. AIOS Override layer (ADR-2026-04-13-1500 §1 Layer 4).",
       "route": { "method": "POST", "path": "/api/hexflo/inbox/notify" },
       "inputSchema": {
         "type": "object",

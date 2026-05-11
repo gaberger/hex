@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604112000",
+  "adr": "ADR-2026-04-11-2000",
   "blocks": [
     "wp-dashboard-live-state (future)",
     "wp-standalone-bazzite-e2e (future)",
@@ -307,7 +307,7 @@
       "tier": 1
     },
     {
-      "description": "With P2 (composition), P3 (Ollama), P4 (Claude-as-backend), and P5 (memory) in place, wire workplan_executor to dispatch through the standalone AgentManager. A phase with one task in a workplan must produce a real inference call (via MockInferencePort in tests, OllamaInferenceAdapter when run manually), persist progress to HexFlo memory, and surface the result through the existing /api/workplan/execute REST path. The dispatch-evidence guard (ADR-2604111800) must accept the run \u2014 its rejection is the signal that we are not cheating.",
+      "description": "With P2 (composition), P3 (Ollama), P4 (Claude-as-backend), and P5 (memory) in place, wire workplan_executor to dispatch through the standalone AgentManager. A phase with one task in a workplan must produce a real inference call (via MockInferencePort in tests, OllamaInferenceAdapter when run manually), persist progress to HexFlo memory, and surface the result through the existing /api/workplan/execute REST path. The dispatch-evidence guard (ADR-2026-04-11-1800) must accept the run \u2014 its rejection is the signal that we are not cheating.",
       "gate": {
         "blocking": true,
         "command": "cargo test -p hex-nexus orchestration::standalone_dispatch",
@@ -335,7 +335,7 @@
             "P2.3",
             "P5.4"
           ],
-          "description": "hex-nexus/tests/standalone_dispatch_e2e.rs: construct a minimal wp-*.json with one phase and one task. Boot hex-nexus in standalone composition with MockInferencePort returning canned code. Call /api/workplan/execute. Assert: (a) task transitions todo -> in_progress -> done, (b) dispatch-evidence guard accepts the completion (ADR-2604111800), (c) task result contains mock output, (d) HexFlo memory has a record of the dispatch.",
+          "description": "hex-nexus/tests/standalone_dispatch_e2e.rs: construct a minimal wp-*.json with one phase and one task. Boot hex-nexus in standalone composition with MockInferencePort returning canned code. Call /api/workplan/execute. Assert: (a) task transitions todo -> in_progress -> done, (b) dispatch-evidence guard accepts the completion (ADR-2026-04-11-1800), (c) task result contains mock output, (d) HexFlo memory has a record of the dispatch.",
           "files": [
             "hex-nexus/tests/standalone_dispatch_e2e.rs"
           ],
@@ -349,7 +349,7 @@
           "deps": [
             "P6.2"
           ],
-          "description": "In the same test file, add a case where MockInferencePort returns empty / whitespace output. Assert the dispatch-evidence guard (ADR-2604111800) rejects the completion with the documented error, NOT a phantom 'done'. This test exists so the guard contract is proven against the new composition path, not just the old one.",
+          "description": "In the same test file, add a case where MockInferencePort returns empty / whitespace output. Assert the dispatch-evidence guard (ADR-2026-04-11-1800) rejects the completion with the documented error, NOT a phantom 'done'. This test exists so the guard contract is proven against the new composition path, not just the old one.",
           "files": [
             "hex-nexus/tests/standalone_dispatch_e2e.rs"
           ],
@@ -405,7 +405,7 @@
           "deps": [
             "P7.2"
           ],
-          "description": "Add a 'Running hex standalone (without Claude Code)' section to the root README.md (short \u2014 just the three commands: install Ollama, hex nexus start, hex plan execute). Update CLAUDE.md to mention that ADR-2604112000 established the standalone composition path, so future workplans can rely on it. Do NOT document it as experimental \u2014 once P7.2 passes, it's a first-class mode.",
+          "description": "Add a 'Running hex standalone (without Claude Code)' section to the root README.md (short \u2014 just the three commands: install Ollama, hex nexus start, hex plan execute). Update CLAUDE.md to mention that ADR-2026-04-11-2000 established the standalone composition path, so future workplans can rely on it. Do NOT document it as experimental \u2014 once P7.2 passes, it's a first-class mode.",
           "files": [
             "README.md",
             "CLAUDE.md"
@@ -422,7 +422,7 @@
             "P7.2",
             "P7.3"
           ],
-          "description": "Run the adversarial-reviewer agent against the full wp-hex-standalone-dispatch change set before marking status=done. Inputs: every file modified by P1-P7, the ADR text, and the audit report findings. Looks for: (a) dangling refs to the old composition path, (b) stale test harnesses, (c) hex-intf-specific leakage in anything added under hex-cli/assets/ (per ADR-2604111142), (d) reducer name drift between WASM module and adapter bindings. Blocking: any HIGH severity finding halts the workplan.",
+          "description": "Run the adversarial-reviewer agent against the full wp-hex-standalone-dispatch change set before marking status=done. Inputs: every file modified by P1-P7, the ADR text, and the audit report findings. Looks for: (a) dangling refs to the old composition path, (b) stale test harnesses, (c) hex-intf-specific leakage in anything added under hex-cli/assets/ (per ADR-2026-04-11-1142), (d) reducer name drift between WASM module and adapter bindings. Blocking: any HIGH severity finding halts the workplan.",
           "files": [
             "docs/analysis/wp-hex-standalone-dispatch-adversarial-review.md"
           ],

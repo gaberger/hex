@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604131500",
+  "adr": "ADR-2026-04-13-1500",
   "created_at": "2026-04-13T15:00:00Z",
   "created_by": "human+judge-synthesis",
   "description": "Ship the 'walk away' moment: Pulse statusline, hex brief narrative, hex decide async decisions, and basic delegation trust model. After this phase, a developer can manage 3+ hex projects with 5-15 minutes of interaction per day.",

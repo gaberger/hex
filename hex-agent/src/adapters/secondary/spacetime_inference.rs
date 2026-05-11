@@ -139,7 +139,7 @@ impl hex_core::ports::inference::IInferencePort for SpacetimeInferenceAdapter {
     }
 
     async fn health(&self) -> Result<HealthStatus, InferenceError> {
-        // TODO(ADR-2604112000 P5): real health via inference-gateway reducer.
+        // TODO(ADR-2026-04-11-2000 P5): real health via inference-gateway reducer.
         // Today we probe the nexus HTTP surface; a hard failure is surfaced
         // as Unreachable so the composition root can pick a different
         // backend. A successful ping returns Ok with no listed models

@@ -1,4 +1,4 @@
-# ADR-2604180001: Workplan Inference Task Stalling & State Sync
+# ADR-2026-04-18-0001: Workplan Inference Task Stalling & State Sync
 
 ## Status
 ACTIVE — Critical blocker for autonomous workplan execution
@@ -71,8 +71,8 @@ Phased approach:
 
 ## Related
 
-- ADR-2604120202 (Tiered inference routing)
-- ADR-2603240130 (Declarative swarm from YAML)
+- ADR-2026-04-12-0202 (Tiered inference routing)
+- ADR-2026-03-24-0130 (Declarative swarm from YAML)
 - ADR-005 (Compile gate retry pipeline)
 - wp-bazzite-e2e-arch-validation (blocked by this issue)
 

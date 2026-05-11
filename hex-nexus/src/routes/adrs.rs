@@ -107,15 +107,32 @@ fn parse_adr_frontmatter(content: &str, filename: &str) -> (String, String, Stri
     (title, status, date)
 }
 
-/// Extract the full ADR ID from a filename stem, e.g. "ADR-059-foo.md" → "ADR-059",
-/// "ADR-2603221500-foo.md" → "ADR-2603221500". Matches CLI's extract_adr_id().
+/// Extract the full ADR ID from a filename stem. Handles three forms:
+///   "ADR-059-foo.md"                    → "ADR-059"           (legacy sequential)
+///   "ADR-2026-03-22-1500-foo.md"        → "ADR-2026-03-22-1500" (hyphenated timestamp, current)
+///   "ADR-2603221500-foo.md"             → "ADR-2603221500"    (legacy 10-digit timestamp, pre-rename)
 fn extract_id(filename: &str) -> String {
     let stem = filename.trim_end_matches(".md");
-    if let Some(rest) = stem.strip_prefix("ADR-").or_else(|| stem.strip_prefix("adr-")) {
-        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if !digits.is_empty() {
-            return format!("ADR-{}", digits);
-        }
+    let rest = match stem.strip_prefix("ADR-").or_else(|| stem.strip_prefix("adr-")) {
+        Some(r) => r,
+        None => return stem.to_string(),
+    };
+
+    // Try the hyphenated timestamp form first: YYYY-MM-DD-HHMM (4-2-2-4 digits).
+    let parts: Vec<&str> = rest.splitn(5, '-').collect();
+    if parts.len() >= 4
+        && parts[0].len() == 4 && parts[0].chars().all(|c| c.is_ascii_digit())
+        && parts[1].len() == 2 && parts[1].chars().all(|c| c.is_ascii_digit())
+        && parts[2].len() == 2 && parts[2].chars().all(|c| c.is_ascii_digit())
+        && parts[3].len() == 4 && parts[3].chars().all(|c| c.is_ascii_digit())
+    {
+        return format!("ADR-{}-{}-{}-{}", parts[0], parts[1], parts[2], parts[3]);
+    }
+
+    // Fall back to leading-digit run (covers ADR-059 + ADR-2603221500 legacy).
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if !digits.is_empty() {
+        return format!("ADR-{}", digits);
     }
     stem.to_string()
 }

@@ -1,4 +1,4 @@
-# ADR-2605010001: Workflow Validation Protocol
+# ADR-2026-05-01-0001: Workflow Validation Protocol
 
 **Status**: Accepted  
 **Date**: 2026-05-01  

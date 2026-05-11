@@ -207,7 +207,7 @@ impl HexFlo {
             data: serde_json::json!({ "swarmId": swarm_id }),
         });
 
-        // ADR-2604131500 P0.2: briefing event for swarm completion
+        // ADR-2026-04-13-1500 P0.2: briefing event for swarm completion
         self.log_briefing_event(
             "notable",
             "swarm",
@@ -363,7 +363,7 @@ impl HexFlo {
             }),
         });
 
-        // ADR-2604131500 P0.2: briefing event for task completion
+        // ADR-2026-04-13-1500 P0.2: briefing event for task completion
         self.log_briefing_event(
             "nominal",
             "swarm",
@@ -587,7 +587,7 @@ impl HexFlo {
         Ok(())
     }
 
-    // ── Briefing events (ADR-2604131500 P0.2) ───────────
+    // ── Briefing events (ADR-2026-04-13-1500 P0.2) ───────────
 
     /// Log a briefing event to HexFlo memory for the developer's morning briefing.
     /// Key format: `briefing:{project_id}:{timestamp}` — scoped per project so

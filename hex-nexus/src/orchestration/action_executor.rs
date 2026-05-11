@@ -184,7 +184,7 @@ async fn execute_file_write(
         .await;
     }
 
-    // ADR-2605110700 R1 — capture pre-write state so we can roll back if
+    // ADR-2026-05-11-0700 R1 — capture pre-write state so we can roll back if
     // cargo_check rejects the patch. Without this, autonomous SOP runs
     // accumulate broken state overnight (5 of 6 cycles on 2026-05-10 failed
     // cargo_check after this gate was advisory-only).
@@ -218,7 +218,7 @@ async fn execute_file_write(
         .await;
     }
 
-    // ADR-2605110700 R1 — hard verifier gate for Rust source files.
+    // ADR-2026-05-11-0700 R1 — hard verifier gate for Rust source files.
     // Run cargo_check on the affected crate immediately after write. If
     // errors, roll back to pre-write state and mark action failed. This
     // turns the cargo_check chain from advisory into authoritative.
@@ -270,7 +270,7 @@ async fn execute_file_write(
                     hex_db,
                     action.id,
                     &format!(
-                        "ADR-2605110700 R1: cargo_check failed on {} after write — rolled back. Errors: {}",
+                        "ADR-2026-05-11-0700 R1: cargo_check failed on {} after write — rolled back. Errors: {}",
                         crate_name,
                         errors_summary.chars().take(800).collect::<String>()
                     ),
@@ -357,7 +357,7 @@ async fn mark_failed(
     Ok(())
 }
 
-/// ADR-2605110700 R1 helper — derive workspace crate name from a repo-
+/// ADR-2026-05-11-0700 R1 helper — derive workspace crate name from a repo-
 /// relative path so we can scope cargo_check to one crate.
 fn infer_rust_crate(rel_path: &str) -> Option<&'static str> {
     if rel_path.starts_with("hex-nexus/src/") { Some("hex-nexus") }

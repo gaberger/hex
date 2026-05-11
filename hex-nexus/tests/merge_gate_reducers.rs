@@ -1,4 +1,4 @@
-//! Comprehensive reducer-level tests for the merge-team gate (ADR-2605081126 P1).
+//! Comprehensive reducer-level tests for the merge-team gate (ADR-2026-05-08-1126 P1).
 //!
 //! Covers:
 //!   - merge_request_open (creation, validation, idempotent re-open)

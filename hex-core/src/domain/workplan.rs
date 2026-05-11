@@ -39,7 +39,7 @@ pub struct Workplan {
     pub supersession: Option<SupersessionRecord>,
     /// Per-workplan timeout override in seconds. When set, the sched daemon
     /// uses this as the lease window instead of the default 30-minute
-    /// workplan lease (ADR-2604141400 §2).
+    /// workplan lease (ADR-2026-04-14-1400 §2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_s: Option<u64>,
 }
@@ -84,7 +84,7 @@ pub struct WorkplanTask {
     /// Absent = documentation-only (backward compatible).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub done_command: Option<String>,
-    /// Execution strategy hint (ADR-2604131630: code-first execution).
+    /// Execution strategy hint (ADR-2026-04-13-1630: code-first execution).
     /// Guides the executor to prefer code-first strategies before inference:
     ///   scaffold  — template codegen (ports, adapters, modules)
     ///   transform — AST transform (rename, move, extract via tree-sitter)
@@ -93,7 +93,7 @@ pub struct WorkplanTask {
     ///   inference — explicitly requires LLM reasoning
     /// Tier mapping: scaffold/transform/script → T1, codegen → T2,
     /// inference → T2.5. When absent, the executor classifies from
-    /// layer + deps heuristics (ADR-2604120202 P1.3).
+    /// layer + deps heuristics (ADR-2026-04-12-0202 P1.3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strategy_hint: Option<String>,
 }

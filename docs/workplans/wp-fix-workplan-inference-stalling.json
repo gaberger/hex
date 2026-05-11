@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604180001",
+  "adr": "ADR-2026-04-18-0001",
   "created_at": "2026-04-17T16:00:00Z",
   "description": "Critical: Workplan processes hang silently during inference. Implement task-level timeouts, heartbeats, state sync, and orphan cleanup to enable autonomous workplan execution.",
   "name": "wp-fix-workplan-inference-stalling",
@@ -197,5 +197,5 @@
     }
   ],
   "priority": "P0",
-  "title": "Fix workplan inference task stalling and state sync (ADR-2604180001)"
+  "title": "Fix workplan inference task stalling and state sync (ADR-2026-04-18-0001)"
 }

@@ -48,7 +48,7 @@ Use the `/hex-adr-create` skill in Claude Code, or create the file manually:
 hex adr schema
 
 # Create the file (timestamp-based ID: YYMMDDHHMM)
-# Example: docs/adrs/ADR-2603241430-my-feature.md
+# Example: docs/adrs/ADR-2026-03-24-1430-my-feature.md
 ```
 
 ADR template:
@@ -76,7 +76,7 @@ What are we going to do?
 
 ```bash
 hex adr list                    # List all ADRs with status
-hex adr status ADR-2603241430   # Show detail for one ADR
+hex adr status ADR-2026-03-24-1430   # Show detail for one ADR
 hex adr search "openrouter"     # Search by keyword
 hex adr abandoned               # Find stale/abandoned ADRs
 hex adr review                  # Check consistency issues
@@ -90,7 +90,7 @@ A workplan decomposes the ADR into adapter-bounded steps organized by dependency
 
 ```bash
 # Reference the ADR (required unless --no-adr)
-hex plan create "implement OpenRouter inference integration" --adr ADR-2603231600
+hex plan create "implement OpenRouter inference integration" --adr ADR-2026-03-23-1600
 
 # Specify target language
 hex plan create "add caching layer" --adr ADR-050 --lang rust
@@ -183,7 +183,7 @@ Claude Code agents use hex MCP tools. The typical flow:
 
 ### From opencode
 
-opencode agents get hex context injected automatically (ADR-2603231800):
+opencode agents get hex context injected automatically (ADR-2026-03-23-1800):
 
 ```bash
 hex opencode inject    # Inject hex context into opencode config
@@ -240,11 +240,11 @@ Here's a full workflow for adding a caching layer:
 
 ```bash
 # 1. ADR — document the decision
-#    Create docs/adrs/ADR-2603241430-response-caching.md
+#    Create docs/adrs/ADR-2026-03-24-1430-response-caching.md
 
 # 2. Workplan — decompose into steps
 hex plan create "add response caching to inference endpoints" \
-  --adr ADR-2603241430 --lang rust
+  --adr ADR-2026-03-24-1430 --lang rust
 
 # 3. Swarm — coordinate agents
 hex swarm init response-caching
@@ -285,7 +285,7 @@ hex enforce list    # Show all enforcement rules
 In mandatory mode, a background agent spawned without an active swarm gets blocked:
 
 ```
-⛔ Background agent blocked — no active workplan (ADR-2603221939)
+⛔ Background agent blocked — no active workplan (ADR-2026-03-22-1939)
   Pipeline: ADR → Workplan → Swarm → Agent
   Create a workplan first: hex plan create <requirements> --adr <ADR-ID>
 ```

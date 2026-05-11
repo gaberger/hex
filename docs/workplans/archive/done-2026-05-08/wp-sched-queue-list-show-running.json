@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604151400",
+  "adr": "ADR-2026-04-15-1400",
   "description": "Make `hex sched queue list` include running tasks (and any other non-terminal states) by default, with --all for terminal states and --status / --json for filtering. Closes the disagreement between `queue list` and `status`. Includes brain→sched title rename on this surface.",
   "id": "wp-sched-queue-list-show-running",
   "phases": [

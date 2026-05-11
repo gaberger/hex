@@ -267,7 +267,7 @@ pub fn grounding_block(max_adrs: usize) -> String {
             to a 'secure channel', 'internal system', 'audit log', or any \
             other invented delivery surface. The CEO has direct repo and \
             dashboard access. To share something, give the OPERATOR-RUNNABLE \
-            file path (e.g. `docs/adrs/ADR-2605081126-...md`) or the dashboard \
+            file path (e.g. `docs/adrs/ADR-2026-05-08-1126-...md`) or the dashboard \
             hashroute (e.g. `#/merge-gate`).\n\
          2. Never invent roles, titles, names, or teams that do not appear \
             in 'Org roster' above. There is no 'head of engineering' — the \

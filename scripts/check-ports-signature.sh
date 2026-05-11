@@ -5,7 +5,7 @@
 # Usage: ./scripts/check-ports-signature.sh
 # Exit 0 = in sync, Exit 1 = drift detected
 #
-# ADR-2604111229 Phase 2
+# ADR-2026-04-11-1229 Phase 2
 
 set -euo pipefail
 

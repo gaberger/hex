@@ -47,12 +47,12 @@
 
 | Term | Definition | NOT |
 |------|-----------|-----|
-| **tier** | Routing class for inference: T1 (scaffold), T2 (codegen), T2.5 (reasoning), T3 (frontier). ADR-2604120202. | "model size" alone |
+| **tier** | Routing class for inference: T1 (scaffold), T2 (codegen), T2.5 (reasoning), T3 (frontier). ADR-2026-04-12-0202. | "model size" alone |
 | **strategy_hint** | Workplan-task field that selects a tier (`scaffold`/`transform`/`script` → T1, `codegen` → T2, `inference` → T2.5). | "model hint", "router hint" |
 | **best-of-N** | T1/T2/T2.5 routing strategy: generate N candidates, select via compile gate (`cargo check` / `tsc --noEmit`). | "N-shot" |
 | **inference-gateway** | WASM module that routes inference requests to providers. | "router" alone |
 | **inference-bridge** | WASM module that hands routed requests off to `hex-nexus` for actual HTTP execution. | "bridge" alone |
-| **standalone mode** | Runtime where `CLAUDE_SESSION_ID` is unset and hex-nexus uses `AgentManager` + `OllamaInferenceAdapter` directly. ADR-2604112000. | "offline mode" |
+| **standalone mode** | Runtime where `CLAUDE_SESSION_ID` is unset and hex-nexus uses `AgentManager` + `OllamaInferenceAdapter` directly. ADR-2026-04-11-2000. | "offline mode" |
 
 ## Workflow Artifacts
 
@@ -62,7 +62,7 @@
 | **workplan** | JSON task graph in `docs/workplans/`. Decomposes a feature into adapter-bounded tasks; one task = one adapter boundary = one git worktree. Max 8 parallel. | "plan" alone, "spec" |
 | **behavioral spec** | User-facing acceptance criteria written BEFORE codegen. Lives in `docs/specs/`. Independent oracle for the validation-judge. | "test plan", "acceptance test" alone |
 | **draft workplan** | Stub created by T3 auto-invoke at `docs/workplans/drafts/draft-*.json`. No worktrees/agents/specs until promoted. | "scaffold workplan" |
-| **task tier** | Classification by `hex hook route`: T1 Todo (silent), T2 Mini-plan (one-line hint), T3 Workplan (auto-draft). ADR-2604110227. | "priority" alone |
+| **task tier** | Classification by `hex hook route`: T1 Todo (silent), T2 Mini-plan (one-line hint), T3 Workplan (auto-draft). ADR-2026-04-11-0227. | "priority" alone |
 
 ## Deployment Units
 

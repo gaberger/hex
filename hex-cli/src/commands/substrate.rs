@@ -1,4 +1,4 @@
-//! Substrate operator commands (ADR-2604261800 P4,
+//! Substrate operator commands (ADR-2026-04-26-1800 P4,
 //! wp-substrate-inference-consumer-rewires P4.1).
 //!
 //! `hex substrate swap-inference` — propose a candidate inference strategy
@@ -61,7 +61,7 @@ pub enum SubstrateAction {
         ticket_id: String,
     },
     /// Layer 6 quarterly ritual — read founding-goals.md, run each goal's
-    /// `Test` field, report drift (ADR-2604261500 P9 — first L6 ritual).
+    /// `Test` field, report drift (ADR-2026-04-26-1500 P9 — first L6 ritual).
     L6Ritual {
         /// Path to founding-goals.md. Defaults to `./founding-goals.md`.
         #[arg(long, default_value = "founding-goals.md")]
@@ -368,7 +368,7 @@ async fn swap_samples(nexus: &NexusClient, ticket_id: &str) -> anyhow::Result<()
     Ok(())
 }
 
-// ── L6 quarterly ritual (ADR-2604261500 C6 / P9) ───────────────────────
+// ── L6 quarterly ritual (ADR-2026-04-26-1500 C6 / P9) ───────────────────────
 
 #[derive(Debug, Clone)]
 struct ParsedGoal {

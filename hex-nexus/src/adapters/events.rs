@@ -1,4 +1,4 @@
-//! In-memory tool-call event adapter (ADR-2604012137, ADR-2604020900).
+//! In-memory tool-call event adapter (ADR-2026-04-01-2137, ADR-2026-04-02-0900).
 //!
 //! Events are ephemeral (WebSocket broadcast is the primary delivery
 //! mechanism) — a bounded ring buffer of the last 1000 events is sufficient

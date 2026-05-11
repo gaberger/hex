@@ -1,7 +1,7 @@
 {
   "id": "wp-standalone-pipeline-test",
   "feature": "Standalone Pipeline Smoke Test",
-  "adr": "ADR-2604120202",
+  "adr": "ADR-2026-04-12-0202",
   "specs": "Verify that tiered inference routing dispatches T1/T2/T2.5 tasks to the correct local models and produces compilable output.",
   "phases": [
     {

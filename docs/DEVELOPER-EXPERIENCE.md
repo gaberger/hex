@@ -6,7 +6,7 @@
 
 ## AIOS Developer Experience
 
-hex presents system state through **4 progressive disclosure layers** ([ADR-2604131500](adrs/ADR-2604131500-aios-developer-experience.md)), so developers get the right level of detail without information overload:
+hex presents system state through **4 progressive disclosure layers** ([ADR-2026-04-13-1500](adrs/ADR-2026-04-13-1500-aios-developer-experience.md)), so developers get the right level of detail without information overload:
 
 | Layer | Surface | What You See |
 |:------|:--------|:-------------|

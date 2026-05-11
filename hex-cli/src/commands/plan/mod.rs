@@ -76,11 +76,11 @@ pub enum PlanAction {
         #[arg(long, default_value_t = false)]
         update: bool,
         /// Re-verify tasks already marked done and demote them when evidence
-        /// fails. Heals JSONs corrupted by the pre-ADR-2604142200 reconcile
+        /// fails. Heals JSONs corrupted by the pre-ADR-2026-04-14-2200 reconcile
         /// loop. Combine with `--update` to persist demotions.
         #[arg(long, default_value_t = false)]
         audit: bool,
-        /// ADR-2604270800 P0.2: tighter evidence rule. Implies --audit.
+        /// ADR-2026-04-27-0800 P0.2: tighter evidence rule. Implies --audit.
         /// Requires every commit match to also reference workplan_id (not
         /// just task_id), so a `(p0.2)` commit from another workplan can't
         /// satisfy this workplan's P0.2.
@@ -103,7 +103,7 @@ pub enum PlanAction {
     },
     /// Output the canonical workplan JSON schema
     Schema,
-    /// Create a draft workplan from a user prompt (ADR-2604110227).
+    /// Create a draft workplan from a user prompt (ADR-2026-04-11-0227).
     ///
     /// Writes a stub JSON to `docs/workplans/drafts/draft-<timestamp>.json`
     /// containing the original prompt. The hex hook router auto-invokes
@@ -117,12 +117,12 @@ pub enum PlanAction {
         #[arg(long, default_value_t = false)]
         background: bool,
     },
-    /// Manage draft workplans (ADR-2604110227)
+    /// Manage draft workplans (ADR-2026-04-11-0227)
     Drafts {
         #[command(subcommand)]
         action: DraftsAction,
     },
-    /// Validate workplan evidence (ADR-2604142200, wp-enforce-workplan-evidence E3.1).
+    /// Validate workplan evidence (ADR-2026-04-14-2200, wp-enforce-workplan-evidence E3.1).
     ///
     /// Runs `validate_workplan_evidence` on one workplan or on every
     /// `docs/workplans/wp-*.json`. Reports violations (task id + kind +
@@ -972,7 +972,7 @@ pub(crate) fn resolve_workplan_path(file: &str) -> anyhow::Result<std::path::Pat
     anyhow::bail!("Workplan not found: {}", file);
 }
 
-/// Execute a workplan — dispatches tasks through tiered inference routing (ADR-2604120202).
+/// Execute a workplan — dispatches tasks through tiered inference routing (ADR-2026-04-12-0202).
 ///
 /// Sends the workplan to hex-nexus for execution. Nexus routes each task through
 /// Path C (headless inference for T1/T2/T2.5) or Path A (spawn agent for T3),
@@ -1135,7 +1135,7 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
 }
 
 /// Distributed workplan execution — creates HexFlo swarm tasks and waits
-/// for remote workers to complete them (ADR-2604121630).
+/// for remote workers to complete them (ADR-2026-04-12-1630).
 ///
 /// Flow: create swarm → create tasks per phase → poll until complete → run gates → next phase
 /// Falls back to local execution if no workers are available.
@@ -2407,7 +2407,7 @@ fn run_done_command(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
-// Reconcile logic extracted to reconcile.rs (ADR-2604142200).
+// Reconcile logic extracted to reconcile.rs (ADR-2026-04-14-2200).
 
 /// Extract identifiers worth grepping from a done_condition string.
 /// Takes snake_case/camelCase words ≥5 chars and single-quoted strings.
@@ -2510,7 +2510,7 @@ fn infer_tier(adapter: &str) -> u8 {
     }
 }
 
-// ── ADR-2604110227: Draft workplans ──────────────────────────────────
+// ── ADR-2026-04-11-0227: Draft workplans ──────────────────────────────────
 
 /// Directory where auto-invoked draft workplans are quarantined until
 /// the user approves, edits, or clears them.
@@ -2560,7 +2560,7 @@ fn slug_from_prompt(prompt: &str) -> String {
 async fn reconcile_all(strict: bool, json: bool) -> anyhow::Result<()> {
     use std::path::PathBuf;
 
-    // Evidence-schema cutoff: ADR-2604142200 (Reconcile must verify file
+    // Evidence-schema cutoff: ADR-2026-04-14-2200 (Reconcile must verify file
     // evidence) was accepted 2026-04-14. Workplans whose first git commit
     // predates that date can't reasonably be flagged for missing
     // `evidence.commits` — the field didn't exist when their tasks were
@@ -2729,7 +2729,7 @@ pub async fn draft_plan_silent(prompt: &str) -> anyhow::Result<std::path::PathBu
         "id": draft_id,
         "kind": "workplan-draft",
         "status": "pending-planner",
-        "adr": "ADR-2604271100",
+        "adr": "ADR-2026-04-27-1100",
         "created_at": chrono::Local::now().to_rfc3339(),
         "origin": "improver-auto-act",
         "prompt": trimmed,
@@ -2780,7 +2780,7 @@ async fn draft_plan(prompt_parts: &[String], background: bool) -> anyhow::Result
         "id": draft_id,
         "kind": "workplan-draft",
         "status": "pending-planner",
-        "adr": "ADR-2604110227",
+        "adr": "ADR-2026-04-11-0227",
         "created_at": chrono::Local::now().to_rfc3339(),
         "origin": "auto-invoke",
         "prompt": trimmed,
@@ -2789,7 +2789,7 @@ async fn draft_plan(prompt_parts: &[String], background: bool) -> anyhow::Result
             format!("Or run `hex plan drafts approve {}`", filename),
             format!("Or run `hex plan drafts clear --name {}`", filename.trim_end_matches(".json")),
         ],
-        "notes": "This is a draft created by ADR-2604110227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up."
+        "notes": "This is a draft created by ADR-2026-04-11-0227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up."
     });
 
     let mut file = std::fs::File::create(&path)?;

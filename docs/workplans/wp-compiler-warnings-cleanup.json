@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604050900",
+  "adr": "ADR-2026-04-05-0900",
   "created_at": "2026-04-17T00:00:00Z",
   "description": "Fix 3 compiler warnings discovered in test run: unreachable code in plan/mod.rs, unused variable in worktree.rs, and unused function in sched.rs",
   "name": "wp-compiler-warnings-cleanup",

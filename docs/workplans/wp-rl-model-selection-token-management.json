@@ -1,0 +1,116 @@
+{
+  "adr": "ADR-031",
+  "created_at": "2026-05-11T14:28:07.703973460+00:00",
+  "created_by": "hex-coder",
+  "feature": "RL-driven model selection & token budget management for hex-agent",
+  "id": "wp-rl-model-selection-token-management",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain & Port layer - RL types, token budgets, reward modeling",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-agent/src/ports/rl.rs"
+          ],
+          "id": "P0.1",
+          "layer": "ports",
+          "name": "Define RlPort trait with select_action/report_reward methods, RlState/RlAction/RlReward types",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/domain/model_selection.rs"
+          ],
+          "id": "P0.2",
+          "layer": "domain",
+          "name": "Implement ModelSelection and ContextStrategy enums with parsing logic",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/domain/tokens.rs"
+          ],
+          "id": "P0.3",
+          "layer": "domain",
+          "name": "Create TokenBudget, TokenPartition, ContextStrategy application logic",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/domain/api_optimization.rs"
+          ],
+          "id": "P0.4",
+          "layer": "domain",
+          "name": "Extend api_optimization domain with rate limit state tracking for RL signals",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary adapters - RL client and noop fallback",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-agent/src/adapters/secondary/rl_client.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement RlClientAdapter with HTTP calls to /api/rl/action and /api/rl/reward",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/adapters/secondary/rl_client.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Implement NoopRlAdapter returning Sonnet + balanced context as default",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "Usecase integration - wire RL into conversation loop",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-agent/src/usecases/conversation.rs"
+          ],
+          "id": "P2.1",
+          "layer": "usecases",
+          "name": "Integrate RL query → model selection → budget adjustment → API call → reward reporting in conversation loop",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/usecases/conversation.rs"
+          ],
+          "id": "P2.2",
+          "layer": "usecases",
+          "name": "Implement fallback chain (Opus→Sonnet→MiniMax→Haiku→Local) with 429 handling and reward penalties",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/usecases/conversation.rs"
+          ],
+          "id": "P2.3",
+          "layer": "usecases",
+          "name": "Add model-pinning override logic (--model flag bypasses RL model selection)",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

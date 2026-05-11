@@ -6,7 +6,7 @@
 
 ## Tiered Inference Routing with RL Self-Improvement
 
-hex classifies every task by complexity and routes it to the right model — local 4B for typo fixes, local 32B for code generation, frontier for multi-file features. The tier->model mapping starts static and **self-optimizes via reinforcement learning** as the system accumulates dispatch outcomes ([ADR-2604120202](adrs/ADR-2604120202-tiered-inference-routing.md)).
+hex classifies every task by complexity and routes it to the right model — local 4B for typo fixes, local 32B for code generation, frontier for multi-file features. The tier->model mapping starts static and **self-optimizes via reinforcement learning** as the system accumulates dispatch outcomes ([ADR-2026-04-12-0202](adrs/ADR-2026-04-12-0202-tiered-inference-routing.md)).
 
 | Tier | Model | Task Type | tok/s | Pass Rate | Best-of-N |
 |:-----|:------|:----------|------:|----------:|----------:|
@@ -49,7 +49,7 @@ hex inference bench bazzite-ollama --compare bazzite-m27 # Side-by-side comparis
 
 ## Model Benchmarking
 
-([ADR-2604131238](adrs/ADR-2604131238-inference-bench-command.md))
+([ADR-2026-04-13-1238](adrs/ADR-2026-04-13-1238-inference-bench-command.md))
 
 `hex inference bench` evaluates any model against hex-specific prompts — Rust code generation (async adapters with thiserror/reqwest/tests), architectural reasoning (cross-adapter violation detection), and identity probes. Each prompt produces a quality checklist score, and the combined result maps to a hex agent tier recommendation.
 
@@ -75,7 +75,7 @@ hex inference bench bazzite-ollama --compare bazzite-m27 # Side-by-side comparis
 
 ## Code-First Execution
 
-hex is **code-first**: inference is an accelerator, not a gate ([ADR-2604131630](adrs/ADR-2604131630-code-first-execution.md)). Before calling any model, the executor checks whether the task can be completed through deterministic means — template codegen, AST transforms, or script execution. Workplan tasks carry a `strategy_hint` field that guides the executor:
+hex is **code-first**: inference is an accelerator, not a gate ([ADR-2026-04-13-1630](adrs/ADR-2026-04-13-1630-code-first-execution.md)). Before calling any model, the executor checks whether the task can be completed through deterministic means — template codegen, AST transforms, or script execution. Workplan tasks carry a `strategy_hint` field that guides the executor:
 
 | Strategy Hint | What Happens | Example |
 |:--------------|:-------------|:--------|

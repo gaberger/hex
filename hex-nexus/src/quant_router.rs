@@ -1,4 +1,4 @@
-//! Quantization-aware inference provider selection (ADR-2603271000, ADR-2604052125).
+//! Quantization-aware inference provider selection (ADR-2026-03-27-1000, ADR-2026-04-05-2125).
 //!
 //! Selects the best available provider that meets a minimum quantization tier,
 //! preferring free-tier providers with remaining quota and higher quality scores.
@@ -127,7 +127,7 @@ fn tier_max(a: TaskTier, b: TaskTier) -> TaskTier {
     if ord(b) > ord(a) { b } else { a }
 }
 
-/// Task-type-aware provider selection (ADR-2604142000).
+/// Task-type-aware provider selection (ADR-2026-04-14-2000).
 ///
 /// Combines three tier signals with take-max semantics:
 ///   1. `caller_tier` — the minimum tier requested by the caller.
@@ -163,7 +163,7 @@ pub fn select_provider_task_aware<'a>(
     (effective, provider)
 }
 
-/// Free-tier-aware provider selection (ADR-2604052125).
+/// Free-tier-aware provider selection (ADR-2026-04-05-2125).
 ///
 /// Like `select_provider` but also checks rate limits and circuit breakers
 /// via the RateLimitManager. Prefers free-tier providers with remaining quota.

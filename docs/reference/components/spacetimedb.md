@@ -84,5 +84,5 @@ The hex-nexus `hex-publish-module` skill scripts this for each module.
 
 - `docs/adrs/ADR-025-spacetimedb-state-backend.md` — original decision.
 - `docs/adrs/ADR-027-hexflo-swarm-coordination.md` — coordination layer on top.
-- `docs/adrs/ADR-2604050900-spacetime-module-rationalization.md` — module count and boundaries.
+- `docs/adrs/ADR-2026-04-05-0900-spacetime-module-rationalization.md` — module count and boundaries.
 - `docs/reference/system-architecture.md` — where SpacetimeDB sits in the wider system.

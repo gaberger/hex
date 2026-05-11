@@ -28,7 +28,7 @@ Base URL: `http://localhost:5555`. Selected endpoints:
 | `POST /api/hexflo/tasks` | Create a task |
 | `PATCH /api/hexflo/tasks/{id}` | Update task state (used by `hex hook subagent-{start,stop}`) |
 | `POST /api/plans/execute` | Execute a workplan (`hex plan execute`) |
-| `GET  /api/inference/escalation-report` | Tier-routing report (ADR-2604120202) |
+| `GET  /api/inference/escalation-report` | Tier-routing report (ADR-2026-04-12-0202) |
 | `GET  /api/git/{repo}/status` | Git status for a project |
 | `POST /api/analyze` | Run tree-sitter boundary analysis |
 | `GET  /api/projects` | Project list (multi-project dashboard) |
@@ -55,14 +55,14 @@ Inside the daemon, several services run on schedules:
 |-----|---------|---------|
 | `HEX_NEXUS_PORT` | `5555` | HTTP listen port |
 | `SPACETIMEDB_HOST` | `localhost:3000` | Coordination backend |
-| `CLAUDE_SESSION_ID` | unset | If set → Claude CLI composition; if unset → standalone composition (ADR-2604112000) |
+| `CLAUDE_SESSION_ID` | unset | If set → Claude CLI composition; if unset → standalone composition (ADR-2026-04-11-2000) |
 | `HEX_AUTO_PLAN` | `1` | Set `0` to disable auto T3-workplan invocation |
 | `OPENROUTER_MANAGEMENT_KEY` | unset | Required only for `hex inference openrouter ...` admin actions |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | unset | Provider keys; loaded only in composition root |
 
 Repo-level config: `.hex/project.json`. Synced into SpacetimeDB on every nexus startup so all clients see the same view.
 
-## Composition variants (ADR-2604112000)
+## Composition variants (ADR-2026-04-11-2000)
 
 Selected at startup based on env:
 
@@ -105,6 +105,6 @@ Logs land in `~/.hex/logs/nexus-<pid>.log`. Crash diagnostics: `hex doctor crash
 - `docs/adrs/ADR-044-nexus-git-integration.md` — config sync.
 - `docs/adrs/ADR-027-hexflo-swarm-coordination.md` — coordination layer.
 - `docs/adrs/ADR-011-multi-instance-coordination.md` — filesystem locks.
-- `docs/adrs/ADR-2604112000-hex-standalone-dispatch.md` — composition variants.
+- `docs/adrs/ADR-2026-04-11-2000-hex-standalone-dispatch.md` — composition variants.
 - `docs/reference/system-architecture.md` — system-wide context.
 - `docs/reference/components/spacetimedb.md` — what nexus syncs into.

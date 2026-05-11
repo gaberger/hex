@@ -287,7 +287,7 @@ async fn main() -> anyhow::Result<()> {
         use adapters::secondary::code_phase_worker::CodePhaseWorker;
         use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
-        // ADR-2605081126 P2.1 — refuse to run from trunk. Hijacker damage in
+        // ADR-2026-05-08-1126 P2.1 — refuse to run from trunk. Hijacker damage in
         // 2026-05-07 came from daemons writing to `/home/gary/hex-intf` directly;
         // this guard enforces the worktree-mandatory rule before any other work.
         match hex_agent::worktree_guard::check_cwd() {
@@ -398,7 +398,7 @@ async fn main() -> anyhow::Result<()> {
             }
         });
 
-        // P3.1 (ADR-2604141200): remote-shell worker runs alongside the
+        // P3.1 (ADR-2026-04-14-1200): remote-shell worker runs alongside the
         // HexFlo task poller so a single `hex-agent daemon` can service
         // both workplan dispatch and operator-issued `hex hey ... on <host>`
         // shell enqueues.
@@ -771,7 +771,7 @@ async fn main() -> anyhow::Result<()> {
     let rate_limiter: Arc<dyn ports::rate_limiter::RateLimiterPort> = Arc::new(RateLimiterAdapter::new());
     let metrics: Arc<dyn ports::token_metrics::TokenMetricsPort> = Arc::new(TokenMetricsAdapter::new());
 
-    // Preflight: ADR-2604101500 local-first (bazzite:11434 before Anthropic)
+    // Preflight: ADR-2026-04-10-1500 local-first (bazzite:11434 before Anthropic)
     let preflight: Arc<dyn ports::PreflightPort> = if args.no_preflight {
         Arc::new(NoopPreflight)
     } else if let Some(ref key) = anthropic_key {
@@ -1321,7 +1321,7 @@ fn load_hex_state_config() -> Option<(String, String, String)> {
 
     // Per-module database names, falling back to the single "database" field
     let default_db = json.get("database").and_then(|v| v.as_str()).unwrap_or("hex-nexus");
-    // ADR-2604050900: skill-registry and agent-definition-registry modules deleted;
+    // ADR-2026-04-05-0900: skill-registry and agent-definition-registry modules deleted;
     // config now synced via hexflo-coordination ("hex" database)
     let skill_db = json
         .get("skill_db")

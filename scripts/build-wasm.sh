@@ -7,7 +7,7 @@
 #   scripts/build-wasm.sh hexflo-coordination agent-registry  # build specific
 #
 # Why: hex-nexus's launcher publishes WASM modules from the embedded bytes
-# (see ADR-2604010000 + the embedded-wasm launcher fix). When operators
+# (see ADR-2026-04-01-0000 + the embedded-wasm launcher fix). When operators
 # edit spacetime-modules/<x>/src/lib.rs, the on-disk wasm in
 # hex-cli/assets/wasm/<x>.wasm goes stale and the next nexus build will
 # bake the OLD bytes. This script keeps them in sync.

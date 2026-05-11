@@ -1,10 +1,10 @@
-# ADR-2605040824 — Polyglot hex-coder vs per-language specialist agents
+# ADR-2026-05-04-0824 — Polyglot hex-coder vs per-language specialist agents
 
 **Status:** Accepted (2026-05-05)
 **Date:** 2026-05-04
 **Supersedes:** none
 **Superseded by:** none
-**Related:** ADR-2603240130 (Declarative Swarm Behavior)
+**Related:** ADR-2026-03-24-0130 (Declarative Swarm Behavior)
 
 ## Context
 

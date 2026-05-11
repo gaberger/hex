@@ -575,7 +575,7 @@ pub async fn generate_bindings(
 
 /// Module publish order — tiered by cross-module dependency.
 ///
-/// Each module publishes to its own SpacetimeDB database (ADR-2603231500).
+/// Each module publishes to its own SpacetimeDB database (ADR-2026-03-23-1500).
 /// Database names are resolved via `hex_core::stdb_database_for_module()`.
 /// hexflo-coordination → "hex" (backward compat), all others → directory name.
 pub const MODULE_TIERS: &[&[&str]] = &[

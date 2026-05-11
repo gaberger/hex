@@ -1,0 +1,99 @@
+{
+  "adr": "ADR-019",
+  "created_at": "2026-05-11T14:11:17.859404813+00:00",
+  "created_by": "hex-coder",
+  "feature": "Ensure every CLI command has an MCP equivalent and close existing gaps",
+  "id": "wp-cli-mcp-parity",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Add missing MCP tools for CLI-only commands",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/primary/mcp-adapter.ts"
+          ],
+          "id": "P0.1",
+          "layer": "primary",
+          "name": "Add hex_daemon_start, hex_daemon_stop, hex_daemon_status MCP tools",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/primary/mcp-adapter.ts"
+          ],
+          "id": "P0.2",
+          "layer": "primary",
+          "name": "Add hex_setup MCP tool",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/primary/mcp-adapter.ts"
+          ],
+          "id": "P0.3",
+          "layer": "primary",
+          "name": "Add hex_compare MCP tool",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/primary/mcp-adapter.ts"
+          ],
+          "id": "P0.4",
+          "layer": "primary",
+          "name": "Add hex_projects_list, hex_projects_add, hex_projects_remove MCP tools",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P1",
+      "name": "Add missing CLI command for MCP-only tool",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/primary/cli-adapter.ts"
+          ],
+          "id": "P1.1",
+          "layer": "primary",
+          "name": "Add dead-exports CLI subcommand",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P2",
+      "name": "Add CI enforcement and documentation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/tests/integration/cli-mcp-parity.test.ts"
+          ],
+          "id": "P2.1",
+          "layer": "integration",
+          "name": "Add parity test comparing CLI subcommands against HEX_TOOLS registry",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/primary/cli-adapter.ts",
+            "hex-nexus/src/usecases/analyze-usecase.ts"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Update hex analyze to report CLI-MCP parity metric",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

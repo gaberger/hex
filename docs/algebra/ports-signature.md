@@ -1,6 +1,6 @@
 # Ports Sigma-Algebra -- hex Effect Signature
 
-**Phase:** P1 of [ADR-2604111229](../adrs/ADR-2604111229-algebraic-formalization-of-process-flow.md)
+**Phase:** P1 of [ADR-2026-04-11-1229](../adrs/ADR-2026-04-11-1229-algebraic-formalization-of-process-flow.md)
 **Source of truth:** `hex-core/src/ports/*.rs`
 **Last verified against source:** 2026-05-04
 
@@ -307,7 +307,7 @@ The simplest port in the signature -- a single pure guard function. Its algebrai
 **Invariants:**
 - `consolidate` is **idempotent** -- only processes new data since last run (matches stash's `internal/brain/consolidate.go` behavior)
 - `recall(remember(c, ns))` retrieves the episode containing `c` within namespace `ns` (write-read coherence, modulo similarity ranking)
-- The port lives **alongside** `IHexFloMemoryStatePort` (KV coordination memory), not inside it -- consolidation is episodic + derived knowledge, coordination is mutable shared state (ADR-2604261430)
+- The port lives **alongside** `IHexFloMemoryStatePort` (KV coordination memory), not inside it -- consolidation is episodic + derived knowledge, coordination is mutable shared state (ADR-2026-04-26-1430)
 
 ---
 
@@ -336,7 +336,7 @@ The simplest port in the signature -- a single pure guard function. Its algebrai
 **Invariants:**
 - Verdicts are **append-only** -- `verdict_record` never updates an existing row; correction is a new verdict referencing the prior one
 - Status transitions follow an explicit lattice (e.g., `ObjectiveStatus::Open -> InProgress -> Resolved`); illegal jumps return `InvalidTransition` (cross-cuts P5 capability rows -- the lattice is a small effect row)
-- Scoped per-`project_id` -- no cross-project list/get; isolation is a security invariant (ADR-2605021400)
+- Scoped per-`project_id` -- no cross-project list/get; isolation is a security invariant (ADR-2026-05-02-1400)
 
 ---
 

@@ -1,4 +1,4 @@
-//! Digital-twin reviewer (ADR-2605082300).
+//! Digital-twin reviewer (ADR-2026-05-08-2300).
 //!
 //! Polls proposed_action.pending, reviews each against the operator's
 //! documented standards (memory dir + repo grounding), emits a verdict
@@ -339,7 +339,7 @@ async fn review_one(
         }
     }
 
-    // ADR-2605082500: actions from the SOP path (proposed_by="tool:*") are
+    // ADR-2026-05-08-2500: actions from the SOP path (proposed_by="tool:*") are
     // already verified by the SOP's own Phase 4 + the tool's input schema.
     // The twin would just be a redundant LLM-judges-LLM gate that the ADR
     // explicitly killed. Auto-approve and let the executor consume it.

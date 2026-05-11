@@ -84,7 +84,7 @@ echo ""
 echo -e "${CYAN}── Phase 2: SpacetimeDB Module Tests ──${NC}"
 
 (cd spacetime-modules && {
-    # ADR-2604050900: right-sized to 7 modules
+    # ADR-2026-04-05-0900: right-sized to 7 modules
     check "hexflo-coordination tests" cargo test -p hexflo-coordination --quiet
     check "agent-registry tests" cargo test -p agent-registry --quiet
     check "inference-gateway tests" cargo test -p inference-gateway --quiet

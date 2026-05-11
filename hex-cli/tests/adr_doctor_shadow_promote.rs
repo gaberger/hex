@@ -2,7 +2,7 @@
 //!
 //! Coverage:
 //!   1. The happy path lands an `Outcome::Applied` and survives the
-//!      ADR-2604150100 dropped-commits scenario (multi-commit history on
+//!      ADR-2026-04-15-0100 dropped-commits scenario (multi-commit history on
 //!      main is fully reachable post-merge; the new fix commit and a real
 //!      merge commit are both present).
 //!   2. Each abort path returns `Outcome::Aborted` and leaves no orphan
@@ -28,14 +28,14 @@ use tempfile::TempDir;
 // ── Test scaffolding ──────────────────────────────────────────────────────
 
 /// Pre-canonical buggy frontmatter — the exact form from the real ADR
-/// `ADR-2604150100-worktree-merge-fast-forward-drops-commits.md` before
+/// `ADR-2026-04-15-0100-worktree-merge-fast-forward-drops-commits.md` before
 /// it was hand-normalized in this session.
 const BUGGY_ADR: &str = "\
-# ADR-2604150100: A buggy frontmatter ADR
+# ADR-2026-04-15-0100: A buggy frontmatter ADR
 
 - **Status**: Proposed
 - **Date**: 2026-04-15
-- **Depends on**: ADR-2604131930 (original worktree-merge integrity claim)
+- **Depends on**: ADR-2026-04-13-1930 (original worktree-merge integrity claim)
 
 ## Context
 
@@ -104,26 +104,26 @@ fn config(repo: &Path, sessions_dir: Option<PathBuf>) -> ShadowPromoteConfig {
 
 fn buggy_finding(rel_path: &str) -> hex_cli::commands::adr::doctor::Finding {
     finding(
-        "ADR-2604150100",
+        "ADR-2026-04-15-0100",
         PathBuf::from(rel_path),
         FindingKind::UnparseableStatus,
         "buggy frontmatter form",
     )
 }
 
-// ── 1. Happy path + ADR-2604150100 dropped-commits scenario ──────────────
+// ── 1. Happy path + ADR-2026-04-15-0100 dropped-commits scenario ──────────────
 
 /// The core safety claim of P2.2: shadow_promote uses `git merge --no-ff`
 /// rather than fast-forward, so unrelated commits already on main cannot
 /// be silently dropped — even when the auto-fix branch was created after
 /// they landed (which is the normal case) AND when other commits land
-/// between worktree creation and merge (the ADR-2604150100 race).
+/// between worktree creation and merge (the ADR-2026-04-15-0100 race).
 #[test]
 fn happy_path_preserves_all_pre_merge_commits() {
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(tmp.path());
 
-    // ── Setup the multi-commit history that ADR-2604150100 says we
+    // ── Setup the multi-commit history that ADR-2026-04-15-0100 says we
     //    must preserve ──
     write_file(&repo, "README.md", "# initial\n");
     let c_initial = commit_all(&repo, "initial");
@@ -137,8 +137,8 @@ fn happy_path_preserves_all_pre_merge_commits() {
     let c_agent_b = commit_all(&repo, "agent B: add agent_b.rs");
 
     // The buggy ADR was committed.
-    write_file(&repo, "docs/adrs/ADR-2604150100-buggy.md", BUGGY_ADR);
-    let c_adr = commit_all(&repo, "docs: add ADR-2604150100 (buggy frontmatter)");
+    write_file(&repo, "docs/adrs/ADR-2026-04-15-0100-buggy.md", BUGGY_ADR);
+    let c_adr = commit_all(&repo, "docs: add ADR-2026-04-15-0100 (buggy frontmatter)");
 
     let pre_merge_history = rev_list_all(&repo);
     assert_eq!(
@@ -153,7 +153,7 @@ fn happy_path_preserves_all_pre_merge_commits() {
     );
 
     // ── Run shadow_promote ──
-    let f = buggy_finding("docs/adrs/ADR-2604150100-buggy.md");
+    let f = buggy_finding("docs/adrs/ADR-2026-04-15-0100-buggy.md");
     let cfg = config(&repo, Some(tmp.path().join("fake-sessions")));
     let outcome = shadow_promote_with_config(&f, &cfg).expect("shadow_promote err");
 
@@ -161,14 +161,14 @@ fn happy_path_preserves_all_pre_merge_commits() {
         Outcome::Applied { branch, commit } => (branch, commit),
         Outcome::Aborted { reason } => panic!("expected Applied, got Aborted: {}", reason),
     };
-    assert_eq!(branch, "sched/auto-fix/adr-doctor/ADR-2604150100");
+    assert_eq!(branch, "sched/auto-fix/adr-doctor/ADR-2026-04-15-0100");
 
-    // ── Verify ADR-2604150100 safety property ──
+    // ── Verify ADR-2026-04-15-0100 safety property ──
     let post_merge_history = rev_list_all(&repo);
     for c in &pre_merge_history {
         assert!(
             post_merge_history.contains(c),
-            "pre-merge commit {} dropped by shadow_promote (ADR-2604150100 regression)",
+            "pre-merge commit {} dropped by shadow_promote (ADR-2026-04-15-0100 regression)",
             c
         );
     }
@@ -190,7 +190,7 @@ fn happy_path_preserves_all_pre_merge_commits() {
     );
 
     // ── Verify the file was actually rewritten to canonical form ──
-    let after = std::fs::read_to_string(repo.join("docs/adrs/ADR-2604150100-buggy.md")).unwrap();
+    let after = std::fs::read_to_string(repo.join("docs/adrs/ADR-2026-04-15-0100-buggy.md")).unwrap();
     assert!(
         after.contains("**Status:** Proposed"),
         "Status line should be canonical after shadow_promote, got:\n{}",
@@ -211,7 +211,7 @@ fn happy_path_preserves_all_pre_merge_commits() {
     );
     let branches = git(&repo, &["branch", "--list", "sched/auto-fix/*"]);
     assert!(
-        branches.contains("sched/auto-fix/adr-doctor/ADR-2604150100"),
+        branches.contains("sched/auto-fix/adr-doctor/ADR-2026-04-15-0100"),
         "auto-fix branch should persist for audit, got:\n{}",
         branches
     );
@@ -223,17 +223,17 @@ fn happy_path_preserves_all_pre_merge_commits() {
 fn aborts_when_target_file_is_dirty() {
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(tmp.path());
-    write_file(&repo, "docs/adrs/ADR-2604150100-buggy.md", BUGGY_ADR);
+    write_file(&repo, "docs/adrs/ADR-2026-04-15-0100-buggy.md", BUGGY_ADR);
     commit_all(&repo, "docs: add ADR");
 
     // Modify the file but don't commit — leaves it tracked-dirty.
     write_file(
         &repo,
-        "docs/adrs/ADR-2604150100-buggy.md",
+        "docs/adrs/ADR-2026-04-15-0100-buggy.md",
         &format!("{}\n// uncommitted edit\n", BUGGY_ADR),
     );
 
-    let f = buggy_finding("docs/adrs/ADR-2604150100-buggy.md");
+    let f = buggy_finding("docs/adrs/ADR-2026-04-15-0100-buggy.md");
     let cfg = config(&repo, Some(tmp.path().join("fake-sessions")));
     let outcome = shadow_promote_with_config(&f, &cfg).expect("shadow_promote err");
 
@@ -249,7 +249,7 @@ fn aborts_when_target_file_is_dirty() {
     }
 
     // The file's uncommitted edit must still be intact (we didn't touch it).
-    let after = std::fs::read_to_string(repo.join("docs/adrs/ADR-2604150100-buggy.md")).unwrap();
+    let after = std::fs::read_to_string(repo.join("docs/adrs/ADR-2026-04-15-0100-buggy.md")).unwrap();
     assert!(after.contains("uncommitted edit"));
     // Total commit count on main is unchanged — no merge happened.
     let count: usize = rev_list_all(&repo).len();
@@ -260,7 +260,7 @@ fn aborts_when_target_file_is_dirty() {
 fn aborts_when_file_is_claimed_by_session_manifest() {
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(tmp.path());
-    write_file(&repo, "docs/adrs/ADR-2604150100-buggy.md", BUGGY_ADR);
+    write_file(&repo, "docs/adrs/ADR-2026-04-15-0100-buggy.md", BUGGY_ADR);
     commit_all(&repo, "docs: add ADR");
 
     // Plant a session manifest that claims docs/adrs/ via allowed_paths.
@@ -277,7 +277,7 @@ fn aborts_when_file_is_claimed_by_session_manifest() {
     )
     .unwrap();
 
-    let f = buggy_finding("docs/adrs/ADR-2604150100-buggy.md");
+    let f = buggy_finding("docs/adrs/ADR-2026-04-15-0100-buggy.md");
     let cfg = config(&repo, Some(sessions_dir.clone()));
     let outcome = shadow_promote_with_config(&f, &cfg).expect("shadow_promote err");
 
@@ -316,12 +316,12 @@ fn aborts_when_self_check_still_reports_findings_after_patch() {
 ";
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(tmp.path());
-    write_file(&repo, "docs/adrs/ADR-2604150100-still-broken.md", STILL_BROKEN);
+    write_file(&repo, "docs/adrs/ADR-2026-04-15-0100-still-broken.md", STILL_BROKEN);
     let pre = commit_all(&repo, "docs: still-broken ADR");
 
     let f = finding(
-        "ADR-2604150100",
-        PathBuf::from("docs/adrs/ADR-2604150100-still-broken.md"),
+        "ADR-2026-04-15-0100",
+        PathBuf::from("docs/adrs/ADR-2026-04-15-0100-still-broken.md"),
         FindingKind::UnparseableStatus,
         "buggy + missing H1",
     );
@@ -345,7 +345,7 @@ fn aborts_when_self_check_still_reports_findings_after_patch() {
     let post = git(&repo, &["rev-parse", "HEAD"]);
     assert_eq!(pre, post, "main HEAD must not advance on aborted run");
     // Original file content untouched.
-    let after = std::fs::read_to_string(repo.join("docs/adrs/ADR-2604150100-still-broken.md"))
+    let after = std::fs::read_to_string(repo.join("docs/adrs/ADR-2026-04-15-0100-still-broken.md"))
         .unwrap();
     assert_eq!(after, STILL_BROKEN);
     // Worktree dir cleaned up.
@@ -373,12 +373,12 @@ fn aborts_when_finding_is_not_tier_a() {
     // way, but the safety property should hold regardless of caller.
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(tmp.path());
-    write_file(&repo, "docs/adrs/ADR-2604150100-buggy.md", BUGGY_ADR);
+    write_file(&repo, "docs/adrs/ADR-2026-04-15-0100-buggy.md", BUGGY_ADR);
     commit_all(&repo, "docs: add ADR");
 
     let tier_b = finding(
-        "ADR-2604150100",
-        PathBuf::from("docs/adrs/ADR-2604150100-buggy.md"),
+        "ADR-2026-04-15-0100",
+        PathBuf::from("docs/adrs/ADR-2026-04-15-0100-buggy.md"),
         FindingKind::StaleProposed, // Tier B
         "stale",
     );
@@ -403,7 +403,7 @@ fn aborts_when_finding_is_not_tier_a() {
 #[test]
 fn aborts_when_patch_is_a_noop_against_already_canonical_file() {
     const CANONICAL: &str = "\
-# ADR-2604150100: Already canonical
+# ADR-2026-04-15-0100: Already canonical
 
 **Status:** Accepted
 **Date:** 2026-04-15
@@ -413,12 +413,12 @@ Body.
 ";
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(tmp.path());
-    write_file(&repo, "docs/adrs/ADR-2604150100-canonical.md", CANONICAL);
+    write_file(&repo, "docs/adrs/ADR-2026-04-15-0100-canonical.md", CANONICAL);
     let pre = commit_all(&repo, "docs: canonical ADR");
 
     // Even Tier-A finding against a canonical file must abort cleanly —
     // there's nothing to fix.
-    let f = buggy_finding("docs/adrs/ADR-2604150100-canonical.md");
+    let f = buggy_finding("docs/adrs/ADR-2026-04-15-0100-canonical.md");
     let cfg = config(&repo, Some(tmp.path().join("fake-sessions")));
     let outcome = shadow_promote_with_config(&f, &cfg).expect("shadow_promote err");
 

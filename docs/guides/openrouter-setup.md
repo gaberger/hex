@@ -2,7 +2,7 @@
 
 OpenRouter provides access to 300+ open-source and commercial models (Llama 4, DeepSeek R1, Qwen 3, Gemini, Mistral, etc.) through a single API key and OpenAI-compatible endpoint. hex treats OpenRouter as a first-class inference provider with special support for cost tracking, provider routing, and RL model selection.
 
-> **ADR**: [ADR-2603231600 — OpenRouter Inference Integration](../adrs/ADR-2603231600-openrouter-inference-integration.md)
+> **ADR**: [ADR-2026-03-23-1600 — OpenRouter Inference Integration](../adrs/ADR-2026-03-23-1600-openrouter-inference-integration.md)
 
 ## Prerequisites
 

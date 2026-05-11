@@ -1,6 +1,6 @@
 {
-  "adr": "ADR-2604151500",
-  "description": "Audit (not fix) the Claude Code status line per ADR-2604151500. Deliverable: docs/analysis/statusline-audit-2604151500.md containing per-segment provenance, glyph legend, inaccuracy log, confusion log, and ranked recommendation set. NO code changes in this workplan — every recommendation routes to a downstream ADR draft if action is warranted.",
+  "adr": "ADR-2026-04-15-1500",
+  "description": "Audit (not fix) the Claude Code status line per ADR-2026-04-15-1500. Deliverable: docs/analysis/statusline-audit-2604151500.md containing per-segment provenance, glyph legend, inaccuracy log, confusion log, and ranked recommendation set. NO code changes in this workplan — every recommendation routes to a downstream ADR draft if action is warranted.",
   "id": "wp-statusline-audit",
   "phases": [
     {
@@ -78,7 +78,7 @@
           "id": "P3.2",
           "status": "done",
           "strategy_hint": "script",
-          "title": "Specifically verify the four open suspicions raised in ADR-2604151500: (a) brain/sched stale terminology in the live binary; (b) per-project leak — does the line aggregate counts across projects or scope to cwd?; (c) agent_count semantics — live or registered?; (d) ○db visual silence on a REQUIRED dependency. Each suspicion confirmed or refuted in the log with exact reproduction commands."
+          "title": "Specifically verify the four open suspicions raised in ADR-2026-04-15-1500: (a) brain/sched stale terminology in the live binary; (b) per-project leak — does the line aggregate counts across projects or scope to cwd?; (c) agent_count semantics — live or registered?; (d) ○db visual silence on a REQUIRED dependency. Each suspicion confirmed or refuted in the log with exact reproduction commands."
         }
       ],
       "title": "Inaccuracy log — reproduce disagreements"

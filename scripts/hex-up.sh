@@ -19,7 +19,7 @@ STDB_BIN=${HEX_STDB_BIN:-$HOME/.local/bin/spacetimedb-standalone}
 LOG_DIR=${HEX_LOG_DIR:-$HOME/.hex}
 mkdir -p "$LOG_DIR"
 
-# Enable the typed-tool SOP path for executive personas (ADR-2605082500).
+# Enable the typed-tool SOP path for executive personas (ADR-2026-05-08-2500).
 # Without this, is_sop_persona() returns false and personas fall back to
 # the OLD commitment-creator contract (no code_patch emission, just
 # "Confirm: I will fix..." text replies). Set BEFORE starting nexus so

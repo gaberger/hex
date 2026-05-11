@@ -1,5 +1,5 @@
 //! Scaffolded dispatch — Best-of-N with compile gate + error-feedback retry
-//! (ADR-2604120202 Phase 2, tasks P3.1 and P3.2).
+//! (ADR-2026-04-12-0202 Phase 2, tasks P3.1 and P3.2).
 //!
 //! Wraps an `IInferencePort` to generate multiple completions, validate each
 //! against a compile gate, and retry with error feedback on failure. The

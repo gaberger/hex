@@ -1,4 +1,4 @@
-//! Integrator subscriber (ADR-2605081126 P4).
+//! Integrator subscriber (ADR-2026-05-08-1126 P4).
 //!
 //! Drives the merge-team gate end-to-end:
 //!
@@ -666,7 +666,7 @@ fn resolve_cargo() -> String {
 
 /// Run `hex worktree merge <branch>`. Returns Ok on exit 0; Err with
 /// stderr otherwise. The CLI cherry-picks file-level changes per
-/// ADR-2604131930 — never raw `git checkout`.
+/// ADR-2026-04-13-1930 — never raw `git checkout`.
 async fn run_worktree_merge(branch: &str) -> Result<(), String> {
     let cmd = tokio::process::Command::new("hex")
         .arg("worktree")

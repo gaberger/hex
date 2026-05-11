@@ -6,7 +6,7 @@
  * because WASM modules cannot access the local filesystem.
  *
  * Reactive primitives created inside initProjectStore() — must be called
- * from App.tsx composition root after initConnectionStore() (ADR-2603231000).
+ * from App.tsx composition root after initConnectionStore() (ADR-2026-03-23-1000).
  */
 import { createSignal, createEffect, createRoot, type Accessor } from "solid-js";
 import { registeredProjects, getHexfloConn } from "./connection";

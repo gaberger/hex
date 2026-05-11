@@ -1,4 +1,4 @@
-//! `hex worktree status / approve / reject` CLI tests (ADR-2605081126 P5).
+//! `hex worktree status / approve / reject` CLI tests (ADR-2026-05-08-1126 P5).
 //!
 //! Spawns the built `hex` binary as a subprocess and asserts on exit code,
 //! stdout, stderr. Like the daemon-worktree-required tests, this suite

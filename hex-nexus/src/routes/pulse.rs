@@ -1,4 +1,4 @@
-//! REST endpoint for the multi-project pulse view (ADR-2604131500 P6.1).
+//! REST endpoint for the multi-project pulse view (ADR-2026-04-13-1500 P6.1).
 //!
 //! GET /api/pulse — one-glance state for every registered project.
 

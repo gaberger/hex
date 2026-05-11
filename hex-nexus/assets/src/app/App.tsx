@@ -173,7 +173,7 @@ const App: Component = () => {
   // Initialize reactive stores SYNCHRONOUSLY before any child renders.
   // These must run during component creation (not onMount) so child
   // components capture the real signal accessors, not the default () => []
-  // stubs. See ADR-2603231000 for the full diagnosis.
+  // stubs. See ADR-2026-03-23-1000 for the full diagnosis.
   initConnectionStore();    // must be first — creates signals other stores depend on
   initProjectStore();       // depends on registeredProjects from connection
   initRouterStore();        // depends on projects from project store
@@ -307,7 +307,7 @@ const App: Component = () => {
         <ShortcutsOverlay />
       </Show>
 
-      {/* Full-screen Merge Gate (ADR-2605081126) */}
+      {/* Full-screen Merge Gate (ADR-2026-05-08-1126) */}
       <Show when={isMergeGatePage()}>
         <ConnectionStatusBanner />
         <MergeGate />
@@ -702,7 +702,7 @@ const App: Component = () => {
               </svg>
               <Show when={!sidebarCollapsed()}>Decisions</Show>
             </button>
-            {/* Merge Gate (ADR-2605081126) */}
+            {/* Merge Gate (ADR-2026-05-08-1126) */}
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
               classList={{
@@ -760,7 +760,7 @@ const App: Component = () => {
               </svg>
               <Show when={!sidebarCollapsed()}>Thoughts</Show>
             </button>
-            {/* Resources (ADR-2605082200) */}
+            {/* Resources (ADR-2026-05-08-2200) */}
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
               classList={{
@@ -799,7 +799,7 @@ const App: Component = () => {
               </svg>
               <Show when={!sidebarCollapsed()}>Commitments</Show>
             </button>
-            {/* Substrate Swaps (ADR-2604261500) */}
+            {/* Substrate Swaps (ADR-2026-04-26-1500) */}
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
               classList={{

@@ -54,7 +54,7 @@ hex secrets status              # Vault health check
 
 ## Running hex Standalone — Zero Cloud Dependencies
 
-hex is designed to run as a fully self-sufficient AIOS on local hardware. No API keys, no cloud accounts, no usage-based billing. When `CLAUDE_SESSION_ID` is unset, hex-nexus automatically selects the standalone composition path with Ollama as the default inference adapter ([ADR-2604112000](adrs/ADR-2604112000-hex-standalone-dispatch.md)).
+hex is designed to run as a fully self-sufficient AIOS on local hardware. No API keys, no cloud accounts, no usage-based billing. When `CLAUDE_SESSION_ID` is unset, hex-nexus automatically selects the standalone composition path with Ollama as the default inference adapter ([ADR-2026-04-11-2000](adrs/ADR-2026-04-11-2000-hex-standalone-dispatch.md)).
 
 **Minimum hardware**: Any machine that can run Ollama (Mac/Linux/Windows). A 4B model (qwen3:4b) handles T1 tasks on 8GB RAM. A 32B model (qwen2.5-coder:32b) needs 24GB — consumer GPUs like RTX 4090 or Strix Halo APUs. No datacenter required.
 

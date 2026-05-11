@@ -1,0 +1,258 @@
+{
+  "adr": "ADR-024",
+  "created_at": "2026-05-11T14:19:35.554807693+00:00",
+  "created_by": "hex-coder",
+  "feature": "Autonomous orchestration nexus with hex-agent runtime and RL-driven AgentDB",
+  "id": "wp-hex-nexus-autonomous-hub",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "hex-agent domain model and ports",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-agent/src/domain/message.rs",
+            "hex-agent/src/domain/token_budget.rs",
+            "hex-agent/src/domain/conversation_state.rs",
+            "hex-agent/src/domain/tool_call.rs",
+            "hex-agent/src/domain/agent_definition.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Define Message, TokenBudget, ConversationState, ToolCall, AgentDefinition domain types",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/domain/skill.rs",
+            "hex-agent/src/domain/hook.rs"
+          ],
+          "id": "P0.2",
+          "layer": "domain",
+          "name": "Define Skill and Hook domain types",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/ports/anthropic.rs",
+            "hex-agent/src/ports/context_manager.rs",
+            "hex-agent/src/ports/skill_loader.rs",
+            "hex-agent/src/ports/hook_runner.rs",
+            "hex-agent/src/ports/tool_executor.rs"
+          ],
+          "id": "P0.3",
+          "layer": "ports",
+          "name": "Define AnthropicPort, ContextManagerPort, SkillLoaderPort, HookRunnerPort, ToolExecutorPort traits",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary adapters for Anthropic API, filesystem tools, and context management",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-agent/src/adapters/secondary/anthropic_client.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement reqwest-based Anthropic client adapter with SSE streaming",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/adapters/secondary/fs_skill_loader.rs",
+            "hex-agent/src/adapters/secondary/fs_hook_runner.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Implement filesystem-based skill and hook loaders",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/adapters/secondary/context_manager.rs",
+            "hex-agent/src/adapters/secondary/token_counter.rs"
+          ],
+          "id": "P1.3",
+          "layer": "secondary",
+          "name": "Implement context window manager with token counting and eviction strategy",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/adapters/secondary/tool_executor.rs"
+          ],
+          "id": "P1.4",
+          "layer": "secondary",
+          "name": "Implement tool executor adapter for shell commands and filesystem operations",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "Primary adapters for CLI and WebSocket communication",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-agent/src/adapters/primary/cli.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Implement stdin/stdout CLI primary adapter",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/adapters/primary/websocket_client.rs"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Implement WebSocket client adapter connecting to hex-hub",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P3",
+      "name": "Use cases and composition root for hex-agent",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-agent/src/usecases/conversation_loop.rs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Implement ConversationLoop use case with multi-turn tool_use handling",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/usecases/context_packer.rs"
+          ],
+          "id": "P3.2",
+          "layer": "usecases",
+          "name": "Implement ContextPacker use case for smart window management",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/composition_root.rs",
+            "hex-agent/src/main.rs"
+          ],
+          "id": "P3.3",
+          "layer": "infrastructure",
+          "name": "Wire composition root and main.rs entry point",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P4",
+      "name": "Hub orchestration layer with RL engine and remote compute",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/agentdb_rl.rs",
+            "hex-nexus/migrations/004_agentdb_rl_tables.sql"
+          ],
+          "id": "P4.1",
+          "layer": "secondary",
+          "name": "Implement AgentDB RL engine with Q-learning in hex-hub",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/primary/routes/orchestration.rs"
+          ],
+          "id": "P4.2",
+          "layer": "primary",
+          "name": "Add orchestration routes for agent lifecycle and workplan executor",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/primary/routes/chat_ws.rs",
+            "hex-nexus/static/chat.html"
+          ],
+          "id": "P4.3",
+          "layer": "primary",
+          "name": "Implement Chat UI with WebSocket handler",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/ssh_deploy.rs"
+          ],
+          "id": "P4.4",
+          "layer": "secondary",
+          "name": "Implement SSH adapter for remote agent deployment using russh",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/usecases/fleet_manager.rs",
+            "hex-nexus/src/usecases/health_checker.rs"
+          ],
+          "id": "P4.5",
+          "layer": "usecases",
+          "name": "Add agent fleet management and health-check use cases",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P5",
+      "name": "Integration testing and documentation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-agent/tests/integration/conversation_e2e.rs",
+            "hex-nexus/tests/integration/orchestration_e2e.rs"
+          ],
+          "id": "P5.1",
+          "layer": "integration",
+          "name": "End-to-end tests for local and remote agent execution",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/tests/integration/rl_training.rs",
+            "hex-nexus/data/rl_seed_data.json"
+          ],
+          "id": "P5.2",
+          "layer": "integration",
+          "name": "RL engine training with seed data and evaluation suite",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "docs/hex-agent-guide.md",
+            "docs/orchestration-api.md",
+            "docs/deployment-guide.md"
+          ],
+          "id": "P5.3",
+          "layer": "infrastructure",
+          "name": "Documentation for hex-agent CLI, hub orchestration API, and deployment guide",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

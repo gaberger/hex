@@ -10,7 +10,7 @@ use std::time::Duration;
 const POLL_INTERVAL_SECS: u64 = 30;
 // CPO cost-spec 2026-05-09 — halved from 4096 to 2048; truncation already handled below.
 const DRAFT_MAX_TOKENS: u32 = 2048;
-// CTO ADR-2605082600 — halved from 50KB to 24KB; staying under upstream BSATN
+// CTO ADR-2026-05-08-2600 — halved from 50KB to 24KB; staying under upstream BSATN
 // `len too long` panic threshold (websocket_building.rs:180:57). Watchdog
 // recovers if the cap is breached, but this prevents the crash entirely.
 const CONTENT_CAP_BYTES: usize = 24 * 1024;
@@ -265,7 +265,7 @@ async fn draft_one(
         return Ok(());
     }
     if content.len() > CONTENT_CAP_BYTES {
-        // CTO ADR-2605082600 — surface truncation so operator can detect
+        // CTO ADR-2026-05-08-2600 — surface truncation so operator can detect
         // patterns + coach personas to produce shorter drafts upfront.
         tracing::warn!(
             commitment_id = c.id,

@@ -1,4 +1,4 @@
-//! Declarative agent & swarm definitions parsed from YAML (ADR-2603240130).
+//! Declarative agent & swarm definitions parsed from YAML (ADR-2026-03-24-0130).
 //!
 //! Agent YAMLs live in `hex-cli/assets/agents/hex/hex/` and are embedded via
 //! `rust-embed` at compile time. Two workflow variants exist:
@@ -327,7 +327,7 @@ pub struct TokenBudget {
 }
 
 /// Declarative pressure thresholds for an agent's context window
-/// (ADR-2603281000 P5). Read by the supervisor and passed as metadata
+/// (ADR-2026-03-28-1000 P5). Read by the supervisor and passed as metadata
 /// so the inference layer can enforce them without hard-coded values.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PressureConfig {

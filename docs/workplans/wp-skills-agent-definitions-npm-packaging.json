@@ -1,0 +1,170 @@
+{
+  "adr": "ADR-006",
+  "created_at": "2026-05-11T14:02:27.392681897+00:00",
+  "created_by": "hex-coder",
+  "feature": "Three-tier packaging: skills (Markdown), agent definitions (YAML), npm distribution",
+  "id": "wp-skills-agent-definitions-npm-packaging",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain models and port definitions for packaging formats",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/domain/skill.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Define Skill entity with frontmatter schema (name, description, triggers)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/domain/agent_definition.rs"
+          ],
+          "id": "P0.2",
+          "layer": "domain",
+          "name": "Define AgentDefinition entity with context loading strategy (L1/L2/L3)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/ports/packaging.rs"
+          ],
+          "id": "P0.3",
+          "layer": "ports",
+          "name": "Port for packaging operations (load skill, parse agent def, extract from npm)",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "File-based adapters for skill and agent definition loading",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/skill_parser.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Markdown parser adapter for .md skills with YAML frontmatter extraction",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/agent_parser.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "YAML parser adapter for agent definitions with context strategy deserialization",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/npm_extractor.rs"
+          ],
+          "id": "P1.3",
+          "layer": "secondary",
+          "name": "npm package extractor adapter (reads skills/ and agents/ from node_modules)",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "CLI and programmatic entry points",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/primary/cli.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "CLI commands: hex init, hex generate, hex summarize",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/primary/skill_trigger.rs"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Skill trigger resolver (map natural language → skill Markdown)",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P3",
+      "name": "Use cases for packaging workflows",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/usecases/load_skill.rs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "LoadSkillByTrigger use case (progressive disclosure: trigger → L1 prompt)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/usecases/load_agent_context.rs"
+          ],
+          "id": "P3.2",
+          "layer": "usecases",
+          "name": "LoadAgentContext use case (L1→L2→L3 context loading strategy)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/usecases/extract_artifacts.rs"
+          ],
+          "id": "P3.3",
+          "layer": "usecases",
+          "name": "ExtractPackageArtifacts use case (skills/ and agents/ from npm install)",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P4",
+      "name": "Integration and distribution artifacts",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "package.json",
+            "skills/hex-scaffold.md",
+            "agents/hex-coder.yaml"
+          ],
+          "id": "P4.1",
+          "layer": "integration",
+          "name": "npm package.json with skills/ and agents/ embedded directories",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/tests/integration/packaging_workflow_test.rs"
+          ],
+          "id": "P4.2",
+          "layer": "integration",
+          "name": "Integration test: skill trigger → context load → agent L1/L2/L3 workflow",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

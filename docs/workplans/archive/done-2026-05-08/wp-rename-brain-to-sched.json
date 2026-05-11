@@ -1,8 +1,8 @@
 {
-  "adr": "ADR-2604150000",
+  "adr": "ADR-2026-04-15-0000",
   "created_at": "2026-04-14T16:50:00-04:00",
   "created_by": "human",
-  "description": "Rename the brain subsystem to sched across CLI, REST API, statusline, hooks, live docs, and state paths. Mechanical rename; historical ADRs keep 'brain' in titles. Backward-compat: `hex brain` stays as hidden alias with stderr deprecation for one release; /api/brain/* stays dual-routed. 401 files touched per ADR-2604150000 impact analysis.",
+  "description": "Rename the brain subsystem to sched across CLI, REST API, statusline, hooks, live docs, and state paths. Mechanical rename; historical ADRs keep 'brain' in titles. Backward-compat: `hex brain` stays as hidden alias with stderr deprecation for one release; /api/brain/* stays dual-routed. 401 files touched per ADR-2026-04-15-0000 impact analysis.",
   "feature": "Rename brain -> sched",
   "id": "wp-rename-brain-to-sched",
   "phases": [
@@ -202,7 +202,7 @@
         {
           "agent": "hex-coder",
           "deps": [],
-          "description": "cargo build -p hex-cli -p hex-nexus --release. Then git add all renamed paths + content changes and commit with message 'refactor(cli): rename brain subsystem to sched (ADR-2604150000)'. Include ADR-2604150000 ref in commit body. Do NOT --amend; create a new commit.",
+          "description": "cargo build -p hex-cli -p hex-nexus --release. Then git add all renamed paths + content changes and commit with message 'refactor(cli): rename brain subsystem to sched (ADR-2026-04-15-0000)'. Include ADR-2026-04-15-0000 ref in commit body. Do NOT --amend; create a new commit.",
           "files": [
             ".git/"
           ],
@@ -216,9 +216,9 @@
           "deps": [
             "P6.1"
           ],
-          "description": "Run `hex doctor --verbose` and `hex sched daemon-status`. Verify statusline renders 'sched' not 'brain'. Verify `hex brain --help` still works and prints the deprecation warning to stderr. If all green, update ADR-2604150000 status from Proposed to Accepted.",
+          "description": "Run `hex doctor --verbose` and `hex sched daemon-status`. Verify statusline renders 'sched' not 'brain'. Verify `hex brain --help` still works and prints the deprecation warning to stderr. If all green, update ADR-2026-04-15-0000 status from Proposed to Accepted.",
           "files": [
-            "docs/adrs/ADR-2604150000-rename-brain-to-sched.md"
+            "docs/adrs/ADR-2026-04-15-0000-rename-brain-to-sched.md"
           ],
           "id": "P6.2",
           "layer": "docs",

@@ -1,0 +1,104 @@
+{
+  "adr": "ADR-032",
+  "created_at": "2026-05-11T14:29:06.971841352+00:00",
+  "created_by": "hex-coder",
+  "feature": "Consolidate hex-hub into hex-nexus as library+binary",
+  "id": "wp-deprecate-hex-hub",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Move IStatePort and adapters into hex-nexus (non-breaking)",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/ports/state.rs",
+            "hex-nexus/src/ports/mod.rs",
+            "hex-nexus/src/adapters/sqlite_state.rs",
+            "hex-nexus/src/adapters/spacetime_state.rs",
+            "hex-nexus/src/adapters/mod.rs"
+          ],
+          "id": "P0.1",
+          "layer": "ports",
+          "name": "Copy state port trait and SQLite/SpacetimeDB adapters from hex-hub to hex-nexus",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/lib.rs",
+            "hex-hub/src/main.rs"
+          ],
+          "id": "P0.2",
+          "layer": "infrastructure",
+          "name": "Update hex-nexus imports to use local state port; hex-hub imports from hex-nexus",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Add binary target to hex-nexus",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/bin/hex-nexus.rs",
+            "hex-nexus/Cargo.toml"
+          ],
+          "id": "P1.1",
+          "layer": "primary",
+          "name": "Create hex-nexus binary entry point from hex-hub main.rs",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/build.rs",
+            "hex-nexus/Cargo.toml"
+          ],
+          "id": "P1.2",
+          "layer": "infrastructure",
+          "name": "Merge build.rs and add tracing-subscriber dependency",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "Deprecate and remove hex-hub",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "Cargo.toml",
+            "hex-hub/Cargo.toml"
+          ],
+          "id": "P2.1",
+          "layer": "infrastructure",
+          "name": "Remove hex-hub from workspace and delete directory",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "docs/CLAUDE.md",
+            "README.md",
+            "docs/adrs/ADR-016-hub-binary-version-verification.md",
+            "docs/adrs/ADR-011-swarm-state-persistence.md",
+            "docs/adrs/ADR-015-hub-swarm-state.md",
+            "docs/adrs/ADR-024-autonomous-nexus.md",
+            "docs/adrs/ADR-025-istate-port.md",
+            "docs/adrs/ADR-026-secret-resolution.md"
+          ],
+          "id": "P2.2",
+          "layer": "infrastructure",
+          "name": "Update documentation, install scripts, and ADR-016 supersession status",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

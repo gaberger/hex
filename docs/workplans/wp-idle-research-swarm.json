@@ -1,8 +1,8 @@
 {
-  "adr": "ADR-2604151200",
+  "adr": "ADR-2026-04-15-1200",
   "auto_promote": false,
   "created_by": "planner",
-  "description": "Stub workplan for ADR-2604151200. Wires an idle-research swarm into the sched daemon: idle-trigger + throttle, structured Finding schema, T1 deterministic analysts (architecture/code-quality/drift), T2/T2.5 LLM-synthesis analysts (naming/performance/UX), routing of severity≥med findings into draft ADRs / draft workplans / idle-sweep memory entries, and dashboard visibility. Drafts are NEVER auto-promoted to Accepted; nothing auto-executes. Promote via /hex-feature-dev when ready.",
+  "description": "Stub workplan for ADR-2026-04-15-1200. Wires an idle-research swarm into the sched daemon: idle-trigger + throttle, structured Finding schema, T1 deterministic analysts (architecture/code-quality/drift), T2/T2.5 LLM-synthesis analysts (naming/performance/UX), routing of severity≥med findings into draft ADRs / draft workplans / idle-sweep memory entries, and dashboard visibility. Drafts are NEVER auto-promoted to Accepted; nothing auto-executes. Promote via /hex-feature-dev when ready.",
   "id": "wp-idle-research-swarm",
   "non_goals": [
     "Continuous background scan independent of activity — sweeps run on idle only.",

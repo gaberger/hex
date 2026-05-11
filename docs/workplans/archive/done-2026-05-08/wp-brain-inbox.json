@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604132330",
+  "adr": "ADR-2026-04-13-2330",
   "created_at": "2026-04-13T23:35:00Z",
   "created_by": "human+agent",
   "description": "Brain daemon drains a task queue each tick. Users/agents enqueue work via hex brain enqueue. Task types: hex-command, workplan, shell. SpacetimeDB-backed for persistence.",

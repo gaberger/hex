@@ -102,13 +102,13 @@ async fn create(swarm_id: &str, title: &str, depends_on: &str, agent: Option<Str
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
-    // ADR-2604102200: Auto-register agent if not already registered
+    // ADR-2026-04-10-2200: Auto-register agent if not already registered
     // This ensures task creation works without requiring manual hex agent connect first
     let _ = ensure_agent_registered(&nexus).await;
 
     // Only assign if --agent is explicitly provided. Auto-resolving from session
     // state would pre-assign tasks to the supervisor, preventing Docker workers
-    // from self-claiming via the pull model (ADR-2603282000).
+    // from self-claiming via the pull model (ADR-2026-03-28-2000).
     let agent_id = agent;
 
     // POST to /api/swarms/{swarm_id}/tasks

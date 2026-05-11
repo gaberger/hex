@@ -66,7 +66,7 @@ pub async fn register(
             tracing::debug!("WS broadcast: no receivers for project-registered");
         }
 
-        // ADR-2604131500 P4.2: Seed default trust entries for all hex scopes
+        // ADR-2026-04-13-1500 P4.2: Seed default trust entries for all hex scopes
         let default_scopes = [
             "domain", "ports", "adapters/primary", "adapters/secondary",
             "dependencies", "deployment",

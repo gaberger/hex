@@ -1,4 +1,4 @@
-/// ADR-2604142200 Reconcile Evidence Verification — Regression Tests (R1.3)
+/// ADR-2026-04-14-2200 Reconcile Evidence Verification — Regression Tests (R1.3)
 ///
 /// Verifies that `hex plan reconcile` does NOT auto-promote tasks whose
 /// target files are missing from the filesystem, even when other heuristic

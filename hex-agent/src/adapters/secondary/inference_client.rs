@@ -1,5 +1,5 @@
 //! Nexus inference client adapter — calls hex-nexus POST /api/inference/complete
-//! with task-type headers for RL model selection (ADR-2603232005).
+//! with task-type headers for RL model selection (ADR-2026-03-23-2005).
 //!
 //! This adapter provides a clean, typed interface for LLM inference that:
 //! - Sends `X-Hex-Agent-Id` for agent identity tracking

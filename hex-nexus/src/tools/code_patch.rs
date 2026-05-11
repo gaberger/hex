@@ -17,7 +17,7 @@
 //!
 //! Verifier: action_executor's cargo_check gate runs after write.
 //! Twin auto-approves `proposed_by="tool:code_patch"` (matches the
-//! ADR-2605082500 SOP-emitted-action policy).
+//! ADR-2026-05-08-2500 SOP-emitted-action policy).
 
 use async_trait::async_trait;
 use serde_json::{json, Value};

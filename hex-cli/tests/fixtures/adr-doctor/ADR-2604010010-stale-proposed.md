@@ -1,4 +1,4 @@
-# ADR-2604010010: Stale proposed ADR
+# ADR-2026-04-01-0010: Stale proposed ADR
 
 **Status:** Proposed
 **Date:** 2025-01-01

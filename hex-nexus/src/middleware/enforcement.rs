@@ -1,4 +1,4 @@
-//! Enforcement middleware — provider-agnostic validation for hex-nexus REST API (ADR-2603221959 P4).
+//! Enforcement middleware — provider-agnostic validation for hex-nexus REST API (ADR-2026-03-22-1959 P4).
 //!
 //! Checks mutating requests (POST/PATCH/PUT/DELETE) against hex lifecycle rules.
 //! GET requests and health endpoints are always allowed.

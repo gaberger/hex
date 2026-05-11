@@ -1,4 +1,4 @@
-//! Composition prerequisite diagnostics (ADR-2604112000).
+//! Composition prerequisite diagnostics (ADR-2026-04-11-2000).
 //!
 //! Probes the runtime environment to determine which composition variant
 //! (Standalone or Claude-integrated) would be selected, and reports the

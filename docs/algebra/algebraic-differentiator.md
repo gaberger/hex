@@ -1,7 +1,7 @@
 # Why an AI Operating System Needs Algebraic Foundations
 
 **Last Updated:** 2026-04-12
-**ADR:** [ADR-2604111229](adrs/ADR-2604111229-algebraic-formalization-of-process-flow.md)
+**ADR:** [ADR-2026-04-11-1229](adrs/ADR-2026-04-11-1229-algebraic-formalization-of-process-flow.md)
 **Ports Sigma-algebra:** [docs/algebra/ports-signature.md](algebra/ports-signature.md)
 
 ---
@@ -230,7 +230,7 @@ Agent lifecycle (state machine):
 - SpacetimeDB's `task_assign` reducer implements CAS — `UPDATE swarm_task SET agent_id = ? WHERE id = ? AND agent_id IS NULL`
 - `hex-nexus/src/coordination/mod.rs` orchestrates task reclamation from dead agents
 
-**What this catches:** Task loss. If agent A crashes while holding task T, the heartbeat timeout fires, A is marked dead, T is returned to the unassigned pool, and another agent can claim it. The CAS prevents double-assignment. These properties are enforced by SpacetimeDB's serialization guarantees and have been tested under multi-agent load. A formal TLA+ model (ADR-2604111229 P4) would prove they hold for *all* interleavings, not just the ones our tests exercised.
+**What this catches:** Task loss. If agent A crashes while holding task T, the heartbeat timeout fires, A is marked dead, T is returned to the unassigned pool, and another agent can claim it. The CAS prevents double-assignment. These properties are enforced by SpacetimeDB's serialization guarantees and have been tested under multi-agent load. A formal TLA+ model (ADR-2026-04-11-1229 P4) would prove they hold for *all* interleavings, not just the ones our tests exercised.
 
 ### Kleisli Pipeline: The Hook Router Is the Composition
 

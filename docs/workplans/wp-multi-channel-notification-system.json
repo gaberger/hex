@@ -1,0 +1,152 @@
+{
+  "adr": "ADR-007",
+  "created_at": "2026-05-11T14:03:27.480437060+00:00",
+  "created_by": "hex-coder",
+  "feature": "Multi-channel notification system with terminal, file log, webhook, and event bus adapters for real-time developer awareness and agent coordination",
+  "id": "wp-multi-channel-notification-system",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain and Ports",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/ports/notification_emit.rs"
+          ],
+          "id": "P0.1",
+          "layer": "ports",
+          "name": "Define INotificationEmitPort interface with notification levels, decision requests, and message structure",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/domain/notification.rs"
+          ],
+          "id": "P0.2",
+          "layer": "domain",
+          "name": "Define notification domain entities: Notification, DecisionRequest, NotificationLevel, StatusUpdate",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary Adapters - Four Notification Channels",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/terminal_notifier.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement TerminalNotifier with ANSI color codes, persistent status bar, and interactive decision prompts",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/file_log_notifier.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Implement FileLogNotifier with JSONL output, 10MB rotation, and .hex/[PERSON_NAME] directory structure",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/webhook_notifier.rs"
+          ],
+          "id": "P1.3",
+          "layer": "secondary",
+          "name": "Implement WebhookNotifier with batched delivery, exponential backoff retry, and credential management",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/event_bus_notifier.rs"
+          ],
+          "id": "P1.4",
+          "layer": "secondary",
+          "name": "Implement EventBusNotifier with in-memory pub/sub, wildcard subscriptions by level/agent/adapter",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "Primary Adapter - Query and Coordination",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/primary/notification_query_adapter.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Implement NotificationQueryAdapter for JSONL file querying, status aggregation, and decision timeout management",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P3",
+      "name": "Use Case Integration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/usecases/execute_swarm.rs",
+            "hex-nexus/src/usecases/handle_agent_blocker.rs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Add notification emission to swarm execution use cases, mapping DomainEvent to Notification at boundary",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/usecases/request_decision.rs"
+          ],
+          "id": "P3.2",
+          "layer": "usecases",
+          "name": "Implement decision request use case with timeout handling and auto-select fallback",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P4",
+      "name": "Integration and Configuration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/main.rs",
+            "hex-nexus/src/config/notification_config.rs"
+          ],
+          "id": "P4.1",
+          "layer": "integration",
+          "name": "Wire all four notifiers through dependency injection in main.rs with runtime configuration for webhook URLs and file paths",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/tests/integration/notification_system_test.rs"
+          ],
+          "id": "P4.2",
+          "layer": "integration",
+          "name": "Add integration tests for notification flow: terminal output, JSONL audit trail, webhook delivery, event bus subscription",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

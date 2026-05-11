@@ -47,7 +47,7 @@ CYAN='\033[0;36m'
 DIM='\033[2m'
 RESET='\033[0m'
 
-# GBNF grammar for code-only output (ADR-2604120202 Phase 2)
+# GBNF grammar for code-only output (ADR-2026-04-12-0202 Phase 2)
 # Forces model to emit ONLY a code block — no prose, no explanation.
 GBNF_CODE_ONLY='root ::= code-line+
 code-line ::= [^\n]* "\n"'

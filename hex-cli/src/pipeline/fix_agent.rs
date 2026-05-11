@@ -34,7 +34,7 @@ pub struct FixTaskInput {
     /// Error outputs from previous failed fix attempts (up to 2, oldest first).
     /// Empty on the first attempt.
     pub prior_errors: Vec<String>,
-    /// hex project ID for architecture fingerprint injection (ADR-2603301200).
+    /// hex project ID for architecture fingerprint injection (ADR-2026-03-30-1200).
     pub project_id: Option<String>,
 }
 
@@ -167,7 +167,7 @@ impl FixAgent {
         let template = PromptTemplate::load(template_name)
             .with_context(|| format!("loading {} prompt template", template_name))?;
         let raw_system = template.render(&context);
-        // Inject architecture fingerprint (ADR-2603301200)
+        // Inject architecture fingerprint (ADR-2026-03-30-1200)
         let system_prompt = if let Some(pid) = &input.project_id {
             match self.client.fetch_fingerprint_text(pid).await {
                 Some(fp) => { debug!(project_id = %pid, "injecting architecture fingerprint into fixer"); format!("{}\n\n{}", fp, raw_system) }

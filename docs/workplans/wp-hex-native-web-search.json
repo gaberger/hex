@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604142100",
+  "adr": "ADR-2026-04-14-2100",
   "created_at": "2026-04-14T21:05:00Z",
   "created_by": "human+agent",
   "description": "Promote web search and web fetch to first-class hex capabilities. Mirrors the inference-broker architecture: WebSearchPort + WebFetchPort traits in hex-core, multiple secondary adapters (Brave, Tavily, SerpAPI, DuckDuckGo) in hex-nexus, REST endpoints, MCP tools, CLI, secret-grant integration, audit trail via a new web_request SpacetimeDB table, and a dashboard panel. Replaces third-party context-mode fetch/search. Unblocks standalone mode web access.",
@@ -506,10 +506,10 @@
               "CLAUDE.md"
             ],
             "matching_commits": [
-              "3dadfe79 feat(doctor): Add embedded-assets-generic guardrail (ADR-2604111142 P4)",
+              "3dadfe79 feat(doctor): Add embedded-assets-generic guardrail (ADR-2026-04-11-1142 P4)",
               "092a0aec feat(inference): wp-tiered-inference-routing P4+P5 — escalation, tracking, integration",
               "91d782aa primary(p5.3): Document tiered routing in CLAUDE.md + README.md",
-              "79531fff chore(finalize): mark ADR-2604050900 accepted, update CLAUDE.md for 7 modules (P6)",
+              "79531fff chore(finalize): mark ADR-2026-04-05-0900 accepted, update CLAUDE.md for 7 modules (P6)",
               "87d0aa36 feat: close P0 workplans — secrets tests, agent-task-sync docs"
             ],
             "symbols_matched": []

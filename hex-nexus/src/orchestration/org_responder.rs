@@ -44,7 +44,7 @@ const RESPONDER_ROLES: &[&str] = &[
 
 /// Persona-flavoured system prompt for replies.
 ///
-/// Per ADR-2605082400, personas are commitment-creators, not artifact-
+/// Per ADR-2026-05-08-2400, personas are commitment-creators, not artifact-
 /// producers. Output is restricted to ONE Confirm: line OR the literal
 /// string "Silent". Anything else is dropped at the parser.
 fn persona_prompt(role: &str) -> String {
@@ -194,7 +194,7 @@ async fn process_role(
             g.mark(role, msg_id);
         }
 
-        // ADR-2605082400 atomic-claim: only the first persona to call
+        // ADR-2026-05-08-2400 atomic-claim: only the first persona to call
         // claim_persona_turn(thread_id) gets to emit a Confirm. Others
         // mark the message read and stay silent — no inference burned.
         // Bilateral DMs (no thread_id) skip the claim and proceed.
@@ -234,7 +234,7 @@ async fn process_role(
             "org_responder: replying to unanswered DM"
         );
 
-        // ADR-2605082500: SOP-enabled personas route to the new typed
+        // ADR-2026-05-08-2500: SOP-enabled personas route to the new typed
         // tool path instead of the free-prose Confirm/Silent contract.
         if crate::orchestration::sop_executor::is_sop_persona(role) {
             let repo_root = std::env::var("HEX_REPO_ROOT")
@@ -306,7 +306,7 @@ async fn process_role(
             continue;
         }
 
-        // ADR-2605082400 strict output filter. Drop anything that isn't
+        // ADR-2026-05-08-2400 strict output filter. Drop anything that isn't
         // exactly a `Confirm: ...` line or the literal `Silent`. Off-
         // contract output is logged + the message marked read so we
         // don't loop on it. The persona is not punished — it just had
@@ -338,7 +338,7 @@ async fn process_role(
         // Inference succeeded — clear any pending ban + failure counter.
         persona.record_success(role).await;
 
-        // ADR-2605082400 Silent sentinel — applies to ALL DMs now, not just
+        // ADR-2026-05-08-2400 Silent sentinel — applies to ALL DMs now, not just
         // board threads. Mark_read + skip send_dm.
         if is_silent_token {
             tracing::info!(role = %role, msg_id, "org_responder: persona chose Silent");
@@ -449,7 +449,7 @@ async fn generate_reply(
     // Augment system prompt with the persona's recent thoughts so it
     // can reference its own prior reasoning ("why did I say X earlier").
     let mut system = persona_prompt(role);
-    // ADR-2605082400 retired the board-meeting PLAN/Amend/Silent protocol.
+    // ADR-2026-05-08-2400 retired the board-meeting PLAN/Amend/Silent protocol.
     // Atomic claim_persona_turn now ensures only one persona inferences per
     // thread; that single persona uses the strict Confirm/Silent prompt
     // from persona_prompt(). is_board is preserved for one minor hint only.
@@ -652,7 +652,7 @@ fn truncate(s: &str, n: usize) -> String {
     format!("{}…", &s[..end])
 }
 
-/// Atomic claim of a thread for a single persona (ADR-2605082400).
+/// Atomic claim of a thread for a single persona (ADR-2026-05-08-2400).
 /// Returns true if THIS role won the claim; false if a peer already
 /// holds it (caller should stay silent + mark_read).
 async fn try_claim_thread(thread_id: &str, role: &str, originating_msg_id: u64) -> bool {

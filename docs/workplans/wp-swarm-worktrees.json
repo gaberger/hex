@@ -1,0 +1,108 @@
+{
+  "adr": "ADR-004",
+  "created_at": "2026-05-11T14:00:21.131934373+00:00",
+  "created_by": "hex-coder",
+  "feature": "Git worktrees for parallel agent isolation in swarm mode",
+  "id": "wp-swarm-worktrees",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain models and port interface",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/domain/worktree.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Define WorktreePath value object with absolutePath and branch",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/ports/worktree.rs"
+          ],
+          "id": "P0.2",
+          "layer": "ports",
+          "name": "Define IWorktreePort with create, merge, cleanup methods",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/domain/merge_result.rs"
+          ],
+          "id": "P0.3",
+          "layer": "domain",
+          "name": "Define MergeResult domain type with conflicts field",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Git worktree adapter implementation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/git_worktree.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement GitWorktreeAdapter with worktree add/remove/prune",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/git_worktree.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Implement rebase-first merge strategy with conflict detection",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "Swarm coordinator integration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/swarm_coordinator.rs"
+          ],
+          "id": "P2.1",
+          "layer": "usecases",
+          "name": "Extend swarm coordinator to map tasks to worktrees with CWD injection",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/swarm_coordinator.rs"
+          ],
+          "id": "P2.2",
+          "layer": "usecases",
+          "name": "Implement dependency-ordered merge orchestration in swarm coordinator",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/main.rs",
+            "hex-nexus/src/orchestration/ruflo_integration.rs"
+          ],
+          "id": "P2.3",
+          "layer": "integration",
+          "name": "Wire GitWorktreeAdapter into Ruflo task lifecycle hooks",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

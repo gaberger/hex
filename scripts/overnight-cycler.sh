@@ -1,5 +1,5 @@
 #!/bin/bash
-# Overnight autonomy cycler — ADR-2605110700 R2/R3/R4 hardened.
+# Overnight autonomy cycler — ADR-2026-05-11-0700 R2/R3/R4 hardened.
 #
 # R1 (hard-gate cargo_check) lives in hex-nexus/src/orchestration/action_executor.rs.
 # R2: per-file commit, not per-cycle atomic — docs ship even if Rust breaks.

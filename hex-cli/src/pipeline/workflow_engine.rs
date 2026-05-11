@@ -1,4 +1,4 @@
-//! YAML-driven workflow engine (ADR-2603240130, steps 5-6).
+//! YAML-driven workflow engine (ADR-2026-03-24-0130, steps 5-6).
 //!
 //! Executes TDD phases and feedback loop gates from agent YAML definitions.
 //! The supervisor delegates to this engine when an agent has a phase-based
@@ -200,7 +200,7 @@ impl WorkflowEngine {
     /// Run a PhaseGate (from a workflow phase) as an executable gate.
     ///
     /// Used by the supervisor to enforce blocking pre_validate gates before
-    /// code generation (ADR-2603240130 S01/S07).
+    /// code generation (ADR-2026-03-24-0130 S01/S07).
     ///
     /// Since PhaseGate has no language-keyed commands, enforcement is done
     /// by running `hex analyze` scoped to required_categories if any are set.

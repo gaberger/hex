@@ -57,5 +57,5 @@ Any daemon, queue, reconciler, or state machine with three or more states and at
 
 ## References
 
-- [ADR-2604111229 — Algebraic formalization of process flow](adrs/ADR-2604111229-algebraic-formalization-of-process-flow.md)
-- [ADR-2604142155 — Sched daemon stuck in_progress](adrs/ADR-2604142155-sched-daemon-stuck-in-progress.md)
+- [ADR-2026-04-11-1229 — Algebraic formalization of process flow](adrs/ADR-2026-04-11-1229-algebraic-formalization-of-process-flow.md)
+- [ADR-2026-04-14-2155 — Sched daemon stuck in_progress](adrs/ADR-2026-04-14-2155-sched-daemon-stuck-in-progress.md)

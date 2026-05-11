@@ -1,4 +1,4 @@
-# ADR-2604170001: Unified hex Bootstrap Command
+# ADR-2026-04-17-0001: Unified hex Bootstrap Command
 
 ## Status
 ACCEPTED
@@ -57,6 +57,6 @@ hex bootstrap [--profile <dev|ci|prod>] [--skip-models] [--force]
 
 ## Related
 
-- ADR-2604112000 (Standalone mode / OllamaInferenceAdapter)
-- ADR-2604150000 (Scheduler daemon / brain)
+- ADR-2026-04-11-2000 (Standalone mode / OllamaInferenceAdapter)
+- ADR-2026-04-15-0000 (Scheduler daemon / brain)
 - `/hex doctor` (diagnostics subcommand)

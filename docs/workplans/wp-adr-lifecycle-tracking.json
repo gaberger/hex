@@ -1,0 +1,153 @@
+{
+  "adr": "ADR-012",
+  "created_at": "2026-05-11T14:05:24.666944117+00:00",
+  "created_by": "hex-coder",
+  "feature": "ADR lifecycle tracking with parsing, AgentDB indexing, and CLI/MCP query tools",
+  "id": "wp-adr-lifecycle-tracking",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain and Port Definitions",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/ports/adr_port.rs"
+          ],
+          "id": "P0.1",
+          "layer": "ports",
+          "name": "Define IADRPort secondary interface for ADR scanning and parsing",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/ports/adr_query_port.rs"
+          ],
+          "id": "P0.2",
+          "layer": "ports",
+          "name": "Define IADRQueryPort primary interface for ADR queries",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/domain/adr.rs"
+          ],
+          "id": "P0.3",
+          "layer": "domain",
+          "name": "Define ADR domain models (ADRMetadata, ADRStatus, etc.)",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "ADR Adapter and AgentDB Integration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/adr_adapter.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement ADRAdapter with filesystem scanning and markdown parsing",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/adr_adapter.rs",
+            "hex-nexus/src/adapters/agentdb_integration.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Integrate ADR indexing into AgentDB via ISwarmPort.patternStore",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "CLI and MCP Tools",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-cli/src/commands/adr.rs",
+            "hex-cli/src/main.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Implement CLI commands: hex adr list, status, search, abandoned",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-mcp/src/tools/adr.rs",
+            "hex-mcp/src/registry.rs"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Implement MCP tools: hex_adr_list, hex_adr_search, hex_adr_abandoned",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P3",
+      "name": "Use Cases and Orchestration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/usecases/adr_search.rs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Implement ADR search use case with AgentDB fallback",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/usecases/adr_abandoned.rs"
+          ],
+          "id": "P3.2",
+          "layer": "usecases",
+          "name": "Implement abandoned ADR detection use case (30-day threshold)",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P4",
+      "name": "Integration and Testing",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/di.rs"
+          ],
+          "id": "P4.1",
+          "layer": "infrastructure",
+          "name": "Wire ADR ports into dependency injection container",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/tests/adr_lifecycle_test.rs"
+          ],
+          "id": "P4.2",
+          "layer": "integration",
+          "name": "Add integration tests for ADR parsing, search, and abandoned detection",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

@@ -1,0 +1,160 @@
+{
+  "adr": "ADR-025",
+  "created_at": "2026-05-11T14:21:28.995109076+00:00",
+  "created_by": "hex-coder",
+  "feature": "SpacetimeDB as distributed state backend with real-time sync",
+  "id": "wp-spacetimedb-state-backend",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Port abstraction and SQLite refactor",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/ports/state_port.rs"
+          ],
+          "id": "P0.1",
+          "layer": "ports",
+          "name": "Define StatePort trait with RL, agent, workplan, and chat methods",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/sqlite_state_adapter.rs",
+            "hex-nexus/src/persistence.rs"
+          ],
+          "id": "P0.2",
+          "layer": "secondary",
+          "name": "Implement SqliteStateAdapter wrapping existing persistence logic",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "SpacetimeDB WASM modules",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "spacetime-modules/Cargo.toml",
+            "spacetime-modules/rl-engine/src/lib.rs",
+            "spacetime-modules/workplan-state/src/lib.rs",
+            "spacetime-modules/agent-registry/src/lib.rs",
+            "spacetime-modules/chat-relay/src/lib.rs",
+            "spacetime-modules/fleet-state/src/lib.rs"
+          ],
+          "id": "P1.1",
+          "layer": "infrastructure",
+          "name": "Create spacetime-modules workspace with rl-engine, workplan-state, agent-registry, chat-relay, fleet-state modules",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "spacetime-modules/rl-engine/src/lib.rs"
+          ],
+          "id": "P1.2",
+          "layer": "infrastructure",
+          "name": "Define tables and reducers in rl-engine module (experiences, q_table, patterns)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "spacetime-modules/workplan-state/src/lib.rs"
+          ],
+          "id": "P1.3",
+          "layer": "infrastructure",
+          "name": "Define tables and reducers in workplan-state module (workplans, phases, tasks)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "spacetime-modules/agent-registry/src/lib.rs"
+          ],
+          "id": "P1.4",
+          "layer": "infrastructure",
+          "name": "Define tables and reducers in agent-registry module (agents, metrics, heartbeats)",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "SpacetimeDB adapter and integration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/spacetime_state_adapter.rs"
+          ],
+          "id": "P2.1",
+          "layer": "secondary",
+          "name": "Implement SpacetimeStateAdapter using spacetimedb-sdk",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/spacetime_state_adapter.rs"
+          ],
+          "id": "P2.2",
+          "layer": "secondary",
+          "name": "Add subscription streams for agents, workplan, and chat in SpacetimeStateAdapter",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-hub/src/main.rs",
+            "hex-hub/src/orchestration/agent_manager.rs"
+          ],
+          "id": "P2.3",
+          "layer": "primary",
+          "name": "Update hex-hub to inject StatePort and subscribe to agent_registry, fleet_state",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/main.rs",
+            "hex-agent/src/task_executor.rs"
+          ],
+          "id": "P2.4",
+          "layer": "primary",
+          "name": "Update hex-agent to use StatePort for RL and workplan operations",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P3",
+      "name": "Deployment and migration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "deployment/spacetimedb-config.toml",
+            "hex-nexus/src/config.rs"
+          ],
+          "id": "P3.1",
+          "layer": "infrastructure",
+          "name": "Add SpacetimeDB deployment configuration and connection logic",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "docs/guides/spacetimedb-migration.md"
+          ],
+          "id": "P3.2",
+          "layer": "infrastructure",
+          "name": "Document migration from SQLite to SpacetimeDB and offline fallback strategy",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

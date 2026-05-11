@@ -1,7 +1,7 @@
 {
   "feature": "spacetimedb-right-sizing",
   "description": "Reduce 19 WASM modules to 7 focused on multi-host dispatch. Migrate inference to procedures. Wire remote agent state to SpacetimeDB.",
-  "adr": "ADR-2604050900",
+  "adr": "ADR-2026-04-05-0900",
   "specs": [
     {
       "id": "S01",
@@ -90,7 +90,7 @@
       "description": "No code imports from deleted spacetime_bindings modules",
       "given": "The workspace after deleting 12 WASM modules",
       "when": "Searching for imports of deleted module bindings (hook_registry, agent_definition_registry, remote_agent_registry, fleet_state, etc.)",
-      "then": "Zero matches in production code (documentation comments referencing ADR-2604050900 are acceptable)",
+      "then": "Zero matches in production code (documentation comments referencing ADR-2026-04-05-0900 are acceptable)",
       "negative_spec": true
     },
     {

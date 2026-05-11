@@ -2,7 +2,7 @@
 #
 # validate-readme.sh — run `hex readme validate` from the repo root.
 #
-# ADR-2604110227: README claim validation.
+# ADR-2026-04-11-0227: README claim validation.
 #
 # Usage:
 #   ./scripts/validate-readme.sh           # advisory mode — exits 0 on warnings

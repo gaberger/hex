@@ -1,0 +1,64 @@
+{
+  "adr": "ADR-018",
+  "created_at": "2026-05-11T14:10:16.651639047+00:00",
+  "created_by": "hex-coder",
+  "feature": "Multi-language build enforcement for Go and Rust in CI and pre-commit",
+  "id": "wp-multi-language-build-enforcement",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Extend IBuildPort and BuildAdapter for multi-language dispatch",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/ports/build.rs"
+          ],
+          "id": "P0.1",
+          "layer": "ports",
+          "name": "Update IBuildPort interface to accept Language parameter",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/build.rs"
+          ],
+          "id": "P0.2",
+          "layer": "secondary",
+          "name": "Implement language-specific compile, lint, test dispatch in BuildAdapter",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Add Rust and Go CI checks and update pre-commit hook",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            ".github/workflows/ci.yml"
+          ],
+          "id": "P1.1",
+          "layer": "infrastructure",
+          "name": "Add rust-check CI job with toolchain setup and cargo commands",
+          "status": "pending"
+        },
+        {
+          "files": [
+            ".husky/pre-commit",
+            "scripts/pre-commit.sh"
+          ],
+          "id": "P1.2",
+          "layer": "infrastructure",
+          "name": "Extend pre-commit hook to detect staged languages and run corresponding checks",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

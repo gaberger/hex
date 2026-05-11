@@ -1,8 +1,8 @@
-# ADR-2604010016: ADR pointing at a non-existent dependency
+# ADR-2026-04-01-0016: ADR pointing at a non-existent dependency
 
 **Status:** Accepted
 **Date:** 2026-04-16
-**Depends on:** ADR-9999999999 (intentionally absent from the corpus)
+**Depends on:** ADR-2099-99-99-9999 (intentionally absent from the corpus)
 **Drivers:** Positive case for `DanglingDependency`. The detector walks the corpus, sees the cited ID is not present, and flags.
 
 ## Context

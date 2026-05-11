@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604170001",
+  "adr": "ADR-2026-04-17-0001",
   "created_at": "2026-04-17T00:00:00Z",
   "description": "Single command to orchestrate full hex setup: verify prerequisites, start services in parallel, load models, configure project, validate. Eliminates manual service juggling and unclear setup steps.",
   "name": "wp-hex-bootstrap",
@@ -98,7 +98,7 @@
       "number": 4,
       "tasks": [
         {
-          "description": "struct ModelLoader with methods:\n- load_tier_models(tier_defaults) → pull each model via `ollama pull <model>`\n- Show progress: model name, % downloaded, ETA\n- Skip if --skip-models or if already present (ollama show <model>)\n- Default tiers from ADR-2604120202: qwen3:4b (T1), qwen2.5-coder:32b (T2), devstral-small-2:24b (T2.5)\n- Return ModelStatus { name, loaded, size_mb, time_s }",
+          "description": "struct ModelLoader with methods:\n- load_tier_models(tier_defaults) → pull each model via `ollama pull <model>`\n- Show progress: model name, % downloaded, ETA\n- Skip if --skip-models or if already present (ollama show <model>)\n- Default tiers from ADR-2026-04-12-0202: qwen3:4b (T1), qwen2.5-coder:32b (T2), devstral-small-2:24b (T2.5)\n- Return ModelStatus { name, loaded, size_mb, time_s }",
           "files": [
             "hex-cli/src/commands/bootstrap/models.rs"
           ],
@@ -198,7 +198,7 @@
           "title": "Test error handling"
         },
         {
-          "description": "git add hex-cli/src/commands/bootstrap/ hex-cli/src/commands/mod.rs\ngit commit -m 'feat: add hex bootstrap command (ADR-2604170001)'\n\nAdd to docs/BOOTSTRAP.md:\n- Usage: hex bootstrap [--profile dev|ci|prod] [--dry-run]\n- Profiles and what they do\n- Troubleshooting (common errors and fixes)",
+          "description": "git add hex-cli/src/commands/bootstrap/ hex-cli/src/commands/mod.rs\ngit commit -m 'feat: add hex bootstrap command (ADR-2026-04-17-0001)'\n\nAdd to docs/BOOTSTRAP.md:\n- Usage: hex bootstrap [--profile dev|ci|prod] [--dry-run]\n- Profiles and what they do\n- Troubleshooting (common errors and fixes)",
           "files": [
             "hex-cli/src/commands/bootstrap/mod.rs"
           ],

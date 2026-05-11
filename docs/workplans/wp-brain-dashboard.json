@@ -25,7 +25,7 @@
         },
         {
           "id": "M1.2",
-          "title": "Frontend: BrainDecisions.tsx view at hex-nexus/assets/src/components/views/. Solid component, fetches /api/decisions on mount + every 30s, groups by severity (CRITICAL > HIGH > MEDIUM), shows count badge in nav. One-click actions: 'resolve' (POST /api/decisions/{id} per ADR-2604131500), 'navigate' (deep-link to the artifact), 'dismiss' (operator says not actionable now).",
+          "title": "Frontend: BrainDecisions.tsx view at hex-nexus/assets/src/components/views/. Solid component, fetches /api/decisions on mount + every 30s, groups by severity (CRITICAL > HIGH > MEDIUM), shows count badge in nav. One-click actions: 'resolve' (POST /api/decisions/{id} per ADR-2026-04-13-1500), 'navigate' (deep-link to the artifact), 'dismiss' (operator says not actionable now).",
           "status": "pending",
           "strategy_hint": "codegen",
           "files": [

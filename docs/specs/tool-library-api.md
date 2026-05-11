@@ -1,6 +1,6 @@
 # Tool library API spec — first wave
 
-ADR-2605082500. Each tool is a Rust function with typed input/output that
+ADR-2026-05-08-2500. Each tool is a Rust function with typed input/output that
 also exports a JSON schema for Anthropic function-calling. The `Tool`
 trait + `ToolRegistry` live in `hex-nexus/src/tools/`.
 

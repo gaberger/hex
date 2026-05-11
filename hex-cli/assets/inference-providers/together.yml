@@ -1,4 +1,4 @@
-# Together.ai — Free-tier cloud inference (ADR-2604052125)
+# Together.ai — Free-tier cloud inference (ADR-2026-04-05-2125)
 # $25 signup credit, 2x serverless speed. Good for code generation.
 # Credit-based free tier (not unlimited).
 name: together

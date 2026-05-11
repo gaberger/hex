@@ -105,7 +105,7 @@ pub fn parse(reply: &str) -> Vec<ExtractedCommitment> {
         let lower = lt.to_ascii_lowercase();
         if lower.starts_with("confirm:") || lower.starts_with("confirm ") {
             let body = lt.split_once(':').map(|(_, r)| r.trim()).unwrap_or(lt);
-            // Split out the success: clause if present (per ADR-2605082400 contract).
+            // Split out the success: clause if present (per ADR-2026-05-08-2400 contract).
             //   "Confirm: I will X by Y — success: docs/specs/foo.md"
             // The dash before success can be `—`, `-`, `--`, or just whitespace.
             let (body_no_success, success_artifact) = split_success_clause(body);

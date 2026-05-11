@@ -1,0 +1,65 @@
+{
+  "adr": "ADR-001",
+  "created_at": "2026-05-10T16:29:39.064364042+00:00",
+  "created_by": "hex-coder",
+  "feature": "Establish Hexagonal Architecture as foundational pattern with domain, ports, and adapters",
+  "id": "wp-hexagonal-architecture-foundational",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Documentation and Foundation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "docs/adrs/ADR-001-hexagonal-architecture.md"
+          ],
+          "id": "P0.1",
+          "layer": "infrastructure",
+          "name": "Capture ADR-001 hexagonal architecture decision",
+          "status": "pending"
+        },
+        {
+          "files": [
+            ".eslintrc.js",
+            "lint-rules/domain-purity.js"
+          ],
+          "id": "P0.2",
+          "layer": "infrastructure",
+          "name": "Create domain layer lint rules enforcing zero external dependencies",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "lint-rules/adapter-isolation.js"
+          ],
+          "id": "P0.3",
+          "layer": "infrastructure",
+          "name": "Create adapter layer lint rules enforcing ports-only imports",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "CI Enforcement",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            ".github/workflows/dependency-check.yml",
+            "scripts/check-dependencies.sh"
+          ],
+          "id": "P1.1",
+          "layer": "integration",
+          "name": "Add dependency direction check to CI pipeline",
+          "status": "done"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

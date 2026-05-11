@@ -202,7 +202,17 @@ impl RemoteAgentOrchestrator {
             agent_id = dead_agent_id,
             "Handling agent death — reassigning tasks"
         );
-        // For now, just log and deregister servers.
+        
+        // Query servers before deregistering to count impacted capacity
+        let servers = self.registry
+            .list_inference_servers(None)
+            .await?;
+        let impacted_count = servers
+            .iter()
+            .filter(|s| s.agent_id == dead_agent_id)
+            .count() as u32;
+        
+        // For now, deregister servers and mark agent dead.
         // Full task reassignment requires integration with HexFlo task tracking.
         self.registry
             .deregister_agent_servers(dead_agent_id)
@@ -210,7 +220,14 @@ impl RemoteAgentOrchestrator {
         self.registry
             .update_agent_status(dead_agent_id, RemoteAgentStatus::Dead)
             .await?;
-        Ok(0) // TODO: return count of reassigned tasks
+            
+        tracing::info!(
+            agent_id = dead_agent_id,
+            impacted_servers = impacted_count,
+            "Agent death handled — deregistered servers"
+        );
+        
+        Ok(impacted_count)
     }
 }
 

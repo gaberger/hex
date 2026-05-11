@@ -1,9 +1,9 @@
-# ADR-2605081126: Worktree-Mandatory Development with Merge-Team Safety Gate
+# ADR-2026-05-08-1126: Worktree-Mandatory Development with Merge-Team Safety Gate
 
 **Status:** Accepted
 **Date:** 2026-05-08
 **Drivers:** 2026-05-07 hijacker incident — background `hex-agent daemon` processes overwrote `hex-nexus/src/lib.rs` (937 lines → 8 lines), `Cargo.toml`, `Cargo.lock`, and `hex-nexus/Cargo.toml`, plus dumped 30+ rogue `.rs` files into `src/bin/` and `hex-nexus/src/bin/` while the operator was working in the same tree. ~3 hours lost to repeated git checkouts, manual cleanup, and rebuild thrash. The 7-phase feature lifecycle, `integrator` agent, and `validation-judge` already exist but were bypassed because the daemons wrote directly to trunk.
-**Supersedes:** Extends ADR-004-swarm-worktrees and ADR-2604131930 (worktree-merge-not-checkout).
+**Supersedes:** Extends ADR-004-swarm-worktrees and ADR-2026-04-13-1930 (worktree-merge-not-checkout).
 
 ## Context
 
@@ -122,7 +122,7 @@ New CLI: `hex worktree status` (pending merges + vote tallies + judge verdict), 
 ## References
 
 - ADR-004-swarm-worktrees — original swarm + worktree decision; this ADR makes the worktree path mandatory rather than recommended.
-- ADR-2604131930 — worktree-merge-not-checkout; this ADR adds the gate that fires `hex worktree merge`.
+- ADR-2026-04-13-1930 — worktree-merge-not-checkout; this ADR adds the gate that fires `hex worktree merge`.
 - Memory: `feedback_workplan_overwrite_hazard.md` — companion observation: `docs/workplans/` is a live execution surface.
 - Memory: `project_main_branch_concurrency.md` — the existing problem this ADR aims to eliminate.
 - 2026-05-07 incident transcript (this session) — original observation that triggered the ADR.
