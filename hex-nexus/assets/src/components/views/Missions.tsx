@@ -546,6 +546,7 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
   const [chatInput, setChatInput] = createSignal("");
   const [chatPersona, setChatPersona] = createSignal<"engineering-lead" | "cto" | "cpo" | "coo">("engineering-lead");
   const [chatSending, setChatSending] = createSignal(false);
+  const [showHeartbeats, setShowHeartbeats] = createSignal(false);
   let timer: ReturnType<typeof setInterval> | null = null;
   let currentPaneRef: HTMLDivElement | undefined;
   let featuresPaneRef: HTMLDivElement | undefined;
@@ -606,10 +607,23 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
     }
   };
 
+  // Heartbeat tools that fire every few seconds and clog the log with noise.
+  // They aren't mission-relevant — we hide them unless the operator opts in.
+  const HEARTBEAT_TOOLS = new Set([
+    "brain_tick", "adr_doctor_tick", "improver_tick",
+    "supervisor_tick", "persona_tick", "session_heartbeat",
+    "resource_observation", "config_sync",
+  ]);
+
   const fetchEvents = async () => {
     try {
-      const r: any = await restClient.get("/api/events?limit=50");
-      setEvents(r.events ?? []);
+      // Fetch a wider window so post-filter we still have ~50 meaningful rows.
+      const r: any = await restClient.get("/api/events?limit=200");
+      const raw: EventRow[] = r.events ?? [];
+      const filtered = showHeartbeats()
+        ? raw
+        : raw.filter((e) => !HEARTBEAT_TOOLS.has(e.tool_name ?? ""));
+      setEvents(filtered.slice(0, 80));
     } catch {}
   };
 
@@ -666,6 +680,9 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
     }
     return fs.find((f) => f.status === "in_progress")
       ?? fs.find((f) => f.status === "planned" || f.status === "pending")
+      // Fallback: first not-done feature so the operator always sees something
+      ?? fs.find((f) => f.status !== "done")
+      ?? fs[0]
       ?? null;
   });
 
@@ -926,7 +943,11 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
           }>
             {(f) => (
               <div class="p-4 overflow-y-auto flex-1 text-sm">
-                <div class="text-base font-semibold text-gray-100 mb-3 leading-snug">{f().name}</div>
+                <div class="text-base font-semibold text-gray-100 mb-3 leading-snug">
+                  {(f().name || "").trim()
+                    || (f().files && f().files![0])
+                    || `(task ${f().id})`}
+                </div>
                 <div class="space-y-2 text-xs">
                   <div>
                     <span class="text-gray-500 mr-2">status</span>
@@ -980,33 +1001,71 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
               <span class="font-mono text-gray-400">
                 {counts().done}/{counts().total}
                 <Show when={counts().failed > 0}><span class="text-red-400 ml-2">{counts().failed} failed</span></Show>
+                <Show when={counts().in_progress > 0}><span class="text-orange-400 ml-2">{counts().in_progress} in flight</span></Show>
               </span>
             </div>
-            <div class="overflow-y-auto flex-1 divide-y divide-gray-850">
+            <div class="overflow-y-auto flex-1">
               <Show when={features().length > 0} fallback={
                 <div class="p-3 text-xs text-gray-600 italic">No features yet — this ADR has no workplan.</div>
               }>
-                <For each={features()}>
-                  {(f) => {
-                    const key = `${f.workplanId}:${f.id}`;
-                    const isCurrent = () => {
-                      const c = currentFeature();
-                      return c && `${c.workplanId}:${c.id}` === key;
-                    };
-                    return (
-                      <div
-                        onClick={() => setSelectedFeatureId(key)}
-                        class={`px-3 py-1.5 flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-850 ${
-                          isCurrent() ? "bg-orange-950/40" : ""
-                        }`}
-                      >
-                        <StatusDot status={f.status} />
-                        <span class={`truncate ${isCurrent() ? "text-orange-200" : "text-gray-300"}`}>{f.name}</span>
-                        <span class="ml-auto text-[10px] text-gray-600 font-mono shrink-0">M{f.phaseIdx + 1}</span>
-                      </div>
-                    );
-                  }}
-                </For>
+                <table class="w-full text-sm">
+                  <thead class="sticky top-0 bg-gray-950 text-[10px] uppercase tracking-wide text-gray-600">
+                    <tr>
+                      <th class="px-2 py-1 text-left w-6"></th>
+                      <th class="px-2 py-1 text-left w-16 font-medium">ID</th>
+                      <th class="px-2 py-1 text-left font-medium">Feature</th>
+                      <th class="px-2 py-1 text-left w-24 font-medium">Layer</th>
+                      <th class="px-2 py-1 text-right w-10 font-medium">M</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-850">
+                    <For each={features()}>
+                      {(f) => {
+                        const key = `${f.workplanId}:${f.id}`;
+                        const isCurrent = () => {
+                          const c = currentFeature();
+                          return c && `${c.workplanId}:${c.id}` === key;
+                        };
+                        // Tasks sometimes have no name field — fall back to first file
+                        // or to the task id so the row is never blank.
+                        const display = () => {
+                          const n = (f.name || "").trim();
+                          if (n) return n;
+                          if (f.files && f.files.length > 0) return f.files[0];
+                          return `(task ${f.id})`;
+                        };
+                        return (
+                          <tr
+                            onClick={() => setSelectedFeatureId(key)}
+                            class={`cursor-pointer hover:bg-gray-850 ${isCurrent() ? "bg-orange-950/40" : ""}`}
+                          >
+                            <td class="px-2 py-1 align-top">
+                              <StatusDot status={f.status} />
+                            </td>
+                            <td class="px-2 py-1 align-top font-mono text-[11px] text-gray-500 whitespace-nowrap">
+                              {f.id}
+                            </td>
+                            <td class="px-2 py-1 align-top">
+                              <div class={`truncate ${isCurrent() ? "text-orange-200" : "text-gray-200"}`}
+                                   title={display()}>
+                                {display()}
+                              </div>
+                              <Show when={!f.name && f.files && f.files.length > 1}>
+                                <div class="text-[10px] text-gray-600 font-mono">+{f.files!.length - 1} more file{f.files!.length - 1 > 1 ? "s" : ""}</div>
+                              </Show>
+                            </td>
+                            <td class="px-2 py-1 align-top text-[11px] text-gray-500 truncate" title={f.layer}>
+                              {f.layer || "—"}
+                            </td>
+                            <td class="px-2 py-1 align-top text-right text-[10px] text-gray-600 font-mono whitespace-nowrap">
+                              M{f.phaseIdx + 1}
+                            </td>
+                          </tr>
+                        );
+                      }}
+                    </For>
+                  </tbody>
+                </table>
               </Show>
             </div>
           </div>
@@ -1015,7 +1074,20 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
             class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden flex flex-col min-h-0 flex-1 transition-shadow">
             <div class="px-4 py-2 border-b border-gray-800 flex items-center justify-between text-xs">
               <span class="uppercase tracking-wide text-gray-500">Progress Log</span>
-              <span class="font-mono text-gray-600">{events().length} events</span>
+              <div class="flex items-center gap-2">
+                <button
+                  onClick={() => { setShowHeartbeats(!showHeartbeats()); fetchEvents(); }}
+                  class={`text-[10px] px-2 py-0.5 rounded border ${
+                    showHeartbeats()
+                      ? "bg-gray-800 text-gray-300 border-gray-700"
+                      : "bg-gray-950 text-gray-600 border-gray-800 hover:text-gray-400"
+                  }`}
+                  title="Show / hide heartbeat ticks (brain_tick, adr_doctor_tick, etc.)"
+                >
+                  {showHeartbeats() ? "noise on" : "noise off"}
+                </button>
+                <span class="font-mono text-gray-600">{events().length} events</span>
+              </div>
             </div>
             <div class="overflow-y-auto flex-1 divide-y divide-gray-850 font-mono text-xs">
               <Show when={events().length > 0} fallback={
