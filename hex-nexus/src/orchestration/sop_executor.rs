@@ -568,7 +568,9 @@ async fn reason_via_openrouter(
         if !status.is_success() {
             let body_str = serde_json::to_string(&body).unwrap_or_default().to_lowercase();
             let is_content_filter = status.as_u16() == 403 && (body_str.contains("content filter") || body_str.contains("redaction"));
-            if is_content_filter {
+            // OR 402 = "out of credits" — fall back to local Ollama instead of failing the team.
+            let is_payment_required = status.as_u16() == 402;
+            if is_content_filter || is_payment_required {
                 tracing::warn!(
                     role = %role, intent = %intent,
                     "openrouter content filter blocked REASON phase; retrying via local ollama"
