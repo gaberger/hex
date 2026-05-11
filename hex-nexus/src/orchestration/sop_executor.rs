@@ -824,7 +824,13 @@ async fn reason_via_ollama_fallback(
             .ok_or_else(|| "ollama: empty choices".to_string())?;
         let message = choice.get("message").cloned().unwrap_or(Value::Null);
         let assistant_content = message.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let tool_calls = message.get("tool_calls").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let mut tool_calls = message.get("tool_calls").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+        // Same small-model fallback as openrouter path: Ollama models also
+        // often emit tool calls as literal JSON in content. Parse + synthesise.
+        if tool_calls.is_empty() && !assistant_content.is_empty() {
+            tool_calls = parse_text_tool_calls(&assistant_content);
+        }
 
         messages.push(json!({
             "role": "assistant",
