@@ -457,9 +457,10 @@ async fn process_role(
         let is_board = thread_id.as_deref().map(|t| t.starts_with("board-")).unwrap_or(false);
         // Operator-style asks (questions, "what/how/status/explain/…") use a
         // free-form conversational prompt and skip the strict Confirm/Silent
-        // parser. Without this, every Mission Control chat-panel ask was
-        // dropped as off-contract and the operator saw silence.
-        let chat_mode = !is_board && is_conversational(&content);
+        // parser. Applies to board broadcasts too — a "status check" sent to
+        // all execs is still informational, not a directive. Without this,
+        // exec replies to status asks were dropped as off-contract.
+        let chat_mode = is_conversational(&content);
         // Acquire a concurrency slot before firing inference so we don't
         // queue 9 simultaneous calls at a small local model.
         let _permit = match sem.clone().acquire_owned().await {
