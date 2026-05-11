@@ -53,6 +53,16 @@
           "layer": "secondary",
           "name": "False-positive filtering: exclude docs/examples/, test fixtures, commented-out patterns. Surface high-confidence leaks only.",
           "status": "done"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/security_sweep.rs",
+            "docs/specs/security-sweep-YYYY-MM-DD.md"
+          ],
+          "id": "P1.3",
+          "layer": "secondary",
+          "name": "cargo audit integration: run dep_audit(severity_min='medium'), parse vulnerability findings (advisory_id, severity, package, version, url), cross-check /tmp/vuln-exceptions.txt (known-accepted vulns), write findings to docs/specs/security-sweep-<date>.md § Dependency Vulnerabilities",
+          "status": "pending"
         }
       ],
       "tier": 1

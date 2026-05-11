@@ -40,7 +40,7 @@ impl CliAdapter {
         }
 
         // Pipe mode: stdin is not a TTY — read entire stdin as a single message.
-        if !atty::is(atty::Stream::Stdin) {
+        if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
             let buf = io::read_to_string(io::stdin())?;
             let buf = buf.trim().to_string();
             if !buf.is_empty() {
