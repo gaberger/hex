@@ -205,10 +205,37 @@ async fn workplan_files() -> Json<serde_json::Value> {
                         })
                         .unwrap_or(0);
 
+                    // The schema-required ADR linkage is the singular `adr` field
+                    // (pattern ^ADR-\d+). `related_adrs` is a legacy array some
+                    // older workplans carry. Return both, but normalize `adrs`
+                    // as a flat array merging both — that's what the Missions
+                    // view consumes.
+                    let mut adrs: Vec<String> = Vec::new();
+                    if let Some(a) = parsed.get("adr").and_then(|v| v.as_str()) {
+                        if !a.is_empty() {
+                            adrs.push(a.to_string());
+                        }
+                    }
+                    if let Some(arr) = parsed.get("related_adrs").and_then(|v| v.as_array()) {
+                        for v in arr {
+                            if let Some(s) = v.as_str() {
+                                if !s.is_empty() && !adrs.contains(&s.to_string()) {
+                                    adrs.push(s.to_string());
+                                }
+                            }
+                        }
+                    }
+                    let title_or_feature = parsed.get("title").and_then(|v| v.as_str())
+                        .or_else(|| parsed.get("feature").and_then(|v| v.as_str()))
+                        .unwrap_or("");
                     workplans.push(json!({
                         "file": filename,
                         "id": parsed.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                        "title": parsed.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+                        "title": title_or_feature,
+                        "feature": parsed.get("feature").and_then(|v| v.as_str()).unwrap_or(""),
+                        "adr": parsed.get("adr").and_then(|v| v.as_str()).unwrap_or(""),
+                        "adrs": adrs,
+                        "status": parsed.get("status").and_then(|v| v.as_str()).unwrap_or(""),
                         "priority": parsed.get("priority").and_then(|v| v.as_str()).unwrap_or(""),
                         "created_at": parsed.get("created_at").and_then(|v| v.as_str()).unwrap_or(""),
                         "phases": phase_count,
