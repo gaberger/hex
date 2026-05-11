@@ -26,6 +26,8 @@ export type Route =
   | { page: "org-comms" }
   | { page: "team" }
   | { page: "workplans" }
+  | { page: "missions" }
+  | { page: "mission-detail"; missionId: string }
   // ADR-2605081126 surfaces (merge gate, personas, thoughts)
   | { page: "merge-gate" }
   | { page: "persona-health" }
@@ -264,6 +266,10 @@ function routeToHash(r: Route): string {
       return "#/commitments";
     case "mission-control":
       return "#/mission-control";
+    case "missions":
+      return "#/missions";
+    case "mission-detail":
+      return `#/missions/${r.missionId}`;
     case "project":
       return `#/project/${r.projectId}`;
     case "project-agents":
@@ -324,7 +330,11 @@ function hashToRoute(hash: string): Route {
   if (parts[0] === "thoughts") return { page: "thoughts" };
   if (parts[0] === "resources") return { page: "resources" };
   if (parts[0] === "commitments") return { page: "commitments" };
-  if (parts[0] === "mission-control" || parts[0] === "mission") return { page: "mission-control" };
+  if (parts[0] === "mission-control") return { page: "mission-control" };
+  if (parts[0] === "missions") {
+    if (parts[1]) return { page: "mission-detail", missionId: decodeURIComponent(parts[1]) };
+    return { page: "missions" };
+  }
 
   // Project-scoped routes: /project/:id/...
   if (parts[0] === "project" && parts[1]) {

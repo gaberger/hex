@@ -56,7 +56,7 @@ pub mod mission_control;
 pub mod resources;
 // pub mod workplan; // removed stub module
 
-use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
+use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit, http::StatusCode};
 use axum::response::{IntoResponse, Redirect};
 use tower_http::cors::{CorsLayer, AllowOrigin};
 use http::{HeaderValue, Method};
@@ -240,6 +240,64 @@ async fn workplan_files() -> Json<serde_json::Value> {
     }
 
     Json(json!({ "ok": false, "count": 0, "workplans": [], "error": "docs/workplans/ not found" }))
+}
+
+/// GET /api/workplans/{id_or_file} — return the full JSON of one workplan file on disk.
+/// Accepts either the `id` field or the filename (with or without .json extension).
+/// Used by the Missions dashboard view for drill-in detail.
+async fn workplan_file_detail(
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let roots = [
+        std::env::current_dir().ok(),
+        std::env::var("HEX_PROJECT_ROOT").ok().map(std::path::PathBuf::from),
+    ];
+
+    // Strip .json suffix if caller included it; we'll re-add as needed.
+    let bare = name.trim_end_matches(".json");
+
+    for root in roots.iter().flatten() {
+        let dir = root.join("docs/workplans");
+        if !dir.is_dir() {
+            continue;
+        }
+
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let filename = entry.file_name().to_string_lossy().to_string();
+            let filename_bare = filename.trim_end_matches(".json").to_string();
+
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let id_match = parsed
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s == bare)
+                        .unwrap_or(false);
+                    if id_match || filename_bare == bare {
+                        return (StatusCode::OK, Json(json!({
+                            "ok": true,
+                            "file": filename,
+                            "workplan": parsed,
+                        })));
+                    }
+                }
+            }
+        }
+    }
+
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({ "ok": false, "error": format!("workplan '{}' not found on disk", name) })),
+    )
 }
 
 /// GET /api/projects/{id}/workplans — list workplan files from a project's docs/workplans/ directory.
@@ -728,6 +786,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/tools", get(tools_registry))
         // Workplan file definitions — reads docs/workplans/*.json from disk
         .route("/api/workplans", get(workplan_files))
+        .route("/api/workplans/{name}", get(workplan_file_detail))
         // Project-scoped workplan files (dashboard passes ?root= as fallback)
         .route("/api/projects/{id}/workplans", get(project_workplan_files))
         .route("/api/projects/{id}/report", get(projects::project_report))
