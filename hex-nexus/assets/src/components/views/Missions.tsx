@@ -662,14 +662,44 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
 
   const fetchChat = async () => {
     try {
-      const r: any = await restClient.get("/api/org/messages?limit=80");
+      const r: any = await restClient.get("/api/org/messages?limit=200");
       const all: OrgMessage[] = r.messages ?? [];
       const idLow = props.missionId.toLowerCase();
-      const filtered = all.filter((m) => {
+      const persona = chatPersona();
+
+      // Find the earliest CEO ↔ persona message that mentions this mission.
+      // Everything after that (in either direction) is part of this conversation,
+      // even when the persona's reply doesn't echo the mission id.
+      let firstId: number | null = null;
+      // Messages are returned DESC by id; iterate from oldest to newest.
+      const oldestFirst = [...all].sort((a, b) => a.id - b.id);
+      for (const m of oldestFirst) {
         const c = (m.content || "").toLowerCase();
-        return c.includes(idLow);
-      });
-      filtered.sort((a, b) => a.id - b.id);
+        const dmInvolved =
+          (m.from === "ceo" && m.to === persona) ||
+          (m.from === persona && m.to === "ceo");
+        if (dmInvolved && c.includes(idLow)) {
+          firstId = m.id;
+          break;
+        }
+      }
+
+      let filtered: OrgMessage[];
+      if (firstId !== null) {
+        filtered = oldestFirst.filter((m) => {
+          if (m.id < firstId!) return false;
+          const dm = (m.from === "ceo" && m.to === persona) ||
+                     (m.from === persona && m.to === "ceo");
+          const mentionsMission = (m.content || "").toLowerCase().includes(idLow);
+          return dm || mentionsMission;
+        });
+      } else {
+        // No DM with this mission yet — show only messages that mention it.
+        filtered = oldestFirst.filter((m) =>
+          (m.content || "").toLowerCase().includes(idLow),
+        );
+      }
+
       setChatMessages(filtered.slice(-30));
     } catch {}
   };

@@ -33,6 +33,11 @@ const THOUGHT_MAX_TOKENS: u32 = 96;
 
 /// Roles the responder will reply on behalf of. Matches the personas under
 /// `hex-cli/assets/agents/hex/hex/`. Add a role here to enable auto-replies.
+///
+/// Lead-tier roles (engineering-lead, product-lead, sre-lead) were added
+/// 2026-05-11 so the dashboard "Orchestrator" chat panel — which defaults
+/// to @engineering-lead — actually gets replies. Without this, DMs to lead
+/// personas landed in STDB but nothing picked them up.
 const RESPONDER_ROLES: &[&str] = &[
     "cto",
     "cpo",
@@ -40,7 +45,78 @@ const RESPONDER_ROLES: &[&str] = &[
     "ciso",
     "chief-visionary",
     "chief-architect",
+    "engineering-lead",
+    "product-lead",
+    "sre-lead",
 ];
+
+fn role_title(role: &str) -> &'static str {
+    match role {
+        "cto" => "Chief Technology Officer",
+        "cpo" => "Chief Product Officer",
+        "coo" => "Chief Operating Officer",
+        "ciso" => "Chief Information Security Officer",
+        "chief-visionary" => "Chief Visionary",
+        "chief-architect" => "Chief Architect",
+        "engineering-lead" => "Engineering Lead",
+        "product-lead" => "Product Lead",
+        "sre-lead" => "SRE Lead",
+        "sre-engineer" => "SRE Engineer",
+        _ => "Executive",
+    }
+}
+
+/// Detect operator-style conversational asks (questions, status requests,
+/// explain/summary). When matched, the responder uses a free-form prompt
+/// and bypasses the strict Confirm/Silent parser. This makes the Mission
+/// Control "Orchestrator" chat panel actually conversational instead of
+/// dropping every reply as off-contract.
+fn is_conversational(content: &str) -> bool {
+    // Strip leading @mention tokens so we look at the body.
+    let trimmed = content.trim_start();
+    let body = trimmed
+        .strip_prefix('@')
+        .map(|s| s.trim_start_matches(|c: char| c.is_alphanumeric() || c == '-' || c == '_'))
+        .unwrap_or(trimmed)
+        .trim_start();
+    if body.is_empty() {
+        return false;
+    }
+    if body.ends_with('?') || body.starts_with('?') {
+        return true;
+    }
+    let lower = body.to_ascii_lowercase();
+    const Q_PREFIXES: &[&str] = &[
+        "what ", "how ", "why ", "where ", "who ", "when ", "which ",
+        "is ", "are ", "can ", "could ", "does ", "do ", "did ",
+        "tell me", "explain", "give me", "show me", "summary",
+        "status", "describe", "list ",
+    ];
+    Q_PREFIXES.iter().any(|p| lower.starts_with(p))
+}
+
+/// Free-form conversational prompt for operator-originated chat asks.
+/// No Confirm/Silent contract — the persona answers directly.
+fn conversational_prompt(role: &str) -> String {
+    let title = role_title(role);
+    format!(
+        "You are the {title} ({role}) in a hexagonal AIOS organization.\n\n\
+         The operator (CEO) is asking you a question via the Mission Control \
+         chat panel. This is a CONVERSATION, not a directive — answer directly.\n\n\
+         === OUTPUT GUIDELINES ===\n\n\
+         - Give a clear, concrete answer in 1–4 short paragraphs.\n\
+         - Ground every claim in real artifacts: file paths under docs/, src/, \
+           tests/, hex-nexus/, hex-cli/, spacetime-modules/; ADR IDs in the form \
+           ADR-YYYY-MM-DD-HHMM or ADR-NNN; commit SHAs; dashboard hashroutes \
+           (e.g. #/merge-gate, #/missions, #/resources).\n\
+         - If you don't know, say so plainly. Suggest who would (peer name) or \
+           where the answer lives (file path, log, dashboard, STDB table).\n\
+         - NO fabrication. NO claims about systems you haven't grounded against.\n\
+         - Be brief. Be specific. Bullet points fine.\n\
+         - DO NOT use the `Confirm:` format — that's for directives, not chats. \
+           If the operator wants you to commit to action, they'll ask explicitly."
+    )
+}
 
 /// Persona-flavoured system prompt for replies.
 ///
@@ -291,7 +367,12 @@ async fn process_role(
         let thoughts = persona.recent_thoughts(role, 5).await;
 
         let is_board = thread_id.as_deref().map(|t| t.starts_with("board-")).unwrap_or(false);
-        let reply = match generate_reply(http, inference_url, role, &content, &history, &thoughts, is_board).await {
+        // Operator-style asks (questions, "what/how/status/explain/…") use a
+        // free-form conversational prompt and skip the strict Confirm/Silent
+        // parser. Without this, every Mission Control chat-panel ask was
+        // dropped as off-contract and the operator saw silence.
+        let chat_mode = !is_board && is_conversational(&content);
+        let reply = match generate_reply(http, inference_url, role, &content, &history, &thoughts, is_board, chat_mode).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(role = %role, msg_id, error = %e, "org_responder: inference failed; will retry");
@@ -306,11 +387,9 @@ async fn process_role(
             continue;
         }
 
-        // ADR-2026-05-08-2400 strict output filter. Drop anything that isn't
-        // exactly a `Confirm: ...` line or the literal `Silent`. Off-
-        // contract output is logged + the message marked read so we
-        // don't loop on it. The persona is not punished — it just had
-        // nothing valid to say.
+        // ADR-2026-05-08-2400 strict output filter applies ONLY to commitment-
+        // mode replies. Conversational replies (chat_mode=true) bypass the
+        // parser and ship verbatim.
         let trimmed_reply = reply.trim();
         let first = trimmed_reply
             .lines()
@@ -321,7 +400,7 @@ async fn process_role(
         let is_silent_token = trimmed_reply.eq_ignore_ascii_case("silent")
             || trimmed_reply.eq_ignore_ascii_case("silent.")
             || first.to_ascii_lowercase().starts_with("silent");
-        if !is_confirm && !is_silent_token {
+        if !chat_mode && !is_confirm && !is_silent_token {
             tracing::warn!(
                 role = %role,
                 msg_id,
@@ -338,9 +417,10 @@ async fn process_role(
         // Inference succeeded — clear any pending ban + failure counter.
         persona.record_success(role).await;
 
-        // ADR-2026-05-08-2400 Silent sentinel — applies to ALL DMs now, not just
-        // board threads. Mark_read + skip send_dm.
-        if is_silent_token {
+        // ADR-2026-05-08-2400 Silent sentinel — applies to commitment-mode
+        // DMs only. Conversational replies ship verbatim even if they happen
+        // to start with the word "silent".
+        if is_silent_token && !chat_mode {
             tracing::info!(role = %role, msg_id, "org_responder: persona chose Silent");
             if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
                 tracing::warn!(role = %role, msg_id, error = %e, "org_responder: mark_read after silent failed");
@@ -429,6 +509,7 @@ async fn generate_reply(
     history: &[ChatTurn],
     thoughts: &[(String, String)],
     is_board: bool,
+    chat_mode: bool,
 ) -> Result<String, String> {
     // Assemble messages array: [history…, current user turn].
     // History entries already encode role=user|assistant for the persona's POV.
@@ -448,7 +529,7 @@ async fn generate_reply(
 
     // Augment system prompt with the persona's recent thoughts so it
     // can reference its own prior reasoning ("why did I say X earlier").
-    let mut system = persona_prompt(role);
+    let mut system = if chat_mode { conversational_prompt(role) } else { persona_prompt(role) };
     // ADR-2026-05-08-2400 retired the board-meeting PLAN/Amend/Silent protocol.
     // Atomic claim_persona_turn now ensures only one persona inferences per
     // thread; that single persona uses the strict Confirm/Silent prompt
