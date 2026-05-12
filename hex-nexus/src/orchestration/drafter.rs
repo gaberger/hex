@@ -244,6 +244,7 @@ struct OpenCommitment {
     role: String,
     action: String,
     success_artifact: String,
+    artifact_kind: String,
     thread_id: String,
     related_msg_id: u64,
 }
@@ -284,18 +285,28 @@ async fn fetch_open_path_commitments(
         }
         let kind = cols.get(4).and_then(|x| x.as_str()).unwrap_or("");
         let status = cols.get(5).and_then(|x| x.as_str()).unwrap_or("");
-        if kind != "verifiable_path" || status != "open" {
+        if status != "open" {
             continue;
         }
-        let path = cols.get(3).and_then(|x| x.as_str()).unwrap_or("");
-        if !is_safe_repo_path(path) {
+        // ADR-2026-05-12-1505 — accept the new adr_status_flip kind as well as
+        // legacy verifiable_path. Path-safety check only applies to file-write
+        // kinds; status-flip payloads use ADR-<id>:<status> format that the
+        // existing path validator would reject.
+        let artifact_raw = cols.get(3).and_then(|x| x.as_str()).unwrap_or("");
+        let (artifact, ok) = match kind {
+            "verifiable_path" => (extract_path(artifact_raw), is_safe_repo_path(artifact_raw)),
+            "adr_status_flip" => (artifact_raw.trim().to_string(), is_adr_status_flip_target(artifact_raw)),
+            _ => continue,
+        };
+        if !ok {
             continue;
         }
         out.push(OpenCommitment {
             id: cols.first().and_then(|x| x.as_u64()).unwrap_or(0),
             role: cols.get(1).and_then(|x| x.as_str()).unwrap_or("").to_string(),
             action: cols.get(2).and_then(|x| x.as_str()).unwrap_or("").to_string(),
-            success_artifact: extract_path(path),
+            success_artifact: artifact,
+            artifact_kind: kind.to_string(),
             thread_id: cols.get(6).and_then(|x| x.as_str()).unwrap_or("").to_string(),
             related_msg_id: cols.get(7).and_then(|x| x.as_u64()).unwrap_or(0),
         });
@@ -351,6 +362,13 @@ async fn draft_one(
     inference_url: &str,
     c: &OpenCommitment,
 ) -> Result<DraftOutcome, String> {
+    // ADR-2026-05-12-1505 — adr_status_flip bypasses the LLM entirely. The
+    // persona's decision is already encoded in success_artifact (`ADR-X:Y`);
+    // the drafter just assembles the typed payload + queues the action.
+    if c.artifact_kind == "adr_status_flip" {
+        return draft_adr_status_flip(http, stdb_host, hex_db, c).await;
+    }
+
     // Pull the originating CEO message — prefer thread, fall back to the
     // related_msg_id lookup so DM-style commitments (no thread_id) still
     // get the original ask passed through to the drafter.
@@ -644,6 +662,48 @@ mod literal_tests {
     }
 }
 
+#[cfg(test)]
+mod adr_status_tests {
+    use super::{is_adr_status_flip_target, parse_adr_status_target};
+
+    #[test]
+    fn parses_accepted() {
+        let (id, st) = parse_adr_status_target("ADR-2026-05-09-0100:Accepted").unwrap();
+        assert_eq!(id, "ADR-2026-05-09-0100");
+        assert_eq!(st, "Accepted");
+    }
+
+    #[test]
+    fn parses_with_whitespace() {
+        let (id, st) = parse_adr_status_target("  ADR-2026-05-09-0100 : Abandoned  ").unwrap();
+        assert_eq!(id, "ADR-2026-05-09-0100");
+        assert_eq!(st, "Abandoned");
+    }
+
+    #[test]
+    fn rejects_missing_separator() {
+        assert!(parse_adr_status_target("ADR-2026-05-09-0100").is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_status() {
+        assert!(parse_adr_status_target("ADR-2026-05-09-0100:Approved").is_err());
+        assert!(parse_adr_status_target("ADR-2026-05-09-0100:proposed").is_err());
+    }
+
+    #[test]
+    fn rejects_bad_prefix() {
+        assert!(parse_adr_status_target("X-123:Accepted").is_err());
+    }
+
+    #[test]
+    fn validator_matches_parser() {
+        assert!(is_adr_status_flip_target("ADR-2026-05-09-0100:Accepted"));
+        assert!(!is_adr_status_flip_target("docs/specs/foo.md"));
+        assert!(!is_adr_status_flip_target(""));
+    }
+}
+
 /// Fetch the FIRST message in a thread (typically CEO's broadcast / DM
 /// that started the conversation). Used to give the drafter the original
 /// ask so it doesn't drift into generic content matching only the path
@@ -741,6 +801,83 @@ fn extract_path(s: &str) -> String {
         }
     }
     s.to_string()
+}
+
+/// ADR-2026-05-12-1505 — validate adr_status_flip targets at fetch time.
+/// Format: `ADR-<id>:<NewStatus>` (e.g. `ADR-2026-05-09-0100:Accepted`).
+/// Twin + executor re-validate — this is the cheap drafter-side filter.
+fn is_adr_status_flip_target(s: &str) -> bool {
+    parse_adr_status_target(s).is_ok()
+}
+
+fn parse_adr_status_target(s: &str) -> Result<(String, String), String> {
+    let s = s.trim();
+    let (left, right) = s
+        .split_once(':')
+        .ok_or_else(|| format!("missing ':' separator in '{}'", s))?;
+    let adr_id = left.trim();
+    let new_status = right.trim();
+    if !adr_id.starts_with("ADR-") || adr_id.len() < 8 || adr_id.len() > 80 {
+        return Err(format!("invalid adr_id prefix in '{}'", adr_id));
+    }
+    if !matches!(new_status, "Accepted" | "Abandoned" | "Superseded") {
+        return Err(format!(
+            "new_status must be one of Accepted|Abandoned|Superseded, got '{}'",
+            new_status
+        ));
+    }
+    Ok((adr_id.to_string(), new_status.to_string()))
+}
+
+/// ADR-2026-05-12-1505 — emit an `adr_status_set` proposed_action without
+/// invoking the LLM. The persona's commitment already encoded the decision
+/// (target ADR + new status); we just assemble the typed payload here.
+async fn draft_adr_status_flip(
+    http: &reqwest::Client,
+    stdb_host: &str,
+    hex_db: &str,
+    c: &OpenCommitment,
+) -> Result<DraftOutcome, String> {
+    let (adr_id, new_status) = parse_adr_status_target(&c.success_artifact)
+        .map_err(|e| format!("draft_adr_status_flip parse: {}", e))?;
+
+    // Reason is pulled directly from the commitment.action field. The persona
+    // wrote it when committing — twin uses it to verify rationale exists.
+    let reason: String = c.action.chars().take(500).collect();
+    if reason.trim().is_empty() {
+        return Err("draft_adr_status_flip: commitment.action empty (no reason)".to_string());
+    }
+
+    let payload = serde_json::json!({
+        "adr_id": adr_id,
+        "new_status": new_status,
+        "reason": reason,
+        "commitment_id": c.id,
+    });
+
+    let url = format!("{}/v1/database/{}/call/proposed_action_open", stdb_host, hex_db);
+    let body = serde_json::json!(["adr_status_set", payload.to_string(), c.role, c.id]);
+    let resp = http
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("open http: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "proposed_action_open HTTP {}: {}",
+            resp.status(),
+            resp.text().await.unwrap_or_default()
+        ));
+    }
+    tracing::info!(
+        commitment_id = c.id,
+        role = %c.role,
+        adr_id = %payload.get("adr_id").and_then(|v| v.as_str()).unwrap_or(""),
+        new_status = %payload.get("new_status").and_then(|v| v.as_str()).unwrap_or(""),
+        "drafter: queued adr_status_set proposed_action"
+    );
+    Ok(DraftOutcome::ProposedAction)
 }
 
 /// Defensive guard before we even propose. Twin + executor enforce

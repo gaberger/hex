@@ -302,6 +302,15 @@ async fn review_one(
     memory: &str,
     action: &PendingAction,
 ) -> Result<(), String> {
+    // ADR-2026-05-12-1505 — adr_status_set is a typed, schema-bounded
+    // mutation (one-line file edit + reason insertion). Twin gates it on
+    // payload shape and target sanity, NOT through the LLM judge. The
+    // executor re-validates against the on-disk file (status==Proposed,
+    // path under docs/adrs/) so this arm is purely structural.
+    if action.kind == "adr_status_set" {
+        return review_adr_status_set(http, stdb_host, hex_db, action).await;
+    }
+
     // SOURCE-CODE GUARD (post-mortem of 2026-05-10 17:0x runaway):
     // Only the typed `code_patch` tool (proposed_by="tool:code_patch")
     // may write to hex-*/src/ or spacetime-modules/*/src/. The drafter
@@ -596,4 +605,127 @@ async fn decide(
     }
     tracing::info!(action_id = id, verdict, rationale, "twin_reviewer: decided");
     Ok(())
+}
+
+/// ADR-2026-05-12-1505 — twin gate for `adr_status_set` actions.
+/// Pure payload-shape validation. The on-disk preconditions (file exists,
+/// current status is Proposed, path under docs/adrs/) are enforced by the
+/// executor at apply time so this gate can run without filesystem access.
+async fn review_adr_status_set(
+    http: &reqwest::Client,
+    stdb_host: &str,
+    hex_db: &str,
+    action: &PendingAction,
+) -> Result<(), String> {
+    match validate_adr_status_payload(&action.payload_json) {
+        Ok(rationale) => {
+            decide(http, stdb_host, hex_db, action.id, "approve", &rationale, "").await
+        }
+        Err(reason) => {
+            decide(
+                http,
+                stdb_host,
+                hex_db,
+                action.id,
+                "reject",
+                &format!("adr_status_set: {}", reason),
+                "",
+            )
+            .await
+        }
+    }
+}
+
+fn validate_adr_status_payload(payload_json: &str) -> Result<String, String> {
+    let v: serde_json::Value = serde_json::from_str(payload_json)
+        .map_err(|e| format!("payload not JSON: {}", e))?;
+    let adr_id = v
+        .get("adr_id")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| "missing adr_id".to_string())?;
+    let new_status = v
+        .get("new_status")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| "missing new_status".to_string())?;
+    let reason = v
+        .get("reason")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| "missing reason".to_string())?;
+    if !adr_id.starts_with("ADR-") || adr_id.len() < 8 || adr_id.len() > 80 {
+        return Err(format!("malformed adr_id '{}'", adr_id));
+    }
+    if !matches!(new_status, "Accepted" | "Abandoned" | "Superseded") {
+        return Err(format!(
+            "new_status must be Accepted|Abandoned|Superseded, got '{}'",
+            new_status
+        ));
+    }
+    if reason.trim().is_empty() {
+        return Err("reason must be non-empty".to_string());
+    }
+    if reason.len() > 500 {
+        return Err(format!("reason too long ({} bytes, max 500)", reason.len()));
+    }
+    Ok(format!(
+        "adr_status_set approved: {} → {} (reason: {} chars)",
+        adr_id,
+        new_status,
+        reason.len()
+    ))
+}
+
+#[cfg(test)]
+mod adr_status_review_tests {
+    use super::validate_adr_status_payload;
+
+    #[test]
+    fn approves_well_formed() {
+        let p = serde_json::json!({
+            "adr_id": "ADR-2026-05-09-0100",
+            "new_status": "Accepted",
+            "reason": "unblocks CTO code_patch legacy-ADR recognition",
+        });
+        assert!(validate_adr_status_payload(&p.to_string()).is_ok());
+    }
+
+    #[test]
+    fn rejects_bad_json() {
+        assert!(validate_adr_status_payload("not json").is_err());
+    }
+
+    #[test]
+    fn rejects_missing_fields() {
+        let p = serde_json::json!({"adr_id":"ADR-x","new_status":"Accepted"});
+        assert!(validate_adr_status_payload(&p.to_string()).is_err());
+    }
+
+    #[test]
+    fn rejects_bad_status() {
+        let p = serde_json::json!({
+            "adr_id": "ADR-2026-05-09-0100",
+            "new_status": "Approved",
+            "reason": "x",
+        });
+        assert!(validate_adr_status_payload(&p.to_string()).is_err());
+    }
+
+    #[test]
+    fn rejects_empty_reason() {
+        let p = serde_json::json!({
+            "adr_id": "ADR-2026-05-09-0100",
+            "new_status": "Abandoned",
+            "reason": "   ",
+        });
+        assert!(validate_adr_status_payload(&p.to_string()).is_err());
+    }
+
+    #[test]
+    fn rejects_oversize_reason() {
+        let p = serde_json::json!({
+            "adr_id": "ADR-2026-05-09-0100",
+            "new_status": "Accepted",
+            "reason": "x".repeat(501),
+        });
+        assert!(validate_adr_status_payload(&p.to_string()).is_err());
+    }
 }

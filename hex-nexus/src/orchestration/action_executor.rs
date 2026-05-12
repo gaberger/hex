@@ -125,6 +125,7 @@ async fn execute_one(
 ) -> Result<(), String> {
     match action.kind.as_str() {
         "file_write" => execute_file_write(http, stdb_host, hex_db, repo_root, action).await,
+        "adr_status_set" => execute_adr_status_set(http, stdb_host, hex_db, repo_root, action).await,
         other => {
             mark_failed(
                 http,
@@ -368,4 +369,242 @@ fn infer_rust_crate(rel_path: &str) -> Option<&'static str> {
     else if rel_path.starts_with("hex-analyzer/src/") { Some("hex-analyzer") }
     else if rel_path.starts_with("hex-desktop/src/") { Some("hex-desktop") }
     else { None }
+}
+
+/// ADR-2026-05-12-1505 — execute an `adr_status_set` action.
+///
+/// Mutates a single ADR file under `docs/adrs/` by rewriting its `Status:`
+/// line and inserting a dated reason line after the `Date:` line. Refuses
+/// any of: target outside `docs/adrs/`, file not found, current status
+/// != Proposed, status line not parseable.
+async fn execute_adr_status_set(
+    http: &reqwest::Client,
+    stdb_host: &str,
+    hex_db: &str,
+    repo_root: &Path,
+    action: &ApprovedAction,
+) -> Result<(), String> {
+    let payload: serde_json::Value = match serde_json::from_str(&action.payload_json) {
+        Ok(v) => v,
+        Err(e) => {
+            return mark_failed(http, stdb_host, hex_db, action.id, &format!("payload parse: {}", e)).await;
+        }
+    };
+    let adr_id = match payload.get("adr_id").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => return mark_failed(http, stdb_host, hex_db, action.id, "missing adr_id").await,
+    };
+    let new_status = match payload.get("new_status").and_then(|v| v.as_str()) {
+        Some(s) if matches!(s, "Accepted" | "Abandoned" | "Superseded") => s.to_string(),
+        _ => return mark_failed(http, stdb_host, hex_db, action.id, "invalid new_status").await,
+    };
+    let reason = match payload.get("reason").and_then(|v| v.as_str()) {
+        Some(s) if !s.trim().is_empty() => s.to_string(),
+        _ => return mark_failed(http, stdb_host, hex_db, action.id, "missing reason").await,
+    };
+
+    let adr_dir = repo_root.join("docs/adrs");
+    let adr_file = match resolve_adr_file(&adr_dir, &adr_id) {
+        Ok(p) => p,
+        Err(e) => {
+            return mark_failed(http, stdb_host, hex_db, action.id, &format!("resolve_adr_file: {}", e)).await;
+        }
+    };
+
+    let canonical_root = match repo_root.canonicalize() {
+        Ok(p) => p,
+        Err(e) => return Err(format!("canonicalise repo_root: {}", e)),
+    };
+    let canonical_target = match adr_file.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            return mark_failed(http, stdb_host, hex_db, action.id, &format!("canonicalise target: {}", e)).await;
+        }
+    };
+    if !canonical_target.starts_with(&canonical_root) {
+        return mark_failed(
+            http, stdb_host, hex_db, action.id,
+            &format!("refused: {} outside repo root", canonical_target.display()),
+        ).await;
+    }
+
+    let original = match std::fs::read_to_string(&adr_file) {
+        Ok(s) => s,
+        Err(e) => {
+            return mark_failed(http, stdb_host, hex_db, action.id, &format!("read: {}", e)).await;
+        }
+    };
+    let mutated = match mutate_adr_status(&original, &new_status, &reason, action.related_commitment_id) {
+        Ok(s) => s,
+        Err(e) => {
+            return mark_failed(http, stdb_host, hex_db, action.id, &e).await;
+        }
+    };
+
+    let tmp = adr_file.with_extension("twinwrite-tmp");
+    if let Err(e) = std::fs::write(&tmp, &mutated) {
+        return mark_failed(http, stdb_host, hex_db, action.id, &format!("tmp write: {}", e)).await;
+    }
+    if let Err(e) = std::fs::rename(&tmp, &adr_file) {
+        let _ = std::fs::remove_file(&tmp);
+        return mark_failed(http, stdb_host, hex_db, action.id, &format!("rename: {}", e)).await;
+    }
+
+    let evidence = format!(
+        "auto-executed by ceo-twin: flipped {} → {} in {}",
+        adr_id,
+        new_status,
+        adr_file.strip_prefix(&canonical_root).unwrap_or(&adr_file).display()
+    );
+    tracing::info!(action_id = action.id, adr_id, new_status, "action_executor: adr_status_set succeeded");
+
+    // Mark executed.
+    let mark_url = format!("{}/v1/database/{}/call/proposed_action_mark_executed", stdb_host, hex_db);
+    let mark_body = serde_json::json!([action.id, true, "", evidence.clone()]);
+    let resp = http.post(&mark_url).json(&mark_body).send().await
+        .map_err(|e| format!("mark_executed http: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("mark_executed HTTP {}: {}", resp.status(), resp.text().await.unwrap_or_default()));
+    }
+
+    if action.related_commitment_id > 0 {
+        let satisfy_url = format!("{}/v1/database/{}/call/commitment_satisfy", stdb_host, hex_db);
+        let satisfy_body = serde_json::json!([action.related_commitment_id, evidence]);
+        if let Err(e) = http.post(&satisfy_url).json(&satisfy_body).send().await {
+            tracing::debug!(commitment_id = action.related_commitment_id, error = %e, "commitment_satisfy http error");
+        }
+    }
+    Ok(())
+}
+
+/// Find the canonical ADR filename inside `docs/adrs/` by id prefix.
+/// e.g. `ADR-2026-05-09-0100` resolves to `ADR-2026-05-09-0100-adr-alias-table-...md`.
+fn resolve_adr_file(adr_dir: &Path, adr_id: &str) -> Result<PathBuf, String> {
+    if !adr_dir.exists() {
+        return Err(format!("dir not found: {}", adr_dir.display()));
+    }
+    let prefix = format!("{}-", adr_id);
+    let exact = format!("{}.md", adr_id);
+    let entries = std::fs::read_dir(adr_dir)
+        .map_err(|e| format!("read_dir: {}", e))?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == exact || (name.starts_with(&prefix) && name.ends_with(".md")) {
+            return Ok(entry.path());
+        }
+    }
+    Err(format!("no ADR file matching '{}' under {}", adr_id, adr_dir.display()))
+}
+
+/// Pure transform: take an ADR file body, rewrite the Status line, and insert
+/// a dated reason line after the Date line. Returns an error if the file
+/// isn't shaped like an ADR (no Status line, or current status != Proposed).
+fn mutate_adr_status(
+    original: &str,
+    new_status: &str,
+    reason: &str,
+    commitment_id: u64,
+) -> Result<String, String> {
+    let mut lines: Vec<String> = original.lines().map(|s| s.to_string()).collect();
+    let status_idx = lines
+        .iter()
+        .position(|l| l.trim_start().starts_with("Status:") && l.contains("**"))
+        .ok_or_else(|| "no Status line found".to_string())?;
+    let current = &lines[status_idx];
+    if !current.contains("**Proposed**") {
+        return Err(format!(
+            "current status is not Proposed (line: {})",
+            current.trim()
+        ));
+    }
+    lines[status_idx] = format!("Status: **{}**", new_status);
+
+    // Insert the reason line after the Date line if present, else immediately
+    // after the Status line.
+    let insert_after = lines
+        .iter()
+        .enumerate()
+        .skip(status_idx)
+        .take(5)
+        .find(|(_, l)| l.trim_start().starts_with("Date:"))
+        .map(|(i, _)| i)
+        .unwrap_or(status_idx);
+
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let reason_line = format!(
+        "{}: {} — {} (autonomous via SOP, commitment {})",
+        new_status, today, reason, commitment_id
+    );
+    lines.insert(insert_after + 1, reason_line);
+
+    let mut out = lines.join("\n");
+    if original.ends_with('\n') && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod adr_status_executor_tests {
+    use super::{mutate_adr_status, resolve_adr_file};
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn tmp_dir(tag: &str) -> PathBuf {
+        // Per-test directory so concurrent test runs don't clobber each other.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        let d = std::env::temp_dir().join(format!("hex-adr-test-{}-{}-{}", std::process::id(), tag, n));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn mutates_status_and_inserts_reason() {
+        let input = "# ADR-X — Title\n\nStatus: **Proposed**\nDate: 2026-05-10\n\n## Context\nbody\n";
+        let out = mutate_adr_status(input, "Accepted", "test reason", 42).unwrap();
+        assert!(out.contains("Status: **Accepted**"));
+        assert!(out.contains("Accepted: "));
+        assert!(out.contains("test reason"));
+        assert!(out.contains("commitment 42"));
+        assert!(!out.contains("Status: **Proposed**"));
+    }
+
+    #[test]
+    fn rejects_non_proposed() {
+        let input = "# ADR-X\n\nStatus: **Accepted**\nDate: 2026-05-10\n";
+        assert!(mutate_adr_status(input, "Accepted", "x", 1).is_err());
+    }
+
+    #[test]
+    fn rejects_no_status_line() {
+        let input = "# ADR-X\n\nDate: 2026-05-10\n";
+        assert!(mutate_adr_status(input, "Accepted", "x", 1).is_err());
+    }
+
+    #[test]
+    fn preserves_trailing_newline() {
+        let with_nl = "Status: **Proposed**\nDate: 2026-05-10\n";
+        let out = mutate_adr_status(with_nl, "Accepted", "x", 1).unwrap();
+        assert!(out.ends_with('\n'));
+    }
+
+    #[test]
+    fn resolve_finds_canonical_filename() {
+        let d = tmp_dir("resolve");
+        let target = d.join("ADR-2026-05-09-0100-foo-bar.md");
+        fs::write(&target, "x").unwrap();
+        let found = resolve_adr_file(&d, "ADR-2026-05-09-0100").unwrap();
+        assert_eq!(found, target);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn resolve_errors_when_missing() {
+        let d = tmp_dir("missing");
+        assert!(resolve_adr_file(&d, "ADR-2099-12-31-9999").is_err());
+        let _ = fs::remove_dir_all(&d);
+    }
 }
