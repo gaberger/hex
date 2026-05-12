@@ -4,10 +4,10 @@
 
 <!-- ID format: YYMMDDHHMM — 2604141400 = 2026-04-14 14:00 local -->
 
-- **Status**: Accepted
-- **Date**: 2026-04-14
-- **Depends on**: ADR-2026-04-13-2330 (brain queue), ADR-2026-04-15-0000 (brain→sched rename), ADR-027 (HexFlo)
-- **Relates to**: feedback_verify_before_done, feedback_use_hexflo_hex_agent
+**Status:** Accepted
+**Date:** 2026-04-14
+**Depends on:** ADR-2026-04-13-2330 (brain queue), ADR-2026-04-15-0000 (brain→sched rename), ADR-027 (HexFlo)
+**Relates to:** feedback_verify_before_done, feedback_use_hexflo_hex_agent
 
 ## Context
 
