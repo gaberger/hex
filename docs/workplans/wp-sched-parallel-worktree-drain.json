@@ -84,7 +84,7 @@
           "id": "P2.3",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Pre-flight: before promoting any task, daemon runs `git status --porcelain` on main; if dirty, log warning ('main has uncommitted changes — pausing parallel drain until clean') and skip this tick."
+          "title": "Pre-flight: before promoting any task, daemon runs `git status --porcelain` on main; if dirty, log warning ('main has uncommitted changes \u2014 pausing parallel drain until clean') and skip this tick."
         },
         {
           "evidence": [
@@ -116,7 +116,7 @@
           "id": "P3.1",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Add fn workplan_file_set(path: &Path) -> HashSet<PathBuf> that loads a workplan JSON and returns the union of phases[].tasks[].files[]. Empty/missing files arrays return empty set (treated as 'unknown — block parallel by default')."
+          "title": "Add fn workplan_file_set(path: &Path) -> HashSet<PathBuf> that loads a workplan JSON and returns the union of phases[].tasks[].files[]. Empty/missing files arrays return empty set (treated as 'unknown \u2014 block parallel by default')."
         },
         {
           "evidence": [
@@ -128,7 +128,7 @@
           "id": "P3.2",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "drain_step gate: a candidate workplan task is only promoted if its file_set is non-empty AND disjoint from every running slot's file_set. If file_set is empty (workplan didn't declare files), do NOT promote concurrently — wait until all other slots are free (conservative-by-default)."
+          "title": "drain_step gate: a candidate workplan task is only promoted if its file_set is non-empty AND disjoint from every running slot's file_set. If file_set is empty (workplan didn't declare files), do NOT promote concurrently \u2014 wait until all other slots are free (conservative-by-default)."
         },
         {
           "evidence": [
@@ -141,7 +141,7 @@
           "id": "P3.3",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Test: workplan A claims [src/a.rs], workplan B claims [src/b.rs] → both promote concurrently. Workplan C claims [src/a.rs] while A is running → C waits. Workplan D with empty files[] → waits until all slots empty."
+          "title": "Test: workplan A claims [src/a.rs], workplan B claims [src/b.rs] \u2192 both promote concurrently. Workplan C claims [src/a.rs] while A is running \u2192 C waits. Workplan D with empty files[] \u2192 waits until all slots empty."
         }
       ],
       "title": "File-overlap conflict gate"
@@ -160,7 +160,7 @@
           "id": "P4.1",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Add fn workplan_max_tier(path: &Path) -> Tier — returns max(strategy_hint→tier) across all tasks. strategy_hint mapping: scaffold/transform/script→T1, codegen→T2, inference→T2.5; absent hint defaults to T2."
+          "title": "Add fn workplan_max_tier(path: &Path) -> Tier \u2014 returns max(strategy_hint\u2192tier) across all tasks. strategy_hint mapping: scaffold/transform/script\u2192T1, codegen\u2192T2, inference\u2192T2.5; absent hint defaults to T2."
         },
         {
           "evidence": [
@@ -185,7 +185,7 @@
           "id": "P4.3",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Test: with t25 cap=1, two T2.5 workplans queued → only one promotes. Once first completes, second promotes. Mixed T1+T2.5 with disjoint files → both promote (different tier buckets)."
+          "title": "Test: with t25 cap=1, two T2.5 workplans queued \u2192 only one promotes. Once first completes, second promotes. Mixed T1+T2.5 with disjoint files \u2192 both promote (different tier buckets)."
         }
       ],
       "title": "Tier-aware throttles"
@@ -242,7 +242,7 @@
           "id": "P6.2",
           "status": "pending",
           "strategy_hint": "script",
-          "title": "Rebuild release binaries: cargo build -p hex-cli --release. Smoke: enqueue 2 disjoint dummy workplans, observe both promote concurrently in `hex sched queue list` (depends on ADR-2026-04-15-1400 having shipped first — list this dependency in the workplan description)."
+          "title": "Rebuild release binaries: cargo build -p hex-cli --release. Smoke: enqueue 2 disjoint dummy workplans, observe both promote concurrently in `hex sched queue list` (depends on ADR-2026-04-15-1400 having shipped first \u2014 list this dependency in the workplan description)."
         },
         {
           "evidence": [
@@ -260,5 +260,6 @@
       ],
       "title": "Build + docs + smoke"
     }
-  ]
+  ],
+  "status": "in_progress"
 }

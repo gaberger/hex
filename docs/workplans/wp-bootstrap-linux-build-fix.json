@@ -5,7 +5,7 @@
   "name": "wp-bootstrap-linux-build-fix",
   "phases": [
     {
-      "description": "Find where macOS and Linux builds diverge — LLVM IR generation, linking, or dead code elimination",
+      "description": "Find where macOS and Linux builds diverge \u2014 LLVM IR generation, linking, or dead code elimination",
       "number": 1,
       "tasks": [
         {
@@ -115,5 +115,6 @@
     }
   ],
   "priority": "P2",
-  "title": "Debug and fix hex bootstrap missing from Linux build"
+  "title": "Debug and fix hex bootstrap missing from Linux build",
+  "status": "in_progress"
 }

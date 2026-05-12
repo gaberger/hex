@@ -42,7 +42,7 @@
           ],
           "id": "P1.1",
           "layer": "usecases",
-          "name": "Add cost gate pre-flight check to sop_executor.rs reason_with_tools() — estimate max_cost, block if > HEX_SOP_COST_GATE_USD, emit escalate_to_operator",
+          "name": "Add cost gate pre-flight check to sop_executor.rs reason_with_tools() \u2014 estimate max_cost, block if > HEX_SOP_COST_GATE_USD, emit escalate_to_operator",
           "status": "done"
         },
         {
@@ -51,7 +51,7 @@
           ],
           "id": "P1.2",
           "layer": "usecases",
-          "name": "Wire cost-policy.yml persona tier override into sop_executor.rs reason_via_anthropic() — call load_persona_tier(), respect tier floor, escalate on complexity_high/cargo_check_failure",
+          "name": "Wire cost-policy.yml persona tier override into sop_executor.rs reason_via_anthropic() \u2014 call load_persona_tier(), respect tier floor, escalate on complexity_high/cargo_check_failure",
           "status": "done"
         },
         {
@@ -77,7 +77,7 @@
           ],
           "id": "P2.1",
           "layer": "usecases",
-          "name": "Move operator memory load outside action loop in twin_reviewer.rs run_one() — cache memory snapshot per tick, reuse for all actions in batch",
+          "name": "Move operator memory load outside action loop in twin_reviewer.rs run_one() \u2014 cache memory snapshot per tick, reuse for all actions in batch",
           "status": "done"
         },
         {
@@ -96,7 +96,7 @@
           ],
           "id": "P2.3",
           "layer": "infrastructure",
-          "name": "Create hex-nexus/src/cache/file_content.rs — LRU cache for repo_read tool with (path, mtime) key, 5min TTL, wire into repo_read tool",
+          "name": "Create hex-nexus/src/cache/file_content.rs \u2014 LRU cache for repo_read tool with (path, mtime) key, 5min TTL, wire into repo_read tool",
           "status": "pending"
         },
         {
@@ -105,7 +105,7 @@
           ],
           "id": "P2.4",
           "layer": "usecases",
-          "name": "Enable Anthropic prompt caching in sop_executor.rs reason_via_anthropic() — set cache_control ephemeral on system prompt + ground pack",
+          "name": "Enable Anthropic prompt caching in sop_executor.rs reason_via_anthropic() \u2014 set cache_control ephemeral on system prompt + ground pack",
           "status": "pending"
         }
       ],
@@ -123,7 +123,7 @@
           ],
           "id": "P3.1",
           "layer": "primary",
-          "name": "Create hex-nexus/src/routes/cost_metrics.rs — GET /api/cost-metrics aggregates inference_log by persona/tool/date, returns daily/MTD spend, 7-day sparkline data",
+          "name": "Create hex-nexus/src/routes/cost_metrics.rs \u2014 GET /api/cost-metrics aggregates inference_log by persona/tool/date, returns daily/MTD spend, 7-day sparkline data",
           "status": "done"
         },
         {
@@ -132,7 +132,7 @@
           ],
           "id": "P3.2",
           "layer": "primary",
-          "name": "Create hex-nexus/assets/src/components/views/CostMetrics.tsx — SolidJS view at #/cost-metrics, table [Persona | Today $ | MTD $ | Avg $/run], 7-day sparkline, alert banner when > HEX_DAILY_COST_LIMIT_USD",
+          "name": "Create hex-nexus/assets/src/components/views/CostMetrics.tsx \u2014 SolidJS view at #/cost-metrics, table [Persona | Today $ | MTD $ | Avg $/run], 7-day sparkline, alert banner when > HEX_DAILY_COST_LIMIT_USD",
           "status": "done"
         },
         {
@@ -141,7 +141,7 @@
           ],
           "id": "P3.3",
           "layer": "primary",
-          "name": "Add per-action cost preview to proposed_action detail view — estimate input/output tokens, show estimated_cost_usd + model_used before operator approval",
+          "name": "Add per-action cost preview to proposed_action detail view \u2014 estimate input/output tokens, show estimated_cost_usd + model_used before operator approval",
           "status": "done"
         }
       ],
@@ -163,7 +163,7 @@
           ],
           "id": "P4.1",
           "layer": "integration",
-          "name": "cargo check hex-nexus — verify Rust changes compile",
+          "name": "cargo check hex-nexus \u2014 verify Rust changes compile",
           "status": "done"
         },
         {
@@ -199,5 +199,5 @@
     }
   ],
   "priority": "normal",
-  "status": "planned"
+  "status": "in_progress"
 }

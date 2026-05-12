@@ -2,7 +2,7 @@
   "adr": "ADR-2026-04-14-2100",
   "created_at": "2026-04-14T17:33:00-04:00",
   "created_by": "claude",
-  "description": "Ship `hex fs` — native filesystem primitives (list/read/search/glob/tree/stat/head/tail) exposed via REST, CLI, and MCP. Removes the context-mode / Bash / Read-Grep-Glob dependency so hex is self-sufficient in standalone mode.",
+  "description": "Ship `hex fs` \u2014 native filesystem primitives (list/read/search/glob/tree/stat/head/tail) exposed via REST, CLI, and MCP. Removes the context-mode / Bash / Read-Grep-Glob dependency so hex is self-sufficient in standalone mode.",
   "feature": "hex native filesystem",
   "id": "wp-hex-native-filesystem",
   "phases": [
@@ -110,7 +110,7 @@
         "type": "smoke"
       },
       "id": "P4",
-      "name": "Dog-food — update agent prompts",
+      "name": "Dog-food \u2014 update agent prompts",
       "tasks": [
         {
           "agent": "hex-coder",
@@ -185,5 +185,6 @@
       ],
       "tier": 6
     }
-  ]
+  ],
+  "status": "in_progress"
 }

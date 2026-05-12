@@ -2,14 +2,14 @@
   "adr": "ADR-TBD-insight-routing",
   "created_at": "2026-04-14T22:15:00Z",
   "created_by": "human+agent",
-  "description": "Close the recursion gap in hex's self-learning loop. Today the agent emits `★ Insight` blocks containing architectural observations, actionable gaps, meta-patterns, and failure-mode notes — but they exist only in the chat transcript. An autonomous system must ingest its own insights: classify each one (ADR-worthy / workplan-worthy / memory-worthy / duplicate), route to the appropriate artifact (draft ADR stub, draft workplan, memory entry), link the resulting artifact back to the insight that spawned it, and track a did-it-close-the-loop metric. This is the recursive half of the self-learning system the user has been asking about — the existing evidence-verifier + workplan-wrap + punch-list hooks close discipline loops; this workplan closes the *learning* loop. Feeds into ReasoningBank (per reasoningbank-agentdb / reasoningbank-intelligence skills).",
+  "description": "Close the recursion gap in hex's self-learning loop. Today the agent emits `\u2605 Insight` blocks containing architectural observations, actionable gaps, meta-patterns, and failure-mode notes \u2014 but they exist only in the chat transcript. An autonomous system must ingest its own insights: classify each one (ADR-worthy / workplan-worthy / memory-worthy / duplicate), route to the appropriate artifact (draft ADR stub, draft workplan, memory entry), link the resulting artifact back to the insight that spawned it, and track a did-it-close-the-loop metric. This is the recursive half of the self-learning system the user has been asking about \u2014 the existing evidence-verifier + workplan-wrap + punch-list hooks close discipline loops; this workplan closes the *learning* loop. Feeds into ReasoningBank (per reasoningbank-agentdb / reasoningbank-intelligence skills).",
   "executor_hint": "frontier-preferred",
-  "feature": "Recursive insight-routing — agent insights become system inputs",
+  "feature": "Recursive insight-routing \u2014 agent insights become system inputs",
   "id": "wp-insight-routing",
-  "notes": "Recursion: insights about insight-handling are themselves valid inputs. I5 explicitly feeds the loop's own outputs back into I1-I4. Also self-apply: this workplan was authored from an insight the user generated ('why not take insight and create a recursive plan') — that insight becomes insight-2604142215-000 in I4's memory store as the canonical seed entry proving the loop exists.",
+  "notes": "Recursion: insights about insight-handling are themselves valid inputs. I5 explicitly feeds the loop's own outputs back into I1-I4. Also self-apply: this workplan was authored from an insight the user generated ('why not take insight and create a recursive plan') \u2014 that insight becomes insight-2604142215-000 in I4's memory store as the canonical seed entry proving the loop exists.",
   "phases": [
     {
-      "description": "Replace prose `★ Insight` blocks with a structured YAML body the hook can parse. New format emits id, kind, content, route_to, estimated_tier, depends_on. PostToolUse hook scans assistant output for structured insights and writes each to ~/.hex/insights/<id>.yaml for downstream stages.",
+      "description": "Replace prose `\u2605 Insight` blocks with a structured YAML body the hook can parse. New format emits id, kind, content, route_to, estimated_tier, depends_on. PostToolUse hook scans assistant output for structured insights and writes each to ~/.hex/insights/<id>.yaml for downstream stages.",
       "gate": {
         "blocking": true,
         "command": "cargo test -p hex-cli insight_extractor",
@@ -37,7 +37,7 @@
           "deps": [
             "I1.1"
           ],
-          "description": "hex-cli/src/commands/hook/route.rs: on PostToolUse of the assistant response, call insight::extract_insights. For each: write to ~/.hex/insights/<id>.yaml. Emit stderr line listing extracted insight ids so the next turn can reference them. Non-blocking — extraction failures log but don't stop the turn.",
+          "description": "hex-cli/src/commands/hook/route.rs: on PostToolUse of the assistant response, call insight::extract_insights. For each: write to ~/.hex/insights/<id>.yaml. Emit stderr line listing extracted insight ids so the next turn can reference them. Non-blocking \u2014 extraction failures log but don't stop the turn.",
           "files": [
             "hex-cli/src/commands/hook/route.rs"
           ],
@@ -68,14 +68,14 @@
       ]
     },
     {
-      "description": "Given an Insight, return a routing decision. Uses embedding-similarity search against existing ADRs/workplans/memory to detect duplicates; uses tier heuristics to choose artifact kind (T1 meta-pattern → memory, T2 gap → workplan draft, T3 architectural observation → ADR stub). Separate from I1 so the classifier can be re-run on historical insights.",
+      "description": "Given an Insight, return a routing decision. Uses embedding-similarity search against existing ADRs/workplans/memory to detect duplicates; uses tier heuristics to choose artifact kind (T1 meta-pattern \u2192 memory, T2 gap \u2192 workplan draft, T3 architectural observation \u2192 ADR stub). Separate from I1 so the classifier can be re-run on historical insights.",
       "gate": {
         "blocking": true,
         "command": "cargo test -p hex-cli insight_classifier",
         "type": "test"
       },
       "id": "I2",
-      "name": "Classifier — decide which artifact to route to",
+      "name": "Classifier \u2014 decide which artifact to route to",
       "tasks": [
         {
           "agent": "hex-coder",
@@ -97,7 +97,7 @@
           "deps": [
             "I2.1"
           ],
-          "description": "Heuristics: FailureMode + T3 → ADR stub. ActionableGap + any → workplan draft. MetaPattern → memory feedback entry. ArchitecturalObservation + T3 → ADR; + T2 → workplan phase appended to the most-related existing workplan. Test fixtures of 10 real session insights classified against a known corpus snapshot.",
+          "description": "Heuristics: FailureMode + T3 \u2192 ADR stub. ActionableGap + any \u2192 workplan draft. MetaPattern \u2192 memory feedback entry. ArchitecturalObservation + T3 \u2192 ADR; + T2 \u2192 workplan phase appended to the most-related existing workplan. Test fixtures of 10 real session insights classified against a known corpus snapshot.",
           "files": [
             "hex-cli/src/commands/insight/classifier.rs",
             "hex-cli/tests/insight_classifier.rs",
@@ -112,14 +112,14 @@
       ]
     },
     {
-      "description": "Given a classified insight, create the target artifact as a draft. ADR → docs/adrs/drafts/adr-<ts>-<slug>.md. Workplan → docs/workplans/drafts/draft-<ts>-<slug>.json with files[] populated from insight.affected_paths if present. Memory → ~/.claude/projects/.../memory/<type>_<slug>.md + MEMORY.md index line. Duplicate → append a cross-ref comment to the existing artifact.",
+      "description": "Given a classified insight, create the target artifact as a draft. ADR \u2192 docs/adrs/drafts/adr-<ts>-<slug>.md. Workplan \u2192 docs/workplans/drafts/draft-<ts>-<slug>.json with files[] populated from insight.affected_paths if present. Memory \u2192 ~/.claude/projects/.../memory/<type>_<slug>.md + MEMORY.md index line. Duplicate \u2192 append a cross-ref comment to the existing artifact.",
       "gate": {
         "blocking": true,
         "command": "cargo test -p hex-cli insight_router && hex plan lint --all",
         "type": "shell"
       },
       "id": "I3",
-      "name": "Auto-router — materialize the artifact",
+      "name": "Auto-router \u2014 materialize the artifact",
       "tasks": [
         {
           "agent": "hex-coder",
@@ -141,7 +141,7 @@
           "deps": [
             "I3.1"
           ],
-          "description": "hex-cli/src/main.rs + commands/insight/mod.rs: `hex insight process [--all] [--since <ts>] [--dry-run]` reads ~/.hex/insights/*.yaml, classifies each, routes to the appropriate materializer, prints a table of (insight_id → artifact_path | skip_reason). --dry-run shows what would happen without writing. Also: `hex insight list` shows insights awaiting routing; `hex insight show <id>` prints the yaml.",
+          "description": "hex-cli/src/main.rs + commands/insight/mod.rs: `hex insight process [--all] [--since <ts>] [--dry-run]` reads ~/.hex/insights/*.yaml, classifies each, routes to the appropriate materializer, prints a table of (insight_id \u2192 artifact_path | skip_reason). --dry-run shows what would happen without writing. Also: `hex insight list` shows insights awaiting routing; `hex insight show <id>` prints the yaml.",
           "files": [
             "hex-cli/src/main.rs",
             "hex-cli/src/commands/insight/mod.rs"
@@ -163,7 +163,7 @@
           ],
           "id": "I3.3",
           "layer": "primary",
-          "name": "Daemon integration — sched tick processes unrouted insights",
+          "name": "Daemon integration \u2014 sched tick processes unrouted insights",
           "status": "pending",
           "strategy_hint": "inference"
         }
@@ -220,7 +220,7 @@
         "type": "shell"
       },
       "id": "I5",
-      "name": "Recursive bootstrap — seed with this session's insights",
+      "name": "Recursive bootstrap \u2014 seed with this session's insights",
       "tasks": [
         {
           "agent": "hex-coder",
@@ -253,5 +253,6 @@
         }
       ]
     }
-  ]
+  ],
+  "status": "in_progress"
 }

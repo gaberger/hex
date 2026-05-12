@@ -19,7 +19,7 @@
           "id": "P1.1",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Backend: change /api/brain/chat to stream — switch handler return type from (StatusCode, Json<Value>) to axum::response::Sse<Stream>. Wrap the inference call to emit an event per token: { type: 'token', text } for each chunk, then { type: 'done', model, totalTokens }. Reuse OpenRouter's stream:true response shape. Keep the non-streaming endpoint at /api/brain/chat?stream=false for backwards compat with existing CLI tooling."
+          "title": "Backend: change /api/brain/chat to stream \u2014 switch handler return type from (StatusCode, Json<Value>) to axum::response::Sse<Stream>. Wrap the inference call to emit an event per token: { type: 'token', text } for each chunk, then { type: 'done', model, totalTokens }. Reuse OpenRouter's stream:true response shape. Keep the non-streaming endpoint at /api/brain/chat?stream=false for backwards compat with existing CLI tooling."
         },
         {
           "evidence": [
@@ -63,10 +63,10 @@
           "id": "P2.2",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Frontend: broadcast handler subscribes to SSE, appends a new bubble to the chat each time a 'response' event arrives. Replace the single pending 'dispatching to N personas...' bubble with a counter ('3/25 returned · 22 in flight') that ticks down as responses land."
+          "title": "Frontend: broadcast handler subscribes to SSE, appends a new bubble to the chat each time a 'response' event arrives. Replace the single pending 'dispatching to N personas...' bubble with a counter ('3/25 returned \u00b7 22 in flight') that ticks down as responses land."
         }
       ],
-      "title": "Broadcast progressive disclosure — render each persona as it lands"
+      "title": "Broadcast progressive disclosure \u2014 render each persona as it lands"
     },
     {
       "id": "P3",
@@ -82,7 +82,7 @@
           "id": "P3.1",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Add a 'cancel' button to in-flight bubbles. Frontend AbortController on the SSE request → backend drops the upstream connection. Critical for @all when the operator realizes 25 personas wasn't what they wanted."
+          "title": "Add a 'cancel' button to in-flight bubbles. Frontend AbortController on the SSE request \u2192 backend drops the upstream connection. Critical for @all when the operator realizes 25 personas wasn't what they wanted."
         }
       ],
       "title": "Cancel/abort while streaming"
@@ -128,7 +128,7 @@
           "id": "P4.3",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Frontend: chat history sidebar showing past threads. Click a thread → load its messages. Replace localStorage as the primary store; keep it as offline cache only."
+          "title": "Frontend: chat history sidebar showing past threads. Click a thread \u2192 load its messages. Replace localStorage as the primary store; keep it as offline cache only."
         },
         {
           "evidence": [
@@ -144,9 +144,12 @@
           "title": "Cross-link with artifacts: when a chat produces an ADR or workplan draft, store the thread_id in the artifact's metadata. From the artifact view, link back to the conversation that produced it. Closes the loop on 'how did we end up with this ADR?'"
         }
       ],
-      "title": "Backend conversation storage — survives browser + machine boundaries"
+      "title": "Backend conversation storage \u2014 survives browser + machine boundaries"
     }
   ],
-  "rationale": "Today /api/brain/chat returns one big JSON blob after the full response is generated — operator stares at 'thinking...' for 5-30s before seeing anything. /api/brain/broadcast is worse: 25 parallel calls all return at once after the slowest finishes. The fix is two-layer: (1) stream tokens as they're generated for single-agent chat, (2) for broadcast, render each persona's response as it lands rather than waiting for the whole batch. OpenRouter supports SSE; Anthropic supports SSE. The inference router already calls upstream — we just need to plumb the stream through hex-nexus → frontend.",
-  "title": "Brain chat — token streaming + broadcast progressive disclosure"
+  "rationale": "Today /api/brain/chat returns one big JSON blob after the full response is generated \u2014 operator stares at 'thinking...' for 5-30s before seeing anything. /api/brain/broadcast is worse: 25 parallel calls all return at once after the slowest finishes. The fix is two-layer: (1) stream tokens as they're generated for single-agent chat, (2) for broadcast, render each persona's response as it lands rather than waiting for the whole batch. OpenRouter supports SSE; Anthropic supports SSE. The inference router already calls upstream \u2014 we just need to plumb the stream through hex-nexus \u2192 frontend.",
+  "title": "Brain chat \u2014 token streaming + broadcast progressive disclosure",
+  "status": "completed",
+  "closed_at": "2026-05-12T10:25:10.474540+00:00",
+  "closed_reason": "all tasks have status=done"
 }

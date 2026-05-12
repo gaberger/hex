@@ -1,6 +1,6 @@
 # ADR-2026-04-14-2243 — Classifier rules as data tables, not control flow
 
-**Status:** accepted
+**Status:** Accepted
 **Date:** 2026-04-14
 **Relates to:** ADR-2026-04-11-0227 (T1/T2/T3 task tier routing), ADR-2026-04-13-1500 (developer steering directives)
 

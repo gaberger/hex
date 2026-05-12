@@ -6,12 +6,12 @@
       "name": "P1: Domain Layer (Core Game Logic)",
       "tasks": [
         {
-          "description": "Create src/domain/mod.rs. NO imports allowed (only use std built-ins if needed). Must define:\n\n1. GameState struct with fields: secret: u32, guesses: u32, won: bool\n2. impl GameState::new(secret: u32) → initializes all fields\n3. GuessResult enum: TooLow, TooHigh, Correct\n4. impl GameState::guess(&mut self, num: u32) → GuessResult { compares num to secret, updates won }\n5. Unit tests: test_guess_correct(), test_too_low()\n\nCRITICAL: This file must compile with ZERO imports besides std. It is the domain layer — pure business logic.",
+          "description": "Create src/domain/mod.rs. NO imports allowed (only use std built-ins if needed). Must define:\n\n1. GameState struct with fields: secret: u32, guesses: u32, won: bool\n2. impl GameState::new(secret: u32) \u2192 initializes all fields\n3. GuessResult enum: TooLow, TooHigh, Correct\n4. impl GameState::guess(&mut self, num: u32) \u2192 GuessResult { compares num to secret, updates won }\n5. Unit tests: test_guess_correct(), test_too_low()\n\nCRITICAL: This file must compile with ZERO imports besides std. It is the domain layer \u2014 pure business logic.",
           "id": "P1-1",
           "status": "done",
           "strategy_hint": "codegen",
           "tier": "T2",
-          "title": "hex-coder: Write domain/mod.rs — Game state machine"
+          "title": "hex-coder: Write domain/mod.rs \u2014 Game state machine"
         }
       ]
     },
@@ -20,12 +20,12 @@
       "name": "P2: Ports Layer (Trait Boundaries)",
       "tasks": [
         {
-          "description": "Create src/ports/mod.rs. Imports: NONE. Must define:\n\n1. trait RandomNumberGenerator { fn gen_range(&self, min: u32, max: u32) → u32; }\n2. trait UserInterface {\n   fn welcome(&self);\n   fn prompt_guess(&self) → u32;\n   fn display_feedback(&self, msg: &str);\n   fn victory(&self, secret: u32, guesses: u32);\n}\n\nNO implementations. These are boundaries only. Code must compile with zero imports.",
+          "description": "Create src/ports/mod.rs. Imports: NONE. Must define:\n\n1. trait RandomNumberGenerator { fn gen_range(&self, min: u32, max: u32) \u2192 u32; }\n2. trait UserInterface {\n   fn welcome(&self);\n   fn prompt_guess(&self) \u2192 u32;\n   fn display_feedback(&self, msg: &str);\n   fn victory(&self, secret: u32, guesses: u32);\n}\n\nNO implementations. These are boundaries only. Code must compile with zero imports.",
           "id": "P2-1",
           "status": "done",
           "strategy_hint": "codegen",
           "tier": "T2",
-          "title": "hex-coder: Write ports/mod.rs — Dependency injection traits"
+          "title": "hex-coder: Write ports/mod.rs \u2014 Dependency injection traits"
         }
       ]
     },
@@ -34,11 +34,11 @@
       "name": "P3: Secondary Adapter (Random Number Generation)",
       "tasks": [
         {
-          "description": "Create src/adapters/secondary/mod.rs. Imports: ONLY crate::ports + rand. Must:\n\n1. Import: use crate::ports::RandomNumberGenerator;\n2. Import: use rand::{thread_rng, Rng};\n3. Define: pub struct OsRandomGenerator;\n4. impl RandomNumberGenerator for OsRandomGenerator {\n   fn gen_range(&self, min: u32, max: u32) → u32 { thread_rng().gen_range(min..=max) }\n}\n\nIMPORTANT: NO other imports, NO domain layer import, NO other adapters.",
+          "description": "Create src/adapters/secondary/mod.rs. Imports: ONLY crate::ports + rand. Must:\n\n1. Import: use crate::ports::RandomNumberGenerator;\n2. Import: use rand::{thread_rng, Rng};\n3. Define: pub struct OsRandomGenerator;\n4. impl RandomNumberGenerator for OsRandomGenerator {\n   fn gen_range(&self, min: u32, max: u32) \u2192 u32 { thread_rng().gen_range(min..=max) }\n}\n\nIMPORTANT: NO other imports, NO domain layer import, NO other adapters.",
           "id": "P3-1",
           "strategy_hint": "codegen",
           "tier": "T2",
-          "title": "hex-coder: Write adapters/secondary/mod.rs — OS random source"
+          "title": "hex-coder: Write adapters/secondary/mod.rs \u2014 OS random source"
         }
       ]
     },
@@ -51,14 +51,14 @@
           "id": "P4-1",
           "strategy_hint": "codegen",
           "tier": "T2",
-          "title": "hex-coder: Write adapters/primary/mod.rs — Stdio UI"
+          "title": "hex-coder: Write adapters/primary/mod.rs \u2014 Stdio UI"
         },
         {
           "description": "Create src/adapters/mod.rs with:\npub mod primary;\npub mod secondary;\n\nThis file ONLY declares submodules.",
           "id": "P4-2",
           "strategy_hint": "scaffold",
           "tier": "T1",
-          "title": "hex-coder: Write adapters/mod.rs — Module declaration"
+          "title": "hex-coder: Write adapters/mod.rs \u2014 Module declaration"
         }
       ]
     },
@@ -71,7 +71,7 @@
           "id": "P5-1",
           "strategy_hint": "codegen",
           "tier": "T2",
-          "title": "hex-coder: Write usecases/mod.rs — Game orchestration"
+          "title": "hex-coder: Write usecases/mod.rs \u2014 Game orchestration"
         }
       ]
     },
@@ -84,7 +84,7 @@
           "id": "P6-1",
           "strategy_hint": "codegen",
           "tier": "T2",
-          "title": "hex-coder: Write src/main.rs — Composition root"
+          "title": "hex-coder: Write src/main.rs \u2014 Composition root"
         },
         {
           "description": "Write Cargo.toml:\n\n[package]\nname = \"hex-game\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nrand = \"0.8\"",
@@ -116,5 +116,6 @@
       ]
     }
   ],
-  "title": "hex-coder builds hexagonal game autonomously"
+  "title": "hex-coder builds hexagonal game autonomously",
+  "status": "in_progress"
 }

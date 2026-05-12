@@ -72,5 +72,6 @@
     }
   ],
   "priority": "P2",
-  "title": "Clean compiler warnings from test run"
+  "title": "Clean compiler warnings from test run",
+  "status": "in_progress"
 }

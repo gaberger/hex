@@ -2,7 +2,7 @@
   "adr": "ADR-2026-05-10-0800",
   "created_at": "2026-05-10T13:41:59.571505190+00:00",
   "created_by": "hex-coder",
-  "feature": "CISO Daily Security Sweep — unsafe-block + secret-pattern + ADR-disk-reconciliation audit",
+  "feature": "CISO Daily Security Sweep \u2014 unsafe-block + secret-pattern + ADR-disk-reconciliation audit",
   "id": "wp-ciso-daily-security-sweep",
   "phases": [
     {
@@ -61,7 +61,7 @@
           ],
           "id": "P1.3",
           "layer": "secondary",
-          "name": "cargo audit integration: run dep_audit(severity_min='medium'), parse vulnerability findings (advisory_id, severity, package, version, url), cross-check /tmp/vuln-exceptions.txt (known-accepted vulns), write findings to docs/specs/security-sweep-<date>.md § Dependency Vulnerabilities",
+          "name": "cargo audit integration: run dep_audit(severity_min='medium'), parse vulnerability findings (advisory_id, severity, package, version, url), cross-check /tmp/vuln-exceptions.txt (known-accepted vulns), write findings to docs/specs/security-sweep-<date>.md \u00a7 Dependency Vulnerabilities",
           "status": "done"
         }
       ],
@@ -158,5 +158,5 @@
     }
   ],
   "priority": "normal",
-  "status": "planned"
+  "status": "in_progress"
 }

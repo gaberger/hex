@@ -1,7 +1,7 @@
 {
   "id": "wp-extend-hex-agent-worker-roles",
   "paused": true,
-  "paused_reason": "DO NOT auto-execute. Each role's worker arm in hex-cli/src/commands/agent/mod.rs:1557 has non-trivial dispatch logic (model selection, context loading, gate execution, output schema). Implementing 16 new arms is dedicated work, not a transform. Resume by either (a) hand-implementing each arm against its YAML contract, or (b) refactoring the worker dispatch into a generic YAML-driven executor (preferable — single change point).",
+  "paused_reason": "DO NOT auto-execute. Each role's worker arm in hex-cli/src/commands/agent/mod.rs:1557 has non-trivial dispatch logic (model selection, context loading, gate execution, output schema). Implementing 16 new arms is dedicated work, not a transform. Resume by either (a) hand-implementing each arm against its YAML contract, or (b) refactoring the worker dispatch into a generic YAML-driven executor (preferable \u2014 single change point).",
   "phases": [
     {
       "id": "P0",
@@ -36,7 +36,7 @@
           "id": "P0.0a",
           "status": "done",
           "strategy_hint": "scaffold",
-          "title": "Backfill missing YAMLs: hex-documenter and hex-ux are dispatch arms with no persona at all (`hex agent overview` flags Gap B). Either (a) write hex-cli/assets/agents/hex/hex/hex-documenter.yml and hex-ux.yml, or (b) delete the dispatch arms. Cannot leave persona-less dispatch arms — that's the bypass we're closing."
+          "title": "Backfill missing YAMLs: hex-documenter and hex-ux are dispatch arms with no persona at all (`hex agent overview` flags Gap B). Either (a) write hex-cli/assets/agents/hex/hex/hex-documenter.yml and hex-ux.yml, or (b) delete the dispatch arms. Cannot leave persona-less dispatch arms \u2014 that's the bypass we're closing."
         },
         {
           "evidence": [
@@ -48,10 +48,10 @@
           "id": "P0.1",
           "status": "done",
           "strategy_hint": "scaffold",
-          "title": "ADR: choose between per-arm worker implementation (16 new match arms, each loading its persona) vs generic YAML-driven executor (single arm that reads `workflow.phases` from the persona and executes generically — new agents only need a YAML). Option B is preferable since it makes P0.0 mechanically enforced (one arm = one place to verify persona-load)."
+          "title": "ADR: choose between per-arm worker implementation (16 new match arms, each loading its persona) vs generic YAML-driven executor (single arm that reads `workflow.phases` from the persona and executes generically \u2014 new agents only need a YAML). Option B is preferable since it makes P0.0 mechanically enforced (one arm = one place to verify persona-load)."
         }
       ],
-      "title": "PERSONA WIRING — non-negotiable contract for every worker arm"
+      "title": "PERSONA WIRING \u2014 non-negotiable contract for every worker arm"
     },
     {
       "id": "P1",
@@ -88,7 +88,7 @@
           "title": "Provider-lock enforcement: when running an agent with model.provider_lock set (adversarial-red: anthropic, adversarial-blue: openai_or_local), refuse to run if the resolved provider doesn't match. Required for the two-adversary debate to be non-theatre."
         }
       ],
-      "title": "If P0 chose generic executor — implement YAML-driven dispatch"
+      "title": "If P0 chose generic executor \u2014 implement YAML-driven dispatch"
     },
     {
       "id": "P2",
@@ -107,7 +107,7 @@
           "title": "Each new arm needs: model resolution from YAML.model.tier/preferred/fallback, context loading per YAML.context.load_on_start, workflow execution per YAML.workflow.phases or .steps, output emission per YAML.outputs schema. Roles to add: pm-agent, planner, feature-developer, swarm-coordinator, integrator, rust-refactorer, behavioral-spec-writer, validation-judge, adversarial-red, adversarial-blue, cli-designer, ux-designer, scaffold-validator, ADR-reviewer, dead-code-analyzer, dependency-analyst, status-monitor, dev-tracker."
         }
       ],
-      "title": "If P0 chose per-arm — add the 16 missing arms"
+      "title": "If P0 chose per-arm \u2014 add the 16 missing arms"
     },
     {
       "id": "P3",
@@ -164,6 +164,9 @@
       "title": "Rebuild + redistribute"
     }
   ],
-  "rationale": "Two separate persona-bypass bugs both surface here. (Bug A — coverage) `hex agent worker --role` accepts a String but the dispatch match in agent/mod.rs:1557 has only 6 hardcoded arms (hex-coder, hex-tester, hex-reviewer, hex-documenter, hex-ux, hex-fixer); the other 17 hit `Unknown worker role`. (Bug B — persona-bypass) Even the 6 arms that DO dispatch don't load AgentDefinition::load(role) — they use hardcoded HEX_MODEL env var, hardcoded language detection, hardcoded retry counts, hardcoded compile/test commands. The persona infrastructure exists (pipeline/agent_def.rs:746, used by adr_phase + objectives) but the worker dispatch ignores it. AND 2 dispatch arms (hex-documenter, hex-ux) don't even have YAML personas to load. Net result: every worker invocation today bypasses the YAML's model.tier, context.load_strategy, workflow.phases, feedback_loop.gates, quality_thresholds, prompt_suffix. The user-facing instruction is unambiguous: 'we need to ensure agents are wired to the personas always'.",
-  "title": "Extend hex agent worker --role to support all 22 declarative agents"
+  "rationale": "Two separate persona-bypass bugs both surface here. (Bug A \u2014 coverage) `hex agent worker --role` accepts a String but the dispatch match in agent/mod.rs:1557 has only 6 hardcoded arms (hex-coder, hex-tester, hex-reviewer, hex-documenter, hex-ux, hex-fixer); the other 17 hit `Unknown worker role`. (Bug B \u2014 persona-bypass) Even the 6 arms that DO dispatch don't load AgentDefinition::load(role) \u2014 they use hardcoded HEX_MODEL env var, hardcoded language detection, hardcoded retry counts, hardcoded compile/test commands. The persona infrastructure exists (pipeline/agent_def.rs:746, used by adr_phase + objectives) but the worker dispatch ignores it. AND 2 dispatch arms (hex-documenter, hex-ux) don't even have YAML personas to load. Net result: every worker invocation today bypasses the YAML's model.tier, context.load_strategy, workflow.phases, feedback_loop.gates, quality_thresholds, prompt_suffix. The user-facing instruction is unambiguous: 'we need to ensure agents are wired to the personas always'.",
+  "title": "Extend hex agent worker --role to support all 22 declarative agents",
+  "status": "completed",
+  "closed_at": "2026-05-12T10:25:10.474540+00:00",
+  "closed_reason": "all tasks have status=done"
 }

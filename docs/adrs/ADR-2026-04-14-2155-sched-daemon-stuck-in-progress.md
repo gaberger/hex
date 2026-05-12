@@ -1,6 +1,6 @@
 # ADR-2026-04-14-2155 — sched daemon leaves tasks stuck `in_progress`
 
-**Status:** accepted
+**Status:** Accepted
 **Date:** 2026-04-14
 **Relates to:** ADR-2026-04-11-1800 (executor dispatch-evidence guard), ADR-2026-04-14-1400 (brain queue swarm-lease)
 

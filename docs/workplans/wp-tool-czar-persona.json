@@ -2,12 +2,12 @@
   "adr": "ADR-[PHONE]",
   "created_at": "2026-05-09T12:13:27.910475611+00:00",
   "created_by": "hex-coder",
-  "feature": "Tool czar — toolchain health monitoring persona",
+  "feature": "Tool czar \u2014 toolchain health monitoring persona",
   "id": "wp-tool-czar-persona",
   "phases": [
     {
       "id": "P0",
-      "name": "STDB schema — tool_health_observation + tool_health_summary tables",
+      "name": "STDB schema \u2014 tool_health_observation + tool_health_summary tables",
       "status": "pending",
       "tasks": [
         {
@@ -51,7 +51,7 @@
     },
     {
       "id": "P1",
-      "name": "tool_czar_supervisor daemon — 15-minute probe tick",
+      "name": "tool_czar_supervisor daemon \u2014 15-minute probe tick",
       "status": "pending",
       "tasks": [
         {
@@ -95,7 +95,7 @@
     },
     {
       "id": "P2",
-      "name": "Probe set — benign payloads for cargo_check, repo_grep, repo_read, web_search, system deps",
+      "name": "Probe set \u2014 benign payloads for cargo_check, repo_grep, repo_read, web_search, system deps",
       "status": "pending",
       "tasks": [
         {
@@ -149,7 +149,7 @@
           ],
           "id": "P3.2",
           "layer": "secondary",
-          "name": "Implement escalation logic in tool_czar_supervisor: <80% success → draft ADR, >5min down → escalate_to_operator",
+          "name": "Implement escalation logic in tool_czar_supervisor: <80% success \u2192 draft ADR, >5min down \u2192 escalate_to_operator",
           "status": "done"
         },
         {
@@ -166,7 +166,7 @@
     },
     {
       "id": "P4",
-      "name": "Dashboard — #/tools route with traffic-light grid + per-persona heatmap",
+      "name": "Dashboard \u2014 #/tools route with traffic-light grid + per-persona heatmap",
       "status": "pending",
       "tasks": [
         {
@@ -211,5 +211,5 @@
     }
   ],
   "priority": "normal",
-  "status": "planned"
+  "status": "in_progress"
 }

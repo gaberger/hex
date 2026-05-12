@@ -134,7 +134,7 @@
         },
         {
           "id": "P2.4",
-          "title": "Add daemon logging: when Path C activates, log '⬡ spawned autonomous agent for workplan <id>'. When agent exits, log summary (completed, failed, duration).",
+          "title": "Add daemon logging: when Path C activates, log '\u2b21 spawned autonomous agent for workplan <id>'. When agent exits, log summary (completed, failed, duration).",
           "status": "done",
           "strategy_hint": "codegen",
           "files": [
@@ -310,5 +310,6 @@
         }
       ]
     }
-  ]
+  ],
+  "status": "in_progress"
 }

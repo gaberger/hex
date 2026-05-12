@@ -7,7 +7,7 @@
   "phases": [
     {
       "id": "P1",
-      "title": "STDB schema — merge_request + merge_vote tables",
+      "title": "STDB schema \u2014 merge_request + merge_vote tables",
       "tasks": [
         {
           "id": "P1.1",
@@ -69,7 +69,7 @@
       "tasks": [
         {
           "id": "P2.1",
-          "title": "HEXFLO_WORKTREE_REQUIRED guard added at daemon entry point in hex-agent/src/main.rs. New module hex-agent/src/worktree_guard.rs uses `git rev-parse --show-toplevel` + `git worktree list --porcelain` to detect trunk; refuses with exit code 2 + remediation message when CWD == trunk. Symlink-safe via fs::canonicalize (handles Bazzite /home → /var/home). Sets HEXFLO_WORKTREE_PATH env for children. NOTE: auto-create-worktree-on-task-claim deferred to a follow-on phase (Layer 1 hardening; needs `hex worktree create` CLI which currently doesn't exist as a subcommand). Trunk-refuse alone closes the hijacker hole observed 2026-05-07.",
+          "title": "HEXFLO_WORKTREE_REQUIRED guard added at daemon entry point in hex-agent/src/main.rs. New module hex-agent/src/worktree_guard.rs uses `git rev-parse --show-toplevel` + `git worktree list --porcelain` to detect trunk; refuses with exit code 2 + remediation message when CWD == trunk. Symlink-safe via fs::canonicalize (handles Bazzite /home \u2192 /var/home). Sets HEXFLO_WORKTREE_PATH env for children. NOTE: auto-create-worktree-on-task-claim deferred to a follow-on phase (Layer 1 hardening; needs `hex worktree create` CLI which currently doesn't exist as a subcommand). Trunk-refuse alone closes the hijacker hole observed 2026-05-07.",
           "status": "done",
           "strategy_hint": "codegen",
           "files": [
@@ -84,7 +84,7 @@
         },
         {
           "id": "P2.2",
-          "title": "Behavioral test in hex-agent/tests/daemon_worktree_required.rs covers three cases: (1) trunk → exit 2 + 'refusing to run from trunk' (BS-1); (2) HEXFLO_WORKTREE_REQUIRED=0 → daemon proceeds with 'override active' log; (3) inside worktree → 'worktree-guard OK' + daemon proceeds. All three pass on cargo test --release.",
+          "title": "Behavioral test in hex-agent/tests/daemon_worktree_required.rs covers three cases: (1) trunk \u2192 exit 2 + 'refusing to run from trunk' (BS-1); (2) HEXFLO_WORKTREE_REQUIRED=0 \u2192 daemon proceeds with 'override active' log; (3) inside worktree \u2192 'worktree-guard OK' + daemon proceeds. All three pass on cargo test --release.",
           "status": "done",
           "strategy_hint": "script",
           "files": [
@@ -102,7 +102,7 @@
       "tasks": [
         {
           "id": "P3.1",
-          "title": "SafeFileWriter now has TWO layers: (1) the existing static is_critical_path() allowlist; (2) new trunk-detect predicate. Layer 2 calls discover_trunk() (via `git worktree list --porcelain`) and cwd_is_trunk() (via `git rev-parse --show-toplevel`); if equal AND !operator_mode_active(), deny. Symlink-safe via fs::canonicalize. operator_mode_active() reads HEX_OPERATOR_MODE=1 BUT runs has_hex_agent_daemon_ancestor() (walks /proc/self up via PPID, looking for hex-agent + daemon argv) — if a daemon is in the ancestor chain, the override is rejected and a warning is logged.",
+          "title": "SafeFileWriter now has TWO layers: (1) the existing static is_critical_path() allowlist; (2) new trunk-detect predicate. Layer 2 calls discover_trunk() (via `git worktree list --porcelain`) and cwd_is_trunk() (via `git rev-parse --show-toplevel`); if equal AND !operator_mode_active(), deny. Symlink-safe via fs::canonicalize. operator_mode_active() reads HEX_OPERATOR_MODE=1 BUT runs has_hex_agent_daemon_ancestor() (walks /proc/self up via PPID, looking for hex-agent + daemon argv) \u2014 if a daemon is in the ancestor chain, the override is rejected and a warning is logged.",
           "status": "done",
           "strategy_hint": "codegen",
           "files": [
@@ -134,7 +134,7 @@
       "tasks": [
         {
           "id": "P4.1",
-          "title": "integrator_subscriber.rs polls merge_request by status: pending → voting + dispatch validation-judge (cargo check, configurable via HEX_JUDGE_CARGO_ARGS); voting → call merge_decision_tally (reducer transitions); approved → run `hex worktree merge`; rejected → log (operator inbox notify deferred). 5s tick, 10s startup delay. Adversarial-red + adversarial-blue voters NOT yet automated — quorum policy must be tuned (min_pass_votes=1, require_judge_pass=true) until they ship. Cargo binary resolved via CARGO env / $HOME/.cargo/bin / PATH. End-to-end verified: pending → voting → judge runs `cargo check --workspace` → casts vote with build output as reason → tally transitions to rejected on judge=fail.",
+          "title": "integrator_subscriber.rs polls merge_request by status: pending \u2192 voting + dispatch validation-judge (cargo check, configurable via HEX_JUDGE_CARGO_ARGS); voting \u2192 call merge_decision_tally (reducer transitions); approved \u2192 run `hex worktree merge`; rejected \u2192 log (operator inbox notify deferred). 5s tick, 10s startup delay. Adversarial-red + adversarial-blue voters NOT yet automated \u2014 quorum policy must be tuned (min_pass_votes=1, require_judge_pass=true) until they ship. Cargo binary resolved via CARGO env / $HOME/.cargo/bin / PATH. End-to-end verified: pending \u2192 voting \u2192 judge runs `cargo check --workspace` \u2192 casts vote with build output as reason \u2192 tally transitions to rejected on judge=fail.",
           "status": "done",
           "strategy_hint": "codegen",
           "files": [
@@ -168,7 +168,7 @@
       "tasks": [
         {
           "id": "P5.1",
-          "title": "hex worktree status — lists every merge_request with role / workplan / opened_at / status (color-coded: pending=yellow, voting=cyan, approved=green, rejected=red, merged=dim). Per-row vote tally with verdict colors + first 80 chars of reason. JSON mode via --json. Direct STDB SQL queries via reqwest (no port-trait surface needed).",
+          "title": "hex worktree status \u2014 lists every merge_request with role / workplan / opened_at / status (color-coded: pending=yellow, voting=cyan, approved=green, rejected=red, merged=dim). Per-row vote tally with verdict colors + first 80 chars of reason. JSON mode via --json. Direct STDB SQL queries via reqwest (no port-trait surface needed).",
           "status": "done",
           "strategy_hint": "codegen",
           "files": [
@@ -182,7 +182,7 @@
         },
         {
           "id": "P5.2",
-          "title": "hex worktree approve <path> --reason <text>: cast operator vote=pass + immediate merge_decision_tally (status flips to approved → integrator picks up next tick → hex worktree merge runs). hex worktree reject <path> <reason>: cast operator vote=fail + tally → status=rejected. Both verified end-to-end: approve → merged; reject → rejected.",
+          "title": "hex worktree approve <path> --reason <text>: cast operator vote=pass + immediate merge_decision_tally (status flips to approved \u2192 integrator picks up next tick \u2192 hex worktree merge runs). hex worktree reject <path> <reason>: cast operator vote=fail + tally \u2192 status=rejected. Both verified end-to-end: approve \u2192 merged; reject \u2192 rejected.",
           "status": "done",
           "strategy_hint": "codegen",
           "files": [
@@ -202,7 +202,7 @@
       "tasks": [
         {
           "id": "P6.1",
-          "title": "hex-nexus/tests/hijack_regression.rs creates a worktree, overwrites lib.rs with a 30-line detector stub, commits, opens merge_request via STDB call endpoint, polls status up to 120s, asserts status=rejected AND trunk lib.rs SHA-256 unchanged. Verified live: judge ran cargo check (46s), failed, voted fail, tally → rejected, trunk untouched. Test gated on HEX_GATE_E2E=1 to keep cargo test cheap.",
+          "title": "hex-nexus/tests/hijack_regression.rs creates a worktree, overwrites lib.rs with a 30-line detector stub, commits, opens merge_request via STDB call endpoint, polls status up to 120s, asserts status=rejected AND trunk lib.rs SHA-256 unchanged. Verified live: judge ran cargo check (46s), failed, voted fail, tally \u2192 rejected, trunk untouched. Test gated on HEX_GATE_E2E=1 to keep cargo test cheap.",
           "status": "done",
           "strategy_hint": "script",
           "files": [
@@ -239,5 +239,8 @@
         }
       ]
     }
-  ]
+  ],
+  "status": "completed",
+  "closed_at": "2026-05-12T10:25:10.474540+00:00",
+  "closed_reason": "all tasks have status=done"
 }

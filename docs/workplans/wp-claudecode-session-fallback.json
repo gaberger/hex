@@ -64,5 +64,6 @@
     }
   ],
   "priority": "P1",
-  "title": "Use CLAUDECODE=1 as fallback for session ID"
+  "title": "Use CLAUDECODE=1 as fallback for session ID",
+  "status": "in_progress"
 }

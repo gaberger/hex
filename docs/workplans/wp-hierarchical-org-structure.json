@@ -202,8 +202,9 @@
     "All C-suite agents defined and tested",
     "All lead agents defined with direct_reports",
     "Brain dashboard shows org chart",
-    "Tasks route through hierarchy (CEO → C-suite → Leads → ICs)",
+    "Tasks route through hierarchy (CEO \u2192 C-suite \u2192 Leads \u2192 ICs)",
     "Existing IC agents updated with reporting structure"
   ],
-  "title": "Implement Hierarchical Organization Structure"
+  "title": "Implement Hierarchical Organization Structure",
+  "status": "in_progress"
 }

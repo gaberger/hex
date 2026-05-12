@@ -19,7 +19,7 @@
           "title": "Bootstrap complete stack on Bazzite"
         },
         {
-          "description": "ssh bazzite 'hex doctor composition'\nShould report: ✓ SpacetimeDB, ✓ hex-nexus, ✓ Ollama, ✓ CLAUDE_SESSION_ID (or standalone mode)",
+          "description": "ssh bazzite 'hex doctor composition'\nShould report: \u2713 SpacetimeDB, \u2713 hex-nexus, \u2713 Ollama, \u2713 CLAUDE_SESSION_ID (or standalone mode)",
           "files": [
             "hex-cli/src/commands/doctor/mod.rs"
           ],
@@ -263,5 +263,6 @@
     }
   ],
   "priority": "P1",
-  "title": "End-to-end hex architecture validation on Bazzite (GPU)"
+  "title": "End-to-end hex architecture validation on Bazzite (GPU)",
+  "status": "in_progress"
 }

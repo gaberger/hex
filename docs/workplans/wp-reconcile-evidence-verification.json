@@ -2,11 +2,11 @@
   "adr": "ADR-2026-04-14-2200",
   "created_at": "2026-04-14T21:25:00Z",
   "created_by": "human+agent",
-  "description": "Fix hex plan reconcile to require positive file evidence (file exists + declared symbol present + commit id match) before promoting a task to done. Remove passive reconcile triggers (hooks, daemon ticks, file watchers) — reconcile mutates only on explicit invocation. Add observability: brain queue history, reconcile --dry-run / --why / --force. Surfaced live during wp-hex-native-web-search: daemon correctly ran P1.1+P1.2 (commits 19928ffc, 1d1e40b9) then reconcile marked 11 downstream tasks done despite their files not existing; a passive loop re-asserted the false state after manual edits.",
+  "description": "Fix hex plan reconcile to require positive file evidence (file exists + declared symbol present + commit id match) before promoting a task to done. Remove passive reconcile triggers (hooks, daemon ticks, file watchers) \u2014 reconcile mutates only on explicit invocation. Add observability: brain queue history, reconcile --dry-run / --why / --force. Surfaced live during wp-hex-native-web-search: daemon correctly ran P1.1+P1.2 (commits 19928ffc, 1d1e40b9) then reconcile marked 11 downstream tasks done despite their files not existing; a passive loop re-asserted the false state after manual edits.",
   "executor_hint": "frontier-preferred",
   "feature": "Reconcile evidence verification",
   "id": "wp-reconcile-evidence-verification",
-  "notes": "Reconcile fixes should ideally be implemented by frontier Claude or by hand — a daemon dispatching this workplan may have reconcile false-positive its own fix tasks. If enqueued autonomously, verify each R* task end-to-end against git evidence before accepting daemon-reported completion.",
+  "notes": "Reconcile fixes should ideally be implemented by frontier Claude or by hand \u2014 a daemon dispatching this workplan may have reconcile false-positive its own fix tasks. If enqueued autonomously, verify each R* task end-to-end against git evidence before accepting daemon-reported completion.",
   "phases": [
     {
       "description": "Reconcile must check: every path in task.files[] exists AND at least one declared symbol from the description appears in at least one declared file AND a commit matching the task id exists in the branch history. If any check fails, the task stays pending. No heuristic override.",
@@ -52,7 +52,7 @@
           "deps": [
             "R1.2"
           ],
-          "description": "hex-cli/tests/reconcile_evidence.rs: load fixture workplan that mirrors wp-hex-native-web-search shape (P1 done with files present + commit, P2/P3 pending with missing files). Assert reconcile leaves P2/P3 as pending. Also fixture: all files present, symbols present, commit matches — assert promotion works.",
+          "description": "hex-cli/tests/reconcile_evidence.rs: load fixture workplan that mirrors wp-hex-native-web-search shape (P1 done with files present + commit, P2/P3 pending with missing files). Assert reconcile leaves P2/P3 as pending. Also fixture: all files present, symbols present, commit matches \u2014 assert promotion works.",
           "files": [
             "hex-cli/tests/reconcile_evidence.rs",
             "hex-cli/tests/fixtures/reconcile/wp-partial.json"
@@ -150,5 +150,6 @@
       ],
       "tier": 2
     }
-  ]
+  ],
+  "status": "in_progress"
 }
