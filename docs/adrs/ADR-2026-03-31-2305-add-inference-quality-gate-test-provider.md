@@ -1,5 +1,7 @@
 # ADR-2026-03-31-2305: Inference Provider Health Checks and Pruning
 
+**Date:** 2026-03-31
+
 **Status:** Accepted
 
 ## Date

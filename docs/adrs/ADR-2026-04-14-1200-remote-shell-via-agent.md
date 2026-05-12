@@ -1,6 +1,6 @@
 # ADR-2026-04-14-1200: Remote Shell Commands via hex-agent Worker
 
-**Status:** Rejected (resolved 2026-05-05)
+**Status:** Rejected
 **Date:** 2026-04-14
 **Drivers:** Users want to run shell commands on remote hosts (bazzite) from their local hex session. Today hex-agent workers poll for tasks but there's no clean way to enqueue a shell command and see the output.
 

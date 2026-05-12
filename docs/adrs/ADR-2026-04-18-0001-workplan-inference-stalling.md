@@ -1,5 +1,7 @@
 # ADR-2026-04-18-0001: Workplan Inference Task Stalling & State Sync
 
+**Date:** 2026-04-18
+
 ## Status
 ACTIVE — Critical blocker for autonomous workplan execution
 

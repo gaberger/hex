@@ -1,6 +1,6 @@
 # ADR-2026-04-14-2100: hex Native Filesystem — Self-Sufficient File Operations
 
-**Status:** Accepted (resolved 2026-05-05)
+**Status:** Accepted
 **Date:** 2026-04-14
 **Drivers:** hex currently depends on external tools (context-mode, Bash glob, Claude Read/Grep) for filesystem operations. An AIOS that needs third-party plugins for `ls` is not self-sufficient. hex must own its entire filesystem surface.
 

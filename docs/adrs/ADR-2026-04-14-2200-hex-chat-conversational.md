@@ -1,6 +1,6 @@
 # ADR-2026-04-14-2200: Hex Chat — Conversational Brain Interface
 
-**Status:** Accepted (2026-05-05)
+**Status:** Accepted
 **Date:** 2026-04-14
 **Drivers:** `hex hey` is one-shot (classify → execute → exit). Users want a persistent conversation where brain maintains context, remembers prior messages, and reports proactively. An AIOS should talk, not just listen.
 

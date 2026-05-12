@@ -2,7 +2,7 @@
 
 <!-- ID format: YYMMDDHHMM — 2604150100 = 2026-04-15 01:00 local -->
 
-**Status:** Accepted (2026-05-05)
+**Status:** Accepted
 **Date:** 2026-04-15
 **Depends on:** ADR-2026-04-13-1930 (original worktree-merge integrity claim)
 **Relates to:** `feedback_use_hex_worktree_merge.md`

@@ -1,5 +1,7 @@
 # ADR-2026-04-17-0001: Unified hex Bootstrap Command
 
+**Date:** 2026-04-17
+
 ## Status
 ACCEPTED
 

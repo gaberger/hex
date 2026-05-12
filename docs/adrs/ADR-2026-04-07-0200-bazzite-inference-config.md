@@ -1,5 +1,7 @@
 # ADR-2026-04-07-0200: Bazzite Standalone Inference Configuration
 
+**Date:** 2026-04-07
+
 **Status:** Accepted
 
 ## Context

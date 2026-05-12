@@ -1,5 +1,7 @@
 # ADR-2026-04-07-0400: Swarm Code Generation Quality Improvements
 
+**Date:** 2026-04-07
+
 **Status:** Accepted
 
 ## Context

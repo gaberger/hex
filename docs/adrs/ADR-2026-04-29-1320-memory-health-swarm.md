@@ -1,6 +1,6 @@
 # ADR-2026-04-29-1320 — Memory Health Swarm
 
-**Status:** Accepted (2026-05-05)
+**Status:** Accepted
 **Date:** 2026-04-29
 **Supersedes:** —
 **Related:** ADR-2026-04-15-1200 (idle-research swarm), ADR-2026-04-14-2345 (insight routing), ADR-2026-04-14-1400 (brain queue swarm-lease)

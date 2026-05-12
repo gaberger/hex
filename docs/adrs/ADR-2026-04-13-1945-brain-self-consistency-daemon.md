@@ -1,6 +1,6 @@
 # ADR-2026-04-13-1945: Brain as Self-Consistency Daemon
 
-**Status:** Accepted (resolved 2026-05-05)
+**Status:** Accepted
 **Date:** 2026-04-13
 **Drivers:** Every bug caught this session was a deterministic invariant violation that hex already had tools to detect — but nothing ran those tools automatically. Brain should be hex's continuous self-consistency layer, not just an RL model selector.
 

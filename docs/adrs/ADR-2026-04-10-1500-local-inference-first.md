@@ -1,5 +1,7 @@
 # ADR-2026-04-10-1500: Local Inference First for RL Evaluator
 
+**Date:** 2026-04-10
+
 **Status:** Accepted
 
 ## Problem

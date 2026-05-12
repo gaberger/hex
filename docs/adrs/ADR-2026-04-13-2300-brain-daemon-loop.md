@@ -1,6 +1,6 @@
 # ADR-2026-04-13-2300: Brain Daemon — The Missing Supervisor Loop
 
-**Status:** Accepted (2026-05-05)
+**Status:** Accepted
 **Date:** 2026-04-13
 **Drivers:** hex has a nexus daemon, SpacetimeDB, cleanup services, and agent pollers — but NO supervisor loop that continuously validates, auto-fixes, and advances project state. Without it, hex is a collection of tools, not an operating system. An AIOS needs an init process.
 

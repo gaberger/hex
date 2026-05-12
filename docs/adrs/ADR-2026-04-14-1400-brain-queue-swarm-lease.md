@@ -1,5 +1,7 @@
 # ADR-2026-04-14-1400: Brain queue tasks require swarm ownership + confirmed completion
 
+**Date:** 2026-04-14
+
 <!-- ID format: YYMMDDHHMM — 2604141400 = 2026-04-14 14:00 local -->
 
 - **Status**: §1 Accepted 2026-04-14 (P1 scope complete — git-evidence guard, inline fallback, queue history); §2 (swarm-lease + task states) Proposed

@@ -1,6 +1,6 @@
 # ADR-031: RL-Driven Model Selection & Token Budget Management
 
-**Status:** Accepted (documenting existing implementation)
+**Status:** Accepted
 **Date:** 2026-03-18
 **Deciders:** Gary
 **Relates to:** ADR-024 (hex-nexus), ADR-028 (API Optimization), ADR-030 (Multi-Provider)

@@ -1,5 +1,7 @@
 # ADR-2026-04-06-1600: Standalone Deployment Gaps — Bazzite E2E Testing
 
+**Date:** 2026-04-06
+
 **Status:** Accepted
 
 ## Context

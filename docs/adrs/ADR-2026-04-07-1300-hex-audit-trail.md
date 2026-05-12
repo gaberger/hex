@@ -1,5 +1,7 @@
 # ADR-2026-04-07-1300: Unified Hex Dev Audit Trail via SpacetimeDB
 
+**Date:** 2026-04-07
+
 **Status:** Accepted
 
 ## Context

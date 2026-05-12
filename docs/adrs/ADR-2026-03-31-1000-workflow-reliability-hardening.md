@@ -1,5 +1,7 @@
 # ADR-2026-03-31-1000: Workflow Reliability Hardening
 
+**Date:** 2026-03-31
+
 **Status:** Accepted
 **Date**: 2026-03-31
 **Context**: Post-E2E analysis of recurring failure modes in the hex dev pipeline

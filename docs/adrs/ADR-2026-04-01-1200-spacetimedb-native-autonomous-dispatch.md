@@ -1,6 +1,6 @@
 # ADR-2026-04-01-1200: SpacetimeDB-Native Autonomous Inference Dispatch
 
-**Status:** Superseded by ADR-2026-04-11-2000 (Hex Standalone Dispatch)
+**Status:** Superseded
 **Date:** 2026-04-01
 **Supersedes:** Nothing — closes the final gap in ADR-2026-04-01-0000 (Unified Execution Path)
 **Extends:** ADR-2026-04-01-0000 (Path B routing), ADR-046 (SpacetimeDB single authority), ADR-027 (HexFlo coordination), ADR-060 (agent inbox)

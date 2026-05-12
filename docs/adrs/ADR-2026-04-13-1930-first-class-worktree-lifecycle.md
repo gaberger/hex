@@ -1,6 +1,6 @@
 # ADR-2026-04-13-1930: First-Class Worktree Lifecycle Management
 
-**Status:** Accepted (2026-05-04)
+**Status:** Accepted
 **Date:** 2026-04-13
 **Drivers:** Worktrees are hex's primary isolation mechanism for parallel agent work, but their lifecycle is fragmented across shell scripts, hooks, agent internals, and manual git commands. Code was silently dropped during a merge because hex didn't own the full lifecycle. An AIOS must guarantee that every line of agent-generated code reaches main.
 

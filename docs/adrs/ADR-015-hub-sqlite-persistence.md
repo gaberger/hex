@@ -1,6 +1,6 @@
 # ADR-015: SQLite Persistence for Hub Swarm State
 
-**Status:** Superseded by ADR-063 (Deprecate SQLite, Migrate HexFlo to SpacetimeDB)
+**Status:** Superseded
 ## Date
 
 2026-03-17

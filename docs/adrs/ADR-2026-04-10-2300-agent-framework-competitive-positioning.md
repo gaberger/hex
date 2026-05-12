@@ -1,6 +1,8 @@
 # ADR-2026-04-10-2300: Agent Framework Competitive Positioning
 
-**Status:** Deprecated — competitive positioning now maintained in README.md
+**Date:** 2026-04-10
+
+**Status:** Deprecated
 
 ## Context
 The AI agent framework landscape in 2026 has three dominant players:

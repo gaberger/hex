@@ -1,6 +1,6 @@
 # ADR-2026-04-26-1800 — Excise Phantom TypeScript Library Surface
 
-**Status:** Accepted (2026-05-05)
+**Status:** Accepted
 **Date:** 2026-04-26
 **Drivers:** During the survey for ADR-2026-04-26-1430 (stash consolidation memory port) we discovered that the TypeScript library described in CLAUDE.md and `package.json` does not exist on disk on this branch. The repo claims a dual Rust+TypeScript surface but ships only the Rust kernel; the TS infrastructure is vestigial and actively broken (`bun run build` fails because `src/cli.ts` is missing).
 **Related:** ADR-001 (hexagonal architecture), ADR-2026-04-26-1430 (stash consolidation memory port — surfaced this drift)

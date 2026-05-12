@@ -1,6 +1,6 @@
 # ADR-2026-04-14-0000: Hey Hex — Natural Language Task Enqueue
 
-**Status:** Accepted (resolved 2026-05-05)
+**Status:** Accepted
 **Date:** 2026-04-14
 **Drivers:** `hex brain enqueue hex-command -- "--version"` is friction. Users want to say "hey brain, do X" and have brain figure it out. An AIOS should have a voice-assistant-style natural-language surface, not just structured CLI.
 

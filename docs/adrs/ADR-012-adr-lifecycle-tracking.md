@@ -39,7 +39,7 @@ The `ADRAdapter` parses markdown files matching `docs/adrs/ADR-*.md`. It extract
 - **Linked features**: `feat/<name>` references found in the body
 - **Linked worktrees**: `worktree: <branch>` references found in the body
 
-Both `## Status: Accepted` and `**Status:** Accepted` formats are supported because existing ADRs use both conventions.
+Both `## Status: Accepted` and `**Status:** Accepted
 
 ### AgentDB Integration
 

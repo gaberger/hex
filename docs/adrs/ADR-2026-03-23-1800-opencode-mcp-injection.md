@@ -1,6 +1,6 @@
 # ADR-2026-03-23-1800: hex Context Injection into opencode
 
-**Status:** Accepted — Partial Implementation
+**Status:** Accepted
 **Date:** 2026-03-23
 **Updated:** 2026-04-01
 **Drivers:** Enable opencode to leverage hex's full agent ecosystem including skills, hooks, enforcement rules, and HexFlo coordination

@@ -1,6 +1,6 @@
 # ADR-2026-04-14-1100: Brain Updates to Operator — Push, Don't Poll
 
-**Status:** Accepted (2026-05-04)
+**Status:** Accepted
 **Date:** 2026-04-14
 **Drivers:** Brain daemon runs autonomously but operator has no visibility unless they manually check `hex brain queue list`. An AIOS should keep the operator informed without being asked.
 

@@ -1,5 +1,7 @@
 # ADR-2026-05-01-0001: Workflow Validation Protocol
 
+**Date:** 2026-05-01
+
 **Status**: Accepted  
 **Date**: 2026-05-01  
 **Context**: Workplan execution system needs standardized validation methodology  
