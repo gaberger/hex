@@ -41,7 +41,12 @@ const THOUGHT_MAX_TOKENS: u32 = 96;
 ///
 /// Both overrideable: HEX_RESPONDER_CHAT_MODEL, HEX_RESPONDER_COMMIT_MODEL.
 /// Legacy HEX_RESPONDER_MODEL still wins for both if set.
-const REPLY_MODEL_CHAT_DEFAULT: &str = "qwen3:4b";
+// qwen3:4b is a thinking model and produces meta-reasoning instead of
+// answers even in chat mode — it hits num_predict mid-think and the strip
+// only catches tagged <think>…</think> blocks, not untagged rambling.
+// nemotron-mini doesn't think, replies tight (~50–200 tokens), follows
+// the brief format. Override via HEX_RESPONDER_CHAT_MODEL.
+const REPLY_MODEL_CHAT_DEFAULT: &str = "nemotron-mini";
 const REPLY_MODEL_COMMIT_DEFAULT: &str = "nemotron-mini";
 /// Cap concurrent inference calls so we don't queue 9 simultaneous
 /// requests at Ollama for a 4B model. Override with HEX_RESPONDER_CONCURRENCY.
