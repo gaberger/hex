@@ -31,7 +31,7 @@ Add automated ADR acceptance verification that runs during the normal hex pipeli
 ### 1. Implementation Phase Linking
 
 Each implementation phase in an ADR references:
-- Worktree branch (e.g., `worktree: feat/adr-verification`)
+- Worktree branch (e.g., `worktree: feat/ADR-verification`)
 - Commit hash (when complete)
 - Test file or command that validates the phase
 

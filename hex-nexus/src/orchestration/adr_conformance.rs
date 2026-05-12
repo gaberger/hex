@@ -136,7 +136,7 @@ impl AdrConformanceChecker {
 fn parse_adr(path: &Path) -> Option<AdrRecord> {
     let stem = path.file_stem()?.to_str()?;
     // Match the ADR-NNNNNNNNNN prefix (case-insensitive). Filenames
-    // observed in the project: "ADR-2026-04-26-1500-...", "adr-2604170001-...".
+    // observed in the project: "ADR-2026-04-26-1500-...", "ADR-2026-04-17-0001-...".
     let id = stem
         .split_once('-')
         .filter(|(prefix, _)| prefix.eq_ignore_ascii_case("adr"))
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn r2_blocks_adapter_referencing_superseded_adr() {
-        let t = ticket("t1", "adr-2604120202-tier-routing", r#"{"version":"0.1.0"}"#);
+        let t = ticket("t1", "ADR-2026-04-12-0202-tier-routing", r#"{"version":"0.1.0"}"#);
         let reg = registry_with(&[("ADR-2026-04-12-0202", AdrStatus::Superseded)]);
         let v = check_against(&t, &reg);
         assert_eq!(v.len(), 1);
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn r2_passes_adapter_referencing_accepted_adr() {
-        let t = ticket("t1", "adr-2604261500-substrate", r#"{"version":"0.1.0"}"#);
+        let t = ticket("t1", "ADR-2026-04-26-1500-substrate", r#"{"version":"0.1.0"}"#);
         let reg = registry_with(&[("ADR-2026-04-26-1500", AdrStatus::Accepted)]);
         let v = check_against(&t, &reg);
         assert!(v.is_empty());
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn r2_blocks_adapter_referencing_missing_adr() {
-        let t = ticket("t1", "adr-9999999999-imaginary", r#"{"version":"0.1.0"}"#);
+        let t = ticket("t1", "ADR-2099-99-99-9999-imaginary", r#"{"version":"0.1.0"}"#);
         let v = check_against(&t, &BTreeMap::new());
         assert_eq!(v.len(), 1);
         match &v[0] {
@@ -331,7 +331,7 @@ mod tests {
     #[test]
     fn parse_adr_handles_lowercase_filename_prefix() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("adr-2604170001-bootstrap.md");
+        let path = dir.path().join("ADR-2026-04-17-0001-bootstrap.md");
         std::fs::write(&path, "**Status:** Accepted\n").expect("write");
         let rec = parse_adr(&path).expect("parsed");
         assert_eq!(rec.id, "ADR-2026-04-17-0001");
@@ -340,15 +340,15 @@ mod tests {
     #[test]
     fn extract_adr_id_handles_both_prefixes() {
         assert_eq!(
-            extract_adr_id("adr-2604120202-something"),
+            extract_adr_id("ADR-2026-04-12-0202-something"),
             Some("ADR-2026-04-12-0202".into())
         );
         assert_eq!(
             extract_adr_id("ADR-2026-04-12-0202-something"),
             Some("ADR-2026-04-12-0202".into())
         );
-        assert_eq!(extract_adr_id("not-an-adr-id"), None);
-        assert_eq!(extract_adr_id("adr-not-numeric"), None);
+        assert_eq!(extract_adr_id("not-an-ADR-id"), None);
+        assert_eq!(extract_adr_id("ADR-not-numeric"), None);
     }
 
     #[test]
@@ -368,7 +368,7 @@ mod tests {
         let checker = AdrConformanceChecker::new(dir.path());
         let reg = checker.load_registry();
         assert_eq!(reg.len(), 2);
-        assert_eq!(reg["adr-2604261500"].status, AdrStatus::Accepted);
-        assert_eq!(reg["adr-2604120202"].status, AdrStatus::Superseded);
+        assert_eq!(reg["ADR-2026-04-26-1500"].status, AdrStatus::Accepted);
+        assert_eq!(reg["ADR-2026-04-12-0202"].status, AdrStatus::Superseded);
     }
 }

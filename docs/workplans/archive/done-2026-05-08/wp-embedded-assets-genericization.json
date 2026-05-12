@@ -21,11 +21,11 @@
           "deps": [],
           "description": "Grep for hex-nexus, hex-cli, hex-core, spacetime-modules markers. Categorize each hit as (a) generic example that can stay, (b) hex-intf-specific that must be replaced with language-agnostic wording, or (c) fundamentally project-specific that requires delete-and-preserve-in-.claude.",
           "files": [
-            "hex-cli/assets/skills/hex-adr-create.md"
+            "hex-cli/assets/skills/hex-ADR-create.md"
           ],
           "id": "P1.1",
           "layer": "primary",
-          "name": "Audit hex-adr-create.md for hex-nexus references",
+          "name": "Audit hex-ADR-create.md for hex-nexus references",
           "status": "done"
         },
         {
@@ -61,7 +61,7 @@
           ],
           "description": "For each audit finding: if generic-with-leaks, edit in place to strip hex-intf markers; if project-specific, rm from hex-cli/assets/skills/ and verify the file still exists under .claude/skills/ (preserve hex-intf's own use). cargo check -p hex-cli must stay green throughout.",
           "files": [
-            "hex-cli/assets/skills/hex-adr-create.md",
+            "hex-cli/assets/skills/hex-ADR-create.md",
             "hex-cli/assets/skills/hex-analyze-arch/SKILL.md",
             "hex-cli/assets/skills/hex-feature-dev/SKILL.md"
           ],
@@ -100,12 +100,12 @@
           "deps": [],
           "description": "Both hooks reference hex-nexus/src/ paths in their descriptions or example violations. Rewrite to use generic adapter-boundary language.",
           "files": [
-            "hex-cli/assets/hooks/hex/hex-adr-lifecycle.yml",
+            "hex-cli/assets/hooks/hex/hex-ADR-lifecycle.yml",
             "hex-cli/assets/hooks/hex/hex-no-rest-state-mutation.yml"
           ],
           "id": "P2.2",
           "layer": "primary",
-          "name": "Fix hex-adr-lifecycle.yml and hex-no-rest-state-mutation.yml hook paths",
+          "name": "Fix hex-ADR-lifecycle.yml and hex-no-rest-state-mutation.yml hook paths",
           "status": "done"
         },
         {

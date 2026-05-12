@@ -2354,7 +2354,7 @@ mod evidence_gate_tests {
         let dispatch_start = chrono::Utc::now().to_rfc3339();
         let result = WorkplanExecutor::check_evidence_gate(
             "P0.1",
-            "wp-adr-doctor-self-fix",
+            "wp-ADR-doctor-self-fix",
             &["src/foo.rs".to_string()],
             dir.to_str().unwrap(),
             &dispatch_start,

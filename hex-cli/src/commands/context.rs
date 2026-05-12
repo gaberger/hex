@@ -49,7 +49,7 @@ async fn list_templates() -> anyhow::Result<()> {
         ("Agent Prompts", vec!["agent-coder", "agent-reviewer", "agent-tester", "agent-fixer", "agent-documenter", "agent-ux"]),
         ("Code Generation", vec!["code-generate", "test-generate"]),
         ("Fix Prompts", vec!["fix-compile", "fix-tests", "fix-violations"]),
-        ("Specialized", vec!["adr-generate", "workplan-generate"]),
+        ("Specialized", vec!["ADR-generate", "workplan-generate"]),
     ];
 
     for (category, items) in categories {

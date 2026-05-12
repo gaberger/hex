@@ -73,4 +73,4 @@ Only `hexflo-coordination` is published to the `hex` database. It contains all 1
 - ADR-039: SpacetimeDB is source of truth (state management)
 - ADR-025: SQLite fallback when SpacetimeDB unavailable
 - Commits: `e4990ee`, `1f4bfb3`
-- `.hex/adr-rules.toml`: rules `adr-039-no-stale-ping`, `adr-039-use-ping-constant`
+- `.hex/ADR-rules.toml`: rules `adr-039-no-stale-ping`, `adr-039-use-ping-constant`

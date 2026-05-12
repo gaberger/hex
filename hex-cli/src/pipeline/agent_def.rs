@@ -48,7 +48,7 @@ where
 /// Deserialize `constraints` which can be:
 ///
 /// - Vec<String> (hex-coder, planner)
-/// - Vec<Map> with structured constraint entries (adr-reviewer)
+/// - Vec<Map> with structured constraint entries (ADR-reviewer)
 /// - Map<String, Value> (rust-refactorer)
 ///
 /// All are normalized to Vec<String> by stringifying non-string entries.

@@ -1,7 +1,7 @@
 ---
-name: hex-adr-search
+name: hex-ADR-search
 description: Search Architecture Decision Records by keyword, status, or date
-trigger: /hex-adr-search
+trigger: /hex-ADR-search
 ---
 
 # Search ADRs
@@ -26,5 +26,5 @@ trigger: /hex-adr-search
 
 ## Example
 
-User: `/hex-adr-search spacetimedb`
+User: `/hex-ADR-search spacetimedb`
 -> Shows ADR-025, ADR-032, ADR-042 with relevant snippets

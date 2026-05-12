@@ -232,7 +232,7 @@ system_prompt: |
        @hex-documenter — docs, READMEs, ADR text
        @planner        — full workplan decomposition
        @rust-refactorer — Rust-specific refactor
-       @adr-reviewer   — ADR draft / supersession review
+       @ADR-reviewer   — ADR draft / supersession review
        @scaffold-validator — verify build / type / test gates
        @validation-judge   — judge whether work satisfies spec
   4. When the request references a workplan/task ID (e.g.

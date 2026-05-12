@@ -142,7 +142,7 @@ System prompts live in `hex-cli/assets/prompts/`, baked into the binary via `rus
 
 ```
 hex-cli/assets/prompts/
-  adr-generate.md          # "You are a software architect writing an ADR..."
+  ADR-generate.md          # "You are a software architect writing an ADR..."
   workplan-generate.md     # "Decompose this ADR into hex-bounded steps..."
   code-generate.md         # "Generate code for this workplan step..."
   test-generate.md         # "Write tests for this module..."

@@ -138,4 +138,4 @@ For users who want the Siri-style feel.
 ---
 ## Operator Resolution Note (2026-05-05T17:31:38.926373427+00:00)
 
-Inline chat-bubble accept on @adr-reviewer's verdict
+Inline chat-bubble accept on @ADR-reviewer's verdict

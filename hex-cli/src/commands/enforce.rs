@@ -1,7 +1,7 @@
 //! `hex enforce` — manage enforcement rules (ADR-2026-03-22-1959 P5).
 //!
 //! Rules define what hex enforces at the MCP, CLI, and API layers.
-//! Rules are synced from `.hex/adr-rules.toml` to SpacetimeDB on startup,
+//! Rules are synced from `.hex/ADR-rules.toml` to SpacetimeDB on startup,
 //! and can be listed/toggled via this command.
 
 use colored::Colorize;
@@ -13,7 +13,7 @@ use crate::nexus_client::NexusClient;
 pub enum EnforceAction {
     /// List all enforcement rules
     List,
-    /// Sync rules from .hex/adr-rules.toml to SpacetimeDB
+    /// Sync rules from .hex/ADR-rules.toml to SpacetimeDB
     Sync,
     /// Disable a rule by ID
     Disable {
@@ -29,7 +29,7 @@ pub enum EnforceAction {
     Mode,
     /// Output a system prompt for non-MCP models (ADR-2026-03-22-1959 P6)
     Prompt,
-    /// Check a file path against adr-rules.toml (for Claude Code hook integration)
+    /// Check a file path against ADR-rules.toml (for Claude Code hook integration)
     CheckFile {
         /// File path to check
         path: String,
@@ -57,7 +57,7 @@ async fn list() -> anyhow::Result<()> {
         None
     };
 
-    // Also load from local .hex/adr-rules.toml
+    // Also load from local .hex/ADR-rules.toml
     let local_rules = load_local_rules();
 
     println!("{} Enforcement Rules (ADR-2026-03-22-1959)", "\u{2b21}".cyan());
@@ -76,7 +76,7 @@ async fn list() -> anyhow::Result<()> {
 
     // Display local rules
     if !local_rules.is_empty() {
-        println!("  {}", "Local rules (.hex/adr-rules.toml):".bold());
+        println!("  {}", "Local rules (.hex/ADR-rules.toml):".bold());
         for rule in &local_rules {
             let severity_icon = match rule.severity.as_str() {
                 "error" => "\u{2717}".red(),
@@ -93,7 +93,7 @@ async fn list() -> anyhow::Result<()> {
         }
         println!("    {} rule(s)", local_rules.len());
     } else {
-        println!("  {} No local rules found (.hex/adr-rules.toml)", "\u{25cb}".dimmed());
+        println!("  {} No local rules found (.hex/ADR-rules.toml)", "\u{25cb}".dimmed());
     }
 
     // Display SpacetimeDB rules if available
@@ -128,7 +128,7 @@ async fn list() -> anyhow::Result<()> {
 async fn sync() -> anyhow::Result<()> {
     let rules = load_local_rules();
     if rules.is_empty() {
-        println!("  {} No rules in .hex/adr-rules.toml", "\u{25cb}".dimmed());
+        println!("  {} No rules in .hex/ADR-rules.toml", "\u{25cb}".dimmed());
         return Ok(());
     }
 
@@ -206,9 +206,9 @@ struct LocalRule {
 
 fn load_local_rules() -> Vec<LocalRule> {
     let paths = [
-        std::path::PathBuf::from(".hex/adr-rules.toml"),
+        std::path::PathBuf::from(".hex/ADR-rules.toml"),
         std::env::var("CLAUDE_PROJECT_DIR")
-            .map(|d| std::path::PathBuf::from(d).join(".hex/adr-rules.toml"))
+            .map(|d| std::path::PathBuf::from(d).join(".hex/ADR-rules.toml"))
             .unwrap_or_default(),
     ];
 
@@ -247,7 +247,7 @@ fn load_local_rules() -> Vec<LocalRule> {
     Vec::new()
 }
 
-// ── adr-rules.toml (new format: [rules] + [[hex_layer_rules]]) ─────────────
+// ── ADR-rules.toml (new format: [rules] + [[hex_layer_rules]]) ─────────────
 
 #[derive(Debug, serde::Deserialize)]
 struct AdrRulesFile {
@@ -269,13 +269,13 @@ struct HexLayerRule {
     layer: String,
 }
 
-/// Find `.hex/adr-rules.toml` starting from cwd, walking up to root,
-/// then falling back to `~/.hex/adr-rules.toml`.
+/// Find `.hex/ADR-rules.toml` starting from cwd, walking up to root,
+/// then falling back to `~/.hex/ADR-rules.toml`.
 fn find_adr_rules_toml() -> Option<std::path::PathBuf> {
     // Walk from cwd upward
     if let Ok(mut dir) = std::env::current_dir() {
         loop {
-            let candidate = dir.join(".hex/adr-rules.toml");
+            let candidate = dir.join(".hex/ADR-rules.toml");
             if candidate.exists() {
                 return Some(candidate);
             }
@@ -284,9 +284,9 @@ fn find_adr_rules_toml() -> Option<std::path::PathBuf> {
             }
         }
     }
-    // Fallback: ~/.hex/adr-rules.toml
+    // Fallback: ~/.hex/ADR-rules.toml
     if let Some(home) = dirs::home_dir() {
-        let candidate = home.join(".hex/adr-rules.toml");
+        let candidate = home.join(".hex/ADR-rules.toml");
         if candidate.exists() {
             return Some(candidate);
         }
@@ -326,7 +326,7 @@ fn check_file(path: &str) -> anyhow::Result<()> {
             std::process::exit(1);
         }
         PathVerdict::Warn { message } => {
-            eprintln!("hex enforce: WARNING — {}. Check your .hex/adr-rules.toml.", message);
+            eprintln!("hex enforce: WARNING — {}. Check your .hex/ADR-rules.toml.", message);
             // Non-blocking: fall through to exit 0
         }
         PathVerdict::Allow => {}
@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn test_load_adr_rules_file_parses_toml() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("adr-rules.toml");
+        let path = dir.path().join("ADR-rules.toml");
         let mut f = std::fs::File::create(&path).unwrap();
         writeln!(
             f,

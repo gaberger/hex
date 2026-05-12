@@ -247,7 +247,7 @@ A "feature" decomposes inside-out across layers; each adapter boundary gets its 
 
 **Slash commands**: `/hex-feature-dev`, `/hex-scaffold`, `/hex-generate`, `/hex-summarize`, `/hex-analyze-deps`, `/hex-analyze-arch`, `/hex-validate`, `/cargo-fast`.
 
-**Agents**: `feature-developer`, `planner`, `hex-coder`, `integrator`, `swarm-coordinator`, `dependency-analyst`, `dead-code-analyzer`, `scaffold-validator`, `behavioral-spec-writer`, `validation-judge`, `status-monitor`, `adversarial-reviewer`, `adr-reviewer`, `rust-refactorer`.
+**Agents**: `feature-developer`, `planner`, `hex-coder`, `integrator`, `swarm-coordinator`, `dependency-analyst`, `dead-code-analyzer`, `scaffold-validator`, `behavioral-spec-writer`, `validation-judge`, `status-monitor`, `adversarial-reviewer`, `ADR-reviewer`, `rust-refactorer`.
 
 ## Key Lessons (from adversarial review)
 

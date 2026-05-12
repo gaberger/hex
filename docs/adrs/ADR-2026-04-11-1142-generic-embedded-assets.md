@@ -46,7 +46,7 @@ markers (`/Volumes/`, `hex-intf`, `hex-nexus`, `hex-cli`, `hex-core`,
 
 ### Pre-existing leaks still embedded (not fixed yet — scope of this ADR's workplan)
 
-- `hex-cli/assets/skills/hex-adr-create.md` — references `hex-nexus/`
+- `hex-cli/assets/skills/hex-ADR-create.md` — references `hex-nexus/`
   paths in example commands
 - `hex-cli/assets/skills/hex-analyze-arch/SKILL.md` — references
   `hex-nexus`, `hex-cli` crates in examples
@@ -55,7 +55,7 @@ markers (`/Volumes/`, `hex-intf`, `hex-nexus`, `hex-cli`, `hex-core`,
 - `hex-cli/assets/agents/hex/hex/adversarial-reviewer.yml` — references
   `cargo build -p hex-nexus`, `hex-core`, `hex-cli` by name in its
   review checklist
-- `hex-cli/assets/hooks/hex/hex-adr-lifecycle.yml` — references
+- `hex-cli/assets/hooks/hex/hex-ADR-lifecycle.yml` — references
   `hex-nexus/src/` paths
 - `hex-cli/assets/hooks/hex/hex-no-rest-state-mutation.yml` — references
   `hex-nexus` routes
@@ -218,4 +218,4 @@ modules, rebuilding hex-nexus). This ADR explicitly preserves the
 ---
 ## Operator Resolution Note (2026-05-05T02:33:37.771866266+00:00)
 
-Auto-applied from @adr-reviewer chat verdict
+Auto-applied from @ADR-reviewer chat verdict

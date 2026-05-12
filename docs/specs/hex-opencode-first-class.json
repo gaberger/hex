@@ -15,7 +15,7 @@
       "id": "S02",
       "category": "HappyPath",
       "description": "Project-local skills override embedded skills on name collision",
-      "given": "A skill named hex-adr-create exists in both hex-cli/assets/skills/ and .claude/skills/",
+      "given": "A skill named hex-ADR-create exists in both hex-cli/assets/skills/ and .claude/skills/",
       "when": "write_opencode_config runs",
       "then": "The .claude/skills/ version takes precedence in the injected command entry",
       "negative_spec": false

@@ -154,7 +154,7 @@ fn is_bridgeable(title: &str) -> bool {
         || lo.contains("hex-tester")
         || lo.contains("hex-reviewer")
         || lo.contains("planner")
-        || lo.contains("adr-reviewer")
+        || lo.contains("ADR-reviewer")
         || lo.contains("[workplan]")
         || lo.contains("[analyze]")
         || lo.contains("wp-")
@@ -190,7 +190,7 @@ fn role_from_title(title: &str) -> Option<String> {
     let known = [
         "hex-coder", "hex-fixer", "hex-tester", "hex-reviewer",
         "hex-documenter", "hex-ux", "rust-refactorer", "scaffold-validator",
-        "planner", "adr-reviewer", "feature-developer", "integrator",
+        "planner", "ADR-reviewer", "feature-developer", "integrator",
         "validation-judge", "swarm-coordinator", "dependency-analyst",
         "behavioral-spec-writer", "dead-code-analyzer",
     ];
@@ -210,7 +210,7 @@ fn is_known_role(role: &str) -> bool {
     matches!(role,
         "hex-coder" | "hex-fixer" | "hex-tester" | "hex-reviewer"
         | "hex-documenter" | "hex-ux" | "rust-refactorer" | "scaffold-validator"
-        | "planner" | "adr-reviewer" | "feature-developer" | "integrator"
+        | "planner" | "ADR-reviewer" | "feature-developer" | "integrator"
         | "validation-judge" | "swarm-coordinator" | "dependency-analyst"
         | "behavioral-spec-writer" | "dead-code-analyzer" | "pm-agent"
         | "cli-designer" | "ux-designer" | "adversarial-red" | "adversarial-blue"

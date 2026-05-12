@@ -35,7 +35,7 @@ hex-cli/assets/
   scaffold/                    # Files extracted by `hex init`
     .hex/
       project.json.tmpl       # Handlebars template with {{name}}, {{id}}
-      adr-rules.toml           # Default ADR enforcement rules
+      ADR-rules.toml           # Default ADR enforcement rules
     .claude/
       settings.json.tmpl      # Default Claude Code settings
       agents/                  # Default agent definitions

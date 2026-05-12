@@ -2423,7 +2423,7 @@ pub async fn tick_adr_health_actions(
 ///     (informational; no operator interrupt). On `Outcome::Aborted`, downgrade
 ///     to a P2 notification so the operator can decide whether to retry.
 ///   - Tier-B → [`doctor::tier_b_draft_with_config`]. The drafter writes a
-///     placeholder notes file on a `sched/auto-fix/adr-doctor/tier-b/...`
+///     placeholder notes file on a `sched/auto-fix/ADR-doctor/tier-b/...`
 ///     branch (worktree left in place); we file a P2 inbox entry with the
 ///     branch + commit so the operator can review the diff and decide.
 ///   - Tier-C → P1 inbox notification, no mutation. Tier-C kinds are judgment
@@ -2975,7 +2975,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             }
         }
 
-        // ── ADR registry health (ADR-2026-04-27-0800 §1a, wp-adr-doctor-self-fix P3.2)
+        // ── ADR registry health (ADR-2026-04-27-0800 §1a, wp-ADR-doctor-self-fix P3.2)
         // After workplan reconcile, before swarm cleanup. Cheap when the
         // registry is clean (a single `docs/adrs/` scan). Routes Tier-A
         // findings through shadow-promotion and emits P1 inbox entries for

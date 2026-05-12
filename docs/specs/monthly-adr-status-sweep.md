@@ -117,7 +117,7 @@ cost_meter(window_secs: 2592000, group_by: "role")
 
 ### 5. Document Sweep Results (5 min)
 
-Create a timestamped entry in `docs/ops-logs/adr-sweep-YYYY-MM.md`:
+Create a timestamped entry in `docs/ops-logs/ADR-sweep-YYYY-MM.md`:
 
 ```markdown
 # ADR Status Sweep — 2026-05-05
@@ -178,10 +178,10 @@ Cost variance is a leading indicator of ADR-driven system changes (new personas,
 
 ## Observable Artifacts
 
-- `docs/ops-logs/adr-sweep-YYYY-MM.md` (monthly log)
+- `docs/ops-logs/ADR-sweep-YYYY-MM.md` (monthly log)
 - Updated `Status:` lines in ADR files (via `adr_status_set`)
 - `escalate_to_operator` notifications for ambiguous cases
-- Cost trend chart (if sweep logs are aggregated via `rg 'Total:' docs/ops-logs/adr-sweep-*.md`)
+- Cost trend chart (if sweep logs are aggregated via `rg 'Total:' docs/ops-logs/ADR-sweep-*.md`)
 
 ---
 

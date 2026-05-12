@@ -41,7 +41,7 @@ Every non-trivial change starts with an ADR documenting the decision and rationa
 
 ### Create an ADR
 
-Use the `/hex-adr-create` skill in Claude Code, or create the file manually:
+Use the `/hex-ADR-create` skill in Claude Code, or create the file manually:
 
 ```bash
 # Check next available ADR number

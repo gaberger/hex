@@ -419,7 +419,7 @@ mod tests {
         );
 
         // Strict mode: same task with workplan_id requirement → no match.
-        let strict = collect_evidence_strict(&task, &tmp, "", Some("wp-adr-doctor-self-fix"));
+        let strict = collect_evidence_strict(&task, &tmp, "", Some("wp-ADR-doctor-self-fix"));
         assert!(
             strict.matching_commits.is_empty(),
             "strict mode must reject commits that don't reference the workplan id; got {:?}",
@@ -451,7 +451,7 @@ mod tests {
             "commit",
             "-q",
             "-m",
-            "feat(p0.2): wp-adr-doctor-self-fix — reconcile evidence rule",
+            "feat(p0.2): wp-ADR-doctor-self-fix — reconcile evidence rule",
         ]);
 
         let task = WorkplanTask {
@@ -462,7 +462,7 @@ mod tests {
             created_at: "2026-04-27T07:55:00Z".into(),
             adr_scope: "ADR-2026-04-27-0800".into(),
         };
-        let strict = collect_evidence_strict(&task, &tmp, "", Some("wp-adr-doctor-self-fix"));
+        let strict = collect_evidence_strict(&task, &tmp, "", Some("wp-ADR-doctor-self-fix"));
         assert!(
             !strict.matching_commits.is_empty(),
             "strict mode should accept commits that reference the workplan id"

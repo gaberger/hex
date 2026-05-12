@@ -212,7 +212,7 @@ Add reporting endpoints and CLI commands:
 | System | Integration |
 |--------|-------------|
 | **Git (ADR-044)** | Task completion records commit SHA. Timeline endpoint merges workplan events with commits. |
-| **ADR compliance (ADR-045)** | Phase gates can run `hex analyze --adr-compliance` as a blocking gate. |
+| **ADR compliance (ADR-045)** | Phase gates can run `hex analyze --ADR-compliance` as a blocking gate. |
 | **HexFlo (ADR-027)** | Workplan tasks map 1:1 to HexFlo swarm tasks. Swarm topology matches workplan tier structure. |
 | **Dashboard** | SpacetimeDB subscription on `WorkplanExecution` + `WorkplanTask` tables drives real-time progress view. |
 | **Remote agents** | Agents read assigned tasks from SpacetimeDB. No polling — subscription pushes updates. |

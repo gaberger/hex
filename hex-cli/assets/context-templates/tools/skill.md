@@ -16,7 +16,7 @@ These skills are defined in `hex-cli/assets/skills/` and deployed to `.claude/sk
 | `/hex-analyze-arch` | Architecture health | Boundary violation check |
 | `/hex-validate` | Post-build validation | Semantic validation gate |
 | `/hex-workplan` | Workplan management | Create, validate, activate workplans |
-| `/hex-adr-create` | Creating ADRs | New Architecture Decision Records |
+| `/hex-ADR-create` | Creating ADRs | New Architecture Decision Records |
 
 ## Rules for hex agents
 

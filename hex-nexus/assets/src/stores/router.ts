@@ -43,7 +43,7 @@ export type Route =
   | { page: "project-swarm-detail"; projectId: string; swarmId: string }
   | { page: "project-swarm-task"; projectId: string; swarmId: string; taskId: string }
   | { page: "project-adrs"; projectId: string }
-  | { page: "project-adr-detail"; projectId: string; adrId: string }
+  | { page: "project-ADR-detail"; projectId: string; adrId: string }
   | { page: "project-workplans"; projectId: string }
   | { page: "project-workplan-detail"; projectId: string; workplanId: string }
   | { page: "project-health"; projectId: string }
@@ -159,7 +159,7 @@ export function initRouterStore() {
           crumbs.push({ label: "ADRs", icon: "file-text", route: { page: "project-adrs", projectId: pid } });
           break;
 
-        case "project-adr-detail":
+        case "project-ADR-detail":
           crumbs.push({ label: "ADRs", icon: "file-text", route: { page: "project-adrs", projectId: pid } });
           crumbs.push({ label: `ADR-${r.adrId}`, icon: "file-text" });
           break;
@@ -284,7 +284,7 @@ function routeToHash(r: Route): string {
       return `#/project/${r.projectId}/swarms/${r.swarmId}/tasks/${r.taskId}`;
     case "project-adrs":
       return `#/project/${r.projectId}/adrs`;
-    case "project-adr-detail":
+    case "project-ADR-detail":
       return `#/project/${r.projectId}/adrs/${r.adrId}`;
     case "project-workplans":
       return `#/project/${r.projectId}/workplans`;
@@ -356,7 +356,7 @@ function hashToRoute(hash: string): Route {
         return { page: "project-swarms", projectId };
 
       case "adrs":
-        if (parts[3]) return { page: "project-adr-detail", projectId, adrId: decodeURIComponent(parts[3]) };
+        if (parts[3]) return { page: "project-ADR-detail", projectId, adrId: decodeURIComponent(parts[3]) };
         return { page: "project-adrs", projectId };
 
       case "workplans":

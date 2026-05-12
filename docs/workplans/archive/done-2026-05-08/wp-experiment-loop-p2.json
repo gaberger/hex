@@ -1,7 +1,7 @@
 {
   "adr": "ADR-2026-05-02-1400",
   "created_at": "2026-05-02T15:00:00Z",
-  "created_by": "claude+adr-synthesis",
+  "created_by": "claude+ADR-synthesis",
   "description": "Phase 2 of ADR-2026-05-02-1400. Land the storage backbone for the loop-closing trio: IExperimentPort trait in hex-core (the contract) and SpacetimeDB tables + reducers in hexflo-coordination (the impl backend). Adapter wiring between them is wp-experiment-loop-p3 (ADR P3). Hexflo-coordination is chosen over a new spacetime-modules/experiment/ since the addition is ~3 tables (~150 lines), well within hexflo-coordination's domain (it already houses swarms, projects, configs, inference tasks).",
   "feature": "Experimental Loop Representations — Phase 2 (Port + Storage)",
   "id": "wp-experiment-loop-p2",

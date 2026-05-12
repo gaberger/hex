@@ -43,7 +43,7 @@ interface Persona {
 // so the user can see the pipeline ordering at a glance:
 //   PRODUCT:   dependency-analyst → pm-agent → behavioral-spec-writer → planner → feature-developer
 //   ENG:       feature-developer → swarm-coordinator → (hex-coder | hex-tester | hex-fixer | hex-documenter | hex-ux | rust-refactorer) → integrator
-//   QUALITY:   hex-reviewer (in-loop) → adversarial-red + adversarial-blue → validation-judge → adr-reviewer + dead-code-analyzer + scaffold-validator
+//   QUALITY:   hex-reviewer (in-loop) → adversarial-red + adversarial-blue → validation-judge → ADR-reviewer + dead-code-analyzer + scaffold-validator
 //   DESIGN:    cli-designer + ux-designer (read-only critique)
 //   OPS:       dev-tracker (resume) + status-monitor (live)
 const PERSONAS: Persona[] = [
@@ -120,7 +120,7 @@ const PERSONAS: Persona[] = [
     tagline: "Final PASS/FAIL verdict + arbitrates red+blue",
     description: "Behavioral specs + property tests (fast-check, not example-based) + smoke + sign-convention + boundary check. PASS at score ≥80, else FAIL with specific fixes. Phase 6a arbitrates red + blue (verifies provider divergence).",
     whenToUse: "Last gate before merge. After both adversaries report. Blocks deployment on FAIL." },
-  { name: "adr-reviewer",          category: "QUALITY",     color: "text-yellow-400",
+  { name: "ADR-reviewer",          category: "QUALITY",     color: "text-yellow-400",
     tagline: "ADR structural + drift validator",
     description: "Validates ADR completeness (Status/Context/Decision/Consequences/Alternatives), legitimate status transitions, cross-references. Flags code that contradicts accepted ADRs.",
     whenToUse: "After writing an ADR or before merging code that touches architectural surfaces." },
@@ -666,7 +666,7 @@ function decisionAction(item: DecisionItem): { role: string; prompt: string } {
       return { role: "pm-agent", prompt: `@pm-agent help me unblock: ${t}` };
     case "proposed_adr": {
       const adrName = item.title.replace(/^ADR aging in Proposed: /, "");
-      return { role: "adr-reviewer", prompt: `@adr-reviewer should ${adrName} be accepted, superseded, or closed?` };
+      return { role: "ADR-reviewer", prompt: `@ADR-reviewer should ${adrName} be accepted, superseded, or closed?` };
     }
     case "persona_bypass":
       return { role: "pm-agent", prompt: `@pm-agent ${t}` };
@@ -1243,7 +1243,7 @@ interface DispatchSource {
 
 /// Heuristic: should this agent reply offer a "Convert to workplan" button?
 /// Matches phrasing the agent typically uses when recommending workplan
-/// creation (adr-reviewer especially: "Phases X-Y should be tracked in a
+/// creation (ADR-reviewer especially: "Phases X-Y should be tracked in a
 /// workplan"). False positives are cheap (operator just doesn't click);
 /// false negatives lose the affordance, so we cast a wide net.
 function shouldOfferWorkplanButton(text: string): boolean {

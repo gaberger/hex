@@ -7,7 +7,7 @@
 # the daemon never goes silent because of a config typo.
 #
 # See also:
-#   - wp-brain-updates-to-operator  (ADR-2604142200 family)
+#   - wp-brain-updates-to-operator  (ADR-2026-04-14-2200 family)
 #   - ADR-060 (inbox priority semantics — 1 = normal, 2 = urgent)
 #
 # Related CLI:

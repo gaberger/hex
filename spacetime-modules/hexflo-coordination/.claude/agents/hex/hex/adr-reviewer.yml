@@ -1,7 +1,7 @@
-# adr-reviewer — Agent definition for Architecture Decision Record review
+# ADR-reviewer — Agent definition for Architecture Decision Record review
 # Validates ADR structure, status transitions, cross-references, and compliance
 
-name: adr-reviewer
+name: ADR-reviewer
 role: Product Engineer
 tier: ic
 reports_to: product-lead
@@ -11,7 +11,7 @@ description: >
   Reviews Architecture Decision Records for completeness, structural validity,
   and cross-reference integrity. Validates status transitions (proposed → accepted
   → superseded → deprecated). Checks that code changes comply with accepted ADRs
-  and flags when new ADRs should be written. Backs the /hex-adr-review skill.
+  and flags when new ADRs should be written. Backs the /hex-ADR-review skill.
 
 model:
   tier: 2

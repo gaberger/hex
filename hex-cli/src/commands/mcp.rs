@@ -859,10 +859,10 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
 
         "hex_enforce_sync" => {
             // Re-use the local rule loader from enforce.rs via nexus POST
-            // Read .hex/adr-rules.toml and POST each rule
-            let rules_path = std::path::Path::new(".hex/adr-rules.toml");
+            // Read .hex/ADR-rules.toml and POST each rule
+            let rules_path = std::path::Path::new(".hex/ADR-rules.toml");
             let alt_path = std::env::var("CLAUDE_PROJECT_DIR")
-                .map(|d| std::path::PathBuf::from(d).join(".hex/adr-rules.toml"))
+                .map(|d| std::path::PathBuf::from(d).join(".hex/ADR-rules.toml"))
                 .unwrap_or_default();
             let content = std::fs::read_to_string(rules_path)
                 .or_else(|_| std::fs::read_to_string(&alt_path));
@@ -898,10 +898,10 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                                 "errors": errors,
                             }))
                         }
-                        Err(e) => Err(format!("Failed to parse .hex/adr-rules.toml: {}", e)),
+                        Err(e) => Err(format!("Failed to parse .hex/ADR-rules.toml: {}", e)),
                     }
                 }
-                Err(_) => Err("No .hex/adr-rules.toml found".to_string()),
+                Err(_) => Err("No .hex/ADR-rules.toml found".to_string()),
             }
         }
 

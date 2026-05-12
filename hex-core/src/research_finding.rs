@@ -99,7 +99,7 @@ mod tests {
             title: "adapter→adapter import violates hex rules".into(),
             evidence: vec![
                 "adapters/primary/cli.rs:42 imports adapters/secondary/db.rs".into(),
-                "hex analyze . --json: violations[0].rule = adr-hex-adapter-isolation".into(),
+                "hex analyze . --json: violations[0].rule = ADR-hex-adapter-isolation".into(),
             ],
             suggested_action: SuggestedAction {
                 kind: ActionKind::DraftWorkplan,

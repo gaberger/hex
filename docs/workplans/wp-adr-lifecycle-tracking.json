@@ -3,7 +3,7 @@
   "created_at": "2026-05-11T14:05:24.666944117+00:00",
   "created_by": "hex-coder",
   "feature": "ADR lifecycle tracking with parsing, AgentDB indexing, and CLI/MCP query tools",
-  "id": "wp-adr-lifecycle-tracking",
+  "id": "wp-ADR-lifecycle-tracking",
   "phases": [
     {
       "id": "P0",

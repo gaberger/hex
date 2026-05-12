@@ -1,7 +1,7 @@
 {
   "adr": "ADR-2026-05-02-1400",
   "created_at": "2026-05-02T16:00:00Z",
-  "created_by": "claude+adr-synthesis",
+  "created_by": "claude+ADR-synthesis",
   "description": "Phase 3a of ADR-2026-05-02-1400 (split from former wp-experiment-loop-p3). Lands the two adapter implementations of IExperimentPort that DO NOT need a live SpacetimeDB: (1) InMemoryExperimentAdapter — Arc<RwLock<HashMap<...>>>-backed, the reference impl that powers tests, the future CLI/REST surface, and the pilot example app; (2) StashExperimentAdapter<Inner> — decorator over an inner IExperimentPort plus an IConsolidationMemoryPort, projects hypothesis/objective/failure into stash. Composition wiring is deferred to P4 (CLI/REST consumer) since neither adapter has a consumer yet inside hex-nexus. The SpacetimeDB-bound adapter and live integration test live in wp-experiment-loop-p3b.",
   "feature": "Experimental Loop Representations — Phase 3a (Adapters that need no external infra)",
   "id": "wp-experiment-loop-p3a",

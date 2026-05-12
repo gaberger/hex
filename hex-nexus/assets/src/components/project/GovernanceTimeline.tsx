@@ -108,7 +108,7 @@ const GovernanceTimeline: Component = () => {
         title: `ADR-${adr.id}: ${adr.title}`,
         status: adr.status,
         timestamp: adr.date ?? '',
-        route: pid ? { page: 'project-adr-detail', projectId: pid, adrId: adr.id } : undefined,
+        route: pid ? { page: 'project-ADR-detail', projectId: pid, adrId: adr.id } : undefined,
       });
     }
 

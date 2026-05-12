@@ -1,7 +1,7 @@
 //! ADR Compliance Checker (ADR-045).
 //!
 //! Scans source files for patterns that violate accepted Architecture Decision Records.
-//! Rules are loaded from the **project's** `.hex/adr-rules.toml` — hex ships zero
+//! Rules are loaded from the **project's** `.hex/ADR-rules.toml` — hex ships zero
 //! project-specific rules. The engine is the framework; the rules are the project's.
 
 use serde::{Deserialize, Serialize};
@@ -38,9 +38,9 @@ pub struct AdrComplianceResult {
 }
 
 // ── Project-Level Rule Definition ──────────────────────
-// Loaded from .hex/adr-rules.toml in the project root.
+// Loaded from .hex/ADR-rules.toml in the project root.
 
-/// The TOML structure of `.hex/adr-rules.toml`:
+/// The TOML structure of `.hex/ADR-rules.toml`:
 /// ```toml
 /// [[rules]]
 /// adr = "ADR-039"
@@ -76,9 +76,9 @@ fn default_severity() -> String {
     "warning".to_string()
 }
 
-/// Load rules from the project's `.hex/adr-rules.toml`.
+/// Load rules from the project's `.hex/ADR-rules.toml`.
 fn load_rules(root_path: &Path) -> (Vec<AdrRuleConfig>, Option<String>) {
-    let rules_path = root_path.join(".hex").join("adr-rules.toml");
+    let rules_path = root_path.join(".hex").join("ADR-rules.toml");
     if !rules_path.is_file() {
         return (Vec::new(), None);
     }
@@ -102,7 +102,7 @@ fn load_rules(root_path: &Path) -> (Vec<AdrRuleConfig>, Option<String>) {
 // ── Scanner ────────────────────────────────────────────
 
 /// Check ADR compliance for all source files under `root_path`.
-/// Rules are loaded from the project's `.hex/adr-rules.toml`.
+/// Rules are loaded from the project's `.hex/ADR-rules.toml`.
 pub async fn check_compliance(root_path: &Path) -> AdrComplianceResult {
     let (rules, rules_file) = load_rules(root_path);
 

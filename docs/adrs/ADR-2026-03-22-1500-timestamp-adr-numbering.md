@@ -33,7 +33,7 @@ Where:
   HH   = two-digit hour in 24h format (00–23)
   MM   = two-digit minute (00–59)
 
-Example: ADR-2026-03-22-1500-timestamp-adr-numbering.md
+Example: ADR-2026-03-22-1500-timestamp-ADR-numbering.md
          → Created 2026-03-22 at 15:00
 ```
 
@@ -91,9 +91,9 @@ Two ADRs created in the same minute would still collide. This is acceptable beca
 |-------|------------|--------|
 | P1 | Update `find_next_adr_number()` in `hex-cli/src/commands/adr.rs` to generate YYMMDDHHMM | Done |
 | P2 | Update `schema()` display and remove SpacetimeDB reservation dependency | Done |
-| P3 | Update `extractId()` and sort logic in `src/adapters/secondary/adr-adapter.ts` | Done |
+| P3 | Update `extractId()` and sort logic in `src/adapters/secondary/ADR-adapter.ts` | Done |
 | P4 | Update workplan schema regex in `docs/workplan-schema.json` | Done |
-| P5 | Update `TEMPLATE.md` placeholder and `/hex-adr-create` skill | Done |
+| P5 | Update `TEMPLATE.md` placeholder and `/hex-ADR-create` skill | Done |
 | P6 | Update `hex-cli/src/commands/adr.rs` ID column width for 10-digit IDs | Done |
 | P7 | Fix existing collision: resolved — second file already uses timestamp ID (`ADR-2026-03-22-1522`) | Done |
 

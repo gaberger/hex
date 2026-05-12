@@ -48,7 +48,7 @@ When `hex adr list` runs, it shows which ADRs have enforcement and which are "ho
 
 ### Layer 3: Pre-Commit Hook
 
-`hex analyze --adr-compliance` runs as a pre-commit hook. Violations produce warnings (not errors, to avoid blocking agents). A `--strict` flag promotes warnings to errors for CI.
+`hex analyze --ADR-compliance` runs as a pre-commit hook. Violations produce warnings (not errors, to avoid blocking agents). A `--strict` flag promotes warnings to errors for CI.
 
 ### Layer 4: Agent Context Injection
 
@@ -88,13 +88,13 @@ ADR compliance results are **shared state** — remote agents working on the sam
 Results are stored in HexFlo's key-value memory store (backed by SpacetimeDB `hexflo_memory` table):
 
 ```
-Key:   adr-compliance:{project_id}
+Key:   ADR-compliance:{project_id}
 Scope: compliance
 Value: JSON { violationCount, errorCount, warningCount, violations[], checkedAt }
 ```
 
 Remote agents can read compliance state via:
-- `hex memory get adr-compliance:{project_id}` (CLI)
+- `hex memory get ADR-compliance:{project_id}` (CLI)
 - `mcp__hex__hex_hexflo_memory_retrieve` (MCP tool)
 - SpacetimeDB subscription on `hexflo_memory` table (dashboard)
 
@@ -130,7 +130,7 @@ This enables:
 Rules live in the **project**, not the framework:
 
 ```
-{project_root}/.hex/adr-rules.toml
+{project_root}/.hex/ADR-rules.toml
 ```
 
 hex ships the compliance **engine** (pattern matcher + file scanner).

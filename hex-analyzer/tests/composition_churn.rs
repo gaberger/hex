@@ -274,7 +274,7 @@ fn architectural_detectors_composition_churn_handles_unknown_window_unit() {
 #[test]
 fn architectural_detectors_composition_churn_no_adrs_dir_is_not_an_error() {
     // Project without `docs/adrs/` at all. We should still run, treat
-    // accepted-adr-count as 0, and only flag if there's churn.
+    // accepted-ADR-count as 0, and only flag if there's churn.
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     init_repo(root);

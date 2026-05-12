@@ -1,7 +1,7 @@
 {
   "adr": "ADR-2026-04-26-1800",
   "created_at": "2026-04-26T20:00:00Z",
-  "created_by": "claude+adr-synthesis",
+  "created_by": "claude+ADR-synthesis",
   "description": "Phase 1 of ADR-2026-04-26-1800. Produce a definitive audit of which package.json dependencies are actually used by scripts/ and which are vestigial. The audit document is the single output; it gates the package.json rewrite in P2 (separate workplan). No edits to package.json or CLAUDE.md in this phase — investigation only.",
   "feature": "Excise Phantom TypeScript Library — Phase 1 (Scripts Dep Audit)",
   "id": "wp-excise-ts-phantom-p1",

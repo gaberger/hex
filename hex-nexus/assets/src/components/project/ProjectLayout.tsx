@@ -59,7 +59,7 @@ const ProjectLayout: Component<{ children: JSX.Element }> = (props) => {
   const isActive = (tab: NavTab) => {
     const page = currentPage();
     if (tab.page === "project") return page === "project";
-    if (tab.page === "project-adrs") return page === "project-adrs" || page === "project-adr-detail";
+    if (tab.page === "project-adrs") return page === "project-adrs" || page === "project-ADR-detail";
     if (tab.page === "project-config") return page === "project-config";
     if (tab.page === "project-files") return page === "project-files" || page === "project-file";
     return page === tab.page;

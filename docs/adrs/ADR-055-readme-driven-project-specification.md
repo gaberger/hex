@@ -108,9 +108,9 @@ Hexagonal architecture (Ports & Adapters) enforced by hex.
 
 ## Architecture Decisions
 
-<!-- hex:adr-summary — auto-updated by hex -->
+<!-- hex:ADR-summary — auto-updated by hex -->
 No ADRs recorded yet. Use `hex adr create` to record decisions.
-<!-- /hex:adr-summary -->
+<!-- /hex:ADR-summary -->
 
 ## Getting Started
 
@@ -134,18 +134,18 @@ and kept current as architecture decisions are made. Last updated: 2026-03-22.*
 
 ### 3. Automatic README Updates on ADR Lifecycle Events
 
-When an ADR transitions to `Accepted`, hex updates the `<!-- hex:adr-summary -->` section in README.md:
+When an ADR transitions to `Accepted`, hex updates the `<!-- hex:ADR-summary -->` section in README.md:
 
 ```markdown
 ## Architecture Decisions
 
-<!-- hex:adr-summary — auto-updated by hex -->
+<!-- hex:ADR-summary — auto-updated by hex -->
 | ADR | Title | Status | Date |
 |-----|-------|--------|------|
 | 001 | Use SpacetimeDB for all state | Accepted | 2026-03-22 |
 | 002 | WebSocket-first client protocol | Accepted | 2026-03-23 |
 | 003 | ARM64 cross-compilation via cross-rs | Proposed | 2026-03-25 |
-<!-- /hex:adr-summary -->
+<!-- /hex:ADR-summary -->
 ```
 
 This is implemented as a **post-hook** on `hex adr create` and `hex adr status <id> --set accepted`:
@@ -192,7 +192,7 @@ When `hex init` runs in a directory with existing source code:
 1. Skip the interview (project already exists)
 2. Generate `.hex/project.yaml` as today (ADR-043)
 3. If no `README.md` exists, offer to generate one by analyzing the codebase
-4. If `README.md` exists, offer to add the `<!-- hex:adr-summary -->` sentinel for ADR tracking
+4. If `README.md` exists, offer to add the `<!-- hex:ADR-summary -->` sentinel for ADR tracking
 
 ## Implementation Plan
 
@@ -220,7 +220,7 @@ When `hex init` runs in a directory with existing source code:
 
 ### Mitigations
 - `hex init --skip-interview` flag for developers who want bare scaffolding
-- Sentinel comments (`<!-- hex:adr-summary -->`) clearly delineate auto-managed sections
+- Sentinel comments (`<!-- hex:ADR-summary -->`) clearly delineate auto-managed sections
 - Only the ADR table is auto-updated; prose sections require explicit `hex readme interview`
 
 ## Related

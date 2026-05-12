@@ -1,6 +1,6 @@
 --------------------------- MODULE sched_daemon ---------------------------
 \* hex sched daemon task lifecycle — TLA+ Specification
-\* ADR-2604142155 (daemon must transition tasks to terminal state)
+\* ADR-2026-04-14-2155 (daemon must transition tasks to terminal state)
 \*
 \* Models the sched daemon's per-task state machine:
 \*   pending -> claimed -> in_progress -> {completed, failed}

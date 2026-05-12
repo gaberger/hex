@@ -1,5 +1,5 @@
 #!/bin/sh
-# hey hex <text>  — natural-language wrapper (ADR-2604140000)
+# hey hex <text>  — natural-language wrapper (ADR-2026-04-14-0000)
 #
 # Usage:
 #   hey hex calibrate inference

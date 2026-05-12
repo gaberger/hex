@@ -95,7 +95,7 @@
       "tasks": [
         {
           "evidence": [
-            "for r in pm-agent planner feature-developer swarm-coordinator integrator rust-refactorer behavioral-spec-writer validation-judge adversarial-red adversarial-blue cli-designer ux-designer scaffold-validator adr-reviewer dead-code-analyzer dependency-analyst status-monitor dev-tracker; do grep -q \"\\\"$r\\\" =>\" hex-cli/src/commands/agent/mod.rs || (echo \"missing: $r\"; exit 1); done",
+            "for r in pm-agent planner feature-developer swarm-coordinator integrator rust-refactorer behavioral-spec-writer validation-judge adversarial-red adversarial-blue cli-designer ux-designer scaffold-validator ADR-reviewer dead-code-analyzer dependency-analyst status-monitor dev-tracker; do grep -q \"\\\"$r\\\" =>\" hex-cli/src/commands/agent/mod.rs || (echo \"missing: $r\"; exit 1); done",
             "cargo check -p hex-cli"
           ],
           "files": [
@@ -104,7 +104,7 @@
           "id": "P2.1",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Each new arm needs: model resolution from YAML.model.tier/preferred/fallback, context loading per YAML.context.load_on_start, workflow execution per YAML.workflow.phases or .steps, output emission per YAML.outputs schema. Roles to add: pm-agent, planner, feature-developer, swarm-coordinator, integrator, rust-refactorer, behavioral-spec-writer, validation-judge, adversarial-red, adversarial-blue, cli-designer, ux-designer, scaffold-validator, adr-reviewer, dead-code-analyzer, dependency-analyst, status-monitor, dev-tracker."
+          "title": "Each new arm needs: model resolution from YAML.model.tier/preferred/fallback, context loading per YAML.context.load_on_start, workflow execution per YAML.workflow.phases or .steps, output emission per YAML.outputs schema. Roles to add: pm-agent, planner, feature-developer, swarm-coordinator, integrator, rust-refactorer, behavioral-spec-writer, validation-judge, adversarial-red, adversarial-blue, cli-designer, ux-designer, scaffold-validator, ADR-reviewer, dead-code-analyzer, dependency-analyst, status-monitor, dev-tracker."
         }
       ],
       "title": "If P0 chose per-arm — add the 16 missing arms"

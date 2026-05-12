@@ -87,8 +87,8 @@ Inject hex skills as opencode slash commands:
 - `/hex-feature-dev` → Start feature development workflow
 - `/hex-analyze-arch` → Check architecture health
 - `/hex-validate` → Run post-build validation
-- `/hex-adr-create` → Create new ADR
-- `/hex-adr-search` → Search existing ADRs
+- `/hex-ADR-create` → Create new ADR
+- `/hex-ADR-search` → Search existing ADRs
 - etc.
 
 #### Layer 4: Hooks System
@@ -108,7 +108,7 @@ Inject ADR-derived enforcement rules:
 #### Layer 6: Project Configuration
 Inject hex project configuration:
 - `.hex/project.json` → opencode project settings
-- `.hex/adr-rules.toml` → enforcement rules
+- `.hex/ADR-rules.toml` → enforcement rules
 - HexFlo coordination settings
 
 ### Implementation Approach
@@ -122,7 +122,7 @@ Inject hex project configuration:
    - Read agent definitions from `agents/*.yaml`
    - Read skills from `skills/*.md`
    - Read hooks from `.claude/hooks/`
-   - Read enforcement rules from `.hex/adr-rules.toml`
+   - Read enforcement rules from `.hex/ADR-rules.toml`
    - Generate MCP server config
 
 3. **Merge into opencode settings**: Non-destructive merge preserving existing config

@@ -10,7 +10,7 @@
  * Catalog (#/missions): table of all ADRs with rollup of workplan count,
  * feature count, and progress across all workplans that reference each ADR.
  *
- * Ops console (#/missions/{adr-id}): the ADR as a running mission, with all
+ * Ops console (#/missions/{ADR-id}): the ADR as a running mission, with all
  * its workplans inline, status dots per feature, progress log, raw stream,
  * action buttons (pause/resume/mark-complete/re-assess), and an orchestrator
  * chat panel that DMs a chosen persona.

@@ -194,7 +194,7 @@ Sessions with `completed_steps.is_empty() && quality_result.is_none()` are retro
 
 - [Research: TUI Phase Gaps](../analysis/research-tui-phase-gaps.md)
 - [Research: Session State Machine](../analysis/research-session-statemachine.md)
-- [Research: ADR Pipeline Gaps](../analysis/research-adr-pipeline-gaps.md)
+- [Research: ADR Pipeline Gaps](../analysis/research-ADR-pipeline-gaps.md)
 - [Research: Swarm Task Lifecycle](../analysis/research-swarm-task-lifecycle.md)
 - [Synthesis](../analysis/research-hex-dev-determinism-synthesis.md)
 - ADR-2026-03-23-2005 — hex-dev-usability (session management)

@@ -78,7 +78,7 @@
           ],
           "id": "P2.1",
           "layer": "secondary",
-          "name": "repo_grep pattern='ADR-[0-9]{10}' glob='docs/**/*.md' to collect all ADR references. Write to /tmp/adr-refs-<date>.txt",
+          "name": "repo_grep pattern='ADR-[0-9]{10}' glob='docs/**/*.md' to collect all ADR references. Write to /tmp/ADR-refs-<date>.txt",
           "status": "done"
         },
         {

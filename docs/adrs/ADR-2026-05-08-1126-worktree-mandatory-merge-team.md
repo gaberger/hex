@@ -16,7 +16,7 @@ hex already has the building blocks for safe parallel development:
 | `integrator` agent | merges worktrees in dependency order, runs full suite |
 | `validation-judge` agent | BLOCKING; behavioral specs + property tests + smoke + sign-convention + boundary check |
 | `adversarial-red` (anthropic-locked) + `adversarial-blue` (openai/local-locked) | provider-divergent correctness/security skeptics |
-| `adr-reviewer` agent | flags code that contradicts accepted ADRs |
+| `ADR-reviewer` agent | flags code that contradicts accepted ADRs |
 | `SafeFileWriter` (commit 0346eff8) | blocks hex-infra writes for some paths under `hex-cli/assets/` |
 
 The gap closed by this ADR: `hex-agent daemon --agent-id <role>` is a HexFlo task-poller. When it claims a task, it executes inside the CWD where it was spawned — typically `/home/gary/hex-intf` (the trunk). It does not call `hex worktree create`, does not emit a `merge_request`, and does not wait for `validation-judge`. SafeFileWriter's protected path list does not cover `hex-nexus/src/lib.rs`, `Cargo.toml`, `spacetime-modules/*/src/lib.rs`, or workplan JSONs. So a workplan with side-effects like "rewrite the lib.rs as a detector module" succeeds against the trunk directly, and a hijacked workplan rewrites trunk code with garbage.

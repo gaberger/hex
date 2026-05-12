@@ -1,7 +1,7 @@
 ---
-name: hex-adr-status
+name: hex-ADR-status
 description: Check ADR lifecycle -- find stale, abandoned, or conflicting decisions
-trigger: /hex-adr-status
+trigger: /hex-ADR-status
 ---
 
 # ADR Status Report

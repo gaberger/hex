@@ -1,7 +1,7 @@
 ---
-name: hex-adr-create
+name: hex-ADR-create
 description: Create a new Architecture Decision Record with auto-numbering, dependency impact analysis, and validation gates. Use when the user asks to "create ADR", "write ADR", "new ADR", or "architecture decision".
-trigger: /hex-adr-create
+trigger: /hex-ADR-create
 ---
 
 # Create New ADR
@@ -187,4 +187,4 @@ prioritize code analysis over documentation analysis.
 
 | Command | What it does |
 |---------|-------------|
-| `/hex-adr-create` | Create a new ADR with full impact analysis |
+| `/hex-ADR-create` | Create a new ADR with full impact analysis |

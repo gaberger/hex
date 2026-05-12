@@ -506,7 +506,7 @@ mod tests {
             title: "adapter→adapter import violates hex rules".into(),
             evidence: vec![
                 "adapters/primary/cli.rs:42 imports adapters/secondary/db.rs".into(),
-                "hex analyze . --json: violations[0].rule = adr-hex-adapter-isolation".into(),
+                "hex analyze . --json: violations[0].rule = ADR-hex-adapter-isolation".into(),
             ],
             suggested_action: SuggestedAction {
                 kind: ActionKind::DraftAdr,
@@ -521,7 +521,7 @@ mod tests {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let pid = std::process::id();
-        let root = env::temp_dir().join(format!("hex-adr-draft-writer-{tag}-{pid}-{nanos}"));
+        let root = env::temp_dir().join(format!("hex-ADR-draft-writer-{tag}-{pid}-{nanos}"));
         fs::create_dir_all(&root).expect("create tmp root");
         root
     }

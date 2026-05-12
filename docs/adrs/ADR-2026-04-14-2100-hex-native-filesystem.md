@@ -118,4 +118,4 @@ Tracked by `docs/workplans/wp-hex-native-filesystem.json`. Phase IDs differ slig
 ---
 ## Operator Resolution Note (2026-05-05T02:09:25.803241440+00:00)
 
-Auto-applied from @adr-reviewer chat verdict
+Auto-applied from @ADR-reviewer chat verdict

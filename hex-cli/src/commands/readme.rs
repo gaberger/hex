@@ -68,9 +68,9 @@ Hexagonal architecture (Ports & Adapters) enforced by [hex](https://github.com/h
 
 ## Architecture Decisions
 
-<!-- hex:adr-summary — auto-updated by hex -->
+<!-- hex:ADR-summary — auto-updated by hex -->
 No ADRs recorded yet. Use `hex adr create` to record decisions.
-<!-- /hex:adr-summary -->
+<!-- /hex:ADR-summary -->
 
 ## Getting Started
 
@@ -177,8 +177,8 @@ pub fn sync_adr_section(readme_path: &Path, adr_dir: &Path) -> Result<bool> {
     let content =
         std::fs::read_to_string(readme_path).context("Failed to read README.md")?;
 
-    let start_sentinel = "<!-- hex:adr-summary";
-    let end_sentinel = "<!-- /hex:adr-summary -->";
+    let start_sentinel = "<!-- hex:ADR-summary";
+    let end_sentinel = "<!-- /hex:ADR-summary -->";
 
     let start_pos = content.find(start_sentinel);
     let end_pos = content.find(end_sentinel);
@@ -199,7 +199,7 @@ pub fn sync_adr_section(readme_path: &Path, adr_dir: &Path) -> Result<bool> {
     };
 
     let new_section = format!(
-        "<!-- hex:adr-summary — auto-updated by hex -->\n{}\n{}",
+        "<!-- hex:ADR-summary — auto-updated by hex -->\n{}\n{}",
         table, end_sentinel
     );
 
@@ -1040,7 +1040,7 @@ mod tests {
         let adr_dir = dir.path().join("adrs");
         fs::create_dir(&adr_dir).unwrap();
 
-        fs::write(&readme, "# Project\n\n<!-- hex:adr-summary — auto-updated by hex -->\nOLD CONTENT\n<!-- /hex:adr-summary -->\n\nFooter\n").unwrap();
+        fs::write(&readme, "# Project\n\n<!-- hex:ADR-summary — auto-updated by hex -->\nOLD CONTENT\n<!-- /hex:ADR-summary -->\n\nFooter\n").unwrap();
         fs::write(adr_dir.join("ADR-001-foo.md"), "# ADR-001: Foo\n\n**Status:** Accepted\n").unwrap();
 
         let updated = sync_adr_section(&readme, &adr_dir).unwrap();
@@ -1066,7 +1066,7 @@ mod tests {
         assert!(updated);
 
         let content = fs::read_to_string(&readme).unwrap();
-        assert!(content.contains("hex:adr-summary"));
+        assert!(content.contains("hex:ADR-summary"));
         assert!(content.contains("| 001 | Bar | Proposed |"));
     }
 
@@ -1084,7 +1084,7 @@ mod tests {
         assert!(readme.contains("cargo build"));
         assert!(readme.contains("test-proj"));
         assert!(readme.contains("Must be fast"));
-        assert!(readme.contains("hex:adr-summary"));
+        assert!(readme.contains("hex:ADR-summary"));
     }
 
     // ─ ADR-2026-04-11-0227: README validator helpers ─

@@ -388,7 +388,7 @@ Self-Healing Fix:
 cat docs/analysis/workflow-test-2026-05-01.md
 
 # Validation protocol (standardized methodology)
-cat docs/adrs/adr-2605010001-workflow-validation-protocol.md
+cat docs/adrs/ADR-2026-05-01-0001-workflow-validation-protocol.md
 
 # Git commits show autonomous execution + self-repair
 git log --oneline 91a39a55..87e7a59d

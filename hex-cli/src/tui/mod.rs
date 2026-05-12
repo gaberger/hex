@@ -2338,7 +2338,7 @@ impl TuiApp {
         }
 
         self.upsert_task(TaskItem {
-            id: "adr-generate".into(),
+            id: "ADR-generate".into(),
             description: "Generate Architecture Decision Record".into(),
             status: TaskStatus::Active,
             duration_secs: None,
@@ -2398,7 +2398,7 @@ impl TuiApp {
 
                 // Update task status
                 self.upsert_task(TaskItem {
-                    id: "adr-generate".into(),
+                    id: "ADR-generate".into(),
                     description: "Generate Architecture Decision Record".into(),
                     status: TaskStatus::Completed,
                     duration_secs: Some(result.duration_ms as f64 / 1000.0),
@@ -2417,7 +2417,7 @@ impl TuiApp {
                     ),
                 );
                 self.upsert_task(TaskItem {
-                    id: "adr-generate".into(),
+                    id: "ADR-generate".into(),
                     description: "Generate Architecture Decision Record".into(),
                     status: TaskStatus::Pending,
                     duration_secs: None,

@@ -104,16 +104,16 @@
       "tasks": [
         {
           "id": "P5.1",
-          "title": "Create docs/adrs/adr-extensible-validation.md documenting migration from hardcoded is_critical_path to ValidationRule trait, showing both old and new implementations coexist during transition",
+          "title": "Create docs/adrs/ADR-extensible-validation.md documenting migration from hardcoded is_critical_path to ValidationRule trait, showing both old and new implementations coexist during transition",
           "status": "done",
           "strategy_hint": "codegen",
           "files": [
-            "docs/adrs/adr-extensible-validation.md"
+            "docs/adrs/ADR-extensible-validation.md"
           ],
           "evidence": [
-            "test -f docs/adrs/adr-extensible-validation.md",
-            "grep -q 'ValidationRule' docs/adrs/adr-extensible-validation.md",
-            "grep -q 'migration' docs/adrs/adr-extensible-validation.md"
+            "test -f docs/adrs/ADR-extensible-validation.md",
+            "grep -q 'ValidationRule' docs/adrs/ADR-extensible-validation.md",
+            "grep -q 'migration' docs/adrs/ADR-extensible-validation.md"
           ]
         }
       ]

@@ -4,7 +4,7 @@
 **Date:** 2026-04-14
 **Drivers:** Brain daemon runs autonomously but operator has no visibility unless they manually check `hex brain queue list`. An AIOS should keep the operator informed without being asked.
 
-> **Acceptance note (2026-05-04):** Verified by adr-reviewer — structurally complete (Context, Decision, Consequences, Implementation, References), clean Proposed→Accepted transition, all four cross-references resolve to existing ADRs (ADR-060, ADR-2026-04-13-2300, ADR-2026-04-13-2330, ADR-2026-04-14-0000). All five implementation phases remain Pending — accepting now is the design gate before P1 begins.
+> **Acceptance note (2026-05-04):** Verified by ADR-reviewer — structurally complete (Context, Decision, Consequences, Implementation, References), clean Proposed→Accepted transition, all four cross-references resolve to existing ADRs (ADR-060, ADR-2026-04-13-2300, ADR-2026-04-13-2330, ADR-2026-04-14-0000). All five implementation phases remain Pending — accepting now is the design gate before P1 begins.
 
 ## Context
 

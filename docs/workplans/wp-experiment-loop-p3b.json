@@ -1,7 +1,7 @@
 {
   "adr": "ADR-2026-05-02-1400",
   "created_at": "2026-05-02T16:00:00Z",
-  "created_by": "claude+adr-synthesis",
+  "created_by": "claude+ADR-synthesis",
   "description": "Phase 3b of ADR-2026-05-02-1400 (split from former wp-experiment-loop-p3). Lands the production SpacetimeDB-bound adapter for IExperimentPort. DEFERRED — requires the SpacetimeDB binary installed and a reachable spacetime instance, neither of which is available in the current build environment. The InMemoryExperimentAdapter from wp-experiment-loop-p3a is the reference oracle the integration test diffs against.",
   "feature": "Experimental Loop Representations — Phase 3b (SpacetimeDB-bound adapter, deferred)",
   "id": "wp-experiment-loop-p3b",

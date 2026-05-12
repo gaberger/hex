@@ -10,7 +10,7 @@ ADR-2026-05-10-2200 — memory_search typed tool for SOP persona context enrichm
 
 ## Context
 
-**Smoking gun (2026-05-10):** CTO persona drafted ADR-[PHONE] using the **obsolete [PERSON_NAME] timestamp naming scheme** (`ADR-[PHONE]`) and **cross-referenced it incorrectly** as `ADR-[PHONE]` in the body — even though `hexflo_memory` had contained `lesson:adr-id-format-must-avoid-phone-pattern` since 2026-05-09 with the agreed **`YYYY-MMDD-slug` scheme** and the three exact code touch points (adr_draft.rs, repo_read, docs/ conventions).
+**Smoking gun (2026-05-10):** CTO persona drafted ADR-[PHONE] using the **obsolete [PERSON_NAME] timestamp naming scheme** (`ADR-[PHONE]`) and **cross-referenced it incorrectly** as `ADR-[PHONE]` in the body — even though `hexflo_memory` had contained `lesson:ADR-id-format-must-avoid-phone-pattern` since 2026-05-09 with the agreed **`YYYY-MMDD-slug` scheme** and the three exact code touch points (adr_draft.rs, repo_read, docs/ conventions).
 
 **Root cause:** The SOP executor (ADR-[PHONE]) has **no typed tool to query `hexflo_memory`** during the GROUND phase. Personas receive:
 1. `prefetched_paths` — explicit file reads from the operator message
@@ -78,7 +78,7 @@ impl Tool for MemorySearch {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Search term (substring, case-insensitive). Example: 'adr-id-format', 'lesson:', 'workplan'.",
+                    "description": "Search term (substring, case-insensitive). Example: 'ADR-id-format', 'lesson:', 'workplan'.",
                 },
                 "k": {
                     "type": "integer",
@@ -224,7 +224,7 @@ Caller (org_responder) already has `Arc<AppState>` in scope — pass it through.
 
 ### ✅ Positive
 
-1. **Regression class closed:** Personas will see `lesson:adr-id-format-must-avoid-phone-pattern` (and all other memory entries) in the GROUND pack before drafting ADRs, eliminating rediscovery of decisions already in memory.
+1. **Regression class closed:** Personas will see `lesson:ADR-id-format-must-avoid-phone-pattern` (and all other memory entries) in the GROUND pack before drafting ADRs, eliminating rediscovery of decisions already in memory.
 
 2. **Zero LLM cost:** `memory_search` is deterministic (substring scan); no additional inference tokens.
 

@@ -1,7 +1,7 @@
 ---
-name: hex-adr-create
+name: hex-ADR-create
 description: Create a new Architecture Decision Record with auto-numbering, dependency impact analysis, and validation gates
-trigger: /hex-adr-create
+trigger: /hex-ADR-create
 ---
 
 # Create New ADR
@@ -147,4 +147,4 @@ The `hex adr schema` command reserves the ADR number atomically via `POST /api/a
 
 | Command | What it does |
 |---------|-------------|
-| `/hex-adr-create` | Create a new ADR with full impact analysis |
+| `/hex-ADR-create` | Create a new ADR with full impact analysis |

@@ -1,6 +1,6 @@
 # brain → sched audit sweep
 # Workplan: wp-rename-brain-to-sched (P0.1)
-# ADR: ADR-2604150000-rename-brain-to-sched
+# ADR: ADR-2026-04-15-0000-rename-brain-to-sched
 # Date: 2026-04-14
 # Pattern: \bbrain\b|hex_brain|hex-brain
 # Scope: *.rs *.ts *.toml *.yml *.yaml *.json *.md *.cjs (excluding target/ node_modules/ .git/ .claude/worktrees/)
@@ -11,35 +11,35 @@ Total files with hits: 43
 
 ## Per-file hit counts (sorted by count desc)
 62  hex-cli/src/commands/brain.rs
-48  docs/adrs/ADR-2604150000-rename-brain-to-sched.md
+48  docs/adrs/ADR-2026-04-15-0000-rename-brain-to-sched.md
 26  docs/workplans/wp-rename-brain-to-sched.json
-21  docs/adrs/ADR-2604132330-brain-inbox-queue.md
+21  docs/adrs/ADR-2026-04-13-2330-brain-inbox-queue.md
 17  docs/workplans/wp-brain-self-consistency.json
 13  hex-cli/src/commands/hook.rs
-10  docs/adrs/ADR-2604140000-hey-hex-natural-language.md
+10  docs/adrs/ADR-2026-04-14-0000-hey-hex-natural-language.md
  9  README.md
  9  docs/workplans/wp-brain-daemon.json
  9  docs/workplans/wp-brain-updates.json
  9  docs/workplans/wp-brain-inbox.json
- 9  docs/adrs/ADR-2604141100-brain-updates-to-operator.md
- 9  docs/adrs/ADR-2604142200-hex-chat-conversational.md
+ 9  docs/adrs/ADR-2026-04-14-1100-brain-updates-to-operator.md
+ 9  docs/adrs/ADR-2026-04-14-2200-hex-chat-conversational.md
  8  hex-cli/src/commands/hey.rs
  8  hex-nexus/src/routes/brain.rs
- 8  docs/adrs/ADR-2604132300-brain-daemon-loop.md
+ 8  docs/adrs/ADR-2026-04-13-2300-brain-daemon-loop.md
  7  hex-cli/assets/templates/claude-md-hex-section.md
  5  CLAUDE.md
  5  hex-nexus/src/brain_service.rs
  5  docs/specs/agentic-brain-core.json
- 5  docs/adrs/ADR-2604131945-brain-self-consistency-daemon.md
+ 5  docs/adrs/ADR-2026-04-13-1945-brain-self-consistency-daemon.md
  5  docs/workplans/wp-hex-chat-conversational.json
  5  hex-cli/assets/helpers/hex-statusline.cjs
  4  docs/algebra/ports-signature.md
  4  docs/workplans/wp-cli-polish.json
- 4  docs/adrs/ADR-2604141200-remote-shell-via-agent.md
+ 4  docs/adrs/ADR-2026-04-14-1200-remote-shell-via-agent.md
  3  hex-nexus/src/routes/mod.rs
  3  hex-nexus/src/adapters/brain.rs  (NOTE: ripgrep reported 1 above — rechecked, single file entry)
- 3  docs/adrs/ADR-2604142300-brain-auto-cleanup-stale-swarms.md
- 2  docs/adrs/ADR-2604132200-cli-simplification.md
+ 3  docs/adrs/ADR-2026-04-14-2300-brain-auto-cleanup-stale-swarms.md
+ 2  docs/adrs/ADR-2026-04-13-2200-cli-simplification.md
  2  hex-nexus/src/state.rs
  2  hex-cli/src/main.rs
  1  hex-nexus/src/adapters/brain.rs
@@ -49,8 +49,8 @@ Total files with hits: 43
  1  hex-core/src/domain/mod.rs
  1  hex-core/src/ports/brain.rs
  1  hex-core/src/ports/mod.rs
- 1  docs/adrs/ADR-2604102300-agent-framework-competitive-positioning.md
- 1  docs/adrs/ADR-2604102200-rl-agent-self-improvement.md
+ 1  docs/adrs/ADR-2026-04-10-2300-agent-framework-competitive-positioning.md
+ 1  docs/adrs/ADR-2026-04-10-2200-rl-agent-self-improvement.md
  1  docs/adrs/ADR-027-hexflo-swarm-coordination.md
  1  docs/workplans/wp-hey-hex.json
  1  hex-cli/assets/swarms/brain-self-improvement.yml
@@ -101,20 +101,20 @@ Conclusion: There is NO SQLite table or column containing 'brain'. The only sche
 Observed from grep hits in hex-nexus/src/routes/brain.rs, hex-nexus/src/state.rs, and hex-cli/src/commands/brain.rs:
   /api/brain/test        → /api/sched/test
   /api/brain/status      → /api/sched/status
-  /api/brain/*           → /api/sched/*    (full prefix rename per ADR-2604150000)
+  /api/brain/*           → /api/sched/*    (full prefix rename per ADR-2026-04-15-0000)
 
 ## ADRs to transition (status update, keep as historical record)
-ADR-2604132200-cli-simplification                — mentions brain subcommand
-ADR-2604132300-brain-daemon-loop                 — will be superseded by ADR-2604150000
-ADR-2604132330-brain-inbox-queue                 — will be superseded
-ADR-2604131945-brain-self-consistency-daemon     — will be superseded
-ADR-2604141100-brain-updates-to-operator         — will be superseded
-ADR-2604142300-brain-auto-cleanup-stale-swarms   — ACTIVE (per session context)
-ADR-2604140000-hey-hex-natural-language          — references brain routing
-ADR-2604141200-remote-shell-via-agent            — references brain
-ADR-2604142200-hex-chat-conversational           — ACTIVE
-ADR-2604102300, ADR-2604102200, ADR-027          — incidental references
-ADR-2604150000-rename-brain-to-sched             — the rename ADR itself
+ADR-2026-04-13-2200-cli-simplification                — mentions brain subcommand
+ADR-2026-04-13-2300-brain-daemon-loop                 — will be superseded by ADR-2026-04-15-0000
+ADR-2026-04-13-2330-brain-inbox-queue                 — will be superseded
+ADR-2026-04-13-1945-brain-self-consistency-daemon     — will be superseded
+ADR-2026-04-14-1100-brain-updates-to-operator         — will be superseded
+ADR-2026-04-14-2300-brain-auto-cleanup-stale-swarms   — ACTIVE (per session context)
+ADR-2026-04-14-0000-hey-hex-natural-language          — references brain routing
+ADR-2026-04-14-1200-remote-shell-via-agent            — references brain
+ADR-2026-04-14-2200-hex-chat-conversational           — ACTIVE
+ADR-2026-04-10-2300, ADR-2026-04-10-2200, ADR-027          — incidental references
+ADR-2026-04-15-0000-rename-brain-to-sched             — the rename ADR itself
 
 ## Workplans referencing brain (update text, keep file history)
 wp-rename-brain-to-sched.json          — driver of this rename

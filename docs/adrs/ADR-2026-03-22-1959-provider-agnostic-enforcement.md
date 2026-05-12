@@ -161,7 +161,7 @@ The LLM's system prompt instructs it to call `hex_session_start` at the beginnin
 
 ### P5: Enforcement rules in SpacetimeDB
 
-Move enforcement rules from `.hex/adr-rules.toml` (file-based, client-only) to a SpacetimeDB `enforcement_rule` table:
+Move enforcement rules from `.hex/ADR-rules.toml` (file-based, client-only) to a SpacetimeDB `enforcement_rule` table:
 
 ```
 enforcement_rule {
@@ -175,7 +175,7 @@ enforcement_rule {
 }
 ```
 
-Rules are synced from `.hex/adr-rules.toml` on startup (same pattern as config sync, ADR-044) but can also be managed via REST/MCP:
+Rules are synced from `.hex/ADR-rules.toml` on startup (same pattern as config sync, ADR-044) but can also be managed via REST/MCP:
 
 ```bash
 hex enforce list                    # Show all rules
@@ -226,7 +226,7 @@ This is defense-in-depth — the server-side guards catch violations even if the
 | P2 | MCP tool guards — check enforcement before executing mutating tools | Done |
 | P3 | MCP lifecycle tools — session_start, heartbeat, workplan_activate | Done |
 | P4 | Nexus API guards — axum middleware for REST endpoint enforcement | Done |
-| P5 | Enforcement rules in SpacetimeDB — sync from .hex/adr-rules.toml + `hex enforce` CLI | Done |
+| P5 | Enforcement rules in SpacetimeDB — sync from .hex/ADR-rules.toml + `hex enforce` CLI | Done |
 | P6 | System prompt injection for non-MCP models — `hex enforce prompt` | Done |
 
 ## References

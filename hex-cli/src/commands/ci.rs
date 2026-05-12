@@ -192,9 +192,9 @@ async fn gate_analyze() -> bool {
 async fn gate_enforce() -> bool {
     print!("  {} ADR rule compliance ....... ", "\u{25cb}".dimmed());
 
-    let rules_file = std::path::Path::new(".hex/adr-rules.toml");
+    let rules_file = std::path::Path::new(".hex/ADR-rules.toml");
     if !rules_file.exists() {
-        println!("{} (no .hex/adr-rules.toml)", "skip".yellow());
+        println!("{} (no .hex/ADR-rules.toml)", "skip".yellow());
         return true;
     }
 

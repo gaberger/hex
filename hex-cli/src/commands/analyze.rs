@@ -56,7 +56,7 @@ pub async fn run(
     let mut rust_violations: Vec<RustViolation> = Vec::new();
     let mut all_violation_count = 0usize;
 
-    // If --adr-compliance flag is set, skip boundary analysis entirely
+    // If --ADR-compliance flag is set, skip boundary analysis entirely
     if !adr_compliance_only {
         // Check for hex project markers
         let has_src = root.join("src").is_dir();
@@ -1035,7 +1035,7 @@ fn resolve_relative_path(source_dir: &str, import_path: &str) -> String {
 }
 
 // ── ADR Compliance (ADR-045) ────────────────────────────
-// Rules are loaded from the project's `.hex/adr-rules.toml` — hex ships no
+// Rules are loaded from the project's `.hex/ADR-rules.toml` — hex ships no
 // project-specific rules. The engine is the framework; the rules are the project's.
 
 struct AdrViolationLocal {
@@ -1073,8 +1073,8 @@ struct AdrRuleConfig {
 fn default_severity() -> String { "warning".to_string() }
 
 fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
-    // Load rules from project's .hex/adr-rules.toml
-    let rules_path = root.join(".hex").join("adr-rules.toml");
+    // Load rules from project's .hex/ADR-rules.toml
+    let rules_path = root.join(".hex").join("ADR-rules.toml");
     let rules = if rules_path.is_file() {
         match std::fs::read_to_string(&rules_path) {
             Ok(content) => match toml::from_str::<AdrRulesFile>(&content) {
@@ -1089,7 +1089,7 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
                 }
                 Err(e) => {
                     eprintln!(
-                        "    {} Failed to parse adr-rules.toml: {}",
+                        "    {} Failed to parse ADR-rules.toml: {}",
                         "\u{2717}".red(), e
                     );
                     return Vec::new();
@@ -1099,7 +1099,7 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
         }
     } else {
         eprintln!(
-            "    {} No .hex/adr-rules.toml found — skipping compliance check",
+            "    {} No .hex/ADR-rules.toml found — skipping compliance check",
             "\u{25cb}".dimmed()
         );
         return Vec::new();
@@ -1194,7 +1194,7 @@ async fn store_compliance_in_hexflo(
         .collect();
 
     let payload = serde_json::json!({
-        "key": "adr-compliance:default",
+        "key": "ADR-compliance:default",
         "value": serde_json::json!({
             "violationCount": violations.len(),
             "errorCount": error_count,

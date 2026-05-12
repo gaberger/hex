@@ -27,11 +27,11 @@ fn hex_coder_yaml_loads_with_preferred_model() {
 
 #[test]
 fn adr_reviewer_yaml_loads_with_preferred_model() {
-    let def = AgentDefinition::load("adr-reviewer")
-        .expect("adr-reviewer.yml must be present in assets");
+    let def = AgentDefinition::load("ADR-reviewer")
+        .expect("ADR-reviewer.yml must be present in assets");
     assert!(
         def.model.preferred.is_some(),
-        "adr-reviewer.yml must define model.preferred"
+        "ADR-reviewer.yml must define model.preferred"
     );
 }
 
@@ -172,7 +172,7 @@ fn yaml_model_id_appears_in_step_result() {
 
 #[test]
 fn all_core_agent_yamls_load() {
-    let roles = ["hex-coder", "adr-reviewer", "planner", "swarm-coordinator"];
+    let roles = ["hex-coder", "ADR-reviewer", "planner", "swarm-coordinator"];
     for role in roles {
         let def = AgentDefinition::load(role);
         assert!(

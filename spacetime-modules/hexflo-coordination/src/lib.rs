@@ -2407,7 +2407,7 @@ pub fn inference_log_create(
 //  Enforcement Rules (ADR-2026-03-22-1959 P5)
 // ============================================================
 
-/// An enforcement rule — persisted in SpacetimeDB, synced from .hex/adr-rules.toml.
+/// An enforcement rule — persisted in SpacetimeDB, synced from .hex/ADR-rules.toml.
 /// These rules are checked by MCP tool guards and nexus API middleware.
 #[table(name = enforcement_rule, public)]
 #[derive(Clone, Debug)]

@@ -622,7 +622,7 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/{project_id}/analyze", get(analysis::analyze_project))
         // ADR compliance (ADR-045) — check code against accepted ADRs
-        .route("/api/analyze/adr-compliance", post(analysis::analyze_adr_compliance)
+        .route("/api/analyze/ADR-compliance", post(analysis::analyze_adr_compliance)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         // ADR number reservation (atomic next-number for multi-agent coordination)
         .route("/api/adr/reserve", post(adr_reserve_number))

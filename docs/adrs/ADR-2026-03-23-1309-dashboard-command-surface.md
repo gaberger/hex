@@ -40,7 +40,7 @@ Commands are grouped by category matching the CLI subcommand structure:
 | task | create, list, complete, assign | SpacetimeDB signals + reducers | State read/write |
 | memory | store, get, search | SpacetimeDB signals + reducers | State read/write |
 | inbox | list, notify, ack | SpacetimeDB reducers | State write |
-| analysis | analyze, adr-compliance | REST (`/api/analyze*`) | Filesystem op |
+| analysis | analyze, ADR-compliance | REST (`/api/analyze*`) | Filesystem op |
 | git | status, log, diff, branches | REST (`/api/{project}/git/*`) | Filesystem op |
 | settings | refresh config, sync skills | REST (`/api/config/*`, `/api/skills/*`) | Filesystem→SpacetimeDB bridge |
 

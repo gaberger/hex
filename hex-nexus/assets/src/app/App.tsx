@@ -140,7 +140,7 @@ function isPageActive(page: string): boolean {
   // Detail pages: project-agent-detail matches project-agents, etc.
   if (page === 'project-agents' && current === 'project-agent-detail') return true;
   if (page === 'project-swarms' && (current === 'project-swarm-detail' || current === 'project-swarm-task')) return true;
-  if (page === 'project-adrs' && current === 'project-adr-detail') return true;
+  if (page === 'project-adrs' && current === 'project-ADR-detail') return true;
   if (page === 'project-workplans' && current === 'project-workplan-detail') return true;
   if (page === 'project-files' && current === 'project-file') return true;
   if (page === 'project-config' && current === 'project-config') return true;
@@ -845,7 +845,7 @@ const App: Component = () => {
             <Match when={route().page === "project-swarm-detail"}><SwarmDetail /></Match>
             <Match when={route().page === "project-swarm-task"}><SwarmDetail /></Match>
             <Match when={route().page === "project-adrs"}><ADRBrowser /></Match>
-            <Match when={route().page === "project-adr-detail"}><ADRBrowser /></Match>
+            <Match when={route().page === "project-ADR-detail"}><ADRBrowser /></Match>
             <Match when={route().page === "project-workplans"}><WorkplanView /></Match>
             <Match when={route().page === "project-workplan-detail"}><WorkPlanDetail /></Match>
             <Match when={route().page === "project-health"}><ProjectDetail /></Match>

@@ -38,7 +38,7 @@ SpacetimeDB is retained for its irreducible multi-agent/multi-host responsibilit
   }]
 }
 ```
-Blocks writes to forbidden paths and wrong hex layers. Reads `.hex/adr-rules.toml` locally — no daemon.
+Blocks writes to forbidden paths and wrong hex layers. Reads `.hex/ADR-rules.toml` locally — no daemon.
 
 ### 2. PostToolUse — Treesitter Boundary Check
 ```json
@@ -72,7 +72,7 @@ Fails the session if architecture violations exist at session end.
 ## New CLI Command: `hex enforce check-file <path>`
 
 A thin subcommand added to `hex-cli/src/commands/enforce.rs` that:
-1. Reads `.hex/adr-rules.toml` (or `~/.hex/adr-rules.toml` as fallback)
+1. Reads `.hex/ADR-rules.toml` (or `~/.hex/ADR-rules.toml` as fallback)
 2. Checks the given path against `forbidden_paths` and `hex_layer` rules
 3. Exits 0 (allow) or 1 (block) — Claude Code interprets exit code for blocking hooks
 

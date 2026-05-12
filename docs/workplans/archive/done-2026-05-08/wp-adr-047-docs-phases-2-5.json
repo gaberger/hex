@@ -1,7 +1,7 @@
 {
   "adr": "ADR-047",
   "created_at": "2026-05-04T00:00:00Z",
-  "created_by": "adr-reviewer-followup",
+  "created_by": "ADR-reviewer-followup",
   "description": "Complete Phases 2-5 of ADR-047 (Internal Documentation System). Phase 1 (canonical glossary) shipped 2026-05-04 in commit 15841351. Remaining work: system-architecture + component docs migrated from CLAUDE.md, WASM module READMEs (7 modules), hex docs check CLI, and ADR frontmatter migration.",
   "feature": "ADR-047 documentation system completion",
   "id": "wp-adr-047-docs-phases-2-5",

@@ -20,7 +20,7 @@ responsibilities:
 
 direct_reports:
   - rust-refactorer
-  - adr-reviewer
+  - ADR-reviewer
 
 model:
   preferred: claude-opus-4-6
@@ -47,7 +47,7 @@ workflow:
 delegation:
   can_spawn:
     - rust-refactorer
-    - adr-reviewer
+    - ADR-reviewer
     - dead-code-analyzer
 
 domain_signals:

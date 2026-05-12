@@ -7,7 +7,7 @@ Date: 2026-05-10
 
 ADR-2026-03-22-1500 (Timestamp-Based ADR Numbering) introduced YYMMDDHHMM IDs to eliminate sequential numbering races. The transition created **two valid ID formats in the wild**:
 - **Legacy**: `ADR-2026-03-22-1500` (10-digit timestamp)
-- **Canonical (new)**: `ADR-2026-03-22-timestamp-adr-numbering` (YYYY-MMDD-slug filename convention)
+- **Canonical (new)**: `ADR-2026-03-22-timestamp-ADR-numbering` (YYYY-MMDD-slug filename convention)
 
 Today's state:
 - **Filenames** on disk use the new canonical form with slug (e.g. `ADR-2026-05-08-2500-typed-tool-library-and-sop-execution.md`)
@@ -31,7 +31,7 @@ Today's state:
 `docs/adrs/aliases.json`:
 ```json
 {
-  "2603221500": "ADR-2026-03-22-timestamp-adr-numbering",
+  "2603221500": "ADR-2026-03-22-timestamp-ADR-numbering",
   "2605082500": "ADR-2026-05-08-typed-tool-library-and-sop-execution"
 }
 ```
@@ -163,7 +163,7 @@ NEW: also accept canonical `ADR-YYYY-MM-DD-slug` format; normalize to timestamp 
 ### 4. Backward Compatibility
 
 - **Zero file renames**: aliases.json is overlay only
-- **Both formats valid forever**: legacy `ADR-2026-03-22-1500` and canonical `ADR-2026-03-22-timestamp-adr-numbering` both resolve to same file
+- **Both formats valid forever**: legacy `ADR-2026-03-22-1500` and canonical `ADR-2026-03-22-timestamp-ADR-numbering` both resolve to same file
 - **Tooling gracefully degrades**: if aliases.json missing or corrupt, tools fall back to digit-only extraction (current behavior)
 - **Display preference**: tools emit canonical ID when available; fallback to `ADR-{timestamp}` if no alias
 
@@ -250,6 +250,6 @@ static ALIASES: Lazy<HashMap<String, String>> = Lazy::new(|| {
 
 1. `cargo check` passes workspace-wide
 2. `hex adr aliases generate` creates `docs/adrs/aliases.json` with ≥1 entry per existing timestamp-based ADR
-3. `hex adr search ADR-2026-03-22-1500` and `hex adr search ADR-2026-03-22-timestamp-adr-numbering` both resolve to same ADR file
+3. `hex adr search ADR-2026-03-22-1500` and `hex adr search ADR-2026-03-22-timestamp-ADR-numbering` both resolve to same ADR file
 4. Workplan auto-emitter coverage scan recognizes both legacy and canonical ID formats in workplan JSON
 5. `hex adr doctor` detects orphaned and missing aliases (if `--json`, includes in findings array)

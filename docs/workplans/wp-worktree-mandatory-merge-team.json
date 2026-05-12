@@ -229,7 +229,7 @@
         },
         {
           "id": "P7.2",
-          "title": "Soft unfreeze 2026-05-08: hex sched daemon restarted (pid live, queue draining, integrator+adr-doctor cycles running cleanly). End-to-end gate proven by BS-4 synthetic hijack regression in P6 (54s wall clock; trunk SHA-256 unchanged after stub-rewrite worktree gets rejected). Existing 108 pre-freeze workplans REMAIN QUARANTINED via per-workplan paused=true on the load-bearing one + operator triage as the explicit next workstream. New workplans created post-freeze go through the live merge gate.",
+          "title": "Soft unfreeze 2026-05-08: hex sched daemon restarted (pid live, queue draining, integrator+ADR-doctor cycles running cleanly). End-to-end gate proven by BS-4 synthetic hijack regression in P6 (54s wall clock; trunk SHA-256 unchanged after stub-rewrite worktree gets rejected). Existing 108 pre-freeze workplans REMAIN QUARANTINED via per-workplan paused=true on the load-bearing one + operator triage as the explicit next workstream. New workplans created post-freeze go through the live merge gate.",
           "status": "done",
           "strategy_hint": "script",
           "evidence": [

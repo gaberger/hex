@@ -64,4 +64,4 @@ When hex-agent is running on bazzite, it polls `/api/hexflo/memory/search?q=brai
 ---
 ## Operator Resolution Note (2026-05-05T02:02:35.247100130+00:00)
 
-Auto-applied from @adr-reviewer chat verdict
+Auto-applied from @ADR-reviewer chat verdict

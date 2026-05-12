@@ -161,7 +161,7 @@ fn happy_path_preserves_all_pre_merge_commits() {
         Outcome::Applied { branch, commit } => (branch, commit),
         Outcome::Aborted { reason } => panic!("expected Applied, got Aborted: {}", reason),
     };
-    assert_eq!(branch, "sched/auto-fix/adr-doctor/ADR-2026-04-15-0100");
+    assert_eq!(branch, "sched/auto-fix/ADR-doctor/ADR-2026-04-15-0100");
 
     // ── Verify ADR-2026-04-15-0100 safety property ──
     let post_merge_history = rev_list_all(&repo);
@@ -211,7 +211,7 @@ fn happy_path_preserves_all_pre_merge_commits() {
     );
     let branches = git(&repo, &["branch", "--list", "sched/auto-fix/*"]);
     assert!(
-        branches.contains("sched/auto-fix/adr-doctor/ADR-2026-04-15-0100"),
+        branches.contains("sched/auto-fix/ADR-doctor/ADR-2026-04-15-0100"),
         "auto-fix branch should persist for audit, got:\n{}",
         branches
     );

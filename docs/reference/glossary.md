@@ -84,6 +84,6 @@
 
 ## Notes on Enforcement
 
-- **Phase 4** of ADR-047 will add `hex docs check` to scan reference docs against this file and flag terminology drift. Until then, enforcement is manual (PR review + adr-reviewer agent).
+- **Phase 4** of ADR-047 will add `hex docs check` to scan reference docs against this file and flag terminology drift. Until then, enforcement is manual (PR review + ADR-reviewer agent).
 - **Glossary updates** require an ADR amendment if they change a canonical term — drift in the glossary itself is the worst kind of drift.
 - **Component additions**: when a new deployment unit or WASM module ships, it MUST be added here in the same commit.

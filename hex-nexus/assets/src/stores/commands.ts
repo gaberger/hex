@@ -152,11 +152,11 @@ const commands: Command[] = [
     }),
   },
   {
-    id: "analysis.adr-compliance",
+    id: "analysis.ADR-compliance",
     label: "Run ADR Compliance Check",
     category: "analysis",
     action: tracked("ADR Compliance Check", "analysis", async () => {
-      const data = await restClient.post<any>("/api/analyze/adr-compliance", { path: "." });
+      const data = await restClient.post<any>("/api/analyze/ADR-compliance", { path: "." });
       const msg = `${data.compliant_count ?? "?"}/${data.total_count ?? "?"} compliant`;
       addToast("success", `ADR compliance: ${msg}`);
       return msg;

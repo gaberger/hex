@@ -131,7 +131,7 @@
             "P1.3",
             "P1.4"
           ],
-          "description": "Add `--composition-churn --window=<duration>` flag. Implementation: walk `git log --since=<window> -- '*composition-root*' '*compose*.rs' '*lib.rs'` and count distinct commits touching wiring; cross-reference with ADRs accepted in the same window. Emits a finding when churn / accepted-adr-count > 1.5. Output: `{findings: [{commits_touching_wiring, accepted_adrs_in_window, ratio, files_touched}]}`.",
+          "description": "Add `--composition-churn --window=<duration>` flag. Implementation: walk `git log --since=<window> -- '*composition-root*' '*compose*.rs' '*lib.rs'` and count distinct commits touching wiring; cross-reference with ADRs accepted in the same window. Emits a finding when churn / accepted-ADR-count > 1.5. Output: `{findings: [{commits_touching_wiring, accepted_adrs_in_window, ratio, files_touched}]}`.",
           "evidence": {
             "files_found": [
               "hex-analyzer/src/analyzers/composition_churn.rs",

@@ -138,7 +138,7 @@
 
 | Template | Size | Placeholders |
 |----------|------|-------------|
-| `adr-generate.md` | 2,383 bytes (~600 tokens) | `user_description`, `existing_adrs`, `architecture_summary`, `related_adrs` |
+| `ADR-generate.md` | 2,383 bytes (~600 tokens) | `user_description`, `existing_adrs`, `architecture_summary`, `related_adrs` |
 | `workplan-generate.md` | 2,739 bytes (~685 tokens) | `adr_content`, `workplan_schema`, `architecture_rules`, `tier_definitions` |
 | `code-generate.md` | 2,725 bytes (~681 tokens) | `step_description`, `target_file`, `ast_summary`, `port_interfaces`, `boundary_rules`, `language` |
 | `test-generate.md` | 2,747 bytes (~687 tokens) | `source_file`, `port_contracts`, `test_patterns`, `language` |

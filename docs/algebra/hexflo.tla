@@ -1,6 +1,6 @@
 --------------------------- MODULE hexflo ---------------------------
 \* HexFlo Swarm Coordination Protocol — TLA+ Specification
-\* ADR-2604111229 Phase 4 (pi-calculus / TLA+)
+\* ADR-2026-04-11-1229 Phase 4 (pi-calculus / TLA+)
 \*
 \* Models the core HexFlo protocol: agents claim tasks via CAS,
 \* send heartbeats, crash and recover, and the cleanup loop

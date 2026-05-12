@@ -277,7 +277,7 @@ fn read_hooks_config() -> Option<Value> {
 }
 
 fn read_enforcement_config() -> Option<Value> {
-    let rules_path = PathBuf::from(".hex/adr-rules.toml");
+    let rules_path = PathBuf::from(".hex/ADR-rules.toml");
     if !rules_path.exists() {
         return None;
     }

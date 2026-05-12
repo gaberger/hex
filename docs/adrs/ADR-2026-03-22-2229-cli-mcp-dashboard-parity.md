@@ -25,7 +25,7 @@ ADR-019 established the principle that every CLI command should have an MCP equi
 | Agent audit | `hex agent audit` | ? | ? |
 | Test history/trends | `hex test history/trends` | ? | ? |
 | Workplan activate | ? | `hex_workplan_activate` | ? |
-| ADR compliance | `hex analyze --adr-compliance` | `hex_analyze` | ? |
+| ADR compliance | `hex analyze --ADR-compliance` | `hex_analyze` | ? |
 | Session heartbeat | hook | `hex_session_heartbeat` | ? |
 
 ## Decision

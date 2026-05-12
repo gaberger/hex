@@ -784,7 +784,7 @@ struct SpecRow {
     description: String,
 }
 
-/// `hex adr specs <adr-id>` — find specs linked to an ADR through workplans.
+/// `hex adr specs <ADR-id>` — find specs linked to an ADR through workplans.
 async fn specs_for_adr(adr_id: &str) -> anyhow::Result<()> {
     let workplans_dir = find_workplans_dir()
         .ok_or_else(|| anyhow::anyhow!("No docs/workplans/ directory found"))?;
@@ -1030,7 +1030,7 @@ mod tests {
 
     #[test]
     fn extract_adr_id_timestamp() {
-        assert_eq!(extract_adr_id("ADR-2026-03-22-1500-timestamp-adr-numbering"), "ADR-2026-03-22-1500");
+        assert_eq!(extract_adr_id("ADR-2026-03-22-1500-timestamp-ADR-numbering"), "ADR-2026-03-22-1500");
     }
 
     #[test]

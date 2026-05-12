@@ -114,4 +114,4 @@ Brain SHALL NOT auto-fix issues that require judgment:
 ---
 ## Operator Resolution Note (2026-05-05T02:10:45.795661613+00:00)
 
-Auto-applied from @adr-reviewer chat verdict
+Auto-applied from @ADR-reviewer chat verdict

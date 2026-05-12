@@ -582,7 +582,7 @@
     {
       "name": "hex_enforce_list",
       "category": "enforcement",
-      "description": "List all enforcement rules (local .hex/adr-rules.toml + SpacetimeDB)",
+      "description": "List all enforcement rules (local .hex/ADR-rules.toml + SpacetimeDB)",
       "route": { "method": "GET", "path": "/api/hexflo/enforcement-rules" },
       "inputSchema": {
         "type": "object",
@@ -604,7 +604,7 @@
     {
       "name": "hex_enforce_sync",
       "category": "enforcement",
-      "description": "Sync enforcement rules from .hex/adr-rules.toml to SpacetimeDB",
+      "description": "Sync enforcement rules from .hex/ADR-rules.toml to SpacetimeDB",
       "route": { "method": "POST", "path": "/api/hexflo/enforcement-rules" },
       "inputSchema": {
         "type": "object",

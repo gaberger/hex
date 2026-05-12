@@ -96,4 +96,4 @@ See `wp-inference-q-report.json`.
 ---
 ## Operator Resolution Note (2026-05-05T02:09:56.921419557+00:00)
 
-Auto-applied from @adr-reviewer chat verdict
+Auto-applied from @ADR-reviewer chat verdict

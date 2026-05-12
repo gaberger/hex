@@ -71,7 +71,7 @@
       "given": ["hex CLI is installed"],
       "when": ["user runs hex opencode inject --enforcement"],
       "then": [
-        "ADR compliance rules are read from .hex/adr-rules.toml",
+        "ADR compliance rules are read from .hex/ADR-rules.toml",
         "rules are added to hex.context.enforcement in opencode.json"
       ]
     },
