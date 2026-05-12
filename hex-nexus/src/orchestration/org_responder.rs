@@ -41,12 +41,13 @@ const THOUGHT_MAX_TOKENS: u32 = 96;
 ///
 /// Both overrideable: HEX_RESPONDER_CHAT_MODEL, HEX_RESPONDER_COMMIT_MODEL.
 /// Legacy HEX_RESPONDER_MODEL still wins for both if set.
-// qwen3:4b is a thinking model and produces meta-reasoning instead of
-// answers even in chat mode — it hits num_predict mid-think and the strip
-// only catches tagged <think>…</think> blocks, not untagged rambling.
-// nemotron-mini doesn't think, replies tight (~50–200 tokens), follows
-// the brief format. Override via HEX_RESPONDER_CHAT_MODEL.
-const REPLY_MODEL_CHAT_DEFAULT: &str = "nemotron-mini";
+// Benchmark-driven defaults (scripts/bench-persona-prompts.py, v2 prompts).
+//   chat-mode   → qwen3.5:9b      avg 0.94, best at grounded status answers
+//   commit-mode → nemotron-mini   avg 1.00 on Confirm: format with few-shot
+//                                 prompt, ~1s latency, ~25 output tokens
+// Overrides: HEX_RESPONDER_CHAT_MODEL, HEX_RESPONDER_COMMIT_MODEL.
+// Re-run the bench when new models drop.
+const REPLY_MODEL_CHAT_DEFAULT: &str = "qwen3.5:9b";
 const REPLY_MODEL_COMMIT_DEFAULT: &str = "nemotron-mini";
 /// Cap concurrent inference calls so we don't queue 9 simultaneous
 /// requests at Ollama for a 4B model. Override with HEX_RESPONDER_CONCURRENCY.
@@ -134,7 +135,16 @@ fn conversational_prompt(role: &str) -> String {
            (peer name) or where the answer lives (file path, log, dashboard).\n\
          - NO fabrication. NO claims about systems you haven't grounded against.\n\
          - Be brief. Be specific. Stop when you've answered.\n\
-         - DO NOT use the `Confirm:` format — that's for directives, not chats."
+         - DO NOT use the `Confirm:` format — that's for directives, not chats.\n\n\
+         === BANNED PHRASES (start of reply) ===\n\
+         Do NOT begin with: 'We are', 'The user', 'Let me', 'I'll respond', \
+         'I will respond', 'First,', 'Looking at', 'Key points', 'Note:'. \
+         These are pre-answer narration. Skip straight to the answer.\n\n\
+         === EXAMPLE (the only valid shape) ===\n\
+         Shipped: docs/specs/cost-runbook.md. In flight: ADR-2026-05-08-2500 \
+         pipeline integration. Concern: 3 active persona rollbacks per \
+         /persona-health.\n\n\
+         Begin your reply with the first character of your answer. Now."
     )
 }
 
@@ -143,6 +153,12 @@ fn conversational_prompt(role: &str) -> String {
 /// Per ADR-2026-05-08-2400, personas are commitment-creators, not artifact-
 /// producers. Output is restricted to ONE Confirm: line OR the literal
 /// string "Silent". Anything else is dropped at the parser.
+///
+/// v2 (2026-05-12): added few-shot examples after benchmark
+/// (scripts/bench-persona-prompts.py) showed they lift nemotron-mini's
+/// commit-mode score from 0.67 → 1.00. The two examples cost ~80 tokens
+/// of system prompt but eliminate the "I will respond with…" rambling
+/// path entirely.
 fn persona_prompt(role: &str) -> String {
     let role_title = match role {
         "cto" => "Chief Technology Officer",
@@ -184,7 +200,13 @@ fn persona_prompt(role: &str) -> String {
          - Any output whose first non-whitespace character is not `C` (for Confirm) or `S` (for Silent)\n\n\
          You have NO tools beyond emitting this Confirm row. The factory pipeline (drafter→twin→\
          executor) will consume your Confirm and produce the artifact. If you write Silent, no \
-         artifact is produced — that is correct when you genuinely have nothing concrete to add."
+         artifact is produced — that is correct when you genuinely have nothing concrete to add.\n\n\
+         === EXAMPLES (these are the ONLY valid output shapes) ===\n\
+         Confirm: I ({role}) will write docs/specs/cost-runbook.md by EOD — success: docs/specs/cost-runbook.md\n\
+         Confirm: I ({role}) will draft ADR-2026-05-12-0900-pool-rebalance by EOW — success: docs/adrs/ADR-2026-05-12-0900-pool-rebalance.md\n\
+         Confirm: I ({role}) will patch hex-cli/src/commands/plan.rs in 2h — success: hex-cli/src/commands/plan.rs\n\
+         Silent\n\n\
+         Begin your reply with the first character now. No preface."
     )
 }
 
