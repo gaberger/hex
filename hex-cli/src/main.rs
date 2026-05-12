@@ -254,6 +254,8 @@ enum Commands {
     Go,
     /// Hey Hex — natural language task classifier (ADR-2026-04-14-0000)
     Hey(HeyArgs),
+    /// Adversarially verify a claim about the repo — returns CONFIRMED / REFUTED / INCONCLUSIVE
+    Verify(commands::verify::VerifyArgs),
     /// Scheduler daemon — queue drain, validation, auto-fix (ADR-2026-04-15-0000)
     Sched {
         #[command(subcommand)]
@@ -637,6 +639,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Go => commands::go::run().await,
         Commands::Hey(args) => commands::hey::run(args).await,
+        Commands::Verify(args) => commands::verify::run(args).await,
         Commands::Sched { action } => commands::sched::run(action).await,
         Commands::Pool { action } => commands::pool::run(action).await,
         Commands::Brain { action } => commands::brain_alias::run(action).await,
