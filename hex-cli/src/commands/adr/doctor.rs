@@ -177,7 +177,12 @@ pub fn scan_single_file(path: &Path, content: &str, now: NaiveDate) -> Vec<Findi
 
 fn adr_id_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"ADR-\d+").unwrap())
+    // Two forms, hyphenated YYYY-MM-DD-HHMM first (longest match wins in
+    // alternation only when used with `find` — must list more-specific
+    // pattern first). Falls back to legacy sequential / 10-digit form.
+    // Without this, `ADR-2026-03-22-1500` truncates to `ADR-2026` and the
+    // doctor reports 154 duplicates.
+    RE.get_or_init(|| Regex::new(r"ADR-\d{4}-\d{2}-\d{2}-\d{4}|ADR-\d+").unwrap())
 }
 
 /// Strict canonical-format extraction. Mirrors the parent module's

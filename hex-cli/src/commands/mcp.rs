@@ -282,15 +282,26 @@ fn find_adr_dir() -> Option<std::path::PathBuf> {
     }
 }
 
-/// Extract ADR ID from filename: "ADR-001-foo.md" → "ADR-001",
-/// "ADR-2026-03-22-2035-foo.md" → "ADR-2026-03-22-2035".
+/// Extract ADR ID from filename. Handles legacy sequential, hyphenated
+/// timestamp (YYYY-MM-DD-HHMM), and legacy 10-digit forms.
 fn extract_adr_id(filename: &str) -> String {
     let stem = filename.trim_end_matches(".md");
-    if let Some(rest) = stem.strip_prefix("ADR-").or_else(|| stem.strip_prefix("adr-")) {
-        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if !digits.is_empty() {
-            return format!("ADR-{}", digits);
-        }
+    let rest = match stem.strip_prefix("ADR-").or_else(|| stem.strip_prefix("adr-")) {
+        Some(r) => r,
+        None => return stem.to_string(),
+    };
+    let parts: Vec<&str> = rest.splitn(5, '-').collect();
+    if parts.len() >= 4
+        && parts[0].len() == 4 && parts[0].chars().all(|c| c.is_ascii_digit())
+        && parts[1].len() == 2 && parts[1].chars().all(|c| c.is_ascii_digit())
+        && parts[2].len() == 2 && parts[2].chars().all(|c| c.is_ascii_digit())
+        && parts[3].len() == 4 && parts[3].chars().all(|c| c.is_ascii_digit())
+    {
+        return format!("ADR-{}-{}-{}-{}", parts[0], parts[1], parts[2], parts[3]);
+    }
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if !digits.is_empty() {
+        return format!("ADR-{}", digits);
     }
     stem.to_string()
 }
