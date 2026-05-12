@@ -41,6 +41,7 @@ Usage:
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -48,6 +49,7 @@ import urllib.error
 import urllib.request
 
 OLLAMA = "http://localhost:11434"
+OPENROUTER = "https://openrouter.ai/api/v1"
 
 # ── Test cases ───────────────────────────────────────────────────────────────
 
@@ -238,13 +240,13 @@ def call_ollama(model, system, user, num_predict=200, timeout_s=60):
             data = json.loads(resp.read().decode())
         elapsed = time.time() - t0
         content = data.get("message", {}).get("content", "")
-        # Strip <think> blocks (qwen3 etc.)
         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
         return {
             "ok": True,
             "content": content,
             "latency_s": elapsed,
             "out_tokens": data.get("eval_count", 0),
+            "cost_usd": 0.0,
         }
     except urllib.error.URLError as e:
         return {"ok": False, "error": str(e), "latency_s": time.time() - t0}
@@ -252,21 +254,88 @@ def call_ollama(model, system, user, num_predict=200, timeout_s=60):
         return {"ok": False, "error": str(e), "latency_s": time.time() - t0}
 
 
-def run(models, prompt_v):
+def call_openrouter(model, system, user, max_tokens=200, timeout_s=120):
+    """Test an OpenRouter model via the nexus /api/inference/complete proxy.
+    Nexus already holds the OpenRouter API key in its vault and handles the
+    auth + retry chain — calling directly would mean wrestling with the
+    redacted-key situation in `hex secrets get`. Going through nexus also
+    means cost telemetry lands in the same place as production calls.
+    """
+    body = {
+        "model": model,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+        "max_tokens": max_tokens,
+    }
+    req = urllib.request.Request(
+        "http://localhost:5555/api/inference/complete",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            data = json.loads(resp.read().decode())
+        elapsed = time.time() - t0
+        content = data.get("content", "") or ""
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+        return {
+            "ok": True,
+            "content": content,
+            "latency_s": elapsed,
+            "out_tokens": data.get("output_tokens", 0),
+            # nexus doesn't surface usage.cost in this response yet; fold in
+            # later when /api/inference/complete forwards OpenRouter's cost.
+            "cost_usd": 0.0,
+        }
+    except urllib.error.HTTPError as e:
+        try: body = e.read().decode()[:300]
+        except Exception: body = str(e)
+        return {"ok": False, "error": f"HTTP {e.code}: {body}", "latency_s": time.time() - t0}
+    except urllib.error.URLError as e:
+        return {"ok": False, "error": str(e), "latency_s": time.time() - t0}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "latency_s": time.time() - t0}
+
+
+def call_model(provider, model, system, user):
+    if provider == "openrouter":
+        return call_openrouter(model, system, user)
+    return call_ollama(model, system, user)
+
+
+def list_openrouter_catalog(filter_substr=None, max_models=20):
+    """Fetch the OpenRouter model catalog. Returns list of model ids.
+    Catalog endpoint is unauthenticated, so we hit it directly.
+    """
+    req = urllib.request.Request(f"{OPENROUTER}/models")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+        models = data.get("data", [])
+        ids = [m.get("id", "") for m in models if m.get("id")]
+        if filter_substr:
+            ids = [m for m in ids if filter_substr.lower() in m.lower()]
+        return ids[:max_models]
+    except Exception as e:
+        print(f"can't fetch OpenRouter catalog: {e}", file=sys.stderr)
+        return []
+
+
+def run(models, prompt_v, provider="ollama"):
     cases = build_cases(prompt_v)
     results = {m: {} for m in models}
     eval_fns = {"chat": eval_chat, "commit": eval_commit, "drafter": eval_drafter}
 
     for model in models:
-        print(f"\n── {model} ──", flush=True)
+        print(f"\n── {provider}: {model} ──", flush=True)
         for case_id, mode, system, user in cases:
-            r = call_ollama(model, system, user)
+            r = call_model(provider, model, system, user)
             if not r["ok"]:
-                print(f"  ✗ {case_id:24} ERROR: {r.get('error','?')[:60]}")
-                results[model][case_id] = {"ok": False, "score": 0.0}
+                print(f"  ✗ {case_id:24} ERROR: {r.get('error','?')[:80]}")
+                results[model][case_id] = {"ok": False, "score": 0.0, "cost_usd": 0.0}
                 continue
             scores = eval_fns[mode](r["content"], r["latency_s"], r["out_tokens"])
-            # Composite: mean of normalized scores (exclude raw_*)
             score_keys = [k for k in scores if not k.startswith("raw_")]
             composite = sum(scores[k] for k in score_keys) / len(score_keys)
             results[model][case_id] = {
@@ -275,68 +344,110 @@ def run(models, prompt_v):
                 "details": scores,
                 "latency_s": r["latency_s"],
                 "out_tokens": r["out_tokens"],
+                "cost_usd": r.get("cost_usd", 0.0),
                 "snippet": r["content"][:80].replace("\n", " "),
             }
+            cost_str = f"${r['cost_usd']:.4f}" if r.get("cost_usd") else ""
             print(f"  {('✓' if composite > 0.6 else '◐' if composite > 0.3 else '✗')} {case_id:24} "
-                  f"score={composite:.2f}  lat={r['latency_s']:.1f}s  tok={r['out_tokens']}  "
-                  f"{r['content'][:60].replace(chr(10),' ')!r}")
+                  f"score={composite:.2f}  lat={r['latency_s']:5.1f}s  tok={r['out_tokens']:>4}  {cost_str:>8}  "
+                  f"{r['content'][:50].replace(chr(10),' ')!r}")
     return results, cases
 
 
 def report(results, cases):
     print("\n\n=== SUMMARY ===\n")
     cols = [c[0] for c in cases]
-    header = f"{'model':30} " + " ".join(f"{c[:6]:>7}" for c in cols) + "   AVG"
+    name_w = max(30, max(len(m) for m in results) + 2)
+    header = f"{'model':<{name_w}}" + " ".join(f"{c[:6]:>7}" for c in cols) + "    AVG  total$"
     print(header)
     print("-" * len(header))
-    for m, runs in results.items():
+    # Sort by avg score desc
+    sorted_models = sorted(
+        results.keys(),
+        key=lambda m: -sum(results[m].get(c, {}).get("score", 0.0) for c in cols),
+    )
+    for m in sorted_models:
+        runs = results[m]
         cells = []
         scores = []
+        total_cost = 0.0
         for c in cols:
             s = runs.get(c, {}).get("score", 0.0)
             scores.append(s)
             cells.append(f"{s:.2f}")
+            total_cost += runs.get(c, {}).get("cost_usd", 0.0) or 0.0
         avg = sum(scores) / len(scores) if scores else 0
-        row = f"{m:30} " + " ".join(f"{x:>7}" for x in cells) + f"   {avg:.2f}"
+        cost_str = f"${total_cost:.4f}" if total_cost > 0 else "  free"
+        row = f"{m:<{name_w}}" + " ".join(f"{x:>7}" for x in cells) + f"   {avg:.2f} {cost_str:>7}"
         print(row)
     print()
-    # Best model per case
     print("Best model per task:")
     for c in cols:
         best = max(results.keys(), key=lambda m: results[m].get(c, {}).get("score", 0))
         s = results[best].get(c, {}).get("score", 0)
-        print(f"  {c:24} → {best:30} {s:.2f}")
+        print(f"  {c:24} → {best:<40} {s:.2f}")
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=("Persona-task bench. Sweeps multiple models across the three "
+                     "shapes hex actually uses (chat / commit / drafter)."),
+        epilog=("Examples:\n"
+                "  # local Ollama models (auto-detected)\n"
+                "  bench-persona-prompts.py\n\n"
+                "  # specific OpenRouter models\n"
+                "  bench-persona-prompts.py --provider openrouter --model anthropic/claude-3.5-sonnet google/gemini-2.5-flash\n\n"
+                "  # discover OR catalog by substring\n"
+                "  bench-persona-prompts.py --provider openrouter --or-filter claude --or-max 6\n"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--provider", default="ollama", choices=["ollama", "openrouter"],
+                        help="backend to test against")
     parser.add_argument("--model", nargs="+", default=None,
-                        help="models to bench; default = all detected local models")
+                        help="explicit model ids to bench (overrides auto-detect)")
     parser.add_argument("--prompt", default="v1", choices=list(PROMPTS.keys()),
                         help="prompt variant to test")
+    parser.add_argument("--or-filter", default=None,
+                        help="OpenRouter catalog filter (substring match on model id)")
+    parser.add_argument("--or-max", type=int, default=8,
+                        help="max OpenRouter models to test (catalog has hundreds)")
     parser.add_argument("--json", action="store_true", help="emit JSON to stdout")
     args = parser.parse_args()
 
     if args.model:
         models = args.model
+    elif args.provider == "openrouter":
+        # We route through nexus, which already has the OR key in its vault.
+        # Verify nexus is up though.
+        try:
+            urllib.request.urlopen("http://localhost:5555/api/health", timeout=3)
+        except Exception:
+            print("ERROR: nexus not reachable at http://localhost:5555")
+            print("       Start it: hex nexus start")
+            sys.exit(2)
+        models = list_openrouter_catalog(args.or_filter, args.or_max)
+        if not models:
+            print("No OpenRouter models matched the filter."); sys.exit(2)
     else:
-        # Detect via Ollama
         try:
             with urllib.request.urlopen(f"{OLLAMA}/api/tags", timeout=5) as r:
                 data = json.loads(r.read().decode())
             all_models = [m["name"] for m in data.get("models", [])]
-            # Filter: skip the very large or cloud-only models for default run
             models = [m for m in all_models
                       if not m.endswith(":cloud") and "32b" not in m and "27b" not in m]
-            models = sorted(set(models))[:6]  # cap at 6 for time
+            models = sorted(set(models))[:6]
         except Exception as e:
             print(f"can't list models: {e}"); sys.exit(1)
 
-    print(f"prompt variant: {args.prompt}")
-    print(f"models: {models}")
-    results, cases = run(models, args.prompt)
+    print(f"provider: {args.provider}")
+    print(f"prompt:   {args.prompt}")
+    print(f"models:   {models}")
+    results, cases = run(models, args.prompt, args.provider)
     if args.json:
-        print(json.dumps({"prompt": args.prompt, "models": models, "results": results}, indent=2))
+        print(json.dumps({
+            "provider": args.provider, "prompt": args.prompt,
+            "models": models, "results": results,
+        }, indent=2))
     else:
         report(results, cases)
 
