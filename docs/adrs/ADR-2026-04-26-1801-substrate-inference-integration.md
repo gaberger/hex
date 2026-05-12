@@ -1,4 +1,4 @@
-# ADR-2026-04-26-1800: Substrate ↔ inference integration model
+# ADR-2026-04-26-1801: Substrate ↔ inference integration model
 
 **Status:** Accepted
 **Date:** 2026-04-26

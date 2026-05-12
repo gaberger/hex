@@ -1184,7 +1184,7 @@ impl WorkplanExecutor {
             // Routes directly through the inference adapter (local or remote Ollama)
             // without spawning an agent process. Faster and cheaper than Path A.
             let inference_port = shared_state.inference_port.clone();
-            // Substrate opt-in (ADR-2026-04-26-1800 P2). When the substrate's
+            // Substrate opt-in (ADR-2026-04-26-1801 P2). When the substrate's
             // inference shadow_router is wired, route Path C dispatch
             // through it — with no swap in flight, the router delegates
             // straight to the live binding (which IS this same

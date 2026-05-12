@@ -74,7 +74,7 @@ impl Tool for WorkplanEmit {
                                         "files": {
                                             "type": "array",
                                             "items": { "type": "string" },
-                                            "description": "Repo-relative file paths this task creates or modifies. Required by ADR-2026-04-14-2200 for hex plan reconcile to verify done-condition. Use forward slashes; no globs."
+                                            "description": "Repo-relative file paths this task creates or modifies. Required by ADR-2026-04-14-2201 for hex plan reconcile to verify done-condition. Use forward slashes; no globs."
                                         }
                                     }
                                 }
@@ -148,7 +148,7 @@ impl Tool for WorkplanEmit {
                 }
                 if tfiles.is_empty() {
                     return ToolResult::err(
-                        format!("phase[{}].tasks[{}] '{}' requires files[] (ADR-2026-04-14-2200 reconcile evidence)", pi, ti, tid),
+                        format!("phase[{}].tasks[{}] '{}' requires files[] (ADR-2026-04-14-2201 reconcile evidence)", pi, ti, tid),
                         start.elapsed().as_millis() as u64,
                     );
                 }

@@ -1,6 +1,6 @@
 //! Evidence-based verification for workplan task reconciliation.
 //!
-//! ADR-2026-04-14-2200: reconcile must require **positive file evidence** before
+//! ADR-2026-04-14-2201: reconcile must require **positive file evidence** before
 //! promoting any task to `done`.  Two pure-ish functions:
 //!
 //! - `collect_evidence` — gathers filesystem, symbol, and git signals

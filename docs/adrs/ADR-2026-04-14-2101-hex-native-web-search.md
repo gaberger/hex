@@ -1,4 +1,4 @@
-# ADR-2026-04-14-2100: Hex-Native Web Search & Fetch (First-Class)
+# ADR-2026-04-14-2101: Hex-Native Web Search & Fetch (First-Class)
 
 **Status:** Accepted
 **Date:** 2026-04-14

@@ -1,6 +1,6 @@
 # workplan-evidence-lint — Pre-edit hook enforcing workplan evidence schema
 # Blocks edits/writes to docs/workplans/wp-*.json that would introduce
-# empty files[] (the reconcile false-positive class closed by ADR-2026-04-14-2200).
+# empty files[] (the reconcile false-positive class closed by ADR-2026-04-14-2201).
 
 name: workplan-evidence-lint
 type: pre-tool-use

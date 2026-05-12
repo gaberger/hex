@@ -3,7 +3,7 @@
 **Date:** 2026-03-31
 
 **Status:** Superseded
-**Superseded-by:** ADR-2026-04-01-0000 (Unified Execution Path)
+**Superseded by:** ADR-2026-04-01-0000 (Unified Execution Path)
 
 ## Date
 2024-04-24

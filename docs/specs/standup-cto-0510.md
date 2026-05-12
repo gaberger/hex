@@ -8,7 +8,7 @@ Wave 2 tool library expansion landed on disk:
 
 1. **`hex-nexus/src/tools/spec_draft.rs`** (177 lines) — `spec_draft(slug, title, status, body)` tool. Mirrors `adr_draft` for non-ADR documentation (UX specs, behavioural scenarios, design notes). Writes `proposed_action(file_write)` to `docs/specs/<slug>.md`. Auto-approved via `tool:*` policy (ADR-2026-05-08-2500 digital twin fix). Grounded: `repo_read hex-nexus/src/tools/spec_draft.rs` line 1-177.
 
-2. **`hex-nexus/src/tools/workplan_emit.rs`** (275 lines) — `workplan_emit(slug, feature, adr, phases[])` tool. Closes ADR→workplan auto-bridge gap. Enforces schema (ADR-2026-04-14-2200 `hex plan reconcile` evidence: each task must declare `files[]`). Emits `docs/workplans/wp-<slug>.json` via `proposed_action(file_write)`. Auto-approved. Grounded: `repo_read hex-nexus/src/tools/workplan_emit.rs` line 1-275.
+2. **`hex-nexus/src/tools/workplan_emit.rs`** (275 lines) — `workplan_emit(slug, feature, adr, phases[])` tool. Closes ADR→workplan auto-bridge gap. Enforces schema (ADR-2026-04-14-2201 `hex plan reconcile` evidence: each task must declare `files[]`). Emits `docs/workplans/wp-<slug>.json` via `proposed_action(file_write)`. Auto-approved. Grounded: `repo_read hex-nexus/src/tools/workplan_emit.rs` line 1-275.
 
 3. **`hex-nexus/src/tools/code_patch.rs`** (271 lines) — `code_patch(path, mode, new_content, rationale)` tool. THE missing primitive for source mutations. Three modes: `replace_lines`, `replace_string`, `append`. Guards: repo-relative paths only, recognised extensions, 16 KB content cap (BSATN mitigation per ADR-2026-05-09-0400 crash fix). Twin auto-approves; executor runs `cargo_check` gate. Grounded: `repo_read hex-nexus/src/tools/code_patch.rs` line 1-50.
 

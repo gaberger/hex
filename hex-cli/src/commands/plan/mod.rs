@@ -76,7 +76,7 @@ pub enum PlanAction {
         #[arg(long, default_value_t = false)]
         update: bool,
         /// Re-verify tasks already marked done and demote them when evidence
-        /// fails. Heals JSONs corrupted by the pre-ADR-2026-04-14-2200 reconcile
+        /// fails. Heals JSONs corrupted by the pre-ADR-2026-04-14-2201 reconcile
         /// loop. Combine with `--update` to persist demotions.
         #[arg(long, default_value_t = false)]
         audit: bool,
@@ -2407,7 +2407,7 @@ fn run_done_command(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
-// Reconcile logic extracted to reconcile.rs (ADR-2026-04-14-2200).
+// Reconcile logic extracted to reconcile.rs (ADR-2026-04-14-2201).
 
 /// Extract identifiers worth grepping from a done_condition string.
 /// Takes snake_case/camelCase words ≥5 chars and single-quoted strings.
@@ -2560,7 +2560,7 @@ fn slug_from_prompt(prompt: &str) -> String {
 async fn reconcile_all(strict: bool, json: bool) -> anyhow::Result<()> {
     use std::path::PathBuf;
 
-    // Evidence-schema cutoff: ADR-2026-04-14-2200 (Reconcile must verify file
+    // Evidence-schema cutoff: ADR-2026-04-14-2201 (Reconcile must verify file
     // evidence) was accepted 2026-04-14. Workplans whose first git commit
     // predates that date can't reasonably be flagged for missing
     // `evidence.commits` — the field didn't exist when their tasks were

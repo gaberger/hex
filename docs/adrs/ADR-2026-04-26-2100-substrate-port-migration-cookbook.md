@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-04-26
 **Accepted:** 2026-04-26
-**Drivers:** Substrate ADR-2026-04-26-1500 declared the substrate as a port-agnostic runtime; ADR-2026-04-26-1800 defined the strategy-level integration model for the first port (`IInferencePort`); the second port migration (`ISecretPort` via `SecretShadowRouter`) shipped today and exercised every assumption empirically. The pattern is now stable enough to document as a reusable cookbook so the third, fourth, and Nth port migrations don't re-litigate any of these decisions.
+**Drivers:** Substrate ADR-2026-04-26-1500 declared the substrate as a port-agnostic runtime; ADR-2026-04-26-1801 defined the strategy-level integration model for the first port (`IInferencePort`); the second port migration (`ISecretPort` via `SecretShadowRouter`) shipped today and exercised every assumption empirically. The pattern is now stable enough to document as a reusable cookbook so the third, fourth, and Nth port migrations don't re-litigate any of these decisions.
 **Supersedes:** None — this is a how-to ADR. It does not change any prior decision; it codifies the implementation pattern that ADR-2026-04-26-1500 P10 anticipated.
 
 ## Context
@@ -160,7 +160,7 @@ P1 is shipped this turn. P2–P5 are explicitly gated on the third-port migratio
 ## References
 
 - ADR-2026-04-26-1500 — Substrate (defines `RuntimeComposition`)
-- ADR-2026-04-26-1800 — Substrate ↔ inference integration (strategy-level pattern, first-port migration)
+- ADR-2026-04-26-1801 — Substrate ↔ inference integration (strategy-level pattern, first-port migration)
 - `hex-nexus/src/orchestration/shadow_router.rs` — first port migration (`IInferencePort`)
 - `hex-nexus/src/orchestration/secret_shadow_router.rs` — second port migration (`ISecretPort`)
 - `hex-nexus/src/orchestration/shadow_decision.rs` — port-agnostic primitives the recipe assumes

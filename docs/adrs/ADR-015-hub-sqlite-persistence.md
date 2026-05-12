@@ -1,6 +1,7 @@
 # ADR-015: SQLite Persistence for Hub Swarm State
 
 **Status:** Superseded
+**Superseded by:** ADR-027 — HexFlo coordination (replaces ruflo/SQLite hub state)
 ## Date
 
 2026-03-17

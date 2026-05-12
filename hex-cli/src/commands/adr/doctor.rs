@@ -247,7 +247,7 @@ fn classify_status(value: &str) -> Option<&'static str> {
         .collect();
     let words: Vec<&str> = cleaned.split_whitespace().collect();
 
-    let known = ["proposed", "accepted", "deprecated", "superseded", "abandoned"];
+    let known = ["proposed", "accepted", "deprecated", "superseded", "abandoned", "rejected"];
     let matches: Vec<&'static str> = known
         .iter()
         .copied()
@@ -270,6 +270,14 @@ fn extract_date(content: &str) -> Option<NaiveDate> {
             Some(stripped["**Date**:".len()..].trim())
         } else if lower.starts_with("date:") {
             Some(stripped["date:".len()..].trim())
+        } else if lower.starts_with("## date:") {
+            // Legacy heading form: `## Date: 2026-03-15`
+            Some(stripped["## Date:".len()..].trim())
+        } else if lower.starts_with("## date ") || lower == "## date" {
+            // `## Date` heading followed by value on next non-blank line is
+            // unusual but possible; caller-side handles that via the lenient
+            // detector. Skip here.
+            None
         } else {
             None
         };
@@ -291,6 +299,7 @@ fn lenient_has_date_line(content: &str) -> bool {
         if lower.starts_with("**date:**")
             || lower.starts_with("**date**:")
             || lower.starts_with("date:")
+            || lower.starts_with("## date")
         {
             return true;
         }

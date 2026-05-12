@@ -2,8 +2,7 @@
 
 **Date:** 2026-04-18
 
-## Status
-ACTIVE — Critical blocker for autonomous workplan execution
+**Status:** Accepted
 
 ## Context
 

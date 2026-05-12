@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-04-27
 **Drivers:** ADR-2026-04-27-1100 names a discovery loop but its detector vocabulary today is operational-drift (ADR drift, workplan drift, RL-loop health). It does not interrogate whether the software *itself* is well-designed and efficiently operating: are domain types well-factored, are ports cohesive, are adapters carrying their weight, is the composition root drifting from the ADRs that authored it. The substrate (ADR-2026-04-26-1500) ships `PortTelemetry` (commit `5556a65f`) and a shadow-promotion ledger that already produce the runtime signal needed; `hex analyze` already produces the static signal. Neither feeds the improver. This ADR routes both into the discovery surface so the self-learning loop interrogates the hexagon end-to-end.
+**Note:** ADR-2026-04-27-1100 (sched improver) was scoped but never written. Treat references as conceptual; the dependency was satisfied by the broader sched-daemon work in ADR-2026-04-15-0000 and successors.
 **Depends on:** ADR-2026-04-27-1100 (sched improver), ADR-2026-04-26-1500 (substrate), ADR-2026-04-26-1311 (six-layer governance + PortTelemetry), ADR-001 (hexagonal architecture), ADR-2026-03-28-3000 (Rust workspace boundary analysis)
 **Relates to:** ADR-2026-04-14-2243 (rules as data), ADR-008 (dogfooding), ADR-031 (RL-driven model selection)
 

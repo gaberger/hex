@@ -162,7 +162,7 @@ pub(super) fn format_violations(violations: &[EvidenceViolation]) -> String {
     }
     s.push_str("\nhint: every task must declare at least one file path in `files[]`.\n");
     s.push_str("      `files` is what reconcile uses to verify the task completed.\n");
-    s.push_str("      prose-only done-conditions trigger false-positive reconcile (ADR-2026-04-14-2200).\n");
+    s.push_str("      prose-only done-conditions trigger false-positive reconcile (ADR-2026-04-14-2201).\n");
     s.push_str("      to override (not recommended), pass --accept-incomplete-evidence.\n");
     s
 }

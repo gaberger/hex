@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-04-17
 **Drivers:** docs/EVIDENCE.md commit `ac4e5aa` — the README claims "cross-layer imports block the commit" but no automated test proves the rejection path; only the pass path is covered.
-**Related:** ADR-001 (hexagonal architecture), ADR-2026-03-28-3000 (Rust workspace boundary analysis), ADR-2026-04-14-2200-reconcile-evidence-verification (same pattern: test the rejection, not just the accept)
+**Related:** ADR-001 (hexagonal architecture), ADR-2026-03-28-3000 (Rust workspace boundary analysis), ADR-2026-04-14-2201-reconcile-evidence-verification (same pattern: test the rejection, not just the accept)
 
 ## Context
 
@@ -22,7 +22,7 @@ The 12 hermetic tests in `hex-cli/src/commands/analyze.rs` cover layer classific
 2. Emits a diagnostic naming the offending file and line.
 3. Returns zero again when the import is removed.
 
-This is the same failure mode ADR-2026-04-14-2200 caught for the reconciler (asserting a task is **not** promoted is harder — and more important — than asserting it **is**). Without an explicit rejection test, a silent refactor of the analyzer that flips a comparison, swaps an `||` for `&&`, or loosens a glob can pass all 12 existing tests while eliminating the very guarantee the README leads with.
+This is the same failure mode ADR-2026-04-14-2201 caught for the reconciler (asserting a task is **not** promoted is harder — and more important — than asserting it **is**). Without an explicit rejection test, a silent refactor of the analyzer that flips a comparison, swaps an `||` for `&&`, or loosens a glob can pass all 12 existing tests while eliminating the very guarantee the README leads with.
 
 The rejection path is the entire value proposition of `hex analyze`. It must be regression-tested.
 
@@ -107,6 +107,6 @@ Keep the manual sequence below it as a human-readable illustration, but the auth
 - docs/EVIDENCE.md §1 (Tree-sitter hexagonal boundary analyzer) — the gap this ADR closes
 - hex-cli/src/commands/analyze.rs — analyzer source; inline tests at the bottom cover the accept path
 - hex-cli/tests/reconcile_evidence.rs — reference shape for hermetic CLI-driven regression tests
-- ADR-2026-04-14-2200-reconcile-evidence-verification — same principle applied to the reconciler: test the rejection, not just the accept
+- ADR-2026-04-14-2201-reconcile-evidence-verification — same principle applied to the reconciler: test the rejection, not just the accept
 - ADR-001-hexagonal-architecture — the rules this analyzer enforces
 - ADR-2026-03-28-3000-rust-workspace-boundary-analysis — Rust-side layer classification this test will exercise

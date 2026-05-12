@@ -1289,7 +1289,7 @@ async fn validate(dry_run: bool) -> anyhow::Result<()> {
 
             // Auto-fix: reconcile stale tasks whose git evidence proves completion.
             // In dry_run mode (daemon tick), only report candidates — never mutate
-            // workplan JSON (ADR-2026-04-14-2200, wp-reconcile-evidence-verification R2.2).
+            // workplan JSON (ADR-2026-04-14-2201, wp-reconcile-evidence-verification R2.2).
             if total_stale > 0 && !dry_run {
                 for wp in &summaries {
                     match autofix_workplan(wp) {

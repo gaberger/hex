@@ -1,4 +1,4 @@
-//! Substrate operator commands (ADR-2026-04-26-1800 P4,
+//! Substrate operator commands (ADR-2026-04-26-1801 P4,
 //! wp-substrate-inference-consumer-rewires P4.1).
 //!
 //! `hex substrate swap-inference` — propose a candidate inference strategy

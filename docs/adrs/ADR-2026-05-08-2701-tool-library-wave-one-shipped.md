@@ -1,4 +1,4 @@
-# ADR-2026-05-08-2700 — tool-library-wave-one-shipped
+# ADR-2026-05-08-2701 — tool-library-wave-one-shipped
 
 Status: **Proposed**
 Date: 2026-05-09
