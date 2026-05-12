@@ -1965,6 +1965,130 @@ async fn bench_chat(
 }
 
 /// Run the identity prompt — measures latency floor and basic responsiveness.
+// ── Persona-task benchmarks (the three shapes hex actually uses) ────────────
+//
+// These mirror what hex-nexus/src/orchestration/org_responder.rs +
+// drafter.rs ask of the model day-to-day. A model that scores well on
+// codegen but poorly here is the wrong default for the responder.
+// Scoring is the same shape as scripts/bench-persona-prompts.py (which
+// remains for ad-hoc / Python-only iteration); production lives here.
+
+/// Detect rambling pre-answer narration ("we are in", "let me think", etc.)
+/// Returns true if the response opens with one of the banned patterns.
+fn has_meta_reasoning(text: &str) -> bool {
+    const BAD: &[&str] = &[
+        "we are in", "the user is", "let me recall", "let me think",
+        "i need to recall", "i'll respond", "i will respond",
+        "first, i note", "key points from", "looking at the",
+    ];
+    let head = text.chars().take(400).collect::<String>().to_lowercase();
+    BAD.iter().any(|b| head.contains(b))
+}
+
+/// Count distinct grounded references (ADR ids, repo paths) in the response.
+fn count_grounded(text: &str) -> usize {
+    let lower = text.to_lowercase();
+    let adr_re = regex::Regex::new(r"adr-\d{4}-\d{2}-\d{2}-\d{4}|adr-\d+").unwrap();
+    let adrs = adr_re.find_iter(&lower).count();
+    const PATHS: &[&str] = &[
+        "docs/specs/", "docs/adrs/", "hex-nexus/src/", "hex-cli/src/",
+        "spacetime-modules/", "hex-nexus/assets/src/", "scripts/",
+    ];
+    let paths: usize = PATHS.iter().filter(|p| lower.contains(*p)).count();
+    adrs + paths
+}
+
+/// chat-mode bench: brief grounded status reply, no meta-reasoning.
+async fn bench_persona_chat(
+    http: &reqwest::Client, url: &str, ptype: &str, model: &str,
+) -> anyhow::Result<BenchResult> {
+    let system = "You are CTO. Answer in 2-3 sentences. Cite a real ADR id (ADR-2026-05-08-2500 form) or repo path (docs/specs/X.md). \
+                  Do NOT begin with: 'We are', 'The user', 'Let me', 'Looking at'. Just answer.";
+    let user = "Status: shipped today, in flight, top concern.";
+    let (response, tokens, wall) = bench_chat(http, url, ptype, model, &format!("{}\n\nUser: {}", system, user)).await?;
+    let word_count = response.split_whitespace().count();
+    let grounded = count_grounded(&response);
+    let checks: Vec<(&str, bool)> = vec![
+        ("non-empty",       !response.trim().is_empty()),
+        ("under 120 words", word_count > 0 && word_count <= 120),
+        ("cites artifact",  grounded >= 1),
+        ("no meta-prelude", !has_meta_reasoning(&response)),
+    ];
+    let passed = checks.iter().filter(|(_, v)| *v).count() as f32;
+    Ok(BenchResult {
+        name: "Persona/chat",
+        quality_score: passed / 4.0,
+        quality_max: 4,
+        quality_details: checks,
+        response, tokens, wall_secs: wall,
+    })
+}
+
+/// commit-mode bench: strict Confirm: format on a single line.
+async fn bench_persona_commit(
+    http: &reqwest::Client, url: &str, ptype: &str, model: &str,
+) -> anyhow::Result<BenchResult> {
+    let system = "You are CTO. Reply with EXACTLY ONE line in the form:\n\
+                  Confirm: I (cto) will <action> by <deadline> — success: <artifact path>\n\
+                  OR the single word: Silent\n\
+                  Examples:\n\
+                  Confirm: I (cto) will write docs/specs/cost-runbook.md by EOD — success: docs/specs/cost-runbook.md\n\
+                  Silent\n\
+                  No preamble. Begin with C or S.";
+    let user = "Write docs/specs/persona-bench-sample.md by EOD.";
+    let (response, tokens, wall) = bench_chat(http, url, ptype, model, &format!("{}\n\nUser: {}", system, user)).await?;
+    let stripped = response.trim();
+    let first_line = stripped.lines().next().unwrap_or("").trim();
+    let is_confirm = first_line.to_lowercase().starts_with("confirm:");
+    let is_silent = stripped.to_lowercase() == "silent" || stripped.to_lowercase() == "silent.";
+    let checks: Vec<(&str, bool)> = vec![
+        ("non-empty",     !stripped.is_empty()),
+        ("Confirm/Silent", is_confirm || is_silent),
+        ("single line",   stripped.lines().count() <= 1),
+        ("cites path",    is_silent || count_grounded(&response) >= 1),
+        ("no meta-prelude", !has_meta_reasoning(&response)),
+    ];
+    let passed = checks.iter().filter(|(_, v)| *v).count() as f32;
+    Ok(BenchResult {
+        name: "Persona/commit",
+        quality_score: passed / 5.0,
+        quality_max: 5,
+        quality_details: checks,
+        response, tokens, wall_secs: wall,
+    })
+}
+
+/// drafter-mode bench: literal file body, no preamble.
+async fn bench_persona_drafter(
+    http: &reqwest::Client, url: &str, ptype: &str, model: &str,
+) -> anyhow::Result<BenchResult> {
+    let system = "Write the body of `docs/specs/persona-bench.md` per the request below. \
+                  Output ONLY the file contents. First character of output is the first character of the file. \
+                  No 'Okay', no 'Sure', no 'Here is', no code fences.";
+    let user = "The file should contain only one line: Hello from the bench.";
+    let (response, tokens, wall) = bench_chat(http, url, ptype, model, &format!("{}\n\nUser: {}", system, user)).await?;
+    let stripped = response.trim();
+    let lower = stripped.to_lowercase();
+    let starts_clean = !["okay", "sure", "here", "i'll", "below", "let me", "i will", "of course"]
+        .iter().any(|p| lower.starts_with(p));
+    let has_exact = lower.contains("hello from the bench");
+    let checks: Vec<(&str, bool)> = vec![
+        ("non-empty",     !stripped.is_empty()),
+        ("no preamble",   starts_clean),
+        ("has target",    has_exact),
+        ("no meta-prelude", !has_meta_reasoning(&response)),
+        ("reasonable size", stripped.len() <= 2048),
+    ];
+    let passed = checks.iter().filter(|(_, v)| *v).count() as f32;
+    Ok(BenchResult {
+        name: "Persona/drafter",
+        quality_score: passed / 5.0,
+        quality_max: 5,
+        quality_details: checks,
+        response, tokens, wall_secs: wall,
+    })
+}
+
 async fn bench_identity(
     http: &reqwest::Client, url: &str, ptype: &str, model: &str,
 ) -> anyhow::Result<BenchResult> {
@@ -2250,6 +2374,24 @@ async fn bench_provider(
             // Reasoning
             print!("  {} Running reasoning benchmark...", "→".cyan());
             match bench_reasoning(&http, &url, &ptype, &model).await {
+                Ok(br) => { println!(" {:.1}s", br.wall_secs); results.push(br); }
+                Err(e) => { println!(" {} {}", "✗".red(), e); }
+            }
+
+            // Persona-task benchmarks — the three shapes the responder/drafter
+            // actually use. A model can ace codegen and still ramble on these.
+            print!("  {} Running persona/chat benchmark...", "→".cyan());
+            match bench_persona_chat(&http, &url, &ptype, &model).await {
+                Ok(br) => { println!(" {:.1}s", br.wall_secs); results.push(br); }
+                Err(e) => { println!(" {} {}", "✗".red(), e); }
+            }
+            print!("  {} Running persona/commit benchmark...", "→".cyan());
+            match bench_persona_commit(&http, &url, &ptype, &model).await {
+                Ok(br) => { println!(" {:.1}s", br.wall_secs); results.push(br); }
+                Err(e) => { println!(" {} {}", "✗".red(), e); }
+            }
+            print!("  {} Running persona/drafter benchmark...", "→".cyan());
+            match bench_persona_drafter(&http, &url, &ptype, &model).await {
                 Ok(br) => { println!(" {:.1}s", br.wall_secs); results.push(br); }
                 Err(e) => { println!(" {} {}", "✗".red(), e); }
             }

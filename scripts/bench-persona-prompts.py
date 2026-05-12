@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 """
-Persona-prompt benchmark.
+Persona-prompt benchmark — PROMPT-VARIANT ITERATION TOOL.
+
+For day-to-day "is this model better than the current default" checks, use
+`hex inference bench <model>` instead — the same persona/chat, persona/commit,
+and persona/drafter checks are baked into the CLI and run against the
+PRODUCTION prompts (hex-cli/src/commands/inference.rs::bench_persona_*).
+
+This script remains for the use case `hex inference bench` doesn't cover:
+testing alternate PROMPT STRATEGIES (v1/v2/v3 in this file) against multiple
+models in one shot, so we can A/B which system-prompt shape wins per task
+without rebuilding the Rust binary. When a v(n) prompt wins decisively,
+port its contents into persona_prompt() / conversational_prompt() in
+hex-nexus/src/orchestration/org_responder.rs and the v2-equivalent gets
+codified.
 
 Runs a fixed test suite against multiple local models (and optionally
 OpenRouter frontier models) to measure how well each handles the THREE
