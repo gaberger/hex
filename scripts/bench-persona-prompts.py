@@ -322,17 +322,19 @@ def list_openrouter_catalog(filter_substr=None, max_models=20):
         return []
 
 
-def run(models, prompt_v, provider="ollama"):
+def run(models, prompt_v, provider="ollama", log=None):
+    """log = file-like to receive per-call progress. None → stderr."""
+    if log is None: log = sys.stderr
     cases = build_cases(prompt_v)
     results = {m: {} for m in models}
     eval_fns = {"chat": eval_chat, "commit": eval_commit, "drafter": eval_drafter}
 
     for model in models:
-        print(f"\n── {provider}: {model} ──", flush=True)
+        print(f"\n── {provider}: {model} ──", file=log, flush=True)
         for case_id, mode, system, user in cases:
             r = call_model(provider, model, system, user)
             if not r["ok"]:
-                print(f"  ✗ {case_id:24} ERROR: {r.get('error','?')[:80]}")
+                print(f"  ✗ {case_id:24} ERROR: {r.get('error','?')[:80]}", file=log, flush=True)
                 results[model][case_id] = {"ok": False, "score": 0.0, "cost_usd": 0.0}
                 continue
             scores = eval_fns[mode](r["content"], r["latency_s"], r["out_tokens"])
@@ -350,7 +352,8 @@ def run(models, prompt_v, provider="ollama"):
             cost_str = f"${r['cost_usd']:.4f}" if r.get("cost_usd") else ""
             print(f"  {('✓' if composite > 0.6 else '◐' if composite > 0.3 else '✗')} {case_id:24} "
                   f"score={composite:.2f}  lat={r['latency_s']:5.1f}s  tok={r['out_tokens']:>4}  {cost_str:>8}  "
-                  f"{r['content'][:50].replace(chr(10),' ')!r}")
+                  f"{r['content'][:50].replace(chr(10),' ')!r}",
+                  file=log, flush=True)
     return results, cases
 
 
@@ -439,10 +442,13 @@ def main():
         except Exception as e:
             print(f"can't list models: {e}"); sys.exit(1)
 
-    print(f"provider: {args.provider}")
-    print(f"prompt:   {args.prompt}")
-    print(f"models:   {models}")
-    results, cases = run(models, args.prompt, args.provider)
+    # When --json, route header + per-call progress to stderr so stdout
+    # is parseable JSON. Otherwise stdout is the human-readable report.
+    log = sys.stderr if args.json else sys.stdout
+    print(f"provider: {args.provider}", file=log)
+    print(f"prompt:   {args.prompt}", file=log)
+    print(f"models:   {models}", file=log)
+    results, cases = run(models, args.prompt, args.provider, log=log)
     if args.json:
         print(json.dumps({
             "provider": args.provider, "prompt": args.prompt,
