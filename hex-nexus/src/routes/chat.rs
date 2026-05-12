@@ -734,16 +734,22 @@ pub(crate) async fn call_inference_endpoint(
         match ep.provider.as_str() {
             "ollama" => {
                 let url = format!("{}/api/chat", ep.url);
-                // Ollama takes generation caps under `options.num_predict`.
-                // Previously omitted → unbounded → 4000+ tokens for tiny asks
-                // and 90s per call. 1024 is plenty for chat replies, ADR/spec
-                // drafts, and twin verdicts. Override via HEX_OLLAMA_NUM_PREDICT.
                 let num_predict: u32 = std::env::var("HEX_OLLAMA_NUM_PREDICT")
                     .ok().and_then(|s| s.parse().ok()).unwrap_or(1024);
+                // CRITICAL: qwen3 family is a *thinking* model — by default
+                // it spends all output tokens on <think> reasoning and emits
+                // an EMPTY `message.content`. Every responder/drafter/twin
+                // call was returning content='' because of this, looking
+                // like silent success but landing nothing. Disable thinking
+                // unless explicitly opted-in via HEX_OLLAMA_THINK=1.
+                let think_enabled = std::env::var("HEX_OLLAMA_THINK")
+                    .ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
                 let body = json!({
                     "model": model,
                     "messages": messages,
                     "stream": false,
+                    "think": think_enabled,
                     "options": { "num_predict": num_predict },
                 });
                 (url, body)
@@ -822,7 +828,13 @@ pub(crate) async fn call_inference_endpoint(
 
     match ep.provider.as_str() {
         "ollama" => {
-            let content = data["message"]["content"].as_str().unwrap_or("(empty)").to_string();
+            let raw = data["message"]["content"].as_str().unwrap_or("(empty)").to_string();
+            // qwen3 / deepseek-r1 family wraps reasoning in <think>...</think>
+            // and emits the actual answer afterward. Downstream parsers (the
+            // responder's Confirm:/Silent gate, the drafter, the twin) all
+            // expect the answer at the start. Strip the think block here so
+            // every caller sees clean content.
+            let content = strip_think_block(&raw);
             let model_used = data["model"].as_str().unwrap_or(&model).to_string();
             let prompt_tokens = data["prompt_eval_count"].as_u64().unwrap_or(0);
             let eval_tokens = data["eval_count"].as_u64().unwrap_or(0);
@@ -1010,6 +1022,69 @@ fn signal_idle(ws_tx: &tokio::sync::broadcast::Sender<WsEnvelope>, topic: &str) 
         event: "agent_status".to_string(),
         data: json!({ "status": "idle" }),
     });
+}
+
+/// Strip <think>...</think> reasoning blocks (qwen3, deepseek-r1, etc.) from
+/// model output before downstream parsers see it. Handles:
+///   - "<think>X</think>\nanswer"  → "answer"
+///   - "<think>X" with no close tag (truncated mid-think — content lost)
+///   - text with no think tag → returned as-is
+///   - multiple think blocks → all stripped
+pub(crate) fn strip_think_block(raw: &str) -> String {
+    // Fast path: no think tag.
+    if !raw.contains("<think>") && !raw.contains("</think>") {
+        return raw.to_string();
+    }
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    loop {
+        match rest.find("<think>") {
+            None => {
+                // No more opens — but there may be a stray `</think>` from
+                // a truncated reply where the open got eaten by streaming.
+                // In that case, take everything AFTER the last `</think>`.
+                if let Some(close) = rest.rfind("</think>") {
+                    out.push_str(&rest[close + "</think>".len()..]);
+                } else {
+                    out.push_str(rest);
+                }
+                break;
+            }
+            Some(open_idx) => {
+                out.push_str(&rest[..open_idx]);
+                let after_open = &rest[open_idx + "<think>".len()..];
+                match after_open.find("</think>") {
+                    None => break, // unterminated — drop everything in/after the think
+                    Some(close_idx) => {
+                        rest = &after_open[close_idx + "</think>".len()..];
+                    }
+                }
+            }
+        }
+    }
+    out.trim().to_string()
+}
+
+#[cfg(test)]
+mod think_block_tests {
+    use super::strip_think_block;
+    #[test] fn no_think() { assert_eq!(strip_think_block("answer"), "answer"); }
+    #[test] fn full_think() {
+        assert_eq!(strip_think_block("<think>reasoning here</think>\nanswer"), "answer");
+    }
+    #[test] fn stray_close() {
+        // Truncated mid-stream where <think> was eaten.
+        assert_eq!(strip_think_block("reasoning here</think>\nanswer"), "answer");
+    }
+    #[test] fn unterminated_think() {
+        assert_eq!(strip_think_block("<think>reasoning but no close"), "");
+    }
+    #[test] fn multiple_blocks() {
+        assert_eq!(
+            strip_think_block("<think>a</think>line1<think>b</think>line2"),
+            "line1line2"
+        );
+    }
 }
 
 pub(crate) fn truncate_str(s: &str, max: usize) -> &str {

@@ -1166,17 +1166,19 @@ async fn stream_inference(
         }
         ("https://openrouter.ai/api/v1/chat/completions".to_string(), b)
     } else if is_ollama {
-        // Ollama's chat API takes generation limits under `options.num_predict`,
-        // not `max_tokens`. Previously we dropped the cap entirely — every
-        // call ran unbounded until the model stopped itself, producing 4000+
-        // tokens for 200-token asks and blocking parallel inferences behind
-        // the slow generation.
+        // Ollama: cap via options.num_predict + DISABLE think-mode by
+        // default (qwen3 etc. otherwise burn the whole budget on <think>
+        // tokens and emit empty content). HEX_OLLAMA_THINK=1 to opt in.
+        let think_enabled = std::env::var("HEX_OLLAMA_THINK")
+            .ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         (
             format!("{}/api/chat", ep.url.trim_end_matches('/')),
             json!({
                 "model": ep.model,
                 "messages": messages,
                 "stream": true,
+                "think": think_enabled,
                 "options": { "num_predict": max_tokens },
             }),
         )
