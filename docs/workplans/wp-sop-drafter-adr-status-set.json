@@ -1,0 +1,179 @@
+{
+  "adr": "ADR-2026-05-12-1505",
+  "created_at": "2026-05-12T15:10:00+00:00",
+  "created_by": "operator",
+  "feature": "SOP drafter + action_executor — emit/execute adr_status_set kind",
+  "id": "wp-sop-drafter-adr-status-set",
+  "priority": "high",
+  "rationale": "Unblocks HARD RULE #11 routing for ADR lifecycle changes. First non-file_write typed-tool kind — sets the pattern for the other five.",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain + commitment schema",
+      "status": "pending",
+      "tier": 0,
+      "tasks": [
+        {
+          "id": "P0.1",
+          "name": "Add artifact_kind variant 'adr_status_flip' alongside existing 'verifiable_path'",
+          "files": [
+            "hex-nexus/src/orchestration/drafter.rs"
+          ],
+          "layer": "orchestration",
+          "status": "pending",
+          "acceptance": "OpenCommitment struct + SELECT in fetch_open_commitments accept both kinds; rows with 'adr_status_flip' parse without error"
+        },
+        {
+          "id": "P0.2",
+          "name": "Parse success_artifact 'ADR-<id>:<status>' format into typed struct",
+          "files": [
+            "hex-nexus/src/orchestration/drafter.rs"
+          ],
+          "layer": "orchestration",
+          "status": "pending",
+          "acceptance": "helper parse_adr_status_flip returns Result<(adr_id, new_status), ParseErr>; rejects malformed input"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "Drafter branch — emit adr_status_set without LLM",
+      "status": "pending",
+      "tier": 1,
+      "depends_on": ["P0"],
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Add draft_adr_status_set path; glob resolve adr_id → canonical filename under docs/adrs/",
+          "files": [
+            "hex-nexus/src/orchestration/drafter.rs"
+          ],
+          "layer": "orchestration",
+          "status": "pending",
+          "acceptance": "draft_one matches on artifact_kind; adr_status_flip path calls queue_adr_status_action; no inference HTTP call on this branch"
+        },
+        {
+          "id": "P1.2",
+          "name": "Call proposed_action_open with kind='adr_status_set' + payload {adr_id, adr_file, new_status, reason}",
+          "files": [
+            "hex-nexus/src/orchestration/drafter.rs"
+          ],
+          "layer": "orchestration",
+          "status": "pending",
+          "acceptance": "proposed_action row appears with kind=adr_status_set and well-formed payload_json; commitment marks the action as queued"
+        },
+        {
+          "id": "P1.3",
+          "name": "Unit test — fixture commitment produces correct payload, no LLM stub invoked",
+          "files": [
+            "hex-nexus/src/orchestration/drafter.rs"
+          ],
+          "layer": "test",
+          "status": "pending",
+          "acceptance": "cargo test -p hex-nexus drafter::tests::adr_status_flip_emits_action passes"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Twin reviewer — gate adr_status_set",
+      "status": "pending",
+      "tier": 1,
+      "depends_on": ["P1"],
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Add review_adr_status_set; enforce current_status=Proposed, new_status in {Accepted, Abandoned, Superseded}",
+          "files": [
+            "hex-nexus/src/orchestration/twin_reviewer.rs"
+          ],
+          "layer": "orchestration",
+          "status": "pending",
+          "acceptance": "verdict 'approve' for valid transitions; 'reject' with rationale for invalid (terminal status, missing reason, unknown new_status)"
+        },
+        {
+          "id": "P2.2",
+          "name": "Unit tests — all 6 transition cases (4 reject + 2 approve)",
+          "files": [
+            "hex-nexus/src/orchestration/twin_reviewer.rs"
+          ],
+          "layer": "test",
+          "status": "pending",
+          "acceptance": "cargo test -p hex-nexus twin_reviewer::tests::adr_status_*  — 6 tests pass"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Action executor — apply adr_status_set",
+      "status": "pending",
+      "tier": 2,
+      "depends_on": ["P0"],
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Add execute_adr_status_set; one-line Status replace + dated reason insertion after Date line",
+          "files": [
+            "hex-nexus/src/orchestration/action_executor.rs"
+          ],
+          "layer": "orchestration",
+          "status": "pending",
+          "acceptance": "ADR file has Status line rewritten + new 'Accepted: <date> — <reason>' line; canonical_root path-traversal guard reused"
+        },
+        {
+          "id": "P3.2",
+          "name": "Wire dispatch arm in execute_one match",
+          "files": [
+            "hex-nexus/src/orchestration/action_executor.rs"
+          ],
+          "layer": "orchestration",
+          "status": "pending",
+          "acceptance": "match action.kind.as_str() handles 'adr_status_set'; mark_failed only for genuinely unknown kinds"
+        },
+        {
+          "id": "P3.3",
+          "name": "Unit test — fixture ADR with Status: **Proposed** becomes Status: **Accepted** + reason line",
+          "files": [
+            "hex-nexus/src/orchestration/action_executor.rs"
+          ],
+          "layer": "test",
+          "status": "pending",
+          "acceptance": "cargo test -p hex-nexus action_executor::tests::adr_status_set_mutates_file passes; idempotency check (running twice on Accepted file errors cleanly)"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "End-to-end validation",
+      "status": "pending",
+      "tier": 3,
+      "depends_on": ["P1", "P2", "P3"],
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "cargo check --workspace — typed types align across drafter/twin/executor",
+          "files": [],
+          "layer": "build",
+          "status": "pending",
+          "acceptance": "cargo check --workspace exits 0"
+        },
+        {
+          "id": "P4.2",
+          "name": "Live SOP test — operator sends board ask, observe proposed_action(adr_status_set) emitted and executed",
+          "files": [],
+          "layer": "integration",
+          "status": "pending",
+          "acceptance": "Test ADR file in docs/adrs/ADR-test-*.md flips from Proposed→Accepted via the full SOP pipeline; proposed_action row reaches status=executed; no operator file edit"
+        },
+        {
+          "id": "P4.3",
+          "name": "Rebuild + deploy hex-nexus; hex dev validate green",
+          "files": [],
+          "layer": "deploy",
+          "status": "pending",
+          "acceptance": "hex dev validate exits 0; hex nexus restart picks up new binary; SOP loop runs against new code"
+        }
+      ]
+    }
+  ]
+}

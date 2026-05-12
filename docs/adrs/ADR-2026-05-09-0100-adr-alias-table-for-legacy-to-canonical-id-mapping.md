@@ -1,7 +1,8 @@
 # ADR-2026-05-09-0100 — ADR Alias Table for Legacy-to-Canonical ID Mapping
 
-Status: **Proposed**
+Status: **Accepted**
 Date: 2026-05-10
+Accepted: 2026-05-12 — operator-authorized after SOP drafter→twin→executor pipeline confirmed unable to emit `adr_status_set` proposed_actions (drafter has only ever produced `file_write` kind; see proposed_action table). Unblocks CTO `code_patch` legacy-ADR recognition.
 
 ## Context
 
