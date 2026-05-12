@@ -1,6 +1,7 @@
 # ADR-2026-04-11-1229: Algebraic Formalization of hex Process Flow
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: docs/algebra/lifecycle-net.md, docs/algebra/ports-signature.md, hex-cli/src/commands/readme.rs (+4 more)
 **Date:** 2026-04-11
 **Drivers:** User question "Is there an algebraic way to represent hex process flow?" during session review. The codebase has grown enough that boundary violations, swarm coordination bugs, and lifecycle ordering mistakes are no longer catchable by reading the code — they need a formal model.
 **Supersedes:** None (complements ADR-2026-03-22-1959 enforcement, ADR-027 HexFlo, ADR-2026-03-24-0130 declarative swarm behaviors)

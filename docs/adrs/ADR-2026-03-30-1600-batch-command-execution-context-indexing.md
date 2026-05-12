@@ -1,6 +1,7 @@
 # ADR-2026-03-30-1600: Batch Command Execution with Context Indexing
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-agent/src/adapters/secondary/command_session.rs, hex-agent/src/adapters/secondary/context_manager.rs, hex-agent/src/adapters/secondary/task_executor.rs (+2 more)
 **Date:** 2026-03-30
 **Drivers:** Agent context windows flood with raw command output (cargo build, cargo test, hex analyze), consuming tokens irreversibly and degrading reasoning quality
 **Supersedes:** N/A

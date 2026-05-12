@@ -1,6 +1,7 @@
 # ADR-2026-04-14-2201: Reconcile must verify file evidence, not just match names
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-core/src/domain/web.rs, hex-core/src/ports/web.rs
 **Accepted:** 2026-04-15 (via wp-enforce-workplan-evidence commits `0fac2e9f` `14a91f9b` `7f0e886b` `daa16c3c`)
 **Date:** 2026-04-14
 **Drivers:** Live bug surfaced during autonomous execution of `wp-hex-native-web-search`: the brain daemon correctly executed P1.1 and P1.2 via nemotron-mini (commits `19928ffc`, `1d1e40b9`, cargo check passes), then `hex plan reconcile` marked 11 downstream tasks as `done` even though their target files do not exist on disk. A continuous reconcile loop actively reverted manual attempts to reset those statuses — the false `done` state is re-asserted within one tick of being corrected. Left unaddressed, every autonomous workplan will silently skip real work.

@@ -1,6 +1,7 @@
 # ADR-2026-04-17-1000 — Cross-Adapter Rejection Regression Test
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: docs/EVIDENCE.md, hex-cli/src/commands/analyze.rs, hex-cli/tests/reconcile_evidence.rs
 **Date:** 2026-04-17
 **Drivers:** docs/EVIDENCE.md commit `ac4e5aa` — the README claims "cross-layer imports block the commit" but no automated test proves the rejection path; only the pass path is covered.
 **Related:** ADR-001 (hexagonal architecture), ADR-2026-03-28-3000 (Rust workspace boundary analysis), ADR-2026-04-14-2201-reconcile-evidence-verification (same pattern: test the rejection, not just the accept)

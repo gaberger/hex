@@ -22,6 +22,7 @@ modules: []
 # ADR-047: Internal Documentation System
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: docs/reference/glossary.md, docs/reference/system-architecture.md, hex-cli/src/commands/docs.rs
 **Accepted Date:** 2026-03-22
 
 > **Implementation Evidence (2026-05-04):**

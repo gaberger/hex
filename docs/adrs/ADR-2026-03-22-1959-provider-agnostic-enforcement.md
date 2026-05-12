@@ -1,6 +1,7 @@
 # ADR-2026-03-22-1959: Provider-Agnostic Enforcement via MCP Tool Guards
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-core/src/ports/enforcement.rs
 **Date:** 2026-03-22
 **Drivers:** hex enforcement (swarm tracking, workplan gates, boundary validation) is currently tied to Claude Code's hook system (`.claude/settings.json`). Open models (Ollama, vLLM, Qwen, Llama) and alternative frontends (Continue, Cursor, custom harnesses) have no hook infrastructure — all enforcement is bypassed. hex must enforce architecture rules regardless of which LLM provider drives the agents.
 

@@ -1,6 +1,7 @@
 # ADR-2026-03-28-1000: Context Pipeline Compression
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/assets/agents/hex/hex/hex-coder.yml, hex-cli/src/pipeline/supervisor.rs, hex-nexus/src/routes/chat.rs
 **Date:** 2026-03-28
 **Drivers:** hex agents have no mechanism to manage context window pressure during long multi-phase pipeline runs. The only existing mitigation is a hard file truncation by byte count (`token_budget.max`). There is no prompt compression, KV-cache quantization, or context pruning — agents simply run out of context window mid-task and degrade silently.
 

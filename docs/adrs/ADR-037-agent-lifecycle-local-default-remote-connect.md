@@ -1,6 +1,7 @@
 # ADR-037: Agent Lifecycle — Local Default + Remote Connect
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/src/orchestration/agent_manager.rs
 **Accepted Date:** 2026-03-22
 ## Date: 2026-03-19
 

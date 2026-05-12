@@ -1,6 +1,7 @@
 # ADR-2026-05-08-1126: Worktree-Mandatory Development with Merge-Team Safety Gate
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: docs/workplans/TRIAGE-2026-05-08.md, hex-agent/src/adapters/safe_file_writer.rs, hex-agent/src/worktree_guard.rs (+7 more)
 **Date:** 2026-05-08
 **Drivers:** 2026-05-07 hijacker incident — background `hex-agent daemon` processes overwrote `hex-nexus/src/lib.rs` (937 lines → 8 lines), `Cargo.toml`, `Cargo.lock`, and `hex-nexus/Cargo.toml`, plus dumped 30+ rogue `.rs` files into `src/bin/` and `hex-nexus/src/bin/` while the operator was working in the same tree. ~3 hours lost to repeated git checkouts, manual cleanup, and rebuild thrash. The 7-phase feature lifecycle, `integrator` agent, and `validation-judge` already exist but were bypassed because the daemons wrote directly to trunk.
 **Supersedes:** Extends ADR-004-swarm-worktrees and ADR-2026-04-13-1930 (worktree-merge-not-checkout).

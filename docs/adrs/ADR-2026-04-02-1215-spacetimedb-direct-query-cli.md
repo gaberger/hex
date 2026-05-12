@@ -1,6 +1,7 @@
 # ADR-2026-04-02-1215: SpacetimeDB Direct Query CLI Command
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-core/src/lib.rs
 **Date:** 2026-04-02
 **Drivers:** Debugging revealed the `project` table was empty in SpacetimeDB while SQLite had data — there was no easy way to verify this without crafting raw curl commands. A `hex stdb query` command would make this transparent.
 

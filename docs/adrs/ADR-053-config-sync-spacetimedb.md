@@ -1,6 +1,7 @@
 # ADR-053: Framework Configuration Sync to SpacetimeDB
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/src/config_sync.rs
 **Accepted Date:** 2026-03-21
 **Date:** 2026-03-21
 

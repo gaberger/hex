@@ -1,6 +1,7 @@
 # ADR-2026-04-15-0000: Rename `brain` subsystem to `sched`
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: docs/adrs/ADR-2026-04-13-2330-brain-inbox-queue.md, docs/adrs/ADR-2026-04-14-0000-hey-hex-natural-language.md, docs/adrs/ADR-2026-04-14-1100-brain-updates-to-operator.md (+2 more)
 **Date:** 2026-04-14
 **Decision type:** restructure (rename with backward-compat aliases)
 **Drivers:** Naming clarity, AIOS framing, operator ergonomics

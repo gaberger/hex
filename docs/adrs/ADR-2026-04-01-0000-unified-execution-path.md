@@ -1,6 +1,7 @@
 # ADR-2026-04-01-0000: Unified Execution Path
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/src/orchestration/agent_manager.rs, hex-nexus/src/orchestration/workplan_executor.rs, hex-nexus/src/routes/inference.rs (+1 more)
 **Date:** 2026-04-01
 **Supersedes:** ADR-2026-03-31-2210 (Claude Code Bypass Mode — retired, approach is architecturally incorrect)
 **Extends:** ADR-031 (RL model selection), ADR-061 (workplan lifecycle), ADR-2026-03-22-1939 (mandatory swarm tracking)

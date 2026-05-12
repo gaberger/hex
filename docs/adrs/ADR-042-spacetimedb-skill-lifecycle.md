@@ -1,6 +1,7 @@
 # ADR-042: SpacetimeDB Skill Lifecycle — Ingest, Select, Serialize
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/skill.rs
 **Accepted Date:** 2026-03-22
 ## Date: 2026-03-21
 

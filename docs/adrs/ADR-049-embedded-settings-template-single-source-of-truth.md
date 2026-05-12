@@ -1,6 +1,7 @@
 # ADR-049: Embedded Settings Template — Single Source of Truth
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/init.rs
 ## Date: 2026-03-21
 
 ## Context

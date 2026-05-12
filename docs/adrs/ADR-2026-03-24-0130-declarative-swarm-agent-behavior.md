@@ -1,6 +1,7 @@
 # ADR-2026-03-24-0130: Declarative Swarm Agent Behavior from YAML Definitions
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/assets/swarms/dev-pipeline.yml, hex-cli/src/pipeline/supervisor.rs
 **Date:** 2026-03-24
 **Drivers:** Agent behaviors are hardcoded in `supervisor.rs` — model selection, context assembly, feedback loops, quality thresholds. But rich YAML agent definitions already exist in `hex-cli/assets/agents/hex/hex/*.yml` with model tiers, context loading strategies, workflow phases, feedback loops, and quality gates. The supervisor should read these YAMLs to configure agent behavior declaratively, not imperatively.
 

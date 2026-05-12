@@ -1,6 +1,7 @@
 # ADR-2026-05-02-1400 — Experimental Loop Representations: Persona, Workload, Trial, Verdict
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: docs/guides/SELF-REORGANIZING-HEXAGON.md, hex-cli/src/pipeline/objectives.rs, hex-core/src/domain/workplan.rs (+1 more)
 **Date:** 2026-05-02
 **Drivers:** The vision plan in `docs/guides/SELF-REORGANIZING-HEXAGON.md` describes target apps reorganizing themselves under demand, with synthetic users placing challenges and an objective function to maximize. The existing ADR / spec / workplan / test taxonomy covers *deciding, accepting, planning, verifying*, but cannot express *who stresses the app, what to maximize, what we predict, what variants we're running, or did the change win*. Without those, the loop is open and the "experiment" is hand-waved.
 **Related:** ADR-2026-04-26-1430 (stash consolidation memory port — provides Hypothesis, Goal, Failure types we lift here), ADR-2026-04-14-2243 (classifier rules as data — the data-fy precedent), ADR-2026-03-24-0130 (declarative agent/swarm YAMLs — same "behavior is data" pattern), ADR-2026-04-12-0202 (tiered inference routing — feeds RL signal that Verdicts archive)

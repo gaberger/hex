@@ -1,6 +1,7 @@
 # ADR-2026-03-23-1309: Map All hex CLI Commands Into Dashboard UI
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/assets/src/stores/commands.ts, hex-nexus/src/routes/commands.rs
 **Date:** 2026-03-23
 **Drivers:** Developer workflow friction — switching between terminal windows and the dashboard breaks flow. The dashboard should be the single pane of glass for all hex operations.
 **Supersedes:** None

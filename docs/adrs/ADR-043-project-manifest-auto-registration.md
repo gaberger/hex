@@ -1,6 +1,7 @@
 # ADR-043: Project Manifest + Auto-Registration via SpacetimeDB
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/init.rs, hex-nexus/src/config_sync.rs
 **Accepted Date:** 2026-03-22
 ## Date: 2026-03-21
 

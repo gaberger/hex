@@ -1,6 +1,7 @@
 # ADR-2026-04-01-2110: Hooks-First Architecture Enforcement
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/enforce.rs
 **Date:** 2026-04-01
 **Supersedes:** (none — extends ADR-002, ADR-018)
 

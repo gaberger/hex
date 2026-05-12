@@ -1,6 +1,7 @@
 # ADR-2026-04-11-0227: Auto-Invoke Planner on Work-Intent Prompts
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/assets/skills/hex-feature-dev/SKILL.md, hex-cli/assets/skills/hex-workplan/SKILL.md, scripts/feature-workflow.sh
 **Date:** 2026-04-11
 **Drivers:** User-reported friction — "Why do we have to ask for a workplan to be created when Claude and others create todos automatically?" The intent classifier already exists in `hex hook route` but only emits passive warnings; it never actually invokes the planner.
 **Supersedes:** None (extends ADR-050)

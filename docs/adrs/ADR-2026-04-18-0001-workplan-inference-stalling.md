@@ -3,6 +3,7 @@
 **Date:** 2026-04-18
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: docs/workplans/wp-bazzite-e2e-arch-validation.json
 
 ## Context
 

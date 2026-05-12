@@ -1,6 +1,7 @@
 # ADR-2026-04-08-1320: Claude Code Context Detection
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/mcp.rs, hex-nexus/src/routes/fingerprint.rs, hex-nexus/src/routes/projects.rs
 **Date:** 2026-04-08
 **Drivers:** Gary Berger
 

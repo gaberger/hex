@@ -1,6 +1,7 @@
 # ADR-027: HexFlo — Replace Ruflo with Native Swarm Coordination
 
 **Status:** Accepted
+**Verified:** 2026-05-12 via adversarial check — hex-nexus/src/coordination/ exists with HexFlo modules (mod.rs, memory.rs, cleanup.rs)
 
 ## Context
 

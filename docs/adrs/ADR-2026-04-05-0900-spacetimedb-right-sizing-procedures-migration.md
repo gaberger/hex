@@ -1,6 +1,7 @@
 # ADR-2026-04-05-0900: SpacetimeDB Right-Sizing — Procedures Migration for Multi-Host Dispatch
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: scripts/generate-ts-bindings.sh
 **Date:** 2026-04-05
 **Drivers:** 14 of 19 WASM modules are never invoked; hex-nexus acts as a monolithic bridge due to WASM side-effect limitations; SpacetimeDB procedures now allow HTTP calls, enabling direct LLM invocation from reducers; multi-host agent dispatch and Docker sandbox coordination require SpacetimeDB as the real-time coordination plane but not as a registry for static config.
 **Supersedes:** ADR-025 (SQLite fallback, already superseded by ADR-2026-04-02-0900), partially supersedes ADR-051 (narrows "single source of state" to coordination state only)

@@ -1,6 +1,7 @@
 # ADR-2026-04-13-1238: Inference Bench Command
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/inference.rs, hex-cli/src/pipeline/model_selection.rs
 **Date:** 2026-04-13
 **Drivers:** Manual, ad-hoc model evaluation (curl + python scripts) is slow and not reproducible. Every new model addition requires re-inventing the same quality/latency/tier analysis. This should be a first-class CLI command.
 **Supersedes:** None

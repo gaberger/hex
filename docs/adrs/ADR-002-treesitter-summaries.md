@@ -1,6 +1,7 @@
 # ADR-002: Tree-Sitter for Token-Efficient LLM Communication
 
 **Status:** Accepted
+**Verified:** 2026-05-12 via adversarial check — tree-sitter integration: 16 files reference 'tree_sitter' or 'tree-sitter'
 ## Date: 2026-03-15
 
 ## Context

@@ -1,6 +1,7 @@
 # ADR-2026-04-26-1801: Substrate ↔ inference integration model
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/src/adapters/inference_router/mod.rs, hex-nexus/src/lib.rs
 **Date:** 2026-04-26
 **Accepted:** 2026-04-26
 **Drivers:** ADR-2026-04-26-1500 (substrate) defined `RuntimeComposition` as a port→adapter binding the substrate can swap. wp-substrate-shadow-promotion wired a `ShadowRouter` that intercepts calls between consumers and bound adapters. The remaining question — and this ADR's subject — is *what level* the substrate intercepts inference at: the per-server level (mirror to a different Ollama instance) or the strategy level (mirror to a different routing policy entirely). The answer determines what consumers do with the `ShadowRouter` handle now wired into `AppState`.

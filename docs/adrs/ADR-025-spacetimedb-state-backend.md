@@ -1,6 +1,7 @@
 # ADR-025: SpacetimeDB as Distributed State Backend
 
 **Status:** Accepted
+**Verified:** 2026-05-12 via adversarial check — SpacetimeDB module count: 8 module dirs (must be > 0)
 
 ## Context
 

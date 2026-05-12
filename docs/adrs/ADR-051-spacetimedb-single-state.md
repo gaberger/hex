@@ -1,6 +1,7 @@
 # ADR-051: SpacetimeDB as Single Source of State
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/src/adapters/spacetime_state.rs, hex-nexus/src/routes/chat.rs, hex-nexus/src/routes/coordination.rs (+4 more)
 **Accepted Date:** 2026-03-22
 **Date:** 2026-03-21
 

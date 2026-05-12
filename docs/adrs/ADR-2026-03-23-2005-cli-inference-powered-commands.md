@@ -1,6 +1,7 @@
 # ADR-2026-03-23-2005: Self-Sufficient hex-agent with TUI
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-agent/src/adapters/secondary/inference_client.rs
 **Date:** 2026-03-23
 **Drivers:** hex has the full development pipeline (ADR → Workplan → Swarm → Code → Validate), inference provider management (OpenRouter, Ollama, vLLM), RL model selection, and architecture enforcement — but it delegates all generative work to external AI agents (Claude Code, opencode). hex should be self-sufficient: a complete AI-assisted development environment that uses its own inference providers to do real work, with zero dependency on any external AI tool.
 **Supersedes:** None (extends ADR-2026-03-23-1600, ADR-030, ADR-031, ADR-027)

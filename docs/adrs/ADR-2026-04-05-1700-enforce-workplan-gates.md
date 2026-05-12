@@ -1,6 +1,7 @@
 # ADR-2026-04-05-1700: Enforce Workplan Gates — Instructions to Code
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/src/orchestration/workplan_executor.rs
 **Date:** 2026-04-05
 **Drivers:** ADR-2026-04-05-0900 session demonstrated that workplan gates exist as JSON declarations but are not enforced as blocking prerequisites. Missing behavioral spec, undocumented gate execution, and unscanned deletion blast radius all passed through unchecked. hex's specs-first pipeline is only specs-first if something enforces the ordering.
 

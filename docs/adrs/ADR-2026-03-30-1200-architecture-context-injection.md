@@ -1,6 +1,7 @@
 # ADR-2026-03-30-1200: Architecture Context Injection for Inference
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/pipeline/agents/reviewer.rs, hex-cli/src/pipeline/agents/tester.rs, hex-nexus/src/analysis/analyzer.rs
 **Date:** 2026-03-30
 **Drivers:** LLM inference calls during `hex dev` pipeline generated a Gin HTTP server instead of a FizzBuzz CLI — the model had no knowledge of the project's architectural intent, tech stack, or conventions. ADRs, specs, and workplans exist but are never injected into inference context.
 

@@ -1,6 +1,7 @@
 # ADR-2026-03-31-2300: Workplan Live Execution Overlay
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/project.rs, hex-nexus/src/routes/projects.rs
 **Date:** 2026-03-31
 **Deciders:** hex core team
 

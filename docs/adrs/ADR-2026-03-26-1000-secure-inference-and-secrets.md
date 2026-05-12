@@ -1,6 +1,7 @@
 # ADR-2026-03-26-1000: Secure Inference Provider Registry and Encrypted Secrets Vault
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/inference.rs, hex-cli/src/commands/secrets.rs
 **Date:** 2026-03-26
 **Drivers:** Security gap analysis comparing hex to OpenFang — secrets stored plaintext in SQLite, API keys embedded in inference provider records, no memory zeroization, frontier providers (Anthropic, OpenAI) not first-class inference participants, no provider fallback chains.
 

@@ -1,6 +1,7 @@
 # ADR-2026-03-23-2220: Developer Audit Report — Full Pipeline Traceability
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/report.rs
 **Date:** 2026-03-23
 **Drivers:** Developers need a single command to see the full lifecycle of any `hex dev` session — from the initial ask through ADR, workplan, swarm, task generation, code generation, and completion. All this data already exists in SpacetimeDB and session files but there's no unified view.
 

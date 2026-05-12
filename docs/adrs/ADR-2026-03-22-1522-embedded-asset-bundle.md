@@ -1,6 +1,7 @@
 # ADR-2026-03-22-1522: Embedded Asset Bundle — rust-embed for CLI Templates and Schemas
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/Cargo.toml, hex-cli/src/assets.rs, hex-cli/src/commands/init.rs (+1 more)
 **Date:** 2026-03-22
 **Drivers:** hex-cli uses scattered `include_str!` and hardcoded strings for templates (settings.json, project.json, CLAUDE.md scaffolds, workplan schema, ADR templates). Adding a new template requires touching Rust code and recompiling. hex-nexus already uses `rust-embed` successfully for dashboard assets.
 

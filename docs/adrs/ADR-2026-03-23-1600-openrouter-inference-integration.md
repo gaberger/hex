@@ -1,6 +1,7 @@
 # ADR-2026-03-23-1600: OpenRouter Inference Integration
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/inference.rs, hex-nexus/src/adapters/spacetime_inference.rs
 **Date:** 2026-03-23
 **Drivers:** Need access to 300+ open-source models (Llama 4, Qwen 3, DeepSeek R1, Mistral, Command R+, etc.) via a single API key, without managing individual provider accounts
 **Supersedes:** None (extends ADR-030)

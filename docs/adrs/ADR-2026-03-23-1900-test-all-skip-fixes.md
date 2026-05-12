@@ -1,6 +1,7 @@
 # ADR-2026-03-23-1900: Fix `hex test all` False Skips
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/test.rs, hex-nexus/src/routes/mod.rs
 **Date:** 2026-03-23
 **Drivers:** Two `hex test all` checks silently skip instead of passing, masking integration gaps
 

@@ -1,6 +1,7 @@
 # ADR-2026-04-26-2100: Substrate port-migration cookbook
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-core/src/composition.rs, hex-nexus/src/orchestration/secret_shadow_router.rs, hex-nexus/src/orchestration/shadow_decision.rs (+1 more)
 **Date:** 2026-04-26
 **Accepted:** 2026-04-26
 **Drivers:** Substrate ADR-2026-04-26-1500 declared the substrate as a port-agnostic runtime; ADR-2026-04-26-1801 defined the strategy-level integration model for the first port (`IInferencePort`); the second port migration (`ISecretPort` via `SecretShadowRouter`) shipped today and exercised every assumption empirically. The pattern is now stable enough to document as a reusable cookbook so the third, fourth, and Nth port migrations don't re-litigate any of these decisions.

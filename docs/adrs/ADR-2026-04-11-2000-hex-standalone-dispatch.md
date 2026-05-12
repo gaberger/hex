@@ -1,6 +1,8 @@
 # ADR-2026-04-11-2000: Hex Self-Sufficient Dispatch (Standalone Mode)
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/src/adapters/spacetime_state.rs, hex-nexus/src/orchestration/workplan_executor.rs
+**Verified:** 2026-05-12 via adversarial check — hex-cli/src/commands/ci.rs::standalone_gate exists (referenced ADR target file present)
 **Date:** 2026-04-11
 **Drivers:** Completeness audit on 2026-04-11 confirmed hex is ~70% functional in Claude-integrated mode but ~30% in standalone mode. The executor dispatch layer gates every phase on `AgentManager` being populated (`hex-nexus/src/orchestration/workplan_executor.rs:746-750`), a slot that today is only ever filled when Claude Code is the driver. `wp-plan-execute-user-feedback` shipped only because the operator hand-bootstrapped dispatch via the Claude `Agent` tool. Memory: `project_wp_plan_execute_user_feedback_shipped.md`.
 **Supersedes:** None (complements ADR-2026-04-11-1800 executor dispatch-evidence guard, ADR-2026-04-10-1500 local-inference-first, ADR-027 HexFlo coordination)

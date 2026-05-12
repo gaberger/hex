@@ -1,6 +1,7 @@
 # ADR: Extensible Validation System Migration
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-agent/src/adapters/validator.rs, hex-core/src/domain/validation.rs, hex-core/src/ports/validator.rs (+1 more)
 
 ## Date
 

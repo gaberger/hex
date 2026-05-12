@@ -1,6 +1,7 @@
 # ADR-061: Workplan Lifecycle Management — Creation, Tracking, and Reporting
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-core/src/domain/workplan.rs, hex-nexus/src/git/status.rs, hex-nexus/src/orchestration/workplan_executor.rs
 **Accepted Date:** 2026-03-22
 ## Date: 2026-03-21
 

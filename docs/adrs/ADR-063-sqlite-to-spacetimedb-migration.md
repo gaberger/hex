@@ -1,6 +1,7 @@
 # ADR-063: Deprecate SQLite, Migrate HexFlo to SpacetimeDB
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/src/adapters/spacetime_state.rs, hex-nexus/src/coordination/cleanup.rs, hex-nexus/src/coordination/memory.rs (+1 more)
 **Date:** 2026-03-18
 **Deciders:** Gary
 **Relates to:** ADR-025 (SpacetimeDB State Backend), ADR-027 (HexFlo Coordination)

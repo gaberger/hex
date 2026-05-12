@@ -1,6 +1,7 @@
 # ADR-014: Ban mock.module() — Use Dependency Injection for Test Isolation
 
 **Status:** Accepted
+**Verified:** 2026-05-12 via adversarial check — `mock.module(` calls in tests/ + src/: 0 matches (target: 0)
 ## Date
 
 2026-03-17

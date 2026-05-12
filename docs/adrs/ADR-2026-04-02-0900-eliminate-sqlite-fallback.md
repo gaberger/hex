@@ -1,6 +1,7 @@
 # ADR-2026-04-02-0900: Eliminate SQLite Fallback — SpacetimeDB as Single State Authority
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/Cargo.toml, hex-nexus/src/lib.rs
 **Date:** 2026-04-02
 **Drivers:** Dual-store divergence: projects registered via CLI/MCP land in SQLite but never reach SpacetimeDB, making them invisible to the portal. This split creates silent inconsistency and user confusion.
 **Supersedes:** ADR-025 (SQLite fallback for offline operation)

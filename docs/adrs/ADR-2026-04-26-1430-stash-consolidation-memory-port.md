@@ -1,6 +1,7 @@
 # ADR-2026-04-26-1430 — Stash-Backed Consolidation Memory Port
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/assets/mcp/mcp-tools.json, hex-core/src/domain/consolidation.rs, hex-core/src/ports/consolidation_memory.rs (+4 more)
 **Date:** 2026-04-26
 **Drivers:** Long-running hex agent sessions accumulate episodic context (chat turns, tool results, ADR drafts, workplan outcomes) but the existing memory surface is a flat key/value store with fuzzy text search. Agents have no structured way to recall facts, detect contradictions across sessions, trace causal chains between failures and goals, or decay stale beliefs. Re-implementing that machinery in `hex-nexus` would duplicate work already done — and done well — by an upstream Apache-2.0 project.
 **Related:** ADR-025 (state port consolidation), ADR-2026-04-05-1800 (memory scope capability checks), ADR-2026-04-11-2000 (memory port split, P5), ADR-2026-04-12-0202 (tiered inference routing), ADR-2026-04-13-1630 (T2.5 reasoning tier)

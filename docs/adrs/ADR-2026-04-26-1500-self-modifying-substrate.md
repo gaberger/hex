@@ -1,6 +1,7 @@
 # ADR-2026-04-26-1500: Hex as a continuously self-modifying application substrate
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-core/src/composition.rs, hex-core/src/ports/adapter_generator.rs, hex-core/src/ports/inference.rs (+3 more)
 **Date:** 2026-04-26
 **Accepted:** 2026-04-26
 **Drivers:** ADR-2026-04-26-1303 (IModelProvider + crate split) and ADR-2026-04-26-1311 (six-layer governance) each solve a real problem, but neither states what hex *is*. Read alone they look like cleanup. Read together they imply something the codebase has never named: hex is no longer a build tool that produces applications — it is the runtime substrate that *hosts* applications which rewrite themselves under LLM supervision. Without that frame, every future ADR re-litigates "is this scope creep?" instead of "does this serve the substrate's contract?" This ADR makes the frame explicit and binds the prior two to it as instantiations.

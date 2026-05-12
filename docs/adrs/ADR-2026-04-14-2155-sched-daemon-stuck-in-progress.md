@@ -1,6 +1,7 @@
 # ADR-2026-04-14-2155 — sched daemon leaves tasks stuck `in_progress`
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/src/orchestration/workplan_executor.rs, scripts/smoke-path-b-wait.sh
 **Date:** 2026-04-14
 **Relates to:** ADR-2026-04-11-1800 (executor dispatch-evidence guard), ADR-2026-04-14-1400 (brain queue swarm-lease)
 

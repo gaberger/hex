@@ -1,6 +1,7 @@
 # ADR-2026-03-25-0838: CLI / MCP Shared Implementation — One Function, Two Skins
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/mcp.rs, hex-nexus/src/routes/adrs.rs
 **Date:** 2026-03-25
 **Drivers:** A bug in `hex adr list` (MCP returned wrong ADRs, CLI returned correct ones) revealed that CLI and MCP had separate filesystem reader implementations that silently diverged. ADR-019 mandates that both adapters *exist*; this ADR mandates that they share the *same underlying implementation*.
 **Supersedes:** Extends ADR-019 (does not replace it)

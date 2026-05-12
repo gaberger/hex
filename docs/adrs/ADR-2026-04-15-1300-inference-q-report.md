@@ -1,6 +1,7 @@
 # ADR-2026-04-15-1300 — `hex inference q-report` CLI
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: docs/INFERENCE.md
 **Date:** 2026-04-15
 **Related:** ADR-2026-04-12-0202 (tiered inference routing), ADR-2026-04-13-1238 (`hex inference bench`), ADR-2026-04-10-2200 (local-success bonus), ADR-2026-04-15-1200 (idle research swarm — Q-report is a planned input signal)
 

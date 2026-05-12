@@ -1,6 +1,7 @@
 # ADR-2026-04-14-2100: hex Native Filesystem — Self-Sufficient File Operations
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: docs/workplans/wp-hex-native-filesystem.json, hex-cli/assets/templates/claude-md-hex-section.md, hex-cli/src/commands/fs.rs (+1 more)
 **Date:** 2026-04-14
 **Drivers:** hex currently depends on external tools (context-mode, Bash glob, Claude Read/Grep) for filesystem operations. An AIOS that needs third-party plugins for `ls` is not self-sufficient. hex must own its entire filesystem surface.
 

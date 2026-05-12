@@ -1,6 +1,7 @@
 # ADR-2026-04-08-0929: hex Self-Update
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/mcp.rs, hex-cli/src/commands/update.rs, hex-cli/src/main.rs (+2 more)
 **Date:** 2026-04-08
 **Drivers:** Gary Berger
 

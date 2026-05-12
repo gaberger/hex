@@ -1,6 +1,7 @@
 # ADR-034: Migrate Hex Analyzer from TypeScript to Rust
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/analyze.rs, hex-nexus/Cargo.toml, hex-nexus/src/analysis/analyzer.rs (+12 more)
 **Accepted Date:** 2026-03-21
 ## Date: 2025-07-19
 

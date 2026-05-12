@@ -1,6 +1,7 @@
 # ADR-2026-04-15-1200 — Idle Research Swarm
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/sched.rs
 **Date:** 2026-04-15
 **Accepted:** 2026-05-04
 **Supersedes:** —

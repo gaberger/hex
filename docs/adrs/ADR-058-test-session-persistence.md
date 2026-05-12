@@ -1,6 +1,7 @@
 # ADR-058: Test Session Persistence and Outcome Tracking
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/test.rs
 **Date:** 2026-03-22
 **Drivers:** No visibility into test health trends. Each `hex test all` run produces results that vanish after the terminal scrolls. We cannot answer: "Are tests getting more stable?", "Which tests flake most?", "Did this commit break something that was green yesterday?"
 

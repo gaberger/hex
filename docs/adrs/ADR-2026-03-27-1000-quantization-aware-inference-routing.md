@@ -1,6 +1,7 @@
 # ADR-2026-03-27-1000: Quantization-Aware Inference Routing
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/assets/agents/hex/hex/hex-coder.yml, hex-cli/src/commands/inference.rs, hex-cli/src/pipeline/model_selection.rs (+2 more)
 **Date:** 2026-03-27
 **Drivers:** TurboQuant (Google Research) demonstrates sub-4-bit quantization (2-bit) achieving near-FP16 accuracy at 4-8x memory reduction. hex's inference routing treats all registered providers as equivalent — it has no concept of quantization level, cannot prefer a cheaper quantized local model for simple tasks, and cannot upgrade to a full-precision provider when quality demands it.
 

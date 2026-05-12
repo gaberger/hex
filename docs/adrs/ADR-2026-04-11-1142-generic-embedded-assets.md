@@ -1,6 +1,7 @@
 # ADR-2026-04-11-1142: Generic-Only Embedded Assets in hex-cli/assets/
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/assets/ci/hex-ci.yml, hex-cli/assets/context-templates/services/hexflo-global.md, hex-cli/assets/context-templates/services/session-memory.md (+4 more)
 **Accepted:** 2026-05-04
 **Date:** 2026-04-11
 **Drivers:** `hex assets sync` audit on 2026-04-11 revealed that `hex-cli/assets/` — the template set embedded into the binary via `rust-embed` and shipped to every target project via `hex init` / `hex assets sync` / `hex scaffold` — contains skills, agents, hooks, context templates, and CI configs that are **hex-maintainer runbooks**, not project-agnostic templates. Specifically, `hex-cli/assets/skills/hex-publish-module/SKILL.md` shipped literal `cd /Volumes/ExtendedStorage/PARA/01-Projects/hex-intf` and `cargo build -p hex-nexus -p hex-cli --release` instructions to any target project that ran `hex init`. This is an AIOS positioning failure: hex claims to be the OS layer for *other* projects, but its templates assume every consumer is hex-intf itself.

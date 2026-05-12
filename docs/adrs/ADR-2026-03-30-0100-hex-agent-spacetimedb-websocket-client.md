@@ -1,6 +1,7 @@
 # ADR-2026-03-30-0100: hex-agent as First-Class SpacetimeDB WebSocket Client
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: docs/specs/hex-agent-stdb-websocket-client.json, hex-agent/Cargo.toml
 **Date:** 2026-03-30
 **Drivers:** Docker sandbox workers use REST polling for task coordination and inference, creating fragile multi-hop chains that fail silently. The correct architecture is hex-agent connecting directly to SpacetimeDB via WebSocket — the same protocol the dashboard uses.
 **Supersedes:** ADR-2026-03-29-1900 (Docker Worker First-Class Execution — subsumed)

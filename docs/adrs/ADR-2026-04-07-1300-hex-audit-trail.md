@@ -3,6 +3,7 @@
 **Date:** 2026-04-07
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: spacetime-modules/hexflo-coordination/src/lib.rs
 
 ## Context
 The hex dev pipeline produces code that compiles and passes tests (ADR-2026-04-07-0400), but the audit trail is broken. Three data layers exist but never integrate:

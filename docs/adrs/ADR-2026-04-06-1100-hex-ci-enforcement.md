@@ -1,6 +1,7 @@
 # ADR-2026-04-06-1100: hex CI Enforcement — Done-Conditions, `hex ci`, and Deployed Workflows
 
 **Status:** Accepted  
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/assets/ci/hex-ci.yml, hex-cli/src/assets.rs, hex-cli/src/commands/ci.rs (+3 more)
 **Date:** 2026-04-06  
 **Drivers:** During ADR-2026-04-02-1215 implementation, `hex stdb query` was specified in the workplan with a `done_condition` but was never implemented. The condition was never verified. The binary shipped without the feature. hex's specs-first pipeline only prevents drift if done-conditions are machine-enforced, not human-reviewed.
 

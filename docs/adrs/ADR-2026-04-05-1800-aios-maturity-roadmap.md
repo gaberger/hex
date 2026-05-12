@@ -1,6 +1,7 @@
 # ADR-2026-04-05-1800: AIOS Maturity Roadmap — Missing Primitives
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-core/src/domain/capability.rs, hex-core/src/ports/file_system.rs, hex-nexus/src/orchestration/agent_manager.rs
 **Date:** 2026-04-05
 **Drivers:** Architectural audit revealed hex has evolved from an AAIDE (AI-Assisted Integrated Development Environment) into an AIOS (AI Operating System) with microkernel architecture, process lifecycle management, distributed state, and resource brokering. The system's capabilities now map 1:1 to traditional OS primitives, but several critical gaps prevent it from being a complete multi-tenant agent runtime.
 **Supersedes:** ADR-052 (AIIDE — Hex Nexus as AI Integrated Development Environment)

@@ -1,6 +1,7 @@
 # ADR-048: Claude Code Session Agent Registration
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/src/routes/mod.rs, hex-nexus/src/routes/orchestration.rs
 ## Date: 2026-03-21
 
 ## Context

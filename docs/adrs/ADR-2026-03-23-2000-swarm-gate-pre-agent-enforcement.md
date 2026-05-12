@@ -1,6 +1,7 @@
 # ADR-2026-03-23-2000: Swarm-Gate Enforcement at Pre-Agent Hook
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/src/coordination/mod.rs
 **Date:** 2026-03-23
 **Drivers:** Both Claude Code and OpenCode allow agent spawning without verifying an active HexFlo swarm exists. Agents burn tokens running exploration then get blocked only at first file edit. OpenCode's hook-handler.cjs does string matching on `HEXFLO_TASK` but never validates swarm state against nexus.
 **Supersedes:** None (extends ADR-2026-03-22-1939 agent lifecycle enforcement)

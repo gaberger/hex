@@ -1,6 +1,7 @@
 # ADR-2026-04-08-0813: Inference Server Discovery Cache
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/inference.rs, hex-nexus/src/config_sync.rs, hex-nexus/src/routes/secrets.rs
 **Date:** 2026-04-08
 **Drivers:** Gary Berger
 

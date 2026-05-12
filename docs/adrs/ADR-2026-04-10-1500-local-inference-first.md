@@ -3,6 +3,7 @@
 **Date:** 2026-04-10
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-agent/src/adapters/secondary/haiku_preflight.rs
 
 ## Problem
 

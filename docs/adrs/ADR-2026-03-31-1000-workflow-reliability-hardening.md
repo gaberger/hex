@@ -3,6 +3,7 @@
 **Date:** 2026-03-31
 
 **Status:** Accepted
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-core/src/types/task_completion.rs
 **Date**: 2026-03-31
 **Context**: Post-E2E analysis of recurring failure modes in the hex dev pipeline
 
