@@ -385,11 +385,16 @@ async fn draft_one(
         ceo_ask = ceo_ask_block,
     );
 
-    // Pin a small fast model. Drafter writes file content; for the kinds
-    // of artifacts personas commit to (specs, runbooks, short markdown)
-    // qwen3:4b is fine. Override with HEX_DRAFTER_MODEL when a beefier
-    // model is genuinely needed.
-    let drafter_model = std::env::var("HEX_DRAFTER_MODEL").unwrap_or_else(|_| "qwen3:4b".to_string());
+    // Pin nemotron-mini by default. Reason same as the responder commit-mode
+    // switch: qwen3:4b is a thinking model — it produces stream-of-
+    // consciousness rambling instead of the actual file content (verified
+    // in 02:17 test where 4601 bytes of "Wait, the user said…" shipped to
+    // disk instead of the requested one-liner). nemotron-mini doesn't think,
+    // doesn't ramble, follows the "produce file body now" instruction.
+    // Override via HEX_DRAFTER_MODEL when a frontier model is warranted
+    // (long specs, code, etc.).
+    let drafter_model = std::env::var("HEX_DRAFTER_MODEL")
+        .unwrap_or_else(|_| "nemotron-mini".to_string());
     let body = serde_json::json!({
         "model": drafter_model,
         "messages": [{

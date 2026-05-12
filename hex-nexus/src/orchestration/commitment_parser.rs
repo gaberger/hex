@@ -108,13 +108,27 @@ pub fn parse(reply: &str) -> Vec<ExtractedCommitment> {
             // Split out the success: clause if present (per ADR-2026-05-08-2400 contract).
             //   "Confirm: I will X by Y — success: docs/specs/foo.md"
             // The dash before success can be `—`, `-`, `--`, or just whitespace.
-            let (body_no_success, success_artifact) = split_success_clause(body);
+            let (body_no_success, success_artifact_raw) = split_success_clause(body);
             let (action, deadline_micros) = split_action_and_deadline(body_no_success);
-            let artifact_kind = if success_artifact.is_empty() {
+            // Path-recovery: small models (nemotron-mini, qwen3:4b) often
+            // invent a fake hash for the success: field while naming a real
+            // file path in the action text. If the success: value doesn't
+            // classify as a real artifact, try to find a path in the action.
+            let mut success_artifact = success_artifact_raw.clone();
+            let mut artifact_kind = if success_artifact.is_empty() {
                 "none".to_string()
             } else {
                 classify_artifact(&success_artifact)
             };
+            if artifact_kind != "verifiable_path" {
+                if let Some(found) = scan_for_path(&action) {
+                    success_artifact = found;
+                    artifact_kind = "verifiable_path".to_string();
+                } else if let Some(found) = scan_for_path(body) {
+                    success_artifact = found;
+                    artifact_kind = "verifiable_path".to_string();
+                }
+            }
             out.push(ExtractedCommitment {
                 raw_text: lt.to_string(),
                 action: if action.is_empty() {
@@ -251,6 +265,46 @@ fn split_success_clause(body: &str) -> (&str, String) {
         .trim_end_matches(|c: char| c.is_whitespace() || c == '—' || c == '-' || c == '–');
     let success_raw = body[pos + "success:".len()..].trim();
     (action_end, success_raw.to_string())
+}
+
+/// Scan a string for the first token that looks like a real repo file path
+/// and canonicalize it. Used to recover the artifact when the persona
+/// wrote a fake hash in the `success:` clause but mentioned the file in
+/// the action text — and to fix common truncations like writing
+/// `specs/foo.md` instead of `docs/specs/foo.md`.
+fn scan_for_path(s: &str) -> Option<String> {
+    // Canonical roots the twin allows.
+    const ROOTS: &[&str] = &[
+        "docs/", "src/", "tests/", "examples/", "scripts/",
+        "hex-nexus/", "hex-cli/", "hex-core/", "hex-agent/",
+        "spacetime-modules/",
+    ];
+    // Bare subtrees small models tend to drop the docs/ prefix from.
+    // When we see one of these, prepend the correct parent.
+    const REWRITE: &[(&str, &str)] = &[
+        ("specs/", "docs/specs/"),
+        ("adrs/", "docs/adrs/"),
+        ("workplans/", "docs/workplans/"),
+        ("analysis/", "docs/analysis/"),
+    ];
+    const EXTS: &[&str] = &[".md", ".rs", ".ts", ".tsx", ".js", ".jsx", ".json", ".toml", ".yml", ".yaml", ".sh", ".py"];
+
+    for raw_tok in s.split(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == '(' || c == ')' || c == '`') {
+        let tok = raw_tok.trim_matches(|c: char| c == '.' || c == ',' || c == ';' || c == ':' || c == '`' || c == '"' || c == '\'');
+        if tok.is_empty() { continue; }
+        let lower = tok.to_ascii_lowercase();
+        let has_ext = EXTS.iter().any(|e| lower.ends_with(e));
+        if !has_ext { continue; }
+        if ROOTS.iter().any(|r| lower.starts_with(r)) {
+            return Some(tok.to_string());
+        }
+        for (bare, full) in REWRITE {
+            if lower.starts_with(bare) {
+                return Some(format!("{}{}", full, &tok[bare.len()..]));
+            }
+        }
+    }
+    None
 }
 
 fn classify_artifact(s: &str) -> String {
