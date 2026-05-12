@@ -245,6 +245,7 @@ struct OpenCommitment {
     action: String,
     success_artifact: String,
     thread_id: String,
+    related_msg_id: u64,
 }
 
 async fn fetch_open_path_commitments(
@@ -253,7 +254,7 @@ async fn fetch_open_path_commitments(
     hex_db: &str,
 ) -> Result<Vec<OpenCommitment>, String> {
     let url = format!("{}/v1/database/{}/sql", stdb_host, hex_db);
-    let body = "SELECT id, role, action, success_artifact, artifact_kind, status, thread_id FROM commitment";
+    let body = "SELECT id, role, action, success_artifact, artifact_kind, status, thread_id, related_msg_id FROM commitment";
     let resp = http
         .post(&url)
         .header("Content-Type", "text/plain")
@@ -296,6 +297,7 @@ async fn fetch_open_path_commitments(
             action: cols.get(2).and_then(|x| x.as_str()).unwrap_or("").to_string(),
             success_artifact: extract_path(path),
             thread_id: cols.get(6).and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            related_msg_id: cols.get(7).and_then(|x| x.as_u64()).unwrap_or(0),
         });
     }
     Ok(out)
@@ -349,15 +351,32 @@ async fn draft_one(
     inference_url: &str,
     c: &OpenCommitment,
 ) -> Result<DraftOutcome, String> {
-    // Pull the originating CEO message so the persona drafts the actual
-    // requested artifact, not a generic doc that matches the path pattern.
-    let ceo_ask = if c.thread_id.is_empty() {
-        String::new()
+    // Pull the originating CEO message — prefer thread, fall back to the
+    // related_msg_id lookup so DM-style commitments (no thread_id) still
+    // get the original ask passed through to the drafter.
+    let ceo_ask = if !c.thread_id.is_empty() {
+        fetch_originating_ask(http, &c.thread_id).await.unwrap_or_default()
+    } else if c.related_msg_id > 0 {
+        fetch_message_by_id(http, c.related_msg_id).await.unwrap_or_default()
     } else {
-        fetch_originating_ask(http, &c.thread_id)
-            .await
-            .unwrap_or_default()
+        String::new()
     };
+
+    // SHORT-CIRCUIT: if the CEO ask contains an explicit literal-content
+    // brief (e.g. "containing only one line: X" or "with content: X"),
+    // write X directly and skip the LLM. Deterministic, no rambling.
+    if !ceo_ask.is_empty() {
+        if let Some(literal) = extract_literal_content(&ceo_ask) {
+            tracing::info!(
+                commitment_id = c.id,
+                role = %c.role,
+                bytes = literal.len(),
+                "drafter: literal-content brief detected — bypassing LLM"
+            );
+            return queue_file_write_action(http, stdb_host, hex_db, c, &literal).await;
+        }
+    }
+
     let ceo_ask_block = if ceo_ask.is_empty() {
         String::new()
     } else {
@@ -488,6 +507,141 @@ async fn draft_one(
         "drafter: queued proposed_action(file_write)"
     );
     Ok(DraftOutcome::ProposedAction)
+}
+
+/// Extract a literal content brief from a CEO ask. Returns Some(content)
+/// when the ask contains a pattern that names exact file contents — e.g.
+///   "containing only one line: Hello from the pipeline"
+///   "with content: foo bar baz"
+///   "with body: ..."
+/// Avoids the LLM ramble entirely when the operator has been specific.
+fn extract_literal_content(ask: &str) -> Option<String> {
+    // Triggers we recognise (case-insensitive prefix scan).
+    const TRIGGERS: &[&str] = &[
+        "containing only one line:",
+        "containing only the line:",
+        "containing only:",
+        "containing the literal text:",
+        "containing the text:",
+        "with content:",
+        "with body:",
+        "exactly:",
+        "the file should contain:",
+        "file body:",
+    ];
+    let lower = ask.to_lowercase();
+    for trig in TRIGGERS {
+        if let Some(start) = lower.find(trig) {
+            let after = &ask[start + trig.len()..];
+            // Take until end-of-message or a clear terminator. Strip
+            // surrounding whitespace and any wrapping quotes/backticks.
+            let mut content = after.trim().to_string();
+            // If wrapped in matching quotes/backticks, peel them.
+            for delim in ['"', '\'', '`'] {
+                if content.starts_with(delim) && content.ends_with(delim) && content.len() > 1 {
+                    content = content[1..content.len() - 1].to_string();
+                    break;
+                }
+            }
+            // Stop at obvious sentence terminators when the brief looks
+            // like a single-line request.
+            if let Some(idx) = content.find('\n') {
+                content.truncate(idx);
+            }
+            let content = content.trim().to_string();
+            if content.is_empty() || content.len() > 8192 {
+                return None;
+            }
+            return Some(content);
+        }
+    }
+    None
+}
+
+/// Look up a single agent_messages row by id. Used by drafter when a
+/// commitment lacks a thread_id but has a related_msg_id (DM mode).
+async fn fetch_message_by_id(http: &reqwest::Client, msg_id: u64) -> Result<String, String> {
+    let stdb_host_agent_comms = std::env::var("HEX_STDB_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+    let url = format!("{}/v1/database/agent-comms/sql", stdb_host_agent_comms);
+    let body = format!("SELECT message FROM agent_messages WHERE id = {}", msg_id);
+    let resp = http
+        .post(&url)
+        .header("Content-Type", "text/plain")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("http: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| format!("json: {}", e))?;
+    let msg = v
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|t| t.get("rows"))
+        .and_then(|r| r.as_array())
+        .and_then(|rows| rows.first())
+        .and_then(|r| r.as_array())
+        .and_then(|cols| cols.first())
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    Ok(msg)
+}
+
+/// Queue a file_write proposed_action for a literal content payload.
+/// Extracted so the LLM and short-circuit paths share the same submission code.
+async fn queue_file_write_action(
+    http: &reqwest::Client,
+    stdb_host: &str,
+    hex_db: &str,
+    c: &OpenCommitment,
+    content: &str,
+) -> Result<DraftOutcome, String> {
+    let payload = serde_json::json!({
+        "path": c.success_artifact,
+        "content": content,
+    });
+    let url = format!("{}/v1/database/{}/call/proposed_action_open", stdb_host, hex_db);
+    let body = serde_json::json!(["file_write", payload.to_string(), c.role, c.id]);
+    let resp = http
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("open http: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "proposed_action_open HTTP {}: {}",
+            resp.status(),
+            resp.text().await.unwrap_or_default()
+        ));
+    }
+    tracing::info!(
+        commitment_id = c.id,
+        role = %c.role,
+        path = %c.success_artifact,
+        bytes = content.len(),
+        "drafter: queued literal-content proposed_action(file_write)"
+    );
+    Ok(DraftOutcome::ProposedAction)
+}
+
+#[cfg(test)]
+mod literal_tests {
+    use super::extract_literal_content;
+    #[test] fn one_line() {
+        let r = extract_literal_content("@cto write docs/x.md containing only one line: Hello from the pipeline.");
+        assert_eq!(r.as_deref(), Some("Hello from the pipeline."));
+    }
+    #[test] fn quoted() {
+        let r = extract_literal_content("write file with content: \"ok done\"");
+        assert_eq!(r.as_deref(), Some("ok done"));
+    }
+    #[test] fn no_trigger() {
+        assert!(extract_literal_content("write a status doc").is_none());
+    }
 }
 
 /// Fetch the FIRST message in a thread (typically CEO's broadcast / DM
