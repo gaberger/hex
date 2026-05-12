@@ -30,13 +30,19 @@ const REPLY_MAX_TOKENS: u32 = 512;
 /// Token cap for the secondary "why this reply" prompt. Kept short — these
 /// thoughts are journal entries, not analyses.
 const THOUGHT_MAX_TOKENS: u32 = 96;
-/// Model pinned for responder calls. The default router selects T2
-/// (qwen2.5-coder:32b, 18 GB) by complexity — way too slow for short
-/// conversational replies and would timeout the http client. Pinning a
-/// small fast model keeps the chat loop snappy and lets us actually
-/// fan out across personas without saturating the GPU/CPU.
-/// Override with HEX_RESPONDER_MODEL.
-const REPLY_MODEL_DEFAULT: &str = "qwen3:4b";
+/// Default models for the two responder reply modes.
+///
+/// chat-mode = conversational asks (status, what/how/why/…) — qwen3:4b is
+/// fine, rambling prose is what the operator wants.
+///
+/// commit-mode = directive asks — needs strict `Confirm: …` / `Silent`
+/// format. qwen3:4b improvises and rambles past the contract; nemotron-mini
+/// (2.5 GB, NVIDIA, no think-mode) reliably emits the format in ~30 tokens.
+///
+/// Both overrideable: HEX_RESPONDER_CHAT_MODEL, HEX_RESPONDER_COMMIT_MODEL.
+/// Legacy HEX_RESPONDER_MODEL still wins for both if set.
+const REPLY_MODEL_CHAT_DEFAULT: &str = "qwen3:4b";
+const REPLY_MODEL_COMMIT_DEFAULT: &str = "nemotron-mini";
 /// Cap concurrent inference calls so we don't queue 9 simultaneous
 /// requests at Ollama for a 4B model. Override with HEX_RESPONDER_CONCURRENCY.
 const REPLY_CONCURRENCY_DEFAULT: usize = 3;
@@ -234,13 +240,23 @@ pub fn spawn(
         .and_then(|s| s.parse::<usize>().ok())
         .filter(|n| *n > 0 && *n <= 32)
         .unwrap_or(REPLY_CONCURRENCY_DEFAULT);
-    let model = std::env::var("HEX_RESPONDER_MODEL").unwrap_or_else(|_| REPLY_MODEL_DEFAULT.to_string());
+    // Legacy single-model override still wins to keep ops contracts intact.
+    let legacy = std::env::var("HEX_RESPONDER_MODEL").ok();
+    let model_chat = legacy.clone().unwrap_or_else(|| {
+        std::env::var("HEX_RESPONDER_CHAT_MODEL")
+            .unwrap_or_else(|_| REPLY_MODEL_CHAT_DEFAULT.to_string())
+    });
+    let model_commit = legacy.unwrap_or_else(|| {
+        std::env::var("HEX_RESPONDER_COMMIT_MODEL")
+            .unwrap_or_else(|_| REPLY_MODEL_COMMIT_DEFAULT.to_string())
+    });
     let sem = Arc::new(Semaphore::new(concurrency));
     tokio::spawn(async move {
         tracing::info!(
             concurrency = concurrency,
-            model = %model,
-            "org_responder: parallelism + pinned model"
+            chat_model = %model_chat,
+            commit_model = %model_commit,
+            "org_responder: parallelism + per-mode pinned models"
         );
         let http = match reqwest::Client::builder()
             .timeout(Duration::from_secs(120))
@@ -278,9 +294,10 @@ pub fn spawn(
                 let inference_url = inference_url.clone();
                 let replied = replied.clone();
                 let sem = sem.clone();
-                let model = model.clone();
+                let model_chat = model_chat.clone();
+                let model_commit = model_commit.clone();
                 handles.push(tokio::spawn(async move {
-                    if let Err(e) = process_role(role, &comm, &persona, &http, &inference_url, &replied, &sem, &model).await {
+                    if let Err(e) = process_role(role, &comm, &persona, &http, &inference_url, &replied, &sem, &model_chat, &model_commit).await {
                         tracing::debug!(role = %role, error = %e, "org_responder: tick error");
                     }
                 }));
@@ -301,7 +318,8 @@ async fn process_role(
     inference_url: &str,
     replied: &Arc<Mutex<RepliedTracker>>,
     sem: &Arc<Semaphore>,
-    model: &str,
+    model_chat: &str,
+    model_commit: &str,
 ) -> Result<(), String> {
     let role_string = role.to_string();
     let mut messages = comm
@@ -461,6 +479,9 @@ async fn process_role(
         // all execs is still informational, not a directive. Without this,
         // exec replies to status asks were dropped as off-contract.
         let chat_mode = is_conversational(&content);
+        // Pick the right model for this mode. chat = rambling-tolerant; commit
+        // = strict-format model so the Confirm:/Silent contract holds.
+        let model = if chat_mode { model_chat } else { model_commit };
         // Acquire a concurrency slot before firing inference so we don't
         // queue 9 simultaneous calls at a small local model.
         let _permit = match sem.clone().acquire_owned().await {
@@ -610,14 +631,22 @@ async fn generate_reply(
     chat_mode: bool,
     model: &str,
 ) -> Result<String, String> {
-    // Assemble messages array: [history…, current user turn].
-    // History entries already encode role=user|assistant for the persona's POV.
-    let mut chat_messages: Vec<serde_json::Value> = history
+    // Commit-mode keeps the message list TINY (just the current ask) so the
+    // small format-following model isn't drowned in prior turns. Chat-mode
+    // includes the recent history so the persona can answer in context.
+    let history_slice: &[ChatTurn] = if chat_mode {
+        history
+    } else {
+        let cap = history.len().min(2); // last 2 turns max in commit-mode
+        &history[history.len() - cap..]
+    };
+    let truncate_chars = if chat_mode { 400 } else { 160 };
+    let mut chat_messages: Vec<serde_json::Value> = history_slice
         .iter()
         .map(|t| {
             serde_json::json!({
                 "role": t.role,
-                "content": truncate(&t.content, 400),
+                "content": truncate(&t.content, truncate_chars),
             })
         })
         .collect();
@@ -642,19 +671,24 @@ async fn generate_reply(
              and the operator will re-address it.",
         );
     }
-    if !thoughts.is_empty() {
-        system.push_str("\n\nYour recent reasoning (newest first):\n");
-        for (kind, body) in thoughts.iter().take(5) {
-            let line = truncate(body, 240);
-            system.push_str(&format!("- [{}] {}\n", kind, line));
+    // For commit-mode (strict Confirm:/Silent) we DROP thoughts + grounding.
+    // Small format-following models (nemotron-mini, etc.) drift when the
+    // system prompt balloons past ~500 tokens. Standalone test with the same
+    // ask but no extra context: 33 tokens, perfect Confirm. Full prompt:
+    // 3631 input tokens → rambling "Here's the response required by…".
+    // Chat-mode keeps the rich context so personas can reference history.
+    if chat_mode {
+        if !thoughts.is_empty() {
+            system.push_str("\n\nYour recent reasoning (newest first):\n");
+            for (kind, body) in thoughts.iter().take(5) {
+                let line = truncate(body, 240);
+                system.push_str(&format!("- [{}] {}\n", kind, line));
+            }
         }
-    }
-
-    // Inject real repo grounding (ADR list, dashboard URLs, anti-fabrication
-    // rule) so the persona stops claiming it sent docs to a "secure channel".
-    let grounding = crate::orchestration::repo_grounding::grounding_block(20);
-    if !grounding.is_empty() {
-        system.push_str(&grounding);
+        let grounding = crate::orchestration::repo_grounding::grounding_block(20);
+        if !grounding.is_empty() {
+            system.push_str(&grounding);
+        }
     }
 
     let body = serde_json::json!({
