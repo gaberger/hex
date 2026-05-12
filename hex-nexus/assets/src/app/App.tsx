@@ -48,6 +48,7 @@ const Resources = lazy(() => import('../components/views/Resources'));
 const Commitments = lazy(() => import('../components/views/Commitments'));
 const MissionControl = lazy(() => import('../components/views/MissionControl'));
 const Missions = lazy(() => import('../components/views/Missions'));
+const OpsSla = lazy(() => import('../components/views/OpsSla'));
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
 
@@ -269,6 +270,7 @@ const App: Component = () => {
   const isCommitmentsPage = () => route().page === "commitments";
   const isMissionControlPage = () => route().page === "mission-control";
   const isMissionsPage = () => route().page === "missions" || route().page === "mission-detail";
+  const isOpsSlaPage = () => route().page === "ops-sla";
 
   return (
     <>
@@ -363,8 +365,16 @@ const App: Component = () => {
         <ShortcutsOverlay />
       </Show>
 
+      {/* Full-screen Operator-Acceptance SLA tile */}
+      <Show when={isOpsSlaPage()}>
+        <ConnectionStatusBanner />
+        <OpsSla />
+        <ToastContainer />
+        <ShortcutsOverlay />
+      </Show>
+
       {/* Standard layout with sidebar for all other pages */}
-      <Show when={!isBrainPage() && !isOrgChartPage() && !isOrgCommsPage() && !isTeamPage() && !isMergeGatePage() && !isPersonaHealthPage() && !isThoughtsPage() && !isResourcesPage() && !isCommitmentsPage() && !isMissionControlPage() && !isMissionsPage()}>
+      <Show when={!isBrainPage() && !isOrgChartPage() && !isOrgCommsPage() && !isTeamPage() && !isMergeGatePage() && !isPersonaHealthPage() && !isThoughtsPage() && !isResourcesPage() && !isCommitmentsPage() && !isMissionControlPage() && !isMissionsPage() && !isOpsSlaPage()}>
         <div class="flex h-screen flex-col bg-gray-950 text-gray-100">
           {/* Connection status banner — shown when nexus or SpacetimeDB is unavailable */}
           <ConnectionStatusBanner />
@@ -663,6 +673,24 @@ const App: Component = () => {
                 <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
               </svg>
               <Show when={!sidebarCollapsed()}>Missions</Show>
+            </button>
+            {/* Operator-Acceptance SLA tile */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              classList={{
+                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "ops-sla",
+                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "ops-sla",
+                "justify-center px-0": sidebarCollapsed(),
+              }}
+              aria-label={sidebarCollapsed() ? "Ops SLA" : undefined}
+              aria-current={route().page === "ops-sla" ? "page" : undefined}
+              onClick={() => { navigate({ page: "ops-sla" }); setMobileDrawerOpen(false); }}
+            >
+              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                classList={{ "text-cyan-400": route().page === "ops-sla" }}>
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Ops SLA</Show>
             </button>
             {/* Brain — full three-pane (TEAM | KANBAN+DECISIONS+SWARMS+HEALTH | CHAT) */}
             <button

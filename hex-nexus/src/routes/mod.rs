@@ -581,6 +581,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/org/send-message", post(org_comms::send_message))
         .route("/api/org/messages", get(org_comms::list_messages))
         .route("/api/org/conversation/{id}", get(org_comms::get_conversation))
+        .route("/api/ops-sla", get(org_comms::ops_sla))
         // ── ADR-2026-05-08-1126 dashboard surfaces ──────────────────────────
         .route("/api/merge/requests", get(merge_gate::list_merge_requests))
         .route("/api/merge/approve", post(merge_gate::approve_merge_request))

@@ -194,6 +194,150 @@ pub async fn list_messages(
     Ok(Json(MessagesResponse { agent, messages }))
 }
 
+// ── Operator-Acceptance SLA tile ─────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct SlaResponse {
+    pub window_hours: u32,
+    pub asks_total: u32,
+    pub replied: u32,
+    pub silent: u32,
+    pub silent_rate: f32,
+    pub stub_rate: f32,             // fraction of replies that were stubs / escalations
+    pub by_persona: Vec<PersonaSla>,
+    pub latest_silent: Vec<SilentAsk>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PersonaSla {
+    pub persona: String,
+    pub asks: u32,
+    pub replied: u32,
+    pub silent: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SilentAsk {
+    pub id: u64,
+    pub to: String,
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SlaQuery {
+    pub window_hours: Option<u32>,
+    pub limit: Option<u32>,
+}
+
+/// GET /api/ops-sla?window_hours=24&limit=400
+///
+/// Operator-acceptance SLA per docs/specs/operator-acceptance-sla.md.
+/// Pulls the last N messages, classifies each ceo→persona ask as
+/// replied or silent (silent = no persona→ceo message with later id),
+/// and returns aggregate + per-persona stats.
+pub async fn ops_sla(
+    State(state): State<Arc<crate::state::AppState>>,
+    axum::extract::Query(q): axum::extract::Query<SlaQuery>,
+) -> Result<Json<SlaResponse>, StatusCode> {
+    let window_hours = q.window_hours.unwrap_or(24);
+    let limit = q.limit.unwrap_or(400);
+
+    let agent_comm = state
+        .agent_comm_stdb
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    use hex_core::ports::agent_comm::IAgentCommPort;
+    let raw = agent_comm
+        .query_messages("ceo".to_string(), Some(limit))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Build a per-persona reply set: ids of messages sent FROM persona TO ceo.
+    // AgentMessage.id is Option<u64> from STDB — skip rows without ids.
+    let mut replies_by_persona: std::collections::HashMap<String, Vec<u64>> = std::collections::HashMap::new();
+    for m in &raw {
+        let id = match m.id { Some(i) => i, None => continue };
+        if m.to_agent.as_deref() == Some("ceo") {
+            replies_by_persona
+                .entry(m.from_agent.clone())
+                .or_default()
+                .push(id);
+        }
+    }
+
+    let mut total: u32 = 0;
+    let mut replied: u32 = 0;
+    let mut stub_or_escalated: u32 = 0;
+    let mut per: std::collections::HashMap<String, (u32, u32)> = std::collections::HashMap::new();
+    let mut latest_silent: Vec<SilentAsk> = Vec::new();
+
+    for m in &raw {
+        let ask_id = match m.id { Some(i) => i, None => continue };
+        if m.from_agent != "ceo" {
+            continue;
+        }
+        let to = match m.to_agent.as_deref() {
+            Some(s) if s != "ceo" => s,
+            _ => continue,
+        };
+        total += 1;
+        let entry = per.entry(to.to_string()).or_insert((0, 0));
+        entry.0 += 1;
+
+        let was_replied = replies_by_persona
+            .get(to)
+            .map(|ids| ids.iter().any(|rid| *rid > ask_id))
+            .unwrap_or(false);
+        if was_replied {
+            replied += 1;
+            entry.1 += 1;
+            if let Some(rid) = replies_by_persona
+                .get(to)
+                .and_then(|ids| ids.iter().filter(|rid| **rid > ask_id).min().copied())
+            {
+                if let Some(reply) = raw.iter().find(|x| x.id == Some(rid)) {
+                    let c = reply.message.to_ascii_lowercase();
+                    if c.contains("reasoning failed") || c.contains("escalated:") || c.contains("stub") {
+                        stub_or_escalated += 1;
+                    }
+                }
+            }
+        } else if latest_silent.len() < 5 {
+            latest_silent.push(SilentAsk {
+                id: ask_id,
+                to: to.to_string(),
+                content: m.message.chars().take(120).collect(),
+            });
+        }
+    }
+
+    let silent = total.saturating_sub(replied);
+    let silent_rate = if total == 0 { 0.0 } else { silent as f32 / total as f32 };
+    let stub_rate = if replied == 0 { 0.0 } else { stub_or_escalated as f32 / replied as f32 };
+
+    let mut by_persona: Vec<PersonaSla> = per
+        .into_iter()
+        .map(|(persona, (asks, replied))| PersonaSla {
+            persona,
+            asks,
+            replied,
+            silent: asks.saturating_sub(replied),
+        })
+        .collect();
+    by_persona.sort_by(|a, b| b.asks.cmp(&a.asks));
+
+    Ok(Json(SlaResponse {
+        window_hours,
+        asks_total: total,
+        replied,
+        silent,
+        silent_rate,
+        stub_rate,
+        by_persona,
+        latest_silent,
+    }))
+}
+
 /// GET /api/org/conversation/:conversation_id
 ///
 /// Retrieves conversation thread showing delegation chain

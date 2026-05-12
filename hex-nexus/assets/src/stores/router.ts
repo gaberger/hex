@@ -35,6 +35,7 @@ export type Route =
   | { page: "resources" }
   | { page: "commitments" }
   | { page: "mission-control" }
+  | { page: "ops-sla" }
   // Project-scoped
   | { page: "project"; projectId: string }
   | { page: "project-agents"; projectId: string }
@@ -270,6 +271,8 @@ function routeToHash(r: Route): string {
       return "#/missions";
     case "mission-detail":
       return `#/missions/${r.missionId}`;
+    case "ops-sla":
+      return "#/ops-sla";
     case "project":
       return `#/project/${r.projectId}`;
     case "project-agents":
@@ -335,6 +338,7 @@ function hashToRoute(hash: string): Route {
     if (parts[1]) return { page: "mission-detail", missionId: decodeURIComponent(parts[1]) };
     return { page: "missions" };
   }
+  if (parts[0] === "ops-sla") return { page: "ops-sla" };
 
   // Project-scoped routes: /project/:id/...
   if (parts[0] === "project" && parts[1]) {
