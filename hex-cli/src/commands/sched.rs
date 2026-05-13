@@ -2984,6 +2984,19 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                     }
                 }
             }
+
+            // Step 3: autonomous high-severity Recommend notifications (BS-5).
+            // Recommends don't enqueue work, so they skip the score≥80
+            // auto-act gate. But severity=error patterns (e.g. an ADR cited
+            // by ≥5 personas across recent thoughts) are signals the
+            // operator should see in real time, not on the next manual
+            // `hex sched improver act --apply`. notify_high_severity_recommends
+            // dedups on a 24h window so persistent patterns surface once
+            // per day rather than every tick.
+            if let Some(ref hs) = hyps {
+                let ranked = crate::commands::sched::improver::judge::rank(hs);
+                crate::commands::sched::improver::act::notify_high_severity_recommends(&ranked).await;
+            }
         }
         state.tick_count = state.tick_count.saturating_add(1);
         save_daemon_state(&state);
