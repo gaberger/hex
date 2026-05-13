@@ -394,6 +394,58 @@ pub fn derive(scored: &ScoredHypothesis) -> Option<Action> {
             });
         }
 
+        // BS-5: thought-pattern findings — cross-persona signals from
+        // agent_thought. Always Recommend (operator-facing) because the
+        // pattern is a *signal* (this ADR keeps coming up; persona X is
+        // frustrated), not a remediation. Routing this through
+        // DraftWorkplan would be premature: the operator (or another
+        // persona via SOP) decides whether the signal warrants a code
+        // change, an ADR update, or a process change.
+        Source::ThoughtPattern => {
+            let pattern = h
+                .evidence
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let count = h
+                .evidence
+                .get("count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let roles_summary = h
+                .evidence
+                .get("mentioning_roles")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            let payload = match pattern {
+                "adr_repetition" => format!(
+                    "Cross-persona signal: {} is referenced in {} recent thoughts by [{}]. Likely an unresolved architectural concern — review the ADR's status and decide whether to (a) ship the implementation, (b) split it into actionable sub-ADRs, or (c) update its Status to Abandoned with a rationale.",
+                    h.scope, count, roles_summary
+                ),
+                "frustration_spike" => format!(
+                    "Frustration spike: {} kind=frustration thoughts in the recent window. Inspect the source persona(s) for a methodology block (missing tool, recurrent error, resource exhaustion) before more code is generated against the same gap.",
+                    count
+                ),
+                other => format!(
+                    "ThoughtPattern '{}' on scope {} (count={}). Inspect recent agent_thought rows for context.",
+                    other, h.scope, count
+                ),
+            };
+            return Some(Action {
+                kind: ActionKind::Recommend,
+                priority,
+                payload,
+                derived_from: h.id.clone(),
+                reason: scored.reason.clone(),
+            });
+        }
+
         // Punch-list items: each unrouted gap recommends the operator
         // route it (task id, draft path, or out-of-scope tag).
         Source::PunchList => {

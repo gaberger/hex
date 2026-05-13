@@ -81,6 +81,12 @@ cmd = "hex plan tests --json"
 description = "Source files lacking sibling test files (or test files with zero test cases). Drives a test-generation swarm: each finding becomes a draft for the tester agent to consume. Coverage gaps that operators wouldn't notice in a code review surface here."
 allow_nonzero_exit = true
 
+[[detector]]
+source = "thought_pattern"
+cmd = "hex sched improver thought-patterns --json"
+description = "BS-5: cross-persona patterns in agent_thought — same ADR cited by ≥2 personas across ≥3 recent thoughts (likely unresolved architectural concern), or kind=frustration spikes (resource/methodology block). Closes the consumer side of Phase-2 thought memory. Pairs with the emitter in hex-nexus::orchestration::org_responder (commit 7671f7d3)."
+allow_nonzero_exit = true
+
 # ─── Aspirational detectors (gated until enum + CLI surface land) ────
 #
 # Entries below reference `Source` variants and CLI flags that haven't

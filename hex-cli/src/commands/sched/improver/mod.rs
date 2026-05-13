@@ -12,6 +12,7 @@ pub mod act;
 pub mod discover;
 pub mod judge;
 pub mod learn;
+pub mod thought_patterns;
 
 use std::time::Duration;
 
@@ -120,6 +121,16 @@ pub enum ImproverAction {
         #[arg(long)]
         json: bool,
     },
+    /// BS-5 detector: scan agent_thought for cross-persona patterns
+    /// (ADR-IDs cited by multiple personas, frustration-kind spikes).
+    /// Emits `{findings: [...]}` so the improver detector table can
+    /// route it like any other Source.
+    ThoughtPatterns {
+        /// Emit findings as JSON (the contract the improver detector
+        /// loop consumes). Plain text mode is for operator preview.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub async fn run(action: ImproverAction) -> Result<()> {
@@ -133,6 +144,7 @@ pub async fn run(action: ImproverAction) -> Result<()> {
         ImproverAction::Scores { json, starvation } => run_scores(json, starvation).await,
         ImproverAction::Status { json, watch, no_history } => run_status(json, watch, no_history).await,
         ImproverAction::History { limit, json } => run_history(limit, json).await,
+        ImproverAction::ThoughtPatterns { json } => thought_patterns::run(json).await,
     }
 }
 

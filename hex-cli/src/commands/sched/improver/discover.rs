@@ -65,6 +65,13 @@ pub enum Source {
     /// from BuildReadiness which checks "do existing tests pass" — this
     /// one checks "do tests EXIST."
     TestCoverage,
+    /// Thought-pattern detector (BS-5): reads agent_thought via the nexus
+    /// merge API and surfaces patterns like the same ADR being cited by
+    /// multiple personas across multiple thoughts (likely unresolved
+    /// architectural concern) or frustration spikes in a recent window.
+    /// Consumer side of Phase-2 thought memory — pairs with the
+    /// emitter in `hex-nexus::orchestration::org_responder`.
+    ThoughtPattern,
 }
 
 impl Source {
@@ -84,6 +91,7 @@ impl Source {
             LayerCoverage,
             BuildReadiness,
             TestCoverage,
+            ThoughtPattern,
         ]
     }
 }
@@ -324,6 +332,7 @@ fn extract_scope(finding: &Value, source: Source) -> String {
         Source::LayerCoverage => &["layer", "scope"],
         Source::BuildReadiness => &["gate", "scope"],
         Source::TestCoverage => &["source", "scope"],
+        Source::ThoughtPattern => &["scope", "pattern"],
     };
     for key in candidates {
         if let Some(s) = finding.get(*key).and_then(|v| v.as_str()) {
