@@ -6,12 +6,19 @@
 //! own memory as authority so the system stays aligned without the
 //! operator being the synchronous gate.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 const POLL_INTERVAL_SECS: u64 = 20;
 const MEMORY_CAP_BYTES: usize = 32 * 1024;
 const PAYLOAD_PREVIEW_BYTES: usize = 4 * 1024;
 const TWIN_MAX_TOKENS: u32 = 512;
+/// Hermes /goal-style fail-open: after this many consecutive parse failures
+/// on a single action_id, escalate to the operator instead of retrying
+/// forever. Inference / HTTP errors do NOT count toward this budget —
+/// only structured-output parse failures (no JSON, missing verdict, etc.)
+/// where the model is producing prose instead of the expected schema.
+const MAX_PARSE_FAILURES: u32 = 5;
 /// Default location of operator memory. Override via HEX_OPERATOR_MEMORY_DIR.
 const DEFAULT_MEMORY_DIR: &str =
     "/home/gary/.claude/projects/-var-home-gary-hex-intf/memory";
@@ -48,10 +55,21 @@ pub fn spawn(stdb_host: String, hex_db: String, port: u16) {
         let mut ticker = tokio::time::interval(Duration::from_secs(POLL_INTERVAL_SECS));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+        // Per-action parse-failure counter. Hermes /goal pattern: a broken
+        // judge must never wedge progress; turn budget is the real backstop.
+        let mut parse_failures: HashMap<u64, u32> = HashMap::new();
+
         loop {
             ticker.tick().await;
-            if let Err(e) =
-                run_one(&http, &stdb_host, &hex_db, &inference_url, &memory_dir).await
+            if let Err(e) = run_one(
+                &http,
+                &stdb_host,
+                &hex_db,
+                &inference_url,
+                &memory_dir,
+                &mut parse_failures,
+            )
+            .await
             {
                 tracing::debug!(error = %e, "twin_reviewer: tick error");
             }
@@ -77,19 +95,78 @@ async fn run_one(
     hex_db: &str,
     inference_url: &str,
     memory_dir: &str,
+    parse_failures: &mut HashMap<u64, u32>,
 ) -> Result<(), String> {
     let pending = fetch_pending(http, stdb_host, hex_db).await?;
     if pending.is_empty() {
+        parse_failures.clear();
         return Ok(());
     }
     // Snapshot operator memory once per tick.
     let memory = load_operator_memory(memory_dir);
 
+    // GC counters for actions no longer pending (decided / removed).
+    let still_pending: std::collections::HashSet<u64> =
+        pending.iter().map(|a| a.id).collect();
+    parse_failures.retain(|k, _| still_pending.contains(k));
+
     for action in pending.into_iter().take(3) {
-        if let Err(e) =
-            review_one(http, stdb_host, hex_db, inference_url, &memory, &action).await
-        {
-            tracing::warn!(action_id = action.id, error = %e, "twin_reviewer: review_one failed");
+        let attempts = parse_failures.get(&action.id).copied().unwrap_or(0);
+        if attempts >= MAX_PARSE_FAILURES {
+            let rationale = format!(
+                "twin parse-failure budget exhausted: {} attempts produced no valid JSON; \
+                 routing to operator for manual review (Hermes /goal-style fail-open)",
+                attempts
+            );
+            tracing::warn!(
+                action_id = action.id,
+                attempts,
+                "twin_reviewer: escalating after parse-failure budget"
+            );
+            match decide(
+                http,
+                stdb_host,
+                hex_db,
+                action.id,
+                "escalate",
+                &rationale,
+                &rationale,
+            )
+            .await
+            {
+                Ok(()) => {
+                    parse_failures.remove(&action.id);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        action_id = action.id,
+                        error = %e,
+                        "twin_reviewer: escalate decide failed"
+                    );
+                }
+            }
+            continue;
+        }
+
+        match review_one(http, stdb_host, hex_db, inference_url, &memory, &action).await {
+            Ok(()) => {
+                parse_failures.remove(&action.id);
+            }
+            Err(e) => {
+                let is_parse_failure = e.contains("no JSON")
+                    || e.contains("json parse")
+                    || e.contains("missing verdict")
+                    || e.contains("invalid verdict");
+                if is_parse_failure {
+                    *parse_failures.entry(action.id).or_insert(0) += 1;
+                }
+                tracing::warn!(
+                    action_id = action.id,
+                    error = %e,
+                    parse_failure = is_parse_failure,
+                    "twin_reviewer: review_one failed"
+                );
+            }
         }
     }
     Ok(())
