@@ -10,7 +10,7 @@
         {
           "id": "P1.1",
           "title": "Add UserPersona table to spacetime-modules/hexflo-coordination/src/lib.rs with fields name (primary_key String), soul_hash (String, SHA-256), created_at (Timestamp), last_used_at (Option<Timestamp>), tools_override (Option<String> JSON), tier_models_override (Option<String> JSON). Mark public.",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
           "evidence": [
@@ -21,7 +21,7 @@
         {
           "id": "P1.2",
           "title": "Add reducers user_persona_create(name, soul_hash, tools_override, tier_models_override), user_persona_delete(name), user_persona_touch(name, now), user_persona_update_soul(name, soul_hash) with collision check against persona_pool. Reject names matching built-in c-suite or IC role identifiers.",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
           "evidence": [
@@ -34,7 +34,7 @@
         {
           "id": "P1.3",
           "title": "Republish hexflo-coordination module and verify new table is queryable via hex stdb tables.",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "script",
           "files": ["spacetime-modules/hexflo-coordination/Cargo.toml"],
           "evidence": [

@@ -4757,6 +4757,160 @@ pub struct PersonaTickSchedule {
     pub scheduled_at: ScheduleAt,
 }
 
+// ============================================================
+// User-defined SOUL personas (ADR-2605131849, wp-user-defined-soul-personas P1)
+// ============================================================
+// Flat-peer personas that coexist with the built-in c-suite. Storage on
+// disk at ~/.hex/personas/<name>/SOUL.md; this table tracks the rows so
+// the dashboard + routing can enumerate them. Separate from persona_pool
+// so the c-suite supervisor (25s tick, ban-after-3-fails) does NOT
+// operate over user-personas — they are invoked on demand and have no
+// health-state machine.
+//
+// name validation: ^[a-z][a-z0-9-]{0,63}$ enforced in the create reducer.
+// collision with persona_pool (c-suite + IC roles) is rejected.
+// ============================================================
+
+#[table(name = user_persona, public)]
+#[derive(Clone, Debug)]
+pub struct UserPersona {
+    #[primary_key]
+    pub name: String,
+    pub soul_hash: String,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+    pub tools_override: Option<String>,
+    pub tier_models_override: Option<String>,
+}
+
+fn user_persona_name_valid(name: &str) -> bool {
+    if name.is_empty() || name.len() > 64 {
+        return false;
+    }
+    let mut chars = name.chars();
+    let first = match chars.next() {
+        Some(c) => c,
+        None => return false,
+    };
+    if !first.is_ascii_lowercase() {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Belt-and-suspenders c-suite + IC role collision check. The reducer
+/// also queries persona_pool dynamically, but if persona_pool was
+/// transiently emptied (e.g. by a `--delete-data=on-conflict` republish
+/// before the supervisor's first tick re-seeds it), the dynamic check
+/// alone would let a user-persona named `cto` slip in. The hardcoded
+/// list closes that window.
+fn user_persona_name_reserved(name: &str) -> bool {
+    matches!(
+        name,
+        // C-suite
+        "ceo" | "cto" | "cpo" | "coo" | "ciso" | "chief-architect"
+        | "chief-visionary" | "cmo"
+        // Leads
+        | "engineering-lead" | "product-lead" | "sre-lead" | "validation-judge"
+        // ICs and tooling agents
+        | "hex-coder" | "hex-tester" | "hex-fixer" | "hex-reviewer" | "hex-ux"
+        | "hex-documenter" | "rust-refactorer" | "dead-code-analyzer"
+        | "scaffold-validator" | "planner" | "integrator" | "ux-designer"
+        | "cli-designer" | "pm-agent" | "behavioral-spec-writer"
+        | "adversarial-red" | "adversarial-blue" | "adr-reviewer"
+        | "platform-engineer" | "sre-engineer"
+    )
+}
+
+#[reducer]
+pub fn user_persona_create(
+    ctx: &ReducerContext,
+    name: String,
+    soul_hash: String,
+    tools_override: Option<String>,
+    tier_models_override: Option<String>,
+) -> Result<(), String> {
+    if !user_persona_name_valid(&name) {
+        return Err(format!(
+            "user_persona_create: invalid name '{}' (must match ^[a-z][a-z0-9-]{{0,63}}$)",
+            name
+        ));
+    }
+    if soul_hash.is_empty() {
+        return Err("user_persona_create: soul_hash is required".into());
+    }
+    if user_persona_name_reserved(&name) {
+        return Err(format!(
+            "user_persona_create: '{}' is a reserved c-suite or IC role identifier",
+            name
+        ));
+    }
+    if ctx.db.persona_pool().role().find(&name).is_some() {
+        return Err(format!(
+            "user_persona_create: name '{}' collides with a built-in c-suite or IC role in persona_pool",
+            name
+        ));
+    }
+    if ctx.db.user_persona().name().find(&name).is_some() {
+        return Err(format!(
+            "user_persona_create: user_persona '{}' already exists; use user_persona_update_soul to refresh",
+            name
+        ));
+    }
+    let now = format!("{:?}", ctx.timestamp);
+    ctx.db.user_persona().insert(UserPersona {
+        name,
+        soul_hash,
+        created_at: now,
+        last_used_at: None,
+        tools_override,
+        tier_models_override,
+    });
+    Ok(())
+}
+
+#[reducer]
+pub fn user_persona_delete(ctx: &ReducerContext, name: String) -> Result<(), String> {
+    if ctx.db.user_persona().name().find(&name).is_none() {
+        return Err(format!("user_persona_delete: '{}' not found", name));
+    }
+    ctx.db.user_persona().name().delete(&name);
+    Ok(())
+}
+
+#[reducer]
+pub fn user_persona_touch(ctx: &ReducerContext, name: String) -> Result<(), String> {
+    let mut row = ctx
+        .db
+        .user_persona()
+        .name()
+        .find(&name)
+        .ok_or_else(|| format!("user_persona_touch: '{}' not found", name))?;
+    row.last_used_at = Some(format!("{:?}", ctx.timestamp));
+    ctx.db.user_persona().name().update(row);
+    Ok(())
+}
+
+#[reducer]
+pub fn user_persona_update_soul(
+    ctx: &ReducerContext,
+    name: String,
+    soul_hash: String,
+) -> Result<(), String> {
+    if soul_hash.is_empty() {
+        return Err("user_persona_update_soul: soul_hash is required".into());
+    }
+    let mut row = ctx
+        .db
+        .user_persona()
+        .name()
+        .find(&name)
+        .ok_or_else(|| format!("user_persona_update_soul: '{}' not found", name))?;
+    row.soul_hash = soul_hash;
+    ctx.db.user_persona().name().update(row);
+    Ok(())
+}
+
 #[reducer]
 pub fn persona_pool_set(
     ctx: &ReducerContext,
