@@ -945,11 +945,23 @@ pub fn check_binary_freshness() -> FreshnessStatus {
 }
 
 /// Scan `docs/workplans/*.json` for active (non-completed) workplans, reconcile
-/// each task against git history, and return per-workplan summaries.
+/// each task against repo evidence, and return per-workplan summaries.
 ///
-/// A task is "stale" when it is still marked `"todo"` in the JSON but a commit
-/// message references its id (e.g. `P3.1`).
+/// A pending task is "stale" (reconcilable to done) when ALL three hold:
+///   1. Every file declared in `task.files[]` exists on disk
+///   2. Any symbols declared in `task.name` (struct/enum/trait/fn/impl Names)
+///      are found in those files
+///   3. At least one git commit touches one of those files AND its message
+///      references BOTH the task id (e.g. `P1.2`) AND the workplan id
+///
+/// Replaces the prior substring-match heuristic which produced ~70% false
+/// positives by treating any commit mentioning a generic task id like `P1.1`
+/// as evidence for every workplan's `P1.1` (ADR-2026-04-14-2201 closes this).
 pub(crate) fn check_workplan_status() -> anyhow::Result<Vec<WorkplanSummary>> {
+    use super::plan::reconcile_evidence::{
+        collect_evidence_strict, verify, VerifyResult, WorkplanTask,
+    };
+
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(|p| p.to_path_buf())
@@ -959,16 +971,6 @@ pub(crate) fn check_workplan_status() -> anyhow::Result<Vec<WorkplanSummary>> {
     if !workplans_dir.is_dir() {
         return Ok(vec![]);
     }
-
-    // Grab recent git log once — search it for task ids later.
-    let git_log = std::process::Command::new("git")
-        .args(["log", "--oneline", "-200"])
-        .current_dir(&workspace_root)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-        .unwrap_or_default();
 
     let mut summaries = Vec::new();
 
@@ -995,31 +997,75 @@ pub(crate) fn check_workplan_status() -> anyhow::Result<Vec<WorkplanSummary>> {
 
         let id = wp.get("id").and_then(|s| s.as_str()).unwrap_or("unknown").to_string();
         let feature = wp.get("feature").and_then(|s| s.as_str()).unwrap_or("").to_string();
+        let adr_scope = wp.get("adr").and_then(|s| s.as_str()).unwrap_or("").to_string();
+        let created_at = wp
+            .get("created_at")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
 
         let mut total_tasks = 0usize;
         let mut done_tasks = 0usize;
         let mut stale_tasks = Vec::new();
 
-        // Walk phases → tasks
         if let Some(phases) = wp.get("phases").and_then(|p| p.as_array()) {
             for phase in phases {
                 if let Some(tasks) = phase.get("tasks").and_then(|t| t.as_array()) {
                     for task in tasks {
                         total_tasks += 1;
-                        let task_status = task.get("status").and_then(|s| s.as_str()).unwrap_or("todo");
-                        let task_id = task.get("id").and_then(|s| s.as_str()).unwrap_or("");
+                        let task_status = task
+                            .get("status")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("todo");
+                        if task_status == "done" {
+                            done_tasks += 1;
+                            continue;
+                        }
 
-                        match task_status {
-                            "done" => done_tasks += 1,
-                            _ => {
-                                // Check if git log mentions this task id (case-insensitive)
-                                let needle_lower = task_id.to_lowercase();
-                                if !task_id.is_empty()
-                                    && git_log.to_lowercase().contains(&needle_lower)
-                                {
-                                    stale_tasks.push(task_id.to_string());
-                                }
-                            }
+                        let task_id = task
+                            .get("id")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if task_id.is_empty() {
+                            continue;
+                        }
+
+                        let description = task
+                            .get("name")
+                            .and_then(|s| s.as_str())
+                            .or_else(|| task.get("description").and_then(|s| s.as_str()))
+                            .unwrap_or("")
+                            .to_string();
+                        let files: Vec<String> = task
+                            .get("files")
+                            .and_then(|f| f.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+
+                        // No files declared — strict verify requires at least one,
+                        // so this task is not reconcilable without explicit evidence.
+                        if files.is_empty() {
+                            continue;
+                        }
+
+                        let wp_task = WorkplanTask {
+                            id: task_id.clone(),
+                            description,
+                            files,
+                            done_command: String::new(),
+                            created_at: created_at.clone(),
+                            adr_scope: adr_scope.clone(),
+                        };
+
+                        let evidence =
+                            collect_evidence_strict(&wp_task, &workspace_root, "", Some(&id));
+                        if matches!(verify(&evidence), VerifyResult::Promote) {
+                            stale_tasks.push(task_id);
                         }
                     }
                 }
