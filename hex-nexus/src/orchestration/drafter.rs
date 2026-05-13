@@ -143,19 +143,32 @@ async fn write_stub_artifact(
         fetch_originating_ask(http, &c.thread_id).await.unwrap_or_default()
     };
 
+    // Sanitize the artifact path before using it as a filename. If the
+    // persona emitted unresolved template placeholders like `<auto-id>`,
+    // writing them literally to disk produces filenames the operator (and
+    // ls/grep/glob) can't sanely handle. Substitute the placeholder with
+    // a timestamp suffix so the stub still lands at a triagable path.
+    // Observed 2026-05-13: CTO committed to `ADR-<auto-id>-...md`; the
+    // placeholder gate caught the file_write attempts but the
+    // circuit-breaker still wrote the stub at the literal path.
+    let sanitized_artifact = sanitize_artifact_path(&c.success_artifact);
+
     let now = chrono::Utc::now().to_rfc3339();
     let stub = format!(
         "# {artifact} — STUB (operator triage required)\n\n\
          **Status:** stub — auto-generated after {n} drafter attempts\n\
          **Generated:** {now}\n\
          **Committed by:** `{role}`\n\
+         **Original committed path:** `{original}`\n\
          **Commitment:** {action}\n\n\
          ## Why this is a stub\n\n\
          The persona `{role}` committed to producing this artifact, but on \
-         {n} drafter attempts returned `INSUFFICIENT_CONTEXT` or an empty \
-         draft. Most likely the persona over-committed during a \
-         conversational reply — promising a structured artifact when the \
-         CEO's original ask was open-ended.\n\n\
+         {n} drafter attempts the drafter could not produce a usable \
+         draft. Causes include: persona returned `INSUFFICIENT_CONTEXT`, \
+         persona returned an empty draft, content was too short for the \
+         long-form artifact type (e.g. ADR / spec), or the artifact path \
+         contained unresolved template placeholders like `<auto-id>` that \
+         the persona forgot to substitute.\n\n\
          ## Originating ask\n\n\
          ```\n{ask}\n```\n\n\
          ## What to do\n\n\
@@ -165,13 +178,17 @@ async fn write_stub_artifact(
          2. **Delete this stub** — the commitment is already marked abandoned \
             in STDB so nothing will retry.\n\
          3. **Re-ask with more context** — DM `@{role}` with a more specific \
-            prompt and let the responder + drafter pipeline try again.\n\n\
+            prompt (and an explicit concrete artifact path/ID if the prior \
+            failure was a placeholder) and let the responder + drafter \
+            pipeline try again. Consider pinning `HEX_DRAFTER_MODEL_LONGFORM` \
+            to a stronger model for ADR/spec asks.\n\n\
          ---\n\n\
          *Stub written directly by the drafter circuit-breaker. Bypassed \
          twin review because stubs are an operator-triage signal, not a \
          persona artifact. Commitment_id `{cid}` was abandoned with the \
          abandon reason pointing here. See `hex-nexus/src/orchestration/drafter.rs`.*\n",
-        artifact = c.success_artifact,
+        artifact = sanitized_artifact,
+        original = c.success_artifact,
         n = STUB_AFTER_FAILURES,
         now = now,
         role = c.role,
@@ -182,7 +199,7 @@ async fn write_stub_artifact(
 
     // Resolve target path safely against repo_root — refuse anything that
     // escapes the tree via .. or symlinks.
-    let target = repo_root.join(&c.success_artifact);
+    let target = repo_root.join(&sanitized_artifact);
     let canonical_root = repo_root
         .canonicalize()
         .map_err(|e| format!("canonicalise repo_root: {}", e))?;
@@ -210,7 +227,7 @@ async fn write_stub_artifact(
     // Mark the commitment abandoned in STDB with a clear evidence pointer.
     let abandon_reason = format!(
         "auto-stub after {} drafter attempts — see {} for operator triage",
-        STUB_AFTER_FAILURES, c.success_artifact
+        STUB_AFTER_FAILURES, sanitized_artifact
     );
     let url = format!("{}/v1/database/{}/call/commitment_abandon", stdb_host, hex_db);
     let body = serde_json::json!([c.id, abandon_reason]);
@@ -232,10 +249,60 @@ async fn write_stub_artifact(
     tracing::info!(
         commitment_id = c.id,
         role = %c.role,
-        path = %c.success_artifact,
+        path = %sanitized_artifact,
+        original_path = %c.success_artifact,
         "drafter: stub written directly + commitment abandoned (twin bypassed)"
     );
     Ok(())
+}
+
+/// Sanitizes an artifact path by substituting any unresolved `<token>`
+/// placeholders with a UTC timestamp suffix, so a placeholder-bearing
+/// commitment can still close to a triagable filename instead of writing
+/// a literal `<auto-id>` to disk. Format: each `<token>` becomes
+/// `placeholder-YYYYMMDDHHMMSS` so multiple placeholders in one path get
+/// distinct-enough names within a single run. Idempotent for paths with
+/// no placeholders.
+fn sanitize_artifact_path(path: &str) -> String {
+    if find_unresolved_placeholder(path).is_none() {
+        return path.to_string();
+    }
+    let ts = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
+    let mut out = String::with_capacity(path.len());
+    let mut chars = path.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if c != '<' {
+            out.push(c);
+            continue;
+        }
+        let rest = &path[i + 1..];
+        let end = match rest.find('>') {
+            Some(e) => e,
+            None => {
+                out.push(c);
+                continue;
+            }
+        };
+        let inner = &rest[..end];
+        let alnum_only = !inner.is_empty()
+            && !inner.contains('<')
+            && !inner.contains(' ')
+            && !inner.contains('/')
+            && !inner.contains('\n')
+            && inner
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-');
+        if alnum_only {
+            out.push_str(&format!("placeholder-{}", ts));
+            // Skip ahead past the closing `>`.
+            for _ in 0..(end + 1) {
+                chars.next();
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 #[derive(Debug)]
@@ -791,6 +858,32 @@ mod literal_tests {
     #[test]
     fn min_bytes_source_code_none() {
         assert_eq!(min_content_bytes_for_path("hex-nexus/src/foo.rs"), None);
+    }
+
+    #[test]
+    fn sanitize_no_placeholder_is_identity() {
+        use super::sanitize_artifact_path;
+        let p = "docs/adrs/ADR-2026-05-13-2300-foo.md";
+        assert_eq!(sanitize_artifact_path(p), p);
+    }
+
+    #[test]
+    fn sanitize_replaces_auto_id_placeholder() {
+        use super::sanitize_artifact_path;
+        let p = "docs/adrs/ADR-<auto-id>-user-defined-soul-personas.md";
+        let s = sanitize_artifact_path(p);
+        assert!(s.starts_with("docs/adrs/ADR-placeholder-"), "got {}", s);
+        assert!(s.ends_with("-user-defined-soul-personas.md"), "got {}", s);
+        assert!(!s.contains('<'), "got {}", s);
+        assert!(!s.contains('>'), "got {}", s);
+    }
+
+    #[test]
+    fn sanitize_skips_non_placeholder_brackets() {
+        use super::sanitize_artifact_path;
+        // Space + bang inside → not a placeholder, leave alone.
+        let p = "docs/x <hello world!>.md";
+        assert_eq!(sanitize_artifact_path(p), p);
     }
 
     #[test]
