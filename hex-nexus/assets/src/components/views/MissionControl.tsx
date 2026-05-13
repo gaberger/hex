@@ -19,6 +19,7 @@ import { navigate } from "../../stores/router";
 interface MissionControlPayload {
   ts: string;
   stdb_alive: boolean;
+  pulse?: PulseRow;
   activity: {
     recent_executed: ExecutedRow[];
     open_merge_requests: MergeRow[];
@@ -30,6 +31,36 @@ interface MissionControlPayload {
   };
   personas: PersonaRow[];
   top_processes: ProcessRow[];
+  recent_thoughts?: ThoughtRow[];
+  thought_patterns?: PatternRow[];
+  recent_messages?: MessageRow[];
+  live_events?: LiveEventRow[];
+}
+
+interface PulseRow {
+  last_thought_ts: string;
+  last_persona_role: string;
+  last_persona_msg_ts: string;
+  last_persona_msg_preview: string;
+  last_improver_event_ts: string;
+  total_thoughts_db: number;
+  active_pattern_count: number;
+  git_head: { sha: string; subject: string; age_seconds: number };
+}
+interface ThoughtRow {
+  thought_id: number; agent_role: string; kind: string;
+  content: string; related_msg_id: number; created_at: string;
+}
+interface PatternRow {
+  pattern: string; scope: string; severity: string; count: number;
+  mentioning_roles?: string[]; sample_thought_ids?: number[];
+}
+interface MessageRow {
+  msg_id: number; from_role: string; to_role: string; message: string; created_at: string;
+}
+interface LiveEventRow {
+  id: number; event_type: string; created_at: string;
+  session_id: string; preview: string;
 }
 
 interface ExecutedRow {
@@ -62,6 +93,44 @@ const REFRESH_MS = 5000;
 
 const fmtRss = (kb: number) =>
   kb >= 1024 * 1024 ? `${(kb / 1024 / 1024).toFixed(1)}G` : `${(kb / 1024).toFixed(0)}M`;
+
+const ageSince = (iso: string): string => {
+  if (!iso) return "—";
+  const t = Date.parse(iso);
+  if (isNaN(t)) return "—";
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+};
+
+const ageSecondsToText = (s: number): string => {
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+};
+
+const patternSevColor = (s: string) => {
+  switch (s) {
+    case "error":   return "bg-red-900/40 text-red-300 border-red-800";
+    case "warning": return "bg-yellow-900/40 text-yellow-300 border-yellow-800";
+    default:        return "bg-gray-800 text-gray-300 border-gray-700";
+  }
+};
+
+const eventColor = (kind: string) => {
+  if (kind.startsWith("improver_act") || kind === "loop_notification")
+    return "bg-cyan-900/40 text-cyan-300 border-cyan-800";
+  if (kind === "improver_tick" || kind === "brain_tick")
+    return "bg-gray-800 text-gray-400 border-gray-700";
+  if (kind === "twin_verdict" || kind === "executor_applied")
+    return "bg-green-900/40 text-green-300 border-green-800";
+  if (kind === "persona_reply" || kind === "thought_journaled")
+    return "bg-purple-900/40 text-purple-300 border-purple-800";
+  return "bg-gray-800 text-gray-400 border-gray-700";
+};
 
 const sevColor = (s: string) => {
   switch (s) {
@@ -211,6 +280,46 @@ const MissionControl: Component = () => {
       </Show>
 
       <Show when={data()}>
+        {/* Pulse hero — narrative "what is going on right now" strip */}
+        <Show when={data()!.pulse}>
+          <div class="px-6 py-3 border-b border-gray-800 bg-gradient-to-r from-gray-900/60 to-gray-950">
+            <div class="flex flex-wrap items-stretch gap-4 text-xs">
+              <div class="flex-1 min-w-[200px]">
+                <div class="uppercase tracking-wide text-gray-500 text-[10px]">last commit</div>
+                <Show when={data()!.pulse!.git_head.sha} fallback={<div class="text-gray-600">—</div>}>
+                  <div class="font-mono text-cyan-400">{data()!.pulse!.git_head.sha}</div>
+                  <div class="text-gray-300 line-clamp-1">{data()!.pulse!.git_head.subject}</div>
+                  <div class="text-gray-500">{ageSecondsToText(data()!.pulse!.git_head.age_seconds)}</div>
+                </Show>
+              </div>
+              <div class="flex-1 min-w-[240px]">
+                <div class="uppercase tracking-wide text-gray-500 text-[10px]">last persona reply</div>
+                <Show when={data()!.pulse!.last_persona_role} fallback={<div class="text-gray-600">silent</div>}>
+                  <div class="text-purple-300 font-mono">{data()!.pulse!.last_persona_role}</div>
+                  <div class="text-gray-300 line-clamp-1">{data()!.pulse!.last_persona_msg_preview}</div>
+                  <div class="text-gray-500">{ageSince(data()!.pulse!.last_persona_msg_ts)}</div>
+                </Show>
+              </div>
+              <div class="flex-1 min-w-[180px]">
+                <div class="uppercase tracking-wide text-gray-500 text-[10px]">last thought journaled</div>
+                <div class="text-gray-300">{ageSince(data()!.pulse!.last_thought_ts)}</div>
+                <div class="text-gray-500">{data()!.pulse!.total_thoughts_db} in current window</div>
+              </div>
+              <div class="flex-1 min-w-[180px]">
+                <div class="uppercase tracking-wide text-gray-500 text-[10px]">improver loop</div>
+                <Show when={data()!.pulse!.last_improver_event_ts} fallback={<div class="text-red-400">no events</div>}>
+                  <div class="text-cyan-300">tick {ageSince(data()!.pulse!.last_improver_event_ts)}</div>
+                </Show>
+                <div class="text-gray-500">
+                  <span class={data()!.pulse!.active_pattern_count > 0 ? "text-orange-400" : "text-gray-500"}>
+                    {data()!.pulse!.active_pattern_count} active pattern{data()!.pulse!.active_pattern_count === 1 ? "" : "s"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Show>
+
         {/* Board ask compose */}
         <div class="px-6 py-3 border-b border-gray-800 bg-gray-900/40">
           <div class="flex gap-2">
@@ -372,6 +481,122 @@ const MissionControl: Component = () => {
                   </button>
                 </div>
               )}</For>
+            </Show>
+          </div>
+
+          {/* Live system events — 8 cols */}
+          <div class="col-span-12 lg:col-span-8 space-y-2">
+            <div class="text-xs uppercase tracking-wide text-gray-500">
+              Live events (autonomous loop) — {(data()!.live_events ?? []).length} shown
+            </div>
+            <Show
+              when={(data()!.live_events ?? []).length > 0}
+              fallback={<div class="text-gray-500 text-sm p-3 border border-gray-900 rounded bg-gray-900/30">
+                No high-signal events yet. Start the sched daemon to populate this stream:
+                <code class="block mt-1 font-mono text-gray-400">hex sched daemon --interval 30 --max-failures 3</code>
+              </div>}
+            >
+              <div class="border border-gray-800 rounded bg-gray-900/30 divide-y divide-gray-900 max-h-80 overflow-y-auto">
+                <For each={data()!.live_events}>{(ev) => (
+                  <div class="px-3 py-2 text-xs">
+                    <div class="flex items-center gap-2">
+                      <span class={`px-2 py-0.5 rounded border ${eventColor(ev.event_type)}`}>{ev.event_type}</span>
+                      <span class="text-gray-500 ml-auto">{ageSince(ev.created_at)}</span>
+                    </div>
+                    <Show when={ev.preview}>
+                      <div class="text-gray-400 mt-1 font-mono line-clamp-2">{ev.preview}</div>
+                    </Show>
+                  </div>
+                )}</For>
+              </div>
+            </Show>
+          </div>
+
+          {/* Active thought patterns — 4 cols (BS-5 inline) */}
+          <div class="col-span-12 lg:col-span-4 space-y-2">
+            <div class="text-xs uppercase tracking-wide text-gray-500 flex items-center gap-2">
+              <span>Thought patterns (BS-5)</span>
+              <span class="text-gray-600">{(data()!.thought_patterns ?? []).length} active</span>
+            </div>
+            <Show
+              when={(data()!.thought_patterns ?? []).length > 0}
+              fallback={<div class="text-gray-500 text-sm p-3 border border-gray-900 rounded bg-gray-900/30">
+                No cross-persona patterns. Personas are aligned or quiet.
+              </div>}
+            >
+              <For each={data()!.thought_patterns}>{(p) => (
+                <div class={`border rounded p-2 ${patternSevColor(p.severity)}`}>
+                  <div class="flex items-center gap-2 text-xs">
+                    <span class="font-mono uppercase">{p.pattern}</span>
+                    <span class="text-gray-500 ml-auto">×{p.count}</span>
+                  </div>
+                  <div class="text-sm font-mono mt-1 break-all">{p.scope}</div>
+                  <Show when={p.mentioning_roles && p.mentioning_roles.length > 0}>
+                    <div class="text-xs text-gray-400 mt-1">
+                      cited by: {p.mentioning_roles!.join(", ")}
+                    </div>
+                  </Show>
+                </div>
+              )}</For>
+            </Show>
+          </div>
+
+          {/* Recent thoughts — 8 cols */}
+          <div class="col-span-12 lg:col-span-8 space-y-2">
+            <div class="text-xs uppercase tracking-wide text-gray-500 flex items-center gap-2">
+              <span>Recent persona thoughts</span>
+              <button
+                class="text-gray-500 hover:text-gray-300 underline ml-auto"
+                onClick={() => navigate({ page: "thoughts" })}
+              >
+                full journal →
+              </button>
+            </div>
+            <Show
+              when={(data()!.recent_thoughts ?? []).length > 0}
+              fallback={<div class="text-gray-500 text-sm p-3 border border-gray-900 rounded bg-gray-900/30">
+                No thoughts journaled. Sending a board ask above will trigger persona replies which auto-journal.
+              </div>}
+            >
+              <div class="border border-gray-800 rounded bg-gray-900/30 divide-y divide-gray-900 max-h-72 overflow-y-auto">
+                <For each={data()!.recent_thoughts}>{(t) => (
+                  <div class="px-3 py-2 text-xs">
+                    <div class="flex items-center gap-2">
+                      <span class="text-purple-300 font-mono">{t.agent_role}</span>
+                      <span class="text-gray-600">{t.kind}</span>
+                      <span class="text-gray-500 ml-auto">#{t.thought_id} · {ageSince(t.created_at)}</span>
+                    </div>
+                    <div class="text-gray-300 mt-1 line-clamp-2">{t.content}</div>
+                  </div>
+                )}</For>
+              </div>
+            </Show>
+          </div>
+
+          {/* Recent persona DMs — 4 cols */}
+          <div class="col-span-12 lg:col-span-4 space-y-2">
+            <div class="text-xs uppercase tracking-wide text-gray-500">
+              Recent messages
+            </div>
+            <Show
+              when={(data()!.recent_messages ?? []).length > 0}
+              fallback={<div class="text-gray-500 text-sm p-3 border border-gray-900 rounded bg-gray-900/30">
+                No persona messages yet.
+              </div>}
+            >
+              <div class="border border-gray-800 rounded bg-gray-900/30 divide-y divide-gray-900 max-h-72 overflow-y-auto">
+                <For each={data()!.recent_messages}>{(m) => (
+                  <div class="px-3 py-2 text-xs">
+                    <div class="flex items-center gap-2">
+                      <span class="text-cyan-400 font-mono">{m.from_role}</span>
+                      <span class="text-gray-600">→</span>
+                      <span class="text-gray-400 font-mono">{m.to_role}</span>
+                      <span class="text-gray-500 ml-auto">{ageSince(m.created_at)}</span>
+                    </div>
+                    <div class="text-gray-300 mt-1 line-clamp-2">{m.message}</div>
+                  </div>
+                )}</For>
+              </div>
             </Show>
           </div>
 
