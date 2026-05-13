@@ -1,6 +1,6 @@
 # ADR-2026-05-11-0700: Overnight Autonomy Failure Modes + Remediation
 
-Status: **Proposed**
+Status: **Accepted** (shipped 2026-05; R1 in commit fe77411d `fix(executor): cargo_check becomes hard-gate in action_executor`; R2/R3/R4 in commit 2ac57f07 `fix(cycler): per-file commit, no stash, wall-clock watchdog`)
 Date: 2026-05-11
 Drivers: Overnight autonomous run 2026-05-10 22:25 EDT → 2026-05-11 05:44 EDT delivered 0 commits of autonomous code despite 61 SOP runs across 6 personas. Stash-on-build-fail safety worked exactly as designed but produced no shippable code value. Operator woke to a missing report + no observable progress.
 

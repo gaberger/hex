@@ -1,6 +1,6 @@
 # ADR-2026-05-09-1430: Workspace Boundary Enforcement
 
-**Status:** Proposed  
+**Status:** Accepted (shipped 2026-05; commits 0bc43bd1 ADR landed via Chief Architect autonomous, 578ee7c2 workspace_boundary_check tool implemented)  
 **Date:** 2026-05-09
 
 ## Context

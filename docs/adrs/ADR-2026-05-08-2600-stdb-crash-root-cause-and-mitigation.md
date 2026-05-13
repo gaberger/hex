@@ -1,6 +1,6 @@
 # ADR-2026-05-08-2600 — stdb-crash-root-cause-and-mitigation
 
-Status: **Proposed**
+Status: **Accepted** (shipped 2026-05; watchdog autorestart proven through 4 cycles, 24KB payload-cap mitigation landed per memory `project_typed_tool_sop_proven`)
 Date: 2026-05-09
 
 ## Context

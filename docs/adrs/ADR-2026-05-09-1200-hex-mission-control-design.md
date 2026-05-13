@@ -1,6 +1,6 @@
 # ADR-2026-05-09-1200 — hex-mission-control-design
 
-Status: **Proposed**
+Status: **Accepted** (shipped 2026-05; commits f4001ce5 Mission Control single landing surface, 7d5ea545 CPO authors mission-control UX spec via spec_draft end-to-end)
 Date: 2026-05-09
 
 ## Context

@@ -1,6 +1,6 @@
 # ADR-2026-05-12-1505 — Extend SOP Drafter to Emit Non-`file_write` Action Kinds
 
-Status: **Proposed**
+Status: **Accepted** (shipped 2026-05; commit e24fe9d5 `feat(sop): implement ADR-2026-05-12-1505 — emit/execute adr_status_set kind`)
 Date: 2026-05-12
 
 ## Context

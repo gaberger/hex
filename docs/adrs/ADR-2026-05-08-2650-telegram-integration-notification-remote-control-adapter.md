@@ -1,10 +1,10 @@
 # ADR-2026-05-08-2650 — telegram-integration-notification-remote-control-adapter
 
-Status: **Proposed**
+Status: **Accepted** (shipped 2026-05; commits d327a266 telegram_notifier stub + dc08f6f5 wire into escalate_to_operator)
 Date: 2026-05-09
 
 ---
-Status: **Proposed**  
+Status: **Accepted** (shipped 2026-05; commits d327a266 telegram_notifier stub + dc08f6f5 wire into escalate_to_operator)  
 Supersedes: -  
 Superseded-By: -  
 ---
