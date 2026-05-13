@@ -22,6 +22,7 @@ use tokio::sync::{Mutex, Semaphore};
 
 use crate::adapters::spacetime_agent_comm::SpacetimeAgentCommAdapter;
 use crate::adapters::spacetime_persona::SpacetimePersonaSupervisor;
+use crate::routes::chat::strip_think_block;
 use hex_core::ports::agent_comm::IAgentCommPort;
 
 const POLL_INTERVAL_SECS: u64 = 4;
@@ -49,6 +50,10 @@ const THOUGHT_MAX_TOKENS: u32 = 96;
 // Re-run the bench when new models drop.
 const REPLY_MODEL_CHAT_DEFAULT: &str = "qwen3.5:9b";
 const REPLY_MODEL_COMMIT_DEFAULT: &str = "nemotron-mini";
+/// Model for the secondary "why this reply" prompt. Pinned to a small
+/// non-thinking format-follower so summaries don't burn THOUGHT_MAX_TOKENS=96
+/// on `<think>` reasoning. Override: HEX_THOUGHT_SUMMARIZER_MODEL.
+const THOUGHT_SUMMARIZER_MODEL_DEFAULT: &str = "nemotron-mini";
 /// Cap concurrent inference calls so we don't queue 9 simultaneous
 /// requests at Ollama for a 4B model. Override with HEX_RESPONDER_CONCURRENCY.
 const REPLY_CONCURRENCY_DEFAULT: usize = 3;
@@ -843,7 +848,10 @@ async fn generate_thought_summary(
     inbound_content: &str,
     reply_content: &str,
 ) -> Result<String, String> {
+    let model = std::env::var("HEX_THOUGHT_SUMMARIZER_MODEL")
+        .unwrap_or_else(|_| THOUGHT_SUMMARIZER_MODEL_DEFAULT.to_string());
     let body = serde_json::json!({
+        "model": model,
         "messages": [{
             "role": "user",
             "content": format!(
@@ -877,10 +885,25 @@ async fn generate_thought_summary(
     if !status.is_success() {
         return Err(format!("HTTP {}: {}", status, json));
     }
-    json.get("content")
+    let raw = json
+        .get("content")
         .and_then(|c| c.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| format!("missing content in response: {}", json))
+        .ok_or_else(|| format!("missing content in response: {}", json))?;
+    // Thinking models (qwen3, deepseek-r1, etc.) wrap reasoning in
+    // <think>…</think>. The main reply path's inference gateway strips
+    // them, but the thought summarizer was journaling raw reasoning —
+    // and at THOUGHT_MAX_TOKENS=96 the whole budget is usually consumed
+    // by <think>, leaving truncated mid-reasoning in the journal.
+    let stripped = strip_think_block(raw);
+    let cleaned = stripped.trim();
+    // Contract says "ONE sentence (max 30 words)". Take the first
+    // sentence and cap at 240 chars as belt-and-braces.
+    let one_line = cleaned
+        .split_terminator(['.', '\n'])
+        .next()
+        .unwrap_or(cleaned)
+        .trim();
+    Ok(one_line.chars().take(240).collect())
 }
 
 fn truncate(s: &str, n: usize) -> String {
