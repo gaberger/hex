@@ -36,7 +36,7 @@
           "title": "Republish hexflo-coordination module and verify new table is queryable via hex stdb tables.",
           "status": "pending",
           "strategy_hint": "script",
-          "files": [],
+          "files": ["spacetime-modules/hexflo-coordination/Cargo.toml"],
           "evidence": [
             "hex stdb tables | grep -i user_persona",
             "curl -sS -X POST http://127.0.0.1:3033/v1/database/hex/sql -H 'Content-Type: text/plain' -d 'SELECT name FROM user_persona LIMIT 1' | grep -v error"
