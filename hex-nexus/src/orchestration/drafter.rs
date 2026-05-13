@@ -448,10 +448,13 @@ async fn draft_one(
     // in 02:17 test where 4601 bytes of "Wait, the user said…" shipped to
     // disk instead of the requested one-liner). nemotron-mini doesn't think,
     // doesn't ramble, follows the "produce file body now" instruction.
-    // Override via HEX_DRAFTER_MODEL when a frontier model is warranted
-    // (long specs, code, etc.).
-    let drafter_model = std::env::var("HEX_DRAFTER_MODEL")
-        .unwrap_or_else(|_| "nemotron-mini".to_string());
+    //
+    // BUT: nemotron-mini is too small for long-form artifacts (ADRs, specs).
+    // Observed 2026-05-13: CTO produced a 53-byte stub for an ADR ask —
+    // grounded gate caught it, but the right structural fix is to route
+    // long-form artifacts through a stronger model when the operator opts in
+    // via HEX_DRAFTER_MODEL_LONGFORM. Generic override is still HEX_DRAFTER_MODEL.
+    let drafter_model = pick_drafter_model(&c.success_artifact);
     let body = serde_json::json!({
         "model": drafter_model,
         "messages": [{
@@ -498,6 +501,28 @@ async fn draft_one(
             "drafter: persona returned INSUFFICIENT_CONTEXT — abstain"
         );
         return Ok(DraftOutcome::PersonaAbstained);
+    }
+    // Long-form artifact stub-detection gate. ADRs / specs / analysis docs
+    // all need substantive content; a persona that returns 50 bytes for an
+    // ADR is producing a stub, not an artifact. Treat as abstain so the
+    // circuit-breaker can re-ask (ideally with a stronger drafter model
+    // pinned via HEX_DRAFTER_MODEL_LONGFORM). Observed 2026-05-13: CTO
+    // wrote `# soul personas alongside c-suite for adr-2026-05-13` and
+    // nothing else for an ADR ask that included 5+ KB of grounding context.
+    if let Some(min_bytes) = min_content_bytes_for_path(&c.success_artifact) {
+        let actual = content.trim().len();
+        if actual < min_bytes {
+            tracing::warn!(
+                commitment_id = c.id,
+                role = %c.role,
+                path = %c.success_artifact,
+                actual,
+                min = min_bytes,
+                model = %drafter_model,
+                "drafter: stub-detection gate — content too short for long-form artifact; abstaining (consider HEX_DRAFTER_MODEL_LONGFORM)"
+            );
+            return Ok(DraftOutcome::PersonaAbstained);
+        }
     }
     if content.len() > CONTENT_CAP_BYTES {
         // CTO ADR-2026-05-08-2600 — surface truncation so operator can detect
@@ -666,6 +691,45 @@ async fn queue_file_write_action(
     Ok(DraftOutcome::ProposedAction)
 }
 
+/// Selects the drafter model based on the artifact path. Long-form
+/// artifacts (ADRs, specs, analysis docs) prefer HEX_DRAFTER_MODEL_LONGFORM
+/// when set so the operator can route them through a stronger model than
+/// the default short-form drafter (nemotron-mini). Generic override is
+/// HEX_DRAFTER_MODEL; default is nemotron-mini.
+fn pick_drafter_model(path: &str) -> String {
+    let is_longform = path.starts_with("docs/adrs/")
+        || path.starts_with("docs/specs/")
+        || path.starts_with("docs/analysis/");
+    if is_longform {
+        if let Ok(m) = std::env::var("HEX_DRAFTER_MODEL_LONGFORM") {
+            if !m.trim().is_empty() {
+                return m;
+            }
+        }
+    }
+    if let Ok(m) = std::env::var("HEX_DRAFTER_MODEL") {
+        if !m.trim().is_empty() {
+            return m;
+        }
+    }
+    "nemotron-mini".to_string()
+}
+
+/// Returns the minimum-content-byte threshold for a given artifact path,
+/// or None if no minimum applies. Long-form documents (ADRs, specs,
+/// analysis) MUST be substantive; a 50-byte "ADR" is always a stub.
+fn min_content_bytes_for_path(path: &str) -> Option<usize> {
+    if path.starts_with("docs/adrs/") {
+        Some(1000)
+    } else if path.starts_with("docs/specs/") {
+        Some(800)
+    } else if path.starts_with("docs/analysis/") {
+        Some(800)
+    } else {
+        None
+    }
+}
+
 /// Returns the first unresolved `<token>` placeholder in the path, if any.
 /// Examples: `<turn>`, `<id>`, `<persona>`. Used by draft_one to refuse
 /// committing a proposed_action whose path contains literal template
@@ -700,7 +764,75 @@ fn find_unresolved_placeholder(path: &str) -> Option<String> {
 
 #[cfg(test)]
 mod literal_tests {
-    use super::{extract_literal_content, find_unresolved_placeholder};
+    use super::{extract_literal_content, find_unresolved_placeholder, min_content_bytes_for_path, pick_drafter_model};
+
+    #[test]
+    fn min_bytes_adr() {
+        assert_eq!(min_content_bytes_for_path("docs/adrs/ADR-x.md"), Some(1000));
+    }
+
+    #[test]
+    fn min_bytes_spec() {
+        assert_eq!(min_content_bytes_for_path("docs/specs/foo.md"), Some(800));
+    }
+
+    #[test]
+    fn min_bytes_analysis() {
+        assert_eq!(min_content_bytes_for_path("docs/analysis/report.md"), Some(800));
+    }
+
+    #[test]
+    fn min_bytes_workplan_none() {
+        // Workplans are JSON and the structural validator handles short
+        // ones — drafter doesn't gate on size for these.
+        assert_eq!(min_content_bytes_for_path("docs/workplans/wp-x.json"), None);
+    }
+
+    #[test]
+    fn min_bytes_source_code_none() {
+        assert_eq!(min_content_bytes_for_path("hex-nexus/src/foo.rs"), None);
+    }
+
+    #[test]
+    fn pick_model_routing() {
+        // Combined test: env vars are process-global and tests run in
+        // parallel by default, so we sequence all env-var manipulation
+        // inside one test rather than risking races between two.
+        let prev_lf = std::env::var("HEX_DRAFTER_MODEL_LONGFORM").ok();
+        let prev = std::env::var("HEX_DRAFTER_MODEL").ok();
+
+        // Case 1: both env vars unset → default falls back to nemotron-mini
+        // regardless of path.
+        std::env::remove_var("HEX_DRAFTER_MODEL_LONGFORM");
+        std::env::remove_var("HEX_DRAFTER_MODEL");
+        assert_eq!(pick_drafter_model("docs/notes.md"), "nemotron-mini");
+        assert_eq!(pick_drafter_model("docs/adrs/foo.md"), "nemotron-mini");
+
+        // Case 2: HEX_DRAFTER_MODEL_LONGFORM set → only ADR/spec/analysis
+        // paths route through it; everything else uses the (still-unset)
+        // generic default.
+        std::env::set_var("HEX_DRAFTER_MODEL_LONGFORM", "test-strong-model");
+        assert_eq!(pick_drafter_model("docs/adrs/foo.md"), "test-strong-model");
+        assert_eq!(pick_drafter_model("docs/specs/foo.md"), "test-strong-model");
+        assert_eq!(pick_drafter_model("docs/analysis/r.md"), "test-strong-model");
+        assert_eq!(pick_drafter_model("hex-cli/src/foo.rs"), "nemotron-mini");
+
+        // Case 3: HEX_DRAFTER_MODEL also set → non-longform paths use it,
+        // longform still wins via LONGFORM.
+        std::env::set_var("HEX_DRAFTER_MODEL", "test-default");
+        assert_eq!(pick_drafter_model("hex-cli/src/foo.rs"), "test-default");
+        assert_eq!(pick_drafter_model("docs/adrs/foo.md"), "test-strong-model");
+
+        // Restore prior env so other tests in the binary aren't disturbed.
+        match prev_lf {
+            Some(v) => std::env::set_var("HEX_DRAFTER_MODEL_LONGFORM", v),
+            None => std::env::remove_var("HEX_DRAFTER_MODEL_LONGFORM"),
+        }
+        match prev {
+            Some(v) => std::env::set_var("HEX_DRAFTER_MODEL", v),
+            None => std::env::remove_var("HEX_DRAFTER_MODEL"),
+        }
+    }
     #[test] fn one_line() {
         let r = extract_literal_content("@cto write docs/x.md containing only one line: Hello from the pipeline.");
         assert_eq!(r.as_deref(), Some("Hello from the pipeline."));
