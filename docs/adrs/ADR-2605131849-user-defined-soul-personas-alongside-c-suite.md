@@ -1,6 +1,6 @@
 # ADR-2605131849: User-defined SOUL personas alongside the c-suite
 
-**Status:** Proposed
+**Status:** Accepted (operator-flipped 2026-05-13 19:00 EDT — ADR-2605131849. Implementation delegated to the autonomous c-suite + leads + IC pools. Auto-emitter expected to materialize a workplan; CEO also DM'd directly to coordinate the 7 implementation phases.)
 **Date:** 2026-05-13
 **Drivers:** Operators want the ergonomic surface Hermes Agent provides (one-command custom-agent creation, distributable profiles, flat-peer routing) without losing hex's distinguishing structural primitives (typed c-suite roles, atomic-claim mediation, hexagonal-architecture enforcement, shared STDB coordination state). Today the only path to a new persona is to edit a YAML under `hex-cli/assets/agents/hex/hex/` and rebuild the binary — operationally heavyweight. Separately, today's session exposed a routing-discrimination bug: `POST /api/org/send-message {"to":"cto"}` broadcasts to the c-suite board thread and the first responder claims, regardless of the `to:` field. There is no DM-level delivery for arbitrary persona names.
 

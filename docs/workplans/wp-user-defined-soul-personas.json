@@ -1,0 +1,281 @@
+{
+  "id": "wp-user-defined-soul-personas",
+  "title": "Implement user-defined SOUL personas alongside the c-suite (ADR-2605131849)",
+  "adr": "ADR-2605131849",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "STDB schema — user_persona table + reducers",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "title": "Add UserPersona table to spacetime-modules/hexflo-coordination/src/lib.rs with fields name (primary_key String), soul_hash (String, SHA-256), created_at (Timestamp), last_used_at (Option<Timestamp>), tools_override (Option<String> JSON), tier_models_override (Option<String> JSON). Mark public.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "evidence": [
+            "grep -n 'struct UserPersona' spacetime-modules/hexflo-coordination/src/lib.rs",
+            "grep -n '#\\[spacetimedb::table(name = user_persona' spacetime-modules/hexflo-coordination/src/lib.rs"
+          ]
+        },
+        {
+          "id": "P1.2",
+          "title": "Add reducers user_persona_create(name, soul_hash, tools_override, tier_models_override), user_persona_delete(name), user_persona_touch(name, now), user_persona_update_soul(name, soul_hash) with collision check against persona_pool. Reject names matching built-in c-suite or IC role identifiers.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "evidence": [
+            "grep -n 'fn user_persona_create' spacetime-modules/hexflo-coordination/src/lib.rs",
+            "grep -n 'fn user_persona_delete' spacetime-modules/hexflo-coordination/src/lib.rs",
+            "grep -n 'fn user_persona_touch' spacetime-modules/hexflo-coordination/src/lib.rs",
+            "grep -n 'fn user_persona_update_soul' spacetime-modules/hexflo-coordination/src/lib.rs"
+          ]
+        },
+        {
+          "id": "P1.3",
+          "title": "Republish hexflo-coordination module and verify new table is queryable via hex stdb tables.",
+          "status": "pending",
+          "strategy_hint": "script",
+          "files": [],
+          "evidence": [
+            "hex stdb tables | grep -i user_persona",
+            "curl -sS -X POST http://127.0.0.1:3033/v1/database/hex/sql -H 'Content-Type: text/plain' -d 'SELECT name FROM user_persona LIMIT 1' | grep -v error"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "CLI verb — hex persona create/delete/list/show",
+      "tasks": [
+        {
+          "id": "P2.1",
+          "title": "Create hex-cli/src/commands/persona.rs with clap subcommand definitions for Create, Delete, List, Show. Name validation regex ^[a-z][a-z0-9-]{0,63}$. Wire into hex-cli/src/main.rs top-level clap structure as 'persona' command.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/persona.rs",
+            "hex-cli/src/main.rs"
+          ],
+          "evidence": [
+            "grep -n 'fn run_persona\\|enum PersonaSubcommand' hex-cli/src/commands/persona.rs",
+            "hex persona --help | grep -i 'create\\|delete\\|list\\|show'"
+          ]
+        },
+        {
+          "id": "P2.2",
+          "title": "Implement hex persona create <name> --soul <path>: read SOUL file, compute SHA-256, write to ~/.hex/personas/<name>/SOUL.md, call user_persona_create reducer via nexus REST. Reject if persona_pool name collision.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": ["hex-cli/src/commands/persona.rs"],
+          "evidence": [
+            "grep -n 'fn create_persona' hex-cli/src/commands/persona.rs",
+            "cargo test -p hex-cli --lib persona::create"
+          ]
+        },
+        {
+          "id": "P2.3",
+          "title": "Implement hex persona list (shows c-suite + user-personas in two sections), hex persona show <name> (SOUL preview, tools/tier overrides), hex persona delete <name> (removes directory + STDB row).",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": ["hex-cli/src/commands/persona.rs"],
+          "evidence": [
+            "grep -n 'fn list_personas\\|fn show_persona\\|fn delete_persona' hex-cli/src/commands/persona.rs",
+            "cargo test -p hex-cli --lib persona::list",
+            "cargo test -p hex-cli --lib persona::show",
+            "cargo test -p hex-cli --lib persona::delete"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "SOUL.md security scan — prompt injection + invisible Unicode",
+      "tasks": [
+        {
+          "id": "P3.1",
+          "title": "Create hex-core/src/security/soul_scan.rs with fn scan_soul(content: &str) -> Result<(), SoulScanError> that rejects: (1) regex matches for (?i)ignore (previous|all|prior) instructions, (2) (?i)you are now , (3) invisible Unicode codepoints U+200B/U+200C/U+200D/U+2060/U+FEFF/U+E0000-U+E007F, (4) content over 64 KB.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": ["hex-core/src/security/soul_scan.rs"],
+          "evidence": [
+            "grep -n 'fn scan_soul' hex-core/src/security/soul_scan.rs",
+            "grep -n 'SoulScanError' hex-core/src/security/soul_scan.rs",
+            "cargo test -p hex-core soul_scan"
+          ]
+        },
+        {
+          "id": "P3.2",
+          "title": "Add 6 unit tests for soul_scan: passes clean content, rejects ignore-instructions, rejects you-are-now jailbreak, rejects zero-width space, rejects 65KB content, accepts 60KB content.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": ["hex-core/src/security/soul_scan.rs"],
+          "evidence": [
+            "cargo test -p hex-core soul_scan -- --list | grep -c test",
+            "cargo test -p hex-core soul_scan 2>&1 | grep 'passed'"
+          ]
+        },
+        {
+          "id": "P3.3",
+          "title": "Wire scan_soul into hex persona create and hex persona install — reject the create/install with SoulScanError details surfaced to the operator.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-cli/src/commands/persona.rs",
+            "hex-core/src/security/mod.rs"
+          ],
+          "evidence": [
+            "grep -n 'scan_soul' hex-cli/src/commands/persona.rs"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "title": "Org-comms routing branch — user_persona DM path",
+      "tasks": [
+        {
+          "id": "P4.1",
+          "title": "In hex-nexus/src/routes/org_comms.rs::route_to_agent, add early branch: if the to field matches a user_persona row in STDB, route to deliver_dm_to_user_persona (NO board-meeting broadcast, NO atomic-claim mediation). Falls through to existing c-suite path otherwise.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": ["hex-nexus/src/routes/org_comms.rs"],
+          "evidence": [
+            "grep -n 'lookup_user_persona\\|deliver_dm_to_user_persona' hex-nexus/src/routes/org_comms.rs"
+          ]
+        },
+        {
+          "id": "P4.2",
+          "title": "Implement deliver_dm_to_user_persona: creates thread dm-<persona>-<sender> if absent, posts the message to it, calls user_persona_touch on STDB to update last_used_at, triggers the user_persona_responder (P5) to generate a reply.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": ["hex-nexus/src/routes/org_comms.rs"],
+          "evidence": [
+            "grep -n 'fn deliver_dm_to_user_persona' hex-nexus/src/routes/org_comms.rs",
+            "cargo test -p hex-nexus --lib org_comms::user_persona_dm"
+          ]
+        }
+      ],
+      "blockedBy": ["P1.3"]
+    },
+    {
+      "id": "P5",
+      "title": "User-persona responder — variant of org_responder without atomic-claim",
+      "tasks": [
+        {
+          "id": "P5.1",
+          "title": "Create hex-nexus/src/orchestration/user_persona_responder.rs as a variant of org_responder. Reads ~/.hex/personas/<name>/SOUL.md for slot 1 of system prompt. Reads tools.yml + tier_models.yml from same directory for tool/model overrides. NO atomic claim_persona_turn call — user-personas have no peers to coordinate with.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": ["hex-nexus/src/orchestration/user_persona_responder.rs"],
+          "evidence": [
+            "grep -n 'fn respond_as_user_persona' hex-nexus/src/orchestration/user_persona_responder.rs",
+            "grep -n 'load_soul\\|load_tools_override\\|load_tier_override' hex-nexus/src/orchestration/user_persona_responder.rs"
+          ]
+        },
+        {
+          "id": "P5.2",
+          "title": "Wire user_persona_responder into the typed-tool dispatch path the c-suite uses. Tool allowlist defaults to full library minus delegation/clarify/memory (same exclusions as Hermes subagent delegation).",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": [
+            "hex-nexus/src/orchestration/user_persona_responder.rs",
+            "hex-nexus/src/orchestration/mod.rs"
+          ],
+          "evidence": [
+            "grep -n 'user_persona_responder' hex-nexus/src/orchestration/mod.rs",
+            "cargo test -p hex-nexus --lib user_persona_responder"
+          ]
+        }
+      ],
+      "blockedBy": ["P4.2"]
+    },
+    {
+      "id": "P6",
+      "title": "Dashboard panel — Custom personas view",
+      "tasks": [
+        {
+          "id": "P6.1",
+          "title": "Create hex-nexus/assets/src/components/views/CustomPersonas.tsx — Solid+Tailwind component subscribed to user_persona STDB table. Renders one card per persona with name, SOUL preview (first 200 chars), tool override badges, last_used_at relative time. Compose box at top mirrors the existing c-suite tree compose box.",
+          "status": "pending",
+          "strategy_hint": "scaffold",
+          "files": ["hex-nexus/assets/src/components/views/CustomPersonas.tsx"],
+          "evidence": [
+            "grep -l 'CustomPersonas' hex-nexus/assets/src/components/views/CustomPersonas.tsx",
+            "grep -n 'createMemo\\|createSignal' hex-nexus/assets/src/components/views/CustomPersonas.tsx"
+          ]
+        },
+        {
+          "id": "P6.2",
+          "title": "Wire CustomPersonas into the dashboard navigation. Route at #/personas/custom. Update hex-nexus/assets/src/App.tsx or equivalent router file. Rebuild the embedded assets with cargo build -p hex-nexus.",
+          "status": "pending",
+          "strategy_hint": "scaffold",
+          "files": [
+            "hex-nexus/assets/src/App.tsx"
+          ],
+          "evidence": [
+            "grep -n 'CustomPersonas\\|/personas/custom' hex-nexus/assets/src/App.tsx",
+            "cargo build -p hex-nexus 2>&1 | grep -v warning | tail -1"
+          ]
+        }
+      ],
+      "blockedBy": ["P1.3"]
+    },
+    {
+      "id": "P7",
+      "title": "Distribution — hex persona install/update/publish",
+      "tasks": [
+        {
+          "id": "P7.1",
+          "title": "Implement hex persona install <git-url> [--alias <name>]: git clone --depth 1 to a tempdir, validate SOUL.md present, run scan_soul (P3.1), copy to ~/.hex/personas/<name>/. --alias creates ~/.local/bin/<name> symlink pointing to hex wrapper that sets HEX_PERSONA_DEFAULT=<name>.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": ["hex-cli/src/commands/persona.rs"],
+          "evidence": [
+            "grep -n 'fn install_persona' hex-cli/src/commands/persona.rs",
+            "cargo test -p hex-cli --lib persona::install"
+          ],
+          "blockedBy": ["P3.3"]
+        },
+        {
+          "id": "P7.2",
+          "title": "Implement hex persona update <name>: refreshes the persona directory from its origin git remote (stored in ~/.hex/personas/<name>/.origin), preserving local edits via git stash + pop.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": ["hex-cli/src/commands/persona.rs"],
+          "evidence": [
+            "grep -n 'fn update_persona' hex-cli/src/commands/persona.rs"
+          ]
+        },
+        {
+          "id": "P7.3",
+          "title": "Implement hex persona publish <name> --to github --repo <owner/name>: initializes the persona dir as a git repo if not already, commits, pushes to the named remote. Strips credentials/memories from the publish.",
+          "status": "pending",
+          "strategy_hint": "codegen",
+          "files": ["hex-cli/src/commands/persona.rs"],
+          "evidence": [
+            "grep -n 'fn publish_persona' hex-cli/src/commands/persona.rs"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P8",
+      "title": "End-to-end smoke test — create, route, delete",
+      "tasks": [
+        {
+          "id": "P8.1",
+          "title": "Smoke test script scripts/smoke-user-persona.sh: hex persona create test-bot --soul /tmp/smoke-soul.md (where smoke-soul.md is a minimal valid SOUL), curl POST /api/org/send-message {to:test-bot,from:operator,content:hello,subject:smoke}, verify a response message appears in agent_comms table for thread dm-test-bot-operator, hex persona delete test-bot, verify ~/.hex/personas/test-bot/ and user_persona row are gone.",
+          "status": "pending",
+          "strategy_hint": "script",
+          "files": ["scripts/smoke-user-persona.sh"],
+          "evidence": [
+            "test -x scripts/smoke-user-persona.sh",
+            "bash scripts/smoke-user-persona.sh 2>&1 | grep -i 'PASS\\|all checks succeeded'"
+          ],
+          "blockedBy": ["P2.3", "P4.2", "P5.2"]
+        }
+      ]
+    }
+  ]
+}
