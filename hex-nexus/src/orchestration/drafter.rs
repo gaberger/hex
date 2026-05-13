@@ -369,6 +369,26 @@ async fn draft_one(
         return draft_adr_status_flip(http, stdb_host, hex_db, c).await;
     }
 
+    // Reject unresolved template placeholders (e.g. `<turn>`, `<id>`,
+    // `<persona>`) in the artifact path. Personas occasionally emit
+    // commitment lines like "draft ADR-2026-05-12-<turn>-foo.md" expecting
+    // the system to substitute — there is no substitution layer; literal
+    // angle-bracket tokens leak straight to disk. Treat as an abstain so
+    // the circuit-breaker can re-ask or promote to a stub, rather than
+    // queueing a known-broken proposed_action that the twin and executor
+    // then both have to special-case. Observed 2026-05-13 on CISO's first
+    // attempt at the fail-open-goal-judge ADR.
+    if let Some(token) = find_unresolved_placeholder(&c.success_artifact) {
+        tracing::warn!(
+            commitment_id = c.id,
+            role = %c.role,
+            artifact = %c.success_artifact,
+            placeholder = %token,
+            "drafter: rejecting commitment — artifact path contains unresolved template placeholder; abstaining"
+        );
+        return Ok(DraftOutcome::PersonaAbstained);
+    }
+
     // Pull the originating CEO message — prefer thread, fall back to the
     // related_msg_id lookup so DM-style commitments (no thread_id) still
     // get the original ask passed through to the drafter.
@@ -646,9 +666,41 @@ async fn queue_file_write_action(
     Ok(DraftOutcome::ProposedAction)
 }
 
+/// Returns the first unresolved `<token>` placeholder in the path, if any.
+/// Examples: `<turn>`, `<id>`, `<persona>`. Used by draft_one to refuse
+/// committing a proposed_action whose path contains literal template
+/// markers a persona forgot to substitute.
+fn find_unresolved_placeholder(path: &str) -> Option<String> {
+    let mut chars = path.char_indices();
+    while let Some((i, c)) = chars.next() {
+        if c != '<' {
+            continue;
+        }
+        // Find matching '>' on the same line, no whitespace, no other '<'.
+        let rest = &path[i + 1..];
+        let end = rest.find('>')?;
+        let inner = &rest[..end];
+        if inner.is_empty()
+            || inner.contains('<')
+            || inner.contains(' ')
+            || inner.contains('/')
+            || inner.contains('\n')
+        {
+            continue;
+        }
+        // Heuristic: an alnum/underscore-only token between angle brackets
+        // is almost certainly a template placeholder, not a legitimate path
+        // component. Real filesystems don't put `<foo>` in paths.
+        if inner.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-') {
+            return Some(format!("<{}>", inner));
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod literal_tests {
-    use super::extract_literal_content;
+    use super::{extract_literal_content, find_unresolved_placeholder};
     #[test] fn one_line() {
         let r = extract_literal_content("@cto write docs/x.md containing only one line: Hello from the pipeline.");
         assert_eq!(r.as_deref(), Some("Hello from the pipeline."));
@@ -659,6 +711,26 @@ mod literal_tests {
     }
     #[test] fn no_trigger() {
         assert!(extract_literal_content("write a status doc").is_none());
+    }
+    #[test] fn placeholder_turn() {
+        assert_eq!(
+            find_unresolved_placeholder("docs/adrs/ADR-2026-05-12-<turn>-fail-open-goal-judge.md").as_deref(),
+            Some("<turn>")
+        );
+    }
+    #[test] fn placeholder_id() {
+        assert_eq!(
+            find_unresolved_placeholder("docs/specs/<id>.md").as_deref(),
+            Some("<id>")
+        );
+    }
+    #[test] fn placeholder_none() {
+        assert!(find_unresolved_placeholder("docs/adrs/ADR-2026-05-13-1500-x.md").is_none());
+    }
+    #[test] fn placeholder_real_brackets_skipped() {
+        // Spaces, slashes, nested angle brackets → not a placeholder.
+        assert!(find_unresolved_placeholder("hello <world!> foo.md").is_none());
+        assert!(find_unresolved_placeholder("a < b > c").is_none());
     }
 }
 

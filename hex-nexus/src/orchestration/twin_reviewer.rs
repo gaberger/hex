@@ -447,6 +447,44 @@ async fn review_one(
         .await;
     }
 
+    // PERSONA CONTENT-GROUNDING GATE — added 2026-05-13 after CISO's first
+    // attempt at the fail-open-goal-judge ADR produced 2 KB of OWASP-DRP
+    // arbitration platitudes citing zero repo facts and dated 2023-04-28. The
+    // existing CONTENT-VS-ASK prompt to the LLM judge is prose-comparison and
+    // best-effort; this is a deterministic structural gate.
+    //
+    // Drafter-emitted (non-tool:*) file_writes to docs/* MUST cite at least
+    // one of: an ADR ID, a repo path under a known hex crate / docs dir, a
+    // git short-SHA, or a `hex <verb>` CLI invocation. Pure prose with no
+    // grounding markers is overwhelmingly diagnostic of an ungrounded
+    // REASON phase. Verdict is `escalate` (not `reject`) — surface to the
+    // operator who can decide whether to approve, redirect, or scrap.
+    if action.kind == "file_write" {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&action.payload_json) {
+            let path = v.get("path").and_then(|x| x.as_str()).unwrap_or("");
+            let content = v.get("content").and_then(|x| x.as_str()).unwrap_or("");
+            if path.starts_with("docs/") && !content_has_grounding(content) {
+                return decide(
+                    http,
+                    stdb_host,
+                    hex_db,
+                    action.id,
+                    "escalate",
+                    &format!(
+                        "content-grounding gate: persona '{}' produced {} bytes to '{}' \
+                         with no repo paths, ADR IDs, commit SHAs, or hex verbs cited. \
+                         Likely hallucinated — routing to operator for review.",
+                        action.proposed_by,
+                        content.len(),
+                        path
+                    ),
+                    "no-grounding",
+                )
+                .await;
+            }
+        }
+    }
+
     // Hard deny-list — applies to drafter / non-tool writes that fall through.
     if let Some(reason) = hard_deny(&action.kind, &action.payload_json) {
         return decide(
@@ -590,6 +628,110 @@ fn parse_verdict(raw: &str) -> Result<(String, String, String), String> {
         return Err(format!("invalid verdict: {}", verdict));
     }
     Ok((verdict, rationale, escalate))
+}
+
+/// Deterministic structural grounding gate for persona-drafted content.
+/// Returns true if `content` cites at least one concrete repo fact: an ADR
+/// ID, a path under a known hex crate / docs dir, a git short-SHA, or a
+/// `hex <verb>` CLI invocation. Used by the twin to surface drafts that
+/// look like hallucinated prose instead of grounded engineering writeups.
+fn content_has_grounding(content: &str) -> bool {
+    // ADR ID — both hyphen-date `ADR-YYYY-MM-DD-HHMM` and timestamp
+    // `ADR-YYMMDDHHMM` forms.
+    static ADR_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let adr_re = ADR_RE.get_or_init(|| {
+        regex::Regex::new(r"ADR-(?:\d{4}-\d{2}-\d{2}-\d{4}|\d{10})").unwrap()
+    });
+    if adr_re.is_match(content) {
+        return true;
+    }
+
+    // Repo paths — any known crate prefix or docs subdirectory.
+    const REPO_PREFIXES: &[&str] = &[
+        "hex-nexus/", "hex-cli/", "hex-core/", "hex-agent/", "hex-parser/",
+        "hex-desktop/", "hex-analyzer/", "spacetime-modules/",
+        "docs/adrs/", "docs/specs/", "docs/workplans/", "docs/analysis/",
+        "scripts/", ".hex/project.json", "CLAUDE.md",
+    ];
+    if REPO_PREFIXES.iter().any(|p| content.contains(p)) {
+        return true;
+    }
+
+    // Git short-SHA — 7-40 lowercase hex chars in a word boundary, with at
+    // least one digit AND one letter so we don't false-match repeated
+    // alphabetic tokens. Anchor on non-hex chars to keep `commit abc1234` in
+    // and `aaaaaaa` (style-guide example) out.
+    static SHA_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let sha_re = SHA_RE.get_or_init(|| {
+        regex::Regex::new(r"(?:^|[^0-9a-f])([0-9a-f]{7,40})(?:[^0-9a-f]|$)").unwrap()
+    });
+    for cap in sha_re.captures_iter(content) {
+        let s = &cap[1];
+        if s.chars().any(|c| c.is_ascii_digit()) && s.chars().any(|c| c.is_ascii_alphabetic()) {
+            return true;
+        }
+    }
+
+    // Recognised `hex <verb>` CLI invocations — cheap heuristic that the
+    // doc engages the system rather than abstract platitudes.
+    const HEX_VERBS: &[&str] = &[
+        "hex nexus", "hex adr", "hex plan", "hex chat", "hex memory",
+        "hex go", "hex hey", "hex pulse", "hex status", "hex doctor",
+        "hex sched", "hex pool", "hex stdb", "hex inbox", "hex swarm",
+        "hex task", "hex dev", "hex worktree", "hex analyze", "hex spec",
+        "hex brain", "hex agent", "hex goal", "hex verify",
+    ];
+    if HEX_VERBS.iter().any(|v| content.contains(v)) {
+        return true;
+    }
+
+    false
+}
+
+#[cfg(test)]
+mod grounding_tests {
+    use super::content_has_grounding;
+
+    #[test]
+    fn detects_adr_id_hyphenated() {
+        assert!(content_has_grounding("see ADR-2026-05-13-1500 for context"));
+    }
+
+    #[test]
+    fn detects_adr_id_timestamp() {
+        assert!(content_has_grounding("supersedes ADR-2605082500"));
+    }
+
+    #[test]
+    fn detects_repo_path() {
+        assert!(content_has_grounding("modifies hex-nexus/src/orchestration/twin_reviewer.rs"));
+    }
+
+    #[test]
+    fn detects_short_sha() {
+        assert!(content_has_grounding("regressed in commit 4bb427ad"));
+    }
+
+    #[test]
+    fn detects_hex_verb() {
+        assert!(content_has_grounding("operator runs `hex nexus start` to recover"));
+    }
+
+    #[test]
+    fn rejects_pure_prose() {
+        // The hallucinated CISO draft from 2026-05-13 contained no markers.
+        let hallucinated = "This document describes a goal judge for an arbitration dispute. \
+                            The implementation must adhere to open-source principles vetted by \
+                            recognized organizations such as OWASP DRP. Implementation will be \
+                            evaluated by a test suite provided by the CEO upon request.";
+        assert!(!content_has_grounding(hallucinated));
+    }
+
+    #[test]
+    fn rejects_alphabetic_token_as_sha() {
+        // `feedfeed` is hex but all-letters — not a real commit SHA.
+        assert!(!content_has_grounding("the token feedfeed has all hex characters"));
+    }
 }
 
 fn hard_deny(kind: &str, payload: &str) -> Option<String> {
