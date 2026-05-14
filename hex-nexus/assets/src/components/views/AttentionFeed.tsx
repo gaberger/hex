@@ -1,64 +1,9 @@
-// hex-nexus/assets/src/components/views/AttentionFeed.tsx
-// This component is a single-column attention feed for the hex dashboard MissionControl landing.
+import { createMemo, For, Show } from 'solid-js';
 
-import { createSignal, createMemo, For } from 'solid-js';
-import { AttentionItem } from './types'; // Assuming types are defined in a separate file
+interface AttentionItem { id: string; priority: 0 | 1 | 2; kind: 'escalation' | 'overdue_commitment' | 'merge_vote_needed' | 'resource_anomaly' | 'autonomous_commit' | 'agent_run_active'; title: string; subtitle: string; age_seconds: number; action_url?: string; cli_repro?: string; }
 
-interface AttentionFeedProps {
-  items: AttentionItem[];
-}
+interface AttentionFeedProps { items: AttentionItem[]; }
 
-const AttentionFeed = (props: AttentionFeedProps) => {
-  const sortedItems = createMemo(() => {
-    return props.items.sort((a, b) => {
-      if (a.priority !== b.priority) {
-        return a.priority - b.priority;
-      }
-      return b.age_seconds - a.age_seconds;
-    });
-  });
+function formatAge(s: number): string { if (s < 60) return s + 's ago'; if (s < 3600) return Math.floor(s/60) + 'm ago'; if (s < 86400) return Math.floor(s/3600) + 'h ago'; return Math.floor(s/86400) + 'd ago'; }
 
-  const renderPriorityPill = (priority: number) => {
-    switch (priority) {
-      case 0:
-        return <span class="bg-red-500 text-white px-2 py-1 rounded">High</span>;
-      case 1:
-        return <span class="bg-amber-500 text-white px-2 py-1 rounded">Medium</span>;
-      case 2:
-        return <span class="bg-blue-500 text-white px-2 py-1 rounded">Low</span>;
-      default:
-        return null;
-    }
-  };
-
-  return (
-    <div class="space-y-4">
-      <For each={sortedItems()}>{item => (
-        <div class="bg-white shadow-md p-4 flex flex-col space-y-2">
-          {renderPriorityPill(item.priority)}
-          <span class="font-semibold">{item.kind}</span>
-          <h3 class="text-xl font-bold">{item.title}</h3>
-          <p>{item.subtitle}</p>
-          <div class="flex items-center space-x-2">
-            <span class="text-gray-500">{item.age_seconds} seconds ago</span>
-            {item.action_url && (
-              <a href={item.action_url} target="_blank" class="text-blue-500 underline">Inspect</a>
-            )}
-            {item.cli_repro && (
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(item.cli_repro);
-                }}
-                class="bg-gray-200 text-gray-800 px-2 py-1 rounded"
-              >
-                CLI
-              </button>
-            )}
-          </div>
-        </div>
-      )}</For>
-    </div>
-  );
-};
-
-export default AttentionFeed;
+export default function AttentionFeed(props: AttentionFeedProps) { const sorted = createMemo(() => [...props.items].sort((a, b) => a.priority - b.priority || b.age_seconds - a.age_seconds)); const pillClass = (p: 0|1|2) => p === 0 ? 'bg-red-600 text-white' : p === 1 ? 'bg-amber-500 text-white' : 'bg-blue-500 text-white'; return (<div class='space-y-3'><For each={sorted()}>{(item) => (<div class='rounded border border-zinc-700 bg-zinc-900 p-3'><div class='flex items-center gap-2 text-xs'><span class={pillClass(item.priority) + ' px-2 py-0.5 rounded'}>P{item.priority}</span><span class='text-zinc-400 uppercase tracking-wide'>{item.kind}</span><span class='text-zinc-500 ml-auto'>{formatAge(item.age_seconds)}</span></div><h3 class='text-sm font-semibold text-zinc-100 mt-1'>{item.title}</h3><p class='text-xs text-zinc-400'>{item.subtitle}</p><div class='flex items-center gap-2 text-xs mt-1'><Show when={item.action_url}><a href={item.action_url} class='text-cyan-400 hover:underline'>Inspect</a></Show><Show when={item.cli_repro}><button class='px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700' onClick={() => navigator.clipboard.writeText(item.cli_repro!)}>Copy CLI</button></Show></div></div>)}</For></div>); }
