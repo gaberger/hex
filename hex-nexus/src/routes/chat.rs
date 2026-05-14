@@ -692,6 +692,114 @@ async fn llm_bridge(
 /// as a string, or empty for non-OpenRouter providers.
 pub(crate) type InferenceResult = (String, String, u64, u64, String);
 
+/// Translate an Anthropic-shaped tool schema entry
+/// `{name, description, input_schema}` to the OpenAI function-calling
+/// shape `{type: "function", function: {name, description, parameters}}`.
+///
+/// Used by `call_inference_endpoint_with_tools` so the same
+/// ToolRegistry::anthropic_schema() that simple_agent emits also flows
+/// through OpenRouter (which speaks OpenAI-compat).
+fn anthropic_tool_to_openai(t: &serde_json::Value) -> serde_json::Value {
+    let name = t.get("name").cloned().unwrap_or(serde_json::Value::Null);
+    let description = t.get("description").cloned().unwrap_or(serde_json::Value::Null);
+    let parameters = t
+        .get("input_schema")
+        .cloned()
+        .or_else(|| t.get("parameters").cloned())
+        .unwrap_or_else(|| serde_json::json!({"type": "object", "properties": {}}));
+    serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": parameters,
+        }
+    })
+}
+
+/// Like `call_inference_endpoint` but propagates a tools schema to the
+/// provider and extracts `tool_calls` from the response. Returns
+/// (InferenceResult, tool_calls_array). When the model emits no tool
+/// calls the second element is an empty Vec.
+///
+/// Only OpenRouter (OpenAI-compat) is wired here today. Anthropic-direct
+/// and Ollama paths fall back to no-tools behavior (returning empty
+/// tool_calls) — caller's text-mode parser still has a chance.
+pub(crate) async fn call_inference_endpoint_with_tools(
+    ep: &crate::routes::secrets::InferenceEndpointEntry,
+    messages: &[serde_json::Value],
+    tools: &[serde_json::Value],
+) -> Result<(InferenceResult, Vec<serde_json::Value>), String> {
+    let is_openrouter = ep.provider == "openrouter"
+        || ep.url.contains("openrouter.ai");
+
+    // Non-OpenRouter providers: delegate to the tools-free path. The
+    // simple_agent text-mode parser is the safety net for Ollama et al.
+    if !is_openrouter {
+        let r = call_inference_endpoint(ep, messages).await?;
+        return Ok((r, Vec::new()));
+    }
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(240))
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+    let model = if ep.model.is_empty() { "default".to_string() } else { ep.model.clone() };
+
+    let openai_tools: Vec<serde_json::Value> = tools
+        .iter()
+        .map(anthropic_tool_to_openai)
+        .collect();
+
+    let url = "https://openrouter.ai/api/v1/chat/completions".to_string();
+    let body = json!({
+        "model": model,
+        "messages": messages,
+        "max_tokens": 4096,
+        "tools": openai_tools,
+    });
+
+    if ep.secret_key.is_empty() {
+        return Err("OPENROUTER_API_KEY not set".into());
+    }
+    let req = client
+        .post(&url)
+        .bearer_auth(&ep.secret_key)
+        .header("HTTP-Referer", "https://hex.local")
+        .header("X-Title", "hex-nexus")
+        .json(&body);
+
+    let resp = req.send().await.map_err(|e| format!("connection: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let err = resp.text().await.unwrap_or_default();
+        return Err(format!("OpenRouter HTTP {status}: {}", truncate_str(&err, 200)));
+    }
+
+    let data: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
+    let content_val = data["choices"][0]["message"]["content"].as_str();
+    let reasoning_val = data["choices"][0]["message"]["reasoning"].as_str();
+    // When the model emits tool_calls and no text, content may be null.
+    // That's OK — caller will look at the tool_calls array instead.
+    let content = content_val
+        .or(reasoning_val)
+        .unwrap_or("")
+        .to_string();
+    let model_used = data["model"].as_str().unwrap_or(&model).to_string();
+    let input_tokens = data["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
+    let output_tokens = data["usage"]["completion_tokens"].as_u64().unwrap_or(0);
+    let cost = data["usage"]["cost"]
+        .as_f64()
+        .map(|c| format!("{:.8}", c))
+        .unwrap_or_default();
+    let tool_calls: Vec<serde_json::Value> = data["choices"][0]["message"]["tool_calls"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    Ok(((content, model_used, input_tokens, output_tokens, cost), tool_calls))
+}
+
 /// Call a registered inference endpoint (OpenAI-compatible /v1/chat/completions,
 /// Ollama /api/chat, or OpenRouter /api/v1/chat/completions).
 pub(crate) async fn call_inference_endpoint(

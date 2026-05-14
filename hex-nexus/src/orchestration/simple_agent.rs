@@ -254,24 +254,16 @@ struct ToolUse {
 fn build_system_prompt(registry: &ToolRegistry) -> String {
     let mut s = String::from(
         "You are a focused hex agent. Use the typed tools below to fulfill the operator's intent.\n\n\
-         RESPONSE FORMAT — emit ONE OR MORE fenced JSON blocks; nothing else.\n\
-         For each tool you want to call:\n\
-         ```json\n\
-         { \"tool\": \"<tool-name>\", \"args\": { ...exact keys from the tool's input_schema below... } }\n\
-         ```\n\
-         When the intent is fully satisfied, end with:\n\
-         ```json\n\
-         { \"finish\": \"<one-sentence summary>\" }\n\
-         ```\n\n\
-         Rules:\n\
-         - The fence delimiter is exactly three backticks + the word `json`.\n\
-         - Each block is a single JSON object — `{ \"tool\": ..., \"args\": ... }` OR `{ \"finish\": ... }`.\n\
-         - STRICT JSON ONLY inside the fence. Strings use double quotes (\"...\"); newlines in string values are encoded as \\n. NEVER use backticks (`...`) or JS template literals — they are not valid JSON and the parser will silently drop your tool call.\n\
-         - Use EXACTLY the key names from each tool's input_schema. Do NOT rename `path` to `file_path`, `content` to `body`, etc.\n\
-         - Do NOT wrap the JSON in any other structure; do NOT add commentary text.\n\
+         RESPONSE FORMAT — call the tools provided to you. The runtime supports two protocols and accepts either:\n\
+         1) NATIVE TOOL-USE (preferred): when your client exposes function-calling, emit tool_use blocks via the standard mechanism. This is what Anthropic Haiku/Sonnet, OpenAI, and other capable models do automatically when `tools` is supplied. Do NOT include a fenced-JSON block in addition — pick one protocol.\n\
+         2) TEXT-MODE FALLBACK (only when your client lacks native tool-use, e.g. local Ollama): emit fenced JSON of shape ```json\n{ \"tool\": \"<tool-name>\", \"args\": { ... } }\n``` followed by a final ```json\n{ \"finish\": \"<one-line summary>\" }\n```.\n\n\
+         Rules (apply to BOTH protocols):\n\
+         - Use EXACTLY the key names from each tool's input_schema. Do NOT rename `path` to `file_path`, `new_content` to `content`, etc.\n\
          - Do NOT echo the operator intent back; act on it.\n\
-         - You may emit multiple tool blocks in one response — they execute in order.\n\
-         - cargo_check is REQUIRED after any .rs write before finish. typescript_check is REQUIRED after any .ts/.tsx write before finish.\n\n\
+         - You may emit multiple tool calls in one response — they execute in order.\n\
+         - cargo_check is REQUIRED after any .rs write before finish. typescript_check is REQUIRED after any .ts/.tsx write before finish.\n\
+         - TEXT-MODE STRICT JSON ONLY inside the fence. Strings use double quotes; newlines encoded as \\n. NEVER backticks or JS template literals.\n\n\
+         When the intent is fully satisfied: NATIVE TOOL-USE callers can stop emitting tool calls; the runtime will detect zero tool_use and terminate. TEXT-MODE callers must emit the explicit { \"finish\": \"...\" } block.\n\n\
          === Tools available (each with input_schema you must follow exactly) ===\n\n",
     );
     let mut names = registry.names();
@@ -480,6 +472,41 @@ fn extract_tool_uses(body: &Value) -> (String, Vec<ToolUse>) {
         }
     }
 
+    // Inference-route tools fast-path: { content, tool_calls: [...] }
+    // where each entry is the OpenAI function-calling shape
+    // {id, type: "function", function: {name, arguments(string)}}.
+    // This is what the hex-nexus /api/inference/complete tools fast-path
+    // returns when a request includes a `tools` schema.
+    if let Some(calls) = body.get("tool_calls").and_then(|v| v.as_array()) {
+        if let Some(c) = body.get("content").and_then(|v| v.as_str()) {
+            text.push_str(c);
+        }
+        for (i, call) in calls.iter().enumerate() {
+            let id = call
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("call_{}", i));
+            let func = call.get("function").cloned().unwrap_or(Value::Null);
+            let name = func
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let args_str = func
+                .get("arguments")
+                .and_then(|v| v.as_str())
+                .unwrap_or("{}");
+            let input: Value =
+                serde_json::from_str(args_str).unwrap_or(Value::Object(Default::default()));
+            uses.push(ToolUse { id, name, input });
+        }
+        if !uses.is_empty() {
+            return (text, uses);
+        }
+        // tool_calls present but empty/malformed — fall through to other shapes.
+    }
+
     // OpenAI shape: { choices: [{message: {content, tool_calls: [...]}}] }
     if let Some(msg) = body.pointer("/choices/0/message") {
         if let Some(c) = msg.get("content").and_then(|v| v.as_str()) {
@@ -544,6 +571,32 @@ mod tests {
         assert_eq!(uses.len(), 1);
         assert_eq!(uses[0].name, "repo_grep");
         assert_eq!(uses[0].id, "abc");
+    }
+
+    #[test]
+    fn extract_tools_fast_path_top_level() {
+        // /api/inference/complete tools fast-path returns this shape.
+        let body = json!({
+            "content": "",
+            "tool_calls": [{
+                "id": "call_abc",
+                "type": "function",
+                "function": {
+                    "name": "code_patch",
+                    "arguments": "{\"path\":\"foo.tsx\",\"new_content\":\"hello\"}"
+                }
+            }],
+            "model": "anthropic/claude-haiku-4.5",
+            "input_tokens": 100,
+            "output_tokens": 20
+        });
+        let (t, uses) = extract_tool_uses(&body);
+        assert_eq!(t, "");
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].name, "code_patch");
+        assert_eq!(uses[0].id, "call_abc");
+        let path = uses[0].input.get("path").and_then(|v| v.as_str()).unwrap_or("");
+        assert_eq!(path, "foo.tsx");
     }
 
     #[test]

@@ -121,6 +121,83 @@ pub async fn inference_complete(
         messages.insert(0, json!({ "role": "system", "content": system }));
     }
 
+    // ── Tools fast-path (hex agent run / typed-tool dispatch) ──────────
+    // When the request includes a `tools` schema, bypass the elaborate
+    // free-tier fallback chain and route directly through OpenRouter
+    // with the schema translated to OpenAI function-calling format.
+    // Surfaces `tool_calls` in the response so simple_agent's extractor
+    // can dispatch them without prose round-trips.
+    if let Some(ref tools_schema) = body.tools {
+        if !tools_schema.is_empty() {
+            let openrouter_key: Option<String> = state.openrouter_api_key.clone()
+                .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()
+                    .filter(|k| k.starts_with("sk-or-")));
+            if let Some(or_key) = openrouter_key {
+                let raw_model = body.model.clone().unwrap_or_else(|| "anthropic/claude-haiku-4.5".to_string());
+                // OpenRouter requires a fully-qualified slug (vendor/model).
+                // qwen2.5-coder:14b style (Ollama-native) won't resolve.
+                let or_model = if raw_model.contains('/') {
+                    raw_model
+                } else if raw_model.starts_with("claude") {
+                    format!("anthropic/{}", raw_model)
+                } else if raw_model.starts_with("gpt") || raw_model.starts_with("o1") {
+                    format!("openai/{}", raw_model)
+                } else if raw_model.contains(':') {
+                    // Ollama-style (e.g. qwen2.5-coder:14b) — won't work on
+                    // OpenRouter. Substitute a sane tool-capable default
+                    // and log the fallback so the operator sees what
+                    // happened.
+                    tracing::warn!(
+                        requested = %raw_model,
+                        fallback = "anthropic/claude-haiku-4.5",
+                        "tools fast-path: Ollama-style model substituted with OpenRouter-capable default"
+                    );
+                    "anthropic/claude-haiku-4.5".to_string()
+                } else {
+                    raw_model
+                };
+                let synth = crate::routes::secrets::InferenceEndpointEntry {
+                    id: "openrouter-tools-fastpath".into(),
+                    url: "https://openrouter.ai/api/v1".into(),
+                    provider: "openrouter".into(),
+                    model: or_model.clone(),
+                    status: "unknown".into(),
+                    requires_auth: true,
+                    secret_key: or_key.clone(),
+                    health_checked_at: String::new(),
+                };
+                match super::chat::call_inference_endpoint_with_tools(&synth, &messages, tools_schema).await {
+                    Ok(((content, model, input_tokens, output_tokens, openrouter_cost), tool_calls)) => {
+                        tracing::info!(
+                            model = %model,
+                            input_tokens,
+                            output_tokens,
+                            tool_calls = tool_calls.len(),
+                            "inference/complete OK (tools fast-path)"
+                        );
+                        let mut resp = json!({
+                            "content": content,
+                            "model": model,
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                            "tool_calls": tool_calls,
+                        });
+                        if !openrouter_cost.is_empty() {
+                            resp["openrouter_cost_usd"] = json!(openrouter_cost);
+                        }
+                        return (StatusCode::OK, Json(resp));
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "tools fast-path failed — falling through to tools-free chain");
+                        // Fall through to legacy path; the model still
+                        // gets the request but won't emit tool_calls.
+                    }
+                }
+            }
+        }
+    }
+
     // Try registered inference endpoints first (SpacetimeDB providers)
     // If a model is requested, find the provider that serves it; otherwise use first provider.
     // Complexity scoring selects minimum quantization tier (ADR-2026-03-27-1000).
