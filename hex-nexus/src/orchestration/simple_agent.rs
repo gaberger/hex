@@ -380,9 +380,22 @@ fn extract_text_mode_tool_uses(text: &str) -> Vec<ToolUse> {
             Ok(v) => v,
             Err(_) => continue,
         };
-        // Two shapes accepted: { tool, args } and { finish }.
+        // Three shapes accepted:
+        //   { tool, args: {...} }      (canonical)
+        //   { tool, <flat fields> }    (Anthropic Haiku via OpenRouter often emits this)
+        //   { finish: "..." }
         if let Some(name) = v.get("tool").and_then(|x| x.as_str()) {
-            let args = v.get("args").cloned().unwrap_or(Value::Null);
+            let args = if let Some(args_obj) = v.get("args") {
+                args_obj.clone()
+            } else if let Some(obj) = v.as_object() {
+                // Strip the "tool" key and treat the rest as args.
+                let mut rest = obj.clone();
+                rest.remove("tool");
+                rest.remove("rationale"); // metadata, not an arg
+                Value::Object(rest)
+            } else {
+                Value::Null
+            };
             uses.push(ToolUse {
                 id: format!("textmode_{}", counter),
                 name: name.to_string(),
