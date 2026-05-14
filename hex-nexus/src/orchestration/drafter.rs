@@ -663,6 +663,34 @@ fn extract_literal_content(ask: &str) -> Option<String> {
     for trig in TRIGGERS {
         if let Some(start) = lower.find(trig) {
             let after = &ask[start + trig.len()..];
+            let after_trimmed = after.trim_start();
+
+            // Multi-line fenced content: ```[lang]\n...\n```
+            // Lets operator paste a whole file body in the board ask.
+            // Cap raised to 32 KB to fit Rust source files; the executor
+            // and STDB payload caps still apply downstream.
+            if after_trimmed.starts_with("```") {
+                let after_fence_open = &after_trimmed[3..];
+                // Skip optional language tag + the newline that closes it.
+                let body_start = after_fence_open
+                    .find('\n')
+                    .map(|i| i + 1)
+                    .unwrap_or(0);
+                let body = &after_fence_open[body_start..];
+                if let Some(end) = body.find("\n```") {
+                    // Well-formed fence — respect its content boundary
+                    // even if oversized (don't fall through to single-line
+                    // and accidentally capture the fence delimiter).
+                    let content = body[..end].to_string();
+                    if content.is_empty() || content.len() > 32 * 1024 {
+                        return None;
+                    }
+                    return Some(content);
+                }
+                // Malformed fence (no close) — fall through to single-line
+                // semantics rather than swallowing the trigger.
+            }
+
             // Take until end-of-message or a clear terminator. Strip
             // surrounding whitespace and any wrapping quotes/backticks.
             let mut content = after.trim().to_string();
@@ -917,16 +945,16 @@ mod literal_tests {
         let prev_lf = std::env::var("HEX_DRAFTER_MODEL_LONGFORM").ok();
         let prev = std::env::var("HEX_DRAFTER_MODEL").ok();
 
-        // Case 1: both env vars unset → default falls back to nemotron-mini
-        // regardless of path.
+        // Case 1: both env vars unset → defaults per pick_drafter_model
+        // (commit 8e929b58 — longform paths default to qwen2.5-coder:14b
+        // per the 2026-05-13 T2/T2.5 re-bench; short-form to nemotron-mini).
         std::env::remove_var("HEX_DRAFTER_MODEL_LONGFORM");
         std::env::remove_var("HEX_DRAFTER_MODEL");
         assert_eq!(pick_drafter_model("docs/notes.md"), "nemotron-mini");
-        assert_eq!(pick_drafter_model("docs/adrs/foo.md"), "nemotron-mini");
+        assert_eq!(pick_drafter_model("docs/adrs/foo.md"), "qwen2.5-coder:14b");
+        assert_eq!(pick_drafter_model("docs/specs/foo.md"), "qwen2.5-coder:14b");
 
-        // Case 2: HEX_DRAFTER_MODEL_LONGFORM set → only ADR/spec/analysis
-        // paths route through it; everything else uses the (still-unset)
-        // generic default.
+        // Case 2: HEX_DRAFTER_MODEL_LONGFORM override beats the longform default.
         std::env::set_var("HEX_DRAFTER_MODEL_LONGFORM", "test-strong-model");
         assert_eq!(pick_drafter_model("docs/adrs/foo.md"), "test-strong-model");
         assert_eq!(pick_drafter_model("docs/specs/foo.md"), "test-strong-model");
@@ -959,6 +987,43 @@ mod literal_tests {
     }
     #[test] fn no_trigger() {
         assert!(extract_literal_content("write a status doc").is_none());
+    }
+
+    #[test]
+    fn multi_line_fence_with_lang() {
+        let ask = "@cto write src/foo.rs with content:\n\
+                   ```rust\n\
+                   pub fn hello() -> &'static str { \"hi\" }\n\
+                   ```";
+        let r = extract_literal_content(ask).unwrap();
+        assert!(r.contains("pub fn hello"));
+        assert!(r.contains("\"hi\""));
+        assert!(!r.contains("```"));
+    }
+
+    #[test]
+    fn multi_line_fence_no_lang() {
+        let ask = "with body:\n```\nline1\nline2\nline3\n```";
+        let r = extract_literal_content(ask).unwrap();
+        assert_eq!(r, "line1\nline2\nline3");
+    }
+
+    #[test]
+    fn fence_without_close_falls_through_to_singleline() {
+        // Malformed (no closing fence) → drop back to single-line capture.
+        let ask = "with content: ```rust\npub fn x() {}";
+        // Single-line capture picks up "```rust" until newline.
+        let r = extract_literal_content(ask).unwrap();
+        assert_eq!(r, "```rust");
+    }
+
+    #[test]
+    fn fence_caps_at_32kb() {
+        let huge = "a".repeat(33 * 1024);
+        let ask = format!("with content:\n```\n{}\n```", huge);
+        // Content exceeds 32 KB cap → fall through to single-line which
+        // also bails on size; total result is None.
+        assert!(extract_literal_content(&ask).is_none());
     }
     #[test] fn placeholder_turn() {
         assert_eq!(
