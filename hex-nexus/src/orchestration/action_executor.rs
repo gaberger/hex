@@ -326,7 +326,229 @@ async fn execute_file_write(
             tracing::debug!(commitment_id = action.related_commitment_id, error = %e, "commitment_satisfy http error");
         }
     }
+
+    // Autonomous commit step — bridges the gap between "executor wrote
+    // file to working tree" and "change persisted on main". Without
+    // this, every approved file_write sits uncommitted until an operator
+    // manually `git add`+`git commit`s it (the agentic-dev-roundtrip
+    // spec on 2026-05-13 landed via SOP but required operator-Claude
+    // commit `8e929b58` to actually persist). With this, the SOP loop
+    // closes end-to-end without a human in the commit step.
+    //
+    // Failures are logged but do NOT fail the action — the executor
+    // already marked it `executed`, the file is on disk, operator can
+    // commit by hand if the auto-commit hit a pre-commit hook failure
+    // or a concurrent git lock.
+    //
+    // Disable via HEX_DISABLE_AUTONOMOUS_COMMIT=1.
+    if let Err(e) = git_commit_executed_file(repo_root, rel_path, content.len(), action, &evidence)
+        .await
+    {
+        tracing::warn!(
+            action_id = action.id,
+            path = %target.display(),
+            error = %e,
+            "action_executor: autonomous commit step failed (file still on disk; operator may commit manually)"
+        );
+    }
+
     Ok(())
+}
+
+/// Auto-stage and commit a single file the executor just wrote. Stages
+/// ONLY the named path (never `git add -A`), commits with `--only` so
+/// concurrent staging of other paths is ignored, runs pre-commit hooks
+/// normally (never `--no-verify`). The commit author is whatever git is
+/// configured for; an explicit `Co-Authored-By: hex-autonomous` footer
+/// distinguishes these from operator-driven commits.
+async fn git_commit_executed_file(
+    repo_root: &Path,
+    rel_path: &str,
+    content_bytes: usize,
+    action: &ApprovedAction,
+    evidence: &str,
+) -> Result<String, String> {
+    let disabled = std::env::var("HEX_DISABLE_AUTONOMOUS_COMMIT")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if disabled {
+        return Err("HEX_DISABLE_AUTONOMOUS_COMMIT=1".to_string());
+    }
+
+    // Safety: never auto-commit env files, secrets, lock files, hub.db.
+    // Per CLAUDE.md "NEVER commit secrets" + the SQLite-removal lesson.
+    if is_no_autocommit_path(rel_path) {
+        return Err(format!(
+            "path '{}' is on the autonomous-commit denylist (env/secret/sqlite/lock)",
+            rel_path
+        ));
+    }
+
+    let (kind, scope) = derive_commit_scope(rel_path);
+    let basename = std::path::Path::new(rel_path)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| rel_path.to_string());
+
+    let subject = format!(
+        "{}({}): auto — action#{} → {}",
+        kind, scope, action.id, basename
+    );
+
+    let body = format!(
+        "Path:           {rel_path}\n\
+         Bytes:          {bytes}\n\
+         Action ID:      {action_id}\n\
+         Commitment ID:  {cid}\n\
+         Kind:           {kind}\n\
+         Evidence:       {evidence}\n\n\
+         Auto-committed by the SOP loop (twin-approved file_write).\n\
+         Disable via HEX_DISABLE_AUTONOMOUS_COMMIT=1.\n\n\
+         Co-Authored-By: hex-autonomous <noreply@hex.local>\n",
+        rel_path = rel_path,
+        bytes = content_bytes,
+        action_id = action.id,
+        cid = action.related_commitment_id,
+        kind = action.kind,
+        evidence = evidence,
+    );
+    let message = format!("{}\n\n{}", subject, body);
+
+    // Verify the file actually changed in git's view before committing.
+    // If the executor wrote bit-identical content (idempotent re-emit),
+    // `git commit --only -- <path>` would create an empty commit which
+    // we don't want.
+    let status_out = tokio::process::Command::new("git")
+        .current_dir(repo_root)
+        .args(["status", "--porcelain", "--", rel_path])
+        .output()
+        .await
+        .map_err(|e| format!("git status: {}", e))?;
+    if !status_out.status.success() {
+        return Err(format!(
+            "git status failed: {}",
+            String::from_utf8_lossy(&status_out.stderr).trim()
+        ));
+    }
+    if status_out.stdout.is_empty() {
+        return Err(format!(
+            "no-op: '{}' has no git diff (file matches HEAD)",
+            rel_path
+        ));
+    }
+
+    // Stage + commit ONLY this file. `--only -- <path>` makes the commit
+    // ignore anything else already in the index, so concurrent operator
+    // staging doesn't leak into this commit.
+    let stage = tokio::process::Command::new("git")
+        .current_dir(repo_root)
+        .args(["add", "--", rel_path])
+        .output()
+        .await
+        .map_err(|e| format!("git add: {}", e))?;
+    if !stage.status.success() {
+        return Err(format!(
+            "git add failed: {}",
+            String::from_utf8_lossy(&stage.stderr).trim()
+        ));
+    }
+
+    let commit = tokio::process::Command::new("git")
+        .current_dir(repo_root)
+        .args(["commit", "--only", "--", rel_path, "-m", &message])
+        .output()
+        .await
+        .map_err(|e| format!("git commit: {}", e))?;
+    if !commit.status.success() {
+        // Pre-commit hook failure or other rejection. Unstage so the
+        // operator's working tree isn't polluted with our stage.
+        let _ = tokio::process::Command::new("git")
+            .current_dir(repo_root)
+            .args(["reset", "HEAD", "--", rel_path])
+            .output()
+            .await;
+        return Err(format!(
+            "git commit failed: {}",
+            String::from_utf8_lossy(&commit.stderr).trim()
+        ));
+    }
+
+    let head = tokio::process::Command::new("git")
+        .current_dir(repo_root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .await
+        .map_err(|e| format!("git rev-parse: {}", e))?;
+    let sha = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    tracing::info!(
+        action_id = action.id,
+        path = %rel_path,
+        sha = %sha,
+        subject = %subject,
+        "action_executor: autonomous commit landed"
+    );
+    Ok(sha)
+}
+
+fn derive_commit_scope(rel_path: &str) -> (&'static str, &'static str) {
+    if rel_path.starts_with("docs/adrs/") {
+        ("docs", "adr")
+    } else if rel_path.starts_with("docs/specs/") {
+        ("docs", "spec")
+    } else if rel_path.starts_with("docs/workplans/") {
+        ("docs", "workplan")
+    } else if rel_path.starts_with("docs/analysis/") {
+        ("docs", "analysis")
+    } else if rel_path.starts_with("docs/") {
+        ("docs", "misc")
+    } else if rel_path.starts_with("hex-cli/") {
+        ("feat", "hex-cli")
+    } else if rel_path.starts_with("hex-nexus/") {
+        ("feat", "hex-nexus")
+    } else if rel_path.starts_with("hex-core/") {
+        ("feat", "hex-core")
+    } else if rel_path.starts_with("hex-agent/") {
+        ("feat", "hex-agent")
+    } else if rel_path.starts_with("hex-parser/") {
+        ("feat", "hex-parser")
+    } else if rel_path.starts_with("hex-desktop/") {
+        ("feat", "hex-desktop")
+    } else if rel_path.starts_with("hex-analyzer/") {
+        ("feat", "hex-analyzer")
+    } else if rel_path.starts_with("spacetime-modules/") {
+        ("feat", "stdb")
+    } else if rel_path.starts_with("scripts/") {
+        ("chore", "scripts")
+    } else {
+        ("chore", "misc")
+    }
+}
+
+fn is_no_autocommit_path(rel_path: &str) -> bool {
+    let p = rel_path.to_ascii_lowercase();
+    // Env / secret files
+    if p == ".env" || p.starts_with(".env.") || p.ends_with("/.env") || p.contains("/.env.") {
+        return true;
+    }
+    if p.contains("secret") || p.contains("credential") || p.contains("password") {
+        return true;
+    }
+    // SQLite / lock files — STDB is sole backend per memory feedback_no_sqlite
+    if p.ends_with(".db") || p == "hub.db" || p.ends_with(".db-journal") || p.ends_with(".sqlite") {
+        return true;
+    }
+    if p.ends_with(".lock") || p == "cargo.lock" {
+        return true;
+    }
+    // Git internals
+    if p.starts_with(".git/") {
+        return true;
+    }
+    // The action_executor's own temp files
+    if p.ends_with(".twinwrite-tmp") || p.ends_with(".stubwrite-tmp") {
+        return true;
+    }
+    false
 }
 
 async fn mark_failed(
@@ -606,5 +828,115 @@ mod adr_status_executor_tests {
         let d = tmp_dir("missing");
         assert!(resolve_adr_file(&d, "ADR-2099-12-31-9999").is_err());
         let _ = fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod autonomous_commit_tests {
+    use super::{derive_commit_scope, is_no_autocommit_path};
+
+    #[test]
+    fn scope_adr() {
+        assert_eq!(
+            derive_commit_scope("docs/adrs/ADR-2605131849-foo.md"),
+            ("docs", "adr")
+        );
+    }
+
+    #[test]
+    fn scope_spec() {
+        assert_eq!(
+            derive_commit_scope("docs/specs/agentic-dev-roundtrip.md"),
+            ("docs", "spec")
+        );
+    }
+
+    #[test]
+    fn scope_workplan() {
+        assert_eq!(
+            derive_commit_scope("docs/workplans/wp-x.json"),
+            ("docs", "workplan")
+        );
+    }
+
+    #[test]
+    fn scope_analysis() {
+        assert_eq!(
+            derive_commit_scope("docs/analysis/r.md"),
+            ("docs", "analysis")
+        );
+    }
+
+    #[test]
+    fn scope_hex_crates() {
+        assert_eq!(
+            derive_commit_scope("hex-cli/src/foo.rs"),
+            ("feat", "hex-cli")
+        );
+        assert_eq!(
+            derive_commit_scope("hex-nexus/src/orchestration/x.rs"),
+            ("feat", "hex-nexus")
+        );
+        assert_eq!(
+            derive_commit_scope("hex-core/src/lib.rs"),
+            ("feat", "hex-core")
+        );
+    }
+
+    #[test]
+    fn scope_stdb() {
+        assert_eq!(
+            derive_commit_scope("spacetime-modules/hexflo-coordination/src/lib.rs"),
+            ("feat", "stdb")
+        );
+    }
+
+    #[test]
+    fn scope_misc_fallback() {
+        assert_eq!(derive_commit_scope("README.md"), ("chore", "misc"));
+        assert_eq!(derive_commit_scope("CLAUDE.md"), ("chore", "misc"));
+    }
+
+    #[test]
+    fn denylist_env_files() {
+        assert!(is_no_autocommit_path(".env"));
+        assert!(is_no_autocommit_path(".env.local"));
+        assert!(is_no_autocommit_path("foo/.env"));
+        assert!(is_no_autocommit_path("foo/.env.prod"));
+    }
+
+    #[test]
+    fn denylist_secrets() {
+        assert!(is_no_autocommit_path("secrets/api.key"));
+        assert!(is_no_autocommit_path("docs/credential-rotation.md"));
+        assert!(is_no_autocommit_path("config/password.toml"));
+    }
+
+    #[test]
+    fn denylist_sqlite_and_locks() {
+        assert!(is_no_autocommit_path("hub.db"));
+        assert!(is_no_autocommit_path("data.sqlite"));
+        assert!(is_no_autocommit_path("Cargo.lock"));
+        assert!(is_no_autocommit_path("foo.lock"));
+    }
+
+    #[test]
+    fn denylist_git_internals() {
+        assert!(is_no_autocommit_path(".git/HEAD"));
+        assert!(is_no_autocommit_path(".git/config"));
+    }
+
+    #[test]
+    fn denylist_executor_temp_files() {
+        assert!(is_no_autocommit_path("docs/specs/foo.twinwrite-tmp"));
+        assert!(is_no_autocommit_path("docs/adrs/bar.stubwrite-tmp"));
+    }
+
+    #[test]
+    fn denylist_does_not_block_normal_paths() {
+        assert!(!is_no_autocommit_path("docs/specs/foo.md"));
+        assert!(!is_no_autocommit_path("docs/adrs/ADR-x.md"));
+        assert!(!is_no_autocommit_path("hex-cli/src/main.rs"));
+        assert!(!is_no_autocommit_path("docs/workplans/wp-foo.json"));
     }
 }
