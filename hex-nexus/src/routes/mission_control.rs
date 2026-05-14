@@ -756,7 +756,30 @@ pub async fn get_mission_control(
 /// Best-effort `git log -1 --format=...` so the pulse pane can show the
 /// most recent commit subject + age. Returns an object with `sha`,
 /// `subject`, `age_seconds`. Empty strings if git is unavailable.
+/// Count today's autonomous commits on the current branch.
+/// Cheap proxy: `git log --since='today 00:00' --grep='Co-Authored-By: hex-autonomous' --oneline | wc -l`.
+fn autonomous_commits_today() -> u64 {
+    use std::process::Command;
+    let output = match Command::new("git")
+        .args([
+            "log",
+            "--since=today 00:00",
+            "--grep=Co-Authored-By: hex-autonomous",
+            "--pretty=%H",
+        ])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return 0,
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .count() as u64
+}
+
 fn git_head_summary() -> Value {
+
     use std::process::Command;
     let out = Command::new("git")
         .args(["log", "-1", "--format=%H%x00%s%x00%ct"])
