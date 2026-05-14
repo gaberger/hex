@@ -237,20 +237,98 @@ struct ToolUse {
 
 /// Build the system prompt enumerating tools. Intentionally terse —
 /// the LLM's job is to pick a tool, not to recite the org chart.
+///
+/// Two response formats are accepted (extract_tool_uses tries each):
+///   1. Native Anthropic content[] blocks with type=tool_use (when the
+///      provider supports function-calling natively).
+///   2. OpenAI choices[].message.tool_calls (when routed through an
+///      OpenAI-compatible adapter).
+///   3. Text-mode JSON envelope as a fallback for local models without
+///      tool-use support: emit fenced ```json { "tool": "<name>",
+///      "args": { ... } } ``` or fenced ```json { "finish": "<summary>" }
+///      ```. The parser scans for these envelopes in the response text.
+///
+/// The system prompt requires #3 explicitly so the LLM doesn't drift
+/// into prose-describing-what-it-would-do.
 fn build_system_prompt(registry: &ToolRegistry) -> String {
     let mut s = String::from(
-        "You are a focused hex agent. Use the typed tools below to fulfill the operator's intent. \
-         Each tool has a typed input schema; call it with the matching JSON. \
-         When you have completed the intent, call the `finish` tool with a one-sentence summary. \
-         Do NOT echo the intent back; act on it. Do NOT call tools you don't need; do NOT skip cargo_check on .rs writes.\n\nAvailable tools:\n",
+        "You are a focused hex agent. Use the typed tools below to fulfill the operator's intent.\n\n\
+         RESPONSE FORMAT — emit ONE OR MORE fenced JSON blocks; nothing else.\n\
+         For each tool you want to call:\n\
+         ```json\n\
+         { \"tool\": \"<tool-name>\", \"args\": { ... matching the tool's input schema ... } }\n\
+         ```\n\
+         When the intent is fully satisfied, end with:\n\
+         ```json\n\
+         { \"finish\": \"<one-sentence summary>\" }\n\
+         ```\n\n\
+         Rules:\n\
+         - The fence delimiter is exactly three backticks + the word `json`.\n\
+         - Each block is a single JSON object — `{ \"tool\": ..., \"args\": ... }` OR `{ \"finish\": ... }`.\n\
+         - Do NOT wrap the JSON in any other structure; do NOT add commentary text.\n\
+         - Do NOT echo the operator intent back; act on it.\n\
+         - You may emit multiple tool blocks in one response — they execute in order.\n\
+         - cargo_check is REQUIRED after any .rs write before finish.\n\n\
+         Available tools:\n",
     );
     let mut names = registry.names();
     names.sort();
     for n in &names {
         s.push_str(&format!("- {}\n", n));
     }
-    s.push_str("- finish  (signal completion; input: { summary: string })\n");
+    s.push_str("- finish  (signal completion; args: { summary: string })\n");
     s
+}
+
+/// Text-mode parser: scans the assistant text for fenced ```json blocks
+/// matching the contract documented in build_system_prompt. Returns
+/// (text_outside_blocks, tool_uses).
+///
+/// Triggered when neither the Anthropic block shape nor the OpenAI
+/// tool_calls shape is present in the response — the case for local
+/// LLMs (qwen2.5-coder:14b, ollama) that ignore the `tools` schema in
+/// the request body and reply in plain text.
+fn extract_text_mode_tool_uses(text: &str) -> Vec<ToolUse> {
+    let mut uses: Vec<ToolUse> = Vec::new();
+    let mut rest = text;
+    let mut counter: u32 = 0;
+    while let Some(start) = rest.find("```json") {
+        let after = &rest[start + 7..];
+        let body_start = match after.find('\n') {
+            Some(i) => i + 1,
+            None => break,
+        };
+        let body = &after[body_start..];
+        let end = match body.find("\n```") {
+            Some(i) => i,
+            None => break,
+        };
+        let raw_json = body[..end].trim();
+        rest = &body[end + 4..];
+        let parsed: Result<serde_json::Value, _> = serde_json::from_str(raw_json);
+        let v = match parsed {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        // Two shapes accepted: { tool, args } and { finish }.
+        if let Some(name) = v.get("tool").and_then(|x| x.as_str()) {
+            let args = v.get("args").cloned().unwrap_or(Value::Null);
+            uses.push(ToolUse {
+                id: format!("textmode_{}", counter),
+                name: name.to_string(),
+                input: args,
+            });
+            counter += 1;
+        } else if let Some(summary) = v.get("finish").and_then(|x| x.as_str()) {
+            uses.push(ToolUse {
+                id: format!("textmode_{}", counter),
+                name: "finish".to_string(),
+                input: serde_json::json!({ "summary": summary }),
+            });
+            counter += 1;
+        }
+    }
+    uses
 }
 
 /// Reconstruct what to put in the assistant message's `content` field so
@@ -354,6 +432,14 @@ fn extract_tool_uses(body: &Value) -> (String, Vec<ToolUse>) {
     if let Some(s) = body.get("content").and_then(|v| v.as_str()) {
         text.push_str(s);
     }
+
+    // Text-mode fallback: local LLMs without tool-use support reply
+    // with fenced ```json envelopes in plain text per the contract in
+    // build_system_prompt. Scan for those and convert to ToolUse if
+    // the structured shapes above produced nothing.
+    if uses.is_empty() && !text.is_empty() {
+        uses = extract_text_mode_tool_uses(&text);
+    }
     (text, uses)
 }
 
@@ -408,5 +494,44 @@ mod tests {
         let (t, uses) = extract_tool_uses(&body);
         assert_eq!(t, "Done.");
         assert!(uses.is_empty());
+    }
+
+    #[test]
+    fn text_mode_fenced_json_tool() {
+        // The qwen2.5-coder:14b shape from the 2026-05-14 fire-it demo:
+        // plain text response wrapping fenced JSON envelopes.
+        let resp = "```json\n{\"tool\":\"repo_grep\",\"args\":{\"pattern\":\"fizzbuzz\"}}\n```";
+        let body = json!({"content": resp});
+        let (_t, uses) = extract_tool_uses(&body);
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].name, "repo_grep");
+        assert_eq!(
+            uses[0].input.get("pattern").and_then(|v| v.as_str()),
+            Some("fizzbuzz")
+        );
+    }
+
+    #[test]
+    fn text_mode_fenced_json_finish() {
+        let resp = "```json\n{\"finish\":\"all done\"}\n```";
+        let body = json!({"content": resp});
+        let (_t, uses) = extract_tool_uses(&body);
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].name, "finish");
+        assert_eq!(
+            uses[0].input.get("summary").and_then(|v| v.as_str()),
+            Some("all done")
+        );
+    }
+
+    #[test]
+    fn text_mode_multiple_blocks() {
+        let resp = "first call:\n```json\n{\"tool\":\"repo_read\",\"args\":{\"path\":\"a\"}}\n```\nsecond:\n```json\n{\"tool\":\"repo_read\",\"args\":{\"path\":\"b\"}}\n```\nfinish:\n```json\n{\"finish\":\"read both\"}\n```";
+        let body = json!({"content": resp});
+        let (_t, uses) = extract_tool_uses(&body);
+        assert_eq!(uses.len(), 3);
+        assert_eq!(uses[0].input.get("path").and_then(|v| v.as_str()), Some("a"));
+        assert_eq!(uses[1].input.get("path").and_then(|v| v.as_str()), Some("b"));
+        assert_eq!(uses[2].name, "finish");
     }
 }
