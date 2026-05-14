@@ -175,12 +175,13 @@ pub async fn run(
                 continue;
             }
             let exec_start = Instant::now();
-            let res = registry.execute(&tu.name, tu.input.clone()).await;
+            let normalized_input = normalize_tool_input(&tu.name, tu.input.clone());
+            let res = registry.execute(&tu.name, normalized_input.clone()).await;
             let elapsed = exec_start.elapsed().as_millis() as u64;
             steps.push(AgentStep {
                 iteration,
                 tool: tu.name.clone(),
-                input: tu.input.clone(),
+                input: normalized_input,
                 ok: res.ok,
                 output: res.output.clone(),
                 error: res.error.clone(),
@@ -256,7 +257,7 @@ fn build_system_prompt(registry: &ToolRegistry) -> String {
          RESPONSE FORMAT — emit ONE OR MORE fenced JSON blocks; nothing else.\n\
          For each tool you want to call:\n\
          ```json\n\
-         { \"tool\": \"<tool-name>\", \"args\": { ... matching the tool's input schema ... } }\n\
+         { \"tool\": \"<tool-name>\", \"args\": { ...exact keys from the tool's input_schema below... } }\n\
          ```\n\
          When the intent is fully satisfied, end with:\n\
          ```json\n\
@@ -265,19 +266,87 @@ fn build_system_prompt(registry: &ToolRegistry) -> String {
          Rules:\n\
          - The fence delimiter is exactly three backticks + the word `json`.\n\
          - Each block is a single JSON object — `{ \"tool\": ..., \"args\": ... }` OR `{ \"finish\": ... }`.\n\
+         - Use EXACTLY the key names from each tool's input_schema. Do NOT rename `path` to `file_path`, `content` to `body`, etc.\n\
          - Do NOT wrap the JSON in any other structure; do NOT add commentary text.\n\
          - Do NOT echo the operator intent back; act on it.\n\
          - You may emit multiple tool blocks in one response — they execute in order.\n\
          - cargo_check is REQUIRED after any .rs write before finish.\n\n\
-         Available tools:\n",
+         === Tools available (each with input_schema you must follow exactly) ===\n\n",
     );
     let mut names = registry.names();
     names.sort();
     for n in &names {
-        s.push_str(&format!("- {}\n", n));
+        if let Some(tool) = registry.get(n) {
+            let schema_compact = serde_json::to_string(&tool.input_schema())
+                .unwrap_or_else(|_| "{}".to_string());
+            s.push_str(&format!(
+                "- {} — {}\n  input_schema: {}\n\n",
+                n,
+                tool.description(),
+                schema_compact
+            ));
+        }
     }
-    s.push_str("- finish  (signal completion; args: { summary: string })\n");
+    s.push_str(
+        "- finish — signal that the intent is complete.\n  \
+         input_schema: {\"type\":\"object\",\"properties\":{\"summary\":{\"type\":\"string\"}},\"required\":[\"summary\"]}\n",
+    );
     s
+}
+
+/// Lenient input-key normalization. LLMs drift on argument names even
+/// when the schema is in the prompt — observed today: `file_path` for
+/// `path`. Rather than failing the dispatch ("missing path"), normalize
+/// the known cross-tool drift before handing off to
+/// ToolRegistry::execute. The canonical key wins if both are present.
+///
+/// IMPORTANT: do NOT alias schema fields that are tool-specific. The
+/// 2026-05-14 first-iteration normalizer tried to map `new_content` →
+/// `content` for "all tools" and broke code_patch (whose schema
+/// canonical field IS `new_content`). Lesson: only alias what's
+/// genuinely cross-tool synonym (path-like keys, search patterns).
+/// Per-tool schema variations belong in the schema-aware prompt, not
+/// in this layer.
+fn normalize_tool_input(_tool: &str, input: Value) -> Value {
+    let mut obj = match input {
+        Value::Object(m) => m,
+        other => return other,
+    };
+
+    // Cross-tool path-like keys.
+    for alias in ["file_path", "filepath", "filename", "file"] {
+        if !obj.contains_key("path") {
+            if let Some(v) = obj.remove(alias) {
+                obj.insert("path".to_string(), v);
+            }
+        } else {
+            obj.remove(alias);
+        }
+    }
+
+    // cargo_check expects `crate`; LLM sometimes emits `cratename`.
+    for alias in ["crate_name", "cratename", "package"] {
+        if !obj.contains_key("crate") {
+            if let Some(v) = obj.remove(alias) {
+                obj.insert("crate".to_string(), v);
+            }
+        } else {
+            obj.remove(alias);
+        }
+    }
+
+    // repo_grep expects `pattern`; LLM sometimes emits `query`/`regex`.
+    for alias in ["query", "regex", "search"] {
+        if !obj.contains_key("pattern") {
+            if let Some(v) = obj.remove(alias) {
+                obj.insert("pattern".to_string(), v);
+            }
+        } else {
+            obj.remove(alias);
+        }
+    }
+
+    Value::Object(obj)
 }
 
 /// Text-mode parser: scans the assistant text for fenced ```json blocks
@@ -522,6 +591,53 @@ mod tests {
             uses[0].input.get("summary").and_then(|v| v.as_str()),
             Some("all done")
         );
+    }
+
+    #[test]
+    fn normalize_aliases_file_path_to_path() {
+        let input = json!({"file_path": "src/foo.rs", "content": "fn main() {}"});
+        let out = normalize_tool_input("code_patch", input);
+        assert_eq!(out.get("path").and_then(|v| v.as_str()), Some("src/foo.rs"));
+        assert_eq!(out.get("content").and_then(|v| v.as_str()), Some("fn main() {}"));
+        assert!(out.get("file_path").is_none());
+    }
+
+    #[test]
+    fn normalize_preserves_new_content_for_code_patch() {
+        // 2026-05-14 lesson: code_patch's schema canonical field is
+        // `new_content`, not `content`. The earlier normalizer mapped
+        // patch/body/text/data → content for "all tools" and broke
+        // code_patch by draining the real schema field. Don't touch
+        // tool-specific schema fields here.
+        let input = json!({
+            "file_path": "Cargo.toml",
+            "mode": "create",
+            "new_content": "[package]\nname=\"x\"",
+            "rationale": "create"
+        });
+        let out = normalize_tool_input("code_patch", input);
+        assert_eq!(out.get("path").and_then(|v| v.as_str()), Some("Cargo.toml"));
+        assert_eq!(out.get("new_content").and_then(|v| v.as_str()), Some("[package]\nname=\"x\""));
+        assert_eq!(out.get("mode").and_then(|v| v.as_str()), Some("create"));
+        // No 'content' key — we did NOT clobber the schema canonical field.
+        assert!(out.get("content").is_none());
+    }
+
+    #[test]
+    fn normalize_canonical_key_wins_when_both_present() {
+        // If LLM emits BOTH path and file_path, the canonical one wins
+        // and the alias gets dropped (no silent override).
+        let input = json!({"path": "good.rs", "file_path": "bad.rs"});
+        let out = normalize_tool_input("code_patch", input);
+        assert_eq!(out.get("path").and_then(|v| v.as_str()), Some("good.rs"));
+        assert!(out.get("file_path").is_none());
+    }
+
+    #[test]
+    fn normalize_passthrough_on_no_aliases() {
+        let input = json!({"path": "x", "content": "y"});
+        let out = normalize_tool_input("code_patch", input.clone());
+        assert_eq!(out, input);
     }
 
     #[test]
