@@ -1,10 +1,35 @@
-# hex-fizzbuzz-hermes
-
-Minimal hexagonal-architecture Rust example. Built **end-to-end by the hex autonomous SOP loop** as the Phase 0+ proof for ADR-2605141135 (hex-as-hermes-harness roadmap).
-
-## Layers
-
-- `src/lib.rs` — domain (`fizzbuzz` fn), ports (`Writer` trait), usecases (`play` fn), unit tests.
-- `src/main.rs` — primary adapter (stdout) + composition root.
-
-## Build & test
+{
+  "feature": "examples-hex-fizzbuzz-hermes",
+  "description": "Hexagonal fizzbuzz example built by the hex autonomous SOP loop as the Phase 0+ proof for ADR-2605141135.",
+  "behavioral_specs": [
+    {
+      "id": "BS-1",
+      "name": "fizzbuzz domain function",
+      "given": "an integer n",
+      "when": "fizzbuzz(n) is called",
+      "then": "returns 'Fizz' on n%3==0 && n%5!=0; 'Buzz' on n%5==0 && n%3!=0; 'FizzBuzz' on n%15==0; decimal otherwise"
+    },
+    {
+      "id": "BS-2",
+      "name": "play usecase iterates inclusive range",
+      "given": "a Writer and start <= end",
+      "when": "play(writer, start, end) is called",
+      "then": "writer.write invoked (end-start+1) times in order with fizzbuzz(start..=end)"
+    },
+    {
+      "id": "BS-3",
+      "name": "CLI default range",
+      "given": "fizzbuzz binary invoked with no args",
+      "when": "main runs",
+      "then": "stdout receives 15 lines: 1,2,Fizz,4,Buzz,Fizz,7,8,Fizz,Buzz,11,Fizz,13,14,FizzBuzz"
+    },
+    {
+      "id": "BS-4",
+      "name": "CLI invalid range rejected",
+      "given": "fizzbuzz binary with end < start",
+      "when": "main runs",
+      "then": "process exits with code 2 and stderr contains 'usage: fizzbuzz'"
+    }
+  ],
+  "verification": "cargo test from examples/hex-fizzbuzz-hermes/ passes; cargo run -- 1 5 emits 1\\n2\\nFizz\\n4\\nBuzz"
+}
