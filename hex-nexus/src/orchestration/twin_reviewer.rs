@@ -390,11 +390,15 @@ async fn review_one(
 
     // SOURCE-CODE GUARD (post-mortem of 2026-05-10 17:0x runaway):
     // Only the typed `code_patch` tool (proposed_by="tool:code_patch")
-    // may write to hex-*/src/ or spacetime-modules/*/src/. The drafter
-    // produces commitment-driven LLM stubs that pass the LLM-judge's
-    // permissive `src/` pattern and clobber real source files. This
-    // guard runs BEFORE hard_deny so the rejection rationale is
-    // specific instead of generic.
+    // OR operator-explicit content (proposed_by="operator-passthrough"
+    // — the operator literally typed the bytes in a board ask via the
+    // drafter's literal-content shortcut) may write to hex-*/src/ or
+    // spacetime-modules/*/src/. The drafter's LLM-generated stubs are
+    // still banned: they clobber real source files when the persona
+    // hallucinates. operator-passthrough is fine because (a) the
+    // operator typed the content explicitly and (b) the executor's
+    // inline cargo_check gate (ADR-2026-05-11-0700 R1) still rolls
+    // back any .rs write that breaks the build, so a typo doesn't ship.
     if action.kind == "file_write" {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&action.payload_json) {
             let path = v.get("path").and_then(|x| x.as_str()).unwrap_or("");
@@ -406,7 +410,9 @@ async fn review_one(
                 || path.starts_with("hex-analyzer/src/")
                 || path.starts_with("hex-desktop/src/")
                 || (path.starts_with("spacetime-modules/") && path.contains("/src/"));
-            if touches_source && action.proposed_by != "tool:code_patch" {
+            let permitted_source_writer = action.proposed_by == "tool:code_patch"
+                || action.proposed_by == "operator-passthrough";
+            if touches_source && !permitted_source_writer {
                 return decide(
                     http,
                     stdb_host,
@@ -414,7 +420,7 @@ async fn review_one(
                     action.id,
                     "reject",
                     &format!(
-                        "hard deny: only code_patch tool may write source files; \
+                        "hard deny: only code_patch tool or operator-passthrough may write source files; \
                          got proposed_by='{}' for path '{}'",
                         action.proposed_by, path
                     ),
