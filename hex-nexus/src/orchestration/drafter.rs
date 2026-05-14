@@ -759,10 +759,21 @@ async fn queue_file_write_action(
 }
 
 /// Selects the drafter model based on the artifact path. Long-form
-/// artifacts (ADRs, specs, analysis docs) prefer HEX_DRAFTER_MODEL_LONGFORM
-/// when set so the operator can route them through a stronger model than
-/// the default short-form drafter (nemotron-mini). Generic override is
-/// HEX_DRAFTER_MODEL; default is nemotron-mini.
+/// artifacts (ADRs, specs, analysis docs) get a model sized for
+/// ≥800-byte coherent prose; short-form (confirm/abstain replies,
+/// code patches) use the small format-follower.
+///
+/// Defaults match the 2026-05-13 re-bench (memory:
+/// project_t2_5_bench_results) — qwen2.5-coder:14b ties 32B quality
+/// at 2× the speed and is the current T2/T2.5 pin. nemotron-mini is
+/// retained for short-form because it follows commit-format contracts
+/// reliably under a small token budget.
+///
+/// Overrides: HEX_DRAFTER_MODEL_LONGFORM (long-form only) and
+/// HEX_DRAFTER_MODEL (any path).
+const DRAFTER_MODEL_LONGFORM_DEFAULT: &str = "qwen2.5-coder:14b";
+const DRAFTER_MODEL_SHORTFORM_DEFAULT: &str = "nemotron-mini";
+
 fn pick_drafter_model(path: &str) -> String {
     let is_longform = path.starts_with("docs/adrs/")
         || path.starts_with("docs/specs/")
@@ -779,7 +790,11 @@ fn pick_drafter_model(path: &str) -> String {
             return m;
         }
     }
-    "nemotron-mini".to_string()
+    if is_longform {
+        DRAFTER_MODEL_LONGFORM_DEFAULT.to_string()
+    } else {
+        DRAFTER_MODEL_SHORTFORM_DEFAULT.to_string()
+    }
 }
 
 /// Returns the minimum-content-byte threshold for a given artifact path,
