@@ -6,7 +6,40 @@
 //! - Threads (conversation grouping)
 //! - Read receipts and typing indicators
 
-use spacetimedb::{reducer, table, ReducerContext, Table};
+use spacetimedb::{reducer, table, ReducerContext, Table, Timestamp};
+
+/// Format an STDB Timestamp as ISO-8601 (UTC).
+/// Avoids pulling in chrono inside the WASM module — formats manually.
+fn format_iso(ts: Timestamp) -> String {
+    let micros = ts.to_micros_since_unix_epoch();
+    let secs = micros / 1_000_000;
+    let micros_part = (micros % 1_000_000).unsigned_abs();
+    // Days since unix epoch, then date math.
+    let days = secs.div_euclid(86_400);
+    let day_secs = secs.rem_euclid(86_400) as u64;
+    let (h, m, s) = ((day_secs / 3600) as u32, ((day_secs % 3600) / 60) as u32, (day_secs % 60) as u32);
+    let (year, month, day) = days_to_ymd(days);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
+        year, month, day, h, m, s, micros_part
+    )
+}
+
+/// Convert days since 1970-01-01 to (year, month, day). Standard
+/// Howard Hinnant date algorithm — fast and panic-free.
+fn days_to_ymd(days: i64) -> (i32, u32, u32) {
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as i32, m as u32, d as u32)
+}
 
 #[table(name = agent_messages, public)]
 #[derive(Clone, Debug)]
@@ -52,7 +85,11 @@ pub fn send_dm(
     message: String,
     thread_id: Option<String>,
 ) -> Result<(), String> {
-    let now = String::new(); // SpacetimeDB auto-populates timestamps
+    // STDB does NOT auto-populate String-typed columns. Format the
+    // current reducer time as ISO-8601 so the dashboard can render
+    // ages. (Earlier comment claiming auto-population was wrong;
+    // all 1327 pre-fix rows had empty `timestamp`.)
+    let now = format_iso(ctx.timestamp);
 
     ctx.db.agent_messages().insert(AgentMessage {
         id: 0,
@@ -92,7 +129,11 @@ pub fn send_to_channel(
         }
     }
 
-    let now = String::new(); // SpacetimeDB auto-populates timestamps
+    // STDB does NOT auto-populate String-typed columns. Format the
+    // current reducer time as ISO-8601 so the dashboard can render
+    // ages. (Earlier comment claiming auto-population was wrong;
+    // all 1327 pre-fix rows had empty `timestamp`.)
+    let now = format_iso(ctx.timestamp);
 
     ctx.db.agent_messages().insert(AgentMessage {
         id: 0,
@@ -138,7 +179,11 @@ pub fn create_channel(
         return Err(format!("Channel {} already exists", name));
     }
 
-    let now = String::new(); // SpacetimeDB auto-populates timestamps
+    // STDB does NOT auto-populate String-typed columns. Format the
+    // current reducer time as ISO-8601 so the dashboard can render
+    // ages. (Earlier comment claiming auto-population was wrong;
+    // all 1327 pre-fix rows had empty `timestamp`.)
+    let now = format_iso(ctx.timestamp);
 
     ctx.db.agent_channels().insert(AgentChannel {
         name: name.clone(),
@@ -157,7 +202,11 @@ pub fn set_typing(
     agent: String,
     channel_or_dm: String,
 ) -> Result<(), String> {
-    let now = String::new(); // SpacetimeDB auto-populates timestamps
+    // STDB does NOT auto-populate String-typed columns. Format the
+    // current reducer time as ISO-8601 so the dashboard can render
+    // ages. (Earlier comment claiming auto-population was wrong;
+    // all 1327 pre-fix rows had empty `timestamp`.)
+    let now = format_iso(ctx.timestamp);
 
     // Delete existing typing indicator for this agent
     if let Some(_existing) = ctx.db.agent_typing().agent().find(&agent) {
