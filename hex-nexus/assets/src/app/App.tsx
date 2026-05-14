@@ -49,6 +49,7 @@ const Commitments = lazy(() => import('../components/views/Commitments'));
 const MissionControl = lazy(() => import('../components/views/MissionControl'));
 const Missions = lazy(() => import('../components/views/Missions'));
 const OpsSla = lazy(() => import('../components/views/OpsSla'));
+const AgentRuns = lazy(() => import('../components/views/AgentRuns'));
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
 
@@ -269,6 +270,7 @@ const App: Component = () => {
   const isResourcesPage = () => route().page === "resources";
   const isCommitmentsPage = () => route().page === "commitments";
   const isMissionControlPage = () => route().page === "mission-control";
+  const isAgentRunsPage = () => route().page === "agent-runs";
   const isMissionsPage = () => route().page === "missions" || route().page === "mission-detail";
   const isOpsSlaPage = () => route().page === "ops-sla";
 
@@ -373,8 +375,26 @@ const App: Component = () => {
         <ShortcutsOverlay />
       </Show>
 
+      {/* Full-screen Agent Runs (hex agent run execution stream) */}
+      <Show when={isAgentRunsPage()}>
+        <ConnectionStatusBanner />
+        <div class="flex flex-col bg-gray-950 min-h-screen text-gray-100">
+          <div class="px-6 py-4 border-b border-gray-800">
+            <h1 class="text-2xl font-bold">Agent Runs</h1>
+            <p class="text-gray-400 text-xs mt-1">
+              Recent <code class="text-cyan-300">hex agent run</code> executions · flat-loop typed-tool dispatches
+            </p>
+          </div>
+          <div class="px-6 py-4">
+            <AgentRuns runs={[]} />
+          </div>
+        </div>
+        <ToastContainer />
+        <ShortcutsOverlay />
+      </Show>
+
       {/* Standard layout with sidebar for all other pages */}
-      <Show when={!isBrainPage() && !isOrgChartPage() && !isOrgCommsPage() && !isTeamPage() && !isMergeGatePage() && !isPersonaHealthPage() && !isThoughtsPage() && !isResourcesPage() && !isCommitmentsPage() && !isMissionControlPage() && !isMissionsPage() && !isOpsSlaPage()}>
+      <Show when={!isBrainPage() && !isOrgChartPage() && !isOrgCommsPage() && !isTeamPage() && !isMergeGatePage() && !isPersonaHealthPage() && !isThoughtsPage() && !isResourcesPage() && !isCommitmentsPage() && !isMissionControlPage() && !isMissionsPage() && !isOpsSlaPage() && !isAgentRunsPage()}>
         <div class="flex h-screen flex-col bg-gray-950 text-gray-100">
           {/* Connection status banner — shown when nexus or SpacetimeDB is unavailable */}
           <ConnectionStatusBanner />
