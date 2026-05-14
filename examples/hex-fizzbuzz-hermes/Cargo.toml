@@ -1,0 +1,12 @@
+[package]
+name = "hex-fizzbuzz-hermes"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "hex_fizzbuzz_hermes"
+path = "src/lib.rs"
+
+[[bin]]
+name = "fizzbuzz"
+path = "src/main.rs"
