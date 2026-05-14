@@ -309,23 +309,43 @@ const MissionControl: Component = () => {
         sourceId: ex.id,
       });
     }
-    // chat
-    for (const msg of d.recent_messages || []) {
+    // chat — collapse broadcast (same from + body within 5s window) into
+    // one bubble so the operator sees "operator → cto, cpo, ciso (3)"
+    // rather than 7 identical copies of the same message routed to the
+    // 7 c-suite roles.
+    const chatMsgs = [...(d.recent_messages || [])].sort(
+      (a, b) => (b.msg_id || 0) - (a.msg_id || 0)
+    );
+    const groups: Array<{ msgs: ChatMessage[]; ts: number; bucket: string }> = [];
+    for (const msg of chatMsgs) {
       const ts = tsToEpoch(msg.created_at);
-      // Even with msg_id=0 fallback timestamp this still surfaces — use msg_id*1000 if no ts
-      const fallback = msg.msg_id ? msg.msg_id : 0;
+      const tsBucket = Math.floor(ts / 5000); // 5-second window
+      const bucket = `${msg.from_role}|${tsBucket}|${msg.message}`;
+      const existing = groups.find((g) => g.bucket === bucket);
+      if (existing) {
+        existing.msgs.push(msg);
+      } else {
+        groups.push({ msgs: [msg], ts: ts || (msg.msg_id || 0), bucket });
+      }
+    }
+    for (const g of groups) {
+      const first = g.msgs[0];
+      const recipients = g.msgs.map((m) => m.to_role).filter((r): r is string => !!r && r !== "*");
+      const targetLabel = recipients.length > 1
+        ? `${recipients.slice(0, 3).join(", ")}${recipients.length > 3 ? ` + ${recipients.length - 3} more` : ""} (${recipients.length})`
+        : (recipients[0] || "everyone");
       items.push({
-        ts: ts || fallback,
+        ts: g.ts,
         kind: "chat",
-        icon: msg.from_role === "operator" ? "→" : "💬",
-        color: msg.from_role === "operator" ? "text-cyan-300" : "text-purple-300",
-        actor: msg.from_role,
-        actorColor: actorColorFor(msg.from_role),
-        verb: "said to",
-        target: msg.to_role || "everyone",
-        body: msg.message,
-        msgId: msg.msg_id,
-        sourceId: `msg-${msg.msg_id}`,
+        icon: first.from_role === "operator" ? "→" : "💬",
+        color: first.from_role === "operator" ? "text-cyan-300" : "text-purple-300",
+        actor: first.from_role,
+        actorColor: actorColorFor(first.from_role),
+        verb: recipients.length > 1 ? "broadcast to" : "said to",
+        target: targetLabel,
+        body: first.message,
+        msgId: first.msg_id,
+        sourceId: `msg-${first.msg_id}`,
       });
     }
     // twin verdicts + anomalies + other live_events (skip heartbeats)

@@ -18,6 +18,13 @@ pub struct SendMessageRequest {
     pub content: String,
     pub context: Option<serde_json::Value>,
     pub project_id: Option<String>, // Optional project scope
+    /// Explicit single-target route. When set, the message goes ONLY
+    /// to this agent and `@mention` parsing is skipped. Pre-fix the
+    /// route silently broadcast to all executives whenever the
+    /// content lacked an @mention; CLI/dashboard callers had no way
+    /// to address one persona without rewriting the body.
+    #[serde(default)]
+    pub to: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -43,8 +50,17 @@ pub async fn send_message(
     State(state): State<Arc<crate::state::AppState>>,
     Json(req): Json<SendMessageRequest>,
 ) -> Result<Json<SendMessageResponse>, StatusCode> {
-    // Parse @mentions and #project from message
-    let mentions = parse_mentions(&req.content)?;
+    // Explicit `to` overrides @mention parsing — single-target route
+    // for CLI/dashboard callers that want a real DM.
+    let mentions = if let Some(ref t) = req.to {
+        if t.trim().is_empty() {
+            parse_mentions(&req.content)?
+        } else {
+            vec![t.trim().to_string()]
+        }
+    } else {
+        parse_mentions(&req.content)?
+    };
     let project_scope = req.project_id.clone().or_else(|| parse_project_scope(&req.content));
 
     // Load org chart to validate mentions and get agent info
