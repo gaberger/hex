@@ -41,6 +41,12 @@ pub struct AgentStep {
     pub output: Value,
     pub error: Option<String>,
     pub elapsed_ms: u64,
+    /// Free-form assistant text emitted alongside this tool_use block.
+    /// Empty when the LLM's response was pure tool calls. The Hermes-
+    /// style transcript view surfaces this inline above the tool block
+    /// so operators can read the model's reasoning.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub assistant_text: String,
 }
 
 /// Final outcome of an agent run.
@@ -213,6 +219,7 @@ pub async fn run(
                     output: serde_json::json!({"skipped": true, "reason": "duplicate of prior success"}),
                     error: None,
                     elapsed_ms: 0,
+                    assistant_text: assistant_text.clone(),
                 });
                 continue;
             }
@@ -229,6 +236,7 @@ pub async fn run(
                 output: res.output.clone(),
                 error: res.error.clone(),
                 elapsed_ms: elapsed,
+                assistant_text: assistant_text.clone(),
             });
             let payload = json!({
                 "ok": res.ok,
