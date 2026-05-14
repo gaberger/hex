@@ -355,7 +355,7 @@ async fn main() -> anyhow::Result<()> {
             .build()
             .context("Failed to build HTTP client")?;
         let hostname = gethostname::gethostname().to_string_lossy().to_string();
-        let _register_result = client
+        let register_result = client
             .post(format!("{}/api/hex-agents/connect", nexus_url))
             .json(&serde_json::json!({
                 "agent_id": agent_uuid,
@@ -369,6 +369,39 @@ async fn main() -> anyhow::Result<()> {
             }))
             .send()
             .await;
+        match register_result {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!(
+                    role = %role_name,
+                    agent_uuid = %agent_uuid,
+                    status = %resp.status(),
+                    "hex-agent daemon: registered to hex_agent table via /api/hex-agents/connect"
+                );
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                tracing::warn!(
+                    role = %role_name,
+                    agent_uuid = %agent_uuid,
+                    status = %status,
+                    body = %body.chars().take(200).collect::<String>(),
+                    "hex-agent daemon: /api/hex-agents/connect returned non-success — \
+                     worker will run but won't appear in `hex agent list` or as a valid \
+                     cc_agent for workplan_executor"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    role = %role_name,
+                    agent_uuid = %agent_uuid,
+                    error = %e,
+                    "hex-agent daemon: /api/hex-agents/connect HTTP request failed — \
+                     worker will run but won't appear in `hex agent list` or as a valid \
+                     cc_agent for workplan_executor"
+                );
+            }
+        }
 
         // P3: CodePhaseWorker — direct code phase, no inner pipeline
         let worker = CodePhaseWorker::from_env().await;

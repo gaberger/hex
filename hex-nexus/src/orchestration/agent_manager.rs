@@ -412,6 +412,30 @@ impl AgentManager {
             tracing::debug!(agent_id = %id, host = %stdb_cfg.host, db = %stdb_cfg.database, "Injecting SpacetimeDB config");
         }
 
+        // Bypass the worktree-guard for supervisor-spawned workers.
+        //
+        // ADR-2605081126 P2.1 made hex-agent refuse to run from trunk to
+        // prevent the 2026-05-07 hijacker-style overwrite. That defense
+        // is correct for ad-hoc operator-invoked hex-agent runs, but the
+        // supervisor IS the operator in the single-host model: it spawns
+        // worker processes with cwd=trunk (nexus's cwd) deliberately so
+        // a single instance can serve all roles without worktree sprawl.
+        //
+        // Pre-fix (observed 2026-05-14): supervisor spawns hex-agent
+        // daemon → worktree-guard at hex_agent/src/main.rs:293 prints
+        // "refusing to run from trunk" and exit(2)s → the registration
+        // call at line 358 (POST /api/hex-agents/connect) never fires →
+        // hex_agent table only ever holds the 10 persona-virtualized
+        // rows, never the real IC workers → workplan_executor's
+        // cc_agent UUID lookup misses → tasks time out at 120s. This is
+        // the construction-loop break diagnosed in ADR-2605141135 Phase 1.
+        //
+        // Override is supervisor-scoped only. Direct `hex-agent daemon`
+        // invocations from a developer shell still hit the guard.
+        // SafeFileWriter (commit 0346eff8) remains the real safety net
+        // for autonomous source-tree writes.
+        cmd.env("HEXFLO_WORKTREE_REQUIRED", "0");
+
         // ADR-2026-04-05-1800 P1: Issue capability token and inject as env var.
         // Default capabilities: SwarmWrite + admin for orchestrator agents.
         // Scoped agents (hex-coder) get TaskWrite + FileSystem for their worktree.
