@@ -125,6 +125,30 @@ pub enum AgentAction {
         /// Workplan execution ID
         id: String,
     },
+    /// Run the simple agent loop on a natural-language intent. The
+    /// flat alternative to `hex ops send` — no persona rephrasing,
+    /// no atomic-claim, no Confirm: contract. Calls nexus
+    /// /api/agent/run which loops LLM → typed-tool → tool_result
+    /// until the LLM signals finish or the iteration budget hits.
+    Run {
+        /// Operator intent in natural language.
+        intent: String,
+        /// Max LLM round-trips (default 10).
+        #[arg(long, default_value_t = 10)]
+        max_iterations: u32,
+        /// Max tokens per LLM response (default 4096).
+        #[arg(long, default_value_t = 4096)]
+        max_tokens: u32,
+        /// Model override (default qwen2.5-coder:14b or $HEX_AGENT_MODEL).
+        #[arg(long)]
+        model: Option<String>,
+        /// Nexus URL.
+        #[arg(long, default_value = "http://127.0.0.1:5555")]
+        nexus: String,
+        /// Output mode: pretty (default) or json.
+        #[arg(long, default_value = "pretty")]
+        output: String,
+    },
     /// Run as a persistent agent worker for a specific role
     Worker {
         /// Agent role (hex-coder, hex-tester, hex-reviewer, hex-documenter, hex-ux, hex-fixer)
@@ -231,6 +255,14 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
             model,
         } => spawn_remote(&target, project_dir, source_dir, sandbox, model).await,
         AgentAction::Disconnect { agent_id } => disconnect(&agent_id).await,
+        AgentAction::Run {
+            intent,
+            max_iterations,
+            max_tokens,
+            model,
+            nexus,
+            output,
+        } => agent_run(intent, max_iterations, max_tokens, model, nexus, output).await,
         AgentAction::Fleet => fleet().await,
         AgentAction::Overview { json } => overview(json).await,
         AgentAction::Evict => evict().await,
@@ -3003,6 +3035,113 @@ async fn cancel_workplan(id: &str) -> anyhow::Result<()> {
     let body = serde_json::json!({ "id": id });
     let resp = nexus.post("/api/workplan/fail", &body).await?;
     println!("{}", resp);
+    Ok(())
+}
+
+/// `hex agent run <intent>` — flat LLM-driven typed-tool agent. Posts
+/// to nexus `/api/agent/run` and prints the summary.
+///
+/// The deliberately-simple alternative to the persona/org-comms loop:
+/// no rephrasing, no atomic-claim, no Confirm: contract, no dual
+/// registry. The LLM picks typed tools from the registry, the same
+/// twin + executor + autonomous-commit chain lands each write.
+async fn agent_run(
+    intent: String,
+    max_iterations: u32,
+    max_tokens: u32,
+    model: Option<String>,
+    nexus_url: String,
+    output: String,
+) -> anyhow::Result<()> {
+    if intent.trim().is_empty() {
+        anyhow::bail!("hex agent run: intent is required and must be non-empty");
+    }
+    let url = format!("{}/api/agent/run", nexus_url.trim_end_matches('/'));
+    let mut body = serde_json::json!({
+        "intent": intent,
+        "max_iterations": max_iterations,
+        "max_tokens": max_tokens,
+    });
+    if let Some(m) = model {
+        body["model"] = serde_json::Value::String(m);
+    }
+
+    let client = reqwest::Client::builder()
+        // Agent loops can take a while — N LLM round-trips × per-iter time.
+        // Generous timeout; let the nexus enforce the iteration budget.
+        .timeout(std::time::Duration::from_secs(60 * 30))
+        .build()?;
+    let resp = client.post(&url).json(&body).send().await?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+
+    if output == "json" {
+        println!("{}", text);
+        if !status.is_success() {
+            anyhow::bail!("hex agent run: HTTP {}", status);
+        }
+        return Ok(());
+    }
+
+    if !status.is_success() {
+        eprintln!("hex agent run: HTTP {}: {}", status, text);
+        anyhow::bail!("nexus returned non-success");
+    }
+
+    let summary: serde_json::Value =
+        serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    let iterations = summary
+        .get("iterations")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let stop_reason = summary
+        .get("stop_reason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let elapsed_ms = summary
+        .get("elapsed_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let final_text = summary
+        .get("final_text")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let steps = summary
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    println!("agent finished — {} iterations, {} steps, {} ms, stop_reason={}",
+        iterations, steps.len(), elapsed_ms, stop_reason);
+    for (i, step) in steps.iter().enumerate() {
+        let tool = step.get("tool").and_then(|v| v.as_str()).unwrap_or("?");
+        let ok = step.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        let elapsed = step
+            .get("elapsed_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let err = step
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let mark = if ok { "✓" } else { "✗" };
+        if ok {
+            println!("  {} step {:>2}: {:>20}  ({} ms)", mark, i + 1, tool, elapsed);
+        } else {
+            println!(
+                "  {} step {:>2}: {:>20}  ({} ms)  error: {}",
+                mark,
+                i + 1,
+                tool,
+                elapsed,
+                err.chars().take(120).collect::<String>()
+            );
+        }
+    }
+    if !final_text.is_empty() {
+        println!("\n--- agent's final reply ---\n{}", final_text);
+    }
     Ok(())
 }
 

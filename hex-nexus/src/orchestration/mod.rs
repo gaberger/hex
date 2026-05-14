@@ -18,6 +18,7 @@ pub mod inference_strategy_builder;
 pub mod action_executor;
 pub mod commitment_parser;
 pub mod drafter;
+pub mod simple_agent;
 pub mod org_responder;
 pub mod repo_grounding;
 pub mod resource_observer;

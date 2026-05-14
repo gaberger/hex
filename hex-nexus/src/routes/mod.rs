@@ -1,4 +1,5 @@
 pub mod adrs;
+pub mod agent_run;
 pub mod agents;
 pub mod browse;
 pub mod files;
@@ -863,6 +864,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/inference/calibrate-all", post(inference::calibrate_all))
         // Synchronous inference completion (hex-agent HTTP bridge)
         .route("/api/inference/complete", post(inference::inference_complete)
+            .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
+        // Simple-agent loop — flat LLM-driven typed-tool dispatch, no persona.
+        // POST /api/agent/run {intent, max_iterations?, max_tokens?, model?}
+        .route("/api/agent/run", post(agent_run::run)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
         // Path B task dispatch queue (ADR-2026-04-01-0000 P2.2 + P2.3)
         .route("/api/inference/queue", post(inference::inference_queue)
