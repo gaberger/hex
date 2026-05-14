@@ -3,6 +3,7 @@ pub mod assets_cmd;
 pub mod brain_alias;
 pub mod pool;
 pub mod bootstrap;
+pub mod ops;
 pub mod sched;
 pub mod brief;
 pub mod ci;

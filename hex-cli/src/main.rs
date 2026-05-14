@@ -297,6 +297,12 @@ enum Commands {
         #[command(subcommand)]
         action: InboxAction,
     },
+    /// Operator-grade SOP primitives (write / send / abandon) — wraps
+    /// the autonomous-loop endpoints so the operator never types curl.
+    Ops {
+        #[command(subcommand)]
+        action: commands::ops::OpsAction,
+    },
     /// Insight extraction surfaces (punch-list, gap detection)
     Insight {
         #[command(subcommand)]
@@ -648,6 +654,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Swarm { action } => commands::swarm::run(action).await,
         Commands::Task { action } => commands::task::run(action).await,
         Commands::Inbox { action } => commands::inbox::run(action).await,
+        Commands::Ops { action } => commands::ops::run(action).await,
         Commands::Insight { action } => commands::insight::run(action).await,
         Commands::Memory { action } => commands::memory::run(action).await,
         Commands::Monitor(args) => commands::monitor::run(args).await,
