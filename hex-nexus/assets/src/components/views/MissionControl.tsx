@@ -178,15 +178,29 @@ const MissionControl: Component = () => {
     }
   };
 
-  // ── Derived: per-persona open work counts ────────────────────────
-  const factoryRows = createMemo(() => {
+  // ── Derived: per-persona status ──────────────────────────────────
+  // Translates raw counts into operator-readable status:
+  //   "idle · 2m"                  (no open work)
+  //   "drafting 2 actions"         (open work, no escalations)
+  //   "blocked · 3 escalated"      (needs operator attention)
+  //   "paused"                     (operator-suspended)
+  interface FactoryRow {
+    role: string;
+    display_name: string;
+    paused: boolean;
+    last_tick_at: string;
+    open: number;
+    escalated: number;
+    statusLine: string;
+    statusColor: string;
+  }
+  const factoryRows = createMemo<FactoryRow[]>(() => {
     const d = data();
     if (!d) return [];
     const openByRole = new Map<string, number>();
     const escByRole = new Map<string, number>();
     for (const a of d.pending_decisions?.actions || []) {
       const by = a.proposed_by || "";
-      // proposed_by may be "cto" or "tool:code_patch" — only count role-style
       if (by && !by.includes(":") && by !== "operator-passthrough") {
         openByRole.set(by, (openByRole.get(by) || 0) + 1);
         if (a.status === "escalated") escByRole.set(by, (escByRole.get(by) || 0) + 1);
@@ -199,20 +213,72 @@ const MissionControl: Component = () => {
           escByRole.set(c.role, (escByRole.get(c.role) || 0) + 1);
       }
     }
-    return (d.personas || []).map((p) => ({
-      ...p,
-      open: openByRole.get(p.role) || 0,
-      escalated: escByRole.get(p.role) || 0,
-    }));
+    return (d.personas || []).map((p) => {
+      const open = openByRole.get(p.role) || 0;
+      const esc = escByRole.get(p.role) || 0;
+      const age = ageSinceAny(p.last_tick_at);
+      let statusLine: string;
+      let statusColor: string;
+      if (p.paused) {
+        statusLine = "paused";
+        statusColor = "text-yellow-400";
+      } else if (esc > 0) {
+        statusLine = `${esc} blocked — needs you`;
+        statusColor = "text-red-400";
+      } else if (open > 0) {
+        statusLine = `working on ${open} action${open === 1 ? "" : "s"}`;
+        statusColor = "text-cyan-300";
+      } else {
+        statusLine = `idle · last tick ${age}`;
+        statusColor = "text-zinc-500";
+      }
+      return { ...p, open, escalated: esc, statusLine, statusColor };
+    });
   });
 
-  // ── Derived: unified activity stream (executed + events, sorted) ─
+  const [selectedRole, setSelectedRole] = createSignal<string | null>(null);
+  const [expandedAttention, setExpandedAttention] = createSignal<Set<string>>(new Set());
+  const [actionBusy, setActionBusy] = createSignal<string | null>(null);
+  const [actionStatus, setActionStatus] = createSignal<Record<string, string>>({});
+
+  const abandonAttention = async (id: string, actionId?: number) => {
+    if (!actionId) return;
+    setActionBusy(id);
+    try {
+      const r = await restClient.post(`/v1/database/hex/call/proposed_action_close`, [actionId, "abandoned", "operator abandoned via dashboard"]).catch(() => null);
+      setActionStatus({ ...actionStatus(), [id]: r ? "abandoned" : "tried abandon; check log" });
+    } catch (e: any) {
+      setActionStatus({ ...actionStatus(), [id]: `error: ${e?.message || e}` });
+    } finally {
+      setActionBusy(null);
+      await refresh();
+    }
+  };
+
+  const inspectAttention = (item: AttentionItem) => {
+    const e = new Set(expandedAttention());
+    if (e.has(item.id)) e.delete(item.id); else e.add(item.id);
+    setExpandedAttention(e);
+  };
+
+  const copyCli = (cli?: string) => {
+    if (!cli) return;
+    navigator.clipboard?.writeText(cli);
+  };
+
+  // ── Derived: unified activity stream as conversational sentences ─
+  // Each item reads like "actor verbed object" — operator can scan
+  // the stream like a newsfeed rather than parsing log lines.
   interface ActivityItem {
     ts: number;
     icon: string;
     color: string;
-    summary: string;
-    detail: string;
+    actor: string;          // who did it (cyan/purple/green text)
+    actorColor: string;
+    verb: string;           // past-tense action
+    target: string;         // what they acted on
+    detail?: string;        // optional secondary context (italic)
+    role?: string;          // for filtering
     sourceId: string | number;
   }
 
@@ -220,18 +286,25 @@ const MissionControl: Component = () => {
     const d = data();
     if (!d) return [];
     const items: ActivityItem[] = [];
+    const role = selectedRole();
     for (const ex of d.activity?.recent_executed || []) {
       const ts = tsToEpoch(ex.executed_at);
       if (!ts) continue;
-      const path = ex.path || "";
+      // Parse "auto-executed by ceo-twin: wrote /path (N bytes)" to
+      // attribute back to the persona/twin actor.
+      const m = ex.evidence?.match(/by (\S+):/);
+      const actor = m ? m[1] : "executor";
+      const path = ex.path || "(unknown)";
+      const filename = path.split("/").pop() || path;
       items.push({
         ts,
         icon: ex.success ? "✎" : "✗",
         color: ex.success ? "text-cyan-300" : "text-red-400",
-        summary: ex.success ? `wrote ${path.split("/").pop() || path}` : `${ex.kind} failed`,
-        detail: ex.success
-          ? `${ex.kind} · ${path} · action#${ex.id}`
-          : `action#${ex.id} · ${ex.error || "no detail"}`,
+        actor,
+        actorColor: actorColorFor(actor),
+        verb: ex.success ? "wrote" : "tried to write",
+        target: filename,
+        detail: ex.success ? `${path} · action #${ex.id}` : (ex.error || `action #${ex.id}`),
         sourceId: ex.id,
       });
     }
@@ -243,13 +316,17 @@ const MissionControl: Component = () => {
         ts,
         icon: info.icon,
         color: info.color,
-        summary: info.summary,
-        detail: ev.preview ? truncate(ev.preview, 140) : ev.event_type,
+        actor: info.actor,
+        actorColor: actorColorFor(info.actor),
+        verb: info.verb,
+        target: info.target || ev.event_type,
+        detail: ev.preview ? truncate(ev.preview, 140) : undefined,
         sourceId: `ev-${ev.id}`,
       });
     }
     items.sort((a, b) => b.ts - a.ts);
-    return items.slice(0, 40);
+    const filtered = role ? items.filter((i) => i.actor === role || i.actor === `${role}-twin`) : items;
+    return filtered.slice(0, 50);
   });
 
   const attention = createMemo(() => data()?.attention_feed || []);
@@ -345,25 +422,31 @@ const MissionControl: Component = () => {
         {/* Left rail: factory + attention */}
         <aside class="col-span-4 lg:col-span-3 border-r border-zinc-800 overflow-y-auto">
           <div class="px-4 py-3 border-b border-zinc-800">
-            <h2 class="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">Factory</h2>
+            <div class="flex items-center justify-between mb-2">
+              <h2 class="text-[10px] uppercase tracking-wide text-zinc-500">Factory</h2>
+              <Show when={selectedRole()}>
+                <button class="text-[10px] text-cyan-400 hover:underline" onClick={() => setSelectedRole(null)}>
+                  clear filter
+                </button>
+              </Show>
+            </div>
             <div class="space-y-1">
               <For each={factoryRows()}>{(p) => (
-                <div class="flex items-center gap-2 text-xs">
-                  <span class={p.paused ? "text-yellow-400" : "text-green-400"}>●</span>
-                  <span class="font-mono text-zinc-200 flex-1">{p.role}</span>
-                  <Show when={p.escalated > 0}>
-                    <span class="text-red-400 tabular-nums">{p.escalated}!</span>
-                  </Show>
-                  <Show when={p.open > 0 && p.escalated === 0}>
-                    <span class="text-cyan-300 tabular-nums">{p.open}</span>
-                  </Show>
-                  <Show when={p.open === 0}>
-                    <span class="text-zinc-600 tabular-nums">0</span>
-                  </Show>
-                  <span class="text-zinc-500 tabular-nums text-[10px] w-8 text-right">
-                    {ageSinceAny(p.last_tick_at)}
-                  </span>
-                </div>
+                <button
+                  class="w-full text-left rounded px-2 py-1.5 border transition-colors"
+                  classList={{
+                    "border-cyan-700 bg-cyan-900/20": selectedRole() === p.role,
+                    "border-transparent hover:bg-zinc-900": selectedRole() !== p.role,
+                  }}
+                  onClick={() => setSelectedRole(selectedRole() === p.role ? null : p.role)}
+                  title={selectedRole() === p.role ? "click to clear filter" : `click to filter activity to ${p.role}`}
+                >
+                  <div class="flex items-center gap-2">
+                    <span class={p.paused ? "text-yellow-400" : (p.escalated > 0 ? "text-red-400" : "text-green-400")}>●</span>
+                    <span class="font-mono text-zinc-200 text-xs">{p.role}</span>
+                  </div>
+                  <div class={`text-[11px] ml-4 ${p.statusColor}`}>{p.statusLine}</div>
+                </button>
               )}</For>
               <Show when={factoryRows().length === 0 && !loading()}>
                 <div class="text-zinc-500 text-xs italic">No personas registered.</div>
@@ -378,24 +461,77 @@ const MissionControl: Component = () => {
             </div>
             <Show
               when={attention().length > 0}
-              fallback={<div class="text-zinc-500 text-xs italic">Clear.</div>}
+              fallback={<div class="text-zinc-500 text-xs italic">Nothing waiting.</div>}
             >
               <div class="space-y-1.5">
-                <For each={attention().slice(0, 15)}>{(item) => (
-                  <div class="text-xs leading-tight">
-                    <div class="flex items-center gap-1.5">
-                      <span class={
-                        item.priority === 0 ? "text-red-400" :
-                        item.priority === 1 ? "text-amber-400" : "text-blue-400"
-                      }>●</span>
-                      <span class="text-zinc-300 truncate flex-1" title={item.title}>{item.title}</span>
-                      <span class="text-zinc-600 tabular-nums shrink-0">{ageSec(item.age_seconds)}</span>
+                <For each={attention().slice(0, 20)}>{(item) => {
+                  const isOpen = () => expandedAttention().has(item.id);
+                  const actionMatch = item.id.match(/^(escalation|commitment|autocommit|merge|anomaly)-(.+)$/);
+                  const actionId = actionMatch && /^\d+$/.test(actionMatch[2]) ? parseInt(actionMatch[2], 10) : undefined;
+                  return (
+                    <div class="text-xs">
+                      <button
+                        class="w-full text-left rounded border transition-colors px-2 py-1.5 hover:bg-zinc-900"
+                        classList={{
+                          "border-red-800 bg-red-950/20": item.priority === 0 && !isOpen(),
+                          "border-amber-800 bg-amber-950/10": item.priority === 1 && !isOpen(),
+                          "border-zinc-800": item.priority === 2 && !isOpen(),
+                          "border-cyan-700 bg-zinc-900": isOpen(),
+                        }}
+                        onClick={() => inspectAttention(item)}
+                      >
+                        <div class="flex items-baseline gap-1.5">
+                          <span class={
+                            item.priority === 0 ? "text-red-400" :
+                            item.priority === 1 ? "text-amber-400" : "text-blue-400"
+                          }>●</span>
+                          <span class="text-zinc-200 truncate flex-1">{item.title}</span>
+                          <span class="text-zinc-500 tabular-nums shrink-0 text-[10px]">{ageSec(item.age_seconds)}</span>
+                          <span class="text-zinc-600 shrink-0">{isOpen() ? "▾" : "▸"}</span>
+                        </div>
+                      </button>
+                      <Show when={isOpen()}>
+                        <div class="border-l border-zinc-700 ml-2 mt-1 px-2 py-1.5 space-y-1.5">
+                          <div class="text-[11px] text-zinc-400">{item.subtitle}</div>
+                          <div class="flex flex-wrap gap-1.5">
+                            <Show when={item.cli_repro}>
+                              <button
+                                class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px]"
+                                onClick={() => copyCli(item.cli_repro)}
+                                title={item.cli_repro}
+                              >
+                                Copy CLI
+                              </button>
+                            </Show>
+                            <Show when={actionId !== undefined}>
+                              <button
+                                class="px-2 py-0.5 rounded bg-red-900/40 hover:bg-red-900 border border-red-800 text-red-200 text-[11px] disabled:opacity-50"
+                                disabled={actionBusy() === item.id}
+                                onClick={() => abandonAttention(item.id, actionId)}
+                              >
+                                {actionBusy() === item.id ? "…" : "Abandon"}
+                              </button>
+                            </Show>
+                            <Show when={item.action_url}>
+                              <a
+                                class="px-2 py-0.5 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-200 text-[11px]"
+                                href={item.action_url}
+                              >
+                                Inspect
+                              </a>
+                            </Show>
+                          </div>
+                          <Show when={actionStatus()[item.id]}>
+                            <div class="text-[10px] text-zinc-500 italic">{actionStatus()[item.id]}</div>
+                          </Show>
+                        </div>
+                      </Show>
                     </div>
-                  </div>
-                )}</For>
-                <Show when={attention().length > 15}>
+                  );
+                }}</For>
+                <Show when={attention().length > 20}>
                   <div class="text-[10px] text-zinc-500 italic pt-1">
-                    … {attention().length - 15} more
+                    … {attention().length - 20} more
                   </div>
                 </Show>
               </div>
@@ -403,28 +539,41 @@ const MissionControl: Component = () => {
           </div>
         </aside>
 
-        {/* Main: live activity stream */}
+        {/* Main: live activity stream — conversational sentences */}
         <main class="col-span-8 lg:col-span-9 overflow-y-auto">
-          <div class="px-6 py-3 border-b border-zinc-800 sticky top-0 bg-zinc-950 z-10">
-            <h2 class="text-[10px] uppercase tracking-wide text-zinc-500">Live activity</h2>
+          <div class="px-6 py-3 border-b border-zinc-800 sticky top-0 bg-zinc-950 z-10 flex items-center justify-between">
+            <h2 class="text-[10px] uppercase tracking-wide text-zinc-500">
+              Live activity{selectedRole() ? ` · filter: ${selectedRole()}` : ""}
+            </h2>
+            <span class="text-[10px] text-zinc-500">{activity().length} events</span>
           </div>
-          <div class="px-6 py-3 space-y-1">
+          <div class="px-6 py-3 space-y-1.5">
             <Show
               when={activity().length > 0}
               fallback={
                 <div class="text-zinc-500 text-sm italic py-8 text-center">
-                  Factory is quiet. Type an intent above to start something.
+                  {selectedRole()
+                    ? `No recent activity for ${selectedRole()}. Click the role again to clear the filter.`
+                    : "Factory is quiet. Type an intent above to start something."}
                 </div>
               }
             >
               <For each={activity()}>{(item) => (
-                <div class="flex items-baseline gap-3 text-xs py-1 border-b border-zinc-900/50 last:border-0">
-                  <span class="text-zinc-500 tabular-nums w-10 shrink-0 text-right">
-                    {ageSec(Math.max(0, Math.floor((Date.now() - item.ts) / 1000)))}
+                <div class="flex items-baseline gap-3 text-sm py-1.5 border-b border-zinc-900/50 last:border-0">
+                  <span class="text-zinc-500 tabular-nums w-12 shrink-0 text-right text-[11px]">
+                    {ageSec(Math.max(0, Math.floor((Date.now() - item.ts) / 1000)))} ago
                   </span>
-                  <span class={`${item.color} w-4 shrink-0`}>{item.icon}</span>
-                  <span class="text-zinc-200 shrink-0 font-medium">{item.summary}</span>
-                  <span class="text-zinc-500 truncate min-w-0 flex-1 font-mono">{item.detail}</span>
+                  <span class={`${item.color} w-4 shrink-0 text-base`}>{item.icon}</span>
+                  <div class="min-w-0 flex-1">
+                    <div class="leading-relaxed">
+                      <span class={`font-mono text-[12px] ${item.actorColor}`}>{item.actor}</span>
+                      <span class="text-zinc-400 text-[13px]"> {item.verb} </span>
+                      <span class="text-zinc-100 text-[13px]">{item.target}</span>
+                    </div>
+                    <Show when={item.detail}>
+                      <div class="text-[11px] text-zinc-500 truncate font-mono mt-0.5">{item.detail}</div>
+                    </Show>
+                  </div>
                 </div>
               )}</For>
             </Show>
@@ -435,16 +584,35 @@ const MissionControl: Component = () => {
   );
 };
 
-function eventDecorate(evType: string): { icon: string; color: string; summary: string } {
-  if (evType.startsWith("twin_") || evType === "twin_verdict") return { icon: "✓", color: "text-green-400", summary: "twin verdict" };
-  if (evType === "executor_applied" || evType === "file_write") return { icon: "✎", color: "text-cyan-300", summary: "executor" };
-  if (evType === "persona_reply") return { icon: "💬", color: "text-purple-300", summary: "persona reply" };
-  if (evType === "thought_journaled") return { icon: "✦", color: "text-purple-300", summary: "thought" };
-  if (evType.startsWith("improver_")) return { icon: "▼", color: "text-cyan-400", summary: "improver" };
-  if (evType === "brain_tick") return { icon: "·", color: "text-zinc-500", summary: "brain tick" };
-  if (evType.startsWith("commitment_")) return { icon: "↑", color: "text-amber-300", summary: "commitment" };
-  if (evType.startsWith("escalat") || evType.startsWith("anomaly")) return { icon: "⚠", color: "text-red-400", summary: "anomaly" };
-  return { icon: "·", color: "text-zinc-400", summary: evType };
+function eventDecorate(evType: string): { icon: string; color: string; actor: string; verb: string; target: string } {
+  if (evType === "twin_verdict") return { icon: "✓", color: "text-green-400", actor: "twin", verb: "decided on", target: "an action" };
+  if (evType.startsWith("twin_")) return { icon: "✓", color: "text-green-400", actor: "twin", verb: "reviewed", target: evType.replace("twin_", "") };
+  if (evType === "executor_applied" || evType === "file_write") return { icon: "✎", color: "text-cyan-300", actor: "executor", verb: "applied", target: "a file write" };
+  if (evType === "persona_reply") return { icon: "💬", color: "text-purple-300", actor: "persona", verb: "replied", target: "to the board" };
+  if (evType === "thought_journaled") return { icon: "✦", color: "text-purple-300", actor: "persona", verb: "journaled", target: "a thought" };
+  if (evType.startsWith("improver_act")) return { icon: "▼", color: "text-cyan-400", actor: "improver", verb: "acted on", target: "a pattern" };
+  if (evType.startsWith("improver_")) return { icon: "▼", color: "text-cyan-400", actor: "improver", verb: "ticked", target: "" };
+  if (evType === "brain_tick") return { icon: "·", color: "text-zinc-500", actor: "brain", verb: "ticked", target: "" };
+  if (evType.startsWith("commitment_created")) return { icon: "↑", color: "text-amber-300", actor: "commitment_parser", verb: "created", target: "a commitment" };
+  if (evType.startsWith("commitment_satisfied")) return { icon: "✓", color: "text-green-300", actor: "executor", verb: "satisfied", target: "a commitment" };
+  if (evType.startsWith("commitment_")) return { icon: "↑", color: "text-amber-300", actor: "commitment", verb: "updated", target: evType };
+  if (evType.startsWith("escalat") || evType.startsWith("anomaly")) return { icon: "⚠", color: "text-red-400", actor: "system", verb: "escalated", target: "an issue" };
+  if (evType === "loop_notification") return { icon: "🔔", color: "text-cyan-300", actor: "loop", verb: "notified", target: "" };
+  return { icon: "·", color: "text-zinc-400", actor: "system", verb: "logged", target: evType };
+}
+
+function actorColorFor(actor: string): string {
+  if (!actor) return "text-zinc-400";
+  if (actor === "operator") return "text-cyan-300";
+  if (actor === "twin" || actor.endsWith("-twin")) return "text-green-300";
+  if (actor === "executor" || actor.includes("executor")) return "text-cyan-300";
+  if (actor === "improver" || actor === "brain") return "text-cyan-400";
+  if (actor === "system" || actor === "loop") return "text-zinc-400";
+  // c-suite roles → purple family; differentiate by stable hash for variety
+  const palette = ["text-purple-300", "text-fuchsia-300", "text-pink-300", "text-indigo-300", "text-violet-300", "text-rose-300"];
+  let h = 0;
+  for (let i = 0; i < actor.length; i++) h = (h * 31 + actor.charCodeAt(i)) & 0xfffff;
+  return palette[h % palette.length];
 }
 
 export default MissionControl;
