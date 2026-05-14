@@ -2,3 +2,5 @@
 name = "agent-smoke"
 version = "0.1.0"
 edition = "2021"
+# Empty workspace block — keeps this example out of the parent hex workspace.
+[workspace]
