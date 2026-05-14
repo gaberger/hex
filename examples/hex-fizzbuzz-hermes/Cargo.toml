@@ -10,3 +10,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "fizzbuzz"
 path = "src/main.rs"
+
+# Empty [workspace] keeps this example out of the hex workspace so it
+# stands alone and can be built without affecting the parent workspace.
+[workspace]
