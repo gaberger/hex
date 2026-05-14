@@ -59,7 +59,7 @@ export type Route =
 // ── State ───────────────────────────────────────────────────────────────────
 
 // Signal is safe at module level — no computation, just a getter/setter pair
-const [route, setRoute] = createSignal<Route>({ page: "brain" });
+const [route, setRoute] = createSignal<Route>({ page: "mission-control" });
 export { route };
 
 // ── Derived state (assigned inside createRoot by initRouterStore) ───────────
