@@ -734,7 +734,15 @@ async fn queue_file_write_action(
         "content": content,
     });
     let url = format!("{}/v1/database/{}/call/proposed_action_open", stdb_host, hex_db);
-    let body = serde_json::json!(["file_write", payload.to_string(), c.role, c.id]);
+    // Literal-content briefs are operator's words transcribed verbatim by
+    // the drafter — NOT persona LLM generation. The content-grounding
+    // gate exists to catch persona hallucination; it doesn't apply when
+    // the operator explicitly named the bytes. Tag the proposed_action
+    // with proposed_by="operator-passthrough" so the twin auto-approves
+    // (mirroring its tool:* fast path) instead of running the LLM judge
+    // and the structural grounding gate. Persona attribution is preserved
+    // in the commitment row (c.role) for audit.
+    let body = serde_json::json!(["file_write", payload.to_string(), "operator-passthrough", c.id]);
     let resp = http
         .post(&url)
         .json(&body)

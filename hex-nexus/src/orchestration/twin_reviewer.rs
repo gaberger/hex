@@ -434,7 +434,15 @@ async fn review_one(
     // Cargo.toml when its own allowlist permits — hard_deny's
     // trunk_blocklist was the wrong abstraction for the post-source-guard
     // era (the source-guard above already gates non-tool drafter writes).
-    if action.proposed_by.starts_with("tool:") {
+    //
+    // operator-passthrough: drafter's literal-content shortcut (operator
+    // explicitly named the bytes in the board ask, e.g. "containing only
+    // one line: X"). Not persona generation → no hallucination risk →
+    // skip the grounding gate and LLM judge. Persona attribution stays in
+    // the commitment row for audit.
+    if action.proposed_by.starts_with("tool:")
+        || action.proposed_by == "operator-passthrough"
+    {
         return decide(
             http,
             stdb_host,

@@ -453,9 +453,13 @@ async fn git_commit_executed_file(
         ));
     }
 
+    // `-m <msg>` must come BEFORE `-- <pathspec>` or git treats `-m` as
+    // another pathspec (`error: pathspec '-m' did not match any file(s)`).
+    // Observed 2026-05-14 on the first smoke run after the operator-
+    // passthrough bypass made the loop reach this step.
     let commit = tokio::process::Command::new("git")
         .current_dir(repo_root)
-        .args(["commit", "--only", "--", rel_path, "-m", &message])
+        .args(["commit", "--only", "-m", &message, "--", rel_path])
         .output()
         .await
         .map_err(|e| format!("git commit: {}", e))?;
