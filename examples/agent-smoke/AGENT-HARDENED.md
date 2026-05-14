@@ -1,0 +1,1 @@
+hex agent run hardened — tools fast-path end to end 2026-05-14
