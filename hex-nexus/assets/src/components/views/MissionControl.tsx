@@ -71,6 +71,14 @@ interface LiveEvent {
   preview: string;
 }
 
+interface ChatMessage {
+  msg_id: number;
+  from_role: string;
+  to_role: string;
+  message: string;
+  created_at: string;
+}
+
 interface Payload {
   stdb_alive: boolean;
   pulse?: { autonomous_commits_today?: number };
@@ -79,6 +87,7 @@ interface Payload {
   pending_decisions: { actions: ActionRow[]; commitments: CommitmentRow[]; anomalies: any[] };
   attention_feed?: AttentionItem[];
   live_events?: LiveEvent[];
+  recent_messages?: ChatMessage[];
 }
 
 const REFRESH_MS = 5000;
@@ -153,11 +162,38 @@ const MissionControl: Component = () => {
   });
   onCleanup(() => { if (timer) clearInterval(timer); });
 
+  // Two modes — natural-language intent dispatches `hex agent run`;
+  // a leading @role sends to the persona board (chat with a persona).
+  // Example:
+  //   "use code_patch to ..."   → POST /api/agent/run
+  //   "@cto draft a security ADR" → POST /api/org/send-message to=cto
+  //   "@all weekly sync"        → broadcast to c-suite
   const dispatch = async () => {
     const text = intent().trim();
     if (!text || running()) return;
+    const chatMatch = text.match(/^@(\S+)\s+([\s\S]+)$/);
     setRunning(true);
-    setLastDispatch("dispatching…");
+    if (chatMatch) {
+      const [, target, msg] = chatMatch;
+      setLastDispatch(`→ chat to @${target}: routing…`);
+      try {
+        const from = target === "all" ? "operator" : "operator";
+        const body: any = { from, content: msg };
+        if (target !== "all") body.to = target;
+        const resp = await restClient.post("/api/org/send-message", body);
+        const routed = resp?.routed_to || [];
+        setLastDispatch(`✓ chat routed → ${Array.isArray(routed) && routed.length ? routed.join(", ") : target}`);
+        setIntent("");
+        setTimeout(refresh, 1500);
+      } catch (e: any) {
+        setLastDispatch(`✗ chat error: ${e?.message || String(e)}`);
+      } finally {
+        setRunning(false);
+        setTimeout(() => setLastDispatch(""), 12000);
+      }
+      return;
+    }
+    setLastDispatch("dispatching agent run…");
     try {
       const resp = await restClient.post("/api/agent/run", {
         intent: text,
@@ -166,12 +202,12 @@ const MissionControl: Component = () => {
       });
       const steps = (resp?.steps || []).length;
       setLastDispatch(
-        `${resp?.iterations ?? 0} iter · ${steps} step${steps === 1 ? "" : "s"} · ${resp?.stop_reason ?? "?"} · ${resp?.elapsed_ms ?? 0}ms`
+        `✓ ${resp?.iterations ?? 0} iter · ${steps} step${steps === 1 ? "" : "s"} · ${resp?.stop_reason ?? "?"} · ${resp?.elapsed_ms ?? 0}ms`
       );
       setIntent("");
       await refresh();
     } catch (e: any) {
-      setLastDispatch(`error: ${e?.message || String(e)}`);
+      setLastDispatch(`✗ ${e?.message || String(e)}`);
     } finally {
       setRunning(false);
       setTimeout(() => setLastDispatch(""), 12000);
@@ -329,6 +365,20 @@ const MissionControl: Component = () => {
     return filtered.slice(0, 50);
   });
 
+  const [mainTab, setMainTab] = createSignal<"activity" | "chat">("activity");
+
+  const chatMessages = createMemo<ChatMessage[]>(() => {
+    const msgs = data()?.recent_messages || [];
+    const role = selectedRole();
+    const filtered = role
+      ? msgs.filter((m) => m.from_role === role || m.to_role === role)
+      : msgs;
+    // Oldest first so chat reads top-to-bottom
+    return [...filtered].sort(
+      (a, b) => tsToEpoch(a.created_at) - tsToEpoch(b.created_at)
+    );
+  });
+
   const attention = createMemo(() => data()?.attention_feed || []);
   const p0 = () => attention().filter((i) => i.priority === 0).length;
   const p1 = () => attention().filter((i) => i.priority === 1).length;
@@ -362,11 +412,14 @@ const MissionControl: Component = () => {
         </div>
       </Show>
 
-      {/* ─── Operator input ─── */}
+      {/* ─── Operator input (chat-or-dispatch) ─── */}
       <div class="px-6 py-3 border-b border-zinc-800 bg-zinc-900/40">
-        <div class="flex items-center gap-2 mb-1.5 text-[11px] text-zinc-500">
-          <span>Tell the factory what you want.</span>
-          <span class="ml-auto flex items-center gap-2">
+        <div class="flex items-center gap-2 mb-1.5 text-[11px]">
+          <span class="text-zinc-500">
+            <span class="text-cyan-300 font-mono">@role</span> chats with a persona ·
+            <span class="text-zinc-300"> plain text</span> dispatches an agent run
+          </span>
+          <span class="ml-auto flex items-center gap-2 text-zinc-500">
             <select
               class="bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-zinc-300"
               value={model()}
@@ -393,7 +446,7 @@ const MissionControl: Component = () => {
         <div class="flex gap-2">
           <input
             class="flex-1 bg-zinc-950 border border-zinc-700 focus:border-cyan-600 focus:outline-none rounded px-3 py-2 text-sm font-mono"
-            placeholder='e.g. "Use code_patch to create docs/specs/foo.md with new_content ..."'
+            placeholder={intent().startsWith("@") ? "chat message → press ⌘↵ to send" : '"@cto draft an ADR" or "use code_patch to create docs/foo.md..."'}
             value={intent()}
             onInput={(e) => setIntent(e.currentTarget.value)}
             onKeyDown={(e) => {
@@ -405,11 +458,15 @@ const MissionControl: Component = () => {
             disabled={running()}
           />
           <button
-            class="px-5 rounded bg-cyan-700 hover:bg-cyan-600 text-white text-sm disabled:opacity-50"
+            class="px-5 rounded text-white text-sm disabled:opacity-50"
+            classList={{
+              "bg-cyan-700 hover:bg-cyan-600": !intent().startsWith("@"),
+              "bg-purple-700 hover:bg-purple-600": intent().startsWith("@"),
+            }}
             disabled={!intent().trim() || running()}
             onClick={dispatch}
           >
-            {running() ? "Running…" : "Run"}
+            {running() ? "Running…" : (intent().startsWith("@") ? "Send" : "Run")}
           </button>
         </div>
         <Show when={lastDispatch()}>
@@ -539,45 +596,119 @@ const MissionControl: Component = () => {
           </div>
         </aside>
 
-        {/* Main: live activity stream — conversational sentences */}
-        <main class="col-span-8 lg:col-span-9 overflow-y-auto">
-          <div class="px-6 py-3 border-b border-zinc-800 sticky top-0 bg-zinc-950 z-10 flex items-center justify-between">
-            <h2 class="text-[10px] uppercase tracking-wide text-zinc-500">
-              Live activity{selectedRole() ? ` · filter: ${selectedRole()}` : ""}
-            </h2>
-            <span class="text-[10px] text-zinc-500">{activity().length} events</span>
-          </div>
-          <div class="px-6 py-3 space-y-1.5">
-            <Show
-              when={activity().length > 0}
-              fallback={
-                <div class="text-zinc-500 text-sm italic py-8 text-center">
-                  {selectedRole()
-                    ? `No recent activity for ${selectedRole()}. Click the role again to clear the filter.`
-                    : "Factory is quiet. Type an intent above to start something."}
-                </div>
-              }
+        {/* Main: Activity stream OR Chat — toggled */}
+        <main class="col-span-8 lg:col-span-9 overflow-y-auto flex flex-col">
+          <div class="px-6 py-2 border-b border-zinc-800 sticky top-0 bg-zinc-950 z-10 flex items-center gap-4">
+            <button
+              class="text-[11px] uppercase tracking-wide pb-1 border-b-2"
+              classList={{
+                "text-zinc-100 border-cyan-500": mainTab() === "activity",
+                "text-zinc-500 border-transparent hover:text-zinc-300": mainTab() !== "activity",
+              }}
+              onClick={() => setMainTab("activity")}
             >
-              <For each={activity()}>{(item) => (
-                <div class="flex items-baseline gap-3 text-sm py-1.5 border-b border-zinc-900/50 last:border-0">
-                  <span class="text-zinc-500 tabular-nums w-12 shrink-0 text-right text-[11px]">
-                    {ageSec(Math.max(0, Math.floor((Date.now() - item.ts) / 1000)))} ago
-                  </span>
-                  <span class={`${item.color} w-4 shrink-0 text-base`}>{item.icon}</span>
-                  <div class="min-w-0 flex-1">
-                    <div class="leading-relaxed">
-                      <span class={`font-mono text-[12px] ${item.actorColor}`}>{item.actor}</span>
-                      <span class="text-zinc-400 text-[13px]"> {item.verb} </span>
-                      <span class="text-zinc-100 text-[13px]">{item.target}</span>
-                    </div>
-                    <Show when={item.detail}>
-                      <div class="text-[11px] text-zinc-500 truncate font-mono mt-0.5">{item.detail}</div>
-                    </Show>
-                  </div>
-                </div>
-              )}</For>
+              Activity <span class="text-zinc-600">({activity().length})</span>
+            </button>
+            <button
+              class="text-[11px] uppercase tracking-wide pb-1 border-b-2"
+              classList={{
+                "text-zinc-100 border-cyan-500": mainTab() === "chat",
+                "text-zinc-500 border-transparent hover:text-zinc-300": mainTab() !== "chat",
+              }}
+              onClick={() => setMainTab("chat")}
+            >
+              Chat <span class="text-zinc-600">({chatMessages().length})</span>
+            </button>
+            <Show when={selectedRole()}>
+              <span class="ml-auto text-[10px] text-zinc-500">
+                filter: <span class="text-cyan-400">{selectedRole()}</span>
+              </span>
             </Show>
           </div>
+
+          <Show when={mainTab() === "activity"}>
+            <div class="px-6 py-3 space-y-1.5">
+              <Show
+                when={activity().length > 0}
+                fallback={
+                  <div class="text-zinc-500 text-sm italic py-8 text-center">
+                    {selectedRole()
+                      ? `No recent activity for ${selectedRole()}. Click the role again to clear the filter.`
+                      : "Factory is quiet. Type an intent above to start something."}
+                  </div>
+                }
+              >
+                <For each={activity()}>{(item) => (
+                  <div class="flex items-baseline gap-3 text-sm py-1.5 border-b border-zinc-900/50 last:border-0">
+                    <span class="text-zinc-500 tabular-nums w-12 shrink-0 text-right text-[11px]">
+                      {ageSec(Math.max(0, Math.floor((Date.now() - item.ts) / 1000)))} ago
+                    </span>
+                    <span class={`${item.color} w-4 shrink-0 text-base`}>{item.icon}</span>
+                    <div class="min-w-0 flex-1">
+                      <div class="leading-relaxed">
+                        <span class={`font-mono text-[12px] ${item.actorColor}`}>{item.actor}</span>
+                        <span class="text-zinc-400 text-[13px]"> {item.verb} </span>
+                        <span class="text-zinc-100 text-[13px]">{item.target}</span>
+                      </div>
+                      <Show when={item.detail}>
+                        <div class="text-[11px] text-zinc-500 truncate font-mono mt-0.5">{item.detail}</div>
+                      </Show>
+                    </div>
+                  </div>
+                )}</For>
+              </Show>
+            </div>
+          </Show>
+
+          <Show when={mainTab() === "chat"}>
+            <div class="px-6 py-3 space-y-3">
+              <Show
+                when={chatMessages().length > 0}
+                fallback={
+                  <div class="text-zinc-500 text-sm py-8 text-center">
+                    <div class="italic mb-2">
+                      {selectedRole()
+                        ? `No recent messages for ${selectedRole()}.`
+                        : "No chat traffic yet."}
+                    </div>
+                    <div class="text-[11px] text-zinc-600">
+                      Type <code class="text-cyan-300">@cto draft an ADR for X</code> in the compose box to start a thread.
+                    </div>
+                  </div>
+                }
+              >
+                <For each={chatMessages()}>{(msg) => {
+                  const isOperator = msg.from_role === "operator";
+                  return (
+                    <div class="flex gap-3" classList={{ "justify-end": isOperator }}>
+                      <div
+                        class="max-w-2xl rounded-lg px-3 py-2 text-sm"
+                        classList={{
+                          "bg-cyan-900/40 border border-cyan-800": isOperator,
+                          "bg-zinc-900 border border-zinc-700": !isOperator,
+                        }}
+                      >
+                        <div class="flex items-baseline gap-2 mb-1">
+                          <span class={`font-mono text-[11px] ${actorColorFor(msg.from_role)}`}>
+                            {msg.from_role}
+                          </span>
+                          <Show when={msg.to_role && msg.to_role !== "all"}>
+                            <span class="text-zinc-500 text-[10px]">→ {msg.to_role}</span>
+                          </Show>
+                          <span class="text-zinc-600 text-[10px] ml-auto">
+                            {ageSinceIso(msg.created_at)} ago
+                          </span>
+                        </div>
+                        <div class="text-zinc-100 whitespace-pre-wrap break-words leading-relaxed">
+                          {msg.message}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }}</For>
+              </Show>
+            </div>
+          </Show>
         </main>
       </div>
     </div>

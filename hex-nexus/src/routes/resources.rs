@@ -224,6 +224,8 @@ pub async fn list_commitments(
                 "all" => true,
                 "open" => status == "open",
                 "overdue" => status == "overdue",
+                "satisfied" => status == "satisfied",
+                "abandoned" => status == "abandoned",
                 "active" | _ => status == "open" || status == "overdue",
             };
             if !keep {

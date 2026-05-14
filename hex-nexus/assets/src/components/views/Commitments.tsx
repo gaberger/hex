@@ -69,7 +69,7 @@ const fmtDeadline = (micros: number): string => {
 
 const Commitments: Component = () => {
   const [commitments, setCommitments] = createSignal<CommitmentRow[]>([]);
-  const [statusFilter, setStatusFilter] = createSignal<string>("active");
+  const [statusFilter, setStatusFilter] = createSignal<string>("all");
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
   const [busyId, setBusyId] = createSignal<number | null>(null);
