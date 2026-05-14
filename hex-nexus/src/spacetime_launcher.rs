@@ -442,7 +442,7 @@ pub async fn start_local(port: u16) -> Result<Child, String> {
     let child = Command::new("spacetime")
         .arg("start")
         .arg("--listen-addr")
-        .arg(format!("127.0.0.1:{}", port))
+        .arg(format!("0.0.0.0:{}", port))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

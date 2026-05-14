@@ -39,7 +39,7 @@ async fn main() {
         .iter()
         .position(|a| a == "--bind")
         .and_then(|i| args.get(i + 1).cloned())
-        .unwrap_or_else(|| "127.0.0.1".to_string());
+        .unwrap_or_else(|| "0.0.0.0".to_string());
 
     // Note: --daemon flag is accepted but ignored. The hex CLI handles process daemonization
     // by redirecting stdout/stderr to a log file and managing the process lifecycle.

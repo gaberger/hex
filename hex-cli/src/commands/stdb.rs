@@ -258,7 +258,7 @@ async fn start(port: u16) -> anyhow::Result<()> {
     let child = tokio::process::Command::new(&binary)
         .arg("start")
         .arg("--listen-addr")
-        .arg(format!("127.0.0.1:{}", port))
+        .arg(format!("0.0.0.0:{}", port))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn();
