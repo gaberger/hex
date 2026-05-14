@@ -228,6 +228,59 @@ async fn execute_file_write(
     let gate_enabled = std::env::var("HEX_DISABLE_CARGO_GATE")
         .map(|v| v != "1" && !v.eq_ignore_ascii_case("true"))
         .unwrap_or(true);
+    if gate_enabled && (rel_path.ends_with(".tsx") || rel_path.ends_with(".ts")) {
+        // ADR-2605141631 follow-up — TypeScript writes get the same
+        // compile-or-rollback discipline as Rust. Without this, the
+        // 2026-05-14 dogfood run on AttentionFeed.tsx landed a file
+        // with a hallucinated `import { AttentionItem } from './types'`
+        // because no gate caught it.
+        let ts_tool = crate::tools::typescript_check::TypescriptCheck;
+        let ts_input = serde_json::json!({});
+        use crate::tools::Tool;
+        let ts_result = ts_tool.execute(ts_input).await;
+        let has_errors = !ts_result.ok
+            || ts_result
+                .output
+                .get("errors")
+                .and_then(|e| e.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false);
+        if has_errors {
+            let errors_summary = ts_result
+                .output
+                .get("errors")
+                .and_then(|e| e.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .take(3)
+                        .map(|v| v.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                })
+                .unwrap_or_default();
+            if let Some(backup) = pre_write_backup.clone() {
+                let _ = std::fs::write(&target, backup);
+            } else {
+                let _ = std::fs::remove_file(&target);
+            }
+            tracing::warn!(
+                action_id = action.id,
+                path = %target.display(),
+                "action_executor: typescript_check rejected patch — rolled back"
+            );
+            return mark_failed(
+                http,
+                stdb_host,
+                hex_db,
+                action.id,
+                &format!(
+                    "ADR-2605141631 R1: typescript_check failed after write — rolled back. Errors: {}",
+                    errors_summary.chars().take(800).collect::<String>()
+                ),
+            )
+            .await;
+        }
+    }
     if gate_enabled && rel_path.ends_with(".rs") {
         if let Some(crate_name) = infer_rust_crate(rel_path) {
             let check_tool = crate::tools::cargo_check::CargoCheck;

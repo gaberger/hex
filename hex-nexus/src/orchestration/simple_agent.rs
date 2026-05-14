@@ -266,11 +266,12 @@ fn build_system_prompt(registry: &ToolRegistry) -> String {
          Rules:\n\
          - The fence delimiter is exactly three backticks + the word `json`.\n\
          - Each block is a single JSON object — `{ \"tool\": ..., \"args\": ... }` OR `{ \"finish\": ... }`.\n\
+         - STRICT JSON ONLY inside the fence. Strings use double quotes (\"...\"); newlines in string values are encoded as \\n. NEVER use backticks (`...`) or JS template literals — they are not valid JSON and the parser will silently drop your tool call.\n\
          - Use EXACTLY the key names from each tool's input_schema. Do NOT rename `path` to `file_path`, `content` to `body`, etc.\n\
          - Do NOT wrap the JSON in any other structure; do NOT add commentary text.\n\
          - Do NOT echo the operator intent back; act on it.\n\
          - You may emit multiple tool blocks in one response — they execute in order.\n\
-         - cargo_check is REQUIRED after any .rs write before finish.\n\n\
+         - cargo_check is REQUIRED after any .rs write before finish. typescript_check is REQUIRED after any .ts/.tsx write before finish.\n\n\
          === Tools available (each with input_schema you must follow exactly) ===\n\n",
     );
     let mut names = registry.names();

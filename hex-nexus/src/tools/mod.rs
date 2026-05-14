@@ -26,6 +26,7 @@ pub mod repo_read;
 pub mod secret_scan;
 pub mod spec_draft;
 pub mod tool_register;
+pub mod typescript_check;
 pub mod web_search;
 pub mod workplan_emit;
 pub mod module_register;
@@ -144,6 +145,7 @@ impl Default for ToolRegistry {
         reg.register(Arc::new(module_register::ModuleRegister));
         reg.register(Arc::new(workspace_boundary_check::WorkspaceBoundaryCheck));
         reg.register(Arc::new(escalate_to_operator::EscalateToOperator));
+        reg.register(Arc::new(typescript_check::TypescriptCheck));
         reg
     }
 }
