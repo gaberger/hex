@@ -1,0 +1,1 @@
+hex ops send proof — board ask via hex CLI, no curl
