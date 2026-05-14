@@ -734,6 +734,7 @@ pub async fn get_mission_control(
             "total_thoughts_db":       total_thoughts,
             "active_pattern_count":    thought_patterns.len(),
             "git_head":                git_head,
+            "autonomous_commits_today": autonomous_commits_today(),
         },
         "activity": {
             "recent_executed": recent_executed,
