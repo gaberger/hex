@@ -1,0 +1,1 @@
+hex ops write proof — autonomous SOP loop reached via hex CLI, no curl
