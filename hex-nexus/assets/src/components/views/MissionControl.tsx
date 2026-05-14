@@ -347,6 +347,10 @@ const MissionControl: Component = () => {
     for (const ev of d.live_events || []) {
       const ts = tsToEpoch(ev.created_at);
       if (!ts) continue;
+      // Heartbeats (brain_tick, improver_tick) are scheduler pulses, not
+      // operator-meaningful events. Surface them via the loop-health
+      // indicator below the header instead of cluttering the stream.
+      if (ev.event_type === "brain_tick" || ev.event_type === "improver_tick") continue;
       const info = eventDecorate(ev.event_type);
       items.push({
         ts,
@@ -356,13 +360,27 @@ const MissionControl: Component = () => {
         actorColor: actorColorFor(info.actor),
         verb: info.verb,
         target: info.target || ev.event_type,
-        detail: ev.preview ? truncate(ev.preview, 140) : undefined,
+        detail: ev.preview ? humanizePreview(ev.event_type, ev.preview) : undefined,
         sourceId: `ev-${ev.id}`,
       });
     }
     items.sort((a, b) => b.ts - a.ts);
     const filtered = role ? items.filter((i) => i.actor === role || i.actor === `${role}-twin`) : items;
     return filtered.slice(0, 50);
+  });
+
+  // Loop health — track when each background loop last ticked so we
+  // know they're alive without spamming the activity stream.
+  const loopHealth = createMemo(() => {
+    const evs = data()?.live_events || [];
+    let brainTs = 0;
+    let improverTs = 0;
+    for (const ev of evs) {
+      const ts = tsToEpoch(ev.created_at);
+      if (ev.event_type === "brain_tick" && ts > brainTs) brainTs = ts;
+      if (ev.event_type === "improver_tick" && ts > improverTs) improverTs = ts;
+    }
+    return { brainTs, improverTs };
   });
 
   const [mainTab, setMainTab] = createSignal<"activity" | "chat">("activity");
@@ -394,6 +412,16 @@ const MissionControl: Component = () => {
         <div class="flex items-center gap-3 text-[11px]">
           <span class={data()?.stdb_alive ? "text-green-400" : "text-red-400"}>
             STDB {data()?.stdb_alive ? "✓" : "✗"}
+          </span>
+          <span class="text-zinc-500">·</span>
+          <span
+            class="text-zinc-500"
+            title={
+              `brain: ${loopHealth().brainTs ? `${ageSec(Math.max(0, Math.floor((Date.now() - loopHealth().brainTs) / 1000)))} ago` : "silent"}\n` +
+              `improver: ${loopHealth().improverTs ? `${ageSec(Math.max(0, Math.floor((Date.now() - loopHealth().improverTs) / 1000)))} ago` : "silent"}`
+            }
+          >
+            loops {loopHealth().brainTs && loopHealth().improverTs ? "✓" : "?"}
           </span>
           <span class="text-zinc-500">·</span>
           <span class="text-cyan-300 tabular-nums">
@@ -730,6 +758,42 @@ function eventDecorate(evType: string): { icon: string; color: string; actor: st
   if (evType.startsWith("escalat") || evType.startsWith("anomaly")) return { icon: "⚠", color: "text-red-400", actor: "system", verb: "escalated", target: "an issue" };
   if (evType === "loop_notification") return { icon: "🔔", color: "text-cyan-300", actor: "loop", verb: "notified", target: "" };
   return { icon: "·", color: "text-zinc-400", actor: "system", verb: "logged", target: evType };
+}
+
+/**
+ * Translate raw live_event.preview payloads into one-line operator prose.
+ * Falls back to a truncated raw string if we don't recognize the shape.
+ */
+function humanizePreview(evType: string, preview: string): string {
+  if (!preview) return "";
+  let parsed: any = null;
+  try {
+    parsed = JSON.parse(preview);
+  } catch {
+    return preview.length > 140 ? preview.slice(0, 140) + "…" : preview;
+  }
+  if (!parsed || typeof parsed !== "object") return String(preview).slice(0, 140);
+  if (evType === "improver_tick" && parsed.by_source) {
+    const keys = Object.keys(parsed.by_source);
+    const total = keys.reduce((acc, k) => acc + (parsed.by_source[k] || 0), 0);
+    return `${total} signal${total === 1 ? "" : "s"} across ${keys.length} pattern${keys.length === 1 ? "" : "s"}`;
+  }
+  if (evType === "twin_verdict") {
+    const v = parsed.verdict || parsed.decision || "?";
+    const aid = parsed.action_id ?? parsed.id ?? "";
+    return `${v}${aid ? ` action #${aid}` : ""}`;
+  }
+  if (evType === "executor_applied" || evType === "file_write") {
+    const path = parsed.path || parsed.target || "";
+    const bytes = parsed.bytes ?? parsed.byte_len;
+    return `${path}${bytes ? ` · ${bytes}B` : ""}`;
+  }
+  if (parsed.summary) return String(parsed.summary).slice(0, 140);
+  if (parsed.message) return String(parsed.message).slice(0, 140);
+  // Last resort: prettiest plausible field
+  const firstScalar = Object.entries(parsed).find(([_, v]) => typeof v !== "object");
+  if (firstScalar) return `${firstScalar[0]}: ${String(firstScalar[1]).slice(0, 100)}`;
+  return "";
 }
 
 function actorColorFor(actor: string): string {
