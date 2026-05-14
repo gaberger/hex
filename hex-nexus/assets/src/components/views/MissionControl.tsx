@@ -15,10 +15,23 @@
 import { Component, For, Show, createSignal, onMount, onCleanup } from "solid-js";
 import { restClient } from "../../services/rest-client";
 import { navigate } from "../../stores/router";
+import AttentionFeed from "./AttentionFeed";
+
+interface AttentionItem {
+  id: string;
+  priority: 0 | 1 | 2;
+  kind: 'escalation' | 'overdue_commitment' | 'merge_vote_needed' | 'resource_anomaly' | 'autonomous_commit' | 'agent_run_active';
+  title: string;
+  subtitle: string;
+  age_seconds: number;
+  action_url?: string;
+  cli_repro?: string;
+}
 
 interface MissionControlPayload {
   ts: string;
   stdb_alive: boolean;
+  attention_feed?: AttentionItem[];
   pulse?: PulseRow;
   activity: {
     recent_executed: ExecutedRow[];
@@ -342,6 +355,21 @@ const MissionControl: Component = () => {
             <div class="text-xs text-gray-400 mt-1">{sendStatus()}</div>
           </Show>
         </div>
+
+        {/* Attention feed — full width, P0/P1/P2 lanes. Hermes-aligned single-pane landing. */}
+        <Show when={(data()!.attention_feed?.length || 0) > 0}>
+          <div class="px-6 pt-4">
+            <div class="flex items-baseline justify-between mb-2">
+              <h2 class="text-sm uppercase tracking-wide text-gray-400">Attention feed</h2>
+              <span class="text-xs text-gray-500">
+                {data()!.attention_feed!.filter(i => i.priority === 0).length} P0 ·
+                {" "}{data()!.attention_feed!.filter(i => i.priority === 1).length} P1 ·
+                {" "}{data()!.attention_feed!.filter(i => i.priority === 2).length} P2
+              </span>
+            </div>
+            <AttentionFeed items={data()!.attention_feed!} />
+          </div>
+        </Show>
 
         {/* 12-col grid below */}
         <div class="grid grid-cols-12 gap-4 px-6 py-4">

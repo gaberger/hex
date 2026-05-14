@@ -1,0 +1,164 @@
+# dashboard-ux-architect — IA + redesign synthesis (read-only, no code-write)
+# Differs from ux-designer (which extracts WCAG findings). This role takes
+# an ADR + existing-component set and emits an opinionated information-
+# architecture design proposal that downstream hex-coder consumes.
+#
+# Origin: 2026-05-14 — ux-designer YAML's output schema is findings-only;
+# ADR-2605141631 (dashboard refactor on Hermes model) needs synthesis,
+# not extraction. New role created per CLAUDE.md HARD RULE 0 ("build the
+# verb before doing the work").
+
+name: dashboard-ux-architect
+type: architect
+version: "1.0.0"
+description: >
+  Information-architecture + redesign synthesis for the hex-nexus
+  dashboard (Solid.js + Tailwind). Takes an ADR + scope + existing
+  component inventory and emits a DesignProposal: landing IA, view
+  disposition (keep/merge/demote), panel specs for new surfaces,
+  WCAG blockers to fix before ship. Read-only — code lands via
+  hex-coder consuming this proposal as input.
+
+shared_prefix:
+  id: hex-agent-common-v1
+  constraints:
+    - "TOOL PREFERENCE: mcp__hex__* before Bash."
+    - "READ-ONLY: this agent has no Write or Edit tools by design."
+    - "GROUND IN ADR: every IA decision cites the input ADR section or names it explicitly missing."
+    - "PRESERVE DIFFERENTIATORS: hex's hexagonal architecture, c-suite persona topology, twin auto-approve, autonomous-commit pipeline are the brand. Never propose redesigns that hide these."
+
+model:
+  tier: T3
+  preferred: opus
+  fallback: sonnet
+  reasoning: >
+    IA synthesis grounded in an ADR is frontier-tier work. Opinionated
+    judgment calls on view disposition + panel placement require strong
+    reasoning. Sonnet is the fallback when opus quota is exhausted.
+  timeout_secs: 600
+
+context:
+  load_on_start:
+    - path: "{{input.adr_path}}"
+      level: L3
+      purpose: The driver ADR — every decision grounds here
+    - path: hex-nexus/assets/src/components/views/
+      level: L1
+      purpose: Existing dashboard surface inventory (AST-level)
+    - path: hex-nexus/assets/src/App.tsx
+      level: L3
+      purpose: Routing + top-level layout
+    - path: hex-nexus/src/routes/mission_control.rs
+      level: L1
+      purpose: Backend aggregator shape (what data is available)
+  load_on_demand:
+    - path: "hex-nexus/assets/src/components/views/{{view}}.tsx"
+      level: L3
+      trigger: "Disposition decision for a specific view"
+    - path: "docs/adrs/{{cited_adr}}.md"
+      level: L3
+      trigger: "Cross-reference to another ADR cited in the input"
+
+inputs:
+  adr_path:
+    type: string
+    required: true
+    description: "Repo-relative path to the driving ADR (e.g. docs/adrs/ADR-2605141631-dashboard-refactor-hermes-model.md)"
+  scope:
+    type: string
+    required: true
+    enum: ["landing", "panel", "full-redesign"]
+    description: "landing=redesign the / route only. panel=spec one new surface. full-redesign=24-view IA decision."
+  reference_models:
+    type: array
+    required: false
+    description: "External UIs to cite by behavior (e.g. ['Hermes Agent']). Do NOT copy them — cite what they did and why."
+  existing_views:
+    type: array
+    required: false
+    description: "If omitted, the agent enumerates hex-nexus/assets/src/components/views/ itself."
+
+outputs:
+  design_proposal:
+    type: object
+    schema:
+      landing_ia:
+        header: string         # what lives in the top bar
+        primary_column: string # the dominant attention zone
+        side_rail: string      # secondary surfaces
+        rationale: string      # one paragraph: why this beats current
+      view_disposition:
+        type: array
+        items:
+          view: string         # filename (e.g. MissionControl.tsx)
+          verdict: string      # 3-word: "keep landing" / "merge into AgentFleet" / "demote to drill-down"
+          rationale: string    # one sentence
+      panel_specs:
+        type: array
+        items:
+          name: string
+          purpose: string
+          data_source: string   # which mission_control field / new endpoint
+          interactions: string  # operator's possible verbs
+          mock: string          # ASCII or prose visual
+      wcag_blockers:
+        type: array
+        items:
+          severity: string      # "blocker" | "warning"
+          location: string      # file:line
+          observation: string
+          recommendation: string
+      ship_phases:
+        type: array
+        items:
+          phase: string         # P0 / P1 / P2
+          deliverable: string
+          dependencies: string
+
+workflow:
+  phases:
+    - name: read_adr
+      action: "Load and summarize the input ADR. Extract: driver, scope, constraints, success criteria."
+      tools_allowed: ["repo_read"]
+      exit_when: "ADR summary captures driver + scope + at least 3 success criteria."
+    - name: enumerate_existing_surfaces
+      action: "List every view in hex-nexus/assets/src/components/views/. Classify by current purpose."
+      tools_allowed: ["repo_grep", "repo_read"]
+      exit_when: "All views named + one-line purpose for each."
+    - name: synthesize_ia
+      action: "Decide landing IA. Cite ADR sections + existing view inventory. State why current layout fails."
+      tools_allowed: []
+      exit_when: "landing_ia object fully populated."
+    - name: dispose_views
+      action: "Walk every existing view; emit keep/merge/demote verdict + rationale."
+      tools_allowed: ["repo_read"]
+      exit_when: "Every enumerated view has a verdict."
+    - name: spec_new_panels
+      action: "For each panel called out in the ADR, write a spec that hex-coder can implement against."
+      tools_allowed: ["repo_grep"]
+      exit_when: "Each new panel has name/purpose/data_source/interactions/mock."
+    - name: wcag_blocker_scan
+      action: "Pass over current dashboard for contrast/keyboard/focus issues that will compound after refactor. Two to five items only."
+      tools_allowed: ["repo_read"]
+      exit_when: "wcag_blockers array has 2-5 items."
+    - name: emit_proposal
+      action: "Assemble final design_proposal JSON. Include ship_phases array breaking work into P0/P1/P2 lanes."
+      tools_allowed: []
+      exit_when: "design_proposal fully populated, validates against schema."
+
+quality_thresholds:
+  min_views_disposed_for_full_redesign: 20
+  min_wcag_blockers: 2
+  max_wcag_blockers: 5
+  min_ship_phases: 3
+
+escalation:
+  conditions:
+    - "Input ADR is empty, missing, or unreadable"
+    - "scope=full-redesign but fewer than 10 views exist (caller likely wrong about scope)"
+    - "ADR contradicts itself (cite which sections conflict)"
+  action: "escalate_to_operator"
+
+# Downstream consumers: hex-coder picks up design_proposal as its input
+# and implements panel_specs[] one panel-per-worktree. validation-judge
+# uses ship_phases as the deliverable contract.

@@ -76,6 +76,22 @@ fn as_ts_iso(v: &Value) -> String {
     String::new()
 }
 
+/// Compute age in seconds from an ISO-8601 timestamp (normalized output
+/// of `as_ts_iso`). Returns 0 on parse failure so the attention feed
+/// degrades gracefully rather than disappearing items with unparseable
+/// stamps.
+fn age_seconds_from_iso(iso: &str) -> u64 {
+    if iso.is_empty() { return 0; }
+    match chrono::DateTime::parse_from_rfc3339(iso) {
+        Ok(dt) => {
+            let now = chrono::Utc::now().timestamp();
+            let then = dt.timestamp();
+            if now > then { (now - then) as u64 } else { 0 }
+        }
+        Err(_) => 0,
+    }
+}
+
 fn micros_to_iso(micros: i64) -> String {
     let secs = micros / 1_000_000;
     let nanos = ((micros % 1_000_000) * 1_000) as u32;
@@ -603,9 +619,112 @@ pub async fn get_mission_control(
     // (tick is alive if its schedule exists and STDB SQL responded).
     let stdb_alive = !persona_rows.is_empty() || !top_procs.is_empty();
 
+    // ── Attention feed ──────────────────────────────────────────────
+    // Operator's single landing surface. Each AttentionItem maps to a
+    // P0/P1/P2 lane and carries a `cli_repro` for terminal-first
+    // operators. Source rules:
+    //   pending_actions (escalate_reason set) → P0 escalation
+    //   open_anomalies  (severity=critical)   → P0 resource_anomaly
+    //   open_anomalies  (else)                → P1 resource_anomaly
+    //   open_merge      (status=voting)       → P1 merge_vote_needed
+    //   open_commitments(status=overdue)      → P1 overdue_commitment
+    //   recent_executed (last 5 SOP commits)  → P2 autonomous_commit
+    // P0 = act now (red). P1 = act soon (amber). P2 = info (blue).
+    let mut attention_feed: Vec<Value> = Vec::new();
+    for a in pending_actions.iter() {
+        let reason = a.get("escalate_reason").and_then(|v| v.as_str()).unwrap_or("");
+        if reason.is_empty() { continue; }
+        let id = a.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+        let kind_name = a.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
+        attention_feed.push(json!({
+            "id": format!("escalation-{}", id),
+            "priority": 0,
+            "kind": "escalation",
+            "title": format!("{} action #{} needs operator attention", kind_name, id),
+            "subtitle": reason.chars().take(180).collect::<String>(),
+            "age_seconds": 0,
+            "action_url": "#/commitments",
+            "cli_repro": format!("hex ops abandon {}", id),
+        }));
+    }
+    for an in open_anomalies.iter() {
+        let id = an.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+        let sev = an.get("severity").and_then(|v| v.as_str()).unwrap_or("");
+        let kind_name = an.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
+        let note = an.get("note").and_then(|v| v.as_str()).unwrap_or("");
+        let priority = if sev == "critical" { 0 } else { 1 };
+        attention_feed.push(json!({
+            "id": format!("anomaly-{}", id),
+            "priority": priority,
+            "kind": "resource_anomaly",
+            "title": format!("{} ({})", kind_name, sev),
+            "subtitle": note.chars().take(180).collect::<String>(),
+            "age_seconds": age_seconds_from_iso(an.get("detected_at").and_then(|v| v.as_str()).unwrap_or("")),
+            "action_url": "#/resources",
+            "cli_repro": "hex resources anomalies".to_string(),
+        }));
+    }
+    for mr in open_merge.iter() {
+        if mr.get("status").and_then(|v| v.as_str()) != Some("voting") { continue; }
+        let path = mr.get("worktree_path").and_then(|v| v.as_str()).unwrap_or("");
+        let branch = mr.get("branch").and_then(|v| v.as_str()).unwrap_or("");
+        attention_feed.push(json!({
+            "id": format!("merge-{}", branch),
+            "priority": 1,
+            "kind": "merge_vote_needed",
+            "title": format!("Merge vote: {}", branch),
+            "subtitle": path.chars().take(180).collect::<String>(),
+            "age_seconds": age_seconds_from_iso(mr.get("opened_at").and_then(|v| v.as_str()).unwrap_or("")),
+            "action_url": "#/merge-gate",
+            "cli_repro": "hex worktree status".to_string(),
+        }));
+    }
+    for c in open_commitments.iter() {
+        if c.get("status").and_then(|v| v.as_str()) != Some("overdue") { continue; }
+        let id = c.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+        let role = c.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        let action = c.get("action").and_then(|v| v.as_str()).unwrap_or("");
+        attention_feed.push(json!({
+            "id": format!("commitment-{}", id),
+            "priority": 1,
+            "kind": "overdue_commitment",
+            "title": format!("Overdue: {} — {}", role, action.chars().take(60).collect::<String>()),
+            "subtitle": format!("commitment #{}", id),
+            "age_seconds": age_seconds_from_iso(c.get("created_at").and_then(|v| v.as_str()).unwrap_or("")),
+            "action_url": "#/commitments",
+            "cli_repro": format!("hex ops abandon {}", id),
+        }));
+    }
+    for ex in recent_executed.iter().take(5) {
+        if ex.get("success").and_then(|v| v.as_bool()) != Some(true) { continue; }
+        let id = ex.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+        let path = ex.get("path").and_then(|v| v.as_str()).unwrap_or("");
+        if path.is_empty() { continue; }
+        attention_feed.push(json!({
+            "id": format!("autocommit-{}", id),
+            "priority": 2,
+            "kind": "autonomous_commit",
+            "title": format!("Auto-committed: {}", path.rsplit('/').next().unwrap_or(path)),
+            "subtitle": format!("action #{} — {}", id, path),
+            "age_seconds": age_seconds_from_iso(ex.get("executed_at").and_then(|v| v.as_str()).unwrap_or("")),
+            "action_url": "#/activity",
+            "cli_repro": format!("git log --grep 'action#{}' -1 -p", id),
+        }));
+    }
+    attention_feed.sort_by(|a, b| {
+        let pa = a.get("priority").and_then(|v| v.as_u64()).unwrap_or(9);
+        let pb = b.get("priority").and_then(|v| v.as_u64()).unwrap_or(9);
+        if pa != pb { return pa.cmp(&pb); }
+        let aa = a.get("age_seconds").and_then(|v| v.as_u64()).unwrap_or(0);
+        let ab = b.get("age_seconds").and_then(|v| v.as_u64()).unwrap_or(0);
+        ab.cmp(&aa) // older = higher in same priority lane
+    });
+    attention_feed.truncate(40);
+
     Ok(Json(json!({
         "ts": chrono::Utc::now().to_rfc3339(),
         "stdb_alive": stdb_alive,
+        "attention_feed": attention_feed,
         "pulse": {
             "last_thought_ts":         last_thought_ts,
             "last_persona_role":       last_persona_role,
