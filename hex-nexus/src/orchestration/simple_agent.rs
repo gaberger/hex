@@ -98,6 +98,12 @@ pub async fn run(
 
     let mut steps: Vec<AgentStep> = Vec::new();
     let mut final_text = String::new();
+    // Track (tool, normalized_input) signatures of past successful tool
+    // dispatches so we can auto-terminate when the model retries the
+    // identical successful call. The model often forgets to emit
+    // `finish` after a single-shot write — preventing the duplicate
+    // collapses N spurious auto-commits into one.
+    let mut prior_successes: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for iteration in 0..max_iterations {
         let req_body = json!({
@@ -163,6 +169,7 @@ pub async fn run(
 
         let mut tool_results: Vec<Value> = Vec::new();
         let mut saw_finish = false;
+        let mut saw_duplicate_success = false;
         for tu in &tool_uses {
             if tu.name == "finish" {
                 saw_finish = true;
@@ -176,8 +183,44 @@ pub async fn run(
             }
             let exec_start = Instant::now();
             let normalized_input = normalize_tool_input(&tu.name, tu.input.clone());
+            // Duplicate detection: short-circuit if the model is asking
+            // us to re-run a call that already succeeded with the
+            // identical (tool, input) signature. Avoids the model's
+            // common forgot-to-call-finish failure mode producing N
+            // duplicate auto-commits.
+            //
+            // The signature strips metadata-only fields (`rationale`,
+            // `reason`, `comment`) that the LLM rephrases between turns
+            // — the action they describe is what matters for dedup,
+            // not the prose around it.
+            let sig_input = strip_metadata_fields(&normalized_input);
+            let sig = format!(
+                "{}:{}",
+                tu.name,
+                serde_json::to_string(&sig_input).unwrap_or_default()
+            );
+            if prior_successes.contains(&sig) {
+                saw_duplicate_success = true;
+                tracing::info!(
+                    tool = %tu.name,
+                    "simple_agent: duplicate-success detected, terminating loop"
+                );
+                steps.push(AgentStep {
+                    iteration,
+                    tool: tu.name.clone(),
+                    input: normalized_input.clone(),
+                    ok: true,
+                    output: serde_json::json!({"skipped": true, "reason": "duplicate of prior success"}),
+                    error: None,
+                    elapsed_ms: 0,
+                });
+                continue;
+            }
             let res = registry.execute(&tu.name, normalized_input.clone()).await;
             let elapsed = exec_start.elapsed().as_millis() as u64;
+            if res.ok {
+                prior_successes.insert(sig);
+            }
             steps.push(AgentStep {
                 iteration,
                 tool: tu.name.clone(),
@@ -208,6 +251,16 @@ pub async fn run(
                 steps,
                 final_text,
                 stop_reason: "finished".to_string(),
+                elapsed_ms: started.elapsed().as_millis() as u64,
+            });
+        }
+
+        if saw_duplicate_success {
+            return Ok(RunSummary {
+                iterations: iteration + 1,
+                steps,
+                final_text,
+                stop_reason: "finished_after_duplicate_success".to_string(),
                 elapsed_ms: started.elapsed().as_millis() as u64,
             });
         }
@@ -262,7 +315,8 @@ fn build_system_prompt(registry: &ToolRegistry) -> String {
          - Do NOT echo the operator intent back; act on it.\n\
          - You may emit multiple tool calls in one response — they execute in order.\n\
          - cargo_check is REQUIRED after any .rs write before finish. typescript_check is REQUIRED after any .ts/.tsx write before finish.\n\
-         - TEXT-MODE STRICT JSON ONLY inside the fence. Strings use double quotes; newlines encoded as \\n. NEVER backticks or JS template literals.\n\n\
+         - TEXT-MODE STRICT JSON ONLY inside the fence. Strings use double quotes; newlines encoded as \\n. NEVER backticks or JS template literals.\n\
+         - STOP-AFTER-SUCCESS: when a tool result returns `ok: true` AND the operator's intent has been satisfied by that single call (single-file writes, single ADR drafts, etc.), do NOT retry the same tool. Either emit `finish` (TEXT-MODE) or simply stop emitting tool calls (NATIVE TOOL-USE). The runtime will auto-terminate if it detects you re-issuing an identical successful call.\n\n\
          When the intent is fully satisfied: NATIVE TOOL-USE callers can stop emitting tool calls; the runtime will detect zero tool_use and terminate. TEXT-MODE callers must emit the explicit { \"finish\": \"...\" } block.\n\n\
          === Tools available (each with input_schema you must follow exactly) ===\n\n",
     );
@@ -300,6 +354,24 @@ fn build_system_prompt(registry: &ToolRegistry) -> String {
 /// genuinely cross-tool synonym (path-like keys, search patterns).
 /// Per-tool schema variations belong in the schema-aware prompt, not
 /// in this layer.
+/// Strip metadata-only fields from a tool input so the duplicate-success
+/// detector treats two calls as identical when they describe the same
+/// action but the LLM's prose around it has changed. The stripped
+/// fields are explicitly NOT consumed by any tool — they're commentary
+/// the model attaches voluntarily.
+fn strip_metadata_fields(input: &Value) -> Value {
+    const METADATA_FIELDS: &[&str] = &["rationale", "reason", "comment", "note"];
+    if let Some(obj) = input.as_object() {
+        let mut stripped = obj.clone();
+        for k in METADATA_FIELDS {
+            stripped.remove(*k);
+        }
+        Value::Object(stripped)
+    } else {
+        input.clone()
+    }
+}
+
 fn normalize_tool_input(_tool: &str, input: Value) -> Value {
     let mut obj = match input {
         Value::Object(m) => m,
