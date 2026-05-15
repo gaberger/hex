@@ -560,13 +560,15 @@ const MissionControl: Component = () => {
           </span>
           <Show when={stuckEscalations() > 0}>
             <span class="text-zinc-500">·</span>
-            <a
-              href="#attention"
+            <button
               class="px-2 py-1 rounded bg-red-900/40 hover:bg-red-900 border border-red-800 text-red-200 text-[11px]"
               title="P0 escalations awaiting triage"
+              onClick={() => {
+                document.getElementById("attention")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
             >
               {stuckEscalations()} escalations stuck — triage
-            </a>
+            </button>
           </Show>
           <span class="text-zinc-500">·</span>
           <button
@@ -735,13 +737,32 @@ const MissionControl: Component = () => {
                                 {copiedId() === item.id ? "✓ copied" : "Copy CLI"}
                               </button>
                             </Show>
-                            <Show when={item.action_url}>
-                              <a
+                            <Show when={item.kind === "autonomous_commit" && numId !== undefined}>
+                              <button
                                 class="px-2 py-0.5 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-200 text-[10px]"
-                                href={item.action_url}
+                                onClick={() => { setStreamFilter("commits"); }}
+                                title="Filter the activity stream to recent commits"
                               >
-                                Open
-                              </a>
+                                Show in stream
+                              </button>
+                            </Show>
+                            <Show when={item.kind === "merge_vote_needed"}>
+                              <button
+                                class="px-2 py-0.5 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-200 text-[10px]"
+                                onClick={() => { setStreamFilter("twin"); }}
+                                title="Filter the activity stream to twin verdicts"
+                              >
+                                Show in stream
+                              </button>
+                            </Show>
+                            <Show when={item.kind === "resource_anomaly"}>
+                              <button
+                                class="px-2 py-0.5 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-200 text-[10px]"
+                                onClick={() => { setStreamFilter("anomaly"); }}
+                                title="Filter the activity stream to anomalies"
+                              >
+                                Show in stream
+                              </button>
                             </Show>
                             <Show when={numId !== undefined && item.kind === "escalation"}>
                               <button
