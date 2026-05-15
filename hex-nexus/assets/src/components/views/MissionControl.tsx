@@ -167,14 +167,35 @@ const MissionControl: Component = () => {
   const [attnBusy, setAttnBusy] = createSignal<string | null>(null);
   const [attnStatus, setAttnStatus] = createSignal<Record<string, string>>({});
   const [copiedId, setCopiedId] = createSignal<string | null>(null);
+  // Optimistic dismissal — supervisor re-emits same-(kind, pids) anomalies
+  // every ~60s, so an Ack would visually "do nothing." We locally
+  // suppress the item AND any near-duplicate signature for 5 minutes
+  // after Ack/Abandon, giving the operator real persistent dismissal.
+  // Keys: id, plus a signature "<kind>:<pids>" for ack-class dedup.
+  const [attnSuppressed, setAttnSuppressed] = createSignal<Set<string>>(new Set());
+  const suppressAttention = (id: string, signature?: string) => {
+    const s = new Set(attnSuppressed());
+    s.add(id);
+    if (signature) s.add(signature);
+    setAttnSuppressed(s);
+    setTimeout(() => {
+      const ns = new Set(attnSuppressed());
+      ns.delete(id);
+      if (signature) ns.delete(signature);
+      setAttnSuppressed(ns);
+    }, 5 * 60 * 1000);
+  };
   // Optimistic chat bubbles — show "you said" + "<role> is thinking…"
   // immediately, replace with real STDB rows when they land.
   interface PendingChat { from: string; to: string; body: string; ts: number; }
   const [pendingChat, setPendingChat] = createSignal<PendingChat[]>([]);
 
   const toggleAttn = (id: string) => {
+    // Default state is OPEN. attnOpen stores "closed:<id>" entries for
+    // items the operator has explicitly collapsed.
+    const key = `closed:${id}`;
     const s = new Set(attnOpen());
-    if (s.has(id)) s.delete(id); else s.add(id);
+    if (s.has(key)) s.delete(key); else s.add(key);
     setAttnOpen(s);
   };
   const copyCli = (cli: string, id: string) => {
@@ -186,6 +207,8 @@ const MissionControl: Component = () => {
   };
   const abandonAction = async (id: string, actionId: number) => {
     setAttnBusy(id);
+    // Optimistic: hide immediately so operator sees the action take effect.
+    suppressAttention(id);
     try {
       const r = await fetch(`/v1/database/hex/call/proposed_action_operator_override`, {
         method: "POST",
@@ -202,13 +225,22 @@ const MissionControl: Component = () => {
   };
   const ackAnomaly = async (id: string, anomalyId: number) => {
     setAttnBusy(id);
+    // Optimistic: hide this item AND any same-(kind, pids) re-emission.
+    // The kind+pids signature is encoded in the item's pulled subtitle
+    // (e.g. "PID 362979 RSS 25.0 GiB ..."); use the item itself + a
+    // looser class signature derived from kind alone so RSS spikes
+    // for OTHER pids still surface.
+    const items = data()?.attention_feed || [];
+    const me = items.find((i) => i.id === id);
+    const sig = me ? `class:${me.kind}:${me.subtitle.slice(0, 40)}` : undefined;
+    suppressAttention(id, sig);
     try {
       const r = await fetch(`/v1/database/hex/call/resource_anomaly_ack`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify([anomalyId, "operator-ack via dashboard 2026-05-15"]),
       });
-      setAttnStatus({ ...attnStatus(), [id]: r.ok ? "✓ acked" : `error: HTTP ${r.status}` });
+      setAttnStatus({ ...attnStatus(), [id]: r.ok ? "✓ acked (suppressed for 5m)" : `error: HTTP ${r.status}` });
     } catch (e: any) {
       setAttnStatus({ ...attnStatus(), [id]: `error: ${e?.message || e}` });
     } finally {
@@ -414,7 +446,17 @@ const MissionControl: Component = () => {
     return rows;
   });
 
-  const attention = createMemo(() => data()?.attention_feed || []);
+  const attention = createMemo(() => {
+    const items = data()?.attention_feed || [];
+    const sup = attnSuppressed();
+    if (sup.size === 0) return items;
+    return items.filter((i) => {
+      if (sup.has(i.id)) return false;
+      // Class-signature suppression: same-kind near-duplicate within 5m
+      const sig = `class:${i.kind}:${i.subtitle.slice(0, 40)}`;
+      return !sup.has(sig);
+    });
+  });
   const stuckEscalations = createMemo(() =>
     attention().filter((i) => i.priority === 0 && i.kind === "escalation").length
   );
@@ -741,7 +783,12 @@ const MissionControl: Component = () => {
             <Show when={attention().length > 0} fallback={<div class="text-zinc-500 text-xs italic">Nothing waiting.</div>}>
               <div class="space-y-1">
                 <For each={attention().slice(0, 25)}>{(item) => {
-                  const isOpen = () => attnOpen().has(item.id);
+                  // Default to OPEN so action buttons (Copy CLI, Show
+                  // in stream, Abandon, Ack) are visible without
+                  // requiring the operator to discover the click-to-
+                  // expand affordance. attnOpen tracks explicitly
+                  // CLOSED items by id.
+                  const isOpen = () => !attnOpen().has(`closed:${item.id}`);
                   // Pull a numeric action id from id slugs like "escalation-12345"
                   const numId = (() => {
                     const m = item.id.match(/^[a-z]+-(\d+)/);
