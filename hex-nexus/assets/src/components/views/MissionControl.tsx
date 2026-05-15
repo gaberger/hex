@@ -15,7 +15,7 @@
  * No tabs. No dual-mode compose. No drill-down footer.
  */
 
-import { Component, For, Show, createSignal, onMount, onCleanup, createMemo } from "solid-js";
+import { Component, For, Show, createSignal, onMount, onCleanup, createMemo, createEffect } from "solid-js";
 import { restClient } from "../../services/rest-client";
 
 interface PersonaRow {
@@ -75,6 +75,30 @@ const ROLE_CAPABILITY: Record<string, string> = {
   "design-lead": "UI / UX",
   "sre-lead": "incidents · monitoring · SLOs",
   "validation-judge": "PASS / FAIL gates",
+};
+
+// Stable canonical order for the factory list. STDB SQL returns rows in
+// indeterminate order; without this the list would shuffle on every 5s
+// refresh and the operator's "ask cto" click would land on whichever
+// row happened to be in that slot. Executive tier first, then IC leads,
+// then specialists. Unknown roles get appended in alphabetical order.
+const ROLE_ORDER: string[] = [
+  "ceo",
+  "cto",
+  "cpo",
+  "ciso",
+  "coo",
+  "chief-visionary",
+  "chief-architect",
+  "product-lead",
+  "engineering-lead",
+  "design-lead",
+  "sre-lead",
+  "validation-judge",
+];
+const roleRank = (role: string): number => {
+  const i = ROLE_ORDER.indexOf(role);
+  return i === -1 ? ROLE_ORDER.length : i;
 };
 
 const MODELS = [
@@ -177,6 +201,8 @@ const MissionControl: Component = () => {
   };
 
   let timer: ReturnType<typeof setInterval> | null = null;
+  let mainScrollRef: HTMLElement | undefined;
+  let lastChatCount = 0;
   const refresh = async () => {
     try {
       const d = await restClient.get("/api/mission-control");
@@ -192,6 +218,28 @@ const MissionControl: Component = () => {
   onMount(() => {
     refresh();
     timer = setInterval(refresh, REFRESH_MS);
+  });
+  // Auto-scroll the main column to the bottom when chat filter is
+  // active and new messages land. Only auto-scrolls if the operator is
+  // already near the bottom — preserves their scroll position when
+  // they're reading older messages.
+  createEffect(() => {
+    if (streamFilter() !== "chat") {
+      lastChatCount = stream().length;
+      return;
+    }
+    const newCount = stream().length;
+    if (newCount > lastChatCount && mainScrollRef) {
+      const el = mainScrollRef;
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
+      if (nearBottom || lastChatCount === 0) {
+        // Defer to next frame so the new DOM is in place
+        requestAnimationFrame(() => {
+          el.scrollTop = el.scrollHeight;
+        });
+      }
+    }
+    lastChatCount = newCount;
   });
   onCleanup(() => { if (timer) clearInterval(timer); });
 
@@ -304,7 +352,7 @@ const MissionControl: Component = () => {
           escByRole.set(c.role, (escByRole.get(c.role) || 0) + 1);
       }
     }
-    return (d.personas || []).map((p) => {
+    const rows = (d.personas || []).map((p) => {
       const open = openByRole.get(p.role) || 0;
       const esc = escByRole.get(p.role) || 0;
       const age = ageSinceAny(p.last_tick_at);
@@ -332,6 +380,15 @@ const MissionControl: Component = () => {
         statusLine, statusColor,
       };
     });
+    // Stable canonical order — never shuffle on refresh. Unknown roles
+    // sort alphabetically AFTER known canonical roles.
+    rows.sort((a, b) => {
+      const ra = roleRank(a.role);
+      const rb = roleRank(b.role);
+      if (ra !== rb) return ra - rb;
+      return a.role.localeCompare(b.role);
+    });
+    return rows;
   });
 
   const attention = createMemo(() => data()?.attention_feed || []);
@@ -456,10 +513,14 @@ const MissionControl: Component = () => {
         sourceId: `ev-${ev.id}`,
       });
     }
-    items.sort((a, b) => b.ts - a.ts);
+    items.sort((a, b) => b.ts - a.ts); // newest-first (activity convention)
     const f = streamFilter();
     const filtered = f === "all" ? items : items.filter((i) => i.kind === f);
-    return filtered.slice(0, 80);
+    const sliced = filtered.slice(0, 80);
+    // Chat reads top-down (question → reply); reverse so most-recent
+    // is at the bottom of the rendered list. Other filters keep the
+    // newsfeed/log convention of newest at the top.
+    return f === "chat" ? sliced.reverse() : sliced;
   });
 
   // Loop liveness
@@ -720,7 +781,7 @@ const MissionControl: Component = () => {
         </aside>
 
         {/* Main: unified stream */}
-        <main class="col-span-8 lg:col-span-9 overflow-y-auto flex flex-col">
+        <main ref={el => { mainScrollRef = el; }} class="col-span-8 lg:col-span-9 overflow-y-auto flex flex-col">
           <div class="px-6 py-2 border-b border-zinc-800 sticky top-0 bg-zinc-950 z-10 flex items-center gap-1.5 flex-wrap">
             <For each={[
               { id: "all" as const, label: "All" },
