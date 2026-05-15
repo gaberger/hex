@@ -81,7 +81,10 @@ const MissionControl: Component = () => {
   const [error, setError] = createSignal<string | null>(null);
   const [intent, setIntent] = createSignal("");
   const [running, setRunning] = createSignal(false);
-  const [teamOpen, setTeamOpen] = createSignal(false);
+  // Left rail visible by default — operator wants to see WHO is
+  // working (factory heat) alongside the stream. Toggle to collapse
+  // for a chat-only view.
+  const [teamOpen, setTeamOpen] = createSignal(true);
   const [pendingChat, setPendingChat] = createSignal<{from: string; to: string; body: string; ts: number}[]>([]);
   const [attnBusy, setAttnBusy] = createSignal<string | null>(null);
   const [attnSuppressed, setAttnSuppressed] = createSignal<Set<string>>(new Set());
@@ -308,6 +311,41 @@ const MissionControl: Component = () => {
   });
 
   const attentionCount = () => (data()?.attention_feed || []).length;
+
+  // Per-persona heat: recent activity count + what they're working on
+  // (latest thought / message / commitment). Drives the "WHO is working
+  // right now" half of the flow visualization.
+  interface PersonaHeat { count: number; workingOn: string; workingKind: string; }
+  const personaHeat = createMemo<Record<string, PersonaHeat>>(() => {
+    const d = data();
+    if (!d) return {};
+    const heat: Record<string, PersonaHeat> = {};
+    const touch = (role: string, body: string, kind: string) => {
+      if (!role || role === "operator") return;
+      const cur = heat[role];
+      if (!cur) heat[role] = { count: 1, workingOn: body, workingKind: kind };
+      else cur.count += 1;
+    };
+    // thoughts have the highest signal — what the persona is reasoning about
+    for (const t of (d as any).recent_thoughts || []) {
+      touch(t.agent_role, t.content || "", "thinking");
+    }
+    for (const m of d.recent_messages || []) {
+      if (m.from_role === "operator") continue;
+      touch(m.from_role, m.message || "", "said");
+    }
+    for (const c of d.pending_decisions?.commitments || []) {
+      if (c.status === "satisfied") continue;
+      touch(c.role, c.action || "", "committed");
+    }
+    for (const a of d.pending_decisions?.actions || []) {
+      const by = a.proposed_by || "";
+      if (by.includes(":") || by === "operator-passthrough") continue;
+      touch(by, a.twin_rationale || a.escalate_reason || a.kind, "proposed");
+    }
+    return heat;
+  });
+
   const personas = () => (data()?.personas || [])
     .slice()
     .sort((a, b) => {
@@ -349,25 +387,44 @@ const MissionControl: Component = () => {
       </Show>
 
       <div class="flex-1 flex overflow-hidden">
-        {/* ─── Optional team list (slides in from right when toggled) ─── */}
+        {/* ─── Flow visualization: WHO is working right now ─── */}
         <Show when={teamOpen()}>
-          <aside class="w-64 shrink-0 border-l border-zinc-800 order-2 overflow-y-auto">
-            <div class="px-4 py-3 border-b border-zinc-800 text-[10px] uppercase tracking-wide text-zinc-500">
-              The team
+          <aside class="w-72 shrink-0 border-r border-zinc-800 overflow-y-auto">
+            <div class="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
+              <span class="text-[10px] uppercase tracking-wide text-zinc-500">Factory</span>
+              <span class="text-[10px] text-zinc-600">click → DM</span>
             </div>
             <Index each={personas()}>{(pGet) => {
               const p = pGet();
+              const h = personaHeat()[p.role];
+              const count = h?.count || 0;
+              // Heat tier: 0 cold · 1-2 warm · 3-4 hot · 5+ very hot
+              const tier = count === 0 ? 0 : count <= 2 ? 1 : count <= 4 ? 2 : 3;
+              const heatBorder =
+                tier === 3 ? "border-l-red-600 bg-red-950/15" :
+                tier === 2 ? "border-l-amber-600 bg-amber-950/10" :
+                tier === 1 ? "border-l-cyan-700 bg-cyan-950/10" :
+                "border-l-zinc-700";
               return (
                 <button
-                  class="w-full text-left px-4 py-2 border-b border-zinc-900 hover:bg-zinc-900"
-                  onClick={() => { setIntent(`@${p.role} `); setTeamOpen(false); }}
+                  class={`w-full text-left px-3 py-2 border-b border-zinc-900 border-l-4 hover:bg-zinc-900 ${heatBorder}`}
+                  onClick={() => setIntent(`@${p.role} `)}
                   title={`Address @${p.role} directly. ${PEER_CAPABILITIES[p.role] || ""}`}
                 >
                   <div class="flex items-center gap-2 text-xs">
-                    <span class={p.paused ? "text-yellow-400" : "text-green-400"}>●</span>
-                    <span class="font-mono text-zinc-200">{p.role}</span>
+                    <span class={p.paused ? "text-yellow-400" : count > 0 ? "text-green-400" : "text-zinc-500"}>●</span>
+                    <span class="font-mono text-zinc-200 flex-1">{p.role}</span>
+                    <Show when={count > 0}>
+                      <span class="text-[10px] text-zinc-400 tabular-nums">{count}↑</span>
+                    </Show>
                   </div>
                   <div class="text-[10px] text-zinc-500 mt-0.5">{PEER_CAPABILITIES[p.role] || "specialist"}</div>
+                  <Show when={h?.workingOn}>
+                    <div class="text-[10px] mt-1 line-clamp-2">
+                      <span class="text-zinc-500">{h!.workingKind}: </span>
+                      <span class="text-zinc-300">{h!.workingOn.slice(0, 100)}</span>
+                    </div>
+                  </Show>
                 </button>
               );
             }}</Index>
