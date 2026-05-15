@@ -15,7 +15,7 @@
  * No tabs. No dual-mode compose. No drill-down footer.
  */
 
-import { Component, For, Show, createSignal, onMount, onCleanup, createMemo, createEffect } from "solid-js";
+import { Component, For, Index, Show, createSignal, onMount, onCleanup, createMemo, createEffect } from "solid-js";
 import { restClient } from "../../services/rest-client";
 
 interface PersonaRow {
@@ -667,41 +667,48 @@ const MissionControl: Component = () => {
           <div class="px-4 py-3 border-b border-zinc-800">
             <h2 class="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">Factory</h2>
             <div class="space-y-1.5">
-              <For each={factoryRows()}>{(p) => (
+              {/* Index instead of For — preserves DOM nodes across data
+                  refreshes (every 5s), so the per-persona "ask" input
+                  doesn't lose focus while the operator is typing.
+                  Index keys by position; factoryRows is stable order
+                  per ROLE_ORDER above. */}
+              <Index each={factoryRows()}>{(pGet) => {
+                const p = pGet;
+                return (
                 <div class="rounded border border-zinc-800 px-2 py-1.5">
                   <div class="flex items-center gap-2">
-                    <span class={p.paused ? "text-yellow-400" : (p.escalated > 0 ? "text-red-400" : "text-green-400")}>●</span>
-                    <span class="font-mono text-zinc-200 text-xs flex-1">{p.role}</span>
-                    <span class={`text-[11px] ${p.statusColor}`}>{p.statusLine}</span>
+                    <span class={p().paused ? "text-yellow-400" : (p().escalated > 0 ? "text-red-400" : "text-green-400")}>●</span>
+                    <span class="font-mono text-zinc-200 text-xs flex-1">{p().role}</span>
+                    <span class={`text-[11px] ${p().statusColor}`}>{p().statusLine}</span>
                     <button
                       class="text-[10px] text-cyan-400 hover:text-cyan-300 hover:underline"
-                      onClick={() => { setAskingRole(askingRole() === p.role ? null : p.role); setQuickAsk(""); }}
+                      onClick={() => { setAskingRole(askingRole() === p().role ? null : p().role); setQuickAsk(""); }}
                     >
-                      {askingRole() === p.role ? "cancel" : "ask"}
+                      {askingRole() === p().role ? "cancel" : "ask"}
                     </button>
                   </div>
-                  <div class="text-[10px] text-zinc-500 ml-4 mt-0.5">{p.capability}</div>
-                  <Show when={askingRole() === p.role}>
+                  <div class="text-[10px] text-zinc-500 ml-4 mt-0.5">{p().capability}</div>
+                  <Show when={askingRole() === p().role}>
                     <div class="mt-1.5 flex gap-1.5">
                       <input
                         class="flex-1 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[11px]"
-                        placeholder={`message to @${p.role}…`}
+                        placeholder={`message to @${p().role}…`}
                         value={quickAsk()}
                         onInput={(e) => setQuickAsk(e.currentTarget.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") askPersona(p.role); }}
+                        onKeyDown={(e) => { if (e.key === "Enter") askPersona(p().role); }}
                         autofocus
                       />
                       <button
                         class="px-2 py-1 rounded bg-purple-700 hover:bg-purple-600 text-[10px] text-white disabled:opacity-50"
                         disabled={!quickAsk().trim()}
-                        onClick={() => askPersona(p.role)}
+                        onClick={() => askPersona(p().role)}
                       >
                         Send
                       </button>
                     </div>
                   </Show>
                 </div>
-              )}</For>
+              )}}</Index>
             </div>
           </div>
 
