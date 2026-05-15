@@ -829,33 +829,14 @@ const MissionControl: Component = () => {
                                 {copiedId() === item.id ? "✓ copied" : "Copy CLI"}
                               </button>
                             </Show>
-                            <Show when={item.kind === "autonomous_commit" && numId !== undefined}>
-                              <button
-                                class="px-2 py-0.5 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-200 text-[10px]"
-                                onClick={() => { setStreamFilter("commit"); }}
-                                title="Filter the activity stream to recent commits"
-                              >
-                                Show in stream
-                              </button>
-                            </Show>
-                            <Show when={item.kind === "merge_vote_needed"}>
-                              <button
-                                class="px-2 py-0.5 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-200 text-[10px]"
-                                onClick={() => { setStreamFilter("twin"); }}
-                                title="Filter the activity stream to twin verdicts"
-                              >
-                                Show in stream
-                              </button>
-                            </Show>
-                            <Show when={item.kind === "resource_anomaly"}>
-                              <button
-                                class="px-2 py-0.5 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-200 text-[10px]"
-                                onClick={() => { setStreamFilter("anomaly"); }}
-                                title="Filter the activity stream to anomalies"
-                              >
-                                Show in stream
-                              </button>
-                            </Show>
+                            {/* "Show in stream" buttons removed —
+                                the stream only carries chat + commits
+                                today (no twin_verdict or anomaly
+                                events flow through live_events), so
+                                the buttons surfaced nothing for most
+                                kinds. Operator uses Copy CLI for
+                                terminal investigation, or the
+                                Abandon/Ack actions below. */}
                             <Show when={numId !== undefined && item.kind === "escalation"}>
                               <button
                                 class="px-2 py-0.5 rounded bg-red-900/40 hover:bg-red-900 border border-red-800 text-red-200 text-[10px] disabled:opacity-50"
@@ -977,8 +958,10 @@ const MissionControl: Component = () => {
               { id: "all" as const, label: "All" },
               { id: "chat" as const, label: "Chat" },
               { id: "commit" as const, label: "Commits" },
-              { id: "twin" as const, label: "Twin" },
-              { id: "anomaly" as const, label: "Anomalies" },
+              // Twin verdicts and anomalies don't flow through
+              // live_events today — chip removed to avoid empty-state
+              // confusion. Add back when the supervisor starts
+              // publishing twin_verdict / anomaly events.
             ]}>{(f) => (
               <button
                 class="px-2 py-1 rounded text-[11px] border transition-colors"
