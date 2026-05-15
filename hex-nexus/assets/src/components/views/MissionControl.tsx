@@ -220,7 +220,13 @@ const MissionControl: Component = () => {
   let timer: ReturnType<typeof setInterval> | null = null;
   let mainScrollRef: HTMLElement | undefined;
   let lastChatCount = 0;
+  let activeAskInput: HTMLInputElement | undefined;
   const refresh = async () => {
+    // Pause data refresh while operator is typing in a per-persona
+    // "ask" input — otherwise the 5s reconciliation can interrupt
+    // focus, cursor position, or in-flight IME composition. Resumed
+    // automatically once they Send or Cancel.
+    if (askingRole() !== null) return;
     try {
       const d = await restClient.get("/api/mission-control");
       setData(d);
@@ -682,7 +688,13 @@ const MissionControl: Component = () => {
                     <span class={`text-[11px] ${p().statusColor}`}>{p().statusLine}</span>
                     <button
                       class="text-[10px] text-cyan-400 hover:text-cyan-300 hover:underline"
-                      onClick={() => { setAskingRole(askingRole() === p().role ? null : p().role); setQuickAsk(""); }}
+                      onClick={() => {
+                        const wasAsking = askingRole() === p().role;
+                        setAskingRole(wasAsking ? null : p().role);
+                        setQuickAsk("");
+                        // Cancel resumes auto-refresh — catch up now
+                        if (wasAsking) refresh();
+                      }}
                     >
                       {askingRole() === p().role ? "cancel" : "ask"}
                     </button>
@@ -691,12 +703,21 @@ const MissionControl: Component = () => {
                   <Show when={askingRole() === p().role}>
                     <div class="mt-1.5 flex gap-1.5">
                       <input
-                        class="flex-1 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[11px]"
-                        placeholder={`message to @${p().role}…`}
+                        ref={(el) => {
+                          activeAskInput = el;
+                          // Solid's autofocus attribute is unreliable on
+                          // hydrated nodes — do it imperatively after the
+                          // element is in the DOM.
+                          requestAnimationFrame(() => el.focus());
+                        }}
+                        class="flex-1 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[11px] focus:outline-none focus:border-purple-500"
+                        placeholder={`message to @${p().role}… (auto-refresh paused)`}
                         value={quickAsk()}
                         onInput={(e) => setQuickAsk(e.currentTarget.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") askPersona(p().role); }}
-                        autofocus
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") askPersona(p().role);
+                          if (e.key === "Escape") { setAskingRole(null); setQuickAsk(""); refresh(); }
+                        }}
                       />
                       <button
                         class="px-2 py-1 rounded bg-purple-700 hover:bg-purple-600 text-[10px] text-white disabled:opacity-50"
