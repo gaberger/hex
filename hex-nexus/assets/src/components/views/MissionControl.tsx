@@ -121,6 +121,60 @@ const MissionControl: Component = () => {
   const [killing, setKilling] = createSignal(false);
   const [askingRole, setAskingRole] = createSignal<string | null>(null);
   const [quickAsk, setQuickAsk] = createSignal("");
+  // Attention card interactivity
+  const [attnOpen, setAttnOpen] = createSignal<Set<string>>(new Set());
+  const [attnBusy, setAttnBusy] = createSignal<string | null>(null);
+  const [attnStatus, setAttnStatus] = createSignal<Record<string, string>>({});
+  const [copiedId, setCopiedId] = createSignal<string | null>(null);
+  // Optimistic chat bubbles — show "you said" + "<role> is thinking…"
+  // immediately, replace with real STDB rows when they land.
+  interface PendingChat { from: string; to: string; body: string; ts: number; }
+  const [pendingChat, setPendingChat] = createSignal<PendingChat[]>([]);
+
+  const toggleAttn = (id: string) => {
+    const s = new Set(attnOpen());
+    if (s.has(id)) s.delete(id); else s.add(id);
+    setAttnOpen(s);
+  };
+  const copyCli = (cli: string, id: string) => {
+    try {
+      navigator.clipboard?.writeText(cli);
+      setCopiedId(id);
+      setTimeout(() => { if (copiedId() === id) setCopiedId(null); }, 1500);
+    } catch {}
+  };
+  const abandonAction = async (id: string, actionId: number) => {
+    setAttnBusy(id);
+    try {
+      const r = await fetch(`/v1/database/hex/call/proposed_action_operator_override`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify([actionId, "rejected", "operator abandoned via dashboard 2026-05-15"]),
+      });
+      setAttnStatus({ ...attnStatus(), [id]: r.ok ? "✓ rejected" : `error: HTTP ${r.status}` });
+    } catch (e: any) {
+      setAttnStatus({ ...attnStatus(), [id]: `error: ${e?.message || e}` });
+    } finally {
+      setAttnBusy(null);
+      await refresh();
+    }
+  };
+  const ackAnomaly = async (id: string, anomalyId: number) => {
+    setAttnBusy(id);
+    try {
+      const r = await fetch(`/v1/database/hex/call/resource_anomaly_ack`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify([anomalyId, "operator-ack via dashboard 2026-05-15"]),
+      });
+      setAttnStatus({ ...attnStatus(), [id]: r.ok ? "✓ acked" : `error: HTTP ${r.status}` });
+    } catch (e: any) {
+      setAttnStatus({ ...attnStatus(), [id]: `error: ${e?.message || e}` });
+    } finally {
+      setAttnBusy(null);
+      await refresh();
+    }
+  };
 
   let timer: ReturnType<typeof setInterval> | null = null;
   const refresh = async () => {
@@ -169,17 +223,31 @@ const MissionControl: Component = () => {
   const askPersona = async (role: string) => {
     const text = quickAsk().trim();
     if (!text) return;
+    const now = Date.now();
+    // Optimistic: render the operator's message + "thinking" bubble
+    // immediately so the operator sees the send landed.
+    setPendingChat([
+      ...pendingChat(),
+      { from: "operator", to: role, body: text, ts: now },
+      { from: role, to: "operator", body: "_thinking…_", ts: now + 1 },
+    ]);
+    setQuickAsk("");
+    setAskingRole(null);
+    setStreamFilter("chat");
     try {
       await restClient.post("/api/org/send-message", {
         from: "operator", to: role, content: text,
       });
-      setQuickAsk("");
-      setAskingRole(null);
-      setStreamFilter("chat");
       await refresh();
     } catch (e: any) {
       setError(`chat to ${role}: ${e?.message || e}`);
     }
+    // Clean up pending bubbles older than 60s — by then the real reply
+    // either landed (showing as agent_messages) or the persona failed
+    // to respond (operator can re-ask).
+    setTimeout(() => {
+      setPendingChat(pendingChat().filter((p) => Date.now() - p.ts < 60_000));
+    }, 60_000);
   };
 
   const killAll = async (resume: boolean) => {
@@ -313,9 +381,30 @@ const MissionControl: Component = () => {
     // one bubble so the operator sees "operator → cto, cpo, ciso (3)"
     // rather than 7 identical copies of the same message routed to the
     // 7 c-suite roles.
-    const chatMsgs = [...(d.recent_messages || [])].sort(
+    const realMsgs = [...(d.recent_messages || [])].sort(
       (a, b) => (b.msg_id || 0) - (a.msg_id || 0)
     );
+    // Hide optimistic bubbles whose real STDB row has already landed.
+    const realBodies = new Set(realMsgs.map((m) => `${m.from_role}:${m.message}`));
+    const pendingFresh = pendingChat().filter((p) => {
+      // Drop the operator's own optimistic bubble once the real row appears
+      if (p.from === "operator" && realBodies.has(`operator:${p.body}`)) return false;
+      // Drop the thinking placeholder once any real message from that persona appears since the pending ts
+      if (p.body === "_thinking…_") {
+        return !realMsgs.some(
+          (m) => m.from_role === p.from && tsToEpoch(m.created_at) >= p.ts - 1000
+        );
+      }
+      return true;
+    });
+    const pendingAsChat: ChatMessage[] = pendingFresh.map((p) => ({
+      msg_id: -p.ts, // negative so they never collide with real ids
+      from_role: p.from,
+      to_role: p.to,
+      message: p.body,
+      created_at: new Date(p.ts).toISOString(),
+    }));
+    const chatMsgs = [...pendingAsChat, ...realMsgs];
     const groups: Array<{ msgs: ChatMessage[]; ts: number; bucket: string }> = [];
     for (const msg of chatMsgs) {
       const ts = tsToEpoch(msg.created_at);
@@ -543,22 +632,88 @@ const MissionControl: Component = () => {
             </div>
             <Show when={attention().length > 0} fallback={<div class="text-zinc-500 text-xs italic">Nothing waiting.</div>}>
               <div class="space-y-1">
-                <For each={attention().slice(0, 25)}>{(item) => (
-                  <div class="text-xs leading-tight rounded border px-2 py-1.5"
-                    classList={{
-                      "border-red-800 bg-red-950/20": item.priority === 0,
-                      "border-amber-800 bg-amber-950/10": item.priority === 1,
-                      "border-zinc-800": item.priority === 2,
-                    }}
-                  >
-                    <div class="flex items-baseline gap-1.5">
-                      <span class={item.priority === 0 ? "text-red-400" : item.priority === 1 ? "text-amber-400" : "text-blue-400"}>●</span>
-                      <span class="text-zinc-200 truncate flex-1" title={item.title}>{item.title}</span>
-                      <span class="text-zinc-500 tabular-nums shrink-0 text-[10px]">{ageSec(item.age_seconds)}</span>
+                <For each={attention().slice(0, 25)}>{(item) => {
+                  const isOpen = () => attnOpen().has(item.id);
+                  // Pull a numeric action id from id slugs like "escalation-12345"
+                  const numId = (() => {
+                    const m = item.id.match(/^[a-z]+-(\d+)/);
+                    return m ? parseInt(m[1], 10) : undefined;
+                  })();
+                  return (
+                    <div class="text-xs leading-tight rounded border"
+                      classList={{
+                        "border-red-800 bg-red-950/20": item.priority === 0,
+                        "border-amber-800 bg-amber-950/10": item.priority === 1,
+                        "border-zinc-800": item.priority === 2,
+                      }}
+                    >
+                      <button
+                        class="w-full text-left px-2 py-1.5 hover:bg-zinc-900/50 rounded-t"
+                        onClick={() => toggleAttn(item.id)}
+                      >
+                        <div class="flex items-baseline gap-1.5">
+                          <span class={item.priority === 0 ? "text-red-400" : item.priority === 1 ? "text-amber-400" : "text-blue-400"}>●</span>
+                          <span class="text-zinc-200 truncate flex-1" title={item.title}>{item.title}</span>
+                          <span class="text-zinc-500 tabular-nums shrink-0 text-[10px]">{ageSec(item.age_seconds)}</span>
+                          <span class="text-zinc-600 shrink-0">{isOpen() ? "▾" : "▸"}</span>
+                        </div>
+                        <div class="text-[10px] text-zinc-500 mt-0.5 line-clamp-2">{item.subtitle}</div>
+                      </button>
+                      <Show when={isOpen()}>
+                        <div class="border-t border-zinc-800 px-2 py-1.5 space-y-1.5 bg-zinc-950/60">
+                          <div class="text-[11px] text-zinc-300 whitespace-pre-wrap break-words">
+                            {item.subtitle}
+                          </div>
+                          <div class="flex flex-wrap gap-1.5">
+                            <Show when={item.cli_repro}>
+                              <button
+                                class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] font-mono"
+                                onClick={() => copyCli(item.cli_repro!, item.id)}
+                                title={item.cli_repro}
+                              >
+                                {copiedId() === item.id ? "✓ copied" : "Copy CLI"}
+                              </button>
+                            </Show>
+                            <Show when={item.action_url}>
+                              <a
+                                class="px-2 py-0.5 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-200 text-[10px]"
+                                href={item.action_url}
+                              >
+                                Open
+                              </a>
+                            </Show>
+                            <Show when={numId !== undefined && item.kind === "escalation"}>
+                              <button
+                                class="px-2 py-0.5 rounded bg-red-900/40 hover:bg-red-900 border border-red-800 text-red-200 text-[10px] disabled:opacity-50"
+                                disabled={attnBusy() === item.id}
+                                onClick={() => abandonAction(item.id, numId!)}
+                              >
+                                {attnBusy() === item.id ? "…" : "Abandon"}
+                              </button>
+                            </Show>
+                            <Show when={numId !== undefined && item.kind === "resource_anomaly"}>
+                              <button
+                                class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] disabled:opacity-50"
+                                disabled={attnBusy() === item.id}
+                                onClick={() => ackAnomaly(item.id, numId!)}
+                              >
+                                {attnBusy() === item.id ? "…" : "Ack"}
+                              </button>
+                            </Show>
+                          </div>
+                          <Show when={attnStatus()[item.id]}>
+                            <div class="text-[10px] text-zinc-500 italic">{attnStatus()[item.id]}</div>
+                          </Show>
+                          <Show when={item.cli_repro}>
+                            <div class="text-[10px] text-zinc-600 font-mono break-all">
+                              {item.cli_repro}
+                            </div>
+                          </Show>
+                        </div>
+                      </Show>
                     </div>
-                    <div class="text-[10px] text-zinc-500 mt-0.5 line-clamp-2">{item.subtitle}</div>
-                  </div>
-                )}</For>
+                  );
+                }}</For>
               </div>
             </Show>
           </div>
