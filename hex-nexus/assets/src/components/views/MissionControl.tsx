@@ -47,6 +47,21 @@ interface ChatMessage {
   msg_id: number; from_role: string; to_role: string;
   message: string; created_at: string;
 }
+interface ProcessRow {
+  pid: number;
+  argv: string;
+  rss_kb: number;
+  cpu_pct: number;
+  state: string;
+}
+interface ThoughtRow {
+  thought_id: number;
+  agent_role: string;
+  kind: string;
+  content: string;
+  related_msg_id: number;
+  created_at: string;
+}
 interface Payload {
   stdb_alive: boolean;
   pulse?: { autonomous_commits_today?: number };
@@ -56,6 +71,8 @@ interface Payload {
   attention_feed?: AttentionItem[];
   live_events?: LiveEvent[];
   recent_messages?: ChatMessage[];
+  top_processes?: ProcessRow[];
+  recent_thoughts?: ThoughtRow[];
 }
 
 const REFRESH_MS = 5000;
@@ -130,7 +147,7 @@ const ageSinceAny = (raw: any): string => {
 const truncate = (s: string, n: number): string =>
   s.length > n ? s.slice(0, n) + "…" : s;
 
-type StreamFilter = "all" | "chat" | "commits" | "twin" | "anomaly";
+type StreamFilter = "all" | "chat" | "commit" | "twin" | "anomaly";
 
 const MissionControl: Component = () => {
   const [data, setData] = createSignal<Payload | null>(null);
@@ -740,7 +757,7 @@ const MissionControl: Component = () => {
                             <Show when={item.kind === "autonomous_commit" && numId !== undefined}>
                               <button
                                 class="px-2 py-0.5 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-200 text-[10px]"
-                                onClick={() => { setStreamFilter("commits"); }}
+                                onClick={() => { setStreamFilter("commit"); }}
                                 title="Filter the activity stream to recent commits"
                               >
                                 Show in stream
@@ -799,6 +816,83 @@ const MissionControl: Component = () => {
               </div>
             </Show>
           </div>
+
+          {/* Drill-down detail sections — formerly separate pages, now
+              embedded inline so the operator never leaves Mission
+              Control. Each section is a collapsible <details>. */}
+          <details class="px-4 py-2 border-t border-zinc-800">
+            <summary class="text-[10px] uppercase tracking-wide text-zinc-500 cursor-pointer hover:text-zinc-300">
+              Top processes ({(data()?.top_processes || []).length})
+            </summary>
+            <div class="mt-2 space-y-1 text-[11px]">
+              <For each={(data()?.top_processes || []).slice(0, 10)}>{(p) => (
+                <div class="font-mono">
+                  <div class="flex items-baseline gap-1.5">
+                    <span class="text-cyan-400 tabular-nums shrink-0">{p.pid}</span>
+                    <span class="text-zinc-200 tabular-nums shrink-0">{(p.rss_kb / 1024 / 1024).toFixed(1)}G</span>
+                    <span class="text-zinc-500 tabular-nums shrink-0">{p.cpu_pct.toFixed(0)}%</span>
+                    <span class="text-zinc-400 truncate">{p.argv}</span>
+                  </div>
+                </div>
+              )}</For>
+              <Show when={(data()?.top_processes || []).length === 0}>
+                <div class="text-zinc-500 italic">No process data.</div>
+              </Show>
+            </div>
+          </details>
+
+          <details class="px-4 py-2 border-t border-zinc-800">
+            <summary class="text-[10px] uppercase tracking-wide text-zinc-500 cursor-pointer hover:text-zinc-300">
+              Commitments ({(data()?.pending_decisions?.commitments || []).length})
+            </summary>
+            <div class="mt-2 space-y-1.5 text-[11px]">
+              <For each={(data()?.pending_decisions?.commitments || []).slice(0, 15)}>{(c) => (
+                <div class="rounded border border-zinc-800 px-2 py-1">
+                  <div class="flex items-baseline gap-1.5">
+                    <span class="font-mono text-purple-300 shrink-0">{c.role}</span>
+                    <span class="font-mono text-zinc-500 shrink-0">#{c.id}</span>
+                    <span class="text-zinc-200 truncate flex-1" title={c.action}>{c.action}</span>
+                    <span class="text-[10px] shrink-0"
+                      classList={{
+                        "text-amber-400": c.status === "open",
+                        "text-red-400": c.status === "overdue" || c.status === "escalated",
+                        "text-green-400": c.status === "satisfied",
+                        "text-zinc-500": !["open","overdue","escalated","satisfied"].includes(c.status),
+                      }}>
+                      {c.status}
+                    </span>
+                  </div>
+                  <Show when={c.success_artifact}>
+                    <div class="text-[10px] text-zinc-500 mt-0.5 truncate">→ {c.success_artifact}</div>
+                  </Show>
+                </div>
+              )}</For>
+              <Show when={(data()?.pending_decisions?.commitments || []).length === 0}>
+                <div class="text-zinc-500 italic">No open commitments.</div>
+              </Show>
+            </div>
+          </details>
+
+          <details class="px-4 py-2 border-t border-zinc-800">
+            <summary class="text-[10px] uppercase tracking-wide text-zinc-500 cursor-pointer hover:text-zinc-300">
+              Recent thoughts ({(data()?.recent_thoughts || []).length})
+            </summary>
+            <div class="mt-2 space-y-1 text-[11px]">
+              <For each={(data()?.recent_thoughts || []).slice(0, 10)}>{(t) => (
+                <div class="border-l-2 border-purple-800 pl-2">
+                  <div class="flex items-baseline gap-1.5">
+                    <span class="font-mono text-purple-300 shrink-0">{t.agent_role}</span>
+                    <span class="text-zinc-500 shrink-0">{t.kind}</span>
+                    <span class="text-zinc-600 shrink-0 ml-auto tabular-nums">{ageSinceAny(t.created_at)}</span>
+                  </div>
+                  <div class="text-zinc-300 mt-0.5 line-clamp-3">{t.content}</div>
+                </div>
+              )}</For>
+              <Show when={(data()?.recent_thoughts || []).length === 0}>
+                <div class="text-zinc-500 italic">No recent thoughts.</div>
+              </Show>
+            </div>
+          </details>
         </aside>
 
         {/* Main: unified stream */}
@@ -807,7 +901,7 @@ const MissionControl: Component = () => {
             <For each={[
               { id: "all" as const, label: "All" },
               { id: "chat" as const, label: "Chat" },
-              { id: "commits" as const, label: "Commits" },
+              { id: "commit" as const, label: "Commits" },
               { id: "twin" as const, label: "Twin" },
               { id: "anomaly" as const, label: "Anomalies" },
             ]}>{(f) => (
