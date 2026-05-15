@@ -14,7 +14,7 @@
  * to address ONE persona specifically.
  */
 
-import { Component, For, Index, Show, createSignal, onMount, onCleanup, createMemo, createEffect } from "solid-js";
+import { Component, For, Index, Show, Switch, Match, createSignal, onMount, onCleanup, createMemo, createEffect } from "solid-js";
 import { restClient } from "../../services/rest-client";
 
 interface PersonaRow { role: string; display_name: string; paused: boolean; last_tick_at: string; }
@@ -338,41 +338,39 @@ const MissionControl: Component = () => {
               </div>
             </Show>
             <For each={stream()}>{(item) => (
-              <Show when={item.kind === "chat" && item.chat}>{() => {
-                const c = item.chat!;
-                const isOp = c.from === "operator";
-                return (
-                  <div class="flex" classList={{ "justify-end": isOp }}>
-                    <div
-                      class="max-w-2xl rounded-lg px-3 py-2 text-sm"
-                      classList={{
-                        "bg-cyan-900/30 border border-cyan-800": isOp,
-                        "bg-zinc-900 border border-zinc-700": !isOp,
-                        "opacity-60 italic": !!c.pending,
-                      }}
-                    >
-                      <div class="flex items-baseline gap-2 mb-1 text-[10px]">
-                        <span class={`font-mono ${actorColor(c.from)}`}>{c.from}</span>
-                        <Show when={c.to && c.to !== "operator"}>
-                          <span class="text-zinc-600">→ {c.to}</span>
-                        </Show>
-                        <span class="text-zinc-600 ml-auto">
-                          {ageSec(Math.max(0, Math.floor((Date.now() - item.ts) / 1000)))} ago
-                        </span>
+              <Switch>
+                <Match when={item.kind === "chat" && item.chat}>
+                  {(() => {
+                    const c = item.chat!;
+                    const isOp = c.from === "operator";
+                    return (
+                      <div class="flex" classList={{ "justify-end": isOp }}>
+                        <div
+                          class="max-w-2xl rounded-lg px-3 py-2 text-sm"
+                          classList={{
+                            "bg-cyan-900/30 border border-cyan-800": isOp,
+                            "bg-zinc-900 border border-zinc-700": !isOp,
+                            "opacity-60 italic": !!c.pending,
+                          }}
+                        >
+                          <div class="flex items-baseline gap-2 mb-1 text-[10px]">
+                            <span class={`font-mono ${actorColor(c.from)}`}>{c.from}</span>
+                            <Show when={c.to && c.to !== "operator"}>
+                              <span class="text-zinc-600">→ {c.to}</span>
+                            </Show>
+                            <span class="text-zinc-600 ml-auto">
+                              {ageSec(Math.max(0, Math.floor((Date.now() - item.ts) / 1000)))} ago
+                            </span>
+                          </div>
+                          <div class="text-zinc-100 whitespace-pre-wrap break-words leading-relaxed">{c.body}</div>
+                        </div>
                       </div>
-                      <div class="text-zinc-100 whitespace-pre-wrap break-words leading-relaxed">{c.body}</div>
-                    </div>
-                  </div>
-                );
-              }}</Show>
-            )}</For>
-            <For each={stream()}>{(item) => null /* solid quirk: re-renders */}</For>
-            {/* Render commit + attention cards inline (separate For to keep DOM tidy) */}
-            <For each={stream().filter((i) => i.kind !== "chat")}>{(item) => (
-              <Show when={true}>
-                {(() => {
-                  if (item.kind === "commit" && item.commit) {
-                    const c = item.commit;
+                    );
+                  })()}
+                </Match>
+                <Match when={item.kind === "commit" && item.commit}>
+                  {(() => {
+                    const c = item.commit!;
                     const fname = c.path.split("/").pop() || c.path;
                     return (
                       <div class="flex justify-center">
@@ -383,13 +381,13 @@ const MissionControl: Component = () => {
                         </div>
                       </div>
                     );
-                  }
-                  if (item.kind === "attention" && item.attention) {
-                    const a = item.attention;
-                    const numId = (() => {
-                      const m = a.id.match(/^[a-z]+-(\d+)/);
-                      return m ? parseInt(m[1], 10) : undefined;
-                    })();
+                  })()}
+                </Match>
+                <Match when={item.kind === "attention" && item.attention}>
+                  {(() => {
+                    const a = item.attention!;
+                    const idMatch = a.id.match(/^[a-z]+-(\d+)/);
+                    const numId = idMatch ? parseInt(idMatch[1], 10) : undefined;
                     const isStdb = a.kind === "resource_anomaly" && (a.subtitle.includes("spacetimedb-standalone") || a.title.includes("rss_oversize"));
                     return (
                       <div class="flex justify-center">
@@ -445,10 +443,9 @@ const MissionControl: Component = () => {
                         </div>
                       </div>
                     );
-                  }
-                  return null;
-                })()}
-              </Show>
+                  })()}
+                </Match>
+              </Switch>
             )}</For>
           </div>
         </main>
