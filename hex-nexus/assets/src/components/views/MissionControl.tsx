@@ -444,6 +444,50 @@ const MissionControl: Component = () => {
     return ps.length > 0 && ps.every((p) => p.paused);
   });
 
+  // ── Per-persona heat: how active is each role and what are they
+  //    working on? Counts messages + thoughts + actions + commitments
+  //    per role; the most recent content body becomes the "working on"
+  //    subject. Used for the heatmap intensity + per-row subject line.
+  interface PersonaHeat {
+    count: number;
+    workingOn: string;
+    workingKind: string; // "thinking" | "said" | "committed" | "proposed"
+  }
+  const personaHeat = createMemo<Record<string, PersonaHeat>>(() => {
+    const d = data();
+    if (!d) return {};
+    const heat: Record<string, PersonaHeat> = {};
+    const touch = (role: string, body: string, kind: string) => {
+      if (!role || role === "operator") return;
+      const cur = heat[role];
+      if (!cur) {
+        heat[role] = { count: 1, workingOn: body, workingKind: kind };
+      } else {
+        cur.count += 1;
+        // First touched wins as "latest" (sources are pre-sorted by
+        // recency upstream: recent_thoughts and recent_messages are
+        // most-recent-first).
+      }
+    };
+    for (const t of d.recent_thoughts || []) {
+      touch(t.agent_role, t.content || "", "thinking");
+    }
+    for (const m of d.recent_messages || []) {
+      if (m.from_role === "operator") continue;
+      touch(m.from_role, m.message || "", "said");
+    }
+    for (const c of d.pending_decisions?.commitments || []) {
+      if (c.status === "satisfied") continue;
+      touch(c.role, c.action || "", "committed");
+    }
+    for (const a of d.pending_decisions?.actions || []) {
+      const by = a.proposed_by || "";
+      if (by.includes(":") || by === "operator-passthrough") continue;
+      touch(by, a.twin_rationale || a.escalate_reason || a.kind, "proposed");
+    }
+    return heat;
+  });
+
   // ── Factory rows with capability + open-work status ─────────────
   interface FactoryRow {
     role: string;
@@ -454,6 +498,10 @@ const MissionControl: Component = () => {
     escalated: number;
     statusLine: string;
     statusColor: string;
+    heatCount: number;       // 0+ count of recent activity items
+    heatTier: 0 | 1 | 2 | 3; // 0=cold, 1=warm, 2=hot, 3=very-hot
+    workingOn: string;       // latest body snippet
+    workingKind: string;     // thinking | said | committed | proposed
   }
   const factoryRows = createMemo<FactoryRow[]>(() => {
     const d = data();
@@ -474,6 +522,7 @@ const MissionControl: Component = () => {
           escByRole.set(c.role, (escByRole.get(c.role) || 0) + 1);
       }
     }
+    const heat = personaHeat();
     const rows = (d.personas || []).map((p) => {
       const open = openByRole.get(p.role) || 0;
       const esc = escByRole.get(p.role) || 0;
@@ -493,6 +542,12 @@ const MissionControl: Component = () => {
         statusLine = `idle · ${age}`;
         statusColor = "text-zinc-500";
       }
+      const h = heat[p.role];
+      const heatCount = h?.count || 0;
+      // 0 cold · 1-2 warm · 3-4 hot · 5+ very hot
+      const heatTier: 0 | 1 | 2 | 3 = heatCount === 0
+        ? 0
+        : heatCount <= 2 ? 1 : heatCount <= 4 ? 2 : 3;
       return {
         role: p.role,
         paused: p.paused,
@@ -500,6 +555,10 @@ const MissionControl: Component = () => {
         capability: ROLE_CAPABILITY[p.role] || "specialist",
         open, escalated: esc,
         statusLine, statusColor,
+        heatCount,
+        heatTier,
+        workingOn: h?.workingOn || "",
+        workingKind: h?.workingKind || "",
       };
     });
     // Stable canonical order — never shuffle on refresh. Unknown roles
@@ -789,11 +848,26 @@ const MissionControl: Component = () => {
                   per ROLE_ORDER above. */}
               <Index each={factoryRows()}>{(pGet) => {
                 const p = pGet;
+                // Heat tier → left-border + background tint. The
+                // colored edge gives an at-a-glance heatmap: cold
+                // (zinc) → warm (cyan-900) → hot (amber-800) →
+                // very hot (red-700).
+                const heatBorderClass = (t: 0|1|2|3) => {
+                  if (t === 3) return "border-l-red-600 bg-red-950/15";
+                  if (t === 2) return "border-l-amber-600 bg-amber-950/10";
+                  if (t === 1) return "border-l-cyan-700 bg-cyan-950/10";
+                  return "border-l-zinc-700";
+                };
                 return (
-                <div class="rounded border border-zinc-800 px-2 py-1.5">
+                <div class={`rounded border border-zinc-800 border-l-4 px-2 py-1.5 ${heatBorderClass(p().heatTier)}`}>
                   <div class="flex items-center gap-2">
                     <span class={p().paused ? "text-yellow-400" : (p().escalated > 0 ? "text-red-400" : "text-green-400")}>●</span>
                     <span class="font-mono text-zinc-200 text-xs flex-1">{p().role}</span>
+                    <Show when={p().heatCount > 0}>
+                      <span class="text-[10px] text-zinc-400 tabular-nums" title={`${p().heatCount} recent activity items`}>
+                        {p().heatCount}↑
+                      </span>
+                    </Show>
                     <span class={`text-[11px] ${p().statusColor}`}>{p().statusLine}</span>
                     <button
                       class="text-[10px] text-cyan-400 hover:text-cyan-300 hover:underline"
@@ -809,6 +883,12 @@ const MissionControl: Component = () => {
                     </button>
                   </div>
                   <div class="text-[10px] text-zinc-500 ml-4 mt-0.5">{p().capability}</div>
+                  <Show when={p().workingOn}>
+                    <div class="text-[10px] ml-4 mt-0.5 line-clamp-2">
+                      <span class="text-zinc-500">{p().workingKind}: </span>
+                      <span class="text-zinc-300">{p().workingOn.slice(0, 120)}</span>
+                    </div>
+                  </Show>
                   <Show when={askingRole() === p().role}>
                     <div class="mt-1.5 flex gap-1.5">
                       <input
