@@ -196,6 +196,19 @@ const MissionControl: Component = () => {
     commit?: { id: number; path: string; actor: string };
     attention?: AttentionItem;
   }
+  // Group the stream into "turns": each operator message is the head
+  // of a turn; everything that happened between it and the next
+  // operator message belongs to that turn. Renders as a workflow:
+  // "you asked X → team did Y → here's the output." If no operator
+  // message yet, items live under a synthetic "Background activity"
+  // turn so they're not orphaned.
+  interface StreamTurn {
+    headerTs: number;
+    headerBody?: string; // operator's question
+    headerLabel: string; // "you asked …" or "Background activity"
+    items: StreamItem[];
+  }
+
   const stream = createMemo<StreamItem[]>(() => {
     const d = data();
     if (!d) return [];
@@ -247,6 +260,38 @@ const MissionControl: Component = () => {
 
     items.sort((a, b) => a.ts - b.ts);
     return items;
+  });
+
+  // Walk the chronological stream and split into turns. Each operator
+  // message starts a new turn; everything after it (replies, commits,
+  // attention items) belongs to that turn until the next operator
+  // message. Items before the first operator message group into
+  // "Background activity."
+  const turns = createMemo<StreamTurn[]>(() => {
+    const items = stream();
+    if (items.length === 0) return [];
+    const out: StreamTurn[] = [];
+    let current: StreamTurn = {
+      headerTs: items[0].ts,
+      headerLabel: "Background activity",
+      items: [],
+    };
+    for (const it of items) {
+      if (it.kind === "chat" && it.chat && it.chat.from === "operator") {
+        // Close current turn, start a new one headed by this operator question
+        if (current.items.length > 0 || current.headerBody) out.push(current);
+        current = {
+          headerTs: it.ts,
+          headerBody: it.chat.body,
+          headerLabel: `you asked · ${ageSec(Math.max(0, Math.floor((Date.now() - it.ts) / 1000)))} ago`,
+          items: [],
+        };
+      } else {
+        current.items.push(it);
+      }
+    }
+    out.push(current);
+    return out;
   });
 
   // Auto-scroll to bottom on new content (the most-recent is at bottom)
@@ -332,12 +377,42 @@ const MissionControl: Component = () => {
         {/* ─── Main: one stream ─── */}
         <main ref={el => { streamScrollRef = el; }} class="flex-1 overflow-y-auto order-1">
           <div class="max-w-4xl mx-auto px-6 py-4 space-y-3">
-            <Show when={stream().length === 0}>
+            <Show when={turns().length === 0}>
               <div class="text-zinc-500 text-sm italic py-12 text-center">
                 Quiet. Type below to start something.
               </div>
             </Show>
-            <For each={stream()}>{(item) => (
+            <For each={turns()}>{(turn) => (
+              <section class="space-y-2">
+                {/* Turn header — operator question or Background activity */}
+                <div class="flex items-center gap-3 pt-4">
+                  <div class="flex-1 border-t border-zinc-800"></div>
+                  <span class="text-[10px] uppercase tracking-wide text-zinc-500">
+                    {turn.headerLabel}
+                  </span>
+                  <div class="flex-1 border-t border-zinc-800"></div>
+                </div>
+                <Show when={turn.headerBody}>
+                  <div class="flex justify-end">
+                    <div class="max-w-2xl rounded-lg px-3 py-2 text-sm bg-cyan-900/30 border border-cyan-800">
+                      <div class="flex items-baseline gap-2 mb-1 text-[10px]">
+                        <span class="font-mono text-cyan-300">operator</span>
+                        <span class="text-zinc-600 ml-auto">
+                          {ageSec(Math.max(0, Math.floor((Date.now() - turn.headerTs) / 1000)))} ago
+                        </span>
+                      </div>
+                      <div class="text-zinc-100 whitespace-pre-wrap break-words leading-relaxed">
+                        {turn.headerBody}
+                      </div>
+                    </div>
+                  </div>
+                </Show>
+                <Show when={turn.items.length === 0 && turn.headerBody}>
+                  <div class="text-[11px] text-zinc-500 italic ml-2">
+                    (no team response yet)
+                  </div>
+                </Show>
+                <For each={turn.items}>{(item) => (
               <Switch>
                 <Match when={item.kind === "chat" && item.chat}>
                   {(() => {
@@ -446,6 +521,8 @@ const MissionControl: Component = () => {
                   })()}
                 </Match>
               </Switch>
+            )}</For>
+              </section>
             )}</For>
           </div>
         </main>
