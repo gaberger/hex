@@ -258,21 +258,39 @@ const App: Component = () => {
     window.removeEventListener('keydown', handleKeyboard);
   });
 
-  // Brain and OrgChart take the entire viewport — no sidebar, no breadcrumbs, no
-  // bottom bar. Use Show for reactivity since route changes after onMount.
-  const isBrainPage = () => route().page === "brain";
+  // ADR-2026-05-15: single-surface operator console. The standalone
+  // Resources / Commitments / MergeGate / PersonaHealth / Thoughts /
+  // Brain / AgentRuns / Missions / OpsSla pages now all render Mission
+  // Control so the operator never switches off the dense single page.
+  // The drill-down hashes (#/resources, #/commitments, …) stay valid
+  // for backward compat — they just point at the same surface now.
+  const DRILLDOWN_PAGES = new Set<string>([
+    "resources",
+    "commitments",
+    "merge-gate",
+    "persona-health",
+    "thoughts",
+    "brain",
+    "brain-decisions",
+    "ops-sla",
+    "missions",
+    "mission-detail",
+    "agent-runs",
+  ]);
+  const isBrainPage = () => false;
   const isOrgChartPage = () => route().page === "org-chart";
   const isOrgCommsPage = () => route().page === "org-comms";
   const isTeamPage = () => route().page === "team";
-  const isMergeGatePage = () => route().page === "merge-gate";
-  const isPersonaHealthPage = () => route().page === "persona-health";
-  const isThoughtsPage = () => route().page === "thoughts";
-  const isResourcesPage = () => route().page === "resources";
-  const isCommitmentsPage = () => route().page === "commitments";
-  const isMissionControlPage = () => route().page === "mission-control";
-  const isAgentRunsPage = () => route().page === "agent-runs";
-  const isMissionsPage = () => route().page === "missions" || route().page === "mission-detail";
-  const isOpsSlaPage = () => route().page === "ops-sla";
+  const isMergeGatePage = () => false;
+  const isPersonaHealthPage = () => false;
+  const isThoughtsPage = () => false;
+  const isResourcesPage = () => false;
+  const isCommitmentsPage = () => false;
+  const isMissionControlPage = () =>
+    route().page === "mission-control" || DRILLDOWN_PAGES.has(route().page);
+  const isAgentRunsPage = () => false;
+  const isMissionsPage = () => false;
+  const isOpsSlaPage = () => false;
 
   return (
     <>
