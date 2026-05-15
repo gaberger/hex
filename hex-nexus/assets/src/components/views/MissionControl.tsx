@@ -157,17 +157,15 @@ const truncate = (s: string, n: number): string =>
 function kindExplainer(kind: string): string {
   switch (kind) {
     case "escalation":
-      return "A proposed action got stuck and auto-handling gave up. Abandon to permanently reject, or Copy CLI to investigate before deciding.";
+      return "A proposed action got stuck and auto-handling gave up. Click Abandon to permanently reject it.";
     case "overdue_commitment":
       return "A persona promised an artifact and missed its deadline. Abandon to clear the commitment, or wait for retry.";
     case "merge_vote_needed":
-      return "A worktree opened a merge request. You decide: Approve (lands on main) or Reject (discards the worktree).";
+      return "A worktree opened a merge request. Approve (lands on main) or Reject (discards the worktree).";
     case "resource_anomaly":
-      return "System flagged unusual resource usage. Operator-aware only — Ack to suppress for 5 minutes; fix the underlying cause via terminal (Copy CLI).";
-    case "autonomous_commit":
-      return "Info only — a file was auto-committed by the SOP loop. No action required; this is here so you see what the factory shipped.";
+      return "STDB or another process flagged unusual resource usage. Restart STDB to reclaim memory, or Ack to suppress for 5 minutes if you want to watch the trend.";
     case "agent_run_active":
-      return "Info only — a `hex agent run` dispatch is in flight. No action required.";
+      return "A `hex agent run` dispatch is in flight. No action required.";
     default:
       return "";
   }
@@ -247,6 +245,28 @@ const MissionControl: Component = () => {
     } finally {
       setAttnBusy(null);
       await refresh();
+    }
+  };
+  const restartStdb = async (id: string) => {
+    if (!confirm("Restart SpacetimeDB? Loses in-memory state but reclaims RSS. Persistent storage is unaffected.")) return;
+    setAttnBusy(id);
+    setAttnStatus({ ...attnStatus(), [id]: "restarting STDB… (~5s)" });
+    try {
+      const r = await fetch(`/api/stdb/restart`, { method: "POST" });
+      const body = await r.json().catch(() => ({}));
+      if (r.ok && body.ok) {
+        setAttnStatus({ ...attnStatus(), [id]: `✓ STDB restarted on port ${body.port}` });
+        // Class-suppress same-anomaly so the rss_oversize doesn't immediately reappear
+        suppressAttention(id, `class:resource_anomaly:rss_oversize`);
+      } else {
+        setAttnStatus({ ...attnStatus(), [id]: `error: ${body.error || `HTTP ${r.status}`}` });
+      }
+    } catch (e: any) {
+      setAttnStatus({ ...attnStatus(), [id]: `error: ${e?.message || e}` });
+    } finally {
+      setAttnBusy(null);
+      // Wait a beat for STDB to come back, then refresh
+      setTimeout(() => refresh(), 3000);
     }
   };
   const decideMerge = async (id: string, worktreePath: string, decision: "approved" | "rejected") => {
@@ -893,6 +913,15 @@ const MissionControl: Component = () => {
                               </button>
                             </Show>
                             <Show when={numId !== undefined && item.kind === "resource_anomaly"}>
+                              <Show when={item.subtitle.includes("spacetimedb-standalone") || item.title.includes("rss_oversize")}>
+                                <button
+                                  class="px-2 py-0.5 rounded bg-amber-900/40 hover:bg-amber-900 border border-amber-800 text-amber-200 text-[10px] disabled:opacity-50"
+                                  disabled={attnBusy() === item.id}
+                                  onClick={() => restartStdb(item.id)}
+                                >
+                                  {attnBusy() === item.id ? "…" : "Restart STDB"}
+                                </button>
+                              </Show>
                               <button
                                 class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] disabled:opacity-50"
                                 disabled={attnBusy() === item.id}

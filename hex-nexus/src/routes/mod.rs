@@ -681,6 +681,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/stdb/hydrate", post(stdb::hydrate)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/stdb/health", get(stdb::health))
+        .route("/api/stdb/restart", post(stdb::restart_stdb))
 
         // Swarm + HexFlo routes — guarded: only registered agents can mutate
         .route("/api/swarms", post(swarms::create_swarm)

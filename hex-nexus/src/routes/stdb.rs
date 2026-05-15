@@ -290,3 +290,52 @@ fn find_modules_dir() -> Option<PathBuf> {
 
     None
 }
+
+/// POST /api/stdb/restart — operator-triggered restart of the local
+/// SpacetimeDB process. Useful when STDB's RSS climbs out of bounds
+/// and the operator wants to reclaim memory without dropping to a
+/// terminal. Runs `hex stdb stop` then `hex stdb start --port <port>`
+/// via std::process::Command so the same orchestration the CLI does
+/// applies (port detection, readiness wait, etc.).
+pub async fn restart_stdb() -> (StatusCode, Json<serde_json::Value>) {
+    use std::process::Command;
+    // Look up which port STDB was running on; default 3033.
+    let port: u16 = std::env::var("HEX_SPACETIMEDB_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3033);
+
+    let stop = Command::new("hex").args(["stdb", "stop"]).output();
+    if let Err(e) = stop {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("hex stdb stop failed to launch: {e}") })),
+        );
+    }
+    // Brief gap so the port frees.
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let start = Command::new("hex")
+        .args(["stdb", "start", "--port", &port.to_string()])
+        .output();
+    match start {
+        Ok(o) if o.status.success() => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "stdout": String::from_utf8_lossy(&o.stdout).chars().take(400).collect::<String>(),
+                "port": port,
+            })),
+        ),
+        Ok(o) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "hex stdb start returned non-zero",
+                "stderr": String::from_utf8_lossy(&o.stderr).chars().take(400).collect::<String>(),
+            })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("hex stdb start failed: {e}") })),
+        ),
+    }
+}
