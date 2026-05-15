@@ -42,18 +42,29 @@ const THOUGHT_MAX_TOKENS: u32 = 96;
 ///
 /// Both overrideable: HEX_RESPONDER_CHAT_MODEL, HEX_RESPONDER_COMMIT_MODEL.
 /// Legacy HEX_RESPONDER_MODEL still wins for both if set.
-// Benchmark-driven defaults (scripts/bench-persona-prompts.py, v2 prompts).
+// Benchmark-driven Ollama defaults (scripts/bench-persona-prompts.py, v2 prompts):
 //   chat-mode   → qwen3.5:9b      avg 0.94, best at grounded status answers
 //   commit-mode → nemotron-mini   avg 1.00 on Confirm: format with few-shot
-//                                 prompt, ~1s latency, ~25 output tokens
-// Overrides: HEX_RESPONDER_CHAT_MODEL, HEX_RESPONDER_COMMIT_MODEL.
-// Re-run the bench when new models drop.
-const REPLY_MODEL_CHAT_DEFAULT: &str = "qwen3.5:9b";
-const REPLY_MODEL_COMMIT_DEFAULT: &str = "nemotron-mini";
+//
+// BUT — when the inference pipeline routes through OpenRouter (no local
+// Ollama registered, or only ANTHROPIC_API_KEY/OPENROUTER_API_KEY set),
+// those Ollama names fail with HTTP 400 "not a valid model ID". Defaults
+// are now OpenRouter slugs that work in either path.
+//
+// gpt-4o-mini over claude-haiku-4.5 because Anthropic safety-filters
+// persona prompts that mention "security audit", "OWASP", "exploit",
+// etc. — common terms for the CTO/CISO roles. OpenAI's filter is much
+// more permissive for legit ops/dev content. Switch back to anthropic
+// via HEX_RESPONDER_CHAT_MODEL when filtering relaxes.
+//
+// Set HEX_RESPONDER_CHAT_MODEL=qwen3.5:9b when local Ollama is
+// registered and the bench-pinned models are preferred.
+const REPLY_MODEL_CHAT_DEFAULT: &str = "openai/gpt-4o-mini";
+const REPLY_MODEL_COMMIT_DEFAULT: &str = "openai/gpt-4o-mini";
 /// Model for the secondary "why this reply" prompt. Pinned to a small
 /// non-thinking format-follower so summaries don't burn THOUGHT_MAX_TOKENS=96
 /// on `<think>` reasoning. Override: HEX_THOUGHT_SUMMARIZER_MODEL.
-const THOUGHT_SUMMARIZER_MODEL_DEFAULT: &str = "nemotron-mini";
+const THOUGHT_SUMMARIZER_MODEL_DEFAULT: &str = "openai/gpt-4o-mini";
 /// Cap concurrent inference calls so we don't queue 9 simultaneous
 /// requests at Ollama for a 4B model. Override with HEX_RESPONDER_CONCURRENCY.
 const REPLY_CONCURRENCY_DEFAULT: usize = 3;
