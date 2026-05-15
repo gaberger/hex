@@ -117,20 +117,32 @@ pub async fn send_message(
             None
         };
         for mention in mentions {
-            if let Some(agent) = org_chart.iter().find(|a| a.name == mention) {
-                route_to_agent(&req.from, &req.content, agent, group_thread.clone(), &state).await?;
-                routed_to.push(agent.name.clone());
-
-                tracing::info!(
-                    from = %req.from,
-                    to = %agent.name,
-                    tier = %agent.tier,
-                    thread = ?group_thread,
-                    "Routed message through org hierarchy"
-                );
+            // Try org_chart first (YAML-defined personas — c-suite + IC leads).
+            // Fall back to a synthetic AgentMention for workspace roles that
+            // don't have YAML files yet (marketing, research) — operator
+            // still wants to address them; the responder picks them up via
+            // RESPONDER_ROLES.
+            let agent_owned;
+            let agent = if let Some(a) = org_chart.iter().find(|a| a.name == mention) {
+                a
             } else {
-                tracing::warn!(mention = %mention, "Agent not found in org chart");
-            }
+                agent_owned = AgentMention {
+                    name: mention.clone(),
+                    tier: "specialist".to_string(),
+                    reports_to: None,
+                };
+                &agent_owned
+            };
+            route_to_agent(&req.from, &req.content, agent, group_thread.clone(), &state).await?;
+            routed_to.push(agent.name.clone());
+
+            tracing::info!(
+                from = %req.from,
+                to = %agent.name,
+                tier = %agent.tier,
+                thread = ?group_thread,
+                "Routed message through org hierarchy"
+            );
         }
     }
 
