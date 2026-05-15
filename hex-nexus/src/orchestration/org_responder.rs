@@ -135,6 +135,58 @@ fn is_conversational(content: &str) -> bool {
 
 /// Free-form conversational prompt for operator-originated chat asks.
 /// No Confirm/Silent contract — the persona answers directly.
+/// Extract the first peer mention in a reply that isn't the speaker.
+/// Two passes:
+///   1. Explicit @<role> mentions (high precision, what the prompt asks for)
+///   2. Plain role names preceded by coordination verbs ("ask the X",
+///      "consult X", "contact the X", etc.) — catches the common case
+///      where the model says "Ask the UX-designer" without the @ prefix.
+/// Used by the inter-persona auto-CC.
+fn first_peer_mention(reply: &str, speaker: &str) -> Option<String> {
+    const VALID_PEERS: &[&str] = &[
+        "ceo", "cto", "cpo", "ciso", "coo",
+        "chief-visionary", "chief-architect",
+        "product-lead", "engineering-lead", "design-lead", "sre-lead",
+        "validation-judge",
+        "ux-designer", "dashboard-ux-architect",
+    ];
+    // Pass 1: explicit @ mentions
+    for cap in reply
+        .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_' && c != '@')
+        .filter(|s| s.starts_with('@'))
+    {
+        let name = cap.trim_start_matches('@').to_ascii_lowercase();
+        if name == speaker { continue; }
+        if VALID_PEERS.contains(&name.as_str()) {
+            return Some(name);
+        }
+    }
+    // Pass 2: ANY mention of a peer role name in the body. Lower
+    // precision (a passing reference will CC too) but matches the
+    // model's natural style — most replies say "the X handles Y"
+    // rather than "ask the X". Operator gets a bit of cross-talk in
+    // exchange for actual agent-to-agent collaboration.
+    let lower = reply.to_ascii_lowercase();
+    for peer in VALID_PEERS {
+        if *peer == speaker { continue; }
+        // Require word-boundary match so "cto" doesn't fire on "actor"
+        let needles = [
+            format!(" {} ", peer),
+            format!(" {}.", peer),
+            format!(" {},", peer),
+            format!(" {}?", peer),
+            format!(" {}\n", peer),
+            format!("the {}", peer),
+        ];
+        for n in needles {
+            if lower.contains(&n) {
+                return Some(peer.to_string());
+            }
+        }
+    }
+    None
+}
+
 fn conversational_prompt(role: &str) -> String {
     let title = role_title(role);
     format!(
@@ -148,7 +200,8 @@ fn conversational_prompt(role: &str) -> String {
            ADR-YYYY-MM-DD-HHMM or ADR-NNN; commit SHAs; dashboard hashroutes \
            (e.g. #/merge-gate, #/missions, #/resources).\n\
          - If you don't know, say so plainly in ONE sentence. Suggest who would \
-           (peer name) or where the answer lives (file path, log, dashboard).\n\
+           by including @<role> in your reply — the runtime will CC them, so \
+           they receive your message and weigh in. ONE peer per reply, max.\n\
          - NO fabrication. NO claims about systems you haven't grounded against.\n\
          - Be brief. Be specific. Stop when you've answered.\n\
          - DO NOT use the `Confirm:` format — that's for directives, not chats.\n\n\
@@ -596,7 +649,7 @@ async fn process_role(
         let thread_id_for_commitment = thread_id.clone().unwrap_or_default();
 
         if let Err(e) = comm
-            .send_dm(role_string.clone(), from.clone(), reply_for_send, thread_id)
+            .send_dm(role_string.clone(), from.clone(), reply_for_send.clone(), thread_id.clone())
             .await
         {
             tracing::warn!(role = %role, msg_id, to = %from, error = %e, "org_responder: send_dm failed; will retry");
@@ -606,6 +659,33 @@ async fn process_role(
         // Only mark as read after a successful reply was committed.
         if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
             tracing::warn!(role = %role, msg_id, error = %e, "org_responder: mark_read after reply failed");
+        }
+
+        // Inter-persona forwarding: if the reply mentions @<role>, send a
+        // coordination DM to that peer so personas can collaborate without
+        // going through the operator. Gated on `from == operator` so
+        // persona→persona→persona chains can't form. At most ONE peer DM
+        // per reply to bound cost.
+        if from == "operator" {
+            if let Some(peer) = first_peer_mention(&reply_for_send, role) {
+                let coord = format!(
+                    "[CC from @{} — operator asked: \"{}\"]\n\n@{} you said:\n{}\n\nYour input is requested.",
+                    role,
+                    msg.message.chars().take(200).collect::<String>(),
+                    role,
+                    reply_for_send.chars().take(400).collect::<String>(),
+                );
+                let role_for_cc = role_string.clone();
+                let peer_clone = peer.clone();
+                if let Err(e) = comm
+                    .send_dm(role_for_cc, peer.clone(), coord, thread_id.clone())
+                    .await
+                {
+                    tracing::warn!(role = %role, peer = %peer_clone, error = %e, "org_responder: inter-persona CC failed");
+                } else {
+                    tracing::info!(role = %role, peer = %peer, "org_responder: CC'd peer based on @mention");
+                }
+            }
         }
 
         // Parse Confirm/PLAN lines and write commitments to STDB. Detached
