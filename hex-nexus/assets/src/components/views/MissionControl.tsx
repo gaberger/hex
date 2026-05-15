@@ -866,19 +866,7 @@ const MissionControl: Component = () => {
                           <div class="text-[10px] text-zinc-500 italic">
                             {kindExplainer(item.kind)}
                           </div>
-                          <div class="text-[11px] text-zinc-300 whitespace-pre-wrap break-words">
-                            {item.subtitle}
-                          </div>
                           <div class="flex flex-wrap gap-1.5">
-                            <Show when={item.cli_repro}>
-                              <button
-                                class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] font-mono"
-                                onClick={() => copyCli(item.cli_repro!, item.id)}
-                                title={item.cli_repro}
-                              >
-                                {copiedId() === item.id ? "✓ copied" : "Copy CLI"}
-                              </button>
-                            </Show>
                             <Show when={item.kind === "merge_vote_needed" && item.worktree_path}>
                               <button
                                 class="px-2 py-0.5 rounded bg-green-900/40 hover:bg-green-900 border border-green-800 text-green-200 text-[10px] disabled:opacity-50"
@@ -916,11 +904,6 @@ const MissionControl: Component = () => {
                           </div>
                           <Show when={attnStatus()[item.id]}>
                             <div class="text-[10px] text-zinc-500 italic">{attnStatus()[item.id]}</div>
-                          </Show>
-                          <Show when={item.cli_repro}>
-                            <div class="text-[10px] text-zinc-600 font-mono break-all">
-                              {item.cli_repro}
-                            </div>
                           </Show>
                         </div>
                       </Show>

@@ -721,22 +721,11 @@ pub async fn get_mission_control(
             "cli_repro": format!("hex ops abandon {}", id),
         }));
     }
-    for ex in recent_executed.iter().take(5) {
-        if ex.get("success").and_then(|v| v.as_bool()) != Some(true) { continue; }
-        let id = ex.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
-        let path = ex.get("path").and_then(|v| v.as_str()).unwrap_or("");
-        if path.is_empty() { continue; }
-        attention_feed.push(json!({
-            "id": format!("autocommit-{}", id),
-            "priority": 2,
-            "kind": "autonomous_commit",
-            "title": format!("Auto-committed: {}", path.rsplit('/').next().unwrap_or(path)),
-            "subtitle": format!("action #{} — {}", id, path),
-            "age_seconds": age_seconds_from_iso(ex.get("executed_at").and_then(|v| v.as_str()).unwrap_or("")),
-            "action_url": "#/activity",
-            "cli_repro": format!("git log --grep 'action#{}' -1 -p", id),
-        }));
-    }
+    // Note: autonomous_commit items are NOT pushed to the attention
+    // feed. They're info-only (nothing for the operator to act on) and
+    // already surface in the activity stream under the "Commits"
+    // filter. Including them as P2 attention items just adds visual
+    // noise to a rail that should only show things needing decisions.
     attention_feed.sort_by(|a, b| {
         let pa = a.get("priority").and_then(|v| v.as_u64()).unwrap_or(9);
         let pb = b.get("priority").and_then(|v| v.as_u64()).unwrap_or(9);
