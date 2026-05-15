@@ -329,6 +329,21 @@ pub async fn get_mission_control(
             .unwrap_or(0)
             .cmp(&a.get("id").and_then(|v| v.as_u64()).unwrap_or(0))
     });
+    // Dedup by (kind, pids) — the supervisor emits a fresh anomaly
+    // every tick that an issue persists, so 15 rss_oversize rows for
+    // the same STDB pid become one "STDB at 27 GiB" alert. Most-
+    // recent wins (already sorted desc by id).
+    {
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        open_anomalies.retain(|a| {
+            let key = format!(
+                "{}|{}",
+                a.get("kind").and_then(|v| v.as_str()).unwrap_or(""),
+                a.get("pids").and_then(|v| v.as_str()).unwrap_or("")
+            );
+            seen.insert(key)
+        });
+    }
     open_anomalies.truncate(15);
 
     // ── Persona health ──────────────────────────────────────────────
