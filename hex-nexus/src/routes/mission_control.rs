@@ -304,6 +304,15 @@ pub async fn get_mission_control(
             if r.get(6).and_then(|v| v.as_bool()).unwrap_or(false) {
                 return None; // handled
             }
+            // Suppress duplicate_argv from the operator's attention feed.
+            // The supervisor emits one of these every tick when two
+            // hex-agents share an argv_sha (common during brain-daemon
+            // respawn races) — pure noise, not an action item.
+            // Rows still land in STDB for audit; just not surfaced here.
+            let kind = r.get(2).and_then(|v| v.as_str()).unwrap_or("");
+            if kind == "duplicate_argv" {
+                return None;
+            }
             Some(json!({
                 "id":          r[0].as_u64().unwrap_or(0),
                 "detected_at": r[1].as_str().unwrap_or(""),
