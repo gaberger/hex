@@ -93,6 +93,10 @@ const ROLE_CAPABILITY: Record<string, string> = {
   "design-lead": "UI / UX",
   "sre-lead": "incidents · monitoring · SLOs",
   "validation-judge": "PASS / FAIL gates",
+  // Specialist read-only reviewers — addressable via @<role> in any
+  // chat. Don't tick in the persona_pool but show up in chat threads.
+  "ux-designer": "WCAG findings · accessibility audits (read-only)",
+  "dashboard-ux-architect": "dashboard IA synthesis · redesign proposals (T3)",
 };
 
 // Stable canonical order for the factory list. STDB SQL returns rows in
@@ -572,6 +576,30 @@ const MissionControl: Component = () => {
     return rows;
   });
 
+  // Recent commits regardless of UTC midnight boundary. Today's count
+  // resets at midnight; this gives a smooth rolling window so the
+  // operator can still see motion just after midnight.
+  const commitsLast24h = createMemo(() => {
+    const ex = data()?.activity?.recent_executed || [];
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    return ex.filter((e) => {
+      if (!e.success) return false;
+      const t = tsToEpoch(e.executed_at);
+      return t > cutoff;
+    }).length;
+  });
+
+  // Most recent commit for the Pulse strip — shows operator "yes, the
+  // factory just shipped something" without scrolling to the activity
+  // stream.
+  const latestCommit = createMemo(() => {
+    const ex = data()?.activity?.recent_executed || [];
+    return ex
+      .filter((e) => e.success && e.path)
+      .map((e) => ({ ...e, _ts: tsToEpoch(e.executed_at) }))
+      .sort((a, b) => b._ts - a._ts)[0];
+  });
+
   const attention = createMemo(() => {
     const items = data()?.attention_feed || [];
     const sup = attnSuppressed();
@@ -746,8 +774,8 @@ const MissionControl: Component = () => {
             loops {loopHealth().brainTs && loopHealth().improverTs ? "✓" : "?"}
           </span>
           <span class="text-zinc-500">·</span>
-          <span class="text-cyan-300 tabular-nums">
-            {data()?.pulse?.autonomous_commits_today ?? "—"} commits today
+          <span class="text-cyan-300 tabular-nums" title="Autonomous file_write actions executed in the last 24h">
+            {commitsLast24h()} ↑ commits/24h
           </span>
           <Show when={stuckEscalations() > 0}>
             <span class="text-zinc-500">·</span>
@@ -1103,6 +1131,25 @@ const MissionControl: Component = () => {
 
         {/* Main: unified stream */}
         <main ref={el => { mainScrollRef = el; }} class="col-span-8 lg:col-span-9 overflow-y-auto flex flex-col">
+          {/* Pulse strip — what JUST shipped + rate of motion. Makes
+              progress visible at a glance so the operator knows the
+              factory is actually working, not just polling. */}
+          <Show when={latestCommit()}>
+            <div class="px-6 py-2 border-b border-zinc-800 bg-cyan-950/20 flex items-center gap-3 text-xs">
+              <span class="text-[10px] uppercase tracking-wide text-cyan-400 shrink-0">Just shipped</span>
+              <span class="font-mono text-zinc-100 truncate flex-1" title={latestCommit()!.path || ""}>
+                {(latestCommit()!.path || "").split("/").pop() || "?"}
+              </span>
+              <span class="text-zinc-500 tabular-nums shrink-0">
+                {ageSec(Math.max(0, Math.floor((Date.now() - latestCommit()!._ts) / 1000)))} ago
+              </span>
+              <span class="text-zinc-500">·</span>
+              <span class="text-cyan-300 tabular-nums shrink-0">
+                {commitsLast24h()}/24h
+              </span>
+            </div>
+          </Show>
+
           <div class="px-6 py-2 border-b border-zinc-800 sticky top-0 bg-zinc-950 z-10 flex items-center gap-1.5 flex-wrap">
             <For each={[
               { id: "all" as const, label: "All" },
