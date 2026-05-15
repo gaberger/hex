@@ -34,23 +34,71 @@ interface Payload {
 }
 
 const REFRESH_MS = 5000;
-const PEER_CAPABILITIES: Record<string, string> = {
-  ceo: "vision · prioritization",
-  cto: "architecture · ADRs · security",
-  cpo: "product · specs · UX",
-  ciso: "security audits · OWASP",
-  coo: "ops · runbooks · cost",
-  "chief-visionary": "long-term strategy",
-  "chief-architect": "system design",
-  "product-lead": "feature shaping",
-  "engineering-lead": "implementation",
-  "design-lead": "UI / UX",
-  "sre-lead": "incidents · SLOs",
-  "validation-judge": "PASS / FAIL gates",
+// Workspaces — different role sets per workflow. The c-suite makes
+// sense for software development; marketing and research need their
+// own personas. Backend org_responder recognizes all of these (see
+// hex-nexus/src/orchestration/org_responder.rs::RESPONDER_ROLES).
+// Operator picks a workspace from the header dropdown.
+interface Workspace {
+  id: string;
+  label: string;
+  roles: string[];
+  capabilities: Record<string, string>;
+  description: string;
+}
+const WORKSPACES: Workspace[] = [
+  {
+    id: "dev",
+    label: "Development",
+    description: "Software org — c-suite + IC leads. Default.",
+    roles: ["ceo", "cto", "cpo", "ciso", "coo", "chief-visionary", "chief-architect", "product-lead", "engineering-lead", "design-lead", "sre-lead", "validation-judge"],
+    capabilities: {
+      ceo: "vision · prioritization",
+      cto: "architecture · ADRs · security",
+      cpo: "product · specs · UX",
+      ciso: "security audits · OWASP",
+      coo: "ops · runbooks · cost",
+      "chief-visionary": "long-term strategy",
+      "chief-architect": "system design",
+      "product-lead": "feature shaping",
+      "engineering-lead": "implementation",
+      "design-lead": "UI / UX",
+      "sre-lead": "incidents · SLOs",
+      "validation-judge": "PASS / FAIL gates",
+    },
+  },
+  {
+    id: "marketing",
+    label: "Marketing",
+    description: "Growth, content, brand, campaigns, analytics.",
+    roles: ["growth-lead", "content-lead", "brand-strategist", "campaign-manager", "analytics-lead"],
+    capabilities: {
+      "growth-lead": "acquisition · retention · funnel metrics",
+      "content-lead": "editorial calendar · long-form · SEO",
+      "brand-strategist": "positioning · voice · messaging",
+      "campaign-manager": "execution · scheduling · channels",
+      "analytics-lead": "measurement · attribution · dashboards",
+    },
+  },
+  {
+    id: "research",
+    label: "Research",
+    description: "Research lead, methodology, writing, peer review.",
+    roles: ["research-lead", "methodologist", "data-scientist", "writer", "peer-reviewer"],
+    capabilities: {
+      "research-lead": "research questions · scoping · prioritization",
+      "methodologist": "study design · sample · validity",
+      "data-scientist": "analysis · statistics · visualization",
+      "writer": "drafting · synthesis · narrative",
+      "peer-reviewer": "critique · rigor · counterarguments",
+    },
+  },
+];
+// Specialist read-only roles that work across all workspaces
+const SHARED_CAPABILITIES: Record<string, string> = {
   "ux-designer": "WCAG audits (read-only)",
   "dashboard-ux-architect": "dashboard IA synthesis",
 };
-const ROLE_ORDER = ["ceo","cto","cpo","ciso","coo","chief-visionary","chief-architect","product-lead","engineering-lead","design-lead","sre-lead","validation-judge"];
 
 const ageSec = (s: number): string => {
   if (s < 60) return `${s}s`;
@@ -85,6 +133,20 @@ const MissionControl: Component = () => {
   // working (factory heat) alongside the stream. Toggle to collapse
   // for a chat-only view.
   const [teamOpen, setTeamOpen] = createSignal(true);
+  // Active workspace — picks the persona set + capability labels.
+  // Persisted to localStorage so workspace selection survives reloads.
+  const [workspaceId, setWorkspaceIdInternal] = createSignal<string>(
+    (typeof localStorage !== "undefined" && localStorage.getItem("hex.workspace")) || "dev"
+  );
+  const setWorkspaceId = (id: string) => {
+    setWorkspaceIdInternal(id);
+    try { localStorage.setItem("hex.workspace", id); } catch {}
+  };
+  const workspace = createMemo<Workspace>(() =>
+    WORKSPACES.find((w) => w.id === workspaceId()) || WORKSPACES[0]
+  );
+  const capabilityFor = (role: string): string =>
+    workspace().capabilities[role] || SHARED_CAPABILITIES[role] || "specialist";
   const [pendingChat, setPendingChat] = createSignal<{from: string; to: string; body: string; ts: number}[]>([]);
   const [attnBusy, setAttnBusy] = createSignal<string | null>(null);
   const [attnSuppressed, setAttnSuppressed] = createSignal<Set<string>>(new Set());
@@ -346,15 +408,24 @@ const MissionControl: Component = () => {
     return heat;
   });
 
-  const personas = () => (data()?.personas || [])
-    .slice()
-    .sort((a, b) => {
-      const ra = ROLE_ORDER.indexOf(a.role);
-      const rb = ROLE_ORDER.indexOf(b.role);
-      const ia = ra === -1 ? 99 : ra;
-      const ib = rb === -1 ? 99 : rb;
-      return ia - ib;
+  // Personas shown in the rail = workspace.roles. For roles registered
+  // in persona_pool (have heartbeat + paused state), use the live row;
+  // for workspace roles NOT in persona_pool yet (marketing, research),
+  // synthesize a placeholder row so they're still addressable.
+  const personas = () => {
+    const ws = workspace();
+    const livePool = data()?.personas || [];
+    return ws.roles.map((role) => {
+      const live = livePool.find((p) => p.role === role);
+      if (live) return live;
+      return {
+        role,
+        display_name: role,
+        paused: false,
+        last_tick_at: "",
+      } as PersonaRow;
     });
+  };
 
   return (
     <div class="flex flex-col h-screen bg-zinc-950 text-zinc-100 font-sans">
@@ -362,6 +433,18 @@ const MissionControl: Component = () => {
       <header class="px-6 py-3 border-b border-zinc-800 flex items-center justify-between text-[11px]">
         <div class="flex items-baseline gap-3">
           <h1 class="text-base font-semibold tracking-tight">hex</h1>
+          <span class="text-zinc-500">·</span>
+          <span class="text-zinc-500">workspace</span>
+          <select
+            class="bg-zinc-900 border border-zinc-700 rounded px-2 py-0.5 text-zinc-200"
+            value={workspaceId()}
+            onChange={(e) => setWorkspaceId(e.currentTarget.value)}
+            title={workspace().description}
+          >
+            <For each={WORKSPACES}>{(w) => (
+              <option value={w.id}>{w.label}</option>
+            )}</For>
+          </select>
         </div>
         <div class="flex items-center gap-2">
           <span class={data()?.stdb_alive ? "text-green-400" : "text-red-400"}>STDB {data()?.stdb_alive ? "✓" : "✗"}</span>
@@ -409,7 +492,7 @@ const MissionControl: Component = () => {
                 <button
                   class={`w-full text-left px-3 py-2 border-b border-zinc-900 border-l-4 hover:bg-zinc-900 ${heatBorder}`}
                   onClick={() => setIntent(`@${p.role} `)}
-                  title={`Address @${p.role} directly. ${PEER_CAPABILITIES[p.role] || ""}`}
+                  title={`Address @${p.role} directly. ${capabilityFor(p.role)}`}
                 >
                   <div class="flex items-center gap-2 text-xs">
                     <span class={p.paused ? "text-yellow-400" : count > 0 ? "text-green-400" : "text-zinc-500"}>●</span>
@@ -418,7 +501,7 @@ const MissionControl: Component = () => {
                       <span class="text-[10px] text-zinc-400 tabular-nums">{count}↑</span>
                     </Show>
                   </div>
-                  <div class="text-[10px] text-zinc-500 mt-0.5">{PEER_CAPABILITIES[p.role] || "specialist"}</div>
+                  <div class="text-[10px] text-zinc-500 mt-0.5">{capabilityFor(p.role)}</div>
                   <Show when={h?.workingOn}>
                     <div class="text-[10px] mt-1 line-clamp-2">
                       <span class="text-zinc-500">{h!.workingKind}: </span>

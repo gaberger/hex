@@ -77,6 +77,7 @@ const REPLY_CONCURRENCY_DEFAULT: usize = 3;
 /// to @engineering-lead — actually gets replies. Without this, DMs to lead
 /// personas landed in STDB but nothing picked them up.
 const RESPONDER_ROLES: &[&str] = &[
+    // Software / development workspace
     "cto",
     "cpo",
     "coo",
@@ -86,10 +87,24 @@ const RESPONDER_ROLES: &[&str] = &[
     "engineering-lead",
     "product-lead",
     "sre-lead",
+    // Marketing workspace (2026-05-15: operator request — personas should
+    // match the workflow, not be locked to a software-org c-suite)
+    "growth-lead",
+    "content-lead",
+    "brand-strategist",
+    "campaign-manager",
+    "analytics-lead",
+    // Research workspace
+    "research-lead",
+    "methodologist",
+    "data-scientist",
+    "writer",
+    "peer-reviewer",
 ];
 
 fn role_title(role: &str) -> &'static str {
     match role {
+        // Software / dev
         "cto" => "Chief Technology Officer",
         "cpo" => "Chief Product Officer",
         "coo" => "Chief Operating Officer",
@@ -100,7 +115,19 @@ fn role_title(role: &str) -> &'static str {
         "product-lead" => "Product Lead",
         "sre-lead" => "SRE Lead",
         "sre-engineer" => "SRE Engineer",
-        _ => "Executive",
+        // Marketing
+        "growth-lead" => "Growth Lead",
+        "content-lead" => "Content Lead",
+        "brand-strategist" => "Brand Strategist",
+        "campaign-manager" => "Campaign Manager",
+        "analytics-lead" => "Analytics Lead",
+        // Research
+        "research-lead" => "Research Lead",
+        "methodologist" => "Methodologist",
+        "data-scientist" => "Data Scientist",
+        "writer" => "Writer",
+        "peer-reviewer" => "Peer Reviewer",
+        _ => "Specialist",
     }
 }
 
@@ -149,6 +176,12 @@ fn first_peer_mention(reply: &str, speaker: &str) -> Option<String> {
         "product-lead", "engineering-lead", "design-lead", "sre-lead",
         "validation-judge",
         "ux-designer", "dashboard-ux-architect",
+        // Marketing
+        "growth-lead", "content-lead", "brand-strategist",
+        "campaign-manager", "analytics-lead",
+        // Research
+        "research-lead", "methodologist", "data-scientist",
+        "writer", "peer-reviewer",
     ];
     // Pass 1: explicit @ mentions
     for cap in reply
