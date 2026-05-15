@@ -39,6 +39,7 @@ interface CommitmentRow {
 interface AttentionItem {
   id: string; priority: 0 | 1 | 2; kind: string; title: string;
   subtitle: string; age_seconds: number; action_url?: string; cli_repro?: string;
+  worktree_path?: string; branch?: string;
 }
 interface LiveEvent {
   id: number; event_type: string; created_at: string; session_id: string; preview: string;
@@ -147,6 +148,31 @@ const ageSinceAny = (raw: any): string => {
 const truncate = (s: string, n: number): string =>
   s.length > n ? s.slice(0, n) + "…" : s;
 
+/**
+ * Plain-English description of what each attention kind means and
+ * what the operator is supposed to do with it. Rendered as a small
+ * caption above each expanded attention card so the operator never
+ * has to guess.
+ */
+function kindExplainer(kind: string): string {
+  switch (kind) {
+    case "escalation":
+      return "A proposed action got stuck and auto-handling gave up. Abandon to permanently reject, or Copy CLI to investigate before deciding.";
+    case "overdue_commitment":
+      return "A persona promised an artifact and missed its deadline. Abandon to clear the commitment, or wait for retry.";
+    case "merge_vote_needed":
+      return "A worktree opened a merge request. You decide: Approve (lands on main) or Reject (discards the worktree).";
+    case "resource_anomaly":
+      return "System flagged unusual resource usage. Operator-aware only — Ack to suppress for 5 minutes; fix the underlying cause via terminal (Copy CLI).";
+    case "autonomous_commit":
+      return "Info only — a file was auto-committed by the SOP loop. No action required; this is here so you see what the factory shipped.";
+    case "agent_run_active":
+      return "Info only — a `hex agent run` dispatch is in flight. No action required.";
+    default:
+      return "";
+  }
+}
+
 type StreamFilter = "all" | "chat" | "commit" | "twin" | "anomaly";
 
 const MissionControl: Component = () => {
@@ -216,6 +242,27 @@ const MissionControl: Component = () => {
         body: JSON.stringify([actionId, "rejected", "operator abandoned via dashboard 2026-05-15"]),
       });
       setAttnStatus({ ...attnStatus(), [id]: r.ok ? "✓ rejected" : `error: HTTP ${r.status}` });
+    } catch (e: any) {
+      setAttnStatus({ ...attnStatus(), [id]: `error: ${e?.message || e}` });
+    } finally {
+      setAttnBusy(null);
+      await refresh();
+    }
+  };
+  const decideMerge = async (id: string, worktreePath: string, decision: "approved" | "rejected") => {
+    if (!worktreePath) return;
+    setAttnBusy(id);
+    suppressAttention(id);
+    try {
+      const r = await fetch(`/v1/database/hex/call/merge_request_set_status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify([worktreePath, decision]),
+      });
+      setAttnStatus({
+        ...attnStatus(),
+        [id]: r.ok ? `✓ ${decision}` : `error: HTTP ${r.status}`,
+      });
     } catch (e: any) {
       setAttnStatus({ ...attnStatus(), [id]: `error: ${e?.message || e}` });
     } finally {
@@ -816,6 +863,9 @@ const MissionControl: Component = () => {
                       </button>
                       <Show when={isOpen()}>
                         <div class="border-t border-zinc-800 px-2 py-1.5 space-y-1.5 bg-zinc-950/60">
+                          <div class="text-[10px] text-zinc-500 italic">
+                            {kindExplainer(item.kind)}
+                          </div>
                           <div class="text-[11px] text-zinc-300 whitespace-pre-wrap break-words">
                             {item.subtitle}
                           </div>
@@ -829,14 +879,22 @@ const MissionControl: Component = () => {
                                 {copiedId() === item.id ? "✓ copied" : "Copy CLI"}
                               </button>
                             </Show>
-                            {/* "Show in stream" buttons removed —
-                                the stream only carries chat + commits
-                                today (no twin_verdict or anomaly
-                                events flow through live_events), so
-                                the buttons surfaced nothing for most
-                                kinds. Operator uses Copy CLI for
-                                terminal investigation, or the
-                                Abandon/Ack actions below. */}
+                            <Show when={item.kind === "merge_vote_needed" && item.worktree_path}>
+                              <button
+                                class="px-2 py-0.5 rounded bg-green-900/40 hover:bg-green-900 border border-green-800 text-green-200 text-[10px] disabled:opacity-50"
+                                disabled={attnBusy() === item.id}
+                                onClick={() => decideMerge(item.id, item.worktree_path!, "approved")}
+                              >
+                                {attnBusy() === item.id ? "…" : "Approve merge"}
+                              </button>
+                              <button
+                                class="px-2 py-0.5 rounded bg-red-900/40 hover:bg-red-900 border border-red-800 text-red-200 text-[10px] disabled:opacity-50"
+                                disabled={attnBusy() === item.id}
+                                onClick={() => decideMerge(item.id, item.worktree_path!, "rejected")}
+                              >
+                                {attnBusy() === item.id ? "…" : "Reject merge"}
+                              </button>
+                            </Show>
                             <Show when={numId !== undefined && item.kind === "escalation"}>
                               <button
                                 class="px-2 py-0.5 rounded bg-red-900/40 hover:bg-red-900 border border-red-800 text-red-200 text-[10px] disabled:opacity-50"

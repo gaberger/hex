@@ -701,6 +701,8 @@ pub async fn get_mission_control(
             "age_seconds": age_seconds_from_iso(mr.get("opened_at").and_then(|v| v.as_str()).unwrap_or("")),
             "action_url": "#/merge-gate",
             "cli_repro": "hex worktree status".to_string(),
+            "worktree_path": path,
+            "branch": branch,
         }));
     }
     for c in open_commitments.iter() {
