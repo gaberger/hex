@@ -743,6 +743,30 @@ pub async fn get_mission_control(
         let ab = b.get("age_seconds").and_then(|v| v.as_u64()).unwrap_or(0);
         ab.cmp(&aa) // older = higher in same priority lane
     });
+    // Global dedup by (kind, dedup_key) — same merge branch, same
+    // file path, same action id should never appear twice. Keys are
+    // pulled from the id field's natural shape (escalation-<id>,
+    // merge-<branch>, autocommit-<id>, anomaly-<id>, etc.). After
+    // sorting, retain keeps the first (highest-priority/oldest) copy.
+    {
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        attention_feed.retain(|item| {
+            let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            // For merge_vote_needed, the id encodes the branch; collapse
+            // multiple worktrees on the same branch.
+            let key = if let Some(stripped) = id.strip_prefix("merge-") {
+                // Strip any worktree-id suffix after the branch
+                format!("merge-{}", stripped.split('/').next().unwrap_or(stripped))
+            } else if let Some(_) = id.strip_prefix("autocommit-") {
+                // Dedup commits by target filename
+                let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                format!("autocommit-{}", title)
+            } else {
+                id.to_string()
+            };
+            seen.insert(key)
+        });
+    }
     attention_feed.truncate(40);
 
     Ok(Json(json!({
