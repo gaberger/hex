@@ -24,6 +24,15 @@ const CONTENT_CAP_BYTES: usize = 24 * 1024;
 /// promised a standup spec when CEO just asked "what's your priority")
 /// loop forever and starve the queue.
 const STUB_AFTER_FAILURES: u32 = 2;
+/// Maximum bytes of the existing file we feed back into the patch prompt
+/// before truncating. Keeps the prompt under the model's context budget
+/// even when editing a 100 KB doc.
+const PATCH_CONTEXT_CAP_BYTES: usize = 16 * 1024;
+/// Minimum fraction of the existing file's significant lines that must
+/// survive in the new draft for it to count as a real patch (vs. a
+/// hallucinated rewrite). 0.40 catches full-file replacements while still
+/// allowing substantial restructuring with the same anchors preserved.
+const PATCH_MIN_PRESERVATION_RATIO: f32 = 0.40;
 
 pub fn spawn(stdb_host: String, hex_db: String, port: u16, repo_root: PathBuf) {
     if std::env::var("HEX_DISABLE_DRAFTER").is_ok() {
@@ -81,7 +90,7 @@ async fn run_one(
             continue; // drafter already ran for this commitment
         }
         // Bound concurrency by handling one per tick; LLM calls are slow.
-        match draft_one(http, stdb_host, hex_db, inference_url, &c).await {
+        match draft_one(http, stdb_host, hex_db, inference_url, &c, repo_root).await {
             Ok(DraftOutcome::ProposedAction) => {
                 failures.lock().await.remove(&c.id);
             }
@@ -428,6 +437,7 @@ async fn draft_one(
     hex_db: &str,
     inference_url: &str,
     c: &OpenCommitment,
+    repo_root: &PathBuf,
 ) -> Result<DraftOutcome, String> {
     // ADR-2026-05-12-1505 — adr_status_flip bypasses the LLM entirely. The
     // persona's decision is already encoded in success_artifact (`ADR-X:Y`);
@@ -488,10 +498,48 @@ async fn draft_one(
         format!("\n\nOriginal CEO request (this is what the file must answer):\n>>> {}\n", ceo_ask.trim())
     };
 
+    // Patch-mode context (2026-05-17 simplification — replaces the planned
+    // twin-side patch-fidelity gate). If the target file already exists on
+    // disk, the persona is supposed to be EDITING it, not regenerating from
+    // scratch. Fetch the current bytes and bind them into the prompt so the
+    // model has the actual content to preserve. Without this the drafter
+    // hallucinates a new doc every time and the twin escalates everything
+    // as ungrounded. Cap at PATCH_CONTEXT_CAP_BYTES so a 50 KB ADR doesn't
+    // blow the prompt budget.
+    let target_existing: Option<String> = {
+        let p = repo_root.join(&c.success_artifact);
+        if p.is_file() {
+            match std::fs::read_to_string(&p) {
+                Ok(s) if !s.trim().is_empty() => Some(s),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    };
+    let existing_block = match target_existing.as_ref() {
+        Some(s) => {
+            let body = if s.len() > PATCH_CONTEXT_CAP_BYTES {
+                format!("{}\n[truncated — {} bytes total]", &s[..PATCH_CONTEXT_CAP_BYTES], s.len())
+            } else {
+                s.clone()
+            };
+            format!(
+                "\n\nEXISTING FILE CONTENT — this file already exists. You are EDITING it.\n\
+                 Preserve every line verbatim EXCEPT for the specific change the CEO asked for.\n\
+                 Do NOT rewrite the document, do NOT change unrelated sections, do NOT alter framing.\n\
+                 Output the FULL updated file body with the targeted change applied.\n\
+                 ---BEGIN EXISTING---\n{}\n---END EXISTING---\n",
+                body
+            )
+        }
+        None => String::new(),
+    };
+
     let system = format!(
         "You are the {role} persona. The CEO asked you for a specific artifact and you committed to producing it.\n\
          Your committed action: {action}\n\
-         Required success artifact: {artifact}{ceo_ask}\n\n\
+         Required success artifact: {artifact}{ceo_ask}{existing}\n\n\
          Produce the ACTUAL FULL CONTENTS of `{artifact}` NOW.\n\n\
          Rules:\n\
          - The file MUST directly answer the CEO request above. Do NOT drift to a generic 'enterprise tooling' \
@@ -507,6 +555,7 @@ async fn draft_one(
         action = c.action,
         artifact = c.success_artifact,
         ceo_ask = ceo_ask_block,
+        existing = existing_block,
     );
 
     // Pin nemotron-mini by default. Reason same as the responder commit-mode
@@ -603,6 +652,31 @@ async fn draft_one(
         );
         content.truncate(CONTENT_CAP_BYTES);
         content.push_str("\n\n[truncated by drafter — CONTENT_CAP_BYTES]\n");
+    }
+
+    // Patch-fidelity check (2026-05-17 — replaces the planned twin-side
+    // gate). If the target file existed before this draft, the persona is
+    // editing — preservation is mandatory. Compute line-set overlap on
+    // significant lines (trimmed, ≥20 chars) between existing and new
+    // content. If <40% of existing significant lines survive, the drafter
+    // rewrote the doc instead of patching — abstain so the circuit-breaker
+    // re-asks (and the off-disk artifact does not get clobbered with
+    // hallucinated content as it did on 2026-05-17 with action 45090).
+    if let Some(existing) = target_existing.as_ref() {
+        let preserved_ratio = significant_line_overlap_ratio(existing, &content);
+        if preserved_ratio < PATCH_MIN_PRESERVATION_RATIO {
+            tracing::warn!(
+                commitment_id = c.id,
+                role = %c.role,
+                path = %c.success_artifact,
+                preserved_ratio = preserved_ratio,
+                threshold = PATCH_MIN_PRESERVATION_RATIO,
+                existing_bytes = existing.len(),
+                new_bytes = content.len(),
+                "drafter: patch-fidelity gate — preserved <40% of existing lines; abstaining (likely full-file rewrite)"
+            );
+            return Ok(DraftOutcome::PersonaAbstained);
+        }
     }
 
     let payload = serde_json::json!({
@@ -1274,4 +1348,59 @@ fn is_safe_repo_path(path_field: &str) -> bool {
         && !p.starts_with("..")
         && !p.is_empty()
         && p.len() < 256
+}
+
+/// Fraction of `existing`'s significant lines that appear (verbatim, trimmed)
+/// in `new_content`. A "significant" line is a trimmed line of at least 20
+/// characters — short markup like `---` or blank lines are ignored. Used by
+/// the patch-fidelity gate to detect drafts that rewrote the doc instead of
+/// editing it. Returns 1.0 when `existing` has no significant lines (cannot
+/// fail-open on an effectively empty target — falls through to other gates).
+fn significant_line_overlap_ratio(existing: &str, new_content: &str) -> f32 {
+    let new_lines: std::collections::HashSet<&str> = new_content
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| l.len() >= 20)
+        .collect();
+    let mut total = 0u32;
+    let mut preserved = 0u32;
+    for line in existing.lines().map(|l| l.trim()).filter(|l| l.len() >= 20) {
+        total += 1;
+        if new_lines.contains(line) {
+            preserved += 1;
+        }
+    }
+    if total == 0 {
+        return 1.0;
+    }
+    preserved as f32 / total as f32
+}
+
+#[cfg(test)]
+mod patch_fidelity_tests {
+    use super::significant_line_overlap_ratio;
+
+    #[test]
+    fn full_rewrite_with_no_overlap_returns_zero() {
+        let existing = "## Status: Proposed\n\nThis ADR describes the IC-responder gap in hex-nexus/src/orchestration/org_responder.rs lines 80-85.\nThe daemon polls only executive personas, leaving 26 ICs silent.\n";
+        let new = "## Incident Response Framework\n\nWe will use machine learning to detect incidents and train staff in response protocols.\nThe new system will track all events with full traceability.\n";
+        let ratio = significant_line_overlap_ratio(existing, new);
+        assert!(ratio < 0.25, "expected near-zero overlap, got {}", ratio);
+    }
+
+    #[test]
+    fn real_patch_preserves_most_lines() {
+        let existing = "# Title\n\nThis ADR describes the IC-responder gap in hex-nexus/src/orchestration/org_responder.rs lines 80-85.\nThe daemon polls only executive personas, leaving 26 ICs silent.\nWe propose a sister daemon to address the gap.\n";
+        let new = "# Title\n\n## Status: Proposed\n\nThis ADR describes the IC-responder gap in hex-nexus/src/orchestration/org_responder.rs lines 80-85.\nThe daemon polls only executive personas, leaving 26 ICs silent.\nWe propose a sister daemon to address the gap.\n\nDrafted by: cto\n";
+        let ratio = significant_line_overlap_ratio(existing, new);
+        assert!(ratio >= 0.99, "expected full preservation, got {}", ratio);
+    }
+
+    #[test]
+    fn short_lines_are_ignored() {
+        let existing = "## A\n---\n   \n";
+        let new = "different entirely";
+        // No significant lines in existing → ratio is 1.0 (fall-open).
+        assert_eq!(significant_line_overlap_ratio(existing, new), 1.0);
+    }
 }
