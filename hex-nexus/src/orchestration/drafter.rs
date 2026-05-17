@@ -335,6 +335,41 @@ fn sanitize_artifact_path(path: &str) -> String {
         return path.to_string();
     }
     let ts = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
+    // First pass: replace [CAPS_]-style content-filter redactions with a
+    // `redacted-{ts}` token. Doing this before the `<token>` pass keeps the
+    // two replacement strategies independent.
+    let path_after_brackets = {
+        let bytes = path.as_bytes();
+        let mut out = String::with_capacity(path.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] != b'[' {
+                out.push(bytes[i] as char);
+                i += 1;
+                continue;
+            }
+            let mut j = i + 1;
+            while j < bytes.len() && bytes[j] != b']' && bytes[j] != b'/' && bytes[j] != b'[' {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b']' {
+                let inner = &path[i + 1..j];
+                let is_redaction = inner.len() >= 3
+                    && inner
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c == '_');
+                if is_redaction {
+                    out.push_str(&format!("redacted-{}", ts));
+                    i = j + 1;
+                    continue;
+                }
+            }
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+        out
+    };
+    let path = path_after_brackets.as_str();
     let mut out = String::with_capacity(path.len());
     let mut chars = path.char_indices().peekable();
     while let Some((i, c)) = chars.next() {
@@ -1060,6 +1095,17 @@ fn is_source_file_path(path: &str) -> bool {
 }
 
 fn find_unresolved_placeholder(path: &str) -> Option<String> {
+    // First check for OpenRouter / OWASP-A05 content-filter redactions
+    // like `[PHONE]`, `[EMAIL]`, `[NUMBER]`, `[REDACTED]`. These leak into
+    // artifact paths when the persona's LLM reply references a path or
+    // identifier containing digit patterns that match the upstream filter.
+    // Observed 2026-05-17: chief-architect commitment 24587 had its artifact
+    // path mangled from `approved-2605171640-implement-phase-1-of-adr.json`
+    // to `approved-[PHONE]-implement-phase-1-of-adr.json` because the 10-digit
+    // timestamp prefix matched the phone-number redaction rule.
+    if let Some(token) = find_bracketed_redaction(path) {
+        return Some(token);
+    }
     let mut chars = path.char_indices();
     while let Some((i, c)) = chars.next() {
         if c != '<' {
@@ -1083,6 +1129,39 @@ fn find_unresolved_placeholder(path: &str) -> Option<String> {
         if inner.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-') {
             return Some(format!("<{}>", inner));
         }
+    }
+    None
+}
+
+/// Detects square-bracket redactions characteristic of upstream content
+/// filters: `[PHONE]`, `[EMAIL]`, `[NUMBER]`, `[REDACTED]`, etc. The pattern
+/// is `[A-Z_]{3,}` between literal `[` and `]`. Lowercase is excluded so
+/// legitimate paths like `docs/notes/[draft]-foo.md` aren't false-positives.
+fn find_bracketed_redaction(path: &str) -> Option<String> {
+    let bytes = path.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'[' {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        while j < bytes.len() && bytes[j] != b']' && bytes[j] != b'/' && bytes[j] != b'[' {
+            j += 1;
+        }
+        if j >= bytes.len() || bytes[j] != b']' {
+            i = j.max(i + 1);
+            continue;
+        }
+        let inner = &path[i + 1..j];
+        if inner.len() >= 3
+            && inner
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c == '_')
+        {
+            return Some(format!("[{}]", inner));
+        }
+        i = j + 1;
     }
     None
 }
