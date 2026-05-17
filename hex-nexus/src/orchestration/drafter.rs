@@ -466,6 +466,25 @@ async fn draft_one(
         return Ok(DraftOutcome::PersonaAbstained);
     }
 
+    // Source-file guard: twin_reviewer hard-denies any file_write to
+    // hex-*/src/ or spacetime-modules/*/src/ unless proposed_by is
+    // `tool:code_patch` or `operator-passthrough` (twin_reviewer.rs:402-432).
+    // The drafter only emits proposed_by=<persona-role>, so source-file
+    // commitments here will ALWAYS reject — and the open-commitment poller
+    // will retry indefinitely, burning inference budget on a loop the
+    // persona literally cannot escape (observed 2026-05-17 on commitment
+    // 24581 against hex-nexus/src/analysis/boundary_checker.rs). Abstain
+    // immediately so the circuit-breaker can promote to stub or operator.
+    if is_source_file_path(&c.success_artifact) {
+        tracing::warn!(
+            commitment_id = c.id,
+            role = %c.role,
+            artifact = %c.success_artifact,
+            "drafter: rejecting commitment — source-file target requires SOP code_patch tool, not drafter LLM; abstaining"
+        );
+        return Ok(DraftOutcome::PersonaAbstained);
+    }
+
     // Pull the originating CEO message — prefer thread, fall back to the
     // related_msg_id lookup so DM-style commitments (no thread_id) still
     // get the original ask passed through to the drafter.
@@ -926,6 +945,19 @@ fn min_content_bytes_for_path(path: &str) -> Option<usize> {
 /// Examples: `<turn>`, `<id>`, `<persona>`. Used by draft_one to refuse
 /// committing a proposed_action whose path contains literal template
 /// markers a persona forgot to substitute.
+/// Mirror of twin_reviewer.rs:405-412 source-path detection. Kept in sync so
+/// the drafter abstains on the same paths the twin would hard-deny.
+fn is_source_file_path(path: &str) -> bool {
+    path.starts_with("hex-nexus/src/")
+        || path.starts_with("hex-cli/src/")
+        || path.starts_with("hex-core/src/")
+        || path.starts_with("hex-agent/src/")
+        || path.starts_with("hex-parser/src/")
+        || path.starts_with("hex-analyzer/src/")
+        || path.starts_with("hex-desktop/src/")
+        || (path.starts_with("spacetime-modules/") && path.contains("/src/"))
+}
+
 fn find_unresolved_placeholder(path: &str) -> Option<String> {
     let mut chars = path.char_indices();
     while let Some((i, c)) = chars.next() {
