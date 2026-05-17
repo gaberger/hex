@@ -668,7 +668,37 @@ async fn process_role(
         // ADR-2026-05-08-2400 Silent sentinel — applies to commitment-mode
         // DMs only. Conversational replies ship verbatim even if they happen
         // to start with the word "silent".
+        //
+        // ADR-2026-05-17-2030 Phase 1: Silent is ILLEGAL for from=operator.
+        // Operator-direct asks must produce action or surfaced escalation —
+        // never silent drop. Convert to a structured decline DM back to
+        // operator so the ask is visible, not buried in a log line.
         if is_silent_token && !chat_mode {
+            if from == "operator" {
+                tracing::warn!(
+                    role = %role,
+                    msg_id,
+                    "org_responder: persona chose Silent on operator-direct ask — escalating as decline DM (Silent banned for from=operator per ADR-2026-05-17-2030)"
+                );
+                let decline = format!(
+                    "Decline: I cannot answer this ask from my current context. \
+                     Operator: please re-fire with more grounding (cite file paths, \
+                     ADR IDs, commit SHAs), route to a different persona, or \
+                     operator-author the artifact via `hex ops write`. Original \
+                     msg_id={}.",
+                    msg_id
+                );
+                if let Err(e) = comm
+                    .send_dm(role_string.clone(), from.clone(), decline, thread_id.clone())
+                    .await
+                {
+                    tracing::warn!(role = %role, msg_id, error = %e, "org_responder: decline DM send failed");
+                }
+                if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
+                    tracing::warn!(role = %role, msg_id, error = %e, "org_responder: mark_read after operator-decline failed");
+                }
+                continue;
+            }
             tracing::info!(role = %role, msg_id, "org_responder: persona chose Silent");
             if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
                 tracing::warn!(role = %role, msg_id, error = %e, "org_responder: mark_read after silent failed");
