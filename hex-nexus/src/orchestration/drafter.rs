@@ -24,6 +24,18 @@ const CONTENT_CAP_BYTES: usize = 24 * 1024;
 /// promised a standup spec when CEO just asked "what's your priority")
 /// loop forever and starve the queue.
 const STUB_AFTER_FAILURES: u32 = 2;
+/// Maximum twin rejections per commitment before the drafter abandons.
+/// Twin rejections mean the persona DID produce content but twin_reviewer
+/// judged it unfit (path-not-allowed, content-grounding gate, etc.). Unlike
+/// PersonaAbstained, the content exists — so retrying with the same persona
+/// and same prompt is unlikely to improve. Observed 2026-05-17: commitment
+/// 24578 retried 54 times against the same content-grounding rejection,
+/// commitment 12293 retried 323 times — neither incremented the existing
+/// failure counter because that only watched PersonaAbstained outcomes. ROI:
+/// the 6 worst loopers in the 9-day log account for ~75% of all drafter
+/// work, all of them >5 rejections. Capping at 5 truncates them with zero
+/// loss of legitimate attempts.
+const REJECT_BUDGET: u32 = 5;
 /// Maximum bytes of the existing file we feed back into the patch prompt
 /// before truncating. Keeps the prompt under the model's context budget
 /// even when editing a 100 KB doc.
@@ -84,10 +96,37 @@ async fn run_one(
         return Ok(());
     }
     let existing = fetch_pending_action_commitment_ids(http, stdb_host, hex_db).await?;
+    let reject_counts = fetch_twin_reject_counts(http, stdb_host, hex_db).await.unwrap_or_default();
 
     for c in commitments {
         if existing.contains(&c.id) {
             continue; // drafter already ran for this commitment
+        }
+        // Back-pressure from twin_reviewer: if this commitment has already
+        // accumulated >= REJECT_BUDGET twin rejections, abandon it instead of
+        // re-drafting. Without this check the drafter loops forever — every
+        // reject simply produces a fresh draft attempt with no learning.
+        // Observed loops: commitment 12293 (323 retries), 12292 (256), 24578 (54).
+        let prior_rejects = reject_counts.get(&c.id).copied().unwrap_or(0);
+        if prior_rejects >= REJECT_BUDGET {
+            tracing::warn!(
+                commitment_id = c.id,
+                role = %c.role,
+                artifact = %c.success_artifact,
+                rejects = prior_rejects,
+                budget = REJECT_BUDGET,
+                "drafter: twin-reject budget exhausted — abandoning commitment without re-draft"
+            );
+            let abandon_url = format!("{}/v1/database/{}/call/commitment_abandon", stdb_host, hex_db);
+            let abandon_body = serde_json::json!([
+                c.id,
+                format!("drafter: twin_reviewer rejected {} drafts; budget {} exhausted — persona content unfit for this artifact, no retry will help", prior_rejects, REJECT_BUDGET),
+            ]);
+            if let Err(e) = http.post(&abandon_url).json(&abandon_body).send().await {
+                tracing::warn!(commitment_id = c.id, error = %e, "drafter: abandon http failed");
+            }
+            failures.lock().await.remove(&c.id);
+            return Ok(());
         }
         // Bound concurrency by handling one per tick; LLM calls are slow.
         match draft_one(http, stdb_host, hex_db, inference_url, &c, repo_root).await {
@@ -405,6 +444,49 @@ async fn fetch_open_path_commitments(
             thread_id: cols.get(6).and_then(|x| x.as_str()).unwrap_or("").to_string(),
             related_msg_id: cols.get(7).and_then(|x| x.as_u64()).unwrap_or(0),
         });
+    }
+    Ok(out)
+}
+
+/// Count rejected proposed_actions per commitment. Used by the spawn loop
+/// to enforce REJECT_BUDGET back-pressure: a commitment that has accumulated
+/// too many twin rejections gets abandoned instead of looping.
+async fn fetch_twin_reject_counts(
+    http: &reqwest::Client,
+    stdb_host: &str,
+    hex_db: &str,
+) -> Result<std::collections::HashMap<u64, u32>, String> {
+    let url = format!("{}/v1/database/{}/sql", stdb_host, hex_db);
+    let body = "SELECT related_commitment_id, status FROM proposed_action";
+    let resp = http
+        .post(&url)
+        .header("Content-Type", "text/plain")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("http: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| format!("json: {}", e))?;
+    let rows = v
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|t| t.get("rows"))
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut out: std::collections::HashMap<u64, u32> = std::collections::HashMap::new();
+    for r in rows {
+        let cols = match r.as_array() {
+            Some(c) => c,
+            None => continue,
+        };
+        let id = cols.first().and_then(|x| x.as_u64()).unwrap_or(0);
+        let status = cols.get(1).and_then(|x| x.as_str()).unwrap_or("");
+        if id > 0 && status == "rejected" {
+            *out.entry(id).or_insert(0) += 1;
+        }
     }
     Ok(out)
 }
