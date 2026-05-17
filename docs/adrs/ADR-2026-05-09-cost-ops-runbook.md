@@ -1,40 +1,42 @@
-# ADR-2026-05-09: Cost Operations Runbook
+# ADR-2026-05-09-cost-ops-runbook
 
-## Status
+## Title: HEX Cost Operations Runbook
 
-Proposed
+## Status: Proposed
 
-## Date
+## Date: 2026-05-09
 
-2026-05-09
-
-## Author
-
-COO
+## Owner: COO
 
 ## Context
 
-The current workplan `docs/workplans/wp-cost-ops-runbook.json` is orphaned due to an outdated ADR reference. The spec for the cost operations runbook, located at `docs/specs/cost-ops-runbook.md`, needs to be converted into an authoritative ADR to properly link and manage the associated workplan.
+The current cost management system requires a comprehensive runbook to ensure that the organization stays within budget and operates efficiently. The existing spec at `docs/specs/cost-ops-runbook.md` outlines the necessary procedures and thresholds for HEX's cost operations.
 
 ## Decision
 
-Convert the existing spec `docs/specs/cost-ops-runbook.md` into an ADR using the `adr_draft` tool. The new ADR will serve as the authoritative document for the cost operations runbook, ensuring alignment with the operational counterpart documented in `docs/specs/cost-and-token-efficiency.md`, owned by the CPO.
+Convert the spec at `docs/specs/cost-ops-runbook.md` into an authoritative ADR using the `adr_draft` typed tool. This will provide a standardized document that can be referenced by the team and used to guide operational decisions related to cost management.
 
 ## Consequences
 
-1. **HEX_DAILY_COST_LIMIT_USD on-call procedure**: Define the process and responsibilities for handling daily cost limits.
-2. **HEX_SOP_COST_GATE_USD auto-hold threshold**: Establish the threshold and mechanism for automatically holding operations when costs exceed a specified limit.
-3. **Dashboard alert (not PagerDuty)**: Implement a dashboard-based alerting system instead of relying on PagerDuty, ensuring better integration with our existing monitoring tools.
-4. **Cost-breakdown table by persona**: Create a detailed cost breakdown table that categorizes expenses by different personas or roles within the organization.
-5. **Kill switches**: Define and document kill switches to quickly halt operations in case of unexpected cost spikes.
-6. **Audit cadence**: Establish a regular audit schedule to review and optimize cost management practices.
-
-By converting the spec into an ADR, we ensure that all stakeholders are aligned on the operational procedures for managing costs effectively, improving transparency and accountability within the organization.
+1. **HEX_DAILY_COST_LIMIT_USD On-Call Procedure**: Define the process for responding to daily cost limits being exceeded, ensuring timely interventions to prevent further overspending.
+2. **HEX_SOP_COST_GATE_USD Auto-Hold Threshold**: Establish an automated threshold that triggers a hold on spending when costs exceed predefined limits, preventing unnecessary expenditures.
+3. **Dashboard Alert (Not PagerDuty)**: Implement alerts on the dashboard to notify stakeholders of cost-related issues without relying on PagerDuty for notifications.
+4. **Cost-Breakdown Table by Persona**: Create a detailed table that breaks down costs by persona, providing transparency and enabling better resource allocation.
+5. **Kill Switches**: Define kill switches that can be activated in case of critical cost issues to immediately halt non-essential spending.
+6. **Audit Cadence**: Establish a regular audit cadence to review cost management practices and ensure compliance with organizational policies.
 
 ## References
 
-- Spec: `docs/specs/cost-ops-runbook.md`
-- Workplan (orphaned): `docs/workplans/wp-cost-ops-runbook.json`
-- Related document: `docs/specs/cost-and-token-efficiency.md` (owned by CPO)
+- `docs/specs/cost-ops-runbook.md`
+- `docs/workplans/wp-cost-ops-runbook.json`
+- `docs/specs/cost-and-token-efficiency.md`
 
-Once this ADR is finalized and committed, the `workplan_auto_emitter` will automatically link the orphaned workplan to this new ADR.
+## Next Steps
+
+1. Convert the spec at `docs/specs/cost-ops-runbook.md` into an ADR using the `adr_draft` tool.
+2. Once the ADR is finalized, update the workplan at `docs/workplans/wp-cost-ops-runbook.json` to link it with the new ADR.
+3. Ensure that all stakeholders are aware of the updated runbook and its implications for cost management operations.
+
+---
+
+This document has been converted from the original spec to ensure consistency and authority across the organization's cost management procedures.
