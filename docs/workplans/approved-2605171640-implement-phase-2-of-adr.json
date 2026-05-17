@@ -1,0 +1,15 @@
+{
+  "adr": "ADR-2026-04-11-0227",
+  "created_at": "2026-05-17T16:40:58.739404445-04:00",
+  "id": "draft-2605171640-implement-phase-2-of-adr",
+  "kind": "workplan-draft",
+  "next_steps": [
+    "Run /hex-feature-dev to expand this draft into a full workplan",
+    "Or run `hex plan drafts approve draft-2605171640-implement-phase-2-of-adr.json`",
+    "Or run `hex plan drafts clear --name draft-2605171640-implement-phase-2-of-adr`"
+  ],
+  "notes": "This is a draft created by ADR-2026-04-11-0227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up.",
+  "origin": "auto-invoke",
+  "prompt": "Implement Phase 2 of ADR-2026-05-17-2030 SOP pipeline redesign: tool-only artifact production. Add hex-nexus/src/orchestration/planner.rs that reads commitment+tool_plan+attempt_history and emits ready-to-invoke tool actions. Split proposed_action.proposed_by into (actor, tool) columns. Add commitment.attempt_history with CommitmentAttempt entries (attempt_n, tool, args_hash, outcome, cost_usd). Wire twin rules to authorize on tool field, attribute on actor field. Feed prior rejection rationale into next planner prompt. MAX_ATTEMPTS=3 then escalate_to_operator. Acceptance gate: >=80% of new commitments satisfied within MAX_ATTEMPTS for paths covered by existing typed-tool library.",
+  "status": "pending-planner"
+}
