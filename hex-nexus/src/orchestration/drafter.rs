@@ -203,6 +203,18 @@ async fn write_stub_artifact(
             c.success_artifact
         ));
     }
+    if is_workplan_path(&c.success_artifact) {
+        tracing::warn!(
+            commitment_id = c.id,
+            role = %c.role,
+            artifact = %c.success_artifact,
+            "drafter: refusing to write stub at workplan path — would clobber real JSON workplan with markdown; abandoning commitment without stub"
+        );
+        return Err(format!(
+            "stub refused: workplan path '{}' cannot receive a markdown stub — use workplan_emit tool",
+            c.success_artifact
+        ));
+    }
 
     let ceo_ask = if c.thread_id.is_empty() {
         String::new()
@@ -617,6 +629,28 @@ async fn draft_one(
             role = %c.role,
             artifact = %c.success_artifact,
             "drafter: rejecting commitment — source-file target requires SOP code_patch tool, not drafter LLM; abstaining"
+        );
+        return Ok(DraftOutcome::PersonaAbstained);
+    }
+
+    // Workplan-path guard: `docs/workplans/*.json` is a live execution surface.
+    // Workplans have strict schema and must be produced via the typed
+    // `workplan_emit` tool (hex-nexus/src/tools/workplan_emit.rs). The drafter
+    // is a free-form LLM patch loop — when given a workplan path it can only
+    // patch the existing stub text, which produces stub-shaped output that
+    // twin_reviewer correctly rejects. Observed 2026-05-17 commitment 24589
+    // (chief-architect → approved-wp-sop-pipeline-redesign-phase-1.json):
+    // drafter produced 1408 bytes of `status: pending-planner` stub text,
+    // twin rejected with "draft content in live execution surface" — and the
+    // loop would have continued until REJECT_BUDGET tripped. Abstaining here
+    // surfaces the gap immediately, with a structured reason naming the right
+    // tool, so the operator can invoke workplan_emit via the SOP path.
+    if is_workplan_path(&c.success_artifact) {
+        tracing::warn!(
+            commitment_id = c.id,
+            role = %c.role,
+            artifact = %c.success_artifact,
+            "drafter: rejecting commitment — workplan-path target requires SOP workplan_emit tool, not drafter LLM; abstaining"
         );
         return Ok(DraftOutcome::PersonaAbstained);
     }
@@ -1092,6 +1126,18 @@ fn is_source_file_path(path: &str) -> bool {
         || path.starts_with("hex-analyzer/src/")
         || path.starts_with("hex-desktop/src/")
         || (path.starts_with("spacetime-modules/") && path.contains("/src/"))
+}
+
+/// Workplan-path detection. `docs/workplans/*.json` is a live execution
+/// surface — the supervisor reads and rewrites these files autonomously and
+/// the schema is strict. Free-form drafter LLM output never satisfies the
+/// schema, so abstain and let workplan_emit (hex-nexus/src/tools/workplan_emit.rs)
+/// own this path. Sub-paths like `docs/workplans/drafts/` are excluded since
+/// drafts are intentionally schemaless stubs.
+fn is_workplan_path(path: &str) -> bool {
+    path.starts_with("docs/workplans/")
+        && !path.starts_with("docs/workplans/drafts/")
+        && path.ends_with(".json")
 }
 
 fn find_unresolved_placeholder(path: &str) -> Option<String> {
