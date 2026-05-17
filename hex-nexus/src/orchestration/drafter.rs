@@ -146,6 +146,25 @@ async fn write_stub_artifact(
     c: &OpenCommitment,
     repo_root: &PathBuf,
 ) -> Result<(), String> {
+    // Stubs are markdown operator-triage notes. Writing one at a source-file
+    // path clobbers real code with markdown and breaks the build. Refuse
+    // outright — the abandon path below still marks the commitment failed,
+    // so the persona loop doesn't spin. Observed 2026-05-17: a cto commitment
+    // targeting hex-nexus/src/orchestration/drafter.rs landed a stub directly
+    // over the source file after STUB_AFTER_FAILURES abstains.
+    if is_source_file_path(&c.success_artifact) {
+        tracing::warn!(
+            commitment_id = c.id,
+            role = %c.role,
+            artifact = %c.success_artifact,
+            "drafter: refusing to write stub at source-file path — would clobber real code; abandoning commitment without stub"
+        );
+        return Err(format!(
+            "stub refused: source-file path '{}' cannot receive a markdown stub",
+            c.success_artifact
+        ));
+    }
+
     let ceo_ask = if c.thread_id.is_empty() {
         String::new()
     } else {
