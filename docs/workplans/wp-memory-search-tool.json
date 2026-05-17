@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-[PHONE]",
+  "adr": "ADR-2026-05-10-2200",
   "created_at": "2026-05-10T13:47:53.726546990+00:00",
   "created_by": "hex-coder",
   "feature": "memory_search typed SOP tool",
@@ -101,7 +101,7 @@
         },
         {
           "files": [
-            "docs/adrs/ADR-[PHONE]-memory-search-typed-tool-for-sop-persona-context-enrichment.md"
+            "docs/adrs/ADR-2026-05-10-2200-memory-search-typed-tool-for-sop-persona-context-enrichment.md"
           ],
           "id": "P2.3",
           "layer": "integration",
