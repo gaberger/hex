@@ -228,7 +228,7 @@ pub enum SelectionSource {
     ProviderFiltered,
     /// Highest quality_score model from the live SpacetimeDB registry.
     RegistryRanked,
-    /// Selected from agent YAML definition (ADR-2603240130).
+    /// Selected from agent YAML definition (ADR-2026-03-24-0130).
     YamlDefinition,
     /// Upgraded from YAML preferred to upgrade_to model after iteration threshold.
     YamlUpgrade,
@@ -263,7 +263,7 @@ impl ModelSelector {
         }
     }
 
-    /// Select a model from a YAML agent definition (ADR-2603240130).
+    /// Select a model from a YAML agent definition (ADR-2026-03-24-0130).
     ///
     /// Fallback chain: user override → YAML preferred → YAML fallback → swarm model_defaults → openrouter/free.
     /// Upgrade: if `iteration >= upgrade_after`, switch to the YAML `upgrade_to` model.

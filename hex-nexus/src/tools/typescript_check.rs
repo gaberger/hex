@@ -5,7 +5,7 @@
 //! before declaring an artifact done. The executor's autonomous-commit
 //! step calls this inline on `.ts` and `.tsx` writes so broken
 //! TypeScript rolls back the same way broken Rust does for
-//! `cargo_check` (ADR-2605110700 R1).
+//! `cargo_check` (ADR-2026-05-11-0700 R1).
 //!
 //! Closes the gap surfaced by ADR-2605141631 dogfood: when
 //! `hex agent run` autonomously scaffolded `AttentionFeed.tsx`

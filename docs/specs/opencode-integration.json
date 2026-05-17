@@ -1,7 +1,7 @@
 {
   "feature": "opencode-integration",
   "title": "hex Context Injection into opencode",
-  "adr": "ADR-2603231800",
+  "adr": "ADR-2026-03-23-1800",
   "description": "Enable opencode to leverage hex's complete ecosystem (MCP tools, agent definitions, skills, hooks, enforcement rules) via opencode.json configuration",
   "spec_version": "2.0",
   "behaviors": [

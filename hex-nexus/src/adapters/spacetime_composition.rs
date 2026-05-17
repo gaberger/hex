@@ -1,5 +1,5 @@
 //! SpacetimeRuntimeComposition — STDB-mirrored RuntimeComposition adapter
-//! (ADR-2604261500 P6, wp-substrate-shadow-promotion P2.1).
+//! (ADR-2026-04-26-1500 P6, wp-substrate-shadow-promotion P2.1).
 //!
 //! Wraps a process-local [`InMemoryComposition`] (from hex-core) and an
 //! [`ISwapTicketStatePort`]. STDB is treated as the source of truth: each

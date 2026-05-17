@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604142200",
+  "adr": "ADR-2026-04-14-2200",
   "description": "Investigate whether wp-reconcile-evidence-verification (task adfbe699, drained earlier in this session) actually shipped its fix, or was itself false-positive-completed by the bug it targets. Deliverable is a short report at docs/analysis/reconcile-fix-shipped-verification.md with a verdict + evidence. NO code changes — if fix didn't ship, the report names a follow-up workplan.",
   "id": "wp-verify-reconcile-fix-shipped",
   "phases": [

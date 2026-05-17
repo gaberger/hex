@@ -1,4 +1,4 @@
-//! Build port — multi-language compile/lint/test dispatch (ADR-018, ADR-2604061000).
+//! Build port — multi-language compile/lint/test dispatch (ADR-018, ADR-2026-04-06-1000).
 //!
 //! Defines the contract for running language-specific build toolchains
 //! against target projects. Implementations dispatch to tsc, go build,

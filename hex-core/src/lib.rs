@@ -38,7 +38,7 @@ pub const SPACETIMEDB_PING_PATH: &str = "/v1/ping";
 pub const SPACETIMEDB_DEFAULT_HOST: &str = "http://127.0.0.1:3033";
 
 // ── SpacetimeDB Module Database Names ─────────────────────
-// Each WASM module publishes to its own database (ADR-2603231500).
+// Each WASM module publishes to its own database (ADR-2026-03-23-1500).
 // hexflo-coordination → "hex" (backward compat), all others → directory name.
 
 /// Database name for the core coordination module (backward-compatible).

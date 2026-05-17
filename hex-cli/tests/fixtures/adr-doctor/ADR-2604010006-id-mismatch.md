@@ -6,4 +6,4 @@
 
 ## Context
 
-The filename's ADR ID is `ADR-2604010006`; the H1 above claims `ADR-2099-99-99-9999`. The detector compares both and flags any divergence.
+The filename's ADR ID is `ADR-2026-04-01-0006`; the H1 above claims `ADR-2099-99-99-9999`. The detector compares both and flags any divergence.

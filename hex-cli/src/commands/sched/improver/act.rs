@@ -1,4 +1,4 @@
-//! Improver act phase (ADR-2604271100 P4).
+//! Improver act phase (ADR-2026-04-27-1100 P4).
 //!
 //! Takes a ranked stream from [`judge::rank`] and turns each top-N
 //! hypothesis into a concrete action — a sched task or a recommendation
@@ -194,7 +194,7 @@ pub fn derive(scored: &ScoredHypothesis) -> Option<Action> {
         }
 
         // Stale worktrees → recommend cleanup; never auto-delete because
-        // worktree cleanup can destroy uncommitted work (ADR-2604150130).
+        // worktree cleanup can destroy uncommitted work (ADR-2026-04-15-0130).
         Source::GitDrift => {
             let branch = h
                 .evidence

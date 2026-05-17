@@ -9,7 +9,7 @@
 //! `is_connected()` returns false and the caller switches to REST.
 
 // ── REST-only stub implementation ────────────────────────────────────────────
-// NOTE(ADR-2604050900): The remote-agent-registry WASM module has been deleted.
+// NOTE(ADR-2026-04-05-0900): The remote-agent-registry WASM module has been deleted.
 // Remote agent coordination now uses the remote_agent table in hexflo-coordination.
 // Future work: subscribe to hexflo-coordination's swarm_task table for push-based
 // task dispatch. For now, callers fall back to REST polling via hex-nexus.

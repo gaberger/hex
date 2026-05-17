@@ -1,4 +1,4 @@
-//! `hex sandbox` — Docker AI Sandbox management (ADR-2603282000).
+//! `hex sandbox` — Docker AI Sandbox management (ADR-2026-03-28-2000).
 //!
 //! Subcommands:
 //!   `hex sandbox status` — check docker daemon + hex-agent:latest image readiness

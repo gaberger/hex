@@ -3,7 +3,7 @@
 //! Constructs a hermetic ADR registry with one Tier-A finding
 //! (`UnparseableStatus`) and one Tier-C finding (`MissingRequiredField`),
 //! drives the orchestrator the daemon would run on every tick, and asserts
-//! the four behaviors that ADR-2604270800 §1a requires:
+//! the four behaviors that ADR-2026-04-27-0800 §1a requires:
 //!
 //!   (a) Tier-A file is mutated AND merged back to `main` via shadow-promote.
 //!   (b) The `adr_doctor_tick` sched event is emitted with both findings
@@ -33,7 +33,7 @@ use tempfile::TempDir;
 /// shadow-promote auto-fix patch normalizes it to canonical
 /// `**Status:** Proposed`.
 const TIER_A_BUGGY: &str = "\
-# ADR-2604280001: Tier-A fixture (buggy status)
+# ADR-2026-04-28-0001: Tier-A fixture (buggy status)
 
 - **Status**: Proposed
 - **Date**: 2026-04-25
@@ -113,8 +113,8 @@ async fn one_tick_routes_tier_a_via_shadow_promote_and_tier_c_via_p1_notify() {
     let repo = init_repo(tmp.path());
     let sessions_dir = tmp.path().join("fake-sessions");
 
-    let tier_a_rel = "docs/adrs/ADR-2604280001-tier-a.md";
-    let tier_c_rel = "docs/adrs/ADR-2604280002-tier-c.md";
+    let tier_a_rel = "docs/adrs/ADR-2026-04-28-0001-tier-a.md";
+    let tier_c_rel = "docs/adrs/ADR-2026-04-28-0002-tier-c.md";
     write_file(&repo, tier_a_rel, TIER_A_BUGGY);
     write_file(&repo, tier_c_rel, TIER_C_FIXTURE);
     commit_all(&repo, "docs: plant Tier-A and Tier-C ADR fixtures");
@@ -171,7 +171,7 @@ async fn one_tick_routes_tier_a_via_shadow_promote_and_tier_c_via_p1_notify() {
         post_tier_a,
     );
     // Confirm it landed via a real merge commit (not fast-forward) — the
-    // ADR-2604150100 safety property of shadow-promote.
+    // ADR-2026-04-15-0100 safety property of shadow-promote.
     let head = git(&repo, &["rev-parse", "HEAD"]);
     let parents = git(&repo, &["rev-list", "--parents", "-n", "1", &head]);
     let parent_count = parents.split_whitespace().count() - 1;
@@ -211,7 +211,7 @@ async fn one_tick_routes_tier_a_via_shadow_promote_and_tier_c_via_p1_notify() {
         "Tier-C must use P1 (operator interrupt), got priority={}",
         tier_c_notif.priority,
     );
-    assert_eq!(tier_c_notif.body["adr_id"], "ADR-2604280002");
+    assert_eq!(tier_c_notif.body["adr_id"], "ADR-2026-04-28-0002");
     assert_eq!(tier_c_notif.body["kind"], "MissingRequiredField");
 
     // Tier-A success path also queues an `adr.doctor.applied` P3 entry.
@@ -222,7 +222,7 @@ async fn one_tick_routes_tier_a_via_shadow_promote_and_tier_c_via_p1_notify() {
         .collect();
     assert_eq!(applied.len(), 1, "Tier-A success must queue exactly one applied notification");
     assert_eq!(applied[0].priority, 3);
-    assert_eq!(applied[0].body["adr_id"], "ADR-2604280001");
+    assert_eq!(applied[0].body["adr_id"], "ADR-2026-04-28-0001");
 
     // ── (d) Tier-C file NOT mutated ─────────────────────────────────────
     let post_tier_c = std::fs::read_to_string(repo.join(tier_c_rel)).unwrap();

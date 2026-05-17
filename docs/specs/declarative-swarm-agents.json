@@ -1,6 +1,6 @@
 {
   "feature": "declarative-swarm-agents",
-  "description": "Complete ADR-2603240130 — all swarm agent behavior driven from YAML definitions, not hardcoded Rust",
+  "description": "Complete ADR-2026-03-24-0130 — all swarm agent behavior driven from YAML definitions, not hardcoded Rust",
   "specs": [
     {
       "id": "S01",

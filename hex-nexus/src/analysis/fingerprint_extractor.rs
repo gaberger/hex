@@ -1,4 +1,4 @@
-//! Architecture Fingerprint Extractor — ADR-2603301200.
+//! Architecture Fingerprint Extractor — ADR-2026-03-30-1200.
 //!
 //! Generates a token-efficient summary of a project's architectural intent
 //! from local sources (manifest files, workplan, ADRs). The fingerprint is

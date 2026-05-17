@@ -109,7 +109,7 @@ fn parse_adr_frontmatter(content: &str, filename: &str) -> (String, String, Stri
 
 /// Extract the full ADR ID from a filename stem. Handles three forms:
 ///   "ADR-059-foo.md"                    → "ADR-059"           (legacy sequential)
-///   "ADR-2603221500-foo.md"        → "ADR-2603221500" (hyphenated timestamp, current)
+///   "ADR-2026-03-22-1500-foo.md"        → "ADR-2026-03-22-1500" (hyphenated timestamp, current)
 ///   "ADR-2603221500-foo.md"             → "ADR-2603221500"    (legacy 10-digit timestamp, pre-rename)
 fn extract_id(filename: &str) -> String {
     let stem = filename.trim_end_matches(".md");

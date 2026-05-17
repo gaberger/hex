@@ -1,4 +1,4 @@
-//! Sched API routes (ADR-2604102200).
+//! Sched API routes (ADR-2026-04-10-2200).
 //!
 //! GET  /api/sched/status - Service status
 //! POST /api/sched/test  - Run a test
@@ -24,7 +24,7 @@ use crate::sched_service;
 use crate::state::SharedState;
 
 /// Kinds of task the sched queue can carry. Serialized as kebab-case so
-/// `RemoteShell` becomes `"remote-shell"` on the wire (ADR-2604141200).
+/// `RemoteShell` becomes `"remote-shell"` on the wire (ADR-2026-04-14-1200).
 ///
 /// Payload shape varies by kind:
 /// - `HexCommand` — raw `hex <subcommand>` string
@@ -32,7 +32,7 @@ use crate::state::SharedState;
 /// - `Shell`      — local shell command (sandboxed, rejects `echo FIXME` stubs)
 /// - `RemoteShell` — JSON-encoded [`RemoteShellPayload`] `{host, command}`;
 ///   the agent on `host` polls `/api/sched/queue?kind=remote-shell&host=<host>`
-///   and executes against its local whitelist (ADR-2604141200 P3).
+///   and executes against its local whitelist (ADR-2026-04-14-1200 P3).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum TaskKind {
@@ -326,7 +326,7 @@ pub struct SchedTaskSummary {
     /// First 80 chars of the task payload (command, workplan path, etc.).
     pub payload_truncated: String,
     /// First 300 chars of the recorded result. Contains the
-    /// `no git evidence` marker when the evidence-guard (ADR-2604141400 §1 P1)
+    /// `no git evidence` marker when the evidence-guard (ADR-2026-04-14-1400 §1 P1)
     /// flipped a vacuous exit-0 drain to failed — this is the primary signal
     /// operators hunt for in history output.
     pub result_truncated: String,
@@ -337,7 +337,7 @@ pub struct SchedTaskSummary {
     /// has not yet completed or the timestamp is unparseable.
     pub completed_at_us: i64,
     /// Workplan timeout in seconds plumbed through the enqueue payload
-    /// (ADR-2604142155 P2.1). Used by the daemon's `sweep_stuck_tasks()` to
+    /// (ADR-2026-04-14-2155 P2.1). Used by the daemon's `sweep_stuck_tasks()` to
     /// auto-fail tasks that exceed `timeout_s + 30s` grace. `None` when the
     /// stored record predates P2.1 — sweep falls back to the kind-default
     /// lease window.
@@ -389,7 +389,7 @@ fn summarize_task(task: &serde_json::Value) -> SchedTaskSummary {
 ///
 /// Returns a paginated, reverse-chronological list of sched-queue tasks. Primary
 /// consumer is `hex sched queue history`, which operators use to verify the
-/// evidence-guard (ADR-2604141400 §1 P1) correctly flips silent-drain workplans
+/// evidence-guard (ADR-2026-04-14-1400 §1 P1) correctly flips silent-drain workplans
 /// to `failed`. Without this surface, the guard shipped but was invisible.
 ///
 /// Parameters:
@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn summarize_task_surfaces_no_git_evidence_marker() {
-        // The guard (ADR-2604141400 §1 P1) writes "no git evidence" into
+        // The guard (ADR-2026-04-14-1400 §1 P1) writes "no git evidence" into
         // `result` on silent-drain failures. That marker MUST survive the
         // 300-char truncation for short result strings — this is the primary
         // operator signal the history endpoint exists to expose.
@@ -549,7 +549,7 @@ mod tests {
         assert_eq!(rfc3339_to_us(""), 0);
     }
 
-    // ── ADR-2604142155 P2.1: timeout_s surfaced through history ─────────
+    // ── ADR-2026-04-14-2155 P2.1: timeout_s surfaced through history ─────────
     // Operators rely on `hex sched queue history` to verify the daemon's
     // sweeper armed itself with the workplan's declared timeout. If the
     // field is dropped at the projection layer the sweep diagnostics are

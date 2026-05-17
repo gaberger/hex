@@ -37,7 +37,7 @@ impl Tool for RepoRead {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path relative to repo root (e.g. 'docs/adrs/ADR-2605082500-typed-tool-library-and-sop-execution.md', 'hex-nexus/src/tools/mod.rs').",
+                    "description": "Path relative to repo root (e.g. 'docs/adrs/ADR-2026-05-08-2500-typed-tool-library-and-sop-execution.md', 'hex-nexus/src/tools/mod.rs').",
                 },
                 "offset": {
                     "type": "integer",

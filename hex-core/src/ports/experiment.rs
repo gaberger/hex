@@ -1,9 +1,9 @@
 //! Experiment port — contract for the target-app experimental loop
-//! (ADR-2605021400).
+//! (ADR-2026-05-02-1400).
 //!
-//! Implemented by SpacetimeDB-backed adapters (P3 of ADR-2605021400) and,
+//! Implemented by SpacetimeDB-backed adapters (P3 of ADR-2026-05-02-1400) and,
 //! optionally, a stash-projecting adapter that mirrors hypotheses/objectives
-//! into the consolidation pipeline (ADR-2604261430).
+//! into the consolidation pipeline (ADR-2026-04-26-1430).
 
 use async_trait::async_trait;
 

@@ -1,5 +1,5 @@
 //! Consolidation domain types — value types returned by the
-//! [`IConsolidationMemoryPort`] (ADR-2604261430).
+//! [`IConsolidationMemoryPort`] (ADR-2026-04-26-1430).
 //!
 //! These mirror Stash's consolidation pipeline shapes (`internal/brain/`,
 //! Apache-2.0). Shapes are kept narrow so the future

@@ -48,7 +48,7 @@ Include:
 | P2 | {Second step} | {Pending/Done} | code:{path}, test:{command} |
 
 <!--
-Verification column format: `code:<path>, test:<command>` (per ADR-2603312340)
+Verification column format: `code:<path>, test:<command>` (per ADR-2026-03-31-2340)
 - code:<path>   — file path that must exist when phase is Done (e.g. code:hex-cli/src/commands/foo.rs)
 - test:<command> — shell command that must succeed (e.g. test:cargo test -p hex-cli foo)
 Either field is optional. Leave the column blank for phases without automated verification.

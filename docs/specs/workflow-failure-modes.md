@@ -102,7 +102,7 @@ When the system has a "safe path" (twin review) and an "emergency path" (stub-wr
 **Fix shape:** Split `proposed_by` into `(persona, tool)` — twin authorizes on tool, attribution on persona. Drafter emits `(cto, drafter:free-form)`; SOP loop emits `(cto, tool:code_patch)`. Twin rules become "tool=code_patch can write source" without losing persona attribution.
 
 ### 6. No idempotency on commit retries
-**Evidence:** Commitment 24578 has 5 different proposed_actions for `docs/adrs/ADR-260512-structural-smell.md` in 2 minutes, each with different content (2946 bytes, 3099, 2606, 2735, …). Whichever wins, the other 4 drafts are silently lost. Personas have no way to see "my previous attempt was rejected for X, here's an improved version."
+**Evidence:** Commitment 24578 has 5 different proposed_actions for `docs/adrs/ADR-2026-05-12-structural-smell.md` in 2 minutes, each with different content (2946 bytes, 3099, 2606, 2735, …). Whichever wins, the other 4 drafts are silently lost. Personas have no way to see "my previous attempt was rejected for X, here's an improved version."
 
 **Fix shape:** Drafter prompt should fetch the most recent rejected action for this commitment and include its content + rejection rationale. Then "produce a v6" is a real iteration instead of a blind reroll.
 

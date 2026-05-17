@@ -1,4 +1,4 @@
-//! Capability token service — signing and verification (ADR-2604051800 P1).
+//! Capability token service — signing and verification (ADR-2026-04-05-1800 P1).
 //!
 //! Signs `AgentCapabilityToken` payloads with HMAC-SHA256 and verifies
 //! tokens presented by agents. The signing key is derived from `HEX_TOKEN_SECRET`

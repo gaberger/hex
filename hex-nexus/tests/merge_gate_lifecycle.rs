@@ -1,5 +1,5 @@
 //! Lifecycle / state-machine tests for the integrator subscriber
-//! (ADR-2605081126 P4).
+//! (ADR-2026-05-08-1126 P4).
 //!
 //! These tests prove the subscriber correctly drives merge_request rows
 //! through the gate states: pending → voting → (approved | rejected) →

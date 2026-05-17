@@ -1,6 +1,6 @@
 {
-  "adr": "ADR-2604150000",
-  "description": "Finish ADR-2604150000 brain→sched rename for user-facing strings only. The hidden `hex brain` alias stays (intentional per ADR §Backward-compat posture). Bug: invoking `hex sched enqueue …` still prints \"enqueued brain task <id>\" because internal log/print strings carry the old name. Scope is println!/eprintln!/info!/warn!/anyhow! strings invoked from the sched command path — NOT identifier renames, NOT the brain alias module, NOT memory-dir paths or persisted JSON keys (those are separate breaking-change ADRs).",
+  "adr": "ADR-2026-04-15-0000",
+  "description": "Finish ADR-2026-04-15-0000 brain→sched rename for user-facing strings only. The hidden `hex brain` alias stays (intentional per ADR §Backward-compat posture). Bug: invoking `hex sched enqueue …` still prints \"enqueued brain task <id>\" because internal log/print strings carry the old name. Scope is println!/eprintln!/info!/warn!/anyhow! strings invoked from the sched command path — NOT identifier renames, NOT the brain alias module, NOT memory-dir paths or persisted JSON keys (those are separate breaking-change ADRs).",
   "id": "wp-brain-string-cleanup",
   "phases": [
     {

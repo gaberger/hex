@@ -1,4 +1,4 @@
-//! Self-improvement loop (ADR-2604271100).
+//! Self-improvement loop (ADR-2026-04-27-1100).
 //!
 //! Pipeline: [`discover`] → variant generation (P2) → judge (P3) → act (P4),
 //! tied together by a sched tick (P5). This module hosts the discovery
@@ -43,7 +43,7 @@ pub enum ImproverAction {
         #[arg(long, default_value_t = DEFAULT_INTERVAL_SECS)]
         interval: u64,
     },
-    /// Run discover() then rank hypotheses by impact (ADR-2604271100 P3).
+    /// Run discover() then rank hypotheses by impact (ADR-2026-04-27-1100 P3).
     /// Outputs the ranked list with score + reason. Read-only.
     Judge {
         /// Emit ranked output as JSON instead of a table.

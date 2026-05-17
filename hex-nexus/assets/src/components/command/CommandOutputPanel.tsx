@@ -3,7 +3,7 @@
  *
  * Displays recent commands dispatched from the dashboard with their results.
  * Replaces the need for a terminal — structured output is better than raw text.
- * Part of ADR-2603231309 (dashboard command surface).
+ * Part of ADR-2026-03-23-1309 (dashboard command surface).
  */
 import { Component, For, Show, createMemo } from "solid-js";
 import {

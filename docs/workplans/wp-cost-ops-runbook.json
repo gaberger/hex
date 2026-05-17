@@ -17,7 +17,7 @@
           "id": "P0.1",
           "layer": "infrastructure",
           "name": "Add cost_override_log table to STDB schema (thread_id, approver, justification, timestamp, approved_cost_usd)",
-          "status": "pending"
+          "status": "done"
         },
         {
           "files": [
@@ -33,7 +33,7 @@
     },
     {
       "id": "P1",
-      "name": "Override approval flow — CLI + dashboard",
+      "name": "Override approval flow \u2014 CLI + dashboard",
       "status": "pending",
       "tasks": [
         {
@@ -42,8 +42,8 @@
           ],
           "id": "P1.1",
           "layer": "usecases",
-          "name": "Create hex admin approve-cost CLI command in hex-cli — takes thread_id, approver, justification, writes to cost_override_log, sets sop_run_override flag in STDB",
-          "status": "pending"
+          "name": "Create hex admin approve-cost CLI command in hex-cli \u2014 takes thread_id, approver, justification, writes to cost_override_log, sets sop_run_override flag in STDB",
+          "status": "done"
         },
         {
           "files": [
@@ -52,8 +52,8 @@
           ],
           "id": "P1.2",
           "layer": "primary",
-          "name": "Add override button to held SOP runs in MissionControl inbox — operator clicks, POSTs to /api/cost/override with thread_id, writes cost_override_log",
-          "status": "pending"
+          "name": "Add override button to held SOP runs in MissionControl inbox \u2014 operator clicks, POSTs to /api/cost/override with thread_id, writes cost_override_log",
+          "status": "done"
         },
         {
           "files": [
@@ -61,8 +61,8 @@
           ],
           "id": "P1.3",
           "layer": "usecases",
-          "name": "Wire sop_executor.rs to read sop_run_override flag from STDB before cost gate check — proceed if override present + approved_cost_override_usd >= estimated cost",
-          "status": "pending"
+          "name": "Wire sop_executor.rs to read sop_run_override flag from STDB before cost gate check \u2014 proceed if override present + approved_cost_override_usd >= estimated cost",
+          "status": "done"
         }
       ],
       "tier": 3
@@ -78,8 +78,8 @@
           ],
           "id": "P2.1",
           "layer": "primary",
-          "name": "Create cost anomaly inbox notification in MissionControl — priority notification when cost_anomaly_detected event fires, shows thread_id, actual vs avg cost, link to phase trace",
-          "status": "pending"
+          "name": "Create cost anomaly inbox notification in MissionControl \u2014 priority notification when cost_anomaly_detected event fires, shows thread_id, actual vs avg cost, link to phase trace",
+          "status": "done"
         },
         {
           "files": [
@@ -87,7 +87,7 @@
           ],
           "id": "P2.2",
           "layer": "infrastructure",
-          "name": "Document HEX_DISABLE_{PERSONA} kill switches in README.md — per ADR-[PHONE], operator can set HEX_DISABLE_DRAFTER=true to pause that loop",
+          "name": "Document HEX_DISABLE_{PERSONA} kill switches in README.md \u2014 per ADR-[PHONE], operator can set HEX_DISABLE_DRAFTER=true to pause that loop",
           "status": "pending"
         },
         {
@@ -98,7 +98,7 @@
           ],
           "id": "P2.3",
           "layer": "usecases",
-          "name": "Wire persona-level kill switches into sop_executor.rs, twin_reviewer.rs, drafter.rs — check HEX_DISABLE_{ROLE} env at poll start, skip if set",
+          "name": "Wire persona-level kill switches into sop_executor.rs, twin_reviewer.rs, drafter.rs \u2014 check HEX_DISABLE_{ROLE} env at poll start, skip if set",
           "status": "pending"
         }
       ],
@@ -115,8 +115,8 @@
           ],
           "id": "P3.1",
           "layer": "secondary",
-          "name": "Create hex-cli/src/commands/cost_report.rs — queries STDB inference_log, aggregates by persona/tool/week, generates Markdown table with runs/total$/avg$/top tool/cache hit %",
-          "status": "pending"
+          "name": "Create hex-cli/src/commands/cost_report.rs \u2014 queries STDB inference_log, aggregates by persona/tool/week, generates Markdown table with runs/total$/avg$/top tool/cache hit %",
+          "status": "done"
         },
         {
           "files": [
@@ -124,8 +124,8 @@
           ],
           "id": "P3.2",
           "layer": "secondary",
-          "name": "Add hex cost-report CLI command — generates weekly report, writes to ~/.hex/cost-reports/YYYY-WW.md, prints to stdout",
-          "status": "pending"
+          "name": "Add hex cost-report CLI command \u2014 generates weekly report, writes to ~/.hex/cost-reports/YYYY-WW.md, prints to stdout",
+          "status": "done"
         },
         {
           "files": [
@@ -133,8 +133,8 @@
           ],
           "id": "P3.3",
           "layer": "infrastructure",
-          "name": "Create weekly cost report cron job example in docs/ops/cost-monitoring.md — 0 9 * * 1 hex cost-report --email operator@example.com",
-          "status": "pending"
+          "name": "Create weekly cost report cron job example in docs/ops/cost-monitoring.md \u2014 0 9 * * 1 hex cost-report --email operator@example.com",
+          "status": "done"
         }
       ],
       "tier": 1
@@ -152,8 +152,8 @@
           ],
           "id": "P4.1",
           "layer": "integration",
-          "name": "cargo check hex-nexus + hex-cli — verify Rust changes compile",
-          "status": "pending"
+          "name": "cargo check hex-nexus + hex-cli \u2014 verify Rust changes compile",
+          "status": "done"
         },
         {
           "files": [
@@ -163,7 +163,7 @@
           "id": "P4.2",
           "layer": "integration",
           "name": "Manual test: set HEX_SOP_COST_GATE_USD=0.01, trigger SOP, verify held, run hex admin approve-cost, verify SOP proceeds",
-          "status": "pending"
+          "status": "done"
         },
         {
           "files": [

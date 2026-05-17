@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604110227",
+  "adr": "ADR-2026-04-11-0227",
   "created_at": "2026-05-05T13:45:18.975716830-04:00",
   "id": "draft-2605051345-wp-experiment-loop-p4-cli",
   "kind": "workplan-draft",
@@ -8,7 +8,7 @@
     "Or run `hex plan drafts approve draft-2605051345-wp-experiment-loop-p4-cli.json`",
     "Or run `hex plan drafts clear --name draft-2605051345-wp-experiment-loop-p4-cli`"
   ],
-  "notes": "This is a draft created by ADR-2604110227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up.",
+  "notes": "This is a draft created by ADR-2026-04-11-0227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up.",
   "origin": "auto-invoke",
   "prompt": "wp-experiment-loop-p4: CLI subcommands hex object",
   "status": "pending-planner"

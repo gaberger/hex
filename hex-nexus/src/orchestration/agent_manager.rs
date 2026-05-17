@@ -172,7 +172,7 @@ pub struct AgentManager {
     /// Resolves secret keys to values for injection into agent child processes (ADR-026).
     /// Injected by the composition root — keeps orchestration free of std::env access.
     secret_resolver: SecretResolver,
-    /// Capability token service for issuing tokens at spawn time (ADR-2604051800 P1).
+    /// Capability token service for issuing tokens at spawn time (ADR-2026-04-05-1800 P1).
     capability_token_service: Arc<crate::adapters::capability_token::CapabilityTokenService>,
 }
 
@@ -249,7 +249,7 @@ impl AgentManager {
         }
 
         // Docker-first spawn: if Docker daemon is running and hex-agent:latest image exists,
-        // prefer microVM isolation (ADR-2603282000 P7). Only when a worktree is set.
+        // prefer microVM isolation (ADR-2026-03-28-2000 P7). Only when a worktree is set.
         if config.worktree_branch.is_some()
             && is_docker_available()
             && docker_image_exists("hex-agent:latest")
@@ -322,7 +322,7 @@ impl AgentManager {
             );
             return Ok(instance);
         } else if config.worktree_branch.is_some() {
-            // Docker is required for worktree-based builds (ADR-2603282000).
+            // Docker is required for worktree-based builds (ADR-2026-03-28-2000).
             // Log clearly so the operator knows isolation is degraded.
             if !is_docker_available() {
                 tracing::warn!(
@@ -407,7 +407,7 @@ impl AgentManager {
             cmd.env("HEX_STDB_HOST", &stdb_cfg.host);
             cmd.env("HEX_STDB_DATABASE", &stdb_cfg.database);
             // Per-module database names removed — skill-registry and
-            // agent-definition-registry were absorbed into hexflo-coordination (ADR-2604050900).
+            // agent-definition-registry were absorbed into hexflo-coordination (ADR-2026-04-05-0900).
             cmd.env("HEX_STATE_BACKEND", "spacetimedb");
             tracing::debug!(agent_id = %id, host = %stdb_cfg.host, db = %stdb_cfg.database, "Injecting SpacetimeDB config");
         }
@@ -436,7 +436,7 @@ impl AgentManager {
         // for autonomous source-tree writes.
         cmd.env("HEXFLO_WORKTREE_REQUIRED", "0");
 
-        // ADR-2604051800 P1: Issue capability token and inject as env var.
+        // ADR-2026-04-05-1800 P1: Issue capability token and inject as env var.
         // Default capabilities: SwarmWrite + admin for orchestrator agents.
         // Scoped agents (hex-coder) get TaskWrite + FileSystem for their worktree.
         {
@@ -467,7 +467,7 @@ impl AgentManager {
             tracing::debug!(agent_id = %id, "Injected capability token");
         }
 
-        // Always deliver the task prompt via --prompt flag (ADR-2604010000).
+        // Always deliver the task prompt via --prompt flag (ADR-2026-04-01-0000).
         // Stdin is null — prompt delivery via pipe is removed.
         if let Some(ref prompt) = config.prompt {
             cmd.arg("--prompt").arg(prompt);
@@ -837,7 +837,7 @@ mod tests {
     }
 
     /// When docker is not available, is_docker_available returns false without panicking.
-    /// This verifies the docker-unavailable fallback path (ADR-2603282000 P7).
+    /// This verifies the docker-unavailable fallback path (ADR-2026-03-28-2000 P7).
     #[test]
     fn docker_unavailable_does_not_panic() {
         // is_docker_available calls `docker info`; on CI or machines without docker this

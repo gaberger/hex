@@ -7,9 +7,9 @@
 **Authors:** Operator (direct authorship — SOP path failed three times to produce a usable draft for this ADR: CISO hallucinated OWASP-DRP platitudes earlier today, CTO produced a 53-byte stub on the first re-fire, CTO produced 7-byte then 624-byte content on the second re-fire even with `HEX_DRAFTER_MODEL_LONGFORM=gemma4:latest` pinned. The new drafter gates correctly abstained each time without polluting disk; commitments closed via the circuit-breaker. The drafter+gemma4+system-prompt combination is structurally not producing ADR-length output and that is its own separate work — tracked in the Consequences section. For this ADR, operator-authoring is the right closure.)
 
 **References:**
-- ADR-2605131500 — Fail-open twin judge + `hex goal` verb (today's earlier ADR)
-- ADR-2605082500 — Typed-tool SOP foundation
-- ADR-2605082300 — Digital-twin reviewer
+- ADR-2026-05-13-1500 — Fail-open twin judge + `hex goal` verb (today's earlier ADR)
+- ADR-2026-05-08-2500 — Typed-tool SOP foundation
+- ADR-2026-05-08-2300 — Digital-twin reviewer
 - ADR-027 — HexFlo swarm coordination
 - Commit `488e1503` — Hermes /goal-style fail-open after 5 parse failures
 - Commit `c1450b58` — drafter placeholder rejection + twin content-grounding gate

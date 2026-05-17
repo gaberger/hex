@@ -1,8 +1,8 @@
 {
-  "adr": "ADR-2604171000",
+  "adr": "ADR-2026-04-17-1000",
   "created_at": "2026-05-05T00:00:00Z",
   "created_by": "planner",
-  "description": "Implement ADR-2604171000: add a hermetic regression test asserting `hex analyze` rejects cross-adapter, ports→adapter, and domain→adapter imports. Closes the last gap in docs/EVIDENCE.md §1 — the rejection path of the boundary analyzer becomes automated rather than a 3-step manual procedure.",
+  "description": "Implement ADR-2026-04-17-1000: add a hermetic regression test asserting `hex analyze` rejects cross-adapter, ports→adapter, and domain→adapter imports. Closes the last gap in docs/EVIDENCE.md §1 — the rejection path of the boundary analyzer becomes automated rather than a 3-step manual procedure.",
   "feature": "Cross-adapter rejection regression test",
   "id": "wp-cross-adapter-rejection-test",
   "phases": [
@@ -19,7 +19,7 @@
         {
           "agent": "hex-coder",
           "deps": [],
-          "description": "Author the 6-file minimal hex-layout fixture under hex-cli/tests/fixtures/boundary-violation/ exactly as specified in ADR-2604171000 §Test shape. domain/mod.rs is empty; ports/mod.rs has only `use crate::domain::*;`; primary/cli.rs and secondary/db.rs each `use crate::ports::*;` only; main.rs is the composition root that pulls in all four layers; Cargo.toml is a [package] stub sufficient for `hex analyze` to walk the tree (no build needed).",
+          "description": "Author the 6-file minimal hex-layout fixture under hex-cli/tests/fixtures/boundary-violation/ exactly as specified in ADR-2026-04-17-1000 §Test shape. domain/mod.rs is empty; ports/mod.rs has only `use crate::domain::*;`; primary/cli.rs and secondary/db.rs each `use crate::ports::*;` only; main.rs is the composition root that pulls in all four layers; Cargo.toml is a [package] stub sufficient for `hex analyze` to walk the tree (no build needed).",
           "files": [
             "hex-cli/tests/fixtures/boundary-violation/Cargo.toml",
             "hex-cli/tests/fixtures/boundary-violation/src/domain/mod.rs",

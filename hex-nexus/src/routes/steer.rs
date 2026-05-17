@@ -1,4 +1,4 @@
-//! REST endpoint for developer steering directives (ADR-2604131500 P1.4).
+//! REST endpoint for developer steering directives (ADR-2026-04-13-1500 P1.4).
 //!
 //! POST /api/steer — classify and store a natural-language directive.
 

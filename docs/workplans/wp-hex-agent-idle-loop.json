@@ -1,40 +1,49 @@
 {
-  "closed_at": "2026-05-12T10:25:10.474540+00:00",
-  "closed_reason": "all tasks have status=done",
   "id": "wp-hex-agent-idle-loop",
   "paused": true,
-  "paused_reason": "Touches hex-agent worker dispatch loop. Resume deliberately, run with the supervisor watching so crash-loop alerts surface real failures instead of legitimate exits. Test plan must include: idle worker stays alive ≥10min, restart_strategy=transient still respawns on real crashes (not normal exits), shutdown signal still terminates cleanly.",
+  "paused_reason": "Touches hex-agent worker dispatch loop. Resume deliberately, run with the supervisor watching so crash-loop alerts surface real failures instead of legitimate exits. Test plan must include: idle worker stays alive \u226510min, restart_strategy=transient still respawns on real crashes (not normal exits), shutdown signal still terminates cleanly.",
   "phases": [
     {
       "id": "P1",
       "tasks": [
         {
+          "evidence": [
+            "grep -nE 'no.*tasks.*found|empty.*queue|return.*Ok|exit.*status.*0' hex-agent/src/main.rs hex-agent/src/adapters/secondary/task_executor.rs | head -10"
+          ],
           "files": [
             "hex-agent/src/main.rs",
             "hex-agent/src/adapters/secondary/task_executor.rs"
           ],
           "id": "P1.1",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "transform",
-          "title": "Identify the existing exit-on-empty-poll path. Currently in hex-agent/src/main.rs (or task_executor.rs) — when poll_tasks returns 0 results, the function returns and main() exits. Map every exit-path that should become a sleep-loop."
+          "title": "Identify the existing exit-on-empty-poll path. Currently in hex-agent/src/main.rs (or task_executor.rs) \u2014 when poll_tasks returns 0 results, the function returns and main() exits. Map every exit-path that should become a sleep-loop."
         },
         {
+          "evidence": [
+            "grep -q 'idle.*sleep\\|poll_interval' hex-agent/src/main.rs",
+            "grep -q 'tokio::signal::ctrl_c' hex-agent/src/main.rs",
+            "cargo check -p hex-agent"
+          ],
           "files": [
             "hex-agent/src/main.rs"
           ],
           "id": "P1.2",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
-          "title": "Wrap the poll-and-execute logic in a loop with bounded sleep between empty polls. Default poll interval 5s when busy, 30s when idle (exponential backoff between 5s and 60s if many consecutive empty polls). Always honor SIGTERM via tokio's ctrl_c handler — clean exit must still work."
+          "title": "Wrap the poll-and-execute logic in a loop with bounded sleep between empty polls. Default poll interval 5s when busy, 30s when idle (exponential backoff between 5s and 60s if many consecutive empty polls). Always honor SIGTERM via tokio's ctrl_c handler \u2014 clean exit must still work."
         },
         {
+          "evidence": [
+            "grep -q 'worker_process_heartbeat' hex-agent/src/main.rs"
+          ],
           "files": [
             "hex-agent/src/main.rs"
           ],
           "id": "P1.3",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
-          "title": "Heartbeat update inside the idle loop — every poll cycle, even when empty, the worker calls worker_process_heartbeat. Without this, supervisor_tick's 'last_heartbeat < 45s ago' check would mark idle workers stale and the supervisor would spawn replacements unnecessarily."
+          "title": "Heartbeat update inside the idle loop \u2014 every poll cycle, even when empty, the worker calls worker_process_heartbeat. Without this, supervisor_tick's 'last_heartbeat < 45s ago' check would mark idle workers stale and the supervisor would spawn replacements unnecessarily."
         }
       ],
       "title": "Idle-loop in hex-agent main"
@@ -43,22 +52,28 @@
       "id": "P2",
       "tasks": [
         {
+          "evidence": [
+            "grep -q 'worker_process_record_exit.*normal' hex-agent/src/main.rs"
+          ],
           "files": [
             "hex-agent/src/main.rs"
           ],
           "id": "P2.1",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "On SIGTERM, set exit_reason='normal' before exiting (so supervisor's restart_strategy='transient' doesn't respawn after a deliberate stop). Use the existing worker_process_record_exit reducer with reason 'normal'."
         },
         {
+          "evidence": [
+            "grep -q 'std::panic::catch_unwind\\|panic_hook' hex-agent/src/main.rs"
+          ],
           "files": [
             "hex-agent/src/main.rs"
           ],
           "id": "P2.2",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
-          "title": "Crash detection: if a panic propagates out of the main task, catch + record exit_reason='crashed' before exiting. Without this, a panic exits with non-zero status and the supervisor counts it as crashed correctly — but the worker_process row's exit_reason stays empty (watchdog defaults to 'unknown'). This task makes it explicit."
+          "title": "Crash detection: if a panic propagates out of the main task, catch + record exit_reason='crashed' before exiting. Without this, a panic exits with non-zero status and the supervisor counts it as crashed correctly \u2014 but the worker_process row's exit_reason stays empty (watchdog defaults to 'unknown'). This task makes it explicit."
         }
       ],
       "title": "Graceful shutdown + restart-strategy semantics"
@@ -67,19 +82,25 @@
       "id": "P3",
       "tasks": [
         {
+          "evidence": [
+            "test -x scripts/test-supervisor-idle-loop.sh",
+            "scripts/test-supervisor-idle-loop.sh 2>&1 | grep -q 'PASS'"
+          ],
           "files": [
             "scripts/test-supervisor-idle-loop.sh"
           ],
           "id": "P3.1",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "script",
-          "title": "Create pool desired=2, restart=permanent, leave idle for 5 minutes. Verify: 2 workers stay alive, last_heartbeat updates every cycle, no crash-loop, no superfluous spawns. Then send SIGTERM to one worker → supervisor sees alive=1, spawns replacement → new worker stays alive. Then test crash path: pkill -SEGV → exit_reason=crashed → supervisor respawns."
+          "title": "Create pool desired=2, restart=permanent, leave idle for 5 minutes. Verify: 2 workers stay alive, last_heartbeat updates every cycle, no crash-loop, no superfluous spawns. Then send SIGTERM to one worker \u2192 supervisor sees alive=1, spawns replacement \u2192 new worker stays alive. Then test crash path: pkill -SEGV \u2192 exit_reason=crashed \u2192 supervisor respawns."
         }
       ],
-      "title": "Smoke test — supervisor + hex-agent loop end-to-end"
+      "title": "Smoke test \u2014 supervisor + hex-agent loop end-to-end"
     }
   ],
-  "rationale": "wp-stdb-supervisor exposed the underlying problem: hex-agent's main loop polls for tasks and if there's nothing to do, exits with status 0. The supervisor (correctly) sees a dead worker, respawns. After 5 exits in 60s the pool flips in_crash_loop and alerts the operator. Net result: 'keep N hex-coder workers alive ready for incoming work' is impossible today — every spawn dies in <1s. The supervisor surfaces the problem; this workplan fixes the underlying behavior.",
+  "rationale": "wp-stdb-supervisor exposed the underlying problem: hex-agent's main loop polls for tasks and if there's nothing to do, exits with status 0. The supervisor (correctly) sees a dead worker, respawns. After 5 exits in 60s the pool flips in_crash_loop and alerts the operator. Net result: 'keep N hex-coder workers alive ready for incoming work' is impossible today \u2014 every spawn dies in <1s. The supervisor surfaces the problem; this workplan fixes the underlying behavior.",
+  "title": "hex-agent idle loop \u2014 sleep+poll instead of exit on no work",
   "status": "completed",
-  "title": "hex-agent idle loop — sleep+poll instead of exit on no work"
+  "closed_at": "2026-05-12T10:25:10.474540+00:00",
+  "closed_reason": "all tasks have status=done"
 }

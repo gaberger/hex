@@ -13,8 +13,8 @@ hex is a code factory. Code goes in as intent, validated artifacts come out
 as commits. Every successful artifact today travels a flat, named, gated
 pipeline: `commitment_open → drafter → proposed_action → digital-twin →
 action_executor → SafeFileWriter → executed_action audit`
-(ADR-2605082300). Every successful merge today travels the flat
-red/blue/judge merge gate (ADR-2605081126). The hierarchical exec layer
+(ADR-2026-05-08-2300). Every successful merge today travels the flat
+red/blue/judge merge gate (ADR-2026-05-08-1126). The hierarchical exec layer
 sits *next to* both pipelines, holds zero file-write tools, emits zero
 artifacts, and consumes inference budget producing chat-shaped filler.
 hex should formalise the pipeline that already does the work and retire
@@ -63,7 +63,7 @@ of `kind=file_write` with `payload.path` and `payload.content`". A
 drafter pinned to a typed output schema cannot drift into management
 prose; it either fills the schema or fails validation.
 
-**E5 — Flat coordination is already the proven path.** ADR-2605081126's
+**E5 — Flat coordination is already the proven path.** ADR-2026-05-08-1126's
 merge gate is `validation-judge + adversarial-red + adversarial-blue`
 voting in parallel, 2-of-3 + judge-pass to merge. No CTO. No engineering
 lead. Three named functional roles, deterministic transitions, auditable
@@ -71,7 +71,7 @@ ballot. It is the mechanism that recovered the trunk from the 2026-05-07
 hijacker incident. Meanwhile the exec layer has zero recorded incident
 recoveries.
 
-**E6 — The operator memory IS the standards manual.** ADR-2605082300
+**E6 — The operator memory IS the standards manual.** ADR-2026-05-08-2300
 Context paragraph: "*the operator already has a documented
 decision-making style in `~/.claude/.../memory/*.md` (15+ rules at last
 count)*… that memory IS the operator's standards manual — it's the
@@ -139,13 +139,13 @@ accountability*. Inference agents have neither — they have context
 windows and quotas. Hierarchy in human orgs is a workaround for biology;
 for inference agents it is **pure overhead**: every exec layer adds a
 hop, a filler reply, and a Confirm: line the operator must action
-manually or hand to the twin (ADR-2605082300). The twin is the flat
+manually or hand to the twin (ADR-2026-05-08-2300). The twin is the flat
 pipeline. The hierarchy was the bug it patched.
 
 ### Steelman 2: "Personas give the operator someone to talk to."
 
 **Demolish.** The operator can talk to a `proposed_action` row. The
-ADR-2605082300 Phase F dashboard already shows `proposed_by`, `kind`,
+ADR-2026-05-08-2300 Phase F dashboard already shows `proposed_by`, `kind`,
 `payload`, `verdict_count` — more information than any persona reply
 has produced this session. If narration is wanted, the `auditor` stage
 emits "drafter→twin approved hex-nexus/src/foo.rs in 14s, 1 KB diff."
@@ -162,7 +162,7 @@ routing is aspirational.
 ### Steelman 4: "Hierarchy gives us escalation paths."
 
 **Demolish.** The pipeline already has `verdict=escalate` → `inbox
-notify priority=2` (ADR-2605082300). One row, dashboard-visible,
+notify priority=2` (ADR-2026-05-08-2300). One row, dashboard-visible,
 audited. "CISO replies to CTO in chat" has no artifact, no audit, no
 SLA.
 

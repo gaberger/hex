@@ -28,7 +28,7 @@ checks:
         ## Consequences
 
       Validate metadata:
-        - ADR ID must use timestamp format YYMMDDHHMM (e.g. ADR-2603221500)
+        - ADR ID must use timestamp format YYMMDDHHMM (e.g. ADR-2026-03-22-1500)
         - **Status:** line must be present and use bold-label format (not ## Status heading)
         - Status must be "Proposed" for new ADRs
         - **Date:** must be present in YYYY-MM-DD format

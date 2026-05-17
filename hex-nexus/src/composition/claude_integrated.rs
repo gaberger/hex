@@ -5,7 +5,7 @@
 //! `~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json`) still lives upstream in
 //! `hex-cli/src/nexus_client.rs`; this module is a thin dispatch target so
 //! the compose() probe can branch. A future task may move the session-file
-//! resolver into this module — see ADR-2604112000 §Consequences.
+//! resolver into this module — see ADR-2026-04-11-2000 §Consequences.
 //!
 //! For P2, the Claude-integrated path shares downstream construction with
 //! the standalone path via `build_agent_manager`: every port past the

@@ -271,7 +271,7 @@ Evaluation trace:
 
 ## References
 
-- ADR-2605082800: Work intent classification (defines `classify_work_intent` heuristic)
+- ADR-2026-05-08-2800: Work intent classification (defines `classify_work_intent` heuristic)
 - `hex-cli/src/commands/hook/mod.rs:2812+` — current classifier implementation
 - `hex-nexus/assets/src/components/views/MissionControl.tsx` — existing Mission Control UI
 

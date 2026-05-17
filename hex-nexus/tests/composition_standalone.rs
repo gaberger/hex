@@ -1,4 +1,4 @@
-//! Integration tests for the standalone composition path (ADR-2604112000 P2.3).
+//! Integration tests for the standalone composition path (ADR-2026-04-11-2000 P2.3).
 //!
 //! These tests prove three invariants about `hex_nexus::composition`:
 //!

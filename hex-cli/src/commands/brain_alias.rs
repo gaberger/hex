@@ -1,4 +1,4 @@
-//! Hidden `brain` alias for the renamed `sched` subcommand (ADR-2604150000).
+//! Hidden `brain` alias for the renamed `sched` subcommand (ADR-2026-04-15-0000).
 //!
 //! `hex brain ...` forwards to `hex sched ...` silently. The subcommand is
 //! hidden from `--help` output (see `#[command(hide = true)]` on the

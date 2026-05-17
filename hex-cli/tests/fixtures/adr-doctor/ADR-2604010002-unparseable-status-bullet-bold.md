@@ -1,4 +1,4 @@
-# ADR-2604010002: Bullet-prefixed bold-colon-outside Status
+# ADR-2026-04-01-0002: Bullet-prefixed bold-colon-outside Status
 
 - **Status**: Proposed
 - **Date**: 2026-04-02
@@ -6,7 +6,7 @@
 
 ## Context
 
-This is the exact shape that triggered the session referenced in ADR-2604270800. It is syntactically valid markdown but the doctor must reject it because downstream tooling (e.g. `hex adr status`) cannot recover the lifecycle state from it.
+This is the exact shape that triggered the session referenced in ADR-2026-04-27-0800. It is syntactically valid markdown but the doctor must reject it because downstream tooling (e.g. `hex adr status`) cannot recover the lifecycle state from it.
 
 ## Decision
 

@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604142155-sched-daemon-stuck-in-progress",
+  "adr": "ADR-2026-04-14-2155-sched-daemon-stuck-in-progress",
   "id": "wp-sched-daemon-terminal-signal",
   "phases": [
     {
@@ -35,11 +35,11 @@
         {
           "acceptance": "ADR body references sched_daemon.tla and the failed liveness property",
           "adapter": "docs",
-          "evidence": "git diff on ADR-2604142155",
+          "evidence": "git diff on ADR-2026-04-14-2155",
           "id": "P0.4",
           "status": "pending",
           "strategy_hint": "transform",
-          "title": "Update ADR-2604142155 Context to cite the TLA+ counterexample as the formal root cause"
+          "title": "Update ADR-2026-04-14-2155 Context to cite the TLA+ counterexample as the formal root cause"
         }
       ],
       "title": "Formal spec — TLA+ model of daemon task lifecycle"
@@ -137,5 +137,5 @@
   ],
   "status": "pending",
   "timeout_s": 1800,
-  "title": "sched daemon must transition tasks to terminal state (ADR-2604142155)"
+  "title": "sched daemon must transition tasks to terminal state (ADR-2026-04-14-2155)"
 }

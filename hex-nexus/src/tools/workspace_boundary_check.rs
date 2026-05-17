@@ -1,6 +1,6 @@
 //! `workspace_boundary_check` — enforces workspace-level hexagonal boundaries.
 //!
-//! Implements ADR-2605090000 rules: validates that workspace crates only depend
+//! Implements ADR-2026-05-09-0000 rules: validates that workspace crates only depend
 //! on allowed peers. Scans Cargo.toml [dependencies] for forbidden workspace
 //! deps, then walks src/**/*.rs for `use hex_*::` statements that violate the
 //! rule table. Returns violations[] array for CI/pre-commit integration.
@@ -17,7 +17,7 @@ use walkdir::WalkDir;
 
 use super::{Tool, ToolResult};
 
-/// Canonical workspace boundary rules from ADR-2605090000.
+/// Canonical workspace boundary rules from ADR-2026-05-09-0000.
 /// Format: (crate_name, &[allowed_dependencies])
 const RULE_TABLE: &[(&str, &[&str])] = &[
     ("hex-core", &[]),
@@ -63,7 +63,7 @@ impl Tool for WorkspaceBoundaryCheck {
         "workspace_boundary_check"
     }
     fn description(&self) -> &'static str {
-        "Enforce workspace-level hexagonal boundaries per ADR-2605090000. \
+        "Enforce workspace-level hexagonal boundaries per ADR-2026-05-09-0000. \
          Validates cross-crate dependencies against rule table, scans \
          Cargo.toml [dependencies] and src/**/*.rs for violations. Returns \
          violations array for CI/pre-commit integration."

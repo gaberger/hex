@@ -166,7 +166,7 @@ fn read_yaml_description(path: &Path) -> String {
 /// id portion since the grounding format pre-pends "ADR-" when rendering.
 ///
 ///   "ADR-059-foo"                  → "059"               (legacy sequential)
-///   "ADR-2605081126-foo"      → "2026-05-08-1126"   (hyphenated timestamp)
+///   "ADR-2026-05-08-1126-foo"      → "2026-05-08-1126"   (hyphenated timestamp)
 ///   "ADR-2603221500-foo"           → "2603221500"        (legacy 10-digit)
 fn extract_adr_id(stem: &str) -> String {
     let rest = match stem.strip_prefix("ADR-").or_else(|| stem.strip_prefix("adr-")) {
@@ -322,7 +322,7 @@ pub fn grounding_block(max_adrs: usize) -> String {
             to a 'secure channel', 'internal system', 'audit log', or any \
             other invented delivery surface. The CEO has direct repo and \
             dashboard access. To share something, give the OPERATOR-RUNNABLE \
-            file path (e.g. `docs/adrs/ADR-2605081126-...md`) or the dashboard \
+            file path (e.g. `docs/adrs/ADR-2026-05-08-1126-...md`) or the dashboard \
             hashroute (e.g. `#/merge-gate`).\n\
          2. Never invent roles, titles, names, or teams that do not appear \
             in 'Org roster' above. There is no 'head of engineering' — the \

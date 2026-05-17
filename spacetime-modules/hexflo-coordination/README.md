@@ -2,7 +2,7 @@
 
 > Swarm coordination + project registry + agent identity + memory + lifecycle (ADR-027 / ADR-058).
 
-The largest module — the coordination backbone for HexFlo swarms, the unified hex-agent identity (ADR-058), workplan/inference task dispatch, and per-project state. Reducers use **CAS optimistic locking** (`version` field on `swarm_task`) to prevent double-assignment across remote nodes without distributed locks (ADR-2603241900).
+The largest module — the coordination backbone for HexFlo swarms, the unified hex-agent identity (ADR-058), workplan/inference task dispatch, and per-project state. Reducers use **CAS optimistic locking** (`version` field on `swarm_task`) to prevent double-assignment across remote nodes without distributed locks (ADR-2026-03-24-1900).
 
 ## Tables (grouped by concern)
 
@@ -87,7 +87,7 @@ The largest module — the coordination backbone for HexFlo swarms, the unified 
 | `hypothesis` | public | `id` | Falsifiable hypothesis under an objective |
 | `verdict` | public | `id` | Outcome verdict — supports/refutes/inconclusive |
 
-### Worker pool supervisor (ADR-2604280000)
+### Worker pool supervisor (ADR-2026-04-28-0000)
 
 | Table | Visibility | Key | Purpose |
 |---|---|---|---|
@@ -129,7 +129,7 @@ Reducer signatures live in `src/lib.rs`. Groups:
 
 ## Key contracts
 
-### Optimistic CAS on `swarm_task` (ADR-2603241900)
+### Optimistic CAS on `swarm_task` (ADR-2026-03-24-1900)
 
 `task_assign(task_id, agent_id, expected_version)` checks `swarm_task.version == expected_version` and increments on success. On mismatch, returns ConflictError — prevents double-claim across remote nodes without distributed locks.
 

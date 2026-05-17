@@ -39,11 +39,11 @@ pub struct CreateTaskRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateTaskRequest {
-    /// Typed status — invalid strings return 422 at deserialization (ADR-2603311000).
+    /// Typed status — invalid strings return 422 at deserialization (ADR-2026-03-31-1000).
     pub status: Option<SwarmTaskStatus>,
     pub result: Option<String>,
     pub agent_id: Option<String>,
-    /// CAS version — must match current task.version (ADR-2603241900).
+    /// CAS version — must match current task.version (ADR-2026-03-24-1900).
     /// Omit to skip version check (legacy / force-assign).
     pub version: Option<u64>,
 }
@@ -275,7 +275,7 @@ pub async fn create_task(
     Path(swarm_id): Path<String>,
     Json(body): Json<CreateTaskRequest>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
-    // ADR-2604051800 P1: Require swarm-write capability
+    // ADR-2026-04-05-1800 P1: Require swarm-write capability
     require_capability(
         claims.as_ref().map(|c| &c.0),
         |c| c.has_capability(&hex_core::Capability::SwarmWrite),
@@ -332,7 +332,7 @@ pub async fn update_task(
     Path((_swarm_id, task_id)): Path<(String, String)>,
     Json(body): Json<UpdateTaskRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    // ADR-2604051800 P1: Check task-write capability
+    // ADR-2026-04-05-1800 P1: Check task-write capability
     require_capability(
         claims.as_ref().map(|c| &c.0),
         |c| c.can_write_task(&task_id),

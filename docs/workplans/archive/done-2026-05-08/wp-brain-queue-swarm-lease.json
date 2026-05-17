@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604141400",
+  "adr": "ADR-2026-04-14-1400",
   "created_at": "2026-04-14T18:05:00-04:00",
   "created_by": "claude",
   "description": "Convert the brain queue from subprocess-exit completion to swarm-owned leased completion with git-evidence verification. Adds task states (leased, in_progress), a lease sweeper, and a confirm-complete check that rejects false-positive 'done' from reconciler drift.",
@@ -143,7 +143,7 @@
       "tier": 2
     },
     {
-      "description": "Background task in the daemon loop that every 30s scans all tasks in Leased or InProgress state, and for each whose leased_until < now: fails the swarm task, increments lease_attempts, returns brain task to Pending (or Failed after 3 attempts). Emits priority-2 inbox notification (ADR-2604141100).",
+      "description": "Background task in the daemon loop that every 30s scans all tasks in Leased or InProgress state, and for each whose leased_until < now: fails the swarm task, increments lease_attempts, returns brain task to Pending (or Failed after 3 attempts). Emits priority-2 inbox notification (ADR-2026-04-14-1100).",
       "gate": {
         "blocking": true,
         "command": "cargo test -p hex-cli brain::sweeper && target/debug/hex brain queue list",
@@ -171,7 +171,7 @@
           "deps": [
             "P3.1"
           ],
-          "description": "For each expired task, call notify_operator (already added in ADR-2604141100 P1) with priority=2 and body `lease expired for <task.kind>:<task.id> after {elapsed}s — attempt {n}/3`. If kind permanently fails, additional notification priority=2 body `task abandoned after 3 attempts`.",
+          "description": "For each expired task, call notify_operator (already added in ADR-2026-04-14-1100 P1) with priority=2 and body `lease expired for <task.kind>:<task.id> after {elapsed}s — attempt {n}/3`. If kind permanently fails, additional notification priority=2 body `task abandoned after 3 attempts`.",
           "files": [
             "hex-cli/src/commands/sched.rs"
           ],

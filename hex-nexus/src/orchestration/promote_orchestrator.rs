@@ -1,5 +1,5 @@
 //! PromoteOrchestrator — closes the loop from PromotionJudge → live
-//! binding flip (ADR-2604261500 P6, wp-substrate-inference-consumer-rewires
+//! binding flip (ADR-2026-04-26-1500 P6, wp-substrate-inference-consumer-rewires
 //! P5).
 //!
 //! On each `tick()` the orchestrator:
@@ -132,7 +132,7 @@ impl PromoteOrchestrator {
             return;
         }
 
-        // L5 ADR conformance gate (ADR-2604261311 L5 / ADR-2604261500 C6).
+        // L5 ADR conformance gate (ADR-2026-04-26-1311 L5 / ADR-2026-04-26-1500 C6).
         // If a checker is wired and the swap violates an Accepted-ADR
         // rule, skip — leave the ticket in shadow_green so the operator
         // can either retract it or extend the relevant ADR. Idempotent

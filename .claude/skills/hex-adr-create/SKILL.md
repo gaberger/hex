@@ -26,7 +26,7 @@ must include a full consumer dependency map before it can be accepted.
 
 ## Phase 2: Dependency Impact Analysis (REQUIRED for modify/delete/restructure/migrate)
 
-**This phase exists because ADR-2604050900 proved that deleting modules without tracing
+**This phase exists because ADR-2026-04-05-0900 proved that deleting modules without tracing
 all consumers leaves compilation broken in downstream crates.**
 
 ### 2a. Identify Affected Artifacts
@@ -87,7 +87,7 @@ Define explicit gates that the workplan MUST include:
 
 **CRITICAL**: The workplan derived from this ADR MUST include a validation step that
 runs these gates AFTER every phase that deletes or restructures artifacts. The
-ADR-2604050900 migration skipped this, resulting in hex-agent being broken for an
+ADR-2026-04-05-0900 migration skipped this, resulting in hex-agent being broken for an
 entire session.
 
 ### 2d. Blast Radius Classification
@@ -159,7 +159,7 @@ Before marking the ADR as complete:
 3. **Gate completeness**: Every implementation phase has at least one validation gate
 4. **Workplan alignment**: If a workplan will be created, verify it includes all gates
 
-## Anti-Patterns (Lessons from ADR-2604050900)
+## Anti-Patterns (Lessons from ADR-2026-04-05-0900)
 
 ### Anti-Pattern: Module-Scoped Impact Analysis
 Analyzing impact only within the module being changed (e.g., only checking

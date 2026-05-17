@@ -1,4 +1,4 @@
-/// Integration tests for ADR-2603240130 — Declarative Swarm Agent Behavior from YAML.
+/// Integration tests for ADR-2026-03-24-0130 — Declarative Swarm Agent Behavior from YAML.
 ///
 /// Verifies that all agent/swarm YAML definitions load correctly and that the
 /// runtime wiring (model selection, phases, cardinality) matches expectations

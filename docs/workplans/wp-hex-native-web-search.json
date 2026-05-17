@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604142100",
+  "adr": "ADR-2026-04-14-2100",
   "created_at": "2026-04-14T21:05:00Z",
   "created_by": "human+agent",
   "description": "Promote web search and web fetch to first-class hex capabilities. Mirrors the inference-broker architecture: WebSearchPort + WebFetchPort traits in hex-core, multiple secondary adapters (Brave, Tavily, SerpAPI, DuckDuckGo) in hex-nexus, REST endpoints, MCP tools, CLI, secret-grant integration, audit trail via a new web_request SpacetimeDB table, and a dashboard panel. Replaces third-party context-mode fetch/search. Unblocks standalone mode web access.",
@@ -27,7 +27,7 @@
           "id": "P1.1",
           "layer": "domain",
           "name": "Domain types: SearchResult, SearchOptions, FetchedPage, FetchOptions, WebProvider enum",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -72,7 +72,7 @@
           "id": "P2.1",
           "layer": "secondary",
           "name": "ReqwestFetchAdapter",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -87,7 +87,7 @@
           "id": "P2.2",
           "layer": "secondary",
           "name": "Fetch cache (filesystem, 24h TTL)",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -103,7 +103,7 @@
           "id": "P2.3",
           "layer": "secondary",
           "name": "Contract test: fetch golden fixture",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         }
       ],
@@ -132,7 +132,7 @@
           "id": "P3.1",
           "layer": "secondary",
           "name": "BraveSearchAdapter",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -141,14 +141,14 @@
             "P1.2",
             "P2.1"
           ],
-          "description": "hex-nexus/src/adapters/secondary/web_search_ddg.rs: impl WebSearchPort. POSTs to https://html.duckduckgo.com/html/ with q=<query>. Uses scraper::Selector (div.result > h2.result__title > a.result__a) for title+url and div.result__snippet for snippet. Limited to first 20 results. Fragile by design — documented as fallback only.",
+          "description": "hex-nexus/src/adapters/secondary/web_search_ddg.rs: impl WebSearchPort. POSTs to https://html.duckduckgo.com/html/ with q=<query>. Uses scraper::Selector (div.result > h2.result__title > a.result__a) for title+url and div.result__snippet for snippet. Limited to first 20 results. Fragile by design \u2014 documented as fallback only.",
           "files": [
             "hex-nexus/src/adapters/secondary/web_search_ddg.rs"
           ],
           "id": "P3.2",
           "layer": "secondary",
           "name": "DuckDuckGoAdapter (HTML scrape, no key)",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -164,7 +164,7 @@
           "id": "P3.3",
           "layer": "secondary",
           "name": "WebSearchBroker with fallback chain",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -172,7 +172,7 @@
           "deps": [
             "P3.3"
           ],
-          "description": "hex-nexus/tests/web_search.rs: Brave test posts a canned JSON response to MockServer, asserts parsing. DDG test serves fixture HTML snapshot, asserts 10 results parsed. Broker test: Brave adapter returns AuthFailure, DDG returns 3 results — broker returns DDG results and logs fallback.",
+          "description": "hex-nexus/tests/web_search.rs: Brave test posts a canned JSON response to MockServer, asserts parsing. DDG test serves fixture HTML snapshot, asserts 10 results parsed. Broker test: Brave adapter returns AuthFailure, DDG returns 3 results \u2014 broker returns DDG results and logs fallback.",
           "files": [
             "hex-nexus/tests/web_search.rs",
             "hex-nexus/tests/fixtures/web/brave-response.json",
@@ -181,7 +181,7 @@
           "id": "P3.4",
           "layer": "secondary",
           "name": "Contract tests: Brave + DDG against wiremock fixtures",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         }
       ],
@@ -209,7 +209,7 @@
           "id": "P4.1",
           "layer": "secondary",
           "name": "TavilySearchAdapter",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -224,7 +224,7 @@
           "id": "P4.2",
           "layer": "secondary",
           "name": "SerpApiSearchAdapter",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         }
       ],
@@ -251,7 +251,7 @@
           "id": "P5.1",
           "layer": "secondary",
           "name": "web_request SpacetimeDB table + reducer",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -268,7 +268,7 @@
           "id": "P5.2",
           "layer": "primary",
           "name": "POST /api/web/search route",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -284,7 +284,7 @@
           "id": "P5.3",
           "layer": "primary",
           "name": "POST /api/web/fetch route",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen"
         },
         {
@@ -458,6 +458,16 @@
             "P6.2"
           ],
           "description": "hex-cli/assets/context-templates/tools/web-search.md and web-fetch.md: replace references to generic WebSearch and ctx_fetch_and_index with hex_web_search and hex_web_fetch. Update 'Prefer these over WebSearch' table. Keep the 'never generate URLs' and 'Sources:' rules. Add a note on provider fallback + caching.",
+          "evidence": {
+            "files_found": [
+              "hex-cli/assets/context-templates/tools/web-search.md",
+              "hex-cli/assets/context-templates/tools/web-fetch.md"
+            ],
+            "matching_commits": [
+              "d237750b feat(context-engineering): P4/P5 - template files + file-based PromptAdapter"
+            ],
+            "symbols_matched": []
+          },
           "files": [
             "hex-cli/assets/context-templates/tools/web-search.md",
             "hex-cli/assets/context-templates/tools/web-fetch.md"
@@ -465,7 +475,7 @@
           "id": "P9.1",
           "layer": "primary",
           "name": "Rewrite context templates",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "transform"
         },
         {
@@ -490,14 +500,27 @@
           "deps": [
             "P6.2"
           ],
-          "description": "CLAUDE.md: add row 'Web search/fetch | mcp__hex__hex_web_search / mcp__hex__hex_web_fetch' to BOTH tool-precedence tables (there are two — global section and project section). Add a note that context-mode ctx_fetch_and_index must not be used for hex-scope work.",
+          "description": "CLAUDE.md: add row 'Web search/fetch | mcp__hex__hex_web_search / mcp__hex__hex_web_fetch' to BOTH tool-precedence tables (there are two \u2014 global section and project section). Add a note that context-mode ctx_fetch_and_index must not be used for hex-scope work.",
+          "evidence": {
+            "files_found": [
+              "CLAUDE.md"
+            ],
+            "matching_commits": [
+              "3dadfe79 feat(doctor): Add embedded-assets-generic guardrail (ADR-2026-04-11-1142 P4)",
+              "092a0aec feat(inference): wp-tiered-inference-routing P4+P5 \u2014 escalation, tracking, integration",
+              "91d782aa primary(p5.3): Document tiered routing in CLAUDE.md + README.md",
+              "79531fff chore(finalize): mark ADR-2026-04-05-0900 accepted, update CLAUDE.md for 7 modules (P6)",
+              "87d0aa36 feat: close P0 workplans \u2014 secrets tests, agent-task-sync docs"
+            ],
+            "symbols_matched": []
+          },
           "files": [
             "CLAUDE.md"
           ],
           "id": "P9.3",
           "layer": "primary",
           "name": "Update CLAUDE.md tool precedence table",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "transform"
         }
       ],
@@ -536,7 +559,7 @@
             "P4.1",
             "P4.2"
           ],
-          "description": "hex-nexus/tests/web_contract.rs: snapshot test — each adapter parses its recorded fixture. Fixtures live in tests/fixtures/web/*.{json,html} and are regenerated manually with a hex web search --record-fixture flag (to be added as a dev-only subcommand). CI runs the snapshot tests; drift fails the build.",
+          "description": "hex-nexus/tests/web_contract.rs: snapshot test \u2014 each adapter parses its recorded fixture. Fixtures live in tests/fixtures/web/*.{json,html} and are regenerated manually with a hex web search --record-fixture flag (to be added as a dev-only subcommand). CI runs the snapshot tests; drift fails the build.",
           "files": [
             "hex-nexus/tests/web_contract.rs",
             "hex-cli/src/commands/web.rs"

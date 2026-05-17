@@ -1,8 +1,8 @@
 {
-  "adr": "ADR-2604142200",
+  "adr": "ADR-2026-04-14-2200",
   "created_at": "2026-04-14T21:40:00Z",
   "created_by": "human+agent",
-  "description": "Close the reconcile false-positive class at the authoring layer: make task.files[] a REQUIRED, non-empty field in the workplan schema, refuse to load workplans that violate it, emit clear errors pointing at the offending task, and retrofit every in-flight workplan (starting with wp-rename-brain-to-sched.json and wp-hex-native-web-search.json) so existing reconcile runs stop falsely promoting prose-only done-conditions. Surfaced by: ADR-2604150000 clap wiring reconciled as 11/11 done while `hex sched` command did not exist (commit 75268e70 had to be hand-wired). Complements ADR-2604142201 (runtime verifier) by preventing the broken input shape from ever reaching the verifier.",
+  "description": "Close the reconcile false-positive class at the authoring layer: make task.files[] a REQUIRED, non-empty field in the workplan schema, refuse to load workplans that violate it, emit clear errors pointing at the offending task, and retrofit every in-flight workplan (starting with wp-rename-brain-to-sched.json and wp-hex-native-web-search.json) so existing reconcile runs stop falsely promoting prose-only done-conditions. Surfaced by: ADR-2026-04-15-0000 clap wiring reconciled as 11/11 done while `hex sched` command did not exist (commit 75268e70 had to be hand-wired). Complements ADR-2026-04-14-2201 (runtime verifier) by preventing the broken input shape from ever reaching the verifier.",
   "executor_hint": "frontier-preferred",
   "feature": "Enforce workplan evidence at authoring time",
   "id": "wp-enforce-workplan-evidence",
@@ -83,7 +83,7 @@
           "deps": [
             "E1.2"
           ],
-          "description": "Populate files[] for each of the 11 steps pointing at the actual renamed artifacts: hex-cli/src/commands/sched.rs, hex-cli/src/commands/brain_alias.rs, hex-cli/src/main.rs, hex-nexus/src/routes/sched.rs (if present), scripts/hex-statusline.cjs, docs/adrs/ADR-2604150000-rename-brain-to-sched.md. Re-reconcile and confirm all 11 verify against real evidence (including the new commit 75268e70 that wired the clap variants).",
+          "description": "Populate files[] for each of the 11 steps pointing at the actual renamed artifacts: hex-cli/src/commands/sched.rs, hex-cli/src/commands/brain_alias.rs, hex-cli/src/main.rs, hex-nexus/src/routes/sched.rs (if present), scripts/hex-statusline.cjs, docs/adrs/ADR-2026-04-15-0000-rename-brain-to-sched.md. Re-reconcile and confirm all 11 verify against real evidence (including the new commit 75268e70 that wired the clap variants).",
           "files": [
             "docs/workplans/wp-rename-brain-to-sched.json"
           ],
@@ -177,7 +177,7 @@
       ]
     },
     {
-      "description": "Rebuild hex-cli release, install to PATH, run `hex plan lint --all` clean, flip ADR-2604142200 Status line from whatever current → Accepted with a retrospective note pointing at this workplan.",
+      "description": "Rebuild hex-cli release, install to PATH, run `hex plan lint --all` clean, flip ADR-2026-04-14-2200 Status line from whatever current → Accepted with a retrospective note pointing at this workplan.",
       "gate": {
         "blocking": true,
         "command": "hex plan lint --all && hex plan reconcile --all --audit",
@@ -208,9 +208,9 @@
           "deps": [
             "E4.1"
           ],
-          "description": "docs/adrs/ADR-2604142201-reconcile-evidence-verification.md: Status → Accepted. Add a `## Retrospective` section linking wp-enforce-workplan-evidence.json and noting the two real-world failures it closed (wp-rename-brain-to-sched 11/11 false-positive, wp-hex-native-web-search P2+ blocked).",
+          "description": "docs/adrs/ADR-2026-04-14-2201-reconcile-evidence-verification.md: Status → Accepted. Add a `## Retrospective` section linking wp-enforce-workplan-evidence.json and noting the two real-world failures it closed (wp-rename-brain-to-sched 11/11 false-positive, wp-hex-native-web-search P2+ blocked).",
           "files": [
-            "docs/adrs/ADR-2604142201-reconcile-evidence-verification.md"
+            "docs/adrs/ADR-2026-04-14-2201-reconcile-evidence-verification.md"
           ],
           "id": "E4.2",
           "layer": "docs",

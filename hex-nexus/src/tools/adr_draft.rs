@@ -13,7 +13,7 @@ use super::{Tool, ToolResult};
 
 const STDB_HOST_DEFAULT: &str = "http://127.0.0.1:3033";
 const MIN_BODY: usize = 200;
-// CTO ADR-2605082600 — halved from 50_000 to 24_000 (BSATN crash mitigation).
+// CTO ADR-2026-05-08-2600 — halved from 50_000 to 24_000 (BSATN crash mitigation).
 const MAX_BODY: usize = 24_000;
 
 pub struct AdrDraft;

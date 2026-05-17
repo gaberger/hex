@@ -29,7 +29,7 @@ pub struct ClaimedTask {
 
 /// Task payload encoded in `code_gen_task.request_json` by the supervisor.
 ///
-/// Schema defined in ADR-2603300100 P4.1. The `description` field is the
+/// Schema defined in ADR-2026-03-30-0100 P4.1. The `description` field is the
 /// human-readable step title passed to the code phase.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TaskPayload {
@@ -74,7 +74,7 @@ impl StdbTaskPoller {
     pub async fn initialize(&self) {
         let ws_url = std::env::var("SPACETIMEDB_URL")
             .unwrap_or_else(|_| "ws://localhost:3033".into());
-        // ADR-2604050900: remote-agent-registry deleted; tasks now in hexflo-coordination ("hex")
+        // ADR-2026-04-05-0900: remote-agent-registry deleted; tasks now in hexflo-coordination ("hex")
         let database = std::env::var("SPACETIMEDB_DATABASE")
             .unwrap_or_else(|_| "hex".into());
         let token = std::env::var("SPACETIMEDB_TOKEN").ok();
@@ -199,7 +199,7 @@ impl StdbTaskPoller {
 
 // ── P5.1: TaskPayload contract tests ─────────────────────────────────────────
 //
-// Verify the JSON schema that the supervisor encodes (ADR-2603300100 P4.1)
+// Verify the JSON schema that the supervisor encodes (ADR-2026-03-30-0100 P4.1)
 // can be decoded by the daemon — no external dependencies required.
 
 #[cfg(test)]

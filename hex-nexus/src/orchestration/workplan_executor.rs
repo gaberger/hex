@@ -14,7 +14,7 @@ use crate::remote::transport::TaskTier;
 use crate::state::{AgentInstruction, InstructionType, SharedState};
 
 /// In-process shadow store for workplan transition events
-/// (ADR-2604271000 §2 — v2 shadow mode).
+/// (ADR-2026-04-27-1000 §2 — v2 shadow mode).
 ///
 /// Until the STDB `workplan_event` reducer (wp-workplan-state-model-v2 P1.1)
 /// is wired, this module is the source of truth callers query for the event
@@ -141,7 +141,7 @@ fn find_active_cc_agent_id() -> Option<String> {
     best.map(|(_, id)| id)
 }
 
-// ── Dispatch-evidence guard (ADR-2604111800) ──────────
+// ── Dispatch-evidence guard (ADR-2026-04-11-1800) ──────────
 //
 // Rejects vacuous completions — where an agent (or mock) produced no
 // meaningful output yet the executor would naively mark the task "done".
@@ -163,12 +163,12 @@ pub fn validate_dispatch_evidence(output: Option<&str>) -> Result<(), String> {
         Some(s) if !s.trim().is_empty() => Ok(()),
         Some(_) => Err(
             "dispatch-evidence guard: agent produced whitespace-only output — \
-             refusing to mark task as completed (ADR-2604111800)"
+             refusing to mark task as completed (ADR-2026-04-11-1800)"
                 .to_string(),
         ),
         None => Err(
             "dispatch-evidence guard: no dispatch output received — \
-             refusing to mark task as completed (ADR-2604111800)"
+             refusing to mark task as completed (ADR-2026-04-11-1800)"
                 .to_string(),
         ),
     }
@@ -258,7 +258,7 @@ impl ExecutionStatus {
     }
 }
 
-/// ADR-2604102100: Actions returned by steering checks.
+/// ADR-2026-04-10-2100: Actions returned by steering checks.
 #[derive(Debug, Clone)]
 pub enum SteeringAction {
     /// Continue execution normally.
@@ -298,7 +298,7 @@ pub struct Workplan {
     #[serde(default)]
     pub adr: String,
     /// Schema: `specs` — path to behavioral spec file.
-    /// ADR-2604051700: If non-empty, file MUST exist before execution starts.
+    /// ADR-2026-04-05-1700: If non-empty, file MUST exist before execution starts.
     #[serde(default)]
     pub specs: String,
     /// LLMs commonly generate `steps` at the top level instead of `phases`.
@@ -374,20 +374,20 @@ pub struct WorkplanTask {
     /// Secret key names to inject into the agent process (ADR-026).
     #[serde(alias = "secretKeys", alias = "secret_keys", default)]
     pub secret_keys: Vec<String>,
-    /// Human-readable description of what "done" means (ADR-2604061100).
+    /// Human-readable description of what "done" means (ADR-2026-04-06-1100).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub done_condition: Option<String>,
-    /// Machine-runnable shell command that verifies done_condition (ADR-2604061100).
+    /// Machine-runnable shell command that verifies done_condition (ADR-2026-04-06-1100).
     /// Exits 0 = condition met; non-zero = step fails.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub done_command: Option<String>,
-    /// Explicit task tier override (ADR-2604120202). When set in the workplan
+    /// Explicit task tier override (ADR-2026-04-12-0202). When set in the workplan
     /// JSON, bypasses the automatic classifier. Values: "T1", "T2", "T2.5", "T3".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tier: Option<crate::remote::transport::TaskTier>,
 }
 
-/// Classify a workplan task into an inference routing tier (ADR-2604120202 P1.3).
+/// Classify a workplan task into an inference routing tier (ADR-2026-04-12-0202 P1.3).
 ///
 /// Priority: explicit `tier` field > agent role heuristic > layer + deps heuristic.
 /// Conservative: false negatives (T3 classified as T2) are cheap (scaffolding
@@ -422,7 +422,7 @@ pub fn classify_task_tier(task: &WorkplanTask) -> crate::remote::transport::Task
     }
 }
 
-// ── File Scope Tracking (ADR-2604131800 P5.1) ────────
+// ── File Scope Tracking (ADR-2026-04-13-1800 P5.1) ────────
 //
 // Prevents parallel agents from editing the same files within a phase.
 // Tasks are partitioned into sequential batches where no two tasks in the
@@ -609,7 +609,7 @@ impl WorkplanExecutor {
             return Err("Workplan has no phases".to_string());
         }
 
-        // ADR-2604051700 Gate 1: Spec-file-exists pre-flight check.
+        // ADR-2026-04-05-1700 Gate 1: Spec-file-exists pre-flight check.
         // If the workplan references a behavioral spec, it MUST exist before execution.
         if !workplan.specs.is_empty() {
             let spec_path = std::path::Path::new(&workplan.specs);
@@ -624,13 +624,13 @@ impl WorkplanExecutor {
         }
 
         // Pre-flight: warn loudly if specs field is absent.
-        // specs-first pipeline (ADR-2604051700) requires behavioral specs before execution.
+        // specs-first pipeline (ADR-2026-04-05-1700) requires behavioral specs before execution.
         if workplan.specs.is_empty() {
             tracing::warn!(
                 workplan_id = %workplan.id,
                 "Workplan has no 'specs' field — specs-first pipeline requires a behavioral \
                  spec before execution. Add: \"specs\": \"docs/specs/<feature>.json\" \
-                 (ADR-2604051700)."
+                 (ADR-2026-04-05-1700)."
             );
         }
 
@@ -739,14 +739,14 @@ impl WorkplanExecutor {
             "Detected project language for workplan execution"
         );
 
-        // ADR-2604010000 P3.1 + 2026-04-27 fix: initialize a HexFlo swarm for this
+        // ADR-2026-04-01-0000 P3.1 + 2026-04-27 fix: initialize a HexFlo swarm for this
         // workplan execution. Two earlier bugs combined to break this entirely:
         //
         //   (a) swarm_init used a fresh UUID as swarm_id while per-task
         //       swarm_task_create at line ~1010 used workplan.id — the swarm
         //       was registered under one key and looked up under another.
         //   (b) swarm_init's owner was the literal "workplan-executor", so per
-        //       ADR-2603241900 (one-agent-one-active-swarm) the second execution
+        //       ADR-2026-03-24-1900 (one-agent-one-active-swarm) the second execution
         //       was rejected with "Agent ... already owns an active swarm".
         //
         // Fix: swarm_id is workplan.id (or execution_id when empty) so init and
@@ -795,7 +795,7 @@ impl WorkplanExecutor {
                 }
             }
 
-            // ADR-2604100000: Add phase heartbeat for observability
+            // ADR-2026-04-10-0000: Add phase heartbeat for observability
             let phase_start = chrono::Utc::now().to_rfc3339();
             tracing::info!(
                 execution_id = %execution_id,
@@ -817,7 +817,7 @@ impl WorkplanExecutor {
                     agent_id: None,
                     result: None,
                 }).await;
-                // ADR-2604271000 v2 shadow mode: every transition that
+                // ADR-2026-04-27-1000 v2 shadow mode: every transition that
                 // mutates v1 JSON also appends to the v2 event log.
                 emit_workplan_event(
                     state_port.as_ref(),
@@ -832,7 +832,7 @@ impl WorkplanExecutor {
                 ).await;
             }
 
-            // ADR-2604051700 Gate 2: Pre-deletion consumer scan before phase execution.
+            // ADR-2026-04-05-1700 Gate 2: Pre-deletion consumer scan before phase execution.
             let consumer_warnings = Self::run_consumer_scan(phase).await;
             if !consumer_warnings.is_empty() {
                 if let Ok(Some(mut exec)) = Self::load_execution(state_port.as_ref(), &execution_id).await {
@@ -904,7 +904,7 @@ impl WorkplanExecutor {
                         }
                     }
 
-                    // ADR-2604102100: Check for steering instructions after phase completes
+                    // ADR-2026-04-10-2100: Check for steering instructions after phase completes
                     let steering = Self::check_steering(&shared_state, &execution_id).await;
                     match steering {
                         SteeringAction::Pause => {
@@ -936,7 +936,7 @@ impl WorkplanExecutor {
         }
 
         Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Completed, None).await.ok();
-        // P5.2: Store full execution record in memory ledger (ADR-2604010000)
+        // P5.2: Store full execution record in memory ledger (ADR-2026-04-01-0000)
         let exec_key = format!("workplan:{}:execution:{}", workplan.id, execution_id);
         let exec_val = serde_json::json!({
             "workplan_id": workplan.id,
@@ -961,14 +961,14 @@ impl WorkplanExecutor {
         // before committing to spawning any agents. Fail fast with a clear message rather
         // than spawning N agents that will all hit the same infrastructure problem.
         //
-        // ADR-2604112000 P2.2: use the structured `MissingComposition` enum so the
+        // ADR-2026-04-11-2000 P2.2: use the structured `MissingComposition` enum so the
         // error names exactly which prerequisite is absent and carries an operator
         // remediation hint. The executor's phase error path is stringly-typed today
         // (`Result<PhaseResult, String>`), so we stringify — but the typed variant
         // is preserved in `to_string()` + `.remediation()`.
         if shared_state.agent_manager.is_none() {
             let diag = crate::orchestration::errors::MissingComposition::IncompletePortWiring {
-                details: "AgentManager not wired at composition root (ADR-2604112000 P2)".to_string(),
+                details: "AgentManager not wired at composition root (ADR-2026-04-11-2000 P2)".to_string(),
             };
             tracing::warn!(
                 phase = %phase.name,
@@ -1004,7 +1004,7 @@ impl WorkplanExecutor {
         let mut errors = Vec::new();
         let mut completed_task_ids = Vec::new();
 
-        // ADR-2604131800 P5.1: Partition tasks into file-scope-safe batches.
+        // ADR-2026-04-13-1800 P5.1: Partition tasks into file-scope-safe batches.
         // Tasks sharing file paths are placed in later batches and dispatched
         // only after conflicting tasks in earlier batches complete.
         let scope_batches = compute_file_scope_batches(&phase.tasks);
@@ -1022,7 +1022,7 @@ impl WorkplanExecutor {
 
         for &task_idx in batch {
             let task = &phase.tasks[task_idx];
-            // ADR-2604100000: Task heartbeat for observability
+            // ADR-2026-04-10-0000: Task heartbeat for observability
             let task_id = if !task.id.is_empty() { task.id.clone() } else { task.name.clone() };
             let task_name = task.name.clone();
             let task_start = chrono::Utc::now().to_rfc3339();
@@ -1034,7 +1034,7 @@ impl WorkplanExecutor {
             );
 
             // Create a HexFlo task for this workplan task so the SubagentStop hook
-            // can mark it complete when the spawned agent finishes (ADR-2604010000 P3.2).
+            // can mark it complete when the spawned agent finishes (ADR-2026-04-01-0000 P3.2).
             let hexflo_task_id = {
                 let hft_id = Uuid::new_v4().to_string();
                 let title = format!("{}: {}", task.id, task.name);
@@ -1169,10 +1169,10 @@ impl WorkplanExecutor {
             let agent_mgr = shared_state.agent_manager.clone();
             let workplan_id = workplan.id.clone();
 
-            // ADR-2604120202 P5.1: Classify task tier for routing
+            // ADR-2026-04-12-0202 P5.1: Classify task tier for routing
             let task_tier = classify_task_tier(task);
 
-            // ADR-2604180001 P2: Tier-specific timeout guards
+            // ADR-2026-04-18-0001 P2: Tier-specific timeout guards
             let timeout_secs = match task_tier {
                 TaskTier::T1 => 30u64,
                 TaskTier::T2 => 120u64,
@@ -1184,7 +1184,7 @@ impl WorkplanExecutor {
             // Routes directly through the inference adapter (local or remote Ollama)
             // without spawning an agent process. Faster and cheaper than Path A.
             let inference_port = shared_state.inference_port.clone();
-            // Substrate opt-in (ADR-2604261801 P2). When the substrate's
+            // Substrate opt-in (ADR-2026-04-26-1801 P2). When the substrate's
             // inference shadow_router is wired, route Path C dispatch
             // through it — with no swap in flight, the router delegates
             // straight to the live binding (which IS this same
@@ -1194,7 +1194,7 @@ impl WorkplanExecutor {
                 && task_tier != TaskTier::T3
                 && inference_port.is_some();
 
-            // ADR-2604010000 P3B.2: Route to Path B (inference queue) when running inside
+            // ADR-2026-04-01-0000 P3B.2: Route to Path B (inference queue) when running inside
             // a Claude Code session (CLAUDECODE=1 in nexus env). Path A (spawn hex-agent)
             // is used otherwise. Pre-extract fields before config is moved into the closure.
             let use_path_b = crate::orchestration::is_claude_code_session();
@@ -1203,10 +1203,10 @@ impl WorkplanExecutor {
             let path_b_model = config.model.clone().unwrap_or_default();
             let path_b_prompt = config.prompt.clone().unwrap_or_default();
             let path_b_phase_name = phase.name.clone();
-            // ADR-2604061100: capture done_command for post-completion verification
+            // ADR-2026-04-06-1100: capture done_command for post-completion verification
             let task_done_command = task.done_command.clone();
             let task_done_condition = task.done_condition.clone();
-            // ADR-2604270800 P0.1: capture for the file-evidence gate.
+            // ADR-2026-04-27-0800 P0.1: capture for the file-evidence gate.
             let task_files_for_evidence = task.files.clone();
             let task_project_dir = task.project_dir.clone();
             // Clone compile_command for the async move block
@@ -1214,7 +1214,7 @@ impl WorkplanExecutor {
 
             handles.push(tokio::spawn(async move {
                 let spawn_result = if use_path_c {
-                    // Path C (ADR-2604120202 P5.1): headless inference dispatch.
+                    // Path C (ADR-2026-04-12-0202 P5.1): headless inference dispatch.
                     // Route prompt directly through inference adapter → compile gate.
                     // No agent process spawned — faster and works with remote Ollama.
                     let inference_raw = inference_port.unwrap(); // safe: use_path_c checks is_some()
@@ -1261,7 +1261,7 @@ impl WorkplanExecutor {
                         "Path C: headless inference dispatch (scaffolded)"
                     );
 
-                    // ADR-2604120202 P5.1: Wrap inference in ScaffoldedDispatch for
+                    // ADR-2026-04-12-0202 P5.1: Wrap inference in ScaffoldedDispatch for
                     // T1/T2/T2.5 tasks. The scaffolding layer adds Best-of-N generation,
                     // compile-gate validation, and error-feedback retries — transparent
                     // to the executor. T3 tasks never reach Path C (filtered above).
@@ -1274,7 +1274,7 @@ impl WorkplanExecutor {
                         compile_checker,
                     );
 
-                    // ADR-2604241700: Graceful timeout for local models.
+                    // ADR-2026-04-24-1700: Graceful timeout for local models.
                     // Local Ollama can be slow (especially first call after idle).
                     // Use 5min timeout for Path C scaffolded dispatch.
                     let dispatch_result = tokio::time::timeout(
@@ -1325,7 +1325,7 @@ impl WorkplanExecutor {
                         }
                         Ok(Err(e)) => Err(format!("Path C inference failed: {}", e)),
                         Err(_elapsed) => {
-                            // ADR-2604241700: Timeout handling for slow local models.
+                            // ADR-2026-04-24-1700: Timeout handling for slow local models.
                             // Return a clear error instead of hanging indefinitely.
                             tracing::error!(
                                 task_id = %task_id,
@@ -1373,7 +1373,7 @@ impl WorkplanExecutor {
                         tracing::info!(queue_id = %queue_id, task_id = %task_id, "Path B: task enqueued, broadcast notification (no session found)");
                     }
                     // Poll STDB inference_task for completion (2s interval, faster than 5s memory poll)
-                    // Timeout is tier-specific (ADR-2604180001 P2): T1=30s, T2=120s, T2.5=300s, T3=600s
+                    // Timeout is tier-specific (ADR-2026-04-18-0001 P2): T1=30s, T2=120s, T2.5=300s, T3=600s
                     tracing::info!(
                         queue_id = %queue_id,
                         task_id = %task_id,
@@ -1390,7 +1390,7 @@ impl WorkplanExecutor {
                         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                         elapsed_secs += 2;
 
-                        // Emit heartbeat every 30 seconds for stall detection (ADR-2604180001 P3)
+                        // Emit heartbeat every 30 seconds for stall detection (ADR-2026-04-18-0001 P3)
                         if elapsed_secs - last_heartbeat >= heartbeat_interval {
                             tracing::info!(
                                 queue_id = %queue_id,
@@ -1448,7 +1448,7 @@ impl WorkplanExecutor {
                                 tier = ?task_tier,
                                 timeout_secs = timeout_secs,
                                 elapsed_secs = elapsed_secs,
-                                "Inference task timeout — killing stalled process (ADR-2604180001)"
+                                "Inference task timeout — killing stalled process (ADR-2026-04-18-0001)"
                             );
                             let _ = sp.inference_task_fail(&queue_id, "executor timeout", &now).await;
                             break Err(format!("inference task {} timed out after {}s (tier: {:?})", queue_id, timeout_secs, task_tier));
@@ -1461,7 +1461,7 @@ impl WorkplanExecutor {
                 };
                 match spawn_result {
                     Ok(agent) => {
-                        // ADR-2604271000 v2 shadow mode: agent has stopped successfully.
+                        // ADR-2026-04-27-1000 v2 shadow mode: agent has stopped successfully.
                         emit_workplan_event(
                             sp.as_ref(),
                             &workplan_id,
@@ -1474,7 +1474,7 @@ impl WorkplanExecutor {
                             }),
                         ).await;
 
-                        // ADR-2604061100: verify done_command before marking completed
+                        // ADR-2026-04-06-1100: verify done_command before marking completed
                         if let Some(ref cmd) = task_done_command {
                             let gate = Self::run_gate(cmd, &task_id).await;
                             // Always emit GateRun — the gate ran regardless of outcome.
@@ -1510,7 +1510,7 @@ impl WorkplanExecutor {
                             }
                         }
 
-                        // ADR-2604270800 P0.1: file-evidence gate. The agent claiming completion
+                        // ADR-2026-04-27-0800 P0.1: file-evidence gate. The agent claiming completion
                         // is not enough — verify files exist OR a commit references the task.
                         // Without this, an agent that exits 0 doing nothing is marked done.
                         let evidence_project_dir = task_project_dir
@@ -1576,7 +1576,7 @@ impl WorkplanExecutor {
                             result: None,
                         }).await;
 
-                        // ADR-2604100000: Task completion heartbeat
+                        // ADR-2026-04-10-0000: Task completion heartbeat
                         let task_end = chrono::Utc::now().to_rfc3339();
                         tracing::info!(
                             task_id = %task_id,
@@ -1585,7 +1585,7 @@ impl WorkplanExecutor {
                             "Task COMPLETE"
                         );
 
-                        // P5.1: Store task outcome in memory ledger (ADR-2604010000)
+                        // P5.1: Store task outcome in memory ledger (ADR-2026-04-01-0000)
                         let outcome_key = format!("workplan:{}:task:{}:outcome", workplan_id, task_id);
                         let outcome_val = serde_json::json!({
                             "task_id": task_id,
@@ -1598,7 +1598,7 @@ impl WorkplanExecutor {
                         Ok((task_id, agent.id))
                     }
                     Err(e) => {
-                        // ADR-2604271000 v2 shadow mode: agent failed to start /
+                        // ADR-2026-04-27-1000 v2 shadow mode: agent failed to start /
                         // exited non-zero — record AgentStopped with the error.
                         emit_workplan_event(
                             sp.as_ref(),
@@ -1618,7 +1618,7 @@ impl WorkplanExecutor {
                             agent_id: None,
                             result: Some(e.clone()),
                         }).await;
-                        // P5.1: Store task failure in memory ledger (ADR-2604010000)
+                        // P5.1: Store task failure in memory ledger (ADR-2026-04-01-0000)
                         let outcome_key = format!("workplan:{}:task:{}:outcome", workplan_id, task_id);
                         let outcome_val = serde_json::json!({
                             "task_id": task_id,
@@ -1913,7 +1913,7 @@ impl WorkplanExecutor {
         }
     }
 
-    /// ADR-2604270800 P0.1 / ADR-2604142200 actual: file-evidence gate.
+    /// ADR-2026-04-27-0800 P0.1 / ADR-2026-04-14-2200 actual: file-evidence gate.
     /// Before marking a task `completed`, verify the agent actually produced the
     /// listed files OR a commit since dispatch references the task. Returns
     /// `Ok(())` on green, `Err(reason)` on red. An empty `task_files` list with
@@ -1996,7 +1996,7 @@ impl WorkplanExecutor {
         Err(reason)
     }
 
-    /// ADR-2604051700 Gate 2: Pre-deletion consumer scan.
+    /// ADR-2026-04-05-1700 Gate 2: Pre-deletion consumer scan.
     /// Before a phase that deletes files/modules, grep the workspace for references.
     /// Returns a list of files that reference the deleted artifacts.
     async fn run_consumer_scan(phase: &WorkplanPhase) -> Vec<String> {
@@ -2064,7 +2064,7 @@ impl WorkplanExecutor {
         warnings
     }
 
-    /// ADR-2604102100: Poll for pending steering instructions for a given agent.
+    /// ADR-2026-04-10-2100: Poll for pending steering instructions for a given agent.
     /// Returns Some(instruction) if pending, None if nothing pending.
     /// The instruction is CONSUMED (removed) when polled — one-time use.
     pub async fn poll_steering_instructions(
@@ -2075,7 +2075,7 @@ impl WorkplanExecutor {
         instructions.remove(agent_id)
     }
 
-    /// ADR-2604102100: Check for steering instructions and react.
+    /// ADR-2026-04-10-2100: Check for steering instructions and react.
     /// Returns true if execution should continue, false if it should stop/pause.
     pub async fn check_steering(
         shared_state: &SharedState,
@@ -2316,7 +2316,7 @@ mod commit_subject_tests {
 
 #[cfg(test)]
 mod evidence_gate_tests {
-    //! ADR-2604270800 P0.1 regression tests for `check_evidence_gate`.
+    //! ADR-2026-04-27-0800 P0.1 regression tests for `check_evidence_gate`.
     //! Reproduces the 2026-04-27 false-done scenario: an agent exits 0
     //! without creating the listed files and without committing — the gate
     //! must reject (`Err(reason)`), not pass.

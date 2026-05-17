@@ -1,8 +1,8 @@
 {
-  "adr": "ADR-2604131500",
+  "adr": "ADR-2026-04-13-1500",
   "created_at": "2026-04-13T15:50:00Z",
   "created_by": "agent",
-  "description": "Close remaining gaps against ADR-2604131500: hex new command, decision defaults+reasoning, configurable deadlines, trust floor enforcement, hex override/pause commands.",
+  "description": "Close remaining gaps against ADR-2026-04-13-1500: hex new command, decision defaults+reasoning, configurable deadlines, trust floor enforcement, hex override/pause commands.",
   "feature": "AIOS Developer Experience — Phase 3 (ADR gap closure)",
   "id": "wp-aios-experience-p3",
   "phases": [

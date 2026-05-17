@@ -1,7 +1,7 @@
 //! Adapter implementing IInferenceRouterPort — routes inference requests
 //! to the best available agent based on model availability, load, and locality (ADR-040).
 //!
-//! Tier-aware model selection (ADR-2604120202 P1.2): when a request carries
+//! Tier-aware model selection (ADR-2026-04-12-0202 P1.2): when a request carries
 //! a `TaskTier`, the router overrides the model name from `TierModelConfig`
 //! before server selection. T3 requests without a configured frontier model
 //! fail early with a remediation hint.
@@ -117,7 +117,7 @@ impl IInferenceRouterPort for InferenceRouterAdapter {
         &self,
         request: CodeGenRequest,
     ) -> Result<CodeGenResult, TransportError> {
-        // Tier-aware model override (ADR-2604120202 P1.2).
+        // Tier-aware model override (ADR-2026-04-12-0202 P1.2).
         // When a tier is set, override the model from the tier→model mapping.
         // When no tier is set, fall back to the model in the request.
         let model = if let Some(tier) = request.tier {

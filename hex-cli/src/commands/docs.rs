@@ -694,7 +694,7 @@ mod tests {
     fn adr_id_extraction_handles_legacy_and_timestamp() {
         let p = std::path::Path::new("docs/adrs/ADR-047-internal-docs.md");
         assert_eq!(adr_id_from_filename(p), "ADR-047");
-        let p = std::path::Path::new("docs/adrs/ADR-2603221500-foo.md");
-        assert_eq!(adr_id_from_filename(p), "ADR-2603221500");
+        let p = std::path::Path::new("docs/adrs/ADR-2026-03-22-1500-foo.md");
+        assert_eq!(adr_id_from_filename(p), "ADR-2026-03-22-1500");
     }
 }

@@ -1,4 +1,4 @@
-//! Inference Gateway SpacetimeDB Module (ADR-035, ADR-2604050900 P2)
+//! Inference Gateway SpacetimeDB Module (ADR-035, ADR-2026-04-05-0900 P2)
 //!
 //! Routes ALL LLM inference through SpacetimeDB. Agents — including sandboxed
 //! Docker agents — write requests via `request_inference`, which immediately
@@ -6,7 +6,7 @@
 //! HTTP calls to LLM APIs directly inside SpacetimeDB — no external bridge
 //! required.
 //!
-//! **Sandboxed agent flow** (ADR-2604050900 Phase 2):
+//! **Sandboxed agent flow** (ADR-2026-04-05-0900 Phase 2):
 //!   1. Agent subscribes to `inference_response` filtered by its `agent_id`
 //!   2. Agent calls `request_inference` reducer with model/messages/tools
 //!   3. SpacetimeDB schedules `execute_inference` procedure (immediate tick)
@@ -119,7 +119,7 @@ pub struct InferenceProvider {
     /// ISO 8601 timestamp
     pub last_health_check: String,
     pub avg_latency_ms: u64,
-    /// Quantization tier: "q2", "q3", "q4", "q8", "fp16", "cloud" (ADR-2603271000)
+    /// Quantization tier: "q2", "q3", "q4", "q8", "fp16", "cloud" (ADR-2026-03-27-1000)
     pub quantization_level: String,
     /// Context window in tokens (0 = unknown)
     pub context_window: u32,
@@ -1016,7 +1016,7 @@ fn build_llm_request(
         "anthropic" => {
             let url = format!("{}/messages", provider.base_url.trim_end_matches('/'));
 
-            // Anthropic extended thinking support (ADR-2604050900 P2)
+            // Anthropic extended thinking support (ADR-2026-04-05-0900 P2)
             let thinking_fragment = if request.thinking_budget > 0 {
                 format!(
                     r#","thinking":{{"type":"enabled","budget_tokens":{}}}"#,

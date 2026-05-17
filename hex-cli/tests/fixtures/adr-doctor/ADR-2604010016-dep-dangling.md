@@ -1,4 +1,4 @@
-# ADR-2604010016: ADR pointing at a non-existent dependency
+# ADR-2026-04-01-0016: ADR pointing at a non-existent dependency
 
 **Status:** Accepted
 **Date:** 2026-04-16

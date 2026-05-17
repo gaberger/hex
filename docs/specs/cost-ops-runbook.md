@@ -74,7 +74,7 @@ This runbook defines **how the hex organization operates** around the cost and t
    - **Context bloat**: ground pack prefetch pulled 6× 32KB files → input token spike
    - **Output verbosity**: LLM generated 8KB response when 2KB sufficed → `max_tokens` too high
 3. **Immediate mitigation** (pick one):
-   - **Kill switch (persona-level)**: `export HEX_DISABLE_<PERSONA>=true` (e.g., `HEX_DISABLE_DRAFTER=true`) per ADR-2604142100 — disables that loop until operator re-enables
+   - **Kill switch (persona-level)**: `export HEX_DISABLE_<PERSONA>=true` (e.g., `HEX_DISABLE_DRAFTER=true`) per ADR-2026-04-14-2100 — disables that loop until operator re-enables
    - **Kill switch (twin/executor)**: `HEX_DISABLE_TWIN=true` or `HEX_DISABLE_ACTION_EXECUTOR=true` — pauses all twin reviews or all action execution
    - **Tier downgrade**: edit `cost-policy.yml` to force `local` tier for anomalous persona until root cause fixed
 4. **Post-incident**: COO drafts ADR if systemic (e.g., SOP contract needs tighter `max_tokens` enforcement), or CPO updates persona SOP if behavioral (e.g., drafter over-using `repo_grep`).
@@ -162,7 +162,7 @@ Anomaly detected → Review trace
 ## 7. References
 
 - **Product spec**: `docs/specs/cost-and-token-efficiency.md` (CPO-owned; defines UX surfaces)
-- **Kill switches**: ADR-2604142100 (persona disable flags)
+- **Kill switches**: ADR-2026-04-14-2100 (persona disable flags)
 - **Tier routing**: `hex-nexus/src/quant_router.rs` (CTO-owned implementation)
 - **Inference logging**: STDB `inference_log` schema (needs `cost_usd` column per product spec)
 

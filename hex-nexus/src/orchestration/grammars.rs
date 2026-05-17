@@ -1,5 +1,5 @@
 //! Built-in GBNF grammar definitions for constrained inference output
-//! (ADR-2604120202 Phase 2, task P3.3).
+//! (ADR-2026-04-12-0202 Phase 2, task P3.3).
 //!
 //! These grammars are passed to Ollama's `/api/generate` endpoint via the
 //! `grammar` field, which forwards them to llama.cpp's GBNF constrained

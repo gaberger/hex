@@ -1,4 +1,4 @@
-//! Digital-twin reviewer (ADR-2605082300).
+//! Digital-twin reviewer (ADR-2026-05-08-2300).
 //!
 //! Polls proposed_action.pending, reviews each against the operator's
 //! documented standards (memory dir + repo grounding), emits a verdict
@@ -379,7 +379,7 @@ async fn review_one(
     memory: &str,
     action: &PendingAction,
 ) -> Result<(), String> {
-    // ADR-2605121505 — adr_status_set is a typed, schema-bounded
+    // ADR-2026-05-12-1505 — adr_status_set is a typed, schema-bounded
     // mutation (one-line file edit + reason insertion). Twin gates it on
     // payload shape and target sanity, NOT through the LLM judge. The
     // executor re-validates against the on-disk file (status==Proposed,
@@ -397,7 +397,7 @@ async fn review_one(
     // still banned: they clobber real source files when the persona
     // hallucinates. operator-passthrough is fine because (a) the
     // operator typed the content explicitly and (b) the executor's
-    // inline cargo_check gate (ADR-2605110700 R1) still rolls
+    // inline cargo_check gate (ADR-2026-05-11-0700 R1) still rolls
     // back any .rs write that breaks the build, so a typo doesn't ship.
     if action.kind == "file_write" {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&action.payload_json) {
@@ -431,7 +431,7 @@ async fn review_one(
         }
     }
 
-    // ADR-2605082500: actions from the SOP path (proposed_by="tool:*") are
+    // ADR-2026-05-08-2500: actions from the SOP path (proposed_by="tool:*") are
     // already verified by the SOP's own Phase 4 + the tool's input schema.
     // The twin would just be a redundant LLM-judges-LLM gate that the ADR
     // explicitly killed. Auto-approve and let the executor consume it.
@@ -708,7 +708,7 @@ mod grounding_tests {
 
     #[test]
     fn detects_adr_id_hyphenated() {
-        assert!(content_has_grounding("see ADR-2605131500 for context"));
+        assert!(content_has_grounding("see ADR-2026-05-13-1500 for context"));
     }
 
     #[test]
@@ -840,7 +840,7 @@ async fn decide(
     Ok(())
 }
 
-/// ADR-2605121505 — twin gate for `adr_status_set` actions.
+/// ADR-2026-05-12-1505 — twin gate for `adr_status_set` actions.
 /// Pure payload-shape validation. The on-disk preconditions (file exists,
 /// current status is Proposed, path under docs/adrs/) are enforced by the
 /// executor at apply time so this gate can run without filesystem access.
@@ -914,7 +914,7 @@ mod adr_status_review_tests {
     #[test]
     fn approves_well_formed() {
         let p = serde_json::json!({
-            "adr_id": "ADR-2605090100",
+            "adr_id": "ADR-2026-05-09-0100",
             "new_status": "Accepted",
             "reason": "unblocks CTO code_patch legacy-ADR recognition",
         });
@@ -935,7 +935,7 @@ mod adr_status_review_tests {
     #[test]
     fn rejects_bad_status() {
         let p = serde_json::json!({
-            "adr_id": "ADR-2605090100",
+            "adr_id": "ADR-2026-05-09-0100",
             "new_status": "Approved",
             "reason": "x",
         });
@@ -945,7 +945,7 @@ mod adr_status_review_tests {
     #[test]
     fn rejects_empty_reason() {
         let p = serde_json::json!({
-            "adr_id": "ADR-2605090100",
+            "adr_id": "ADR-2026-05-09-0100",
             "new_status": "Abandoned",
             "reason": "   ",
         });
@@ -955,7 +955,7 @@ mod adr_status_review_tests {
     #[test]
     fn rejects_oversize_reason() {
         let p = serde_json::json!({
-            "adr_id": "ADR-2605090100",
+            "adr_id": "ADR-2026-05-09-0100",
             "new_status": "Accepted",
             "reason": "x".repeat(501),
         });

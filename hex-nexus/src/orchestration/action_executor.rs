@@ -185,7 +185,7 @@ async fn execute_file_write(
         .await;
     }
 
-    // ADR-2605110700 R1 — capture pre-write state so we can roll back if
+    // ADR-2026-05-11-0700 R1 — capture pre-write state so we can roll back if
     // cargo_check rejects the patch. Without this, autonomous SOP runs
     // accumulate broken state overnight (5 of 6 cycles on 2026-05-10 failed
     // cargo_check after this gate was advisory-only).
@@ -219,7 +219,7 @@ async fn execute_file_write(
         .await;
     }
 
-    // ADR-2605110700 R1 — hard verifier gate for Rust source files.
+    // ADR-2026-05-11-0700 R1 — hard verifier gate for Rust source files.
     // Run cargo_check on the affected crate immediately after write. If
     // errors, roll back to pre-write state and mark action failed. This
     // turns the cargo_check chain from advisory into authoritative.
@@ -324,7 +324,7 @@ async fn execute_file_write(
                     hex_db,
                     action.id,
                     &format!(
-                        "ADR-2605110700 R1: cargo_check failed on {} after write — rolled back. Errors: {}",
+                        "ADR-2026-05-11-0700 R1: cargo_check failed on {} after write — rolled back. Errors: {}",
                         crate_name,
                         errors_summary.chars().take(800).collect::<String>()
                     ),
@@ -637,7 +637,7 @@ async fn mark_failed(
     Ok(())
 }
 
-/// ADR-2605110700 R1 helper — derive workspace crate name from a repo-
+/// ADR-2026-05-11-0700 R1 helper — derive workspace crate name from a repo-
 /// relative path so we can scope cargo_check to one crate.
 fn infer_rust_crate(rel_path: &str) -> Option<&'static str> {
     if rel_path.starts_with("hex-nexus/src/") { Some("hex-nexus") }
@@ -650,7 +650,7 @@ fn infer_rust_crate(rel_path: &str) -> Option<&'static str> {
     else { None }
 }
 
-/// ADR-2605121505 — execute an `adr_status_set` action.
+/// ADR-2026-05-12-1505 — execute an `adr_status_set` action.
 ///
 /// Mutates a single ADR file under `docs/adrs/` by rewriting its `Status:`
 /// line and inserting a dated reason line after the `Date:` line. Refuses
@@ -757,7 +757,7 @@ async fn execute_adr_status_set(
 }
 
 /// Find the canonical ADR filename inside `docs/adrs/` by id prefix.
-/// e.g. `ADR-2605090100` resolves to `ADR-2605090100-adr-alias-table-...md`.
+/// e.g. `ADR-2026-05-09-0100` resolves to `ADR-2026-05-09-0100-adr-alias-table-...md`.
 fn resolve_adr_file(adr_dir: &Path, adr_id: &str) -> Result<PathBuf, String> {
     if !adr_dir.exists() {
         return Err(format!("dir not found: {}", adr_dir.display()));
@@ -873,9 +873,9 @@ mod adr_status_executor_tests {
     #[test]
     fn resolve_finds_canonical_filename() {
         let d = tmp_dir("resolve");
-        let target = d.join("ADR-2605090100-foo-bar.md");
+        let target = d.join("ADR-2026-05-09-0100-foo-bar.md");
         fs::write(&target, "x").unwrap();
-        let found = resolve_adr_file(&d, "ADR-2605090100").unwrap();
+        let found = resolve_adr_file(&d, "ADR-2026-05-09-0100").unwrap();
         assert_eq!(found, target);
         let _ = fs::remove_dir_all(&d);
     }

@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604170001, ADR-2604120202, ADR-2603240130",
+  "adr": "ADR-2026-04-17-0001, ADR-2026-04-12-0202, ADR-2026-03-24-0130",
   "created_at": "2026-04-17T14:30:00Z",
   "description": "Comprehensive validation of hex system on target deployment environment: system health, project execution, architecture enforcement, swarm coordination, and tiered inference routing with GPU acceleration.",
   "name": "wp-bazzite-e2e-arch-validation",
@@ -14,12 +14,12 @@
             "hex-cli/src/commands/bootstrap/mod.rs"
           ],
           "id": "P1-1",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Bootstrap complete stack on Bazzite"
         },
         {
-          "description": "ssh bazzite 'hex doctor composition'\nShould report: ✓ SpacetimeDB, ✓ hex-nexus, ✓ Ollama, ✓ CLAUDE_SESSION_ID (or standalone mode)",
+          "description": "ssh bazzite 'hex doctor composition'\nShould report: \u2713 SpacetimeDB, \u2713 hex-nexus, \u2713 Ollama, \u2713 CLAUDE_SESSION_ID (or standalone mode)",
           "files": [
             "hex-cli/src/commands/doctor/mod.rs"
           ],
@@ -34,7 +34,7 @@
             "hex-nexus/assets/"
           ],
           "id": "P1-3",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Verify nexus dashboard accessible"
         },
@@ -44,7 +44,7 @@
             "hex-cli/src/commands/inference/mod.rs"
           ],
           "id": "P1-4",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Check Ollama GPU inference working"
         }
@@ -61,7 +61,7 @@
             "examples/hex-task-tracker/"
           ],
           "id": "P2-1",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Clone hex-task-tracker on Bazzite"
         },
@@ -71,7 +71,7 @@
             "hex-cli/src/commands/analyze/mod.rs"
           ],
           "id": "P2-2",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Run hex analyze on project"
         },
@@ -263,6 +263,6 @@
     }
   ],
   "priority": "P1",
-  "status": "in_progress",
-  "title": "End-to-end hex architecture validation on Bazzite (GPU)"
+  "title": "End-to-end hex architecture validation on Bazzite (GPU)",
+  "status": "in_progress"
 }

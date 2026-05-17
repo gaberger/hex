@@ -1,6 +1,6 @@
 {
-  "adr": "ADR-2604151430",
-  "description": "Implement parallel worktree-isolated sched drain per ADR-2604151430. P1 introduces the slot table + max_parallel_drains config. P2 adds the worktree create/dispatch path (each running task gets feat/sched-drain/<task-id>/). P3 adds the static file-overlap conflict gate. P4 adds tier-aware throttles (T2.5, T3 caps). P5 adds gc-worktrees + post-merge cleanup. P6 covers tests, build, and docs.",
+  "adr": "ADR-2026-04-15-1430",
+  "description": "Implement parallel worktree-isolated sched drain per ADR-2026-04-15-1430. P1 introduces the slot table + max_parallel_drains config. P2 adds the worktree create/dispatch path (each running task gets feat/sched-drain/<task-id>/). P3 adds the static file-overlap conflict gate. P4 adds tier-aware throttles (T2.5, T3 caps). P5 adds gc-worktrees + post-merge cleanup. P6 covers tests, build, and docs.",
   "id": "wp-sched-parallel-worktree-drain",
   "phases": [
     {
@@ -72,7 +72,7 @@
           "id": "P2.2",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "On task success (evidence-guard passes per ADR-2604141400), sched daemon shells out to `hex worktree merge feat/sched-drain/<task-id>` to integrate. On merge success, run `hex worktree cleanup feat/sched-drain/<task-id>`. On merge failure, leave worktree, mark task failed with reason 'merge_failed: <stderr>'."
+          "title": "On task success (evidence-guard passes per ADR-2026-04-14-1400), sched daemon shells out to `hex worktree merge feat/sched-drain/<task-id>` to integrate. On merge success, run `hex worktree cleanup feat/sched-drain/<task-id>`. On merge failure, leave worktree, mark task failed with reason 'merge_failed: <stderr>'."
         },
         {
           "evidence": [
@@ -242,12 +242,12 @@
           "id": "P6.2",
           "status": "pending",
           "strategy_hint": "script",
-          "title": "Rebuild release binaries: cargo build -p hex-cli --release. Smoke: enqueue 2 disjoint dummy workplans, observe both promote concurrently in `hex sched queue list` (depends on ADR-2604151400 having shipped first \u2014 list this dependency in the workplan description)."
+          "title": "Rebuild release binaries: cargo build -p hex-cli --release. Smoke: enqueue 2 disjoint dummy workplans, observe both promote concurrently in `hex sched queue list` (depends on ADR-2026-04-15-1400 having shipped first \u2014 list this dependency in the workplan description)."
         },
         {
           "evidence": [
             "grep -n 'max_parallel_drains' CLAUDE.md",
-            "grep -n 'ADR-2604151430' CLAUDE.md"
+            "grep -n 'ADR-2026-04-15-1430' CLAUDE.md"
           ],
           "files": [
             "CLAUDE.md"
@@ -255,7 +255,7 @@
           "id": "P6.3",
           "status": "pending",
           "strategy_hint": "transform",
-          "title": "Update CLAUDE.md sched section: document max_parallel_drains, file-overlap gate, tier caps, gc-worktrees command. Cross-reference ADR-2604151430."
+          "title": "Update CLAUDE.md sched section: document max_parallel_drains, file-overlap gate, tier caps, gc-worktrees command. Cross-reference ADR-2026-04-15-1430."
         }
       ],
       "title": "Build + docs + smoke"

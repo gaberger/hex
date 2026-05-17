@@ -14,7 +14,7 @@ This skill can be invoked three ways:
 1. **Manually**: user runs `/hex-feature-dev` (explicit)
 2. **Draft pickup**: user has a pending draft from `hex plan drafts list` —
    read the draft's `prompt` field and start from Phase 1 using that prompt
-3. **Auto-invocation (ADR-2604110227)**: when `hex hook route` classifies a
+3. **Auto-invocation (ADR-2026-04-11-0227)**: when `hex hook route` classifies a
    user prompt as **T3 Workplan** and there is no active workplan, it
    auto-creates a draft stub at `docs/workplans/drafts/draft-*.json` and
    surfaces it in hook output via a one-line `[HEX]` banner. When you see

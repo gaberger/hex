@@ -41,10 +41,10 @@ pub enum AdrAction {
     Schema,
     /// Show behavioral specs linked to an ADR via workplans
     Specs {
-        /// ADR identifier (e.g. ADR-2603240130 or partial match like 2603240130)
+        /// ADR identifier (e.g. ADR-2026-03-24-0130 or partial match like 2603240130)
         adr_id: String,
     },
-    /// Self-consistency checker over docs/adrs/ (ADR-2604270800).
+    /// Self-consistency checker over docs/adrs/ (ADR-2026-04-27-0800).
     ///
     /// Detects unparseable status, duplicate IDs, dangling Depends-on links,
     /// stale Proposed ADRs, unlinked Superseded, and so on. Each finding is
@@ -52,7 +52,7 @@ pub enum AdrAction {
     /// the appropriate self-fix path. Exit 0 clean, 1 warnings only, 2 any
     /// error (or any finding under `--strict`).
     Doctor {
-        /// Apply tier-aware auto-fixes (ADR-2604270800 §1a). Tier-A
+        /// Apply tier-aware auto-fixes (ADR-2026-04-27-0800 §1a). Tier-A
         /// findings get shadow-promoted onto a `sched/auto-fix/...`
         /// branch; Tier-B findings get a draft notes file committed on
         /// a sibling branch for human review. The branches are *not*
@@ -96,7 +96,7 @@ pub async fn run(action: AdrAction) -> anyhow::Result<()> {
 /// Drive the doctor subcommand: detection → optional tier-aware fix →
 /// output → exit code.
 ///
-/// Detection is shared with the sched daemon (ADR-2604270800 §1) via
+/// Detection is shared with the sched daemon (ADR-2026-04-27-0800 §1) via
 /// `doctor::run`; the dispatch + rendering live here.
 ///
 ///   - `--fix`           → Tier A shadow-promote (no merge),
@@ -346,7 +346,7 @@ fn parse_enforced_by(content: &str) -> Option<String> {
 
 /// Extract the ADR ID from a filename stem. Handles three forms:
 ///   "ADR-059-foo"                    → "ADR-059"            (legacy sequential)
-///   "ADR-2603221500-foo"        → "ADR-2603221500" (hyphenated timestamp)
+///   "ADR-2026-03-22-1500-foo"        → "ADR-2026-03-22-1500" (hyphenated timestamp)
 ///   "ADR-2603221500-foo"             → "ADR-2603221500"     (legacy 10-digit)
 ///
 /// The naive split-on-hyphen previously returned "ADR-2026" for every
@@ -721,7 +721,7 @@ async fn schema() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Generate a timestamp-based ADR ID in YYMMDDHHMM format (ADR-2603221500).
+/// Generate a timestamp-based ADR ID in YYMMDDHHMM format (ADR-2026-03-22-1500).
 /// This eliminates race conditions from sequential max+1 numbering.
 fn generate_timestamp_adr_id() -> String {
     let now = chrono::Local::now();
@@ -1039,7 +1039,7 @@ mod tests {
         assert_eq!(parse_enforced_by("# ADR\n\nNo enforcement.\n"), None);
     }
 
-    // ── Timestamp ID tests (ADR-2603221500) ──
+    // ── Timestamp ID tests (ADR-2026-03-22-1500) ──
 
     #[test]
     fn extract_adr_id_legacy() {
@@ -1048,7 +1048,7 @@ mod tests {
 
     #[test]
     fn extract_adr_id_timestamp() {
-        assert_eq!(extract_adr_id("ADR-2603221500-timestamp-ADR-numbering"), "ADR-2603221500");
+        assert_eq!(extract_adr_id("ADR-2026-03-22-1500-timestamp-ADR-numbering"), "ADR-2026-03-22-1500");
     }
 
     #[test]
@@ -1071,10 +1071,10 @@ mod tests {
 
     #[test]
     fn extract_title_timestamp_adr() {
-        let path = std::path::Path::new("ADR-2603221500-test.md");
+        let path = std::path::Path::new("ADR-2026-03-22-1500-test.md");
         assert_eq!(
-            extract_title(path, "# ADR-2603221500: My Title\n"),
-            "ADR-2603221500: My Title"
+            extract_title(path, "# ADR-2026-03-22-1500: My Title\n"),
+            "ADR-2026-03-22-1500: My Title"
         );
     }
 }

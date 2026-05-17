@@ -125,9 +125,9 @@ Create a timestamped entry in `docs/ops-logs/ADR-sweep-YYYY-MM.md`:
 **Duration:** 28 min  
 **Tool failures:** None  
 **Actions:**
-- Accepted ADR-2605090100 (workspace-boundary-enforcement) — all P0-P2 tasks verified
+- Accepted ADR-2026-05-09-0100 (workspace-boundary-enforcement) — all P0-P2 tasks verified
 - Superseded ADR-018 (old inference port) → replaced by ADR-030
-- Flagged ADR-2604280900 (proposed 68 days) for operator review
+- Flagged ADR-2026-04-28-0900 (proposed 68 days) for operator review
 
 **Cost snapshot (30d):**
 - Total: $47.23

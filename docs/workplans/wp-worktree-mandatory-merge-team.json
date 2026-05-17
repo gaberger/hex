@@ -1,9 +1,9 @@
 {
   "id": "wp-worktree-mandatory-merge-team",
   "paused": true,
-  "paused_reason": "Foundation freeze workplan (ADR-2605081126). Resume only when operator manually unpauses; this workplan BUILDS the merge gate that all subsequent work depends on, so it must be executed deliberately by a single operator-controlled agent, not picked up by the brain queue. See docs/STATE-OF-HEX-2026-05-08.md.",
+  "paused_reason": "Foundation freeze workplan (ADR-2026-05-08-1126). Resume only when operator manually unpauses; this workplan BUILDS the merge gate that all subsequent work depends on, so it must be executed deliberately by a single operator-controlled agent, not picked up by the brain queue. See docs/STATE-OF-HEX-2026-05-08.md.",
   "title": "Worktree-Mandatory Development with Merge-Team Safety Gate",
-  "adr_ref": "ADR-2605081126",
+  "adr_ref": "ADR-2026-05-08-1126",
   "phases": [
     {
       "id": "P1",

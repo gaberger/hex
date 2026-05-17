@@ -1,8 +1,8 @@
 {
-  "adr": "ADR-2604261800",
+  "adr": "ADR-2026-04-26-1800",
   "created_at": "2026-04-26T20:00:00Z",
   "created_by": "claude+ADR-synthesis",
-  "description": "Phase 1 of ADR-2604261800. Produce a definitive audit of which package.json dependencies are actually used by scripts/ and which are vestigial. The audit document is the single output; it gates the package.json rewrite in P2 (separate workplan). No edits to package.json or CLAUDE.md in this phase — investigation only.",
+  "description": "Phase 1 of ADR-2026-04-26-1800. Produce a definitive audit of which package.json dependencies are actually used by scripts/ and which are vestigial. The audit document is the single output; it gates the package.json rewrite in P2 (separate workplan). No edits to package.json or CLAUDE.md in this phase — investigation only.",
   "feature": "Excise Phantom TypeScript Library — Phase 1 (Scripts Dep Audit)",
   "id": "wp-excise-ts-phantom-p1",
   "phases": [
@@ -33,7 +33,7 @@
           "deps": [
             "P1.1"
           ],
-          "description": "Cross-reference /tmp/scripts-imports.txt against the dependencies + devDependencies blocks of package.json. Produce docs/analysis/scripts-deps-audit.md with the following sections (verbatim headings): (1) `# Scripts Dependency Audit` — date, branch, commit hash. (2) `## Inventory` — table of every script file, its imports (grouped by bare-module), and shebang. (3) `## Used dependencies` — bullet list of package.json deps that have at least one bare-module import in scripts/. Each bullet cites the consuming file. (4) `## Unused dependencies` — bullet list of package.json deps with zero bare-module imports in scripts/. Each bullet flagged DROP. (5) `## Missing dependencies` — bullet list of bare-module imports that resolve to no package.json entry (would need adding, or imply a phantom). (6) `## Recommended dependencies` — the minimum set: union of used + missing, formatted as a JSON snippet ready to paste into package.json. (7) `## Open questions` — anything ambiguous (e.g. transitive needs, optional native modules). The doc is the contract for ADR-2604261800 P2.",
+          "description": "Cross-reference /tmp/scripts-imports.txt against the dependencies + devDependencies blocks of package.json. Produce docs/analysis/scripts-deps-audit.md with the following sections (verbatim headings): (1) `# Scripts Dependency Audit` — date, branch, commit hash. (2) `## Inventory` — table of every script file, its imports (grouped by bare-module), and shebang. (3) `## Used dependencies` — bullet list of package.json deps that have at least one bare-module import in scripts/. Each bullet cites the consuming file. (4) `## Unused dependencies` — bullet list of package.json deps with zero bare-module imports in scripts/. Each bullet flagged DROP. (5) `## Missing dependencies` — bullet list of bare-module imports that resolve to no package.json entry (would need adding, or imply a phantom). (6) `## Recommended dependencies` — the minimum set: union of used + missing, formatted as a JSON snippet ready to paste into package.json. (7) `## Open questions` — anything ambiguous (e.g. transitive needs, optional native modules). The doc is the contract for ADR-2026-04-26-1800 P2.",
           "files": [
             "docs/analysis/scripts-deps-audit.md"
           ],

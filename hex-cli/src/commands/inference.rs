@@ -1,7 +1,7 @@
 //! `hex inference` — Manage inference providers (Ollama, vLLM, etc.)
 //!
 //! Register, list, and test self-hosted LLM endpoints.
-//! Supports template-based registration for known free-tier providers (ADR-2604052125).
+//! Supports template-based registration for known free-tier providers (ADR-2026-04-05-2125).
 //!
 //! Usage:
 //!   hex inference add groq --key $GROQ_API_KEY          # Template-based (auto-registers all models)
@@ -19,10 +19,10 @@ use colored::Colorize;
 use crate::assets::Assets;
 use crate::nexus_client::NexusClient;
 
-/// Known free-tier provider template names (ADR-2604052125).
+/// Known free-tier provider template names (ADR-2026-04-05-2125).
 const PROVIDER_TEMPLATES: &[&str] = &["groq", "cerebras", "sambanova", "together", "openrouter", "ollama"];
 
-/// Parsed provider template from YAML (ADR-2604052125).
+/// Parsed provider template from YAML (ADR-2026-04-05-2125).
 #[derive(Debug, serde::Deserialize)]
 struct ProviderTemplate {
     name: String,
@@ -147,7 +147,7 @@ pub enum InferenceAction {
     },
     /// List pending inference queue tasks
     Queue,
-    /// Show inference cost attribution and provider statistics (ADR-2604052125)
+    /// Show inference cost attribution and provider statistics (ADR-2026-04-05-2125)
     Stats,
     /// Show escalation rates per task-tier and model (P4.2 — escalation tracking)
     EscalationReport {
@@ -184,7 +184,7 @@ pub enum InferenceAction {
         #[arg(long)]
         watch: bool,
     },
-    /// Benchmark a model: code-gen, reasoning, and identity prompts — quality + speed + tier recommendation (ADR-2604131238)
+    /// Benchmark a model: code-gen, reasoning, and identity prompts — quality + speed + tier recommendation (ADR-2026-04-13-1238)
     Bench {
         /// Provider ID, model name, or URL (e.g. "bazzite-ollama", "minimax-m2.7:cloud", "http://bazzite:11434")
         target: String,
@@ -246,7 +246,7 @@ async fn write_inference_cache() {
 pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
     match action {
         InferenceAction::Add { provider_type, url, model, key, id, quantization } => {
-            // Check if provider_type is a known template name (ADR-2604052125)
+            // Check if provider_type is a known template name (ADR-2026-04-05-2125)
             if PROVIDER_TEMPLATES.contains(&provider_type.as_str()) && url.is_none() {
                 add_from_template(&provider_type, key.as_deref(), id.as_deref()).await
             } else {
@@ -441,7 +441,7 @@ async fn add_provider(
 
     let models_json = serde_json::to_string(&discovered_models).unwrap_or_else(|_| format!("[\"{}\"]", model_name));
 
-    // Resolve quantization level (ADR-2603271000):
+    // Resolve quantization level (ADR-2026-03-27-1000):
     // 1. Explicit --quantization flag
     // 2. Auto-detect from model name GGUF tag
     // 3. Default: "cloud" for API providers, "q4" for local
@@ -524,7 +524,7 @@ async fn add_provider(
     Ok(())
 }
 
-/// Register a provider from a built-in template (ADR-2604052125).
+/// Register a provider from a built-in template (ADR-2026-04-05-2125).
 ///
 /// Reads the YAML template from embedded assets, resolves the API key from
 /// --key flag or environment variable, and registers all models with correct
@@ -626,12 +626,12 @@ async fn add_from_template(
     Ok(())
 }
 
-/// Discover all free-tier providers by checking env vars (ADR-2604052125).
+/// Discover all free-tier providers by checking env vars (ADR-2026-04-05-2125).
 ///
 /// Probes known free-tier providers (Groq, Cerebras, SambaNova, Together, OpenRouter)
 /// for API keys in environment variables and registers all discovered providers.
 async fn discover_free_tier() -> anyhow::Result<()> {
-    println!("{}", "── Discovering Free-Tier Inference Providers (ADR-2604052125) ──".cyan());
+    println!("{}", "── Discovering Free-Tier Inference Providers (ADR-2026-04-05-2125) ──".cyan());
     println!();
 
     let mut discovered = 0u32;
@@ -707,10 +707,10 @@ async fn discover_free_tier() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Show inference cost attribution and provider statistics (ADR-2604052125).
+/// Show inference cost attribution and provider statistics (ADR-2026-04-05-2125).
 async fn inference_stats() -> anyhow::Result<()> {
     let client = NexusClient::from_env();
-    println!("{}", "── Inference Cost Attribution (ADR-2604052125) ──".cyan());
+    println!("{}", "── Inference Cost Attribution (ADR-2026-04-05-2125) ──".cyan());
     println!();
 
     if client.ensure_running().await.is_err() {
@@ -1899,7 +1899,7 @@ async fn queue_list() -> anyhow::Result<()> {
     Ok(())
 }
 
-// ── Bench command (ADR-2604131238) ──────────────────────────────────────────
+// ── Bench command (ADR-2026-04-13-1238) ──────────────────────────────────────────
 
 /// Result of a single benchmark prompt.
 #[allow(dead_code)]
@@ -2002,7 +2002,7 @@ fn count_grounded(text: &str) -> usize {
 async fn bench_persona_chat(
     http: &reqwest::Client, url: &str, ptype: &str, model: &str,
 ) -> anyhow::Result<BenchResult> {
-    let system = "You are CTO. Answer in 2-3 sentences. Cite a real ADR id (ADR-2605082500 form) or repo path (docs/specs/X.md). \
+    let system = "You are CTO. Answer in 2-3 sentences. Cite a real ADR id (ADR-2026-05-08-2500 form) or repo path (docs/specs/X.md). \
                   Do NOT begin with: 'We are', 'The user', 'Let me', 'Looking at'. Just answer.";
     let user = "Status: shipped today, in flight, top concern.";
     let (response, tokens, wall) = bench_chat(http, url, ptype, model, &format!("{}\n\nUser: {}", system, user)).await?;
@@ -2255,7 +2255,7 @@ fn print_bench_results(model: &str, results: &[BenchResult], label: Option<&str>
     // score is computed inline
 }
 
-/// `hex inference bench` — benchmark a model with hex-specific prompts (ADR-2604131238).
+/// `hex inference bench` — benchmark a model with hex-specific prompts (ADR-2026-04-13-1238).
 async fn bench_provider(
     target: &str,
     model_override: Option<&str>,

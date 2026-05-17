@@ -151,7 +151,7 @@ pub fn create_default_state_backend() -> Result<Arc<dyn IStatePort>, StateError>
     create_state_backend(&config)
 }
 
-// ── Decision Deadline Configuration (ADR-2604131500 P1.2) ───
+// ── Decision Deadline Configuration (ADR-2026-04-13-1500 P1.2) ───
 
 /// Default decision deadline in seconds (2 hours per ADR).
 const DEFAULT_DECISION_DEADLINE_SECS: u64 = 7200;
@@ -161,7 +161,7 @@ const DEFAULT_DECISION_DEADLINE_SECS: u64 = 7200;
 /// Priority:
 /// 1. `HEX_DECISION_DEADLINE_SECS` env var
 /// 2. `.hex/project.json` → `decision.deadline_secs`
-/// 3. Default: 7200 (2 hours per ADR-2604131500)
+/// 3. Default: 7200 (2 hours per ADR-2026-04-13-1500)
 pub fn resolve_decision_deadline_secs() -> u64 {
     // 1. Environment variable (highest precedence)
     if let Ok(val) = std::env::var("HEX_DECISION_DEADLINE_SECS") {
@@ -208,7 +208,7 @@ pub fn resolve_decision_deadline_secs() -> u64 {
 
 /// Like `create_default_state_backend` but wires an `InferenceTxBus` so that
 /// `inference_task_create` broadcasts to /ws/inference subscribers immediately
-/// on insert (ADR-2604011200 P2.T3).
+/// on insert (ADR-2026-04-01-1200 P2.T3).
 pub fn create_default_state_backend_with_inference(
     inference_tx: crate::state::InferenceTxBus,
 ) -> Result<Arc<dyn IStatePort>, StateError> {

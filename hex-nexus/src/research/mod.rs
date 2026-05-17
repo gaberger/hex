@@ -1,4 +1,4 @@
-//! Research analysts for the idle-research swarm (ADR-2604151200).
+//! Research analysts for the idle-research swarm (ADR-2026-04-15-1200).
 //!
 //! Each submodule implements one deterministic, code-first analyst that
 //! shells out to existing tooling, parses its output, and emits

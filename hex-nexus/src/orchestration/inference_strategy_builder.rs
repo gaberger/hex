@@ -1,6 +1,6 @@
 //! InferenceStrategyBuilder — materializes `Arc<dyn IInferencePort>` from a
 //! JSON spec carried by a substrate swap proposal
-//! (ADR-2604261801 P3, wp-substrate-inference-consumer-rewires P3).
+//! (ADR-2026-04-26-1801 P3, wp-substrate-inference-consumer-rewires P3).
 //!
 //! When an operator proposes a swap via `hex substrate swap-inference`
 //! (P4.1), the CLI passes a JSON `InferenceStrategySpec`. The builder turns

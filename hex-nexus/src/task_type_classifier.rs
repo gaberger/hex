@@ -1,4 +1,4 @@
-//! Task-type-aware inference routing (ADR-2604142000).
+//! Task-type-aware inference routing (ADR-2026-04-14-2000).
 //!
 //! Complements `score_complexity()` with task-type signals that require a
 //! minimum inference tier regardless of prompt length. Shell command generation,
@@ -55,7 +55,7 @@ pub struct TaskTypeResult {
 
 /// Classify a prompt and return the task type + minimum required tier as a tuple.
 ///
-/// Thin ergonomic shim over [`classify_task_type`] matching the ADR-2604142000
+/// Thin ergonomic shim over [`classify_task_type`] matching the ADR-2026-04-14-2000
 /// surface: `classify(prompt) -> Option<(TaskType, TaskTier)>`.
 pub fn classify(prompt: &str) -> Option<(TaskType, TaskTier)> {
     classify_task_type(prompt).map(|r| (r.task_type, r.raised_tier))

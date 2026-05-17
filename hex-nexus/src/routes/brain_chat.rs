@@ -231,7 +231,7 @@ fn prefetch_files_in_message(message: &str, project_root: &str) -> Option<String
         // Special case: bare ADR-XXX or ADR-XXX-slug references — auto-resolve
         // to docs/adrs/ADR-XXX*.md by glob. Operators (and agents) commonly
         // refer to ADRs by id without the path or extension. Matches:
-        //   ADR-047, ADR-2603312340, ADR-047-internal-documentation-system
+        //   ADR-047, ADR-2026-03-31-2340, ADR-047-internal-documentation-system
         let upper = cleaned.to_ascii_uppercase();
         if upper.starts_with("ADR-") && upper.len() > 4 {
             let adrs_dir = canonical_root.join("docs/adrs");

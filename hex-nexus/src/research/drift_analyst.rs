@@ -2,7 +2,7 @@
 //!
 //! Detects mismatches between workplan claims and reality:
 //! - **Status drift** — a task says `status: done` but its declared `files[]`
-//!   are missing on disk (the failure mode that prompted ADR-2604142200).
+//!   are missing on disk (the failure mode that prompted ADR-2026-04-14-2200).
 //! - **Missing files** — a task declares files that don't yet exist regardless
 //!   of status (informational; these are tasks not yet started).
 //!

@@ -1,7 +1,7 @@
 {
   "id": "wp-substrate-inference-consumer-rewires",
-  "feature": "Substrate inference consumer rewires (ADR-2604261801 P2-P5)",
-  "adr": "ADR-2604261800",
+  "feature": "Substrate inference consumer rewires (ADR-2026-04-26-1801 P2-P5)",
+  "adr": "ADR-2026-04-26-1800",
   "created_at": "2026-04-26T18:00:00Z",
   "created_by": "human+claude",
   "description": "Land the per-consumer opt-in rewires that turn the substrate from 'wired but bypassed' to 'production traffic flows through it' for the inference port. Each rewire is small, additive, and falls back to direct inference_port.complete when shadow_router is unavailable — substrate is never load-bearing in this slice.",
@@ -50,7 +50,7 @@
           "deps": ["P1.1"],
           "layer": "secondary",
           "status": "done",
-          "notes": "MOOT — architectural finding: agent_manager does NOT directly invoke inference_port.complete(). It spawns hex-agent processes; inference happens inside those agents over their own STDB inference-task path. The complete production-inference call-site map is: (1) workplan_executor — substrate-wrapped via P1.1; (2) scaffolding.rs:199 (self.inference.complete) — already substrate-routed because workplan_executor passes the wrapped Arc into ScaffoldedDispatch::new; (3) scaffolding.rs:255 (frontier.complete) — only fires when a frontier adapter is wired (not in production today; future substrate port); (4) inference_router/mod.rs:295 — explicitly EXCLUDED by ADR-2604261801 (strategy-level binding, not server-level). Production inference is therefore 100% substrate-covered via the single P1.1 wrapper."
+          "notes": "MOOT — architectural finding: agent_manager does NOT directly invoke inference_port.complete(). It spawns hex-agent processes; inference happens inside those agents over their own STDB inference-task path. The complete production-inference call-site map is: (1) workplan_executor — substrate-wrapped via P1.1; (2) scaffolding.rs:199 (self.inference.complete) — already substrate-routed because workplan_executor passes the wrapped Arc into ScaffoldedDispatch::new; (3) scaffolding.rs:255 (frontier.complete) — only fires when a frontier adapter is wired (not in production today; future substrate port); (4) inference_router/mod.rs:295 — explicitly EXCLUDED by ADR-2026-04-26-1801 (strategy-level binding, not server-level). Production inference is therefore 100% substrate-covered via the single P1.1 wrapper."
         }
       ]
     },

@@ -1,6 +1,6 @@
 # Standalone Pipeline Smoke Test
 
-End-to-end test for hex's tiered inference routing (ADR-2604120202).
+End-to-end test for hex's tiered inference routing (ADR-2026-04-12-0202).
 
 Sends code generation tasks at each tier to the mapped local model via Ollama,
 then validates output with string matching (T1) or `rustc` compile gates (T2/T2.5).

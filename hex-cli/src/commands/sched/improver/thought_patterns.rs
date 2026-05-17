@@ -38,7 +38,7 @@ const ADR_REPETITION_ERROR_COUNT: usize = 5;
 const FRUSTRATION_SPIKE_MIN: usize = 5;
 const FRUSTRATION_SPIKE_ERROR: usize = 10;
 
-/// Match canonical hyphenated ADR IDs (`ADR-2605082500`).
+/// Match canonical hyphenated ADR IDs (`ADR-2026-05-08-2500`).
 /// We deliberately *don't* match legacy `ADR-NNN` short form — those produce
 /// too many false positives against arbitrary numbers in body text.
 fn adr_re() -> &'static Regex {
@@ -190,16 +190,16 @@ mod tests {
 
     #[test]
     fn single_adr_reference_does_not_fire() {
-        let t = vec![thought(1, "cto", "decision", "ADR-2605082500 is the spine")];
+        let t = vec![thought(1, "cto", "decision", "ADR-2026-05-08-2500 is the spine")];
         assert!(detect_in(&t).is_empty());
     }
 
     #[test]
     fn three_mentions_one_role_does_not_fire() {
         let t = vec![
-            thought(1, "cto", "decision", "ADR-2605082500 is the spine"),
-            thought(2, "cto", "decision", "we need to close ADR-2605082500"),
-            thought(3, "cto", "decision", "ADR-2605082500 status pending"),
+            thought(1, "cto", "decision", "ADR-2026-05-08-2500 is the spine"),
+            thought(2, "cto", "decision", "we need to close ADR-2026-05-08-2500"),
+            thought(3, "cto", "decision", "ADR-2026-05-08-2500 status pending"),
         ];
         // ≥3 mentions but only 1 role → does not fire (the min-roles guard).
         assert!(detect_in(&t).is_empty());
@@ -208,14 +208,14 @@ mod tests {
     #[test]
     fn three_mentions_two_roles_fires_warning() {
         let t = vec![
-            thought(1, "cto", "decision", "ADR-2605082500 is the spine"),
-            thought(2, "cpo", "decision", "cost spec depends on ADR-2605082500"),
-            thought(3, "ciso", "decision", "ADR-2605082500 needs A01 follow-up"),
+            thought(1, "cto", "decision", "ADR-2026-05-08-2500 is the spine"),
+            thought(2, "cpo", "decision", "cost spec depends on ADR-2026-05-08-2500"),
+            thought(3, "ciso", "decision", "ADR-2026-05-08-2500 needs A01 follow-up"),
         ];
         let f = detect_in(&t);
         assert_eq!(f.len(), 1);
         assert_eq!(f[0]["pattern"], "adr_repetition");
-        assert_eq!(f[0]["scope"], "ADR-2605082500");
+        assert_eq!(f[0]["scope"], "ADR-2026-05-08-2500");
         assert_eq!(f[0]["severity"], "warning");
         assert_eq!(f[0]["count"], 3);
     }
@@ -225,7 +225,7 @@ mod tests {
         let t: Vec<Value> = (0..6)
             .map(|i| {
                 let role = if i % 2 == 0 { "cto" } else { "cpo" };
-                thought(i, role, "decision", "ADR-2605082500 again")
+                thought(i, role, "decision", "ADR-2026-05-08-2500 again")
             })
             .collect();
         let f = detect_in(&t);
@@ -247,8 +247,8 @@ mod tests {
     #[test]
     fn duplicated_adr_in_single_thought_counts_once() {
         let t = vec![
-            thought(1, "cto", "decision", "ADR-2605082500 and ADR-2605082500"),
-            thought(2, "cpo", "decision", "ADR-2605082500 mentioned"),
+            thought(1, "cto", "decision", "ADR-2026-05-08-2500 and ADR-2026-05-08-2500"),
+            thought(2, "cpo", "decision", "ADR-2026-05-08-2500 mentioned"),
         ];
         // Only 2 thoughts mention the ADR; doesn't reach min-count of 3.
         assert!(detect_in(&t).is_empty());

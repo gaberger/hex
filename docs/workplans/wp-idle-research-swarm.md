@@ -1,6 +1,6 @@
 # wp-idle-research-swarm — Idle Research Swarm
 
-**ADR:** [ADR-2604151200 — Idle Research Swarm](../adrs/ADR-2604151200-idle-research-swarm.md)
+**ADR:** [ADR-2026-04-15-1200 — Idle Research Swarm](../adrs/ADR-2026-04-15-1200-idle-research-swarm.md)
 **Status:** Stub
 **Companion JSON:** [`wp-idle-research-swarm.json`](./wp-idle-research-swarm.json)
 
@@ -49,11 +49,11 @@ Detailed task graph lives in `wp-idle-research-swarm.json`. High-level phases:
 
 ## Dependencies
 
-- **ADR-2604151200** (this feature's decision record).
-- **ADR-2604142345** — insight routing (findings must route to drafts, not dead `.md`).
-- **ADR-2604141400** — sched queue swarm-lease (single-writer guarantee for self-enqueue).
-- **ADR-2604131630** — code-first execution (T1 deterministic gating before T2/T2.5 inference).
-- **ADR-2604110227** — task-tier routing (T1/T2/T2.5 dispatch).
+- **ADR-2026-04-15-1200** (this feature's decision record).
+- **ADR-2026-04-14-2345** — insight routing (findings must route to drafts, not dead `.md`).
+- **ADR-2026-04-14-1400** — sched queue swarm-lease (single-writer guarantee for self-enqueue).
+- **ADR-2026-04-13-1630** — code-first execution (T1 deterministic gating before T2/T2.5 inference).
+- **ADR-2026-04-11-0227** — task-tier routing (T1/T2/T2.5 dispatch).
 - Existing CLI surfaces: `hex analyze`, `hex plan reconcile`, `hex plan drafts`, `hex memory store`.
 - Local Ollama tier models per `.hex/project.json` → `inference.tier_models`.
 - `serde_yaml` for the structured finding schema.

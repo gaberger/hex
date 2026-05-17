@@ -243,7 +243,7 @@ fn conversational_prompt(role: &str) -> String {
          'I will respond', 'First,', 'Looking at', 'Key points', 'Note:'. \
          These are pre-answer narration. Skip straight to the answer.\n\n\
          === EXAMPLE (the only valid shape) ===\n\
-         Shipped: docs/specs/cost-runbook.md. In flight: ADR-2605082500 \
+         Shipped: docs/specs/cost-runbook.md. In flight: ADR-2026-05-08-2500 \
          pipeline integration. Concern: 3 active persona rollbacks per \
          /persona-health.\n\n\
          Begin your reply with the first character of your answer. Now."
@@ -252,7 +252,7 @@ fn conversational_prompt(role: &str) -> String {
 
 /// Persona-flavoured system prompt for replies.
 ///
-/// Per ADR-2605082400, personas are commitment-creators, not artifact-
+/// Per ADR-2026-05-08-2400, personas are commitment-creators, not artifact-
 /// producers. Output is restricted to ONE Confirm: line OR the literal
 /// string "Silent". Anything else is dropped at the parser.
 ///
@@ -305,7 +305,7 @@ fn persona_prompt(role: &str) -> String {
          artifact is produced — that is correct when you genuinely have nothing concrete to add.\n\n\
          === EXAMPLES (these are the ONLY valid output shapes) ===\n\
          Confirm: I ({role}) will write docs/specs/cost-runbook.md by EOD — success: docs/specs/cost-runbook.md\n\
-         Confirm: I ({role}) will draft ADR-2605120900-pool-rebalance by EOW — success: docs/adrs/ADR-2605120900-pool-rebalance.md\n\
+         Confirm: I ({role}) will draft ADR-2026-05-12-0900-pool-rebalance by EOW — success: docs/adrs/ADR-2026-05-12-0900-pool-rebalance.md\n\
          Confirm: I ({role}) will patch hex-cli/src/commands/plan.rs in 2h — success: hex-cli/src/commands/plan.rs\n\
          Silent\n\n\
          Begin your reply with the first character now. No preface."
@@ -505,7 +505,7 @@ async fn process_role(
             g.mark(role, msg_id);
         }
 
-        // ADR-2605082400 atomic-claim: only the first persona to call
+        // ADR-2026-05-08-2400 atomic-claim: only the first persona to call
         // claim_persona_turn(thread_id) gets to emit a Confirm. Others
         // mark the message read and stay silent — no inference burned.
         // Bilateral DMs (no thread_id) skip the claim and proceed.
@@ -545,7 +545,7 @@ async fn process_role(
             "org_responder: replying to unanswered DM"
         );
 
-        // ADR-2605082500: SOP-enabled personas route to the new typed
+        // ADR-2026-05-08-2500: SOP-enabled personas route to the new typed
         // tool path instead of the free-prose Confirm/Silent contract.
         if crate::orchestration::sop_executor::is_sop_persona(role) {
             let repo_root = std::env::var("HEX_REPO_ROOT")
@@ -633,7 +633,7 @@ async fn process_role(
             continue;
         }
 
-        // ADR-2605082400 strict output filter applies ONLY to commitment-
+        // ADR-2026-05-08-2400 strict output filter applies ONLY to commitment-
         // mode replies. Conversational replies (chat_mode=true) bypass the
         // parser and ship verbatim.
         let trimmed_reply = reply.trim();
@@ -665,11 +665,11 @@ async fn process_role(
         persona.record_success(role).await;
         replied.lock().await.clear_failures(role, msg_id);
 
-        // ADR-2605082400 Silent sentinel — applies to commitment-mode
+        // ADR-2026-05-08-2400 Silent sentinel — applies to commitment-mode
         // DMs only. Conversational replies ship verbatim even if they happen
         // to start with the word "silent".
         //
-        // ADR-2605172030 Phase 1: Silent is ILLEGAL for from=operator.
+        // ADR-2026-05-17-2030 Phase 1: Silent is ILLEGAL for from=operator.
         // Operator-direct asks must produce action or surfaced escalation —
         // never silent drop. Convert to a structured decline DM back to
         // operator so the ask is visible, not buried in a log line.
@@ -678,7 +678,7 @@ async fn process_role(
                 tracing::warn!(
                     role = %role,
                     msg_id,
-                    "org_responder: persona chose Silent on operator-direct ask — escalating as decline DM (Silent banned for from=operator per ADR-2605172030)"
+                    "org_responder: persona chose Silent on operator-direct ask — escalating as decline DM (Silent banned for from=operator per ADR-2026-05-17-2030)"
                 );
                 let decline = format!(
                     "Decline: I cannot answer this ask from my current context. \
@@ -844,7 +844,7 @@ async fn generate_reply(
     // Augment system prompt with the persona's recent thoughts so it
     // can reference its own prior reasoning ("why did I say X earlier").
     let mut system = if chat_mode { conversational_prompt(role) } else { persona_prompt(role) };
-    // ADR-2605082400 retired the board-meeting PLAN/Amend/Silent protocol.
+    // ADR-2026-05-08-2400 retired the board-meeting PLAN/Amend/Silent protocol.
     // Atomic claim_persona_turn now ensures only one persona inferences per
     // thread; that single persona uses the strict Confirm/Silent prompt
     // from persona_prompt(). is_board is preserved for one minor hint only.
@@ -1071,7 +1071,7 @@ fn truncate(s: &str, n: usize) -> String {
     format!("{}…", &s[..end])
 }
 
-/// Atomic claim of a thread for a single persona (ADR-2605082400).
+/// Atomic claim of a thread for a single persona (ADR-2026-05-08-2400).
 /// Returns true if THIS role won the claim; false if a peer already
 /// holds it (caller should stay silent + mark_read).
 async fn try_claim_thread(thread_id: &str, role: &str, originating_msg_id: u64) -> bool {

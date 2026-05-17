@@ -1,4 +1,4 @@
-//! C3 — First-class per-port telemetry (per ADR-2604261500).
+//! C3 — First-class per-port telemetry (per ADR-2026-04-26-1500).
 //!
 //! Every port trait declares its metrics shape via `PortTelemetry`. Adapter
 //! authors use `PortTelemetry::emit` instead of free-form logging; the

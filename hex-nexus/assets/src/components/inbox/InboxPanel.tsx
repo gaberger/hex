@@ -3,7 +3,7 @@
  *
  * Displays notifications from SpacetimeDB agent_inbox table.
  * Priority-2 (critical) notifications are highlighted.
- * Acknowledge via SpacetimeDB reducer (ADR-060, ADR-2603231309).
+ * Acknowledge via SpacetimeDB reducer (ADR-060, ADR-2026-03-23-1309).
  */
 import { Component, For, Show, createMemo } from "solid-js";
 import { agentInbox, getHexfloConn } from "../../stores/connection";

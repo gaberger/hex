@@ -1,4 +1,4 @@
-//! Emergency override (ADR-2604131500 §1 Layer 4).
+//! Emergency override (ADR-2026-04-13-1500 §1 Layer 4).
 //! `hex override <project> "<instruction>"` — sends priority-2 notification to all agents.
 
 use colored::Colorize;

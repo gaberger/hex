@@ -17,7 +17,7 @@
           "id": "P0.1",
           "layer": "ports",
           "name": "Implement memory_search.rs tool with AppState dependency",
-          "status": "pending"
+          "status": "done"
         },
         {
           "files": [
@@ -43,7 +43,7 @@
           "id": "P1.1",
           "layer": "usecases",
           "name": "Pass Arc<AppState> into sop_executor::run() signature",
-          "status": "pending"
+          "status": "done"
         },
         {
           "files": [
@@ -52,7 +52,7 @@
           "id": "P1.2",
           "layer": "usecases",
           "name": "Inject MemorySearch into registry clone in reason_with_tools()",
-          "status": "pending"
+          "status": "done"
         },
         {
           "files": [
@@ -61,7 +61,7 @@
           "id": "P1.3",
           "layer": "usecases",
           "name": "Auto-call memory_search in ground_for_intent() before returning ground_pack",
-          "status": "pending"
+          "status": "done"
         },
         {
           "files": [
@@ -88,7 +88,7 @@
           "id": "P2.1",
           "layer": "integration",
           "name": "Run cargo check --workspace",
-          "status": "pending"
+          "status": "done"
         },
         {
           "files": [

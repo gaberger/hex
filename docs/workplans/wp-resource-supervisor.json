@@ -1,7 +1,7 @@
 {
   "id": "wp-resource-supervisor",
   "title": "Resource-aware supervisor (process_observation + tick + observer)",
-  "adr": "ADR-2605082200",
+  "adr": "ADR-2026-05-08-2200",
   "status": "in_progress",
   "paused": false,
   "phases": [

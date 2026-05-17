@@ -1,7 +1,7 @@
 //! In-memory mock for [`IInferencePort`].
 //!
 //! `MockInferencePort` is used by P2 (standalone composition tests) and P5
-//! (acceptance gate) from ADR-2604112000. It has no network, no subprocess,
+//! (acceptance gate) from ADR-2026-04-11-2000. It has no network, no subprocess,
 //! and no shared state — every instance is independently configurable via
 //! the `with_*` constructors below.
 //!

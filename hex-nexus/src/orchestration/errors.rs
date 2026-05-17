@@ -2,7 +2,7 @@
 //!
 //! Replaces string-shaped errors in the workplan executor (and the
 //! composition root) with typed variants that carry remediation hints.
-//! See ADR-2604112000 and wp-hex-standalone-dispatch P2.2 for the
+//! See ADR-2026-04-11-2000 and wp-hex-standalone-dispatch P2.2 for the
 //! decision record.
 
 use thiserror::Error;

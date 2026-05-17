@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2604170001",
+  "adr": "ADR-2026-04-17-0001",
   "created_at": "2026-04-17T00:00:00Z",
   "description": "Single command to orchestrate full hex setup: verify prerequisites, start services in parallel, load models, configure project, validate. Eliminates manual service juggling and unclear setup steps.",
   "name": "wp-hex-bootstrap",
@@ -14,7 +14,7 @@
             "hex-cli/src/commands/bootstrap/mod.rs"
           ],
           "id": "P1-1",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Create hex-cli/src/commands/bootstrap/mod.rs"
         },
@@ -29,12 +29,12 @@
           "title": "Add bootstrap to hex-cli/src/commands/mod.rs"
         },
         {
-          "description": "Create:\n- bootstrap/prereq.rs — OS detection, brew/apt checks, install helpers\n- bootstrap/services.rs — parallel startup logic for SpacetimeDB, hex-nexus, Ollama\n- bootstrap/models.rs — Ollama model pull, progress output\n- bootstrap/config.rs — .hex/project.json creation and defaults\n- bootstrap/validate.rs — health checks and diagnostics",
+          "description": "Create:\n- bootstrap/prereq.rs \u2014 OS detection, brew/apt checks, install helpers\n- bootstrap/services.rs \u2014 parallel startup logic for SpacetimeDB, hex-nexus, Ollama\n- bootstrap/models.rs \u2014 Ollama model pull, progress output\n- bootstrap/config.rs \u2014 .hex/project.json creation and defaults\n- bootstrap/validate.rs \u2014 health checks and diagnostics",
           "files": [
             "hex-cli/src/commands/bootstrap/prereq.rs"
           ],
           "id": "P1-3",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Create bootstrap submodules"
         }
@@ -51,7 +51,7 @@
             "hex-cli/src/commands/bootstrap/prereq.rs"
           ],
           "id": "P2-1",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Implement prereq detection in bootstrap/prereq.rs"
         },
@@ -61,7 +61,7 @@
             "hex-cli/src/commands/bootstrap/mod.rs"
           ],
           "id": "P2-2",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Add --skip-prereq flag for CI"
         }
@@ -73,7 +73,7 @@
       "number": 3,
       "tasks": [
         {
-          "description": "Struct ServiceStarter with methods:\n- start_spacetimedb() → check if running, spawn if not, poll /api/health\n- start_hex_nexus() → check if running, spawn if not, poll :5555/api/health\n- start_ollama() → check if running, spawn if not, poll :11434/api/tags\n- All run concurrently via tokio::join!\n- Timeout: 30s per service, up to 3 retries with backoff\n- Return ServiceStatus { name, running, pid, error }",
+          "description": "Struct ServiceStarter with methods:\n- start_spacetimedb() \u2192 check if running, spawn if not, poll /api/health\n- start_hex_nexus() \u2192 check if running, spawn if not, poll :5555/api/health\n- start_ollama() \u2192 check if running, spawn if not, poll :11434/api/tags\n- All run concurrently via tokio::join!\n- Timeout: 30s per service, up to 3 retries with backoff\n- Return ServiceStatus { name, running, pid, error }",
           "files": [
             "hex-cli/src/commands/bootstrap/services.rs"
           ],
@@ -98,7 +98,7 @@
       "number": 4,
       "tasks": [
         {
-          "description": "struct ModelLoader with methods:\n- load_tier_models(tier_defaults) → pull each model via `ollama pull <model>`\n- Show progress: model name, % downloaded, ETA\n- Skip if --skip-models or if already present (ollama show <model>)\n- Default tiers from ADR-2604120202: qwen3:4b (T1), qwen2.5-coder:32b (T2), devstral-small-2:24b (T2.5)\n- Return ModelStatus { name, loaded, size_mb, time_s }",
+          "description": "struct ModelLoader with methods:\n- load_tier_models(tier_defaults) \u2192 pull each model via `ollama pull <model>`\n- Show progress: model name, % downloaded, ETA\n- Skip if --skip-models or if already present (ollama show <model>)\n- Default tiers from ADR-2026-04-12-0202: qwen3:4b (T1), qwen2.5-coder:32b (T2), devstral-small-2:24b (T2.5)\n- Return ModelStatus { name, loaded, size_mb, time_s }",
           "files": [
             "hex-cli/src/commands/bootstrap/models.rs"
           ],
@@ -130,7 +130,7 @@
       "number": 6,
       "tasks": [
         {
-          "description": "BootstrapValidator with methods:\n- validate_services() → check /api/health for each service\n- validate_models() → check ollama show for each tier model\n- validate_config() → check .hex/project.json exists and is valid\n- Collect BootstrapReport { services, models, config, ready: bool }\n- Return report",
+          "description": "BootstrapValidator with methods:\n- validate_services() \u2192 check /api/health for each service\n- validate_models() \u2192 check ollama show for each tier model\n- validate_config() \u2192 check .hex/project.json exists and is valid\n- Collect BootstrapReport { services, models, config, ready: bool }\n- Return report",
           "files": [
             "hex-cli/src/commands/bootstrap/validate.rs"
           ],
@@ -139,7 +139,7 @@
           "title": "Implement validation in bootstrap/validate.rs"
         },
         {
-          "description": "After validation, show table:\n\n╭─ Bootstrap Status ───────────────────╮\n│ SpacetimeDB      ✓ running (PID ...) │\n│ hex-nexus        ✓ running (PID ...) │\n│ Ollama           ✓ running (PID ...) │\n├─ Models (qwen3:4b) ─────────────────┤\n│ T1: qwen3:4b     ✓ 4.7 GB loaded    │\n│ T2: qwen2.5-coder:32b ✓ 19 GB      │\n│ T2.5: devstral-small-2:24b ✓ 14 GB │\n├─ Status ────────────────────────────┤\n│ Profile: dev                         │\n│ Ready:   ✓ All systems go            │\n│ Next:    hex plan execute ...        │\n╰──────────────────────────────────────╯",
+          "description": "After validation, show table:\n\n\u256d\u2500 Bootstrap Status \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n\u2502 SpacetimeDB      \u2713 running (PID ...) \u2502\n\u2502 hex-nexus        \u2713 running (PID ...) \u2502\n\u2502 Ollama           \u2713 running (PID ...) \u2502\n\u251c\u2500 Models (qwen3:4b) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\n\u2502 T1: qwen3:4b     \u2713 4.7 GB loaded    \u2502\n\u2502 T2: qwen2.5-coder:32b \u2713 19 GB      \u2502\n\u2502 T2.5: devstral-small-2:24b \u2713 14 GB \u2502\n\u251c\u2500 Status \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\n\u2502 Profile: dev                         \u2502\n\u2502 Ready:   \u2713 All systems go            \u2502\n\u2502 Next:    hex plan execute ...        \u2502\n\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
           "files": [
             "hex-cli/src/commands/bootstrap/validate.rs"
           ],
@@ -180,7 +180,7 @@
           "title": "Build hex bootstrap"
         },
         {
-          "description": "Run: hex bootstrap --dry-run (show what would happen)\nThen: hex bootstrap (full setup)\nThen: hex bootstrap (idempotent — should skip already-running services)\nVerify: all services responsive, models loaded, project.json created",
+          "description": "Run: hex bootstrap --dry-run (show what would happen)\nThen: hex bootstrap (full setup)\nThen: hex bootstrap (idempotent \u2014 should skip already-running services)\nVerify: all services responsive, models loaded, project.json created",
           "files": [
             "hex-cli/src/commands/bootstrap/mod.rs"
           ],
@@ -198,7 +198,7 @@
           "title": "Test error handling"
         },
         {
-          "description": "git add hex-cli/src/commands/bootstrap/ hex-cli/src/commands/mod.rs\ngit commit -m 'feat: add hex bootstrap command (ADR-2604170001)'\n\nAdd to docs/BOOTSTRAP.md:\n- Usage: hex bootstrap [--profile dev|ci|prod] [--dry-run]\n- Profiles and what they do\n- Troubleshooting (common errors and fixes)",
+          "description": "git add hex-cli/src/commands/bootstrap/ hex-cli/src/commands/mod.rs\ngit commit -m 'feat: add hex bootstrap command (ADR-2026-04-17-0001)'\n\nAdd to docs/BOOTSTRAP.md:\n- Usage: hex bootstrap [--profile dev|ci|prod] [--dry-run]\n- Profiles and what they do\n- Troubleshooting (common errors and fixes)",
           "files": [
             "hex-cli/src/commands/bootstrap/mod.rs"
           ],
@@ -211,6 +211,6 @@
     }
   ],
   "priority": "P1",
-  "status": "in_progress",
-  "title": "Implement hex bootstrap command"
+  "title": "Implement hex bootstrap command",
+  "status": "in_progress"
 }

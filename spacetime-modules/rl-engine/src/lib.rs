@@ -52,7 +52,7 @@ const EPSILON: f64 = 0.1;
 const LEARNING_RATE: f64 = 0.1;
 const DISCOUNT_FACTOR: f64 = 0.95;
 
-/// Known model actions with progressive tiers (ADR-2604102200).
+/// Known model actions with progressive tiers (ADR-2026-04-10-2200).
 /// Local models tried first, escalates to cloud on failure.
 const MODEL_ACTIONS: &[(&str, f64)] = &[
     // Tier 1: Local fast models (try first)
@@ -107,7 +107,7 @@ fn is_openrouter_action(action: &str) -> bool {
 }
 
 /// Returns true if `action` is a local model (Ollama) action.
-/// These get bonus reward to encourage self-improvement (ADR-2604102200).
+/// These get bonus reward to encourage self-improvement (ADR-2026-04-10-2200).
 fn is_local_model_action(action: &str) -> bool {
     // Local models: no slash, no openrouter prefix
     if !action.starts_with("model:") {
@@ -227,7 +227,7 @@ pub fn record_reward(
             effective_reward += RATE_LIMIT_PENALTY;
         }
 
-        // Reward local models to encourage self-improvement (ADR-2604102200)
+        // Reward local models to encourage self-improvement (ADR-2026-04-10-2200)
         if is_local_model_action(component) && reward > 0.0 {
             effective_reward += LOCAL_SUCCESS_BONUS;
             log::info!(

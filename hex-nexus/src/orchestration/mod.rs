@@ -57,7 +57,7 @@ use crate::ports::state::IHexFloMemoryStatePort;
 pub fn build_role_preamble(role: &str) -> String {
     match role {
         "hex-coder" | "coder" => {
-            // ADR-2604270800 P0.2: Path-A agents that author the commit message themselves
+            // ADR-2026-04-27-0800 P0.2: Path-A agents that author the commit message themselves
             // must produce the same subject shape strict reconcile accepts; otherwise valid
             // work is demoted because the subject never names the workplan it came from.
             "You are a hex-coder agent operating inside the hex AIOS framework. \
@@ -96,7 +96,7 @@ and validate end-to-end behaviour across all integration boundaries.\n\n"
 /// Returns true when this process is running inside an active Claude Code session.
 /// Claude Code sets CLAUDECODE=1 and CLAUDE_CODE_ENTRYPOINT in all child processes.
 /// Used by the workplan executor and agent_manager to select Path B (inference queue)
-/// vs Path A (direct inference gateway) per ADR-2604010000.
+/// vs Path A (direct inference gateway) per ADR-2026-04-01-0000.
 pub fn is_claude_code_session() -> bool {
     std::env::var("CLAUDECODE").as_deref() == Ok("1")
         || std::env::var("CLAUDE_CODE_ENTRYPOINT").is_ok()

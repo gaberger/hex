@@ -1,4 +1,4 @@
-//! Integration tests for ADR-2605081126 P2.1 — `hex-agent daemon` refuses to
+//! Integration tests for ADR-2026-05-08-1126 P2.1 — `hex-agent daemon` refuses to
 //! run from trunk and proceeds inside a worktree.
 //!
 //! These tests shell out to the built `hex-agent` binary because the guard

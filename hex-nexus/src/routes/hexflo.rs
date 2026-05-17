@@ -44,7 +44,7 @@ pub async fn memory_store(
 
     let scope = body.scope.as_deref().unwrap_or("global");
 
-    // ADR-2604051800 P1: Check memory scope capability
+    // ADR-2026-04-05-1800 P1: Check memory scope capability
     if let Err(status) = require_capability(
         claims.as_ref().map(|c| &c.0),
         |c| c.can_access_memory(scope),
@@ -285,7 +285,7 @@ pub async fn cleanup(
     }
 }
 
-// ── Enforcement Rules (ADR-2603221959 P5) ──────────────
+// ── Enforcement Rules (ADR-2026-03-22-1959 P5) ──────────────
 
 fn enforcement_rules_dir() -> std::path::PathBuf {
     let base = std::env::var("HOME")

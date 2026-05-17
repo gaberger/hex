@@ -1,8 +1,8 @@
 {
-  "adr": "ADR-2604120202",
+  "adr": "ADR-2026-04-12-0202",
   "created_at": "2026-04-12T02:02:00Z",
   "created_by": "human",
-  "description": "Route T1/T2 tasks to local models with scaffolding (Best-of-N + compile gate + GBNF grammars + retry loop + cascading escalation), dropping frontier API calls to ~30%. Builds on ADR-2604112000 standalone dispatch + the wired inference router.",
+  "description": "Route T1/T2 tasks to local models with scaffolding (Best-of-N + compile gate + GBNF grammars + retry loop + cascading escalation), dropping frontier API calls to ~30%. Builds on ADR-2026-04-11-2000 standalone dispatch + the wired inference router.",
   "feature": "Tiered Inference Routing with Local Model Scaffolding",
   "id": "wp-tiered-inference-routing",
   "phases": [
@@ -101,7 +101,7 @@
           "deps": [
             "P2.1"
           ],
-          "description": "Edit the 14 agent YAMLs to: (a) move shared context to a common prefix section, (b) flatten nested instructions to numbered steps, (c) front-load file/code context before instructions, (d) repeat key constraints at end of prompt ('REMEMBER: only edit files in your manifest'). ADR-2604111142 content rule applies — no hex-intf specifics in embedded assets.",
+          "description": "Edit the 14 agent YAMLs to: (a) move shared context to a common prefix section, (b) flatten nested instructions to numbered steps, (c) front-load file/code context before instructions, (d) repeat key constraints at end of prompt ('REMEMBER: only edit files in your manifest'). ADR-2026-04-11-1142 content rule applies — no hex-intf specifics in embedded assets.",
           "files": [
             "hex-cli/assets/agents/hex/hex/hex-coder.yml",
             "hex-cli/assets/agents/hex/hex/planner.yml",
