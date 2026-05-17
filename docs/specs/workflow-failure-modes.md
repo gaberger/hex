@@ -13,15 +13,17 @@
 | `reject` verdicts | 700 (56%) | drafter / free-form path |
 | `escalate` verdicts | 124 (10%) | mostly content-grounding gate |
 | drafter queue events | 802 | across 47 distinct commitments |
-| commitments **satisfied** | **0** | over the entire 9-day window |
-| commitments abandoned | 5 | manually, via operator |
+| commitments **satisfied** | 57 of 75 (76%) | per STDB `commitment` table at 2026-05-17T20:50Z |
+| commitments abandoned | 17 of 75 (23%) | per STDB; 1 still open |
 | worst single loop | 323 retries | `commitment 12293` → `resilience_thought_experiments.md` |
 | Silent verdicts | 15 | cto 7, eng-lead 4, ciso 2, cpo 1, cvo 1 |
 | off-contract responder drops | 30 | persona produced reply ≠ `Confirm:`/`Silent` |
 | content-grounding rejects | 101 | cto 94, ciso 7 |
 | twin parse-failure-budget exhaustions | 23 | twin's own LLM produced no valid JSON in 5 tries |
 
-**The headline is the satisfaction rate: 0/47 commitments closed in 9 days.** Every persona commitment the drafter has touched is still open, abandoned, or looping. The 429 successful `approve` verdicts are entirely from the typed-tool path (`tool:code_patch`, `tool:adr_draft`, etc.) — the persona-free-form path has a 0% completion rate.
+**The headline is efficiency, not closure rate.** Direct STDB query at 2026-05-17T20:50Z showed 75 commitments — 57 satisfied, 17 abandoned, 1 open. So the floor *is* 76% satisfied. But the **cost** of getting there is the bug: the 6 worst-offender commitments accounted for ~75% of all drafter work (commitment 12293 alone retried 323 times against the same rejection). The system eventually closed most things, but at 5–300× the necessary LLM budget. The 429 `approve` verdicts are entirely typed-tool actions; persona-free-form actions reject at 100% on source paths and require many retries elsewhere before any random draft happens to ground.
+
+(An earlier draft of this section claimed 0/47 closures based on a log-grep that missed the `commitment_satisfy` reducer's log format. The STDB query is authoritative; the satisfaction *floor* was higher than first reported, but the **structural problems are real** — efficiency loops, silent drops, stub-clobber, rejection-loops without back-pressure.)
 
 ## Pipeline Map + Lossy Edges
 
