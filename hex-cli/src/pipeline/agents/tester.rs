@@ -100,7 +100,7 @@ impl TesterAgent {
         let raw_system = template.render(&tpl_context);
         debug!(template = "agent-tester", placeholders = ?template.placeholders(), "rendered tester prompt");
 
-        // Inject architecture fingerprint (ADR-2026-03-30-1200) — prepend to system prompt.
+        // Inject architecture fingerprint (ADR-2603301200) — prepend to system prompt.
         let system_prompt = if let Some(pid) = &context.project_id {
             match self.client.fetch_fingerprint_text(pid).await {
                 Some(fp) => { debug!(project_id = %pid, "injecting architecture fingerprint into tester"); format!("{}\n\n{}", fp, raw_system) }

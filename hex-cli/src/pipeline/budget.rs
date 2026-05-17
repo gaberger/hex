@@ -1,4 +1,4 @@
-//! Budget tracking for `hex dev` pipeline (ADR-2026-03-23-2005).
+//! Budget tracking for `hex dev` pipeline (ADR-2603232005).
 //!
 //! Tracks cumulative cost, tokens, and request counts across inference calls.
 //! Provides budget enforcement with soft warnings (80% threshold) and a gate

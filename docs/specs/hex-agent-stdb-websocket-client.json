@@ -1,7 +1,7 @@
 {
   "id": "hex-agent-stdb-websocket-client",
   "title": "hex-agent as First-Class SpacetimeDB WebSocket Client",
-  "adr": "ADR-2026-03-30-0100",
+  "adr": "ADR-2603300100",
   "version": "1.0.0",
   "description": "Behavioral specification for replacing hex-agent's REST polling coordination with direct SpacetimeDB WebSocket subscriptions. Covers task assignment, code generation, inference routing, and task completion signal paths.",
 

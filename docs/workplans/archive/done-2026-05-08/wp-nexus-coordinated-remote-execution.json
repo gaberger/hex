@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-12-1630",
+  "adr": "ADR-2604121630",
   "created_at": "2026-04-12T16:30:00Z",
   "created_by": "human",
   "description": "Remote agents poll nexus for workplan tasks, execute locally with ADR-005 gates, report results to SpacetimeDB. Enables hex plan report for all executions and cross-agent RL learning.",

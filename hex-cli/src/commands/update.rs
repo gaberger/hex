@@ -2,7 +2,7 @@
 //!
 //! `hex self-update [--check] [--version <tag>] [--yes]`
 //!
-//! ADR-2026-04-08-0929
+//! ADR-2604080929
 
 use anyhow::{bail, Context};
 use colored::Colorize;

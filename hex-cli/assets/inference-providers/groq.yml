@@ -1,4 +1,4 @@
-# Groq — Free-tier cloud inference (ADR-2026-04-05-2125)
+# Groq — Free-tier cloud inference (ADR-2604052125)
 # Fastest time-to-first-token for interactive agent conversations.
 # Free tier: 30 RPM, ~1000 requests/day for 70B models.
 name: groq

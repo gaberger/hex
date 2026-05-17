@@ -6,7 +6,7 @@
  * active execution is detected.
  *
  * All reactive primitives are created inside initWorkplanStore() which must
- * be called from the App.tsx composition root (ADR-2026-03-23-1000).
+ * be called from the App.tsx composition root (ADR-2603231000).
  *
  * Usage:
  *   import { workplans, activeWorkplan, fetchReport } from "../stores/workplan";

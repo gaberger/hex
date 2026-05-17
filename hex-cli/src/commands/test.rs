@@ -48,7 +48,7 @@ pub enum TestAction {
     History,
     /// Show test pass rate trends
     Trends,
-    /// Test Docker sandbox agent coordination (ADR-2026-03-28-2000)
+    /// Test Docker sandbox agent coordination (ADR-2603282000)
     Coordination,
 }
 
@@ -506,7 +506,7 @@ fn run_unit_tests(r: &mut TestResults) {
     println!("{}", "── SpacetimeDB Module Tests ──".cyan());
     r.set_category("spacetimedb");
 
-    // ADR-2026-04-05-0900: right-sized to 7 modules
+    // ADR-2604050900: right-sized to 7 modules
     for module in &[
         "hexflo-coordination",
         "agent-registry",
@@ -1624,7 +1624,7 @@ fn cargo_test_spacetime(module: &str) -> bool {
         .unwrap_or(false)
 }
 
-// ── Coordination Tests (ADR-2026-03-28-2000) ─────────────────────────────────────
+// ── Coordination Tests (ADR-2603282000) ─────────────────────────────────────
 
 async fn run_coordination_tests(r: &mut TestResults) {
     println!("{}", "── Docker Sandbox Coordination Tests ──".cyan());

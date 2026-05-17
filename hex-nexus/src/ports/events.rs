@@ -1,4 +1,4 @@
-//! Shared data types for tool-call event observability (ADR-2026-04-01-2137).
+//! Shared data types for tool-call event observability (ADR-2604012137).
 //!
 //! These types are used by the in-memory event adapter (adapters/events.rs)
 //! and the REST route handlers (routes/events.rs).

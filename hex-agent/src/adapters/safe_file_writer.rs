@@ -6,7 +6,7 @@
 //!      Catches well-known load-bearing paths (sched.rs, monitor.rs, etc.)
 //!      regardless of CWD.
 //!
-//!   2. **Trunk-detect predicate (ADR-2026-05-08-1126 P3.1).** If the writer's
+//!   2. **Trunk-detect predicate (ADR-2605081126 P3.1).** If the writer's
 //!      effective CWD resolves to the git trunk AND the process is not in
 //!      operator-mode, every write is denied — full stop. Rationale: a
 //!      background agent should never write to trunk; it must work in a
@@ -59,7 +59,7 @@ impl IFileWriter for SafeFileWriter {
         if let Some(ref trunk) = self.trunk {
             if cwd_is_trunk(trunk) && !operator_mode_active() {
                 return Err(format!(
-                    "Refusing trunk write per ADR-2026-05-08-1126: {} \
+                    "Refusing trunk write per ADR-2605081126: {} \
                      (CWD is the git trunk and HEX_OPERATOR_MODE is not active). \
                      Either run from a worktree or set HEX_OPERATOR_MODE=1 (operator only).",
                     path_str
@@ -133,7 +133,7 @@ fn operator_mode_active() -> bool {
     if has_hex_agent_daemon_ancestor() {
         eprintln!(
             "SafeFileWriter: HEX_OPERATOR_MODE=1 ignored — process tree includes hex-agent daemon \
-             (footgun guard per ADR-2026-05-08-1126 P3.1)"
+             (footgun guard per ADR-2605081126 P3.1)"
         );
         return false;
     }

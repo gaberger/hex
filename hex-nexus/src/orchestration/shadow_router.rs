@@ -1,4 +1,4 @@
-//! ShadowRouter for `IInferencePort` (ADR-2026-04-26-1500 P6,
+//! ShadowRouter for `IInferencePort` (ADR-2604261500 P6,
 //! wp-substrate-shadow-promotion P3.1).
 //!
 //! Responsibilities:
@@ -15,7 +15,7 @@
 //! Concrete to `IInferencePort` for now (substrate's first port). The
 //! generic abstraction lands in P10 alongside the second-port migration —
 //! premature generalization here would buy nothing today and is exactly
-//! what ADR-2026-04-26-1500's "proof of concept before generalization" mitigation
+//! what ADR-2604261500's "proof of concept before generalization" mitigation
 //! warns against.
 //!
 //! `MetricsRng` is a `Box<dyn Fn() -> f32>` — production code wires it to

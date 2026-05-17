@@ -1,4 +1,4 @@
-//! Integration tests for quantization-aware inference routing (ADR-2026-03-27-1000).
+//! Integration tests for quantization-aware inference routing (ADR-2603271000).
 
 use hex_core::QuantizationLevel;
 use hex_nexus::adapters::spacetime_inference::InferenceProviderRow;

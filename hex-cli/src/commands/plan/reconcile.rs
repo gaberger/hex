@@ -1,6 +1,6 @@
 //! Workplan reconciliation with evidence-gated mutation.
 //!
-//! ADR-2026-04-14-2200 requires **positive file evidence** before marking tasks done.
+//! ADR-2604142200 requires **positive file evidence** before marking tasks done.
 //! The `mutate` parameter (default: `false`) controls whether reconcile writes
 //! changes back to workplan JSON. Callers must opt in to mutation explicitly.
 //!

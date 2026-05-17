@@ -71,7 +71,7 @@ pub async fn inference_complete(
     let work = async move {
     let started = std::time::Instant::now();
 
-    // Score complexity before consuming body.messages (ADR-2026-03-27-1000).
+    // Score complexity before consuming body.messages (ADR-2603271000).
     let prompt_text = body.messages.iter()
         .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
         .collect::<Vec<_>>()
@@ -84,7 +84,7 @@ pub async fn inference_complete(
         "quantization routing: complexity scored, minimum tier selected"
     );
 
-    // Resolve architecture fingerprint for ACI injection (ADR-2026-03-30-1200).
+    // Resolve architecture fingerprint for ACI injection (ADR-2603301200).
     // Read project_id from x-hex-project-id header; look up in state.fingerprints.
     // If found, prepend the fingerprint block to the system prompt.
     let aci_block: Option<String> = {
@@ -200,7 +200,7 @@ pub async fn inference_complete(
 
     // Try registered inference endpoints first (SpacetimeDB providers)
     // If a model is requested, find the provider that serves it; otherwise use first provider.
-    // Complexity scoring selects minimum quantization tier (ADR-2026-03-27-1000).
+    // Complexity scoring selects minimum quantization tier (ADR-2603271000).
     let endpoint: Option<crate::routes::secrets::InferenceEndpointEntry> =
         if let Some(ref stdb) = state.inference_stdb {
             match stdb.list_providers().await {
@@ -430,7 +430,7 @@ pub async fn inference_complete(
                 tracing::warn!("spacetime_secrets not available for vault resolution");
             }
         }
-        // Record request dispatch in rate limiter (ADR-2026-04-05-2125)
+        // Record request dispatch in rate limiter (ADR-2604052125)
         state.rate_limiter.record_request(&ep.id, body.max_tokens as u64).await;
         match super::chat::call_inference_endpoint(&ep, &messages).await {
             Ok(resp) => {
@@ -442,7 +442,7 @@ pub async fn inference_complete(
             // fallback chain. Doing so wastes the entire retry budget and produces an error
             // trail that ends at Anthropic with no indication of the root cause.
             Err(ref e) if e.contains("401") || e.contains("Unauthorized") => {
-                // Record auth failure in rate limiter (ADR-2026-04-05-2125)
+                // Record auth failure in rate limiter (ADR-2604052125)
                 state.rate_limiter.record_completion(&ep.id, 0, 0, false).await;
                 tracing::error!(provider = %ep.provider, error = %e,
                     "authentication failed — bad credentials, not retrying");
@@ -457,7 +457,7 @@ pub async fn inference_complete(
                 || e.contains("parse:") || e.contains("500") || e.contains("503")
                 || e.contains("404") || e.contains("No endpoints") || e.contains("data policy")
                 || e.contains("connection:") || e.contains("null content") => {
-                // Record transient failure in rate limiter (ADR-2026-04-05-2125)
+                // Record transient failure in rate limiter (ADR-2604052125)
                 state.rate_limiter.record_completion(&ep.id, 0, 0, false).await;
                 // OpenRouter transient failure (credits, rate limit, parse/server error),
                 // or permanent failure (404 model-not-found / data policy).
@@ -843,7 +843,7 @@ pub async fn inference_complete(
     }
 }
 
-// ── Path B: Inference Queue (ADR-2026-04-01-0000) ──────────────────────────────
+// ── Path B: Inference Queue (ADR-2604010000) ──────────────────────────────
 
 /// An entry in the inference dispatch queue. Stored in HexFlo memory so workers
 /// can claim tasks via GET /api/inference/queue/pending.
@@ -1066,7 +1066,7 @@ pub async fn queue_update(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Streaming chat endpoint (ADR-2026-04-01-1300)
+// Streaming chat endpoint (ADR-2604011300)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// POST /api/inference/chat/stream — streaming LLM completion via Server-Sent Events.
@@ -1588,7 +1588,7 @@ pub async fn openai_chat_completions(
     (StatusCode::OK, Json(openai_resp)).into_response()
 }
 
-// ── Rate State + Cost Attribution (ADR-2026-04-05-2125) ─────────────────────────
+// ── Rate State + Cost Attribution (ADR-2604052125) ─────────────────────────
 
 /// GET /api/inference/rate-state — per-provider rate limit and circuit breaker state.
 pub async fn rate_state(
@@ -1606,7 +1606,7 @@ pub async fn inference_stats_endpoint(
     (StatusCode::OK, Json(stats))
 }
 
-// ── Q-Report (ADR-2026-04-12-0202 + wp-inference-q-report) ───────────────────
+// ── Q-Report (ADR-2604120202 + wp-inference-q-report) ───────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct QReportParams {

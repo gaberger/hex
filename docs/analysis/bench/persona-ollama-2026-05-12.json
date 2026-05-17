@@ -485,7 +485,7 @@ models:   ['devstral-small-2:24b', 'gemma3:12b', 'gemma4:latest', 'hf.co/zai-org
         "latency_s": 2.9056951999664307,
         "out_tokens": 48,
         "cost_usd": 0.0,
-        "snippet": "The top concern for this project is [ADR-2026-05-08-2500], as it was the one tha"
+        "snippet": "The top concern for this project is [ADR-2605082500], as it was the one tha"
       },
       "chat_status_coo": {
         "ok": true,

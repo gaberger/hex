@@ -42,10 +42,10 @@
           "id": "P1.3",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Add supervisor_event table: { id, ts, kind (spawn_request|crash_loop|escalation|restart_attempted), pool_id, worker_id?, payload }. Pure event log \u2014 subscribers consume."
+          "title": "Add supervisor_event table: { id, ts, kind (spawn_request|crash_loop|escalation|restart_attempted), pool_id, worker_id?, payload }. Pure event log — subscribers consume."
         }
       ],
-      "title": "STDB schema \u2014 worker_pool_intent + worker_process + supervisor_event tables"
+      "title": "STDB schema — worker_pool_intent + worker_process + supervisor_event tables"
     },
     {
       "id": "P2",
@@ -64,140 +64,109 @@
           "title": "Add #[reducer(scheduled = '10s')] supervisor_tick. For each non-paused worker_pool_intent row: count alive worker_process rows (last_heartbeat < now-45s, NOT in crash loop, exited_at is null) for that role. If alive < desired_count, emit supervisor_event{kind: spawn_request, pool_id}. If alive > desired_count, do nothing (excess workers stay until they die naturally)."
         },
         {
-          "evidence": [
-            "grep -q 'in_crash_loop\\|crash_loop' spacetime-modules/hexflo-coordination/src/lib.rs"
-          ],
           "files": [
             "spacetime-modules/hexflo-coordination/src/lib.rs"
           ],
           "id": "P2.2",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "Crash-loop detection inside supervisor_tick: for each worker_process where exited_at is set, increment restart_count on the pool. If a pool exceeds max_restarts within max_restart_window_secs, mark it in_crash_loop=true, emit supervisor_event{kind: crash_loop} + write to inbox priority 2 (operator override per ADR-060), STOP emitting spawn_request for that pool."
         },
         {
-          "evidence": [
-            "grep -q 'fn should_respawn\\|RestartStrategy::Permanent' spacetime-modules/hexflo-coordination/src/lib.rs"
-          ],
           "files": [
             "spacetime-modules/hexflo-coordination/src/lib.rs"
           ],
           "id": "P2.3",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "title": "Restart strategy semantics: permanent (always respawn), transient (respawn on abnormal exit only \u2014 exit_reason != 'normal'), temporary (never respawn). Default permanent for hex-coder pool; temporary for one-shot tasks."
+          "title": "Restart strategy semantics: permanent (always respawn), transient (respawn on abnormal exit only — exit_reason != 'normal'), temporary (never respawn). Default permanent for hex-coder pool; temporary for one-shot tasks."
         }
       ],
-      "title": "Scheduled reducer \u2014 supervisor_tick (every 10s)"
+      "title": "Scheduled reducer — supervisor_tick (every 10s)"
     },
     {
       "id": "P3",
       "tasks": [
         {
-          "evidence": [
-            "test -f hex-nexus/src/orchestration/supervisor_subscriber.rs",
-            "grep -q 'fn handle_spawn_request' hex-nexus/src/orchestration/supervisor_subscriber.rs",
-            "cargo check -p hex-nexus"
-          ],
           "files": [
             "hex-nexus/src/orchestration/supervisor_subscriber.rs",
             "hex-nexus/src/orchestration/agent_manager.rs"
           ],
           "id": "P3.1",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "In hex-nexus, subscribe to the supervisor_event table. On kind=spawn_request, look up the pool's role. If host is local (or not specified), call existing spawn_local_agent() with the role. Record the spawned process_id in a new worker_process row."
         },
         {
-          "evidence": [
-            "grep -q 'worker_process.*exited_at\\|exited_at.*now' hex-nexus/src/orchestration/agent_manager.rs"
-          ],
           "files": [
             "hex-nexus/src/orchestration/agent_manager.rs"
           ],
           "id": "P3.2",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "On hex-agent process exit, the supervising nexus updates the worker_process row with exited_at + exit_reason. Wire into the existing agent_manager exit-handler."
         },
         {
-          "evidence": [
-            "grep -q 'inbox_notify.*priority.*2\\|crash_loop.*priority' hex-nexus/src/orchestration/supervisor_subscriber.rs"
-          ],
           "files": [
             "hex-nexus/src/orchestration/supervisor_subscriber.rs"
           ],
           "id": "P3.3",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "title": "On kind=crash_loop, write to operator inbox at priority 2 (overrides current work per ADR-060) so the operator sees 'pool X has crash-looped \u2014 paused after Y restarts in Z seconds'."
+          "title": "On kind=crash_loop, write to operator inbox at priority 2 (overrides current work per ADR-060) so the operator sees 'pool X has crash-looped — paused after Y restarts in Z seconds'."
         }
       ],
-      "title": "Nexus subscriber \u2014 consume supervisor_event::spawn_request"
+      "title": "Nexus subscriber — consume supervisor_event::spawn_request"
     },
     {
       "id": "P4",
       "tasks": [
         {
-          "evidence": [
-            "grep -q 'pub fn pool_create' hex-cli/src/commands/pool.rs",
-            "grep -q 'mod pool' hex-cli/src/main.rs",
-            "cargo check -p hex-cli"
-          ],
           "files": [
             "hex-cli/src/commands/pool.rs",
             "hex-cli/src/main.rs"
           ],
           "id": "P4.1",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "hex pool create <role> --count <N> [--restart permanent|transient|temporary] [--max-restarts N] [--restart-window SECS]. Calls worker_pool_intent_set reducer."
         },
         {
-          "evidence": [
-            "grep -q 'pub fn pool_list\\|pub fn pool_pause' hex-cli/src/commands/pool.rs"
-          ],
           "files": [
             "hex-cli/src/commands/pool.rs"
           ],
           "id": "P4.2",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "hex pool list (shows desired vs alive per pool, crash-loop status). hex pool pause/resume <id>. hex pool delete <id> (sets desired_count=0; supervisor stops respawning)."
         },
         {
-          "evidence": [
-            "grep -q 'Worker pools' hex-cli/src/commands/agent/mod.rs"
-          ],
           "files": [
             "hex-cli/src/commands/agent/mod.rs"
           ],
           "id": "P4.3",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "transform",
           "title": "hex agent overview surfaces pool health. New row in the overview output: 'Worker pools: N defined, M crash-looped'."
         }
       ],
-      "title": "CLI surface \u2014 operators interact with pools"
+      "title": "CLI surface — operators interact with pools"
     },
     {
       "id": "P5",
       "tasks": [
         {
-          "evidence": [
-            "grep -q 'SupervisorPanel\\|worker_pool_intent' hex-nexus/assets/src/components/views/Brain.tsx"
-          ],
           "files": [
             "hex-nexus/assets/src/components/views/Brain.tsx",
             "hex-nexus/src/routes/decisions.rs"
           ],
           "id": "P5.1",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "title": "Add a SupervisorPanel to Brain showing each worker pool: role \u00b7 desired/alive \u00b7 restart count \u00b7 crash-loop badge. Click to drill into the pool's worker_process rows. Crash-looped pools surfaced as decisions in the existing /api/decisions aggregator."
+          "title": "Add a SupervisorPanel to Brain showing each worker pool: role · desired/alive · restart count · crash-loop badge. Click to drill into the pool's worker_process rows. Crash-looped pools surfaced as decisions in the existing /api/decisions aggregator."
         }
       ],
-      "title": "Brain dashboard \u2014 supervisor pane"
+      "title": "Brain dashboard — supervisor pane"
     },
     {
       "id": "P6",
@@ -212,13 +181,13 @@
           "id": "P6.1",
           "status": "pending",
           "strategy_hint": "scaffold",
-          "title": "Today only the LOCAL nexus's hex-agent gets respawned. For real OTP-equivalent supervision across a fleet, each host's nexus subscribes to spawn_request events filtered by host_pool_assignment. A new table host_pool_assignment maps (pool_id, host_id) -> can_run_here. ADR-shaped change \u2014 write the ADR before implementation."
+          "title": "Today only the LOCAL nexus's hex-agent gets respawned. For real OTP-equivalent supervision across a fleet, each host's nexus subscribes to spawn_request events filtered by host_pool_assignment. A new table host_pool_assignment maps (pool_id, host_id) -> can_run_here. ADR-shaped change — write the ADR before implementation."
         }
       ],
-      "title": "Cross-host (multi-machine) supervision \u2014 deferred"
+      "title": "Cross-host (multi-machine) supervision — deferred"
     }
   ],
   "rationale": "Today hex spawns a single local hex-agent that naively respawns on exit. There's no declarative 'I want N workers of role X', no crash-loop detection, no restart-strategy semantics, no cross-host supervision. Heartbeat cleanup marks dead agents but never replaces them. The result: '0 registered, 0 online' is a real outcome and the operator has no recovery without manual `hex agent worker --role X` invocations. Rebuilding this in the OTP supervisor pattern using STDB scheduled reducers gives declarative + transactional + restartable supervision without introducing Erlang.",
-  "title": "STDB-backed worker supervisor \u2014 OTP-style restart strategies for hex-agent pools",
-  "status": "in_progress"
+  "status": "in_progress",
+  "title": "STDB-backed worker supervisor — OTP-style restart strategies for hex-agent pools"
 }

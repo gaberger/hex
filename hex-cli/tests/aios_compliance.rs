@@ -1,4 +1,4 @@
-/// ADR-2026-04-13-1500 AIOS Developer Experience — Compliance Smoke Test (P5.2)
+/// ADR-2604131500 AIOS Developer Experience — Compliance Smoke Test (P5.2)
 ///
 /// Verifies that all 7 ADR sections are wired into the hex CLI:
 ///

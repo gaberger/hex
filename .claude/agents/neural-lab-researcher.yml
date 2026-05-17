@@ -38,7 +38,7 @@ context:
       purpose: The file being actively developed
       load: on_demand
     - level: L1
-      scope: "docs/adrs/ADR-2026-03-24-1230-neural-network-encoding-spacetimedb-wasm.md"
+      scope: "docs/adrs/ADR-2603241230-neural-network-encoding-spacetimedb-wasm.md"
       purpose: Architecture decision and table schemas
     - level: L1
       scope: "docs/specs/neural-lab.json"

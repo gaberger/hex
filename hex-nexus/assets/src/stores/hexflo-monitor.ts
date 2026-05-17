@@ -6,7 +6,7 @@
  * Only toast for errors/failures that need attention.
  *
  * createEffect is wrapped in createRoot inside startHexFloMonitor()
- * to ensure proper reactive ownership (ADR-2026-03-23-1000).
+ * to ensure proper reactive ownership (ADR-2603231000).
  */
 import { createEffect, createRoot, on } from "solid-js";
 import { swarmTasks, swarms } from "./connection";

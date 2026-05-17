@@ -1,4 +1,4 @@
-//! Shared CLI table formatting (ADR-2026-03-24-1226).
+//! Shared CLI table formatting (ADR-2603241226).
 //!
 //! ONE function for all hex CLI table output:
 //!   `pretty_table(&["Col1", "Col2"], &[vec!["a", "b"], vec!["c", "d"]])`

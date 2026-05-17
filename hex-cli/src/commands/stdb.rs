@@ -449,7 +449,7 @@ async fn publish(modules_dir: &str, host: &str, database: &str) -> anyhow::Resul
     Ok(())
 }
 
-/// Module publish order — tiered by dependency (ADR-2026-04-05-0900: right-sized to 7).
+/// Module publish order — tiered by dependency (ADR-2604050900: right-sized to 7).
 /// Tier 0 has no cross-module deps; Tier 1 depends on Tier 0.
 const MODULE_TIERS: &[&[&str]] = &[
     // Tier 0: Foundation — no cross-module dependencies

@@ -156,7 +156,7 @@ The hex-nexus system currently stores coordination state in **multiple disconnec
 
 ## Decision
 
-**Consolidate ALL coordination state into 7 focused SpacetimeDB modules (ADR-2026-04-05-0900):**
+**Consolidate ALL coordination state into 7 focused SpacetimeDB modules (ADR-2604050900):**
 
 1. \`hexflo-coordination\` — swarms, tasks, agents, memory, fleet (compute_node), lifecycle, cleanup
 2. \`inference-gateway\` — providers, requests, budgets, streaming, procedure-based LLM calls

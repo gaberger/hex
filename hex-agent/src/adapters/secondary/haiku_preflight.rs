@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 /// Preflight adapter that uses local Ollama (bazzite) first, then Anthropic.
 ///
-/// ADR-2026-04-10-1500: Local inference first to avoid Anthrobic API quota issues.
+/// ADR-2604101500: Local inference first to avoid Anthrobic API quota issues.
 /// Tries bazzite:11434 first, only falls back to Anthrobic if unavailable.
 pub struct LocalFirstPreflightAdapter {
     anthropic: Arc<dyn AnthropicPort>,
@@ -40,7 +40,7 @@ impl LocalFirstPreflightAdapter {
 #[async_trait]
 impl PreflightPort for LocalFirstPreflightAdapter {
     async fn check_quota(&self) -> Result<(), PreflightError> {
-        // ADR-2026-04-10-1500: Try local Ollama first
+        // ADR-2604101500: Try local Ollama first
         if self.check_local().await {
             tracing::info!("local_inference_first: using bazzite for preflight");
             return Ok(());

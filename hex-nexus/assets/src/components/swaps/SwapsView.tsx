@@ -1,6 +1,6 @@
 /**
  * SwapsView — substrate swap-ticket dashboard
- * (ADR-2026-04-26-1500 P5, wp-substrate-shadow-promotion P5.1).
+ * (ADR-2604261500 P5, wp-substrate-shadow-promotion P5.1).
  *
  * Lists in-flight swap_ticket rows with shadow-sample summaries. Polls
  * /api/swaps every 5s. The proper STDB-reactive subscription path
@@ -123,7 +123,7 @@ export default function SwapsView() {
       <div class="mb-4">
         <h1 class="text-xl font-semibold text-gray-100">Substrate swaps</h1>
         <p class="mt-1 text-sm text-gray-400">
-          In-flight swap tickets per ADR-2026-04-26-1500. Polls every 5s.
+          In-flight swap tickets per ADR-2604261500. Polls every 5s.
         </p>
       </div>
 

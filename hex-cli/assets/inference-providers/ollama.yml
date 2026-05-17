@@ -1,4 +1,4 @@
-# Ollama — Local inference (ADR-2026-04-05-2125)
+# Ollama — Local inference (ADR-2604052125)
 # Unlimited tokens, zero cost, hardware-bound speed.
 # Auto-discovered via LAN scan; this template provides metadata.
 name: ollama

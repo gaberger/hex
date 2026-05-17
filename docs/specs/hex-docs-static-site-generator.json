@@ -1,7 +1,7 @@
 {
   "id": "hex-docs-static-site-generator",
   "title": "hex docs — Static Site Generator",
-  "adr": "ADR-2026-03-31-2000",
+  "adr": "ADR-2603312000",
   "status": "proposed",
   "created": "2026-03-31",
   "behaviors": [

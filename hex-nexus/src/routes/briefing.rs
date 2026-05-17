@@ -1,4 +1,4 @@
-//! GET /api/briefing — paginated project briefing endpoint (ADR-2026-04-13-1500 P1.1).
+//! GET /api/briefing — paginated project briefing endpoint (ADR-2604131500 P1.1).
 //!
 //! Returns a compact summary of recent events grouped by session, with
 //! configurable pagination to keep response size under 2 KB by default.

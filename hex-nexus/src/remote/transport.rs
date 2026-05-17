@@ -203,7 +203,7 @@ pub enum AgentMessage {
 
 // ── Code Generation Types ───────────────────────────
 
-/// Task complexity tier for inference routing (ADR-2026-04-12-0202).
+/// Task complexity tier for inference routing (ADR-2604120202).
 /// Determines which model handles the request and how much scaffolding
 /// (Best-of-N, compile gate, retry loop) is applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -247,7 +247,7 @@ pub struct CodeGenRequest {
     pub model: Option<String>,
     pub max_tokens: Option<u32>,
     /// Task complexity tier. When set, the router overrides model selection
-    /// based on the tier→model mapping (ADR-2026-04-12-0202).
+    /// based on the tier→model mapping (ADR-2604120202).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tier: Option<TaskTier>,
 }

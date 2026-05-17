@@ -3,7 +3,7 @@
  *
  * Records every command dispatched from the dashboard (via command palette or
  * action panels), stores results, and provides reactive accessors for display.
- * Subscribes to WebSocket result events for async command completion (ADR-2026-03-23-1309).
+ * Subscribes to WebSocket result events for async command completion (ADR-2603231309).
  */
 import { createSignal } from "solid-js";
 

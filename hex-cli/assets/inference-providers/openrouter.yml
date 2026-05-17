@@ -1,4 +1,4 @@
-# OpenRouter — Multi-model broker with free tier (ADR-2026-04-05-2125)
+# OpenRouter — Multi-model broker with free tier (ADR-2604052125)
 # 50 req/day free (1K with $10 lifetime spend). 28+ free models.
 # Already integrated as primary broker — this template adds free-tier metadata.
 name: openrouter

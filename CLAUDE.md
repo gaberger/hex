@@ -16,11 +16,11 @@ Everything in this repo (hooks, skills, agents, statuslines, settings) is instan
 | **hex-dashboard** (`hex-nexus/assets/`) | Solid.js + Tailwind control plane. Multi-project, fleet, arch-health, inference monitoring. Real-time via SpacetimeDB subs. |
 | **Inference** | `inference-gateway` + `inference-bridge` WASM modules route requests; hex-nexus makes actual HTTP calls. Model-agnostic (Anthropic, OpenAI, Ollama). |
 
-### Standalone Mode (ADR-2026-04-11-2000)
+### Standalone Mode (ADR-2604112000)
 
 When `CLAUDE_SESSION_ID` is unset, hex-nexus uses `AgentManager` + `OllamaInferenceAdapter` — no Claude CLI needed. `hex doctor composition` diagnoses the active variant; `hex ci --standalone-gate` validates the path.
 
-### Tiered Inference Routing (ADR-2026-04-12-0202 + ADR-2026-04-13-1630)
+### Tiered Inference Routing (ADR-2604120202 + ADR-2604131630)
 
 | Tier | Default Model | Use Case |
 |------|--------------|----------|
@@ -58,7 +58,7 @@ Tier is driven by WorkplanTask `strategy_hint` (`scaffold`/`transform`/`script` 
    | manual `Edit`/`Write` to hex source | dispatch a board ask to the appropriate persona; let SOP + `code_patch` apply via twin auto-approve + executor |
    | `TaskCreate` (Claude-side todo) | `hex task create <swarm-id> <title>` — local todos do not survive the session and the swarm coordinator can't see them |
    | `mkdir docs/workplans/wp-X.json` by hand | `hex plan draft <prompt>` then approve, OR let `workplan_auto_emitter` derive from a persona-authored ADR |
-   | `git checkout <branch> -- <file>` | `hex worktree merge` (ADR-2026-04-13-1930) |
+   | `git checkout <branch> -- <file>` | `hex worktree merge` (ADR-2604131930) |
    | restoring trunk after hijacker damage by hand | `hex worktree status` + `hex worktree approve|reject` |
    | spawning STDB / nexus directly | `hex stdb start`, `hex nexus start/stop/status` |
    | `pkill -9 hex-nexus` | `hex nexus stop` |
@@ -74,7 +74,7 @@ Tier is driven by WorkplanTask `strategy_hint` (`scaffold`/`transform`/`script` 
    hex brain enqueue workplan docs/workplans/wp-foo.json
    ```
 2. **Rebuild release binaries after commits touching hex-cli/hex-nexus/hex-agent.** Use `hex dev validate` (which chains the build); only fall back to `cargo build --release` if `hex dev` itself is broken.
-3. **Use `hex worktree merge`, NEVER `git checkout <branch> -- <file>`** — raw checkout silently drops parallel-worktree code (ADR-2026-04-13-1930).
+3. **Use `hex worktree merge`, NEVER `git checkout <branch> -- <file>`** — raw checkout silently drops parallel-worktree code (ADR-2604131930).
 4. **Prefer `hex hey <intent>`** over raw commands when the task maps to natural language.
 5. **Start the brain daemon at session start** if not running: `hex brain daemon --background --interval 30`. Check with `hex brain daemon-status`.
 6. **Reconcile workplans after agent work**: `hex plan reconcile --all --update`.
@@ -95,7 +95,7 @@ Tier is driven by WorkplanTask `strategy_hint` (`scaffold`/`transform`/`script` 
 - ALWAYS run `bun test` after code changes; `bun run build` before committing.
 - NEVER `mock.module()` in tests — use the Deps pattern (ADR-014).
 
-## Task Tier Routing (ADR-2026-04-11-0227)
+## Task Tier Routing (ADR-2604110227)
 
 Every user prompt is classified by `hex-cli/src/commands/hook.rs::classify_work_intent` (run by `hex hook route` on `UserPromptSubmit`).
 
@@ -143,7 +143,7 @@ hex-agent/               Architecture enforcement runtime
 hex-desktop/             Tauri wrapper for dashboard
 hex-parser/              Code parsing utilities
 
-# SpacetimeDB WASM modules (7 total — ADR-2026-04-05-0900)
+# SpacetimeDB WASM modules (7 total — ADR-2604050900)
 spacetime-modules/
   hexflo-coordination/     Swarms, tasks, agents, memory, fleet
   agent-registry/          Lifecycle + heartbeats + cleanup
@@ -254,7 +254,7 @@ A "feature" decomposes inside-out across layers; each adapter boundary gets its 
 - **Tests can mirror bugs** — same LLM writes code + tests → tests encode the misunderstanding. Use property tests + behavioral specs as independent oracles.
 - **"It compiles" ≠ "it works"** — always add runtime validation (can a user actually start the app?).
 - **Browser TS needs a dev server** — any HTML + TS project MUST include Vite or equivalent.
-- **Trace ALL consumers before deleting** (ADR-2026-04-05-0900) — `grep` the ENTIRE workspace, not just the immediate directory. hex-agent was broken for a session because a workplan missed feature-gated imports.
+- **Trace ALL consumers before deleting** (ADR-2604050900) — `grep` the ENTIRE workspace, not just the immediate directory. hex-agent was broken for a session because a workplan missed feature-gated imports.
 - **Build gates between phases** — every phase that deletes/restructures ends with `cargo check --workspace`. A "done" workplan with a broken build is worse than no workplan.
 - **Parallelize by file boundary, serialize by file overlap** — multiple agents editing the same file produce conflicting diffs. Batch or serialize.
 - **Sign conventions matter** — for physics/math, document coordinate systems (e.g. `flapStrength` must be negative in screen coords).
@@ -286,7 +286,7 @@ Agent: { subagent_type: "coder", mode: "bypassPermissions", run_in_background: t
 
 Include `HEXFLO_TASK:{task_id}` in the subagent prompt. `hex hook subagent-start` reads stdin, PATCHes `/api/hexflo/tasks/{task_id}` with `agent_id` (→ `in_progress`). `hex hook subagent-stop` PATCHes again with result (→ `completed`). State persists in `~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json`. `agent_id` auto-resolves from that file.
 
-## Declarative Swarm Behavior (ADR-2026-03-24-0130)
+## Declarative Swarm Behavior (ADR-2603240130)
 
 Agent + swarm behavior is declared in YAML, not hardcoded. The supervisor reads YAMLs at startup.
 

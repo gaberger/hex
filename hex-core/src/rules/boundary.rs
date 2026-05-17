@@ -1,7 +1,7 @@
 //! Hex architecture boundary enforcement.
 //!
 //! These rules are the same ones enforced by `hex analyze .` (ADR-035)
-//! and by MCP server boundary checks in hex-agent (ADR-2026-04-01-2110).
+//! and by MCP server boundary checks in hex-agent (ADR-2604012110).
 
 use serde::{Deserialize, Serialize};
 

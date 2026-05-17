@@ -10,7 +10,7 @@ Press Enter to step one generation. `n 20` to advance 20. `r` to reset. `q` to q
 
 ## Why this exists
 
-Demonstrates that the hex-architecture rules enforced by `hex analyze` work for non-trivial software, not just for hex-nexus itself. Built tonight (2026-05-09) as a proof artifact alongside the typed-tool-library SOP work (ADR-2026-05-08-2500). The whole example was built inside hex's own `hex analyze` 100/100 grade — zero boundary violations.
+Demonstrates that the hex-architecture rules enforced by `hex analyze` work for non-trivial software, not just for hex-nexus itself. Built tonight (2026-05-09) as a proof artifact alongside the typed-tool-library SOP work (ADR-2605082500). The whole example was built inside hex's own `hex analyze` 100/100 grade — zero boundary violations.
 
 ## Rules — Bays B2/S34 hexagonal Life
 

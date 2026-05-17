@@ -14,7 +14,7 @@
 //! `test_spacetime_live_contract` is `#[ignore]` for exactly that reason).
 //!
 //! Workplan: wp-hex-standalone-dispatch P5.4
-//! ADR: ADR-2026-04-11-2000
+//! ADR: ADR-2604112000
 //!
 //! Gate command:
 //!   cargo test -p hex-nexus --test hexflo_memory_e2e

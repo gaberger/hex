@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-14-0000",
+  "adr": "ADR-2604140000",
   "created_at": "2026-04-14T00:00:00Z",
   "created_by": "human+agent",
   "description": "hex hey <text> command. Two-tier classifier: keyword match first (80% of intents), LLM fallback via local qwen3:4b. Pairs with brain daemon for async execution.",

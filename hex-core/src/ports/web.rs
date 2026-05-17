@@ -1,4 +1,4 @@
-//! Web search & fetch ports (ADR-2026-04-14-2100: hex-native web search).
+//! Web search & fetch ports (ADR-2604142100: hex-native web search).
 //!
 //! Two driven-adapter contracts: `WebSearchPort` for query-to-results, and
 //! `WebFetchPort` for URL-to-page. Domain types live in

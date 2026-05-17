@@ -1,4 +1,4 @@
-//! P5.1 — Task lifecycle integration tests (ADR-2026-03-30-0100).
+//! P5.1 — Task lifecycle integration tests (ADR-2603300100).
 //!
 //! Tier 1 (always run — no external deps):
 //!   Daemon subprocess starts, logs "REST polling fallback active" when SpacetimeDB

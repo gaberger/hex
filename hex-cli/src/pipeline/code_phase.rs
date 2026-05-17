@@ -936,7 +936,7 @@ impl CodePhase {
         info!(model = %selected.model_id, source = %selected.source, "selected model for code generation");
 
         // ── 4. Call inference ────────────────────────────────────────────
-        // Build enriched user message (ADR-2026-04-07-0400 P0: explicit paths, structure, imports)
+        // Build enriched user message (ADR-2604070400 P0: explicit paths, structure, imports)
         let target_path_display = target_file.as_deref().unwrap_or("(not specified)");
         let mut user_message = format!(
             "Write the file: {}\nLanguage: {}\n\n## Task\n{}\n",
@@ -959,7 +959,7 @@ impl CodePhase {
 
         let start = Instant::now();
 
-        // ADR-2026-04-13-0010: Local Ollama path for remote workers.
+        // ADR-2604130010: Local Ollama path for remote workers.
         // When HEX_PROVIDER=ollama, call Ollama directly — never route through nexus.
         let use_local_ollama = std::env::var("HEX_PROVIDER").as_deref() == Ok("ollama");
 
@@ -975,7 +975,7 @@ impl CodePhase {
             tracing::info!(
                 model = %selected.model_id,
                 host = %ollama_host,
-                "CodePhase: local Ollama inference (ADR-2026-04-13-0010)"
+                "CodePhase: local Ollama inference (ADR-2604130010)"
             );
             let http = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(600))
@@ -1070,7 +1070,7 @@ impl CodePhase {
     /// Execute code generation for a single workflow phase.
     ///
     /// Like `execute_step`, but injects the phase's steps from the YAML definition
-    /// as TDD instructions into the system prompt. Used by ADR-2026-03-24-0130 phase dispatch.
+    /// as TDD instructions into the system prompt. Used by ADR-2603240130 phase dispatch.
     ///
     /// # Arguments
     /// * `step` - the workplan step
@@ -1176,7 +1176,7 @@ impl CodePhase {
             .context("model selection failed")?;
         info!(model = %selected.model_id, source = %selected.source, phase = %phase.id, "selected model for phase code generation");
 
-        // ── 5. Build user message (ADR-2026-04-07-0400 P0: enriched) ─────────
+        // ── 5. Build user message (ADR-2604070400 P0: enriched) ─────────
         let target_path_display = target_file.as_deref().unwrap_or("(not specified)");
         let mut user_message = format!(
             "Write the file: {}\nLanguage: {}\n\n## Task\n{}\n",
@@ -1205,7 +1205,7 @@ impl CodePhase {
         // ── 6. Call inference ────────────────────────────────────────────
         let start = Instant::now();
 
-        // ADR-2026-04-13-0010: Local Ollama path for remote workers.
+        // ADR-2604130010: Local Ollama path for remote workers.
         // When HEX_PROVIDER=ollama, call Ollama directly — never route through nexus.
         let use_local_ollama = std::env::var("HEX_PROVIDER").as_deref() == Ok("ollama");
 
@@ -1222,7 +1222,7 @@ impl CodePhase {
                 model = %selected.model_id,
                 host = %ollama_host,
                 phase = %phase.id,
-                "CodePhase: local Ollama inference for phase (ADR-2026-04-13-0010)"
+                "CodePhase: local Ollama inference for phase (ADR-2604130010)"
             );
             let http = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(600))

@@ -49,7 +49,7 @@ impl Tool for WorkplanEmit {
                 },
                 "adr": {
                     "type": "string",
-                    "description": "Source ADR reference (e.g. 'ADR-2026-05-08-2600'). Required by ADR→workplan→swarm pipeline."
+                    "description": "Source ADR reference (e.g. 'ADR-2605082600'). Required by ADR→workplan→swarm pipeline."
                 },
                 "phases": {
                     "type": "array",
@@ -74,7 +74,7 @@ impl Tool for WorkplanEmit {
                                         "files": {
                                             "type": "array",
                                             "items": { "type": "string" },
-                                            "description": "Repo-relative file paths this task creates or modifies. Required by ADR-2026-04-14-2201 for hex plan reconcile to verify done-condition. Use forward slashes; no globs."
+                                            "description": "Repo-relative file paths this task creates or modifies. Required by ADR-2604142201 for hex plan reconcile to verify done-condition. Use forward slashes; no globs."
                                         }
                                     }
                                 }
@@ -148,7 +148,7 @@ impl Tool for WorkplanEmit {
                 }
                 if tfiles.is_empty() {
                     return ToolResult::err(
-                        format!("phase[{}].tasks[{}] '{}' requires files[] (ADR-2026-04-14-2201 reconcile evidence)", pi, ti, tid),
+                        format!("phase[{}].tasks[{}] '{}' requires files[] (ADR-2604142201 reconcile evidence)", pi, ti, tid),
                         start.elapsed().as_millis() as u64,
                     );
                 }
@@ -231,7 +231,7 @@ impl Tool for WorkplanEmit {
                 "adr": adr,
                 "phases": phases_out.len(),
                 "byte_len": pretty.len(),
-                "note": "proposed_action queued; twin auto-approves tool:* per ADR-2026-05-08-2500; once executor writes, run `hex swarm init wp-<slug>` to dispatch",
+                "note": "proposed_action queued; twin auto-approves tool:* per ADR-2605082500; once executor writes, run `hex swarm init wp-<slug>` to dispatch",
             }),
             start.elapsed().as_millis() as u64,
         )

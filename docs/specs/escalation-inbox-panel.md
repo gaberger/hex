@@ -13,7 +13,7 @@ Escalation Inbox Panel — Operator UX Surface
 
 ## Context
 
-Per ADR-2026-05-09-0000, personas use `escalate_to_operator(reason, urgency, options?)` when they cannot proceed autonomously. Currently (as of overnight cycle 4):
+Per ADR-2605090000, personas use `escalate_to_operator(reason, urgency, options?)` when they cannot proceed autonomously. Currently (as of overnight cycle 4):
 
 - Escalations are **logged** to `nexus.log` (tracing::warn)
 - A **Telegram notification** fires if configured (fire-and-forget)
@@ -291,8 +291,8 @@ Call `check_escalations().await` in the main `run()` function after the nexus ch
 
 ## Dependencies
 
-- **ADR-2026-05-09-0000**: SOP contracts (defines `escalate_to_operator` tool)  
-- **ADR-2026-04-14-2200**: Workplan reconciliation (not directly related, but both touch operator observability)  
+- **ADR-2605090000**: SOP contracts (defines `escalate_to_operator` tool)  
+- **ADR-2604142200**: Workplan reconciliation (not directly related, but both touch operator observability)  
 - **SpacetimeDB**: `hexflo-coordination` module must be deployed with the new `operator_escalation` table  
 
 ---

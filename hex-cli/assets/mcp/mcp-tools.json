@@ -256,7 +256,7 @@
       "name": "hex_adr_doctor",
       "category": "adr",
       "cli": "hex adr doctor [--fix] [--json] [--strict]",
-      "description": "ADR registry self-consistency checker (ADR-2026-04-27-0800). Detects unparseable status, duplicate IDs, dangling Depends-on links, stale-Proposed, unlinked Superseded, etc. Each finding is tagged with an auto-fix tier (A/B/C) the sched daemon dispatches. Exit 0 clean, 1 warnings only, 2 any error (or any finding under --strict). --fix is reserved for P2 (Tier-A auto-fix) and currently stub-warns.",
+      "description": "ADR registry self-consistency checker (ADR-2604270800). Detects unparseable status, duplicate IDs, dangling Depends-on links, stale-Proposed, unlinked Superseded, etc. Each finding is tagged with an auto-fix tier (A/B/C) the sched daemon dispatches. Exit 0 clean, 1 warnings only, 2 any error (or any finding under --strict). --fix is reserved for P2 (Tier-A auto-fix) and currently stub-warns.",
       "route": { "method": "LOCAL", "path": "docs/adrs/" },
       "inputSchema": {
         "type": "object",
@@ -272,7 +272,7 @@
       "name": "hex_sched_improver_discover",
       "category": "sched",
       "cli": "hex sched improver discover [--once] [--json] [--interval <secs>]",
-      "description": "Self-improvement discovery surface (ADR-2026-04-27-1100 P1). Runs every detector in assets/improver/detectors.toml against the repo, emits a deduped Hypothesis list — operator preview of what the autonomous loop would propose. JSON envelope: { count, hypotheses: [{ id, source, scope, severity, evidence, generated_at }] }. --once exits after one sweep; default polls at the daemon's improver-tick cadence (240s).",
+      "description": "Self-improvement discovery surface (ADR-2604271100 P1). Runs every detector in assets/improver/detectors.toml against the repo, emits a deduped Hypothesis list — operator preview of what the autonomous loop would propose. JSON envelope: { count, hypotheses: [{ id, source, scope, severity, evidence, generated_at }] }. --once exits after one sweep; default polls at the daemon's improver-tick cadence (240s).",
       "route": { "method": "LOCAL", "path": "docs/adrs/,docs/workplans/" },
       "inputSchema": {
         "type": "object",
@@ -558,7 +558,7 @@
       "name": "hex_brief",
       "category": "aios",
       "cli": "hex brief",
-      "description": "Get a developer briefing: pending decisions, recent activity, and project health summary. Ambient-first AIOS layer (ADR-2026-04-13-1500).",
+      "description": "Get a developer briefing: pending decisions, recent activity, and project health summary. Ambient-first AIOS layer (ADR-2604131500).",
       "route": { "method": "GET", "path": "/api/briefing" },
       "inputSchema": {
         "type": "object",
@@ -574,7 +574,7 @@
       "name": "hex_decide",
       "category": "aios",
       "cli": "hex decide <decision_id> <action>",
-      "description": "Respond to a pending decision (approve, reject, defer, or override with a value). Part of the AIOS Console layer (ADR-2026-04-13-1500).",
+      "description": "Respond to a pending decision (approve, reject, defer, or override with a value). Part of the AIOS Console layer (ADR-2604131500).",
       "route": { "method": "POST", "path": "/api/decisions/{decision_id}" },
       "inputSchema": {
         "type": "object",
@@ -590,7 +590,7 @@
       "name": "hex_trust_show",
       "category": "aios",
       "cli": "hex trust show",
-      "description": "Show current delegation trust levels per project and scope. Part of the AIOS delegation layer (ADR-2026-04-13-1500).",
+      "description": "Show current delegation trust levels per project and scope. Part of the AIOS delegation layer (ADR-2604131500).",
       "route": { "method": "GET", "path": "/api/trust" },
       "inputSchema": {
         "type": "object",
@@ -604,7 +604,7 @@
       "name": "hex_trust_set",
       "category": "aios",
       "cli": "hex trust set <project> <scope> <level>",
-      "description": "Set delegation trust level for a project scope (suggest, auto, or block). Controls how much autonomy agents have (ADR-2026-04-13-1500).",
+      "description": "Set delegation trust level for a project scope (suggest, auto, or block). Controls how much autonomy agents have (ADR-2604131500).",
       "route": { "method": "PATCH", "path": "/api/trust" },
       "inputSchema": {
         "type": "object",
@@ -620,7 +620,7 @@
       "name": "hex_steer",
       "category": "aios",
       "cli": "hex steer <project> <directive>",
-      "description": "Send a steering directive to a project — adjusts agent behavior without interrupting work. Part of the AIOS Override layer (ADR-2026-04-13-1500).",
+      "description": "Send a steering directive to a project — adjusts agent behavior without interrupting work. Part of the AIOS Override layer (ADR-2604131500).",
       "route": { "method": "POST", "path": "/api/steer" },
       "inputSchema": {
         "type": "object",
@@ -635,7 +635,7 @@
       "name": "hex_pulse",
       "category": "aios",
       "cli": "hex pulse",
-      "description": "One-glance system pulse: active agents, pending decisions, recent completions, health. The ambient heartbeat of the AIOS (ADR-2026-04-13-1500).",
+      "description": "One-glance system pulse: active agents, pending decisions, recent completions, health. The ambient heartbeat of the AIOS (ADR-2604131500).",
       "route": { "method": "GET", "path": "/api/pulse" },
       "inputSchema": {
         "type": "object",
@@ -678,7 +678,7 @@
       "name": "hex_new",
       "category": "aios",
       "cli": "hex new <path> [--name <name>] [--description <desc>] [--taste-from <project>]",
-      "description": "Structured project intake: create or adopt a directory, register the project, seed trust at suggest level, and optionally copy taste preferences (ADR-2026-04-13-1500 §2).",
+      "description": "Structured project intake: create or adopt a directory, register the project, seed trust at suggest level, and optionally copy taste preferences (ADR-2604131500 §2).",
       "route": { "method": "POST", "path": "/api/projects/register" },
       "inputSchema": {
         "type": "object",
@@ -695,7 +695,7 @@
       "name": "hex_pause",
       "category": "aios",
       "cli": "hex pause",
-      "description": "Emergency pause: halt the active workplan. In-flight agents finish their current task but no new tasks are dispatched. AIOS Override layer (ADR-2026-04-13-1500 §1 Layer 4).",
+      "description": "Emergency pause: halt the active workplan. In-flight agents finish their current task but no new tasks are dispatched. AIOS Override layer (ADR-2604131500 §1 Layer 4).",
       "route": { "method": "POST", "path": "/api/workplan/pause" },
       "inputSchema": {
         "type": "object",
@@ -707,7 +707,7 @@
       "name": "hex_resume",
       "category": "aios",
       "cli": "hex resume",
-      "description": "Resume a paused workplan. Dispatches the next tier of tasks. AIOS Override layer (ADR-2026-04-13-1500 §1 Layer 4).",
+      "description": "Resume a paused workplan. Dispatches the next tier of tasks. AIOS Override layer (ADR-2604131500 §1 Layer 4).",
       "route": { "method": "POST", "path": "/api/workplan/resume" },
       "inputSchema": {
         "type": "object",
@@ -719,7 +719,7 @@
       "name": "hex_override",
       "category": "aios",
       "cli": "hex override <project> <instruction>",
-      "description": "Emergency override: send a priority-2 notification to all agents in a project. Agents must acknowledge before continuing. AIOS Override layer (ADR-2026-04-13-1500 §1 Layer 4).",
+      "description": "Emergency override: send a priority-2 notification to all agents in a project. Agents must acknowledge before continuing. AIOS Override layer (ADR-2604131500 §1 Layer 4).",
       "route": { "method": "POST", "path": "/api/hexflo/inbox/notify" },
       "inputSchema": {
         "type": "object",

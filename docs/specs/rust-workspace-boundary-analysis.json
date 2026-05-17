@@ -1,7 +1,7 @@
 {
   "feature": "rust-workspace-boundary-analysis",
   "description": "Extend hex analyze to detect and report Rust workspace layers and boundary violations. Currently hex analyze only reports TypeScript src/ layer counts; 299 Rust files (87% of the codebase) are invisible to the health score and boundary checker.",
-  "adr": "ADR-2026-03-28-3000",
+  "adr": "ADR-2603283000",
   "specs": [
     {
       "id": "S01",

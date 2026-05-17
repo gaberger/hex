@@ -19,7 +19,7 @@
           "id": "P0.1",
           "layer": "infrastructure",
           "name": "Add teloxide dependency and telegram_bot adapter module",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -65,7 +65,7 @@
           "id": "P1.1",
           "layer": "secondary",
           "name": "Implement chat_id allowlist loader from .hex/telegram.toml",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -74,7 +74,7 @@
           "id": "P1.2",
           "layer": "secondary",
           "name": "Add rate limiter (5 commands/min per chat_id)",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -83,7 +83,7 @@
           "id": "P1.3",
           "layer": "secondary",
           "name": "Implement /status command (nexus uptime, inbox count)",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -120,7 +120,7 @@
           "id": "P2.1",
           "layer": "primary",
           "name": "Add hex telegram subcommand (enable/disable/status)",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -148,7 +148,7 @@
           "id": "P3.1",
           "layer": "infrastructure",
           "name": "Add HEX_DISABLE_TELEGRAM kill switch check",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -158,7 +158,7 @@
           "id": "P3.2",
           "layer": "integration",
           "name": "Add integration test with mock Telegram API",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 4

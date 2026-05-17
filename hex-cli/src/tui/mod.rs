@@ -1,4 +1,4 @@
-//! Ratatui-based TUI for `hex dev` (ADR-2026-03-23-2005).
+//! Ratatui-based TUI for `hex dev` (ADR-2603232005).
 //!
 //! The TUI provides a full-screen interactive view of the hex development
 //! pipeline: a progress bar across phases, a scrollable task list, live
@@ -165,11 +165,11 @@ pub struct TuiApp {
     /// Set to `true` after `running_phase` is assigned; the actual blocking call
     /// happens on the *next* tick so render() gets one frame to show the status.
     phase_ready_to_run: bool,
-    /// Channel for receiving messages from phase workers (ADR-2026-03-24-1500).
+    /// Channel for receiving messages from phase workers (ADR-2603241500).
     ui_rx: tokio::sync::mpsc::UnboundedReceiver<messages::UiMessage>,
-    /// Channel sender cloned to each phase worker (ADR-2026-03-24-1500).
+    /// Channel sender cloned to each phase worker (ADR-2603241500).
     ui_tx: tokio::sync::mpsc::UnboundedSender<messages::UiMessage>,
-    /// Read-only UI state rebuilt from messages (ADR-2026-03-24-1500).
+    /// Read-only UI state rebuilt from messages (ADR-2603241500).
     ui_state: messages::UiState,
     /// Ticker incremented every tick — drives spinner animation in render().
     phase_elapsed_ticker: u8,
@@ -288,7 +288,7 @@ impl TuiApp {
                     self.handle_key(key.code, key.modifiers);
                 }
             }
-            // Drain messages from phase workers (ADR-2026-03-24-1500).
+            // Drain messages from phase workers (ADR-2603241500).
             while let Ok(msg) = self.ui_rx.try_recv() {
                 // Sync session data from phase workers before applying to UI state.
                 match &msg {
@@ -1053,7 +1053,7 @@ impl TuiApp {
                         self.session.clone(),
                     ));
 
-                    // Generate + store architecture fingerprint (ADR-2026-03-30-1200).
+                    // Generate + store architecture fingerprint (ADR-2603301200).
                     // Best-effort: failure is logged but does not block the pipeline.
                     let fingerprint_project_id = self.session.project_id.clone();
                     if let Some(ref pid) = fingerprint_project_id {
@@ -1104,7 +1104,7 @@ impl TuiApp {
                             self.session.completed_steps = sup_session.completed_steps.clone();
                         }
                     }
-                    // Fallback: populate completed_steps from workplan (ADR-2026-04-07-1300)
+                    // Fallback: populate completed_steps from workplan (ADR-2604071300)
                     // Only when supervisor succeeded — never mark steps done on error/halt.
                     if self.session.completed_steps.is_empty() && result.is_ok() {
                         self.session.completed_steps = workplan_data.steps.iter()
@@ -1112,7 +1112,7 @@ impl TuiApp {
                             .collect();
                     }
 
-                    // Build quality_result — even on Err for partial results (ADR-2026-04-07-1300)
+                    // Build quality_result — even on Err for partial results (ADR-2604071300)
                     match &result {
                         Ok(sr) => {
                             self.session.quality_result = Some(sr.to_quality_report(language));

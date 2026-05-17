@@ -184,7 +184,7 @@ pub struct ContextVariables {
     pub workspace_root: Option<String>,
     pub current_phase: Option<String>,
     pub constraints: Option<String>,
-    // Live enrichment fields (ADR-2026-03-31-2100)
+    // Live enrichment fields (ADR-2603312100)
     pub architecture_score: Option<u8>,
     architecture_score_display: Option<String>,
     pub arch_violations: Option<Vec<String>>,
@@ -709,7 +709,7 @@ mod tests {
         let vars = ContextVariables::new()
             .with_architecture_score(85)
             .with_arch_violations(vec!["adapter imports adapter".to_string()])
-            .with_relevant_adrs(vec!["ADR-2026-03-31-2100".to_string()])
+            .with_relevant_adrs(vec!["ADR-2603312100".to_string()])
             .with_ast_summary("mod domain { struct Foo }".to_string())
             .with_recent_changes("feat: add context enrichment".to_string())
             .with_hexflo_memory("task:abc123 in_progress".to_string())

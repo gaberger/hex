@@ -93,7 +93,7 @@ pub struct WorkplanTaskUpdate {
     pub result: Option<String>,
 }
 
-// ── Workplan Event Log (ADR-2026-04-27-1000) ──────────────────
+// ── Workplan Event Log (ADR-2604271000) ──────────────────
 //
 // The append-only event log that replaces mutable JSON `status` fields as
 // the source of truth for workplan progress. The executor emits events at
@@ -203,7 +203,7 @@ pub struct SwarmInfo {
     pub name: String,
     pub topology: String,
     pub status: String,
-    /// Authoritative owner agent ID (ADR-2026-03-24-1900).
+    /// Authoritative owner agent ID (ADR-2603241900).
     #[serde(default)]
     pub owner_agent_id: String,
     /// Kept for backward compat — mirrors owner_agent_id.
@@ -234,7 +234,7 @@ pub struct SwarmTaskInfo {
     pub result: String,
     /// Comma-separated task IDs this task depends on (empty = no deps).
     pub depends_on: String,
-    /// Monotonic version for CAS (ADR-2026-03-24-1900).
+    /// Monotonic version for CAS (ADR-2603241900).
     #[serde(default)]
     pub version: u64,
     /// Last agent to claim this task (for conflict messages).
@@ -479,7 +479,7 @@ pub enum StateEvent {
     SwarmAgentChanged { agent: SwarmAgentInfo },
 }
 
-// ── Focused Sub-Traits (ADR-2026-04-05-0900 P6) ─────────────
+// ── Focused Sub-Traits (ADR-2604050900 P6) ─────────────
 //
 // IStatePort was a 100+ method god-trait. These sub-traits let consumers
 // depend only on the method groups they actually use. IStatePort remains
@@ -545,7 +545,7 @@ pub trait IWorkplanStatePort: Send + Sync {
         workplan_id: &str,
     ) -> Result<Vec<WorkplanTaskUpdate>, StateError>;
 
-    /// Append a workplan transition event (ADR-2026-04-27-1000 §2).
+    /// Append a workplan transition event (ADR-2604271000 §2).
     ///
     /// Default impl is a no-op so adapters that haven't yet wired the STDB
     /// `workplan_event` reducer (P1.1) keep compiling. The executor still
@@ -811,7 +811,7 @@ pub trait ICoordinationStatePort: Send + Sync {
 #[async_trait]
 pub trait IHexAgentStatePort: Send + Sync {
     async fn hex_agent_connect(&self, id: &str, name: &str, host: &str, project_id: &str, project_dir: &str, model: &str, session_id: &str, role: &str, capabilities_json: &str) -> Result<(), StateError>;
-    /// Update only the capabilities_json column for an existing agent (ADR-2026-04-13-0010 P2.1).
+    /// Update only the capabilities_json column for an existing agent (ADR-2604130010 P2.1).
     async fn hex_agent_update_capabilities(&self, id: &str, capabilities_json: &str) -> Result<(), StateError>;
     async fn hex_agent_disconnect(&self, id: &str) -> Result<(), StateError>;
     async fn hex_agent_heartbeat(&self, id: &str) -> Result<(), StateError>;
@@ -910,7 +910,7 @@ pub trait INeuralLabStatePort: Send + Sync {
     async fn neural_lab_strategies_list(&self) -> Result<Vec<serde_json::Value>, StateError>;
 }
 
-// ── Substrate swap-ticket port (ADR-2026-04-26-1500 P6 / wp-substrate-shadow-promotion P2) ──
+// ── Substrate swap-ticket port (ADR-2604261500 P6 / wp-substrate-shadow-promotion P2) ──
 //
 // Deliberately *not* added to the `IStatePort` super-trait. The substrate
 // ADR is about port-by-port modular swapping; expanding the god-trait would
@@ -1067,7 +1067,7 @@ pub enum StateError {
     Connection(String),
     #[error("Serialization error: {0}")]
     Serialization(String),
-    /// CAS conflict on task_assign (ADR-2026-03-24-1900).
+    /// CAS conflict on task_assign (ADR-2603241900).
     #[error("Conflict: {0}")]
     Conflict(String),
 }

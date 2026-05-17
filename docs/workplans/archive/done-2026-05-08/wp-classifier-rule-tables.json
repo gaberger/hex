@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-14-2243-classifier-rule-tables",
+  "adr": "ADR-2604142243-classifier-rule-tables",
   "id": "wp-classifier-rule-tables",
   "phases": [
     {
@@ -98,5 +98,5 @@
   ],
   "status": "pending",
   "timeout_s": 1800,
-  "title": "Lift remaining if-elif classifiers into rule tables (ADR-2026-04-14-2243)"
+  "title": "Lift remaining if-elif classifiers into rule tables (ADR-2604142243)"
 }

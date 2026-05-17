@@ -1,4 +1,4 @@
-//! C2 — Hot-swappable composition root API (per ADR-2026-04-26-1500).
+//! C2 — Hot-swappable composition root API (per ADR-2604261500).
 //!
 //! `RuntimeComposition` is the trait by which adapters are registered, swapped,
 //! promoted, and rolled back at runtime. `InMemoryComposition` is the day-one

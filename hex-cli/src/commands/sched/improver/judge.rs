@@ -1,4 +1,4 @@
-//! Improver judge phase (ADR-2026-04-27-1100 P3).
+//! Improver judge phase (ADR-2604271100 P3).
 //!
 //! Takes the unordered hypothesis stream from [`discover`] and scores each
 //! one so [`act`] can pick the top-N. Scoring is deliberately a closed

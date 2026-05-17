@@ -1,5 +1,5 @@
 //! REST surface for substrate swap-tickets + shadow-samples
-//! (ADR-2026-04-26-1500 P5, wp-substrate-shadow-promotion P5.1).
+//! (ADR-2604261500 P5, wp-substrate-shadow-promotion P5.1).
 //!
 //! Read-only. Backed by the `ISwapTicketStatePort` read methods landed in
 //! P4 (`shadow_tickets_due` + `shadow_samples_for`).
@@ -56,7 +56,7 @@ pub async fn list_swaps(State(state): State<SharedState>) -> Json<Value> {
 }
 
 /// Body for POST /api/swaps/secret/propose — operator-facing trigger for
-/// secret-port swaps (ADR-2026-04-26-2100 cookbook Step 6.4: sibling endpoint
+/// secret-port swaps (ADR-2604262100 cookbook Step 6.4: sibling endpoint
 /// per port until polymorphic dispatch lands at third-port arrival).
 #[derive(Debug, Deserialize)]
 pub struct ProposeSecretSwapBody {
@@ -294,7 +294,7 @@ pub async fn list_samples(
 
 /// Substrate port allowlist — single source of truth for the L2
 /// `KnownPortReviewer`. When a third port migrates per the cookbook
-/// (ADR-2026-04-26-2100), add it here once instead of editing every
+/// (ADR-2604262100), add it here once instead of editing every
 /// propose/dry-run handler.
 fn substrate_port_allowlist() -> Vec<String> {
     vec!["inference".into(), "secret".into()]
@@ -384,7 +384,7 @@ async fn finalize_propose(
     Ok(now)
 }
 
-/// Body for POST /api/swaps/propose — operator-facing trigger (ADR-2026-04-26-1800
+/// Body for POST /api/swaps/propose — operator-facing trigger (ADR-2604261800
 /// P4, wp-substrate-inference-consumer-rewires P4.1).
 #[derive(Debug, Deserialize)]
 pub struct ProposeSwapBody {
@@ -514,8 +514,8 @@ pub async fn propose_swap(
         manifest,
     };
 
-    // L2 adversarial-swarm pre-flight gate (ADR-2026-04-26-1311 L2 /
-    // ADR-2026-04-26-1500 C6). Run reviewers BEFORE registering the handle on
+    // L2 adversarial-swarm pre-flight gate (ADR-2604261311 L2 /
+    // ADR-2604261500 C6). Run reviewers BEFORE registering the handle on
     // the router — keeps the registry clean if review rejects.
     // Append the LLM-backed reviewer when an inference adapter is wired,
     // so the swarm includes a non-deterministic opinion alongside the

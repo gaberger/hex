@@ -1,4 +1,4 @@
-# hex-agent Docker AI Sandbox — network policy (ADR-2026-03-28-2000)
+# hex-agent Docker AI Sandbox — network policy (ADR-2603282000)
 #
 # Defines the allowed network egress for hex-agent running inside a
 # Docker AI Sandbox microVM. Outbound connections are restricted to

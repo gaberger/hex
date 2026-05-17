@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-14-1200",
+  "adr": "ADR-2604141200",
   "created_at": "2026-04-14T17:31:00-04:00",
   "created_by": "claude",
   "description": "Allow `hex hey run <cmd> on <host>` to execute whitelisted shell commands on remote hosts via hex-agent workers. Introduces a `remote-shell` brain task kind, agent-side poll/execute loop, and a trusted_hosts + command whitelist security model.",
@@ -7,7 +7,7 @@
   "id": "wp-remote-shell-via-agent",
   "phases": [
     {
-      "description": "Extend the hey-hex natural-language classifier (ADR-2026-04-14-0000) to recognize trailing `on <host>` and route to the new `remote-shell` kind when the host is in .hex/project.json trusted_hosts.",
+      "description": "Extend the hey-hex natural-language classifier (ADR-2604140000) to recognize trailing `on <host>` and route to the new `remote-shell` kind when the host is in .hex/project.json trusted_hosts.",
       "gate": {
         "blocking": true,
         "command": "cargo test -p hex-cli hey::remote",

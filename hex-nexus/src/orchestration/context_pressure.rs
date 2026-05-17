@@ -1,4 +1,4 @@
-//! Context window pressure tracking (ADR-2026-03-28-1000 P1).
+//! Context window pressure tracking (ADR-2603281000 P1).
 //!
 //! Tracks token consumption across agent sessions and signals when the context
 //! window is approaching capacity so the supervisor can trigger summarisation

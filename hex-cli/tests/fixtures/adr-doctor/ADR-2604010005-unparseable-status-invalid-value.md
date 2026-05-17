@@ -1,4 +1,4 @@
-# ADR-2026-04-01-0005: Status with non-lifecycle value
+# ADR-2604010005: Status with non-lifecycle value
 
 **Status:** Banana
 **Date:** 2026-04-05

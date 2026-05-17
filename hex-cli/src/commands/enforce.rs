@@ -1,4 +1,4 @@
-//! `hex enforce` — manage enforcement rules (ADR-2026-03-22-1959 P5).
+//! `hex enforce` — manage enforcement rules (ADR-2603221959 P5).
 //!
 //! Rules define what hex enforces at the MCP, CLI, and API layers.
 //! Rules are synced from `.hex/ADR-rules.toml` to SpacetimeDB on startup,
@@ -27,7 +27,7 @@ pub enum EnforceAction {
     },
     /// Show current enforcement mode (mandatory/advisory/disabled)
     Mode,
-    /// Output a system prompt for non-MCP models (ADR-2026-03-22-1959 P6)
+    /// Output a system prompt for non-MCP models (ADR-2603221959 P6)
     Prompt,
     /// Check a file path against ADR-rules.toml (for Claude Code hook integration)
     CheckFile {
@@ -60,7 +60,7 @@ async fn list() -> anyhow::Result<()> {
     // Also load from local .hex/ADR-rules.toml
     let local_rules = load_local_rules();
 
-    println!("{} Enforcement Rules (ADR-2026-03-22-1959)", "\u{2b21}".cyan());
+    println!("{} Enforcement Rules (ADR-2603221959)", "\u{2b21}".cyan());
     println!();
 
     // Show enforcement mode
@@ -356,7 +356,7 @@ fn resolve_mode() -> String {
     "mandatory".to_string()
 }
 
-/// Generate a system prompt for non-MCP models (ADR-2026-03-22-1959 P6).
+/// Generate a system prompt for non-MCP models (ADR-2603221959 P6).
 /// Outputs the enforcement template with the current mode substituted.
 async fn generate_prompt() -> anyhow::Result<()> {
     let mode = resolve_mode();

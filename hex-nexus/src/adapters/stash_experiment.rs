@@ -4,7 +4,7 @@
 //! today, [`super::spacetime_experiment::SpacetimeExperimentAdapter`] tomorrow)
 //! plus an [`IConsolidationMemoryPort`]. Writes go to inner first; on success
 //! they are mirrored best-effort into stash so the consolidation pipeline
-//! (ADR-2026-04-26-1430) can reason about hypotheses, objectives, and rollback
+//! (ADR-2604261430) can reason about hypotheses, objectives, and rollback
 //! failures.
 //!
 //! Projection semantics:
@@ -16,7 +16,7 @@
 //! | verdict_record(rollback) | remember(notes+reason, namespace) |
 //!
 //! `IConsolidationMemoryPort` does not have native `create_goal` or
-//! `create_hypothesis` methods (those land in P8 of ADR-2026-04-26-1430). Until
+//! `create_hypothesis` methods (those land in P8 of ADR-2604261430). Until
 //! then, projection uses [`IConsolidationMemoryPort::remember`] with a
 //! convention-bound namespace per record kind. When the richer surface lands,
 //! this adapter swaps the calls without changing the trait shape.
@@ -154,7 +154,7 @@ where
         status: ObjectiveStatus,
     ) -> Result<(), ExperimentError> {
         // Status transitions are not projected today — they're inferable from
-        // the underlying objective record. If P8 of ADR-2026-04-26-1430 introduces
+        // the underlying objective record. If P8 of ADR-2604261430 introduces
         // a typed goal-status surface in the consolidation port, swap to it
         // here.
         self.inner.objective_update_status(id, status).await

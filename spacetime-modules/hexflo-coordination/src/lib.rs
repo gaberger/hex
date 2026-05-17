@@ -19,7 +19,7 @@ pub struct Swarm {
     pub topology: String,
     /// Status: "active", "completed", "failed"
     pub status: String,
-    /// Agent ID that owns this swarm (ADR-2026-03-24-1900). Authoritative owner —
+    /// Agent ID that owns this swarm (ADR-2603241900). Authoritative owner —
     /// not just creator. Use swarm_transfer to change ownership.
     pub owner_agent_id: String,
     /// Kept for backward compatibility during migration; mirrors owner_agent_id.
@@ -29,7 +29,7 @@ pub struct Swarm {
 }
 
 /// A task within a swarm — the unit of work assigned to agents.
-/// CAS fields (ADR-2026-03-24-1900): callers read `version` before assigning, then
+/// CAS fields (ADR-2603241900): callers read `version` before assigning, then
 /// pass it to task_assign. Mismatch → ConflictError; prevents double-assignment
 /// across remote nodes without distributed locks.
 #[table(name = swarm_task, public)]
@@ -211,7 +211,7 @@ pub fn agent_disconnect(ctx: &ReducerContext, id: String, timestamp: String) -> 
 }
 
 /// Update agent capabilities (models, tok/s, provider) without full re-registration.
-/// Called by worker after inference discovery (ADR-2026-04-13-0010 P2.1).
+/// Called by worker after inference discovery (ADR-2604130010 P2.1).
 #[reducer]
 pub fn agent_update_capabilities(
     ctx: &ReducerContext,
@@ -624,7 +624,7 @@ pub fn mcp_tool_sync(
 }
 
 // ============================================================
-//  Remote Agent Registry (ADR-2026-04-05-0900 P4.1)
+//  Remote Agent Registry (ADR-2604050900 P4.1)
 //
 //  Replaces in-memory RemoteRegistryAdapter with SpacetimeDB-backed state.
 //  Dashboard subscribes to this table for real-time fleet visibility.
@@ -1035,7 +1035,7 @@ pub fn swarm_init(
         return Err(format!("Swarm '{}' already exists", id));
     }
 
-    // ADR-2026-03-24-1900: enforce 1:1 agent↔swarm ownership.
+    // ADR-2603241900: enforce 1:1 agent↔swarm ownership.
     // An agent may not own more than one active swarm at a time.
     if !created_by.is_empty() {
         let already_owns = ctx
@@ -1209,7 +1209,7 @@ fn dependencies_met(ctx: &ReducerContext, task: &SwarmTask) -> bool {
     true
 }
 
-/// Assign a task to an agent using Compare-And-Swap (ADR-2026-03-24-1900).
+/// Assign a task to an agent using Compare-And-Swap (ADR-2603241900).
 ///
 /// `expected_version` must match `task.version` at the time of the call.
 /// Pass `u64::MAX` (18446744073709551615) to skip version check (legacy / force-assign).
@@ -1297,7 +1297,7 @@ pub fn task_assign(
     Ok(())
 }
 
-/// Transfer swarm ownership to a new agent (ADR-2026-03-24-1900).
+/// Transfer swarm ownership to a new agent (ADR-2603241900).
 /// Only the current owner or a call with no owner set may transfer.
 #[reducer]
 pub fn swarm_transfer(
@@ -1614,7 +1614,7 @@ pub fn inference_task_fail(
         .find(&id)
         .ok_or_else(|| format!("InferenceTask '{}' not found", id))?;
 
-    // ADR-2026-04-24-1630: sanitize empty error strings - never store empty
+    // ADR-2604241630: sanitize empty error strings - never store empty
     let sanitized_error = if error.trim().is_empty() {
         "unknown error".to_string()
     } else {
@@ -1632,7 +1632,7 @@ pub fn inference_task_fail(
 }
 
 // ============================================================
-//  Workplan event log — ADR-2026-04-27-1000 §2 (state-model-v2)
+//  Workplan event log — ADR-2604271000 §2 (state-model-v2)
 // ============================================================
 //
 // Append-only event log for workplan task state transitions. Replaces the
@@ -2136,7 +2136,7 @@ pub fn memory_clear_scope(ctx: &ReducerContext, scope: String) -> Result<(), Str
 }
 
 // ============================================================
-//  Dev Session & Inference Log (ADR-2026-04-07-1300)
+//  Dev Session & Inference Log (ADR-2604071300)
 //  Tracks hex dev pipeline sessions with full audit trail.
 //  Dashboard subscribes for real-time progress visibility.
 // ============================================================
@@ -2404,7 +2404,7 @@ pub fn inference_log_create(
 }
 
 // ============================================================
-//  Enforcement Rules (ADR-2026-03-22-1959 P5)
+//  Enforcement Rules (ADR-2603221959 P5)
 // ============================================================
 
 /// An enforcement rule — persisted in SpacetimeDB, synced from .hex/ADR-rules.toml.
@@ -2654,7 +2654,7 @@ pub fn trigger_cleanup(ctx: &ReducerContext, cutoff: String) -> Result<(), Strin
 
 // ─── Architecture Fingerprint ──────────────────────────────────────────────
 //
-// ADR-2026-03-30-1200: Token-efficient architecture context injected into every
+// ADR-2603301200: Token-efficient architecture context injected into every
 // LLM inference system prompt. Generated from go.mod/package.json/Cargo.toml,
 // workplan, and active ADRs. Prevents models from hallucinating wrong stacks.
 
@@ -2748,7 +2748,7 @@ pub fn delete_fingerprint(ctx: &ReducerContext, project_id: String) -> Result<()
 }
 
 // ============================================================
-//  Fleet State (absorbed from fleet-state module — ADR-2026-04-05-0900)
+//  Fleet State (absorbed from fleet-state module — ADR-2604050900)
 // ============================================================
 
 /// A compute node in the fleet — tracks capacity for multi-host agent dispatch.
@@ -3100,7 +3100,7 @@ pub fn lifecycle_check_unblocked(ctx: &ReducerContext, swarm_id: String) {
     }
 }
 
-// ─── Developer Decision Inbox (ADR-2026-04-13-1500) ──────────────────────────
+// ─── Developer Decision Inbox (ADR-2604131500) ──────────────────────────
 
 /// A decision that requires developer input. hex surfaces these with a
 /// recommended default action; if the developer doesn't respond before the
@@ -3240,7 +3240,7 @@ pub fn expire_decisions(ctx: &ReducerContext, current_time: String) -> Result<()
     Ok(())
 }
 
-// ─── Delegation Trust Model (ADR-2026-04-13-1500) ─────────────────────────────
+// ─── Delegation Trust Model (ADR-2604131500) ─────────────────────────────
 
 /// Per-scope trust level that controls how much autonomy hex has in a given
 /// area. Trust can be elevated by consistent good outcomes and decayed when
@@ -3419,7 +3419,7 @@ pub fn init_project_trust(
     Ok(())
 }
 
-// ─── Briefing Buffer (ADR-2026-04-13-1500) ────────────────────────────────────
+// ─── Briefing Buffer (ADR-2604131500) ────────────────────────────────────
 
 /// Accumulated events for the developer briefing. Events are logged
 /// continuously and consumed when the developer opens a session or asks
@@ -3531,7 +3531,7 @@ pub fn archive_old_briefings(ctx: &ReducerContext, cutoff_time: String) -> Resul
 }
 
 // ============================================================
-//  Substrate — swap-ticket + shadow-sample (ADR-2026-04-26-1500 P6, wp-substrate-shadow-promotion P1)
+//  Substrate — swap-ticket + shadow-sample (ADR-2604261500 P6, wp-substrate-shadow-promotion P1)
 // ============================================================
 //
 // `swap_ticket` records every proposed swap of a port -> adapter binding in
@@ -3839,7 +3839,7 @@ mod swap_ticket_state_tests {
 }
 
 // ============================================================
-//  Brain-task history — wire type (ADR-2026-04-14-1400 §1 P1, wp-sched-queue-history P1.1)
+//  Brain-task history — wire type (ADR-2604141400 §1 P1, wp-sched-queue-history P1.1)
 // ============================================================
 //
 // Brain tasks (the `hex sched` / `hex brain queue` pipeline) are NOT stored in
@@ -3847,7 +3847,7 @@ mod swap_ticket_state_tests {
 // `brain-task:<uuid>` with the full task record serialized as JSON in the
 // value column. This keeps the queue schemaless at the DB layer — daemons can
 // evolve the task record (adding lease/evidence-guard fields per
-// ADR-2026-04-14-1400) without WASM re-publish gates.
+// ADR-2604141400) without WASM re-publish gates.
 //
 // Adding a parallel `brain_task` table here would duplicate that state and
 // invite drift between "the canonical task record" (hexflo_memory) and "the
@@ -3870,21 +3870,21 @@ mod swap_ticket_state_tests {
 //   created_at_us: i64            // RFC3339 → microseconds since epoch
 //   completed_at_us: i64          // 0 if not completed
 
-// ─── Experimental Loop (ADR-2026-05-02-1400) ──────────────────────────────────
+// ─── Experimental Loop (ADR-2605021400) ──────────────────────────────────
 //
 // Storage for the loop-closing trio of target-app representations:
 // Objective (what to maximize), Hypothesis (predicted Δ on Objective),
 // and Verdict (measured outcome + graduate/hold/rollback decision).
 //
 // Persona / Workload / Trial / Failure tables land in a follow-up phase
-// (wp-experiment-loop-p2-extras, ADR-2026-05-02-1400 §Implementation P5–P8).
+// (wp-experiment-loop-p2-extras, ADR-2605021400 §Implementation P5–P8).
 //
 // Enums are stored as String columns (SpacetimeDB cannot store nested
-// Rust enums in columns). The hex-side adapter (ADR-2026-05-02-1400 §P3)
+// Rust enums in columns). The hex-side adapter (ADR-2605021400 §P3)
 // converts between these row shapes and `hex_core::domain::experiment::*`.
 
 /// A target-app objective — what the application is trying to maximize/
-/// minimize over its workload (ADR-2026-05-02-1400 §Decision).
+/// minimize over its workload (ADR-2605021400 §Decision).
 #[table(name = objective, public)]
 #[derive(Clone, Debug)]
 pub struct Objective {
@@ -5163,7 +5163,7 @@ fn parse_persona_ts_micros(s: &str) -> Option<i64> {
 }
 
 // ============================================================
-//  Merge-Team Safety Gate (ADR-2026-05-08-1126 P1)
+//  Merge-Team Safety Gate (ADR-2605081126 P1)
 //
 //  No agent writes to trunk. Every change to a hex-internal source file
 //  originates inside a git worktree, opens a merge_request, accumulates
@@ -5577,7 +5577,7 @@ pub fn merge_decision_tally(
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// ADR-2026-05-08-2200 — Resource-aware supervisor
+// ADR-2605082200 — Resource-aware supervisor
 //
 // Adds /proc-derived process observations (RSS, CPU, ppid, state, argv
 // signature) plus a 60s tick that emits resource_anomaly rows for
@@ -6112,7 +6112,7 @@ pub fn commitment_check_tick(
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Digital-twin action queue (ADR-2026-05-08-2300)
+// Digital-twin action queue (ADR-2605082300)
 //
 // Personas can't write files. The drafter task picks up open commitments
 // with verifiable_path artifacts, asks the proposer for the actual
@@ -6304,7 +6304,7 @@ pub fn proposed_action_operator_override(
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Persona turn claim (ADR-2026-05-08-2400)
+// Persona turn claim (ADR-2605082400)
 //
 // Closes the 5-PLANs-simultaneously race. The first persona to call
 // commitment_thread_claim wins the right to emit a Confirm row for that

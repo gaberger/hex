@@ -185,7 +185,7 @@ pub async fn disconnect_agent_post(
 }
 
 /// POST /api/hex-agents/:id/capabilities — update agent capabilities after inference discovery
-/// (ADR-2026-04-13-0010 P2.1). Accepts models, estimated_tok_s, provider, max_model_size_gb.
+/// (ADR-2604130010 P2.1). Accepts models, estimated_tok_s, provider, max_model_size_gb.
 #[derive(Debug, Deserialize)]
 pub struct UpdateCapabilitiesRequest {
     pub capabilities: Value,

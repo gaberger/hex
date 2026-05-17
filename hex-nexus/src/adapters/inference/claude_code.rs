@@ -1,5 +1,5 @@
 //! Claude Code inference adapter — a subprocess-backed `IInferencePort`
-//! implementation (wp-hex-standalone-dispatch P4, ADR-2026-04-11-2000).
+//! implementation (wp-hex-standalone-dispatch P4, ADR-2604112000).
 //!
 //! This adapter is the **backend** form of Claude Code integration: it
 //! spawns `claude -p --dangerously-skip-permissions <prompt>` as a child

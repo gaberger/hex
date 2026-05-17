@@ -19,7 +19,7 @@
         {
           "agent": "hex-coder",
           "deps": [],
-          "description": "Create docs/reference/system-architecture.md. Source content: existing CLAUDE.md 'System Components' table + README architecture sections. Cover all 5 deployment units (SpacetimeDB, hex-nexus, hex-agent, hex-dashboard, hex clients), their dependency graph, data flow on cold start, data flow on a typical workplan execution, and the standalone-mode variant (ADR-2026-04-11-2000). Use mermaid diagrams for the dependency graph. Cite ADR-025, ADR-027, ADR-044, ADR-2026-04-11-2000.",
+          "description": "Create docs/reference/system-architecture.md. Source content: existing CLAUDE.md 'System Components' table + README architecture sections. Cover all 5 deployment units (SpacetimeDB, hex-nexus, hex-agent, hex-dashboard, hex clients), their dependency graph, data flow on cold start, data flow on a typical workplan execution, and the standalone-mode variant (ADR-2604112000). Use mermaid diagrams for the dependency graph. Cite ADR-025, ADR-027, ADR-044, ADR-2604112000.",
           "files": [
             "docs/reference/system-architecture.md"
           ],

@@ -1,4 +1,4 @@
-//! Sched commands (ADR-2026-04-10-2200).
+//! Sched commands (ADR-2604102200).
 //!
 //! `hex sched status|test|scores|models|validate`
 //!
@@ -24,7 +24,7 @@ use crate::fmt::{pretty_table, truncate};
 
 use super::adr::doctor;
 
-/// Self-improvement loop (ADR-2026-04-27-1100). P1.1 lands the discovery surface;
+/// Self-improvement loop (ADR-2604271100). P1.1 lands the discovery surface;
 /// later tasks plug in variant generation, judging, and the tick handler.
 pub mod improver;
 
@@ -86,7 +86,7 @@ const DEFAULT_IDLE_THRESHOLD_TICKS: u32 = 4;
 const DEFAULT_ANALYZE_INTERVAL_SECS: u64 = 3600;
 
 /// Default minimum interval between idle-triggered research sweeps, in hours
-/// (wp-idle-research-swarm P1.2 / ADR-2026-04-15-1200). The throttle keeps the
+/// (wp-idle-research-swarm P1.2 / ADR-2604151200). The throttle keeps the
 /// idle-trigger from re-firing every queue_drain tick once the queue settles
 /// — without it a quiet repo would self-enqueue research sweeps continuously.
 const DEFAULT_MIN_SWEEP_INTERVAL_H: u64 = 6;
@@ -506,7 +506,7 @@ pub enum BrainAction {
     Models,
     /// Run self-diagnostics (CLI wiring check, etc.)
     Validate,
-    /// Run the sched supervisor loop — validates + auto-fixes every interval (ADR-2026-04-13-2300)
+    /// Run the sched supervisor loop — validates + auto-fixes every interval (ADR-2604132300)
     Daemon {
         /// Tick interval in seconds (default 10)
         #[arg(long, default_value = "10")]
@@ -525,7 +525,7 @@ pub enum BrainAction {
     DaemonRestart,
     /// Show sched daemon status (running/stopped)
     DaemonStatus,
-    /// Enqueue a task for the sched daemon (ADR-2026-04-13-2330)
+    /// Enqueue a task for the sched daemon (ADR-2604132330)
     Enqueue {
         /// Task kind (hex-command, workplan, shell)
         kind: String,
@@ -561,7 +561,7 @@ pub enum BrainAction {
         #[arg(long, default_value = "10")]
         interval: u64,
     },
-    /// Self-improvement loop (ADR-2026-04-27-1100) — discovery, judging, act.
+    /// Self-improvement loop (ADR-2604271100) — discovery, judging, act.
     /// Operator-facing preview surface for what the autonomous loop would
     /// propose; later phases plug in variant generation and act().
     Improver {
@@ -588,7 +588,7 @@ pub enum QueueAction {
     Drain,
     /// Show recent sched tasks across all statuses (wp-sched-queue-history P1.3).
     ///
-    /// Primary use: verify the ADR-2026-04-14-1400 §1 P1 evidence-guard correctly
+    /// Primary use: verify the ADR-2604141400 §1 P1 evidence-guard correctly
     /// flipped silent-drain workplans to `failed`. Filter with `--status failed`
     /// to see only guard-flipped tasks; the result column shows the
     /// `no git evidence` marker produced by `check_evidence`.
@@ -956,7 +956,7 @@ pub fn check_binary_freshness() -> FreshnessStatus {
 ///
 /// Replaces the prior substring-match heuristic which produced ~70% false
 /// positives by treating any commit mentioning a generic task id like `P1.1`
-/// as evidence for every workplan's `P1.1` (ADR-2026-04-14-2201 closes this).
+/// as evidence for every workplan's `P1.1` (ADR-2604142201 closes this).
 pub(crate) fn check_workplan_status() -> anyhow::Result<Vec<WorkplanSummary>> {
     use super::plan::reconcile_evidence::{
         collect_evidence_strict, verify, VerifyResult, WorkplanTask,
@@ -1335,7 +1335,7 @@ async fn validate(dry_run: bool) -> anyhow::Result<()> {
 
             // Auto-fix: reconcile stale tasks whose git evidence proves completion.
             // In dry_run mode (daemon tick), only report candidates — never mutate
-            // workplan JSON (ADR-2026-04-14-2201, wp-reconcile-evidence-verification R2.2).
+            // workplan JSON (ADR-2604142201, wp-reconcile-evidence-verification R2.2).
             if total_stale > 0 && !dry_run {
                 for wp in &summaries {
                     match autofix_workplan(wp) {
@@ -1507,7 +1507,7 @@ async fn validate(dry_run: bool) -> anyhow::Result<()> {
         }
     }
 
-    // Stale swarm check (ADR-2026-04-14-2300): active swarms whose tasks are all done
+    // Stale swarm check (ADR-2604142300): active swarms whose tasks are all done
     // but status still "active" — auto-complete them via PATCH /api/swarms/:id.
     match check_stale_swarms().await {
         Ok(stale) if stale.is_empty() => {
@@ -1706,7 +1706,7 @@ async fn check_stale_swarms() -> anyhow::Result<Vec<StaleSwarm>> {
 }
 
 /// Mark a stale swarm complete via `PATCH /api/swarms/:id`. Returns `true`
-/// on success. Respects `HEX_BRAIN_DRY_RUN=1` (ADR-2026-04-14-2300 safety mitigation).
+/// on success. Respects `HEX_BRAIN_DRY_RUN=1` (ADR-2604142300 safety mitigation).
 async fn autofix_stale_swarm(id: &str) -> bool {
     if std::env::var("HEX_BRAIN_DRY_RUN").as_deref() == Ok("1") {
         return false;
@@ -1927,7 +1927,7 @@ fn process_alive(pid: i32) -> bool {
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
-// ─── Daemon staleness detection (ADR-2026-04-24-1820) ────────────────────────────
+// ─── Daemon staleness detection (ADR-2604241820) ────────────────────────────
 
 /// Path to the daemon staleness record.
 fn staleness_file_path() -> PathBuf {
@@ -2229,7 +2229,7 @@ async fn notify_validate_regression(
 /// Mirrors the inline `brain_tick` POST in [`daemon`] but exposes a `payload`
 /// field so per-handler counts can travel alongside the kind. Network errors
 /// and HTTP non-success responses are logged to stderr (visible in the daemon
-/// log) per ADR-2026-04-24-1815 P2 — the original silent-drop bug it diagnoses
+/// log) per ADR-2604241815 P2 — the original silent-drop bug it diagnoses
 /// returned a 400 that fire-and-forget code never noticed.
 async fn record_sched_event(event_type: &str, payload: serde_json::Value) {
     let port = std::env::var("HEX_NEXUS_PORT")
@@ -2462,7 +2462,7 @@ pub async fn tick_adr_health_actions(
     TickAdrHealthResult { event, notifications }
 }
 
-/// Run `hex adr doctor` once and route findings per ADR-2026-04-27-0800 §1a.
+/// Run `hex adr doctor` once and route findings per ADR-2604270800 §1a.
 ///
 ///   - Tier-A → [`doctor::shadow_promote`] (with [`doctor::MergePolicy::Merge`]).
 ///     On `Outcome::Applied`, fire a P3 inbox entry summarizing the fix
@@ -2550,7 +2550,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
     let pid = std::process::id();
     let _ = write_pid_file(pid);
 
-    // ADR-2026-04-24-1820: record binary identity at startup for staleness detection.
+    // ADR-2604241820: record binary identity at startup for staleness detection.
     // Stores interval/max_failures so `daemon_restart` can re-use the same settings.
     let mut current = DaemonStaleness::current();
     if let Some(ref mut rec) = current {
@@ -2583,7 +2583,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
     let mut state = load_daemon_state();
 
     loop {
-        // ADR-2026-04-24-1820: skip tick if binary was rebuilt while daemon was running.
+        // ADR-2604241820: skip tick if binary was rebuilt while daemon was running.
         if check_and_warn_staleness() {
             // Log skipped tick and wait for operator to restart.
             let port = std::env::var("HEX_NEXUS_PORT")
@@ -2683,12 +2683,12 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         }
 
         // Drain brain queue — hand up to 1 pending task per tick to a
-        // `brain-lease` swarm (ADR-2026-04-14-1400 P1.2). The daemon no longer
+        // `brain-lease` swarm (ADR-2604141400 P1.2). The daemon no longer
         // executes work inline; it stamps the lease and moves on. Swarm
         // workers progress the task; the sweeper reclaims if the lease
         // expires. Runs regardless of validate() outcome.
         //
-        // ADR-2026-04-14-1400 §1 partial-impl gap (dog-food finding 2026-04-14):
+        // ADR-2604141400 §1 partial-impl gap (dog-food finding 2026-04-14):
         // no swarm workers register against `brain-lease`, and no reclaim
         // sweeper exists, so a pure swarm-lease path silently parks every
         // task in `leased` forever — bypassing the §1 P1 evidence guard
@@ -2741,7 +2741,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                         let _ =
                             update_brain_task(&id, BrainTaskStatus::InProgress, "").await;
                         let (mut ok, mut result) = execute_brain_task(&kind, &payload).await;
-                        // ADR-2026-04-14-2155 P2.3: reject vacuous executor output
+                        // ADR-2604142155 P2.3: reject vacuous executor output
                         if ok {
                             if let Err(reason) = validate_dispatch_evidence(Some(&result)) {
                                 ok = false;
@@ -2793,7 +2793,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             _ => {}
         }
 
-        // ── Periodic dead-code analysis (ADR-2026-04-24-1800) ─────────────────
+        // ── Periodic dead-code analysis (ADR-2604241800) ─────────────────
         if should_enqueue_analyze(&state).await {
             match enqueue_analyze_task().await {
                 Ok(id) => {
@@ -2864,7 +2864,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             }
         }
 
-        // ── Improver learn + auto-act pass (ADR-2026-04-27-1100 P5/P6) ───────
+        // ── Improver learn + auto-act pass (ADR-2604271100 P5/P6) ───────
         // Two-step:
         //   1. If a prior `act --apply` snapshot is on disk, learn from it
         //      (credit resolved hypotheses, rotate snapshot).
@@ -3010,7 +3010,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             eprintln!("  ! improver history snapshot: {}", e);
         }
 
-        // ── Analyze regression detection (ADR-2026-04-24-1800) ────────────────
+        // ── Analyze regression detection (ADR-2604241800) ────────────────
         // After each tick, check if a completed analyze task has more violations
         // than last time. Notify operator on regression.
         if state.seeded {
@@ -3034,14 +3034,14 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             }
         }
 
-        // ── ADR registry health (ADR-2026-04-27-0800 §1a, wp-ADR-doctor-self-fix P3.2)
+        // ── ADR registry health (ADR-2604270800 §1a, wp-ADR-doctor-self-fix P3.2)
         // After workplan reconcile, before swarm cleanup. Cheap when the
         // registry is clean (a single `docs/adrs/` scan). Routes Tier-A
         // findings through shadow-promotion and emits P1 inbox entries for
         // Tier-C judgment calls — the rest of the loop is unaffected.
         tick_adr_health(&state).await;
 
-        // Sweep stuck in_progress tasks (ADR-2026-04-14-2155 P2.2).
+        // Sweep stuck in_progress tasks (ADR-2604142155 P2.2).
         match sweep_stuck_tasks().await {
             Ok(swept) if !swept.is_empty() => {
                 for tid in &swept {
@@ -3058,7 +3058,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             _ => {}
         }
 
-        // Emit brain_tick event to nexus — ADR-2026-04-24-1815: explicit session_id
+        // Emit brain_tick event to nexus — ADR-2604241815: explicit session_id
         // and schema-validated body. Errors are logged, not silently dropped.
         let port = std::env::var("HEX_NEXUS_PORT")
             .unwrap_or_else(|_| "5555".to_string())
@@ -3095,7 +3095,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             }
         }
 
-        // ADR-2026-04-24-1820: Record validate outcome as RL reward.
+        // ADR-2604241820: Record validate outcome as RL reward.
         // +0.5 if validate passed with no regressions, -0.3 if regressions found.
         // This closes the RL loop: daemon behavior improves based on project health.
         record_daemon_reward(validate_ok, has_regressions).await;
@@ -3263,7 +3263,7 @@ fn daemon_status() -> anyhow::Result<()> {
                 pid
             );
             println!("  pid file: {}", pid_file_path().display());
-            // ADR-2026-04-24-1820: warn if daemon binary is stale.
+            // ADR-2604241820: warn if daemon binary is stale.
             if let Some(true) = is_current_binary_stale() {
                 println!(
                     "  {} daemon may be stale — binary was rebuilt. Restart with: hex sched daemon restart",
@@ -3328,7 +3328,7 @@ fn parse_since(input: &str) -> anyhow::Result<String> {
 
 /// Stream new `brain_tick` events to stdout as they appear.
 async fn watch(since: Option<String>) -> anyhow::Result<()> {
-    // ADR-2026-04-24-1820: warn if daemon binary is stale before starting.
+    // ADR-2604241820: warn if daemon binary is stale before starting.
     if let Some(true) = is_current_binary_stale() {
         eprintln!(
             "⚠ {} daemon may be stale — results may not reflect current code. Restart with: hex sched daemon restart",
@@ -3468,11 +3468,11 @@ fn print_brain_event(ev: &serde_json::Value) {
     );
 }
 
-// ─── ADR-2026-04-13-2330: Brain task queue (HexFlo memory–backed) ───────────────
+// ─── ADR-2604132330: Brain task queue (HexFlo memory–backed) ───────────────
 
 const NEXUS_BASE: &str = "http://127.0.0.1:5555";
 
-// ─── Typed schema (ADR-2026-04-14-1400 P0.1) ────────────────────────────────────
+// ─── Typed schema (ADR-2604141400 P0.1) ────────────────────────────────────
 //
 // The on-wire JSON shape is shared across daemon/CLI/dashboard. A typed enum
 // replaces the string-stamped `"status"` so variants are enforced at compile
@@ -3539,7 +3539,7 @@ impl BrainTaskStatus {
 }
 
 /// Evidence surfaced by the lease sweeper / reconciler to justify a
-/// completion verdict (ADR-2026-04-14-1400). Populated in P2+; defaults keep
+/// completion verdict (ADR-2604141400). Populated in P2+; defaults keep
 /// older records valid.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct BrainTaskEvidence {
@@ -3658,7 +3658,7 @@ impl BrainTaskRecord {
     }
 }
 
-// ─── Lease durations per kind (ADR-2026-04-14-1400 P1.1) ────────────────────────
+// ─── Lease durations per kind (ADR-2604141400 P1.1) ────────────────────────
 //
 // Bounded lease windows are what make the sweeper safe: a task that holds a
 // lease past its window is assumed stuck and reclaimable. Each kind gets a
@@ -3900,7 +3900,7 @@ pub(crate) async fn list_brain_tasks(
 }
 
 /// Drain up to `limit` pending sched tasks. Reserved for the future sched daemon tick loop
-/// (P3 of ADR-2026-04-13-2330). Also invoked by `hex brain queue drain` logic indirectly.
+/// (P3 of ADR-2604132330). Also invoked by `hex brain queue drain` logic indirectly.
 ///
 /// Tasks are drained in (priority desc, created_at asc) order — higher-priority
 /// work jumps the queue without needing a flush. Equal-priority tasks fall back
@@ -3977,7 +3977,7 @@ pub(crate) async fn update_brain_task(
     Ok(())
 }
 
-// ─── Timeout sweep (ADR-2026-04-14-2155 P2.2) ──────────────────────────────────
+// ─── Timeout sweep (ADR-2604142155 P2.2) ──────────────────────────────────
 //
 // Weak fairness guarantee: every in_progress task eventually reaches a
 // terminal state. The daemon calls sweep_stuck_tasks() each tick, which
@@ -4114,7 +4114,7 @@ pub(crate) struct LeaseHandle {
 }
 
 /// Result of `dispatch_brain_task` as seen by the daemon drain loop
-/// (ADR-2026-04-14-1400 §1 inline-fallback). Separated from `LeaseHandle`
+/// (ADR-2604141400 §1 inline-fallback). Separated from `LeaseHandle`
 /// because the daemon's decision about whether to inline-execute depends
 /// on whether a live worker actually holds the lease, not just whether
 /// the swarm/task records were created.
@@ -4163,7 +4163,7 @@ pub(crate) fn should_fallback_inline(outcome: &DispatchOutcome) -> bool {
 pub(crate) async fn classify_dispatch(handle: &LeaseHandle) -> DispatchOutcome {
     // TODO(§2): query /api/swarms/{swarm_id}/agents and return
     // LeasedToWorker when a registered agent exists. For now, every lease
-    // is empty in practice — see ADR-2026-04-14-1400 §1 "Known gaps".
+    // is empty in practice — see ADR-2604141400 §1 "Known gaps".
     DispatchOutcome::LeasedEmpty {
         swarm_id: handle.swarm_id.clone(),
         swarm_task_id: handle.swarm_task_id.clone(),
@@ -4353,7 +4353,7 @@ async fn stamp_brain_task_lease(
 /// failure (not a repo, git missing, subprocess error). Used by the
 /// workplan-evidence guard in [`execute_brain_task`]: if HEAD is unchanged
 /// before and after `hex plan execute` runs, we know the subprocess did no
-/// real work regardless of its exit code (ADR-2026-04-14-1400 §1 P1).
+/// real work regardless of its exit code (ADR-2604141400 §1 P1).
 /// Read the analyze interval from `.hex/project.json` (key
 /// `brain.analyze_interval_secs`). Falls back to `DEFAULT_ANALYZE_INTERVAL_SECS`
 /// when absent or unreadable.
@@ -4559,7 +4559,7 @@ fn git_head_sha() -> Option<String> {
 /// and by the unit test `test_workplan_no_evidence`. Returns
 /// `(success, snippet_suffix)` given the subprocess exit status and the
 /// pre/post HEAD shas. A workplan that exits 0 but leaves HEAD unchanged is
-/// ADR-2026-04-14-2155 P2.3: output-level evidence guard mirroring
+/// ADR-2604142155 P2.3: output-level evidence guard mirroring
 /// `hex_nexus::orchestration::workplan_executor::validate_dispatch_evidence`.
 /// Rejects empty / whitespace-only executor output so vacuous acks like
 /// `"Execution dispatched: Object {"` cannot promote a task to `completed`.
@@ -4568,18 +4568,18 @@ pub(crate) fn validate_dispatch_evidence(output: Option<&str>) -> Result<(), Str
         Some(s) if !s.trim().is_empty() => Ok(()),
         Some(_) => Err(
             "dispatch-evidence guard: executor produced whitespace-only output — \
-             refusing to accept completion (ADR-2026-04-11-1800)"
+             refusing to accept completion (ADR-2604111800)"
                 .to_string(),
         ),
         None => Err(
             "dispatch-evidence guard: no executor output received — \
-             refusing to accept completion (ADR-2026-04-11-1800)"
+             refusing to accept completion (ADR-2604111800)"
                 .to_string(),
         ),
     }
 }
 
-/// treated as a failed run — the whole point of the guard (ADR-2026-04-14-1400 §1
+/// treated as a failed run — the whole point of the guard (ADR-2604141400 §1
 /// P1). If HEAD is unreadable on either side, the guard errs on the side of
 /// marking the run a failure; silent drains are the bug we're killing.
 fn check_evidence(
@@ -4780,7 +4780,7 @@ async fn validate_workplan_evidence(workplan_path: &str) -> anyhow::Result<Strin
 
 pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, String) {
     debug!(kind = %kind, payload_len = payload.len(), "drain-path: execute-start");
-    // ADR-2026-04-14-1400 §1 P1: capture pre-HEAD only for workplan tasks; the
+    // ADR-2604141400 §1 P1: capture pre-HEAD only for workplan tasks; the
     // other kinds stay exit-code-only in this slice.
     let pre_head = if kind == "workplan" {
         git_head_sha()
@@ -4795,7 +4795,7 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
             .args(["analyze", ".", "--json"])
             .output(),
         "workplan" => {
-            // Path C (ADR-2026-04-29-1354): when no active Claude session, spawn
+            // Path C (ADR-2604291354): when no active Claude session, spawn
             // autonomous hex-agent instead of dispatching to nexus
             if std::env::var("CLAUDE_SESSION_ID").is_err() {
                 eprintln!("⬡ spawned autonomous agent for workplan {}", payload);
@@ -4876,7 +4876,7 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
             let count = combined.chars().count();
             let skip = count.saturating_sub(8000);
             let mut snippet: String = combined.chars().skip(skip).collect();
-            // ADR-2026-04-14-1400 §1 P1: for workplan tasks, require that HEAD
+            // ADR-2604141400 §1 P1: for workplan tasks, require that HEAD
             // actually moved. `hex plan execute` exits 0 in multiple no-op
             // paths (tasks already done, inference unavailable, empty
             // dispatch) — exit code alone produces silent drains.
@@ -5050,7 +5050,7 @@ async fn queue_list(include: &str, since: Option<&str>) -> anyhow::Result<()> {
 /// Render the recent brain-task history table (wp-sched-queue-history P1.3).
 ///
 /// Hits `GET /api/sched/queue/history` and formats each row with a 60-char
-/// tail of the result string so the `no git evidence` marker (ADR-2026-04-14-1400
+/// tail of the result string so the `no git evidence` marker (ADR-2604141400
 /// §1 P1 evidence-guard) is visible without horizontal scrolling. Using the
 /// tail rather than the head is deliberate — the guard appends the marker,
 /// so a head-truncation would hide it.
@@ -5211,7 +5211,7 @@ async fn queue_drain() -> anyhow::Result<()> {
     let idle_ticks = state.idle_tick_count;
     save_daemon_state(&state);
 
-    // ── Idle-research trigger (wp-idle-research-swarm P1.2 / ADR-2026-04-15-1200) ──
+    // ── Idle-research trigger (wp-idle-research-swarm P1.2 / ADR-2604151200) ──
     // When the queue has been idle for `threshold` ticks AND no sweep has
     // run for `min_sweep_interval_h` hours, self-enqueue a research-sweep.
     // The actual analyst dispatch lands in P4.1 (hex-nexus); for now we
@@ -5248,7 +5248,7 @@ async fn queue_drain() -> anyhow::Result<()> {
         }
     }
 
-    // ── Memory-health trigger (wp-memory-health-swarm P3.1 / ADR-2026-04-29-1320) ──
+    // ── Memory-health trigger (wp-memory-health-swarm P3.1 / ADR-2604291320) ──
     // Run memory-health check every hour (not idle-gated like research-sweep).
     // This ensures stale task cleanup happens regularly even when queue is busy.
     {
@@ -5313,7 +5313,7 @@ async fn queue_drain() -> anyhow::Result<()> {
         println!("  → executing {id} ({kind})");
         let _ = update_brain_task(&id, BrainTaskStatus::InProgress, "").await;
         let (mut ok, mut result) = execute_brain_task(&kind, &payload).await;
-        // ADR-2026-04-14-2155 P2.3: reject vacuous executor output
+        // ADR-2604142155 P2.3: reject vacuous executor output
         if ok {
             if let Err(reason) = validate_dispatch_evidence(Some(&result)) {
                 ok = false;
@@ -5335,7 +5335,7 @@ async fn queue_drain() -> anyhow::Result<()> {
     Ok(())
 }
 
-// ─── ADR-doctor tick orchestrator (ADR-2026-04-27-0800 §1a, P3.2) ────────────
+// ─── ADR-doctor tick orchestrator (ADR-2604270800 §1a, P3.2) ────────────
 //
 // Pure data-shape unit tests for `tick_adr_health_actions`. Lives in a
 // module named `tick_adr_health` directly under `sched` so the workplan
@@ -5382,8 +5382,8 @@ mod tick_adr_health {
     #[tokio::test]
     async fn routes_tier_c_findings_to_p1_inbox_notifications() {
         let f = finding(
-            "ADR-2026-04-27-0800",
-            PathBuf::from("docs/adrs/ADR-2026-04-27-0800-x.md"),
+            "ADR-2604270800",
+            PathBuf::from("docs/adrs/ADR-2604270800-x.md"),
             FindingKind::DuplicateId,
             "duplicate id detected",
         );
@@ -5396,15 +5396,15 @@ mod tick_adr_health {
         assert_eq!(n.kind, "adr.doctor.notify");
         assert_eq!(n.priority, 1, "Tier-C must be priority=1 (operator interrupt)");
         assert_eq!(n.body["tier"], "C");
-        assert_eq!(n.body["adr_id"], "ADR-2026-04-27-0800");
+        assert_eq!(n.body["adr_id"], "ADR-2604270800");
         assert_eq!(n.body["kind"], "DuplicateId");
     }
 
     #[tokio::test]
     async fn aborts_tier_a_when_config_unavailable_with_p2_notification() {
         let f = finding(
-            "ADR-2026-04-27-0800",
-            PathBuf::from("docs/adrs/ADR-2026-04-27-0800-x.md"),
+            "ADR-2604270800",
+            PathBuf::from("docs/adrs/ADR-2604270800-x.md"),
             FindingKind::UnparseableStatus,
             "buggy frontmatter",
         );
@@ -5440,7 +5440,7 @@ mod tick_adr_health {
 mod tests {
     use super::*;
 
-    // ── ADR-2026-04-14-1400 §1 P1: workplan-evidence guard ─────────────────────
+    // ── ADR-2604141400 §1 P1: workplan-evidence guard ─────────────────────
     // These tests lock in the semantics of `check_evidence`: a workplan task
     // whose subprocess exits 0 but produces no new commit must return
     // success=false with a snippet that names the drift ("no git evidence").
@@ -5704,7 +5704,7 @@ min_priority = 2
         assert_eq!(cfg.min_priority, 2);
     }
 
-    // ─── ADR-2026-04-14-2155 P2.3: validate_dispatch_evidence ────────────────────
+    // ─── ADR-2604142155 P2.3: validate_dispatch_evidence ────────────────────
 
     #[test]
     fn dispatch_evidence_accepts_non_empty_output() {
@@ -5729,7 +5729,7 @@ min_priority = 2
         assert!(err.contains("no executor output"), "got: {err}");
     }
 
-    // ─── Brain task schema (ADR-2026-04-14-1400 P0.1) ───────────────────────────
+    // ─── Brain task schema (ADR-2604141400 P0.1) ───────────────────────────
     //
     // Nested under `brain::task_schema` so the workplan gate
     // (`cargo test -p hex-cli brain::task_schema`) runs exactly this set.
@@ -5945,7 +5945,7 @@ min_priority = 2
             }
         }
 
-        // ─── Lease durations (ADR-2026-04-14-1400 P1.1) ─────────────────────
+        // ─── Lease durations (ADR-2604141400 P1.1) ─────────────────────
         //
         // Nested under `brain::lease_durations` so the workplan gate
         // (`cargo test -p hex-cli brain::lease_durations`) runs exactly
@@ -6081,7 +6081,7 @@ min_priority = 2
             }
         }
 
-        // ─── Inline fallback decision (ADR-2026-04-14-1400 §1 inline-fallback) ───
+        // ─── Inline fallback decision (ADR-2604141400 §1 inline-fallback) ───
         //
         // Locks the predicate `should_fallback_inline`: daemon drain MUST
         // fall back to inline execute_brain_task whenever the swarm-lease
@@ -6134,7 +6134,7 @@ min_priority = 2
             }
         }
 
-        // ─── Sweep timeout logic (ADR-2026-04-14-2155 P2.2) ────────────────────
+        // ─── Sweep timeout logic (ADR-2604142155 P2.2) ────────────────────
 
         mod sweep_timeout {
             use super::super::super::{
@@ -6260,7 +6260,7 @@ min_priority = 2
             }
         }
 
-        // ─── Idle-research trigger gate (wp-idle-research-swarm P1.4 / ADR-2026-04-15-1200) ──
+        // ─── Idle-research trigger gate (wp-idle-research-swarm P1.4 / ADR-2604151200) ──
         //
         // Locks the predicate `should_self_enqueue_research_sweep` and its
         // dependency `sweep_throttle_elapsed`. The trigger is the only

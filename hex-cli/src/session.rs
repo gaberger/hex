@@ -1,4 +1,4 @@
-//! Session persistence for `hex dev` (ADR-2026-03-23-2005).
+//! Session persistence for `hex dev` (ADR-2603232005).
 //!
 //! Each dev session is stored as a pretty-printed JSON file under
 //! `~/.hex/sessions/dev/<id>.json`.  Sessions can be resumed after
@@ -576,7 +576,7 @@ mod tests {
         assert_eq!(PipelinePhase::Commit.to_string(), "commit");
     }
 
-    // --- ADR-2026-03-31-1900: pipeline phase precondition gate tests ---
+    // --- ADR-2603311900: pipeline phase precondition gate tests ---
 
     #[test]
     fn incomplete_session_detection() {

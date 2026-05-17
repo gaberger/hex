@@ -1,4 +1,4 @@
-//! Unit tests for tiered inference routing (ADR-2026-04-12-0202 P1.4).
+//! Unit tests for tiered inference routing (ADR-2604120202 P1.4).
 //!
 //! Three layers of coverage:
 //!   1. `TierModelConfig::model_for_tier` — pure function, no async

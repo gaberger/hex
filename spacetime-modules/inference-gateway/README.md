@@ -1,6 +1,6 @@
 # inference-gateway
 
-> Routes ALL LLM inference through SpacetimeDB (ADR-035 / ADR-2026-04-05-0900 P2).
+> Routes ALL LLM inference through SpacetimeDB (ADR-035 / ADR-2604050900 P2).
 
 Agents — including sandboxed Docker agents — write a request via `request_inference`. SpacetimeDB schedules the `execute_inference` procedure (immediate tick) which makes the outbound HTTP call to the LLM API directly. The response lands in `inference_response` and the agent picks it up via subscription. hex-nexus is only on the fallback path (calls `complete_inference` if the in-WASM HTTP procedure is unavailable).
 
@@ -90,4 +90,4 @@ SELECT * FROM agent_budget
 
 - `temperature`, `cost_usd`, `openrouter_cost_usd` are stored as strings to avoid float-precision drift.
 - `cache_control` is `0/1` (SpacetimeDB bool workaround).
-- `quantization_level` follows ADR-2026-03-27-1000: `q2`/`q3`/`q4`/`q8`/`fp16`/`cloud`.
+- `quantization_level` follows ADR-2603271000: `q2`/`q3`/`q4`/`q8`/`fp16`/`cloud`.

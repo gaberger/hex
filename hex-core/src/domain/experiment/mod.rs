@@ -1,4 +1,4 @@
-//! Target-app experimental loop representations (ADR-2026-05-02-1400).
+//! Target-app experimental loop representations (ADR-2605021400).
 //!
 //! These types support the self-reorganizing-app loop:
 //!
@@ -7,7 +7,7 @@
 //! 3. A [`Verdict`] records the measured outcome and the graduate/rollback decision.
 //!
 //! This is **Phase 1** (the loop-closing trio). Persona / Workload / Trial /
-//! Failure land in **Phase 2** per ADR-2026-05-02-1400 §Implementation P5–P8.
+//! Failure land in **Phase 2** per ADR-2605021400 §Implementation P5–P8.
 
 pub mod hypothesis;
 pub mod objective;
@@ -22,7 +22,7 @@ pub use verdict::{Verdict, VerdictDecision, VerdictId};
 use thiserror::Error;
 
 /// Errors surfaced by the experiment domain and the future `IExperimentPort`
-/// (ADR-2026-05-02-1400 §Implementation P2).
+/// (ADR-2605021400 §Implementation P2).
 #[derive(Debug, Error)]
 pub enum ExperimentError {
     #[error("objective not found: {0:?}")]

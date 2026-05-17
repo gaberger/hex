@@ -1,4 +1,4 @@
-# ADR-2026-04-01-0011: Recently proposed ADR (not stale)
+# ADR-2604010011: Recently proposed ADR (not stale)
 
 **Status:** Proposed
 **Date:** 2026-04-25

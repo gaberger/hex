@@ -1,5 +1,5 @@
 /**
- * Resources.tsx — system resource utilisation (ADR-2026-05-08-2200).
+ * Resources.tsx — system resource utilisation (ADR-2605082200).
  *
  * Reads /api/resources (process_observation) and /api/resources/anomalies
  * (resource_anomaly). Mirrors `top` for the hex fleet plus an anomaly
@@ -136,7 +136,7 @@ const Resources: Component = () => {
           <div>
             <h1 class="text-2xl font-bold mb-1">Resources</h1>
             <p class="text-gray-400 text-sm">
-              ADR-2026-05-08-2200 · /proc walker every 15s · supervisor tick every 60s
+              ADR-2605082200 · /proc walker every 15s · supervisor tick every 60s
             </p>
           </div>
           <div class="text-xs text-gray-500">

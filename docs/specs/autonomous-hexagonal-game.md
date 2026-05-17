@@ -3,7 +3,7 @@
 **Title**: Prove hex agents can autonomously build architecture-compliant software  
 **Date**: 2026-04-17  
 **Status**: COMPLETE  
-**ADR**: ADR-2026-04-17-0002 (Autonomous Hexagonal Architecture)
+**ADR**: ADR-2604170002 (Autonomous Hexagonal Architecture)
 
 ## Problem Statement
 

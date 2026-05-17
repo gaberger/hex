@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-13-1500",
+  "adr": "ADR-2604131500",
   "created_at": "2026-04-13T15:00:00Z",
   "created_by": "human+judge-synthesis",
   "description": "Ship the 'walk away' moment: Pulse statusline, hex brief narrative, hex decide async decisions, and basic delegation trust model. After this phase, a developer can manage 3+ hex projects with 5-15 minutes of interaction per day.",
@@ -26,7 +26,7 @@
           "id": "P1.1",
           "layer": "secondary",
           "name": "Add developer_inbox table to hexflo-coordination WASM module",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -38,7 +38,7 @@
           "id": "P1.2",
           "layer": "secondary",
           "name": "Add delegation_trust table to hexflo-coordination WASM module",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -50,7 +50,7 @@
           "id": "P1.3",
           "layer": "secondary",
           "name": "Add briefing_buffer table to hexflo-coordination WASM module",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -98,7 +98,7 @@
           "id": "P2.1",
           "layer": "primary",
           "name": "Add Brief command to hex-cli",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -155,7 +155,7 @@
           "id": "P3.1",
           "layer": "primary",
           "name": "Add Decide command to hex-cli",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -171,7 +171,7 @@
           "id": "P3.2",
           "layer": "secondary",
           "name": "Decision surfacing in workplan executor",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -185,7 +185,7 @@
           "id": "P3.3",
           "layer": "secondary",
           "name": "Decision deadline auto-resolution daemon",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 1
@@ -213,7 +213,7 @@
           "id": "P4.1",
           "layer": "primary",
           "name": "Add Trust command to hex-cli",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -227,7 +227,7 @@
           "id": "P4.2",
           "layer": "secondary",
           "name": "Trust initialization on project creation",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 1
@@ -255,7 +255,7 @@
           "id": "P5.1",
           "layer": "primary",
           "name": "Add Steer command to hex-cli",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",
@@ -270,7 +270,7 @@
           "id": "P5.2",
           "layer": "secondary",
           "name": "Directive classifier in hex-nexus",
-          "status": "done"
+          "status": "pending"
         },
         {
           "agent": "hex-coder",

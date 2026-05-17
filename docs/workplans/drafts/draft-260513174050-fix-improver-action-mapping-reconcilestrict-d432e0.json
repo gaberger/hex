@@ -1,0 +1,10 @@
+{
+  "adr": "ADR-2604271100",
+  "created_at": "2026-05-13T17:40:50.429638060-04:00",
+  "id": "draft-260513174050-fix-improver-action-mapping-reconcilestrict-d432e0",
+  "kind": "workplan-draft",
+  "notes": "Auto-drafted by the improver act phase from a detector_health or q_starvation hypothesis. The improver couldn't fix the underlying surface (broken CLI, ineffective action mapping) automatically, so it captured the work as a draft for the operator (or a downstream planner agent) to pick up.",
+  "origin": "improver-auto-act",
+  "prompt": "Fix improver action mapping `ReconcileStrict:SchedShell`: mean reward -1.00 after ≥3 samples — the action runs but doesn't clear the target hypothesis. Review act::derive for this (source, kind) and either pick a different action, refine the action's payload, or change ActionKind from auto-enqueueable to Recommend. Add a regression test that asserts the hypothesis count drops after the action runs.",
+  "status": "pending-planner"
+}

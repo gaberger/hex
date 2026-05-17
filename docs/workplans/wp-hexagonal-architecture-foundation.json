@@ -35,7 +35,7 @@
           "id": "P1.1",
           "layer": "infrastructure",
           "name": "Add lint rule preventing domain/ imports from adapters/",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -45,7 +45,7 @@
           "id": "P1.2",
           "layer": "infrastructure",
           "name": "Add lint rule restricting adapters/ to ports/ imports only",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -55,7 +55,7 @@
           "id": "P1.3",
           "layer": "infrastructure",
           "name": "Implement CI dependency direction check gate",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 4

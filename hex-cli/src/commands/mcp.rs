@@ -46,7 +46,7 @@ struct JsonRpcError {
 // ─── Tool Definitions ────────────────────────────────────
 
 /// Compiled-in fallback: the JSON is baked in at build time via rust-embed
-/// (ADR-2026-03-22-1522) so the MCP server works even when `config/mcp-tools.json`
+/// (ADR-2603221522) so the MCP server works even when `config/mcp-tools.json`
 /// is not on disk (e.g. installed binary).
 fn builtin_tools_json() -> String {
     crate::assets::Assets::get_str("schemas/mcp-tools.json")
@@ -118,7 +118,7 @@ fn load_tools_json() -> String {
     builtin_tools_json()
 }
 
-// ─── Enforcement (ADR-2026-03-22-1959) ───────────────────────
+// ─── Enforcement (ADR-2603221959) ───────────────────────
 
 use hex_core::domain::enforcement::DefaultEnforcer;
 use hex_core::ports::enforcement::{EnforcementContext, EnforcementMode, EnforcementResult, IEnforcementPort};
@@ -183,7 +183,7 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "hex_opencode_status", "hex_opencode_config",
 ];
 
-/// Returns true when running inside Claude Code as an MCP tool call (ADR-2026-04-08-1320).
+/// Returns true when running inside Claude Code as an MCP tool call (ADR-2604081320).
 /// Claude Code sets CLAUDE_SESSION_ID on every tool invocation.
 /// hex-nexus also sets CLAUDECODE=1 for bypass mode — treated as equivalent.
 pub fn is_claude_code_context() -> bool {
@@ -395,7 +395,7 @@ fn read_adr_detail(dir: &std::path::Path, id: &str) -> Option<serde_json::Value>
 /// Execute a tool call by delegating to the nexus REST API.
 /// Returns MCP-formatted content result.
 async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
-    // ADR-2026-03-22-1959 P2: Enforce rules before mutating tools
+    // ADR-2603221959 P2: Enforce rules before mutating tools
     if !READ_ONLY_TOOLS.contains(&name) {
         let ctx = build_enforcement_ctx(name, args);
         let enforcer = DefaultEnforcer::new(get_enforcement_mode());
@@ -952,7 +952,7 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
         "hex_project_list" => {
             let resp = nexus.get("/api/projects").await.map_err(|e| e.to_string());
             // When inside Claude Code, enrich with structured actions so Claude
-            // can call MCP tools directly instead of narrating CLI commands (ADR-2026-04-08-1320).
+            // can call MCP tools directly instead of narrating CLI commands (ADR-2604081320).
             if is_claude_code_context() {
                 resp.map(|r| {
                     let mut enriched = r.clone();
@@ -994,7 +994,7 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             nexus.post("/api/projects/register", &body).await.map_err(|e| e.to_string())
         }
 
-        // ── Fingerprint (ADR-2026-03-30-1200 / ADR-2026-04-08-1320) ──
+        // ── Fingerprint (ADR-2603301200 / ADR-2604081320) ──
         "hex_fingerprint_generate" => {
             let project_id = args.get("project_id").and_then(|v| v.as_str()).unwrap_or("");
             let mut body = serde_json::json!({});
@@ -1011,7 +1011,7 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                 .await.map_err(|e| e.to_string())
         }
 
-        // ── Self-update (ADR-2026-04-08-0929) ──
+        // ── Self-update (ADR-2604080929) ──
         "hex_self_update" => {
             let check_only = args.get("check_only").and_then(|v| v.as_bool()).unwrap_or(true);
             let _target_version = args.get("version").and_then(|v| v.as_str());
@@ -1178,7 +1178,7 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             }))
         }
 
-        // ── Provider-agnostic lifecycle tools (ADR-2026-03-22-1959 P3) ──
+        // ── Provider-agnostic lifecycle tools (ADR-2603221959 P3) ──
         // These replace Claude Code hooks for non-Claude providers.
 
         "hex_session_start" => {

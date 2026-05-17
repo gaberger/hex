@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-27-1100",
+  "adr": "ADR-2604271100",
   "created_at": "2026-05-03T15:02:18.709333281-04:00",
   "id": "draft-2605031502-fix-typescript-typecheck-failures-in",
   "kind": "workplan-draft",

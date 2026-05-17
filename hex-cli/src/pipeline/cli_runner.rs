@@ -1,4 +1,4 @@
-//! CliRunner — subprocess wrapper for hex CLI commands (ADR-2026-03-24-1126).
+//! CliRunner — subprocess wrapper for hex CLI commands (ADR-2603241126).
 //!
 //! The TUI pipeline uses this to execute hex commands instead of making
 //! direct REST calls to nexus, ensuring CLI = MCP = TUI (one code path).

@@ -1,4 +1,4 @@
-/// Role assignment and template loading for agent registration (P6.2, ADR-2026-03-31-2100).
+/// Role assignment and template loading for agent registration (P6.2, ADR-2603312100).
 ///
 /// This module is intentionally independent of `hex-agent::domain::context`.
 /// hex-nexus sits at the orchestration boundary: it parses role strings arriving

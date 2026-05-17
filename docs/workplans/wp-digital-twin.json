@@ -1,7 +1,7 @@
 {
   "id": "wp-digital-twin",
   "title": "Digital-twin auto-validator (operator stand-in for proposed actions)",
-  "adr": "ADR-2026-05-08-2300",
+  "adr": "ADR-2605082300",
   "status": "in_progress",
   "paused": false,
   "phases": [

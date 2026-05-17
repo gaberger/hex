@@ -1,6 +1,6 @@
 {
-  "adr": "ADR-2026-04-15-1330",
-  "description": "Move sched queue + daemon PID + sweep-state from ~/.hex/ (global) to <workspace_root>/.hex/sched/ (per-project) per ADR-2026-04-15-1330. Includes one-time migration of in-scope tasks from the legacy global queue, daemon binding to its workspace_root, orphan-task GC for missing workplan files, and a hex sched gc-global escape hatch.",
+  "adr": "ADR-2604151330",
+  "description": "Move sched queue + daemon PID + sweep-state from ~/.hex/ (global) to <workspace_root>/.hex/sched/ (per-project) per ADR-2604151330. Includes one-time migration of in-scope tasks from the legacy global queue, daemon binding to its workspace_root, orphan-task GC for missing workplan files, and a hex sched gc-global escape hatch.",
   "id": "wp-sched-queue-per-project",
   "phases": [
     {

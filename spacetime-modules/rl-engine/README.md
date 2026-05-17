@@ -1,6 +1,6 @@
 # rl-engine
 
-> Q-learning bandit for model + context-strategy selection (ADR-2026-04-10-2200).
+> Q-learning bandit for model + context-strategy selection (ADR-2604102200).
 
 A reinforcement-learning module that picks the best model action (`model:<name>`) and context strategy (`context:<strategy>`) for a given `state_key` (a hash of task type + features). Uses ε-greedy exploration with exploration bonuses for under-observed OpenRouter models, plus a `LOCAL_SUCCESS_BONUS` to bias the agent toward local Ollama models when they succeed.
 

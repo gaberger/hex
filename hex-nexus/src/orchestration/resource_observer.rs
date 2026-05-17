@@ -1,4 +1,4 @@
-//! Resource observer (ADR-2026-05-08-2200).
+//! Resource observer (ADR-2605082200).
 //!
 //! Walks `/proc` every 15 s on Linux, computes per-process RSS / CPU% /
 //! argv signature, and upserts a row into `process_observation` for each

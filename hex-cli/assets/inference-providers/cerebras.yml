@@ -1,4 +1,4 @@
-# Cerebras — Free-tier cloud inference (ADR-2026-04-05-2125)
+# Cerebras — Free-tier cloud inference (ADR-2604052125)
 # Highest throughput (3000+ tok/s). Best for batch/non-interactive work.
 # Free tier: 1M tokens/day, 30 RPM.
 name: cerebras

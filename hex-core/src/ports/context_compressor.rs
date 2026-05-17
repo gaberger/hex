@@ -1,4 +1,4 @@
-//! Context compressor port — contract for prompt compression (ADR-2026-03-28-1000 P3).
+//! Context compressor port — contract for prompt compression (ADR-2603281000 P3).
 //!
 //! Implementors reduce accumulated tool output to fit within a token budget
 //! while preserving code blocks and error messages verbatim.

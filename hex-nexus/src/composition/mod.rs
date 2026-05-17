@@ -14,7 +14,7 @@
 //! "which identity source did we use?" is identical. See
 //! [`build_agent_manager`] for the shared helper.
 //!
-//! See ADR-2026-04-11-2000 for the decision record and wp-hex-standalone-dispatch
+//! See ADR-2604112000 for the decision record and wp-hex-standalone-dispatch
 //! phase P2 for the task decomposition.
 
 pub mod claude_integrated;
@@ -55,7 +55,7 @@ pub struct CompositionInputs {
 /// Default env-backed probe.
 ///
 /// Returns `ClaudeIntegrated` iff `CLAUDE_SESSION_ID` is set and non-empty
-/// (matching ADR-2026-04-11-2000 §Decision). The ADR also mentions checking
+/// (matching ADR-2604112000 §Decision). The ADR also mentions checking
 /// `~/.hex/sessions/agent-*.json`, but a session file without the env var is
 /// an inconsistent state we don't handle in P2 — see the ADR for future
 /// refinement. The richer `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` probe lives

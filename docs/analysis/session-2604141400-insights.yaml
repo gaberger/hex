@@ -71,11 +71,11 @@ insights:
     source_turn: 10
     content: |
       Two-layer defense closes false-positive classes with no hiding
-      place: ADR-2026-04-14-2200 is the runtime guard, wp-enforce-workplan-
+      place: ADR-2604142200 is the runtime guard, wp-enforce-workplan-
       evidence is the authoring guard. Runtime verifiers catch bad
       inputs; schema validators prevent bad inputs from existing.
     route_to: adr
-    artifact: docs/adrs/ADR-2026-04-14-2200-reconcile-evidence-verification.md
+    artifact: docs/adrs/ADR-2604142200-reconcile-evidence-verification.md
     estimated_tier: T3
     verdict: closed
     depends_on: []
@@ -101,7 +101,7 @@ insights:
     source_session: 2604141400
     source_turn: 6
     content: |
-      Rule 8 ("don't stall on menus, ship") and ADR-2026-04-14-2200 ("require
+      Rule 8 ("don't stall on menus, ship") and ADR-2604142200 ("require
       positive file evidence") contradict without the workplan wrapper —
       ship fast but evidence trail empty, so reconcile either lies
       (false-positive done) or doesn't know work exists. Workplan is
@@ -140,7 +140,7 @@ insights:
       7→0 in <15min but zero expected files produced (no schema_validate.rs,
       no insight/, no punch_list.rs). Trivial `status` hex-command drains
       same rate as 10-task workplan → daemon is silent-noop for workplan
-      dispatch. Same class as ADR-2026-04-14-1400 but now confirmed live on
+      dispatch. Same class as ADR-2604141400 but now confirmed live on
       three brand-new workplans. Means: every "enqueued as sched task"
       message in this session was misleading — tasks only persist in git,
       not in any execution state.

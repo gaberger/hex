@@ -1,4 +1,4 @@
-//! End-to-end tests for hex-agent MCP server (ADR-2026-03-28-2000 P1/P2/P8).
+//! End-to-end tests for hex-agent MCP server (ADR-2603282000 P1/P2/P8).
 //!
 //! Spawns `hex-agent mcp-server` as a subprocess and drives it over JSON-RPC
 //! via stdin/stdout — the same protocol Docker AI Sandbox agents use.

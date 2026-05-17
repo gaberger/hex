@@ -1,5 +1,5 @@
 //! Consolidation memory port — contract for stash-style persistent memory
-//! (ADR-2026-04-26-1430).
+//! (ADR-2604261430).
 //!
 //! Implemented by `NoopConsolidationAdapter` (always-available fallback) and
 //! `StashSseAdapter` (proxies to a stash sidecar). Lives alongside, not

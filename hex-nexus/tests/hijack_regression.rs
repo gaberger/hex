@@ -1,4 +1,4 @@
-//! Hijack regression test (ADR-2026-05-08-1126 P6 / BS-4).
+//! Hijack regression test (ADR-2605081126 P6 / BS-4).
 //!
 //! Reproduces the 2026-05-07 hijacker pattern under controlled conditions:
 //! a workplan that rewrites `hex-nexus/src/lib.rs` to a 30-line stub. The

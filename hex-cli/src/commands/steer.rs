@@ -1,4 +1,4 @@
-//! Project steering commands (ADR-2026-04-13-1500).
+//! Project steering commands (ADR-2604131500).
 //!
 //! `hex steer direct` — send natural-language directives to a project.
 

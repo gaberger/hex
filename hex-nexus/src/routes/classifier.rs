@@ -25,7 +25,7 @@ struct RuleEntry {
 pub async fn list_classifier_rules() -> Json<Value> {
     let mut rules: Vec<RuleEntry> = Vec::new();
 
-    // hex-nexus: task-type inference routing (ADR-2026-04-14-2000)
+    // hex-nexus: task-type inference routing (ADR-2604142000)
     for r in TASK_TYPE_RULES {
         rules.push(RuleEntry {
             table: "task_type",
@@ -34,7 +34,7 @@ pub async fn list_classifier_rules() -> Json<Value> {
         });
     }
 
-    // hex-nexus: steer directive classifier (ADR-2026-04-13-1500)
+    // hex-nexus: steer directive classifier (ADR-2604131500)
     for r in super::steer::STEER_RULES {
         rules.push(RuleEntry {
             table: "steer",

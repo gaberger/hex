@@ -1,4 +1,4 @@
-//! Prompt template engine for hex dev TUI (ADR-2026-03-23-2005).
+//! Prompt template engine for hex dev TUI (ADR-2603232005).
 //!
 //! Loads prompt templates from embedded assets (`hex-cli/assets/prompts/`)
 //! and renders them by replacing `{{placeholder}}` tokens with provided values.

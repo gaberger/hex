@@ -1,4 +1,4 @@
-//! REST endpoints for decision resolution (ADR-2026-04-13-1500 P1.4) + the
+//! REST endpoints for decision resolution (ADR-2604131500 P1.4) + the
 //! Brain-dashboard decisions aggregator (wp-brain-dashboard M1).
 //!
 //! GET  /api/decisions                             — aggregated worklist
@@ -338,7 +338,7 @@ pub async fn resolve_adr(
     // Try the literal filename first (operator passed "ADR-047-internal-..."
     // and the file is exactly that). If missing, fall back to a prefix glob:
     // operators commonly say "ADR-004" but the actual file is
-    // "ADR-2026-04-04-0000-..." (timestamp-prefixed) or "ADR-047-internal-..."
+    // "ADR-2604040000-..." (timestamp-prefixed) or "ADR-047-internal-..."
     // (3-digit slug form). Match any file whose name starts with stripped
     // OR with a normalized variant.
     let literal = adrs_dir.join(format!("{}.md", stripped));
@@ -348,7 +348,7 @@ pub async fn resolve_adr(
         // Build a list of normalized candidates from the stripped id so we
         // tolerate operator/agent variations:
         //   ADR-018 → also try ADR-0018 / ADR-18 / ADR-00018
-        //   ADR-2026-04-12-1630-foo → unchanged (timestamp form is unambiguous)
+        //   ADR-2604121630-foo → unchanged (timestamp form is unambiguous)
         // Plus: strip "ADR-" prefix on the final component to compare numeric
         // tokens directly (handles agents that say "ADR-018" when the file
         // is "ADR-018-something" but ALSO when the file is "ADR-0018-...").

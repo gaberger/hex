@@ -1,5 +1,5 @@
 //! [`Verdict`] — the quantified outcome record that closes the experimental
-//! loop (ADR-2026-05-02-1400).
+//! loop (ADR-2605021400).
 //!
 //! A Verdict is what stash's binary `confirm_hypothesis` / `reject_hypothesis`
 //! becomes when projected through hex: same idea, but carries the measured
@@ -35,7 +35,7 @@ pub enum VerdictDecision {
 
 /// The recorded outcome of a [`super::hypothesis::Hypothesis`] tested under a
 /// trial variant. Computing `delta` and `confidence` is the responsibility of
-/// the future `VerdictPolicy` port (ADR-2026-05-02-1400 §Implementation P7), not
+/// the future `VerdictPolicy` port (ADR-2605021400 §Implementation P7), not
 /// of this domain type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Verdict {
@@ -44,7 +44,7 @@ pub struct Verdict {
     ///
     /// **Phase 1 stub:** carried as `String` until the `Trial` and `TrialId`
     /// types land in `wp-experiment-loop-p2`. At that point this field
-    /// becomes `TrialId`. See ADR-2026-05-02-1400 §Implementation P5.
+    /// becomes `TrialId`. See ADR-2605021400 §Implementation P5.
     pub trial_id: String,
     pub hypothesis_id: HypothesisId,
     pub objective_id: ObjectiveId,

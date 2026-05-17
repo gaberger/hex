@@ -1,7 +1,7 @@
 {
   "feature": "docker-sandbox-agent-coordination",
-  "description": "Complete ADR-2026-03-28-2000 — P1/P2/P3/P5/P8-partial already implemented. This spec covers the remaining pieces: P4 (Dockerfile + sandbox YAML), P6 (hook worktree gate), P7 (hex swarm microVM-first default).",
-  "adr": "ADR-2026-03-28-2000",
+  "description": "Complete ADR-2603282000 — P1/P2/P3/P5/P8-partial already implemented. This spec covers the remaining pieces: P4 (Dockerfile + sandbox YAML), P6 (hook worktree gate), P7 (hex swarm microVM-first default).",
+  "adr": "ADR-2603282000",
   "specs": [
     {
       "id": "S01",

@@ -96,7 +96,7 @@ pub struct AgentContext {
     pub upstream_output: Option<String>,
     /// Task-specific metadata.
     pub metadata: HashMap<String, String>,
-    /// hex project ID for architecture fingerprint injection (ADR-2026-03-30-1200).
+    /// hex project ID for architecture fingerprint injection (ADR-2603301200).
     pub project_id: Option<String>,
 }
 
@@ -118,7 +118,7 @@ pub struct Supervisor {
     agent_id: Option<String>,
     /// Dev session for logging tool calls (shared, behind Mutex for interior mutability).
     session: Option<Arc<Mutex<DevSession>>>,
-    /// Cached agent definitions loaded from YAML (ADR-2026-03-24-0130).
+    /// Cached agent definitions loaded from YAML (ADR-2603240130).
     agent_defs: HashMap<String, AgentDefinition>,
     /// Cached swarm composition (loaded once, used for model defaults).
     swarm_comp: Option<SwarmComposition>,
@@ -135,7 +135,7 @@ pub struct Supervisor {
     /// Metrics from the most recent `dispatch_agent` call.
     /// Written by `dispatch_agent`, consumed once by `execute_agent_tracked`.
     last_dispatch_metrics: Mutex<Option<AgentMetrics>>,
-    /// hex project ID for architecture fingerprint injection (ADR-2026-03-30-1200).
+    /// hex project ID for architecture fingerprint injection (ADR-2603301200).
     pub project_id: Option<String>,
 }
 
@@ -149,7 +149,7 @@ impl Supervisor {
         let model_override = std::env::var("HEX_MODEL").ok();
         let provider_pref = std::env::var("HEX_PROVIDER").ok();
 
-        // Load YAML definitions at construction (ADR-2026-03-24-0130)
+        // Load YAML definitions at construction (ADR-2603240130)
         let agent_defs = AgentDefinition::load_all();
         let swarm_comp = SwarmComposition::load("dev-pipeline");
 
@@ -215,7 +215,7 @@ impl Supervisor {
         self
     }
 
-    /// Set the hex project ID for architecture fingerprint injection (ADR-2026-03-30-1200).
+    /// Set the hex project ID for architecture fingerprint injection (ADR-2603301200).
     ///
     /// When set, all agent contexts will include this ID so agents can fetch and
     /// inject the architecture fingerprint into their inference system prompts.
@@ -588,7 +588,7 @@ impl Supervisor {
         }
     }
 
-    // ── YAML-driven context (ADR-2026-03-24-0130) ──────────────────────────────
+    // ── YAML-driven context (ADR-2603240130) ──────────────────────────────
 
     /// Build agent context from a YAML agent definition's `load_strategy`.
     ///
@@ -820,7 +820,7 @@ impl Supervisor {
     ///
     /// Loads the swarm composition from the embedded `dev-pipeline.yml` and
     /// evaluates each agent's `when` guard against workplan properties.
-    /// See [`crate::pipeline::swarm_config::SwarmConfig`] (ADR-2026-03-24-1230 step 8).
+    /// See [`crate::pipeline::swarm_config::SwarmConfig`] (ADR-2603241230 step 8).
     fn roles_for_workplan(workplan: &WorkplanData) -> Vec<String> {
         let config = crate::pipeline::SwarmConfig::load_default();
 
@@ -875,7 +875,7 @@ impl Supervisor {
             let abs_output_str = abs_output.to_string_lossy().to_string();
 
             let child = if use_sandbox {
-                // Spawn hex-agent daemon inside an isolated Docker container (ADR-2026-03-28-2000).
+                // Spawn hex-agent daemon inside an isolated Docker container (ADR-2603282000).
                 //
                 // Uses plain `docker run` — Docker AI Sandbox (docker sandbox) is designed for
                 // interactive agents (Claude, Copilot); hex-agent is a background daemon that
@@ -986,7 +986,7 @@ impl Supervisor {
     }
 
     /// Returns true when Docker is available for isolated worker containers.
-    /// ADR-2026-03-28-2000: workers run inside plain `docker run` containers.
+    /// ADR-2603282000: workers run inside plain `docker run` containers.
     fn sandbox_available() -> bool {
         // HEX_NO_SANDBOX=1 forces local worker mode (no Docker isolation).
         // Useful when the project lives on a volume Docker can't bind-mount
@@ -1241,7 +1241,7 @@ impl Supervisor {
         let mut prior_results: HashMap<Objective, bool> = HashMap::new();
         // Accumulate error outputs per objective across fix iterations (last 2 kept).
         let mut prior_errors_map: HashMap<Objective, Vec<String>> = HashMap::new();
-        // P2 (ADR-2026-04-07-0400): Track fixer output hashes to detect loops.
+        // P2 (ADR-2604070400): Track fixer output hashes to detect loops.
         // Maps objective → list of SHA-256 hashes of blocking_issues after each fixer run.
         let mut fixer_hashes: HashMap<Objective, Vec<String>> = HashMap::new();
         let mut fixer_stuck_count: HashMap<Objective, u32> = HashMap::new();
@@ -1356,7 +1356,7 @@ impl Supervisor {
                     }
                 }
 
-                // P2 (ADR-2026-04-07-0400): Detect fixer loop via content hash.
+                // P2 (ADR-2604070400): Detect fixer loop via content hash.
                 use std::collections::hash_map::DefaultHasher;
                 use std::hash::{Hash, Hasher};
                 let mut hasher = DefaultHasher::new();
@@ -1517,7 +1517,7 @@ impl Supervisor {
 
         // Encode the WorkplanStep as TaskPayload JSON so the worker can deserialize
         // `step_id`, `description`, `model_hint`, and `output_dir` without needing
-        // a separate hexflo memory lookup (ADR-2026-03-30-0100 P4.1).
+        // a separate hexflo memory lookup (ADR-2603300100 P4.1).
         let title = if let Some(s) = step {
             let mut payload = serde_json::json!({
                 "role": role,
@@ -1678,7 +1678,7 @@ impl Supervisor {
             self.store_step_metadata(tid, workplan_steps).await;
         }
 
-        // Read cardinality for this role from the swarm YAML (ADR-2026-03-24-0130 S06).
+        // Read cardinality for this role from the swarm YAML (ADR-2603240130 S06).
         let cardinality = crate::pipeline::SwarmConfig::load_default().cardinality_for_role(role);
         info!(role = %role, cardinality = ?cardinality, "agent cardinality from swarm YAML");
 
@@ -1690,7 +1690,7 @@ impl Supervisor {
         let agent_result = if self.has_worker_for_role(role) {
             // ── Worker delegation path ──────────────────────────────────
             // Tasks are left in "pending" state so workers self-claim via
-            // the role-guarded /claim endpoint (pull model, ADR-2026-03-28-2000).
+            // the role-guarded /claim endpoint (pull model, ADR-2603282000).
             // Do NOT call `task assign` here — that would set the task
             // in_progress with the supervisor's agent_id, which workers
             // never match when polling for their own tasks.
@@ -1804,7 +1804,7 @@ impl Supervisor {
                             if worker_result.tests_pass { "✓" } else { "✗" },
                             worker_result.file_path,
                         );
-                        // Store audit metrics so execute_agent_tracked logs them once (ADR-2026-04-07-1300).
+                        // Store audit metrics so execute_agent_tracked logs them once (ADR-2604071300).
                         self.store_dispatch_metrics(AgentMetrics {
                             model: worker_result.model.clone(),
                             tokens: worker_result.tokens,
@@ -1933,7 +1933,7 @@ impl Supervisor {
                         "running YAML workflow phases for hex-coder"
                     );
 
-                    // Run pre_validate gate before code generation (ADR-2026-03-24-0130 S01/S07)
+                    // Run pre_validate gate before code generation (ADR-2603240130 S01/S07)
                     // Skip for tier 0 (domain/ports have no adapter boundaries to violate)
                     if tier >= 1 {
                         if let Some(pre_validate_phase) = workflow.phases.iter().find(|p| p.id == "pre_validate") {
@@ -1968,7 +1968,7 @@ impl Supervisor {
                         }
                     }
 
-                    // Select model from YAML definition (ADR-2026-03-24-0130)
+                    // Select model from YAML definition (ADR-2603240130)
                     let yaml_selected = self.select_model_for_role("hex-coder", 0);
                     let yaml_model_id = yaml_selected.model_id.clone();
                     let effective_model: Option<&str> = model_override
@@ -1982,7 +1982,7 @@ impl Supervisor {
 
                     // Execute code generation for each workplan step
                     for step in workplan_steps {
-                        // Build YAML-driven context for this step (ADR-2026-03-24-0130 S03)
+                        // Build YAML-driven context for this step (ADR-2603240130 S03)
                         let target_adapter = step.adapter.as_deref();
                         let _yaml_ctx = self.build_context_from_yaml(
                             agent_def.as_ref().unwrap(),
@@ -2056,7 +2056,7 @@ impl Supervisor {
                                 .with_context(|| format!("code phase step {} failed", step.id))?
                         };
 
-                        // Store metrics for session audit trail (ADR-2026-04-07-1300)
+                        // Store metrics for session audit trail (ADR-2604071300)
                         self.store_dispatch_metrics(AgentMetrics {
                             model: Some(result.model_used.clone()),
                             tokens: Some(result.tokens),
@@ -2089,7 +2089,7 @@ impl Supervisor {
                             info!(path = %rel_path, bytes = clean_content.len(), "wrote generated code to disk");
                         }
 
-                        // Evaluate quality thresholds from hex-coder YAML (ADR-2026-03-24-0130 S06)
+                        // Evaluate quality thresholds from hex-coder YAML (ADR-2603240130 S06)
                         {
                             let file_lines = result.content.lines().count() as u32;
                             // Longest contiguous non-empty block as a proxy for max function lines
@@ -2303,7 +2303,7 @@ impl Supervisor {
                     }
                 } else {
                     // Fallback: direct CodePhase execution (no YAML workflow)
-                    // Still use YAML model selection (ADR-2026-03-24-0130)
+                    // Still use YAML model selection (ADR-2603240130)
                     let yaml_selected = self.select_model_for_role("hex-coder", 0);
                     let yaml_model_id = yaml_selected.model_id.clone();
                     let effective_model: Option<&str> = model_override
@@ -2315,7 +2315,7 @@ impl Supervisor {
                         "hex-coder model selected from YAML (fallback path)"
                     );
                     for step in workplan_steps {
-                        // Build YAML-driven context for this step (ADR-2026-03-24-0130 S03)
+                        // Build YAML-driven context for this step (ADR-2603240130 S03)
                         let target_adapter = step.adapter.as_deref();
                         let _yaml_ctx = self.build_context_from_yaml(
                             agent_def.as_ref().unwrap(),
@@ -2352,7 +2352,7 @@ impl Supervisor {
                             .await
                             .with_context(|| format!("code phase step {} failed", step.id))?;
 
-                        // Store metrics for session audit trail (ADR-2026-04-07-1300, fallback path)
+                        // Store metrics for session audit trail (ADR-2604071300, fallback path)
                         self.store_dispatch_metrics(AgentMetrics {
                             model: Some(result.model_used.clone()),
                             tokens: Some(result.tokens),
@@ -2385,7 +2385,7 @@ impl Supervisor {
                             info!(path = %rel_path, bytes = clean_content.len(), "wrote generated code to disk");
                         }
 
-                        // Evaluate quality thresholds from hex-coder YAML (ADR-2026-03-24-0130 S06)
+                        // Evaluate quality thresholds from hex-coder YAML (ADR-2603240130 S06)
                         {
                             let file_lines = result.content.lines().count() as u32;
                             let max_fn_lines = {
@@ -2967,7 +2967,7 @@ impl Supervisor {
         }
     }
 
-    // ── YAML-driven dispatch (ADR-2026-03-24-0130 steps 8-9) ─────────────────
+    // ── YAML-driven dispatch (ADR-2603240130 steps 8-9) ─────────────────
 
     /// Get the YAML agent definition for a role, if available.
     pub fn agent_def(&self, role: &str) -> Option<&AgentDefinition> {

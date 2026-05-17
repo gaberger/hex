@@ -2,7 +2,7 @@
   "adr": "ADR-TBD-workflow-enforcement",
   "created_at": "2026-04-14T21:58:00Z",
   "created_by": "human+agent",
-  "description": "The hex workflow (T1/T2/T3 tier routing, workplan-wrapped T3 fixes, queue-before-prose, no echo-stubs) is documented in CLAUDE.md but relies on agent discipline to apply. In a single session today the agent violated four separate rules despite each being captured in feedback memory: (1) shipped two T3 fixes without workplan wrappers, (2) emitted prose punch-lists instead of enqueueing, (3) had to be prompted twice to enqueue pending gaps, (4) only the echo-stub rule caught a violation \u2014 because it's the only one enforced by a hook. This workplan extends that enforcement pattern: every discipline rule becomes a hook check that blocks the offending output path instead of relying on the agent to remember.",
+  "description": "The hex workflow (T1/T2/T3 tier routing, workplan-wrapped T3 fixes, queue-before-prose, no echo-stubs) is documented in CLAUDE.md but relies on agent discipline to apply. In a single session today the agent violated four separate rules despite each being captured in feedback memory: (1) shipped two T3 fixes without workplan wrappers, (2) emitted prose punch-lists instead of enqueueing, (3) had to be prompted twice to enqueue pending gaps, (4) only the echo-stub rule caught a violation — because it's the only one enforced by a hook. This workplan extends that enforcement pattern: every discipline rule becomes a hook check that blocks the offending output path instead of relying on the agent to remember.",
   "executor_hint": "frontier-preferred",
   "feature": "System-enforced tier routing + punch-list discipline",
   "id": "wp-workflow-enforcement",
@@ -16,7 +16,7 @@
         "type": "test"
       },
       "id": "W1",
-      "name": "Agent output guard \u2014 punch-list linter hook",
+      "name": "Agent output guard — punch-list linter hook",
       "tasks": [
         {
           "agent": "hex-coder",
@@ -76,8 +76,8 @@
           ],
           "id": "W1.4",
           "layer": "test",
-          "name": "Unit tests \u2014 punch-list fixtures",
-          "status": "done",
+          "name": "Unit tests — punch-list fixtures",
+          "status": "pending",
           "strategy_hint": "codegen"
         }
       ]
@@ -90,7 +90,7 @@
         "type": "test"
       },
       "id": "W2",
-      "name": "Tier router \u2014 `hex classify <prompt>` deterministic tier verdict",
+      "name": "Tier router — `hex classify <prompt>` deterministic tier verdict",
       "tasks": [
         {
           "agent": "hex-coder",
@@ -175,7 +175,7 @@
           ],
           "id": "W3.2",
           "layer": "assets",
-          "name": "Hook asset \u2014 workplan-wrap-guard.yml",
+          "name": "Hook asset — workplan-wrap-guard.yml",
           "status": "pending",
           "strategy_hint": "scaffold"
         },
@@ -211,7 +211,7 @@
         {
           "agent": "hex-coder",
           "deps": [],
-          "description": "docs/adrs/ADR-TBD-workflow-enforcement.md: Proposed \u2192 Accepted on W4.2. Decision: three hooks (W1, W2, W3) are the authoring-time enforcement layer for the CLAUDE.md discipline rules; the discipline rules remain the source of truth, hooks are their compiler.",
+          "description": "docs/adrs/ADR-TBD-workflow-enforcement.md: Proposed → Accepted on W4.2. Decision: three hooks (W1, W2, W3) are the authoring-time enforcement layer for the CLAUDE.md discipline rules; the discipline rules remain the source of truth, hooks are their compiler.",
           "files": [
             "docs/adrs/ADR-TBD-workflow-enforcement.md"
           ],

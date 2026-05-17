@@ -92,7 +92,7 @@ impl CleanupService {
                 }
             }
 
-            // ── Decision auto-resolution (ADR-2026-04-13-1500 P3.3, P1.2) ──
+            // ── Decision auto-resolution (ADR-2604131500 P3.3, P1.2) ──
             // Auto-acknowledge unresolved decision notifications past the
             // configurable deadline. Reads from env / .hex/project.json / default 2h.
             if let Some(sp) = &self.state.state_port {

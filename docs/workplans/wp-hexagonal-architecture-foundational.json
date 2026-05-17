@@ -54,7 +54,7 @@
           "id": "P1.1",
           "layer": "integration",
           "name": "Add dependency direction check to CI pipeline",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 4

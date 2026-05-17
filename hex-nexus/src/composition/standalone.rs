@@ -3,13 +3,13 @@
 //! assuming Claude Code is the outer shell.
 //!
 //! This is the variant that fires when `CLAUDE_SESSION_ID` is unset in the
-//! process environment. See `composition/mod.rs` for dispatch, ADR-2026-04-11-2000
+//! process environment. See `composition/mod.rs` for dispatch, ADR-2604112000
 //! for the decision record, and wp-hex-standalone-dispatch P2.1/P3.3 for the
 //! task descriptions.
 //!
 //! ## Default inference provider
 //!
-//! Per ADR-2026-04-11-2000 §Decision, Ollama is the reference standalone provider.
+//! Per ADR-2604112000 §Decision, Ollama is the reference standalone provider.
 //! Upstream callers that don't already have an [`IInferencePort`] to pass in
 //! can use [`default_inference_adapter`] to get an
 //! [`OllamaInferenceAdapter`] pointed at `OLLAMA_HOST` (or localhost).

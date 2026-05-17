@@ -1,4 +1,4 @@
-//! `hex insight` — recursive insight routing (ADR-2026-04-14-2345).
+//! `hex insight` — recursive insight routing (ADR-2604142345).
 //!
 //! The agent emits `★ Insight` blocks during non-trivial turns. These blocks
 //! carry architectural observations, actionable gaps, meta-patterns, and
@@ -189,7 +189,7 @@ pub enum RouteTarget {
     Skip,
 }
 
-/// Estimated execution tier per ADR-2026-04-12-0202 tiered inference routing.
+/// Estimated execution tier per ADR-2604120202 tiered inference routing.
 /// The author estimates; later phases can override.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Tier {

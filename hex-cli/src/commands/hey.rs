@@ -1,4 +1,4 @@
-//! Hey Hex — natural-language task classifier (ADR-2026-04-14-0000).
+//! Hey Hex — natural-language task classifier (ADR-2604140000).
 
 use clap::Args;
 use colored::Colorize;
@@ -21,7 +21,7 @@ pub enum TaskIntent {
     HexCommand { args: String, destructive: bool, description: String },
     Shell { cmd: String, destructive: bool, description: String },
     /// Trusted remote-shell task — routed via brain task kind `remote-shell`
-    /// (ADR-2026-04-14-1200). `host` must already be validated against trusted_hosts.
+    /// (ADR-2604141200). `host` must already be validated against trusted_hosts.
     RemoteShell { host: String, command: String, description: String },
     Workplan { path: String, description: String },
     /// Classified but rejected by policy (e.g. remote-shell whitelist — P1.2).
@@ -177,7 +177,7 @@ fn classify_intent(text: &str) -> TaskIntent {
     let t = text.to_lowercase();
 
     // Remote shell — "<cmd> on <host>". When host ∈ trusted_hosts, route to the
-    // first-class `remote-shell` brain task kind (ADR-2026-04-14-1200). Otherwise
+    // first-class `remote-shell` brain task kind (ADR-2604141200). Otherwise
     // fall through to the legacy `__SSH__` LLM-translation path below. Commands
     // are gated by the remote-shell whitelist (P1.2) before either path so we
     // don't burn LLM tokens translating commands we'd refuse to dispatch.

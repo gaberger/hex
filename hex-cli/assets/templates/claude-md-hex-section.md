@@ -15,7 +15,7 @@ hex is an AIOS with a supervisor loop (`hex brain daemon`). Agents interacting w
 
 4. **Reconcile workplans with `--update`.** Use `hex plan reconcile --all --update` to sync JSON task statuses with git evidence after agent work.
 
-5. **Merge worktrees via `hex worktree merge`, never `git checkout <branch> -- <file>`.** Raw checkout silently drops code from other worktrees (ADR-2026-04-13-1630 G4). Always use the integrity-verified merge tool.
+5. **Merge worktrees via `hex worktree merge`, never `git checkout <branch> -- <file>`.** Raw checkout silently drops code from other worktrees (ADR-2604131630 G4). Always use the integrity-verified merge tool.
 
 6. **Brain daemon runs continuously.** Start it with `hex brain daemon --background --interval 30`. It validates, auto-fixes, drains queue. Check status with `hex brain daemon-status` or `hex brain queue list`.
 
@@ -90,4 +90,4 @@ depends_on: [insight-id-1, insight-id-2]
 ─────────────────────────────────────────────────
 ```
 
-This structured form is ingested by `hex hook route` on PostToolUse and routed per ADR-2026-04-14-2345.
+This structured form is ingested by `hex hook route` on PostToolUse and routed per ADR-2604142345.

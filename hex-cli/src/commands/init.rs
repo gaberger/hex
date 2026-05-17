@@ -181,7 +181,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
     match &register_result {
         Ok(pid) => {
             println!("  {} SpacetimeDB project registered ({})", "\u{2713}".green(), &pid[..8.min(pid.len())]);
-            // ADR-2026-03-30-1200: Generate architecture fingerprint on init so it's available
+            // ADR-2603301200: Generate architecture fingerprint on init so it's available
             // immediately in Claude Code sessions and the first `hex dev` run.
             let nexus = crate::nexus_client::NexusClient::from_env();
             let fp_body = serde_json::json!({
@@ -322,7 +322,7 @@ pub fn create_mcp_json(target: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Load the embedded settings template (ADR-2026-03-22-1522).
+/// Load the embedded settings template (ADR-2603221522).
 fn settings_template() -> String {
     crate::assets::Assets::get_str("templates/hex-claude-settings.json")
         .expect("hex-claude-settings.json must be embedded in assets/templates/")

@@ -1,4 +1,4 @@
-//! Architecture fingerprint routes — ADR-2026-03-30-1200.
+//! Architecture fingerprint routes — ADR-2603301200.
 //!
 //! POST /api/projects/{id}/fingerprint  — generate + store fingerprint
 //! GET  /api/projects/{id}/fingerprint  — retrieve as JSON

@@ -165,7 +165,7 @@ async fn test_registry_agent_lifecycle() {
 
 // ── Full Stack Smoke Test ────────────────────────────
 
-// ── SpacetimeDB Sync Tests (ADR-2026-04-05-0900) ─────────────
+// ── SpacetimeDB Sync Tests (ADR-2604050900) ─────────────
 
 /// Verify that registering a remote agent via the adapter also writes
 /// a row to the SpacetimeDB `remote_agent` table (fire-and-forget sync).

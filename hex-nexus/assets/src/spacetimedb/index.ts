@@ -8,4 +8,4 @@ export * as hexfloCoordination from "./hexflo-coordination/index.ts";
 export * as agentRegistry from "./agent-registry/index.ts";
 export * as chatRelay from "./chat-relay/index.ts";
 export * as inferenceGateway from "./inference-gateway/index.ts";
-// ADR-2026-04-05-0900: fleet-state deleted; compute_node absorbed into hexflo-coordination
+// ADR-2604050900: fleet-state deleted; compute_node absorbed into hexflo-coordination

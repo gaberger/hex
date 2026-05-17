@@ -6,7 +6,7 @@
  * Global views (inference, fleet) aggregate across projects.
  *
  * Memos (activeProjectId, breadcrumbs) created inside initRouterStore() —
- * must be called from App.tsx after initProjectStore() (ADR-2026-03-23-1000).
+ * must be called from App.tsx after initProjectStore() (ADR-2603231000).
  */
 import { createSignal, createMemo, createRoot, type Accessor } from "solid-js";
 import { projects } from "./projects";
@@ -28,7 +28,7 @@ export type Route =
   | { page: "workplans" }
   | { page: "missions" }
   | { page: "mission-detail"; missionId: string }
-  // ADR-2026-05-08-1126 surfaces (merge gate, personas, thoughts)
+  // ADR-2605081126 surfaces (merge gate, personas, thoughts)
   | { page: "merge-gate" }
   | { page: "persona-health" }
   | { page: "thoughts" }
@@ -399,7 +399,7 @@ function hashToRoute(hash: string): Route {
   }
 
   // Default landing — Mission Control is the operator's primary surface
-  // (per ADR-2026-05-09-1200). Brain remains accessible via the sidebar.
+  // (per ADR-2605091200). Brain remains accessible via the sidebar.
   return { page: "mission-control" };
 }
 

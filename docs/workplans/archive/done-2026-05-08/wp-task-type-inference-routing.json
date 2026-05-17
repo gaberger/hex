@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-14-2000",
+  "adr": "ADR-2604142000",
   "created_at": "2026-04-14T17:32:00-04:00",
   "created_by": "claude",
   "description": "Add a task-type classifier as a third routing dimension in hex inference routing, running before the complexity scorer. Uncommitted `hex-nexus/src/task_type_classifier.rs` exists and must be folded in with tests, then wired into `quant_router.rs` + `inference.rs` per the revised routing algorithm.",

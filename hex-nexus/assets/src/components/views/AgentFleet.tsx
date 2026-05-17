@@ -72,7 +72,7 @@ const AgentFleet: Component = () => {
   });
 
   const remoteAgents = createMemo(() => {
-    // Merge two sources: SpacetimeDB remote_agent table (ADR-2026-04-05-0900) + heuristic
+    // Merge two sources: SpacetimeDB remote_agent table (ADR-2604050900) + heuristic
     // filter from hex_agent table (agents with host/remote/transport fields).
     const heuristic = filteredAgents().filter(
       (a: any) => a.host || a.remote || a.transport

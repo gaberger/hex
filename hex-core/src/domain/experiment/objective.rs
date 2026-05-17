@@ -1,5 +1,5 @@
 //! Target-app [`Objective`] — the function the application is trying to maximize
-//! (or minimize) over its workload (ADR-2026-05-02-1400).
+//! (or minimize) over its workload (ADR-2605021400).
 //!
 //! Distinct from the *dev-process* objectives in
 //! `hex-cli/src/pipeline/objectives.rs`, which gate code generation

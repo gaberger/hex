@@ -1,9 +1,9 @@
 {
-  "adr": "ADR-2026-04-26-1500",
+  "adr": "ADR-2604261500",
   "created_at": "2026-04-26T15:30:00Z",
   "created_by": "human+claude",
   "description": "Land the three trait modules in hex-core that the substrate ADR (2604261500) names as its load-bearing contracts: RuntimeComposition (C2), PortTelemetry (C3), and IAdapterGenerator (C4). Pure trait definitions and value types only — no behavior beyond an in-memory stub for RuntimeComposition that wraps the existing static composition so nothing breaks. Adapter implementations and the shadow-promotion protocol (P5–P10) are out of scope and depend on this. hex-core must remain zero-runtime-dep (serde/thiserror only).",
-  "feature": "Substrate core traits (P2+P3+P4 of ADR-2026-04-26-1500)",
+  "feature": "Substrate core traits (P2+P3+P4 of ADR-2604261500)",
   "id": "wp-substrate-core-traits",
   "phases": [
     {
@@ -19,7 +19,7 @@
         {
           "agent": "hex-coder",
           "deps": [],
-          "description": "New file hex-core/src/composition.rs. Define: trait RuntimeComposition (methods ports, snapshot, propose_swap, promote, rollback per ADR-2026-04-26-1500 C2); struct PortRegistry (typed map PortId -> Arc<dyn Any+Send+Sync>); struct CompositionSwap { port: PortId, new_adapter_id: AdapterId, manifest: AdapterManifest }; struct SwapTicket { id: Uuid, port: PortId, state: SwapState, created_at: chrono::DateTime<Utc> }; enum SwapState { Candidate, Shadow, ShadowGreen, ShadowRed, Promoted, RolledBack }; struct CompositionSnapshot { bindings: BTreeMap<PortId, AdapterId>, taken_at: chrono::DateTime<Utc> }; enum SwapError { PortUnknown, SwapInFlight, AdapterMissing, NotEligibleForPromotion }. PortId and AdapterId are newtype String wrappers. All types derive Serialize+Deserialize+Debug+Clone where sensible. NO impls beyond derive macros; no behavior in this task.",
+          "description": "New file hex-core/src/composition.rs. Define: trait RuntimeComposition (methods ports, snapshot, propose_swap, promote, rollback per ADR-2604261500 C2); struct PortRegistry (typed map PortId -> Arc<dyn Any+Send+Sync>); struct CompositionSwap { port: PortId, new_adapter_id: AdapterId, manifest: AdapterManifest }; struct SwapTicket { id: Uuid, port: PortId, state: SwapState, created_at: chrono::DateTime<Utc> }; enum SwapState { Candidate, Shadow, ShadowGreen, ShadowRed, Promoted, RolledBack }; struct CompositionSnapshot { bindings: BTreeMap<PortId, AdapterId>, taken_at: chrono::DateTime<Utc> }; enum SwapError { PortUnknown, SwapInFlight, AdapterMissing, NotEligibleForPromotion }. PortId and AdapterId are newtype String wrappers. All types derive Serialize+Deserialize+Debug+Clone where sensible. NO impls beyond derive macros; no behavior in this task.",
           "files": [
             "hex-core/src/composition.rs",
             "hex-core/src/lib.rs"

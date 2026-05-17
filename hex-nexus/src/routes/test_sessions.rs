@@ -1,7 +1,7 @@
 //! REST endpoints for test session recording and querying.
 //!
 //! Uses a file-based store at ~/.hex/test-sessions/ with JSON files.
-//! (ADR-2026-04-05-0900: the test-results WASM module was deleted as an empty stub.)
+//! (ADR-2604050900: the test-results WASM module was deleted as an empty stub.)
 
 use axum::{
     extract::{Path, Query, State},

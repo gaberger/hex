@@ -6,7 +6,7 @@
  *
  * All reactive primitives (signals + useTable effects) are created inside
  * initConnectionStore() which must be called from App.tsx before any other
- * store initialization (ADR-2026-03-23-1000).
+ * store initialization (ADR-2603231000).
  *
  * Usage:
  *   import { swarms, tasks, agents, connected } from "../stores/connection";
@@ -38,7 +38,7 @@ import {
 import {
   DbConnection as InferenceGatewayDbConnection,
 } from "../spacetimedb/inference-gateway/index";
-// ADR-2026-04-05-0900: fleet-state module deleted; compute_node absorbed into hexflo-coordination
+// ADR-2604050900: fleet-state module deleted; compute_node absorbed into hexflo-coordination
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -104,7 +104,7 @@ let setInferenceConn: (v: any | null) => void = () => {};
 let inferenceConnected: Accessor<boolean> = () => false;
 let setInferenceConnected: (v: boolean) => void = () => {};
 
-// fleet-state — retired (ADR-2026-04-05-0900), compute_node now in hexflo-coordination
+// fleet-state — retired (ADR-2604050900), compute_node now in hexflo-coordination
 let fleetConnected: Accessor<boolean> = () => false;
 
 // ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@ let remoteAgents: Accessor<any[]> = () => [];
 let inferenceProviders: Accessor<any[]> = () => [];
 let inferenceRequests: Accessor<any[]> = () => [];
 
-// fleet/compute_node — now served from hexflo-coordination (ADR-2026-04-05-0900)
+// fleet/compute_node — now served from hexflo-coordination (ADR-2604050900)
 let fleetNodes: Accessor<any[]> = () => [];
 
 // Aggregated connection status
@@ -263,7 +263,7 @@ export function initConnectionStore() {
     const [_hexfloConnected, _setHexfloConnected] = createSignal(false);
     const [_inferenceConn, _setInferenceConn] = createSignal<any | null>(null);
     const [_inferenceConnected, _setInferenceConnected] = createSignal(false);
-    // ADR-2026-04-05-0900: fleet-state retired; fleetConnected mirrors hexfloConnected
+    // ADR-2604050900: fleet-state retired; fleetConnected mirrors hexfloConnected
 
     // Assign to module-level variables
     hexfloConn = _hexfloConn;
@@ -295,7 +295,7 @@ export function initConnectionStore() {
     inferenceProviders = useTable(() => _inferenceConn()?.db.inference_provider as SpacetimeDBTableHandle<any> | undefined);
     inferenceRequests = useTable(() => _inferenceConn()?.db.inference_request as SpacetimeDBTableHandle<any> | undefined);
 
-    // fleet/compute_node — now served from hexflo-coordination (ADR-2026-04-05-0900)
+    // fleet/compute_node — now served from hexflo-coordination (ADR-2604050900)
     fleetNodes = useTable(() => _hexfloConn()?.db.compute_node as SpacetimeDBTableHandle<any> | undefined);
 
     // Aggregated connection status
@@ -364,5 +364,5 @@ export function getHexfloConn() { return hexfloConn(); }
 export function getAgentRegistryConn() { return hexfloConn(); }
 /** Get the inference-gateway connection for calling reducers. */
 export function getInferenceConn() { return inferenceConn(); }
-/** Get the fleet/compute_node connection (now served from hexflo-coordination — ADR-2026-04-05-0900). */
+/** Get the fleet/compute_node connection (now served from hexflo-coordination — ADR-2604050900). */
 export function getFleetConn() { return hexfloConn(); }

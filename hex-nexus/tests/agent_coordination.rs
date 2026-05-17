@@ -1,4 +1,4 @@
-//! Integration tests for Docker sandbox agent coordination (ADR-2026-03-28-2000).
+//! Integration tests for Docker sandbox agent coordination (ADR-2603282000).
 //!
 //! These tests verify that:
 //! - ISandboxPort and IAgentRuntimePort types compile and are consistent

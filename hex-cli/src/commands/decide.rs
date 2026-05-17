@@ -1,4 +1,4 @@
-//! Decision resolution commands (ADR-2026-04-13-1500).
+//! Decision resolution commands (ADR-2604131500).
 //!
 //! `hex decide resolve|approve-all|explain` — manage pending project decisions.
 

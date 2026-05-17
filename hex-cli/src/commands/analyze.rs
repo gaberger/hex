@@ -117,7 +117,7 @@ pub async fn run(
             print_check("Composition Root", has_composition_root);
         }
 
-        // Rust workspace layer detection (ADR-2026-03-28-3000)
+        // Rust workspace layer detection (ADR-2603283000)
         let rust_layers = if has_cargo_toml {
             let layers = scan_rust_workspace_layers(&root);
             if !layers.is_empty() {
@@ -655,7 +655,7 @@ fn find_go_module_prefix(root: &Path) -> Option<String> {
     None
 }
 
-// ── Rust Workspace Analysis (ADR-2026-03-28-3000) ────────────────────────────
+// ── Rust Workspace Analysis (ADR-2603283000) ────────────────────────────
 
 /// A boundary violation found in Rust source.
 pub struct RustViolation {
@@ -1230,7 +1230,7 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
             Vec::new()
         };
 
-        // Rust workspace layers and violations (ADR-2026-03-28-3000)
+        // Rust workspace layers and violations (ADR-2603283000)
         let has_cargo_toml = root.join("Cargo.toml").is_file();
         let rust_layers_data: Vec<serde_json::Value> = if has_cargo_toml {
             scan_rust_workspace_layers(root)

@@ -244,7 +244,7 @@ pub enum ReadmeAction {
     SyncAdrs,
     /// Re-run the project interview and update README scope
     Interview,
-    /// Validate README.md claims against the actual project (ADR-2026-04-11-0227).
+    /// Validate README.md claims against the actual project (ADR-2604110227).
     ///
     /// Checks counts (ADRs, agents, skills, WASM modules, crates, port traits,
     /// reducers), file existence (SVG assets, internal links), named entities
@@ -341,7 +341,7 @@ pub async fn run(action: ReadmeAction) -> Result<()> {
     }
 }
 
-// ── ADR-2026-04-11-0227: README claim validation ─────────────────────────
+// ── ADR-2604110227: README claim validation ─────────────────────────
 
 /// Severity of a single validation finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1087,7 +1087,7 @@ mod tests {
         assert!(readme.contains("hex:ADR-summary"));
     }
 
-    // ─ ADR-2026-04-11-0227: README validator helpers ─
+    // ─ ADR-2604110227: README validator helpers ─
 
     #[test]
     fn extract_number_before_simple() {

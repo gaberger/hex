@@ -1,6 +1,6 @@
 //! `hex ci` — Run all hex enforcement gates.
 //!
-//! ADR-2026-04-06-1100: single entry point for CI systems.
+//! ADR-2604061100: single entry point for CI systems.
 //! Gates: architecture boundaries, ADR rules, workplan done_commands, spec coverage.
 
 use colored::Colorize;
@@ -23,7 +23,7 @@ pub async fn run() -> anyhow::Result<()> {
     // Gate 4: Spec coverage — every step must reference >=1 spec ID
     all_passed &= gate_spec_coverage().await;
 
-    // Gate 5: Embedded assets must be project-generic (ADR-2026-04-11-1142)
+    // Gate 5: Embedded assets must be project-generic (ADR-2604111142)
     all_passed &= gate_embedded_assets_generic();
 
     // Gate 6: WASM assets in hex-cli/assets/wasm/ must be at-or-newer than
@@ -42,7 +42,7 @@ pub async fn run() -> anyhow::Result<()> {
     }
 }
 
-/// Standalone composition gate (ADR-2026-04-11-2000).
+/// Standalone composition gate (ADR-2604112000).
 ///
 /// Validates that the standalone composition path works by:
 /// 1. Running the doctor composition check to verify prerequisites.
@@ -50,7 +50,7 @@ pub async fn run() -> anyhow::Result<()> {
 pub async fn run_standalone_gate() -> anyhow::Result<()> {
     println!("{} hex ci --standalone-gate", "\u{2b21}".cyan());
     println!();
-    println!("  {}", "Standalone composition gate (ADR-2026-04-11-2000)".bold());
+    println!("  {}", "Standalone composition gate (ADR-2604112000)".bold());
     println!();
 
     let mut all_passed = true;

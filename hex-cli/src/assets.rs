@@ -1,4 +1,4 @@
-//! Embedded asset bundle for hex-cli (ADR-2026-03-22-1522).
+//! Embedded asset bundle for hex-cli (ADR-2603221522).
 //!
 //! All templates and schemas live as real files under `hex-cli/assets/`
 //! and are baked into the binary at compile time via `rust-embed`. This

@@ -1,6 +1,6 @@
 # AIOS Experience — Acceptance Specification
 
-**ADR**: ADR-2026-04-13-1500
+**ADR**: ADR-2604131500
 **Workplan**: wp-aios-experience-p1
 **Date**: 2026-04-13
 

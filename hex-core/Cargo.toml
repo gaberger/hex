@@ -15,7 +15,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 async-trait = "0.1"
-# Substrate contracts (ADR-2026-04-26-1500 — RuntimeComposition, telemetry, IAdapterGenerator).
+# Substrate contracts (ADR-2604261500 — RuntimeComposition, telemetry, IAdapterGenerator).
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 futures = "0.3"

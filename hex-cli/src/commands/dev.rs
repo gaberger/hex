@@ -1,4 +1,4 @@
-//! `hex dev` — interactive TUI-driven development pipeline (ADR-2026-03-23-2005).
+//! `hex dev` — interactive TUI-driven development pipeline (ADR-2603232005).
 //!
 //! Entry point that creates or resumes a DevSession, then launches the
 //! ratatui TUI for the full ADR → Plan → Code → Validate → Commit pipeline.

@@ -1,4 +1,4 @@
-//! Prompt compressor adapter (ADR-2026-03-28-1000 P3).
+//! Prompt compressor adapter (ADR-2603281000 P3).
 //!
 //! Implements `IContextCompressorPort` with a section-aware compression strategy:
 //! - Code blocks (``` ``` ```) and inline code — preserved verbatim

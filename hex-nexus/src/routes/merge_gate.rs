@@ -1,4 +1,4 @@
-//! Merge gate dashboard endpoints (ADR-2026-05-08-1126 P5 / dashboard).
+//! Merge gate dashboard endpoints (ADR-2605081126 P5 / dashboard).
 //!
 //! Read-only operator views over the STDB merge_request / merge_vote /
 //! persona_pool / persona_health / agent_thought tables. Plus thin write

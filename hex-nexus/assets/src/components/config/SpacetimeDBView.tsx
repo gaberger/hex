@@ -24,7 +24,7 @@ const MODULES: ModuleDef[] = [
     connected: inferenceConnected,
     tables: ["inference_provider", "inference_request", "inference_response"],
   },
-  // ADR-2026-04-05-0900: fleet-state deleted; compute_node now in hexflo-coordination
+  // ADR-2604050900: fleet-state deleted; compute_node now in hexflo-coordination
 ];
 
 const SpacetimeDBView: Component = () => {

@@ -1,11 +1,11 @@
 {
-  "adr": "ADR-2026-04-17-0001",
+  "adr": "ADR-2604170001",
   "created_at": "2026-04-17T14:15:00Z",
   "description": "Bootstrap command works on macOS but mysteriously vanishes from Linux binary despite clean compilation. Isolate link-time issue and restore bootstrap to Linux release binary.",
   "name": "wp-bootstrap-linux-build-fix",
   "phases": [
     {
-      "description": "Find where macOS and Linux builds diverge \u2014 LLVM IR generation, linking, or dead code elimination",
+      "description": "Find where macOS and Linux builds diverge — LLVM IR generation, linking, or dead code elimination",
       "number": 1,
       "tasks": [
         {
@@ -14,7 +14,7 @@
             "hex-cli/src/commands/bootstrap/mod.rs"
           ],
           "id": "P1-1",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "Capture verbose build output for both platforms"
         },
@@ -34,7 +34,7 @@
             "hex-cli/src/main.rs"
           ],
           "id": "P1-3",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "Verify Commands enum dispatch is identical on both"
         }
@@ -52,7 +52,7 @@
             "hex-cli/src/main.rs"
           ],
           "id": "P2-1",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "Implement fix based on P1 findings"
         },
@@ -62,7 +62,7 @@
             "hex-cli/src/commands/bootstrap/mod.rs"
           ],
           "id": "P2-2",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "Verify bootstrap in Linux binary"
         },
@@ -72,7 +72,7 @@
             "hex-cli/src/commands/bootstrap/mod.rs"
           ],
           "id": "P2-3",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "Commit fix"
         }
@@ -115,6 +115,6 @@
     }
   ],
   "priority": "P2",
-  "title": "Debug and fix hex bootstrap missing from Linux build",
-  "status": "in_progress"
+  "status": "in_progress",
+  "title": "Debug and fix hex bootstrap missing from Linux build"
 }

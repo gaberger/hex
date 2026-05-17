@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-13-1800",
+  "adr": "ADR-2604131800",
   "created_at": "2026-04-14T10:50:00Z",
   "created_by": "hex+human",
   "description": "Fix issues identified during dog-fooding: self-rebuild, MCP-CLI parity gaps, reconcile status field, classifier gaps, dependabot vulns.",

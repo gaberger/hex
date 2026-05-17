@@ -14,7 +14,7 @@ triggers:
 
 **Use this skill when**: you want the improver to actually move the homeostasis score, not just preview hypotheses. This runs the full discover → judge → act --apply → wait → learn → status arc and reports the delta.
 
-Background: ADR-2026-04-27-1100. The improver is a closed-loop RL system over the workplan corpus. Read-only subcommands (`discover`, `judge`) only *describe* drift; only `act --apply` and `learn` change anything.
+Background: ADR-2604271100. The improver is a closed-loop RL system over the workplan corpus. Read-only subcommands (`discover`, `judge`) only *describe* drift; only `act --apply` and `learn` change anything.
 
 ## Step 1 — Snapshot starting state
 

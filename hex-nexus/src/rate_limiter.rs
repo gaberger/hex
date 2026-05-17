@@ -1,4 +1,4 @@
-//! Sliding-window rate limit tracker + circuit breaker (ADR-2026-04-05-2125).
+//! Sliding-window rate limit tracker + circuit breaker (ADR-2604052125).
 //!
 //! Tracks per-provider request/token consumption in a 60-second sliding window
 //! and daily counters. Provides circuit breaker (Closed/Open/Half-Open) per
@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 
 // ─── Circuit Breaker ───────────────────────────────────────────────────────
 
-/// Circuit breaker states (ADR-2026-04-05-2125).
+/// Circuit breaker states (ADR-2604052125).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CircuitState {
@@ -111,7 +111,7 @@ impl CircuitBreaker {
 
 // ─── Rate Limit Tracker ────────────────────────────────────────────────────
 
-/// Per-provider rate consumption state (ADR-2026-04-05-2125).
+/// Per-provider rate consumption state (ADR-2604052125).
 #[derive(Debug, Clone)]
 pub struct ProviderRateState {
     pub provider_id: String,
@@ -264,7 +264,7 @@ fn today_utc() -> String {
 
 // ─── Rate Limit Manager ────────────────────────────────────────────────────
 
-/// Manages rate state for all providers (ADR-2026-04-05-2125).
+/// Manages rate state for all providers (ADR-2604052125).
 /// Thread-safe, shared across all inference routes.
 #[derive(Clone, Default)]
 pub struct RateLimitManager {
@@ -273,7 +273,7 @@ pub struct RateLimitManager {
     cost_tracker: Arc<RwLock<CostTracker>>,
 }
 
-/// Tracks actual vs. counterfactual inference cost (ADR-2026-04-05-2125 Phase 4).
+/// Tracks actual vs. counterfactual inference cost (ADR-2604052125 Phase 4).
 #[derive(Debug, Clone, Default)]
 pub struct CostTracker {
     /// Total actual cost across all providers.
@@ -482,7 +482,7 @@ impl RateLimitManager {
             }
         }
 
-        // Priority order (ADR-2026-04-05-2125):
+        // Priority order (ADR-2604052125):
         // 1. Free provider with remaining quota
         // 2. Free provider in half-open circuit (testing recovery)
         // 3. Paid provider with lowest cost

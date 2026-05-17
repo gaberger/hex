@@ -581,7 +581,7 @@ mod real {
     }
 
     // ── Workplan ────────────────────────────────────
-    // NOTE: workplan-state module was removed (ADR-2026-04-05-0900).
+    // NOTE: workplan-state module was removed (ADR-2604050900).
     // These stubs satisfy the trait; state is managed by hexflo-coordination.
 
     #[async_trait]
@@ -651,7 +651,7 @@ mod real {
     }
 
     // ── Skill Registry ────────────────────────────────
-    // NOTE: skill-registry module was removed (ADR-2026-04-05-0900).
+    // NOTE: skill-registry module was removed (ADR-2604050900).
     // Queries below hit the default database (hexflo-coordination) which
     // absorbed config-sync tables.
 
@@ -718,7 +718,7 @@ mod real {
     }
 
     // ── Agent Definition Registry ──────────────────────
-    // NOTE: agent-definition-registry module was removed (ADR-2026-04-05-0900).
+    // NOTE: agent-definition-registry module was removed (ADR-2604050900).
     // These stubs satisfy the trait.
 
     #[async_trait]
@@ -986,7 +986,7 @@ mod real {
             self.call_reducer("inference_task_create",
                 serde_json::json!([id, workplan_id, task_id, phase, prompt, role, created_at])
             ).await?;
-            // Broadcast to /ws/inference subscribers (ADR-2026-04-01-1200 P2.T3).
+            // Broadcast to /ws/inference subscribers (ADR-2604011200 P2.T3).
             // The reducer inserts the row with status=Pending, so we broadcast immediately
             // after a successful insert rather than polling the table.
             if let Some(ref tx) = self.inference_tx {
@@ -1103,7 +1103,7 @@ mod real {
 
     }
 
-    // ── HexFlo memory (ADR-2026-04-11-2000 P5) ──
+    // ── HexFlo memory (ADR-2604112000 P5) ──
     //
     // The four methods below are the data-plane calls for
     // `HexFlo::memory_*` → `IHexFloMemoryStatePort`. They talk to the

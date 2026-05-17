@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-13-1945",
+  "adr": "ADR-2604131945",
   "created_at": "2026-04-13T19:45:00Z",
   "created_by": "human+agent",
   "description": "Brain gains deterministic validation checks that run automatically: CLI wiring, binary freshness, workplan reconciliation, MCP-CLI parity, worktree integrity. Auto-fixes safe issues.",

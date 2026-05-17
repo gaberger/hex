@@ -1,7 +1,7 @@
 {
   "id": "openrouter-inference-integration",
   "title": "OpenRouter Inference Integration — Behavioral Specs",
-  "adr": "ADR-2026-03-23-1600",
+  "adr": "ADR-2603231600",
   "created": "2026-03-23",
   "specs": [
     {

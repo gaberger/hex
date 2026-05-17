@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 const POLL_INTERVAL_SECS: u64 = 30;
 // CPO cost-spec 2026-05-09 — halved from 4096 to 2048; truncation already handled below.
 const DRAFT_MAX_TOKENS: u32 = 2048;
-// CTO ADR-2026-05-08-2600 — halved from 50KB to 24KB; staying under upstream BSATN
+// CTO ADR-2605082600 — halved from 50KB to 24KB; staying under upstream BSATN
 // `len too long` panic threshold (websocket_building.rs:180:57). Watchdog
 // recovers if the cap is breached, but this prevents the crash entirely.
 const CONTENT_CAP_BYTES: usize = 24 * 1024;
@@ -469,7 +469,7 @@ async fn fetch_open_path_commitments(
         if status != "open" {
             continue;
         }
-        // ADR-2026-05-12-1505 — accept the new adr_status_flip kind as well as
+        // ADR-2605121505 — accept the new adr_status_flip kind as well as
         // legacy verifiable_path. Path-safety check only applies to file-write
         // kinds; status-flip payloads use ADR-<id>:<status> format that the
         // existing path validator would reject.
@@ -587,7 +587,7 @@ async fn draft_one(
     c: &OpenCommitment,
     repo_root: &PathBuf,
 ) -> Result<DraftOutcome, String> {
-    // ADR-2026-05-12-1505 — adr_status_flip bypasses the LLM entirely. The
+    // ADR-2605121505 — adr_status_flip bypasses the LLM entirely. The
     // persona's decision is already encoded in success_artifact (`ADR-X:Y`);
     // the drafter just assembles the typed payload + queues the action.
     if c.artifact_kind == "adr_status_flip" {
@@ -596,7 +596,7 @@ async fn draft_one(
 
     // Reject unresolved template placeholders (e.g. `<turn>`, `<id>`,
     // `<persona>`) in the artifact path. Personas occasionally emit
-    // commitment lines like "draft ADR-2026-05-12-<turn>-foo.md" expecting
+    // commitment lines like "draft ADR-260512-<turn>-foo.md" expecting
     // the system to substitute — there is no substitution layer; literal
     // angle-bracket tokens leak straight to disk. Treat as an abstain so
     // the circuit-breaker can re-ask or promote to a stub, rather than
@@ -830,7 +830,7 @@ async fn draft_one(
         }
     }
     if content.len() > CONTENT_CAP_BYTES {
-        // CTO ADR-2026-05-08-2600 — surface truncation so operator can detect
+        // CTO ADR-2605082600 — surface truncation so operator can detect
         // patterns + coach personas to produce shorter drafts upfront.
         tracing::warn!(
             commitment_id = c.id,
@@ -1246,7 +1246,7 @@ mod literal_tests {
     #[test]
     fn sanitize_no_placeholder_is_identity() {
         use super::sanitize_artifact_path;
-        let p = "docs/adrs/ADR-2026-05-13-2300-foo.md";
+        let p = "docs/adrs/ADR-2605132300-foo.md";
         assert_eq!(sanitize_artifact_path(p), p);
     }
 
@@ -1359,7 +1359,7 @@ mod literal_tests {
     }
     #[test] fn placeholder_turn() {
         assert_eq!(
-            find_unresolved_placeholder("docs/adrs/ADR-2026-05-12-<turn>-fail-open-goal-judge.md").as_deref(),
+            find_unresolved_placeholder("docs/adrs/ADR-260512-<turn>-fail-open-goal-judge.md").as_deref(),
             Some("<turn>")
         );
     }
@@ -1370,7 +1370,7 @@ mod literal_tests {
         );
     }
     #[test] fn placeholder_none() {
-        assert!(find_unresolved_placeholder("docs/adrs/ADR-2026-05-13-1500-x.md").is_none());
+        assert!(find_unresolved_placeholder("docs/adrs/ADR-2605131500-x.md").is_none());
     }
     #[test] fn placeholder_real_brackets_skipped() {
         // Spaces, slashes, nested angle brackets → not a placeholder.
@@ -1385,27 +1385,27 @@ mod adr_status_tests {
 
     #[test]
     fn parses_accepted() {
-        let (id, st) = parse_adr_status_target("ADR-2026-05-09-0100:Accepted").unwrap();
-        assert_eq!(id, "ADR-2026-05-09-0100");
+        let (id, st) = parse_adr_status_target("ADR-2605090100:Accepted").unwrap();
+        assert_eq!(id, "ADR-2605090100");
         assert_eq!(st, "Accepted");
     }
 
     #[test]
     fn parses_with_whitespace() {
-        let (id, st) = parse_adr_status_target("  ADR-2026-05-09-0100 : Abandoned  ").unwrap();
-        assert_eq!(id, "ADR-2026-05-09-0100");
+        let (id, st) = parse_adr_status_target("  ADR-2605090100 : Abandoned  ").unwrap();
+        assert_eq!(id, "ADR-2605090100");
         assert_eq!(st, "Abandoned");
     }
 
     #[test]
     fn rejects_missing_separator() {
-        assert!(parse_adr_status_target("ADR-2026-05-09-0100").is_err());
+        assert!(parse_adr_status_target("ADR-2605090100").is_err());
     }
 
     #[test]
     fn rejects_unknown_status() {
-        assert!(parse_adr_status_target("ADR-2026-05-09-0100:Approved").is_err());
-        assert!(parse_adr_status_target("ADR-2026-05-09-0100:proposed").is_err());
+        assert!(parse_adr_status_target("ADR-2605090100:Approved").is_err());
+        assert!(parse_adr_status_target("ADR-2605090100:proposed").is_err());
     }
 
     #[test]
@@ -1415,7 +1415,7 @@ mod adr_status_tests {
 
     #[test]
     fn validator_matches_parser() {
-        assert!(is_adr_status_flip_target("ADR-2026-05-09-0100:Accepted"));
+        assert!(is_adr_status_flip_target("ADR-2605090100:Accepted"));
         assert!(!is_adr_status_flip_target("docs/specs/foo.md"));
         assert!(!is_adr_status_flip_target(""));
     }
@@ -1520,8 +1520,8 @@ fn extract_path(s: &str) -> String {
     s.to_string()
 }
 
-/// ADR-2026-05-12-1505 — validate adr_status_flip targets at fetch time.
-/// Format: `ADR-<id>:<NewStatus>` (e.g. `ADR-2026-05-09-0100:Accepted`).
+/// ADR-2605121505 — validate adr_status_flip targets at fetch time.
+/// Format: `ADR-<id>:<NewStatus>` (e.g. `ADR-2605090100:Accepted`).
 /// Twin + executor re-validate — this is the cheap drafter-side filter.
 fn is_adr_status_flip_target(s: &str) -> bool {
     parse_adr_status_target(s).is_ok()
@@ -1546,7 +1546,7 @@ fn parse_adr_status_target(s: &str) -> Result<(String, String), String> {
     Ok((adr_id.to_string(), new_status.to_string()))
 }
 
-/// ADR-2026-05-12-1505 — emit an `adr_status_set` proposed_action without
+/// ADR-2605121505 — emit an `adr_status_set` proposed_action without
 /// invoking the LLM. The persona's commitment already encoded the decision
 /// (target ADR + new status); we just assemble the typed payload here.
 async fn draft_adr_status_flip(

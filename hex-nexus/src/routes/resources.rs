@@ -1,4 +1,4 @@
-//! Resource supervisor dashboard endpoints (ADR-2026-05-08-2200).
+//! Resource supervisor dashboard endpoints (ADR-2605082200).
 //!
 //! Read-only views over `process_observation` + `resource_anomaly` plus an
 //! ack write shim. The `/proc` walker that populates these tables lives in

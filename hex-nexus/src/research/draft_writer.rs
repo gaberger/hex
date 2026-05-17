@@ -36,7 +36,7 @@ use hex_core::{ActionKind, Domain, Finding, Severity};
 use serde_json::{json, Value};
 
 /// Memory namespace used for findings routed via [`store_memory_finding`].
-/// Matches ADR-2026-04-15-1200 §6 ("`kind: memory` → call `hex memory store` with
+/// Matches ADR-2604151200 §6 ("`kind: memory` → call `hex memory store` with
 /// namespace `idle-sweep`"). Centralised so the constant can be reused by
 /// any caller scoping a query/list back to idle-sweep entries.
 pub const MEMORY_NAMESPACE: &str = "idle-sweep";
@@ -335,7 +335,7 @@ pub fn render_workplan_draft_json(
         "id": draft_id,
         "kind": "workplan-draft",
         "origin": "idle-research-swarm",
-        "adr": "ADR-2026-04-15-1200",
+        "adr": "ADR-2604151200",
         "created_at": now.to_rfc3339(),
         "status": "pending-planner",
         "mode": mode,
@@ -670,7 +670,7 @@ mod tests {
         assert_eq!(parsed["kind"], "workplan-draft");
         assert_eq!(parsed["status"], "pending-planner");
         assert_eq!(parsed["origin"], "idle-research-swarm");
-        assert_eq!(parsed["adr"], "ADR-2026-04-15-1200");
+        assert_eq!(parsed["adr"], "ADR-2604151200");
         assert_eq!(parsed["mode"], "new");
         assert_eq!(parsed["finding_id"], "f-2604241200-arch-cross-adapter");
         assert_eq!(parsed["domain"], "architecture");

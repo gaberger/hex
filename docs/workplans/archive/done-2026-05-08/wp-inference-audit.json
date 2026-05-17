@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-05-2125",
+  "adr": "ADR-2604052125",
   "description": "Audit all registered inference models, track token usage, and calculate cost attribution across providers",
   "id": "wp-inference-audit",
   "phases": [

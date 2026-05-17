@@ -1,4 +1,4 @@
-//! Swarm composition configuration loaded from YAML (ADR-2026-03-24-1230, step 8).
+//! Swarm composition configuration loaded from YAML (ADR-2603241230, step 8).
 //!
 //! Replaces the hardcoded `roles_for_workplan()` in supervisor.rs with a
 //! data-driven approach: the dev-pipeline.yml defines which agents participate,

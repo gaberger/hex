@@ -550,11 +550,11 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
         .route("/api/event", post(push::push_event)
             .layer(DefaultBodyLimit::max(EVENT_BODY_LIMIT)))
-        // Tool-call event log (ADR-2026-04-01-2137, ADR-2026-04-02-0900) — in-memory ring buffer + WebSocket broadcast.
+        // Tool-call event log (ADR-2604012137, ADR-2604020900) — in-memory ring buffer + WebSocket broadcast.
         .route("/api/events", post(events::post_event).get(events::list_events))
-        // Paginated briefing (ADR-2026-04-13-1500 P1.1)
+        // Paginated briefing (ADR-2604131500 P1.1)
         .route("/api/briefing", get(briefing::get_briefing))
-        // AGENTIC SCHED (ADR-2026-04-10-2200) — must register BEFORE {project_id} routes
+        // AGENTIC SCHED (ADR-2604102200) — must register BEFORE {project_id} routes
         .route("/api/sched/status", get(sched::status))
         .route("/api/sched/improver/status", get(sched::improver_status))
         .route("/api/sched/test", post(sched::test))
@@ -564,7 +564,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/sched/queue/history", get(sched::queue_history))
         // Idle-research swarm dashboard surface (wp-idle-research-swarm P5.2)
         .route("/api/research/sweeps", get(research::list_sweeps))
-        // AIOS Experience (ADR-2026-04-13-1500) — pulse, steer, taste, trust
+        // AIOS Experience (ADR-2604131500) — pulse, steer, taste, trust
         .route("/api/pulse", get(pulse::get_pulse))
         .route("/api/steer", post(steer::handle_steer))
         .route("/api/classifier/rules", get(classifier::list_classifier_rules))
@@ -583,14 +583,14 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/org/messages", get(org_comms::list_messages))
         .route("/api/org/conversation/{id}", get(org_comms::get_conversation))
         .route("/api/ops-sla", get(org_comms::ops_sla))
-        // ── ADR-2026-05-08-1126 dashboard surfaces ──────────────────────────
+        // ── ADR-2605081126 dashboard surfaces ──────────────────────────
         .route("/api/merge/requests", get(merge_gate::list_merge_requests))
         .route("/api/merge/approve", post(merge_gate::approve_merge_request))
         .route("/api/merge/reject", post(merge_gate::reject_merge_request))
         .route("/api/merge/personas", get(merge_gate::list_personas))
         .route("/api/merge/thoughts", get(merge_gate::list_thoughts))
         .route("/api/merge/persona-events/{role}", get(merge_gate::list_persona_events))
-        // ── ADR-2026-05-08-2200 resource supervisor ─────────────────────────
+        // ── ADR-2605082200 resource supervisor ─────────────────────────
         .route("/api/resources", get(resources::list_processes))
         .route("/api/resources/anomalies", get(resources::list_anomalies))
         .route("/api/resources/anomalies/ack", post(resources::ack_anomaly))
@@ -686,7 +686,7 @@ pub fn build_router(state: SharedState) -> Router {
         // Swarm + HexFlo routes — guarded: only registered agents can mutate
         .route("/api/swarms", post(swarms::create_swarm)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
-        // Substrate swap-tickets (ADR-2026-04-26-1500 P5).
+        // Substrate swap-tickets (ADR-2604261500 P5).
         .route("/api/swaps", get(swaps::list_swaps))
         .route("/api/swaps/propose", post(swaps::propose_swap))
         .route("/api/swaps/dry-run", post(swaps::dry_run_swap))
@@ -810,7 +810,7 @@ pub fn build_router(state: SharedState) -> Router {
         // Environment API (P5a)
         .route("/api/environments", post(orchestration::create_environment))
         .route("/api/environments", get(orchestration::list_environments))
-        // Context engineering (ADR-2026-03-31-2100) — hot-reload context caches
+        // Context engineering (ADR-2603312100) — hot-reload context caches
         .route("/api/context/reload", post(context::reload_context))
         // MCP tool registry — serves config/mcp-tools.json for dashboard discovery
         .route("/api/tools", get(tools_registry))
@@ -821,7 +821,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/projects/{id}/workplans", get(project_workplan_files))
         .route("/api/projects/{id}/report", get(projects::project_report))
         .route("/api/projects/{id}/swarms", get(projects::project_swarms))
-        // Architecture fingerprint (ADR-2026-03-30-1200)
+        // Architecture fingerprint (ADR-2603301200)
         .route("/api/projects/{id}/fingerprint", post(fingerprint::generate_fingerprint)
             .get(fingerprint::get_fingerprint))
         .route("/api/projects/{id}/fingerprint/text", get(fingerprint::get_fingerprint_text))
@@ -870,12 +870,12 @@ pub fn build_router(state: SharedState) -> Router {
         // POST /api/agent/run {intent, max_iterations?, max_tokens?, model?}
         .route("/api/agent/run", post(agent_run::run)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
-        // Path B task dispatch queue (ADR-2026-04-01-0000 P2.2 + P2.3)
+        // Path B task dispatch queue (ADR-2604010000 P2.2 + P2.3)
         .route("/api/inference/queue", post(inference::inference_queue)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
         .route("/api/inference/queue/pending", get(inference::queue_pending))
         .route("/api/inference/queue/{id}", patch(inference::queue_update))
-        // Rate limit state + cost attribution (ADR-2026-04-05-2125)
+        // Rate limit state + cost attribution (ADR-2604052125)
         .route("/api/inference/rate-state", get(inference::rate_state))
         .route("/api/inference/stats", get(inference::inference_stats_endpoint))
         .route("/api/inference/q-report", get(inference::q_report))
@@ -938,7 +938,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/hexflo/memory/{key}", get(hexflo::memory_retrieve)
             .delete(hexflo::memory_delete))
         .route("/api/hexflo/cleanup", post(hexflo::cleanup))
-        // Enforcement rules (ADR-2026-03-22-1959 P5)
+        // Enforcement rules (ADR-2603221959 P5)
         .route("/api/hexflo/enforcement-rules", get(hexflo::enforcement_rules_list)
             .post(hexflo::enforcement_rules_upsert)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))

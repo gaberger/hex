@@ -40,7 +40,7 @@ pub enum WorktreeAction {
         #[arg(long)]
         force: bool,
     },
-    /// Show pending merge requests + vote tallies (ADR-2026-05-08-1126)
+    /// Show pending merge requests + vote tallies (ADR-2605081126)
     Status {
         /// Emit JSON instead of the colorized table
         #[arg(long)]
@@ -541,7 +541,7 @@ async fn merge(
         }
     }
 
-    // ── Merge Integrity Check (ADR-2026-04-13-1800) ─────────────────────────
+    // ── Merge Integrity Check (ADR-2604131800) ─────────────────────────
     // Verify every worktree's added lines are present on main after merge.
     // This catches the "last write wins" problem where git checkout from
     // one branch silently drops additions from another branch.
@@ -755,7 +755,7 @@ async fn cleanup(force: bool) -> anyhow::Result<()> {
 }
 
 // ============================================================
-//  Merge-team CLI surface (ADR-2026-05-08-1126 P5)
+//  Merge-team CLI surface (ADR-2605081126 P5)
 // ============================================================
 
 const STDB_HOST_DEFAULT: &str = "http://127.0.0.1:3033";

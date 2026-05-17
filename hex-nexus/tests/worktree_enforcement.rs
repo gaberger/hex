@@ -1,4 +1,4 @@
-//! Integration tests for worktree enforcement in agent hooks (ADR-2026-03-23-1700).
+//! Integration tests for worktree enforcement in agent hooks (ADR-2603231700).
 //!
 //! Tests cover all 8 phases:
 //! - P1: SessionState worktree_path, allowed_paths

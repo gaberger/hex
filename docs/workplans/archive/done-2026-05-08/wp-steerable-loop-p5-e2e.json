@@ -1,8 +1,8 @@
 {
-  "adr": "ADR-2026-04-10-2100",
+  "adr": "ADR-2604102100",
   "created_at": "2026-05-04T22:00:00Z",
   "created_by": "agent",
-  "description": "ADR-2026-04-10-2100 P5 follow-up — end-to-end pause/resume test for the agentic steerable loop. P1-P4 already shipped (workplan-executor polling, AgentInstruction state, CLI agent loop, pause/resume/stop handlers). This workplan covers the missing live-pipeline test gate so the loop is verified, not just compiled.",
+  "description": "ADR-2604102100 P5 follow-up — end-to-end pause/resume test for the agentic steerable loop. P1-P4 already shipped (workplan-executor polling, AgentInstruction state, CLI agent loop, pause/resume/stop handlers). This workplan covers the missing live-pipeline test gate so the loop is verified, not just compiled.",
   "feature": "Agentic steerable loop — end-to-end verification",
   "id": "wp-steerable-loop-p5-e2e",
   "phases": [
@@ -33,13 +33,13 @@
           "deps": [
             "P1.1"
           ],
-          "description": "Once the e2e test is green, flip ADR-2026-04-10-2100 P5 status to Done with the test path as evidence and remove the post-acceptance follow-up note.",
+          "description": "Once the e2e test is green, flip ADR-2604102100 P5 status to Done with the test path as evidence and remove the post-acceptance follow-up note.",
           "files": [
-            "docs/adrs/ADR-2026-04-10-2100-agentic-steerable-loop.md"
+            "docs/adrs/ADR-2604102100-agentic-steerable-loop.md"
           ],
           "id": "P1.2",
           "layer": "docs",
-          "name": "Mark ADR-2026-04-10-2100 P5 Done",
+          "name": "Mark ADR-2604102100 P5 Done",
           "status": "done"
         }
       ]

@@ -1,7 +1,7 @@
 {
   "id": "wp-substrate-shadow-promotion",
-  "feature": "Substrate shadow-promotion protocol (P6 of ADR-2026-04-26-1500)",
-  "adr": "ADR-2026-04-26-1500",
+  "feature": "Substrate shadow-promotion protocol (P6 of ADR-2604261500)",
+  "adr": "ADR-2604261500",
   "created_at": "2026-04-26T16:30:00Z",
   "created_by": "human+claude",
   "description": "Replace InMemoryComposition's manual mark_shadow_green with the real C5 shadow-promotion protocol: STDB-backed swap_ticket + shadow_sample tables, a candidate router that mirrors a configurable traffic fraction to both incumbent and candidate, a promotion-judge agent that compares samples against the candidate's ShadowTestPlan and transitions ShadowGreen/ShadowRed, and a dashboard view of in-flight tickets. STDB-only — no SQLite, no JSON file fallback (per the no-sqlite directive). The first port driven through this protocol is IInferencePort (P5 already wired it behind RuntimeComposition; this workplan adds the safety harness around the swap).",
@@ -90,7 +90,7 @@
     {
       "id": "P4",
       "name": "Promotion-judge — closes the loop on Shadow tickets",
-      "description": "The agent (Layer 3 from ADR-2026-04-26-1311) that reads accumulated shadow_sample rows for a ticket and decides ShadowGreen vs ShadowRed against the ticket's success_criteria_json. Runs on a tick, idempotent, observable.",
+      "description": "The agent (Layer 3 from ADR-2604261311) that reads accumulated shadow_sample rows for a ticket and decides ShadowGreen vs ShadowRed against the ticket's success_criteria_json. Runs on a tick, idempotent, observable.",
       "tier": 0,
       "gate": {
         "type": "test",
@@ -166,7 +166,7 @@
           "deps": ["P6.1", "P5.1"],
           "layer": "verification",
           "status": "done",
-          "notes": "All substrate-related tests pass: hex-core 68+1, hex-nexus substrate_composition 4, shadow_router 4, promotion_judge 7, substrate_e2e 2. Workspace check + analyze A+ + sqlite-gate all clean. NOT BLOCKING but flagged: tests/sched_daemon_terminal_state.rs (5 cases) fail with HTTP-status assertion errors against /api/brain/status — confirmed PRE-EXISTING by `git stash` test (failures persist at HEAD with no substrate changes applied). Routes were renamed brain→sched per ADR-2026-04-15-0000 and these tests were never updated. Not a substrate regression; surface as a follow-up cleanup workplan."
+          "notes": "All substrate-related tests pass: hex-core 68+1, hex-nexus substrate_composition 4, shadow_router 4, promotion_judge 7, substrate_e2e 2. Workspace check + analyze A+ + sqlite-gate all clean. NOT BLOCKING but flagged: tests/sched_daemon_terminal_state.rs (5 cases) fail with HTTP-status assertion errors against /api/brain/status — confirmed PRE-EXISTING by `git stash` test (failures persist at HEAD with no substrate changes applied). Routes were renamed brain→sched per ADR-2604150000 and these tests were never updated. Not a substrate regression; surface as a follow-up cleanup workplan."
         }
       ]
     }

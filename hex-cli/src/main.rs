@@ -1,4 +1,4 @@
-// Pre-existing clippy lints — tracked for cleanup in ADR-2026-03-22-2050
+// Pre-existing clippy lints — tracked for cleanup in ADR-2603222050
 #![allow(
     clippy::manual_strip,
     clippy::ptr_arg,
@@ -252,11 +252,11 @@ enum Commands {
     },
     /// Do the next right thing — check project health and suggest/execute actions
     Go,
-    /// Hey Hex — natural language task classifier (ADR-2026-04-14-0000)
+    /// Hey Hex — natural language task classifier (ADR-2604140000)
     Hey(HeyArgs),
     /// Adversarially verify a claim about the repo — returns CONFIRMED / REFUTED / INCONCLUSIVE
     Verify(commands::verify::VerifyArgs),
-    /// Scheduler daemon — queue drain, validation, auto-fix (ADR-2026-04-15-0000)
+    /// Scheduler daemon — queue drain, validation, auto-fix (ADR-2604150000)
     Sched {
         #[command(subcommand)]
         action: BrainAction,
@@ -266,7 +266,7 @@ enum Commands {
         #[command(subcommand)]
         action: commands::pool::PoolAction,
     },
-    /// Deprecated alias for `sched` (ADR-2026-04-15-0000) — forwards with warning
+    /// Deprecated alias for `sched` (ADR-2604150000) — forwards with warning
     #[command(hide = true)]
     Brain {
         #[command(subcommand)]
@@ -277,7 +277,7 @@ enum Commands {
         #[command(subcommand)]
         action: StdbAction,
     },
-    /// Substrate (ADR-2026-04-26-1500): propose / list / inspect inference swaps
+    /// Substrate (ADR-2604261500): propose / list / inspect inference swaps
     Substrate {
         #[command(subcommand)]
         action: commands::substrate::SubstrateAction,
@@ -355,7 +355,7 @@ enum Commands {
         #[command(subcommand)]
         action: SkillAction,
     },
-    /// Inspect and sync embedded assets baked into the binary (ADR-2026-03-22-1522)
+    /// Inspect and sync embedded assets baked into the binary (ADR-2603221522)
     Assets {
         #[command(subcommand)]
         action: commands::assets_cmd::AssetsAction,
@@ -365,16 +365,16 @@ enum Commands {
         #[command(subcommand)]
         action: GitAction,
     },
-    /// Native filesystem primitives (ADR-2026-04-14-2100) — replaces Bash/Read/Grep/Glob
+    /// Native filesystem primitives (ADR-2604142100) — replaces Bash/Read/Grep/Glob
     Fs {
         #[command(subcommand)]
         action: FsAction,
     },
     /// Project status
     Status,
-    /// One-glance multi-project pulse (ADR-2026-04-13-1500 P6.1)
+    /// One-glance multi-project pulse (ADR-2604131500 P6.1)
     Pulse,
-    /// Inject hex context into opencode (ADR-2026-03-23-1800)
+    /// Inject hex context into opencode (ADR-2603231800)
     Opencode {
         #[command(subcommand)]
         action: commands::opencode::Commands,
@@ -384,12 +384,12 @@ enum Commands {
         #[command(subcommand)]
         action: commands::docs::DocsAction,
     },
-    /// Docker AI Sandbox management — build image, check readiness (ADR-2026-03-28-2000)
+    /// Docker AI Sandbox management — build image, check readiness (ADR-2603282000)
     Sandbox {
         #[command(subcommand)]
         action: SandboxAction,
     },
-    /// Architecture fingerprint management (ADR-2026-03-30-1200)
+    /// Architecture fingerprint management (ADR-2603301200)
     Fingerprint {
         #[command(subcommand)]
         action: FingerprintAction,
@@ -411,7 +411,7 @@ enum Commands {
         #[command(subcommand)]
         action: ContextAction,
     },
-    /// Update hex to the latest release (ADR-2026-04-08-0929)
+    /// Update hex to the latest release (ADR-2604080929)
     #[command(name = "self-update")]
     SelfUpdate {
         /// Only check for updates, do not install
@@ -424,7 +424,7 @@ enum Commands {
         #[arg(long, short)]
         yes: bool,
     },
-    /// Emergency override — send priority-2 directive to all agents (ADR-2026-04-13-1500)
+    /// Emergency override — send priority-2 directive to all agents (ADR-2604131500)
     #[command(name = "send-override")]
     OverrideDirect {
         /// Project name
@@ -547,7 +547,7 @@ enum Commands {
         #[command(subcommand)]
         action: Option<PauseAction>,
     },
-    /// Resume a paused workplan (ADR-2026-04-13-1500 §1 Layer 4)
+    /// Resume a paused workplan (ADR-2604131500 §1 Layer 4)
     Resume,
     /// (hidden) Decide — use `hex override decide` instead
     #[command(hide = true)]

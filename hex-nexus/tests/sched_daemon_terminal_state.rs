@@ -1,4 +1,4 @@
-//! P1.1 — Sched daemon terminal-state integration test (ADR-2026-04-14-2155).
+//! P1.1 — Sched daemon terminal-state integration test (ADR-2604142155).
 //!
 //! Validates the brain-task lifecycle through hex-nexus REST endpoints:
 //!   1. Enqueue a brain task via POST /api/hexflo/memory

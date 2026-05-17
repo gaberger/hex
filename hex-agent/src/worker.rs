@@ -1,4 +1,4 @@
-//! Remote-shell sched-task worker (ADR-2026-04-14-1200 P3).
+//! Remote-shell sched-task worker (ADR-2604141200 P3).
 //!
 //! Polls nexus hexflo-memory for pending sched-task records with
 //! kind=remote-shell and payload.host == local hostname, argv-splits the

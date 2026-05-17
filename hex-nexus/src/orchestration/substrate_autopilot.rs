@@ -1,13 +1,13 @@
 //! Substrate autopilot — STUB.
 //!
-//! The full implementation (ADR-2026-04-26-1500 closing-the-loop) was referenced
+//! The full implementation (ADR-2604261500 closing-the-loop) was referenced
 //! from `sched_service.rs` but the source file was never committed, leaving
 //! the workspace unbuildable. This stub restores `cargo build` parity so
 //! unrelated work can land while a follow-up workplan implements the real
 //! recommender. Every `tick()` here is a no-op that emits an Abstain so the
 //! caller's match-arm logging makes the gap visible in operator logs.
 //!
-//! TODO(ADR-2026-04-26-1500): replace with the real autopilot. Tracking workplan
+//! TODO(ADR-2604261500): replace with the real autopilot. Tracking workplan
 //! should pull recommendations from substrate state via the swap-ticket port
 //! and live `inference_port` — see `sched_service::spawn_substrate_autopilot`
 //! for the expected call shape.
@@ -64,7 +64,7 @@ impl SubstrateAutopilot {
     pub async fn tick(&self) -> Report {
         Report {
             recommendation: Some(Recommendation::Abstain {
-                reason: "substrate_autopilot is a stub — see ADR-2026-04-26-1500 follow-up workplan"
+                reason: "substrate_autopilot is a stub — see ADR-2604261500 follow-up workplan"
                     .into(),
             }),
         }

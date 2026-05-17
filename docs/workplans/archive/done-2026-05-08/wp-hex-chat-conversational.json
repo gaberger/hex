@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-14-2200",
+  "adr": "ADR-2604142200",
   "created_at": "2026-04-14T13:20:00Z",
   "created_by": "hex+human",
   "description": "Extend hex chat to inject brain context (queue, validate, recent commits) per message, stream brain_tick events inline, persist conversation history, and support --resume.",

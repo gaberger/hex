@@ -1,4 +1,4 @@
-//! Regression detector (ADR-2026-04-13-1500 P2 P1.1).
+//! Regression detector (ADR-2604131500 P2 P1.1).
 //! Correlates gate failures with recent agent commits to identify
 //! which scope should have trust decayed.
 
@@ -148,7 +148,7 @@ fn decay_level(current: &str) -> Option<&'static str> {
     }
 }
 
-/// ADR-2026-04-13-1500 P2 P1.2: Apply trust decay for a regression report.
+/// ADR-2604131500 P2 P1.2: Apply trust decay for a regression report.
 ///
 /// Reads the current trust level for the report's scope, drops it one level,
 /// stores the updated trust + history entry, and logs a briefing event.

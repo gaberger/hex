@@ -2,7 +2,7 @@
 //!
 //! This port abstracts LLM inference calls through hex-nexus, supporting
 //! task-type-aware model selection (via RL routing) and cost tracking.
-//! Used by the "hex dev" TUI pipeline (ADR-2026-03-23-2005).
+//! Used by the "hex dev" TUI pipeline (ADR-2603232005).
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

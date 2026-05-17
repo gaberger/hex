@@ -1,4 +1,4 @@
-# ADR-2026-04-01-0008: ADR with no Date field
+# ADR-2604010008: ADR with no Date field
 
 **Status:** Accepted
 **Drivers:** Date is absent. Should produce exactly one `MissingRequiredField` finding (Date), nothing else.

@@ -2,12 +2,12 @@
   "adr": "ADR-[PHONE]",
   "created_at": "2026-05-09T12:13:27.910475611+00:00",
   "created_by": "hex-coder",
-  "feature": "Tool czar \u2014 toolchain health monitoring persona",
+  "feature": "Tool czar — toolchain health monitoring persona",
   "id": "wp-tool-czar-persona",
   "phases": [
     {
       "id": "P0",
-      "name": "STDB schema \u2014 tool_health_observation + tool_health_summary tables",
+      "name": "STDB schema — tool_health_observation + tool_health_summary tables",
       "status": "pending",
       "tasks": [
         {
@@ -17,7 +17,7 @@
           "id": "P0.1",
           "layer": "infrastructure",
           "name": "Add tool_health_observation table with id, tool_name, persona, ts, success, latency_ms, error_msg",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -51,7 +51,7 @@
     },
     {
       "id": "P1",
-      "name": "tool_czar_supervisor daemon \u2014 15-minute probe tick",
+      "name": "tool_czar_supervisor daemon — 15-minute probe tick",
       "status": "pending",
       "tasks": [
         {
@@ -61,7 +61,7 @@
           "id": "P1.1",
           "layer": "secondary",
           "name": "Create tool_czar_supervisor module with spawn(stdb_host, hex_db, tool_registry)",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -70,7 +70,7 @@
           "id": "P1.2",
           "layer": "infrastructure",
           "name": "Wire tool_czar_supervisor::spawn() in nexus main (after resource_observer)",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -79,7 +79,7 @@
           "id": "P1.3",
           "layer": "secondary",
           "name": "Implement 15-min tokio::time::interval tick loop with ToolRegistry probe calls",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -95,7 +95,7 @@
     },
     {
       "id": "P2",
-      "name": "Probe set \u2014 benign payloads for cargo_check, repo_grep, repo_read, web_search, system deps",
+      "name": "Probe set — benign payloads for cargo_check, repo_grep, repo_read, web_search, system deps",
       "status": "pending",
       "tasks": [
         {
@@ -105,7 +105,7 @@
           "id": "P2.1",
           "layer": "secondary",
           "name": "Define probe payload + pass condition for cargo_check, repo_grep, repo_read, web_search, escalate_to_operator",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -141,7 +141,7 @@
           "id": "P3.1",
           "layer": "infrastructure",
           "name": "Create tool-czar.yml with tier=executive, preferred=qwen3:4b, escalation=[PERSON_NAME]-opus-4-7, reports_to=cto",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -149,8 +149,8 @@
           ],
           "id": "P3.2",
           "layer": "secondary",
-          "name": "Implement escalation logic in tool_czar_supervisor: <80% success \u2192 draft ADR, >5min down \u2192 escalate_to_operator",
-          "status": "done"
+          "name": "Implement escalation logic in tool_czar_supervisor: <80% success → draft ADR, >5min down → escalate_to_operator",
+          "status": "pending"
         },
         {
           "files": [
@@ -159,14 +159,14 @@
           "id": "P3.3",
           "layer": "secondary",
           "name": "Add model switching: qwen3:4b for probes, [PERSON_NAME]-opus-4-7 for ADR drafting (check persona.escalation field)",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 0
     },
     {
       "id": "P4",
-      "name": "Dashboard \u2014 #/tools route with traffic-light grid + per-persona heatmap",
+      "name": "Dashboard — #/tools route with traffic-light grid + per-persona heatmap",
       "status": "pending",
       "tasks": [
         {
@@ -176,7 +176,7 @@
           "id": "P4.1",
           "layer": "primary",
           "name": "Create ToolHealth.tsx component: traffic-light grid per tool (green/yellow/red by success rate)",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -185,7 +185,7 @@
           "id": "P4.2",
           "layer": "primary",
           "name": "Add per-persona heatmap: rows=tools, cols=personas, cell=success rate from tool_health_summary",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [

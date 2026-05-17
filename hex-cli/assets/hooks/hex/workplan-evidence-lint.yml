@@ -1,6 +1,6 @@
 # workplan-evidence-lint — Pre-edit hook enforcing workplan evidence schema
 # Blocks edits/writes to docs/workplans/wp-*.json that would introduce
-# empty files[] (the reconcile false-positive class closed by ADR-2026-04-14-2201).
+# empty files[] (the reconcile false-positive class closed by ADR-2604142201).
 
 name: workplan-evidence-lint
 type: pre-tool-use
@@ -59,7 +59,7 @@ output:
 
     Every task must declare at least one file path in files[]. The files
     list is what `hex plan reconcile` uses to verify the task completed;
-    prose-only done-conditions silently false-positive (ADR-2026-04-14-2200).
+    prose-only done-conditions silently false-positive (ADR-2604142200).
 
     To fix:
       1. Identify the output files each task produces

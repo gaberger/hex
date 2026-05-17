@@ -1,4 +1,4 @@
-# SambaNova — Free-tier cloud inference (ADR-2026-04-05-2125)
+# SambaNova — Free-tier cloud inference (ADR-2604052125)
 # Fast inference with generous free credits. Good overflow target.
 # Free tier: $5 signup credit + rate-limited free access.
 name: sambanova

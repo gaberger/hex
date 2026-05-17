@@ -1,4 +1,4 @@
-//! End-to-end integration tests for standalone dispatch (ADR-2026-04-11-2000 P6).
+//! End-to-end integration tests for standalone dispatch (ADR-2604112000 P6).
 //!
 //! These tests prove three things:
 //!
@@ -12,7 +12,7 @@
 //!
 //! 3. **P6.3 — Vacuous completion rejection**: A `MockInferencePort` with an
 //!    empty response is rejected by the dispatch-evidence guard per
-//!    ADR-2026-04-11-1800. The guard prevents phantom task completions.
+//!    ADR-2604111800. The guard prevents phantom task completions.
 //!
 //! ## Why not test through `execute_phase` directly?
 //!
@@ -26,7 +26,7 @@
 //!   valid `AgentManager` (reuses P2.3 pattern).
 //! - **Guard level**: `validate_dispatch_evidence` is a pure function that
 //!   the executor calls on the task completion path. Testing it directly
-//!   proves the ADR-2026-04-11-1800 contract.
+//!   proves the ADR-2604111800 contract.
 //!
 //! The composition test proves the standalone path is wirable; the guard
 //! tests prove the evidence check works. Together they cover the P6 gate.
@@ -164,7 +164,7 @@ mod standalone_dispatch {
     // ── P6.3: Vacuous completion rejection ───────────────
 
     /// Empty string output is rejected — the agent produced no evidence of
-    /// work. Per ADR-2026-04-11-1800, this must NOT result in a "done" status.
+    /// work. Per ADR-2604111800, this must NOT result in a "done" status.
     #[test]
     fn dispatch_evidence_rejects_empty_output() {
         let result = validate_dispatch_evidence(Some(""));

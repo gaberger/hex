@@ -75,25 +75,25 @@ pub struct InferenceRegisterRequest {
     /// Context window size in tokens.
     #[serde(alias = "context_window")]
     pub context_window: Option<u32>,
-    /// Requests per minute limit (ADR-2026-04-05-2125).
+    /// Requests per minute limit (ADR-2604052125).
     #[serde(alias = "rate_limit_rpm")]
     pub rate_limit_rpm: Option<u32>,
-    /// Tokens per minute limit (ADR-2026-04-05-2125).
+    /// Tokens per minute limit (ADR-2604052125).
     #[serde(alias = "rate_limit_tpm")]
     pub rate_limit_tpm: Option<u64>,
-    /// Whether this is a free-tier provider (ADR-2026-04-05-2125).
+    /// Whether this is a free-tier provider (ADR-2604052125).
     #[serde(alias = "is_free_tier")]
     pub is_free_tier: Option<bool>,
-    /// Cost per million input tokens (ADR-2026-04-05-2125).
+    /// Cost per million input tokens (ADR-2604052125).
     #[serde(alias = "cost_per_input_mtok")]
     pub cost_per_input_mtok: Option<f64>,
-    /// Cost per million output tokens (ADR-2026-04-05-2125).
+    /// Cost per million output tokens (ADR-2604052125).
     #[serde(alias = "cost_per_output_mtok")]
     pub cost_per_output_mtok: Option<f64>,
-    /// Daily token limit (0 = unlimited) (ADR-2026-04-05-2125).
+    /// Daily token limit (0 = unlimited) (ADR-2604052125).
     #[serde(alias = "daily_token_limit")]
     pub daily_token_limit: Option<u64>,
-    /// Daily request limit (0 = unlimited) (ADR-2026-04-05-2125).
+    /// Daily request limit (0 = unlimited) (ADR-2604052125).
     #[serde(alias = "daily_request_limit")]
     pub daily_request_limit: Option<u32>,
 }
@@ -320,7 +320,7 @@ pub async fn register_inference(
     let models_json = body.models_json
         .unwrap_or_else(|| serde_json::json!([body.model]).to_string());
 
-    // Resolve quantization level (ADR-2026-03-27-1000):
+    // Resolve quantization level (ADR-2603271000):
     // 1. Explicit --quantization flag
     // 2. Auto-detect from model name GGUF tag
     // 3. Default: "cloud" for API providers, "q4" for local
@@ -357,7 +357,7 @@ pub async fn register_inference(
         body.context_window.unwrap_or(0) as u64
     };
 
-    // Extract rate limit and cost metadata from request body (ADR-2026-04-05-2125)
+    // Extract rate limit and cost metadata from request body (ADR-2604052125)
     let rpm_limit = body.rate_limit_rpm.unwrap_or(60);
     let tpm_limit = body.rate_limit_tpm.unwrap_or(0);
     let is_free_tier = body.is_free_tier.unwrap_or(false);
@@ -376,7 +376,7 @@ pub async fn register_inference(
                     tracing::warn!(provider = %body.id, error = %e, "set_api_key failed (non-fatal)");
                 }
             }
-            // Register rate limits in the rate limiter (ADR-2026-04-05-2125)
+            // Register rate limits in the rate limiter (ADR-2604052125)
             let daily_token_limit = body.daily_token_limit.unwrap_or(0);
             let daily_request_limit = body.daily_request_limit.unwrap_or(0);
             let cost_input = body.cost_per_input_mtok.unwrap_or(0.0);

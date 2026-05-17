@@ -1,5 +1,5 @@
 //! wp-workplan-state-model-v2 P1.2 — verify the executor emits workplan_event
-//! on every transition (ADR-2026-04-27-1000 §2).
+//! on every transition (ADR-2604271000 §2).
 //!
 //! End-to-end intent: dispatch a fake task, assert the event log shows
 //! Dispatched → AgentStopped → EvidenceChecked. Until the STDB

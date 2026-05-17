@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-11-1142",
+  "adr": "ADR-2604111142",
   "created_at": "2026-04-11T11:45:00Z",
   "created_by": "human",
   "description": "Close the pre-existing hex-intf-specific leaks in hex-cli/assets/ (skills, agents, hooks, context-templates, ci, and the scaffold parallel tree), then add a hex doctor guardrail that fails CI on any future regression. Follow-up to the 2026-04-11 cleanup that deleted hex-publish-module, hex-spacetime, and hex-dev-rebuild from the embed set.",
@@ -191,7 +191,7 @@
       "tier": 2
     },
     {
-      "description": "Implement the CI-enforceable check described in ADR-2026-04-11-1142 §Decision.3. After P1-P3 have cleaned the current state, this check prevents any future edit from re-introducing the pollution.",
+      "description": "Implement the CI-enforceable check described in ADR-2604111142 §Decision.3. After P1-P3 have cleaned the current state, this check prevents any future edit from re-introducing the pollution.",
       "gate": {
         "blocking": true,
         "command": "cargo test -p hex-cli embedded_assets_generic",
@@ -246,7 +246,7 @@
             "P4.1",
             "P4.2"
           ],
-          "description": "Add a short section to CLAUDE.md under the 'hex-cli/assets — Embedded Templates' block explaining the generic-only rule, the marker list, and how to add exceptions (via an allowlist file that the check reads — design TBD, can land in a follow-up). Link back to ADR-2026-04-11-1142.",
+          "description": "Add a short section to CLAUDE.md under the 'hex-cli/assets — Embedded Templates' block explaining the generic-only rule, the marker list, and how to add exceptions (via an allowlist file that the check reads — design TBD, can land in a follow-up). Link back to ADR-2604111142.",
           "files": [
             "CLAUDE.md"
           ],

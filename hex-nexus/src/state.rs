@@ -30,7 +30,7 @@ pub struct AppState {
     pub activities: RwLock<VecDeque<ActivityEntry>>,
     // WebSocket broadcast channel (ephemeral)
     pub ws_tx: broadcast::Sender<WsEnvelope>,
-    // Inference task push channel (ADR-2026-04-01-1200) — feeds /ws/inference subscribers
+    // Inference task push channel (ADR-2604011200) — feeds /ws/inference subscribers
     pub inference_tx: InferenceTxBus,
     pub auth_token: Option<String>,
     pub fleet: FleetManager,
@@ -45,14 +45,14 @@ pub struct AppState {
     pub hexflo: Option<Arc<HexFlo>>,
     // Unified state port (ADR-025 + ADR-042) — single source of truth for all persistent state
     pub state_port: Option<Arc<dyn IStatePort>>,
-    // Substrate swap-ticket read/write surface (ADR-2026-04-26-1500). Held
+    // Substrate swap-ticket read/write surface (ADR-2604261500). Held
     // separately from `state_port` because the substrate ADR is about
     // port-by-port modular swapping; expanding the IStatePort super-trait
     // would contradict the motivation. SpacetimeStateAdapter impls both
     // independently — composition_root constructs a second adapter pointed
     // at the same STDB.
     pub swap_ticket_port: Option<Arc<dyn ISwapTicketStatePort>>,
-    // Substrate runtime composition for the inference port (ADR-2026-04-26-1500
+    // Substrate runtime composition for the inference port (ADR-2604261500
     // P5). The InMemoryComposition is pre-bound with the live inference
     // adapter as adapter id "default-inference"; STDB is the durable audit
     // log via swap_ticket_port. None when there is no live inference
@@ -66,8 +66,8 @@ pub struct AppState {
     // `inference_port.complete(req)` directly. With no swap in flight,
     // ShadowRouter delegates to the live adapter — opt-in is zero-cost.
     pub inference_shadow_router: Option<Arc<crate::orchestration::shadow_router::ShadowRouter>>,
-    // Substrate runtime composition for the SECRET port (ADR-2026-04-26-1500
-    // P10 second-port migration; ADR-2026-04-26-2100 cookbook). Per-port
+    // Substrate runtime composition for the SECRET port (ADR-2604261500
+    // P10 second-port migration; ADR-2604262100 cookbook). Per-port
     // composition mirroring the inference one — see those ADRs for why
     // each substrate port gets its own RuntimeComposition+Router pair
     // today (until polymorphic dispatch lands when a third port arrives).
@@ -86,20 +86,20 @@ pub struct AppState {
     pub session_port: Option<Arc<dyn ISessionPort>>,
     // Live context enrichment port (P9.5) — enriches task prompts before dispatch
     pub live_context: Option<Arc<dyn ILiveContextPort>>,
-    // Context window pressure tracker (ADR-2026-03-28-1000 P1) — keyed by session_id/agent_id
+    // Context window pressure tracker (ADR-2603281000 P1) — keyed by session_id/agent_id
     pub context_pressure: Arc<Mutex<HashMap<String, ContextPressureTracker>>>,
-    // Architecture fingerprints (ADR-2026-03-30-1200) — in-memory, regenerated per hex dev run
+    // Architecture fingerprints (ADR-2603301200) — in-memory, regenerated per hex dev run
     pub fingerprints:
         RwLock<HashMap<String, crate::analysis::fingerprint_extractor::ArchitectureFingerprint>>,
-    // Tool-call event log (ADR-2026-04-01-2137, ADR-2026-04-02-0900) — in-memory ring buffer, WebSocket broadcast on insert
+    // Tool-call event log (ADR-2604012137, ADR-2604020900) — in-memory ring buffer, WebSocket broadcast on insert
     pub event_adapter: std::sync::Arc<crate::adapters::events::InMemoryEventAdapter>,
-    // Capability token service (ADR-2026-04-05-1800 P1) — signs and verifies agent tokens
+    // Capability token service (ADR-2604051800 P1) — signs and verifies agent tokens
     pub capability_token_service: Arc<CapabilityTokenService>,
-    // Rate limit manager (ADR-2026-04-05-2125) — sliding-window rate tracking + circuit breakers
+    // Rate limit manager (ADR-2604052125) — sliding-window rate tracking + circuit breakers
     pub rate_limiter: RateLimitManager,
-    // Agent steering (ADR-2026-04-10-1900) — pending interrupt/steer instructions per agent
+    // Agent steering (ADR-2604101900) — pending interrupt/steer instructions per agent
     pub agent_instructions: RwLock<HashMap<String, AgentInstruction>>,
-    // Direct inference port for Path C headless dispatch (ADR-2026-04-12-0202 P5.1).
+    // Direct inference port for Path C headless dispatch (ADR-2604120202 P5.1).
     // Used by the workplan executor to route T1/T2/T2.5 tasks directly through
     // the inference adapter (local or remote Ollama) without spawning an agent process.
     pub inference_port: Option<Arc<dyn hex_core::ports::inference::IInferencePort>>,
@@ -114,7 +114,7 @@ pub struct AppState {
     pub last_autopilot_tick: RwLock<Option<String>>,
     pub last_shrinkage_tick: RwLock<Option<String>>,
     pub last_promote_tick: RwLock<Option<String>>,
-    // RL routing leader and last-changed timestamp (substrate ADR-2026-04-26-1311
+    // RL routing leader and last-changed timestamp (substrate ADR-2604261311
     // L4 surface). Updated by the sched RL cycle when a new model overtakes
     // the incumbent in the Q-table.
     pub rl_leader: RwLock<Option<String>>,
@@ -244,7 +244,7 @@ pub struct WsEnvelope {
     pub data: serde_json::Value,
 }
 
-// ── Inference Task Push (ADR-2026-04-01-1200) ────────────────
+// ── Inference Task Push (ADR-2604011200) ────────────────
 
 /// Push payload for /ws/inference subscribers.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

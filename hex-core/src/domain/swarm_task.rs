@@ -2,7 +2,7 @@
 //!
 //! Both `hex-agent` (sender) and `hex-nexus` (receiver) import these types,
 //! making mismatched status strings a compile error rather than a runtime bug.
-//! See ADR-2026-03-31-1000.
+//! See ADR-2603311000.
 
 use serde::{Deserialize, Serialize};
 

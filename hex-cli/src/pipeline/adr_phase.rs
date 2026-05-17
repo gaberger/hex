@@ -23,7 +23,7 @@ use crate::prompts::PromptTemplate;
 pub struct AdrPhaseResult {
     /// The generated ADR markdown content.
     pub content: String,
-    /// Proposed file path relative to the project root (e.g. `docs/adrs/ADR-2026-03-23-1415-add-caching.md`).
+    /// Proposed file path relative to the project root (e.g. `docs/adrs/ADR-2603231415-add-caching.md`).
     pub file_path: String,
     /// Model identifier used for inference.
     pub model_used: String,

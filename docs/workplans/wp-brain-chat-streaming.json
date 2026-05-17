@@ -1,4 +1,6 @@
 {
+  "closed_at": "2026-05-12T10:25:10.474540+00:00",
+  "closed_reason": "all tasks have status=done",
   "id": "wp-brain-chat-streaming",
   "paused": true,
   "paused_reason": "Codegen scope. Touches inference plumbing (OpenRouter SSE) + WebSocket routing + frontend chat rendering. Not safe for autonomous hex-agent execution per the rogue-agent incident. Resume deliberately, one phase at a time.",
@@ -7,30 +9,21 @@
       "id": "P1",
       "tasks": [
         {
-          "evidence": [
-            "grep -q 'pub async fn dispatch_brain_chat_stream' hex-nexus/src/routes/brain_chat.rs",
-            "grep -q 'axum::response::Sse' hex-nexus/src/routes/brain_chat.rs",
-            "cargo check -p hex-nexus"
-          ],
           "files": [
             "hex-nexus/src/routes/brain_chat.rs",
             "hex-nexus/src/routes/inference.rs"
           ],
           "id": "P1.1",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "title": "Backend: change /api/brain/chat to stream \u2014 switch handler return type from (StatusCode, Json<Value>) to axum::response::Sse<Stream>. Wrap the inference call to emit an event per token: { type: 'token', text } for each chunk, then { type: 'done', model, totalTokens }. Reuse OpenRouter's stream:true response shape. Keep the non-streaming endpoint at /api/brain/chat?stream=false for backwards compat with existing CLI tooling."
+          "title": "Backend: change /api/brain/chat to stream — switch handler return type from (StatusCode, Json<Value>) to axum::response::Sse<Stream>. Wrap the inference call to emit an event per token: { type: 'token', text } for each chunk, then { type: 'done', model, totalTokens }. Reuse OpenRouter's stream:true response shape. Keep the non-streaming endpoint at /api/brain/chat?stream=false for backwards compat with existing CLI tooling."
         },
         {
-          "evidence": [
-            "grep -q 'EventSource\\|getReader' hex-nexus/assets/src/components/views/Brain.tsx",
-            "grep -q 'token-arrived\\|stream-chunk' hex-nexus/assets/src/components/views/Brain.tsx"
-          ],
           "files": [
             "hex-nexus/assets/src/components/views/Brain.tsx"
           ],
           "id": "P1.2",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "Frontend: ChatPanel switches from POST + await to EventSource (or fetch-stream). Replace the optimistic 'thinking...' bubble with a live one that appends each token as it arrives. On 'done' event, freeze the bubble."
         }
@@ -41,48 +34,38 @@
       "id": "P2",
       "tasks": [
         {
-          "evidence": [
-            "grep -q 'dispatch_brain_broadcast_stream\\|broadcast_sse' hex-nexus/src/routes/brain_chat.rs",
-            "cargo check -p hex-nexus"
-          ],
           "files": [
             "hex-nexus/src/routes/brain_chat.rs"
           ],
           "id": "P2.1",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "Backend: change /api/brain/broadcast to SSE. Spawn one inference call per persona; each emits { type: 'response', role, model, content } as soon as it lands. Final { type: 'done', total } when all complete. The slowest no longer holds back the fastest."
         },
         {
-          "evidence": [
-            "grep -q 'broadcast.*response.*landed\\|response-arrived' hex-nexus/assets/src/components/views/Brain.tsx"
-          ],
           "files": [
             "hex-nexus/assets/src/components/views/Brain.tsx"
           ],
           "id": "P2.2",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "title": "Frontend: broadcast handler subscribes to SSE, appends a new bubble to the chat each time a 'response' event arrives. Replace the single pending 'dispatching to N personas...' bubble with a counter ('3/25 returned \u00b7 22 in flight') that ticks down as responses land."
+          "title": "Frontend: broadcast handler subscribes to SSE, appends a new bubble to the chat each time a 'response' event arrives. Replace the single pending 'dispatching to N personas...' bubble with a counter ('3/25 returned · 22 in flight') that ticks down as responses land."
         }
       ],
-      "title": "Broadcast progressive disclosure \u2014 render each persona as it lands"
+      "title": "Broadcast progressive disclosure — render each persona as it lands"
     },
     {
       "id": "P3",
       "tasks": [
         {
-          "evidence": [
-            "grep -q 'AbortController\\|cancel-broadcast' hex-nexus/assets/src/components/views/Brain.tsx"
-          ],
           "files": [
             "hex-nexus/assets/src/components/views/Brain.tsx",
             "hex-nexus/src/routes/brain_chat.rs"
           ],
           "id": "P3.1",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "title": "Add a 'cancel' button to in-flight bubbles. Frontend AbortController on the SSE request \u2192 backend drops the upstream connection. Critical for @all when the operator realizes 25 personas wasn't what they wanted."
+          "title": "Add a 'cancel' button to in-flight bubbles. Frontend AbortController on the SSE request → backend drops the upstream connection. Critical for @all when the operator realizes 25 personas wasn't what they wanted."
         }
       ],
       "title": "Cancel/abort while streaming"
@@ -92,64 +75,48 @@
       "rationale": "localStorage persistence (already shipped) only protects against browser refresh. It doesn't survive: clearing browser data, switching machines, or sharing a thread with another operator. Backend storage + per-session thread IDs gives durable + portable conversations. Also enables the 'show me the conversation that produced ADR-XXX' navigation referenced in the M3 design.",
       "tasks": [
         {
-          "evidence": [
-            "grep -q 'pub fn message_append\\|reducer.*message_append' spacetime-modules/hexflo-coordination/src/lib.rs",
-            "grep -q 'struct ChatThread\\|struct ChatMessage' spacetime-modules/hexflo-coordination/src/lib.rs"
-          ],
           "files": [
             "spacetime-modules/hexflo-coordination/src/lib.rs"
           ],
           "id": "P4.1",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "Add chat_threads + chat_messages tables to hexflo-coordination STDB module. Schema: thread (id, owner_agent_id, title, created_at, last_active_at), message (id, thread_id, from_role, to_role, content, model, ts, parent_id?). Reducers: thread_create, thread_list, message_append."
         },
         {
-          "evidence": [
-            "grep -q 'thread_id\\|threadId' hex-nexus/src/routes/brain_chat.rs",
-            "grep -q 'api/brain/threads' hex-nexus/src/routes/mod.rs"
-          ],
           "files": [
             "hex-nexus/src/routes/brain_chat.rs",
             "hex-nexus/src/routes/mod.rs"
           ],
           "id": "P4.2",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "POST /api/brain/chat: extract or create thread_id, append message, append response. Add GET /api/brain/threads (operator's threads) and GET /api/brain/threads/{id}/messages."
         },
         {
-          "evidence": [
-            "grep -q 'fetchThreads\\|/api/brain/threads' hex-nexus/assets/src/components/views/Brain.tsx"
-          ],
           "files": [
             "hex-nexus/assets/src/components/views/Brain.tsx"
           ],
           "id": "P4.3",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
-          "title": "Frontend: chat history sidebar showing past threads. Click a thread \u2192 load its messages. Replace localStorage as the primary store; keep it as offline cache only."
+          "title": "Frontend: chat history sidebar showing past threads. Click a thread → load its messages. Replace localStorage as the primary store; keep it as offline cache only."
         },
         {
-          "evidence": [
-            "grep -q 'thread_id' hex-cli/assets/agents/hex/hex/pm-agent.yml"
-          ],
           "files": [
             "hex-nexus/src/routes/brain_chat.rs",
             "hex-cli/assets/agents/hex/hex/pm-agent.yml"
           ],
           "id": "P4.4",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "Cross-link with artifacts: when a chat produces an ADR or workplan draft, store the thread_id in the artifact's metadata. From the artifact view, link back to the conversation that produced it. Closes the loop on 'how did we end up with this ADR?'"
         }
       ],
-      "title": "Backend conversation storage \u2014 survives browser + machine boundaries"
+      "title": "Backend conversation storage — survives browser + machine boundaries"
     }
   ],
-  "rationale": "Today /api/brain/chat returns one big JSON blob after the full response is generated \u2014 operator stares at 'thinking...' for 5-30s before seeing anything. /api/brain/broadcast is worse: 25 parallel calls all return at once after the slowest finishes. The fix is two-layer: (1) stream tokens as they're generated for single-agent chat, (2) for broadcast, render each persona's response as it lands rather than waiting for the whole batch. OpenRouter supports SSE; Anthropic supports SSE. The inference router already calls upstream \u2014 we just need to plumb the stream through hex-nexus \u2192 frontend.",
-  "title": "Brain chat \u2014 token streaming + broadcast progressive disclosure",
+  "rationale": "Today /api/brain/chat returns one big JSON blob after the full response is generated — operator stares at 'thinking...' for 5-30s before seeing anything. /api/brain/broadcast is worse: 25 parallel calls all return at once after the slowest finishes. The fix is two-layer: (1) stream tokens as they're generated for single-agent chat, (2) for broadcast, render each persona's response as it lands rather than waiting for the whole batch. OpenRouter supports SSE; Anthropic supports SSE. The inference router already calls upstream — we just need to plumb the stream through hex-nexus → frontend.",
   "status": "completed",
-  "closed_at": "2026-05-12T10:25:10.474540+00:00",
-  "closed_reason": "all tasks have status=done"
+  "title": "Brain chat — token streaming + broadcast progressive disclosure"
 }

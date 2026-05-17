@@ -150,7 +150,7 @@ pub async fn auto_register_project(project_root: &Path, stdb_host: &str, stdb_db
 
 /// Preload inference endpoints from `~/.hex/inference-servers.json` into SpacetimeDB.
 ///
-/// Called during startup after SpacetimeDB connection is established (ADR-2026-04-08-0813).
+/// Called during startup after SpacetimeDB connection is established (ADR-2604080813).
 /// Re-registers any cached endpoints that are missing from the inference-gateway module.
 /// Stale/unreachable endpoints are logged as warnings but never fail startup.
 ///
@@ -327,7 +327,7 @@ pub async fn preload_inference_cache(stdb_host: &str) {
     }
 
     if preloaded > 0 {
-        tracing::info!("Preloaded {}/{} inference endpoints from cache (ADR-2026-04-08-0813)", preloaded, endpoints.len());
+        tracing::info!("Preloaded {}/{} inference endpoints from cache (ADR-2604080813)", preloaded, endpoints.len());
     }
 }
 
@@ -500,7 +500,7 @@ pub async fn sync_project_config_with_report(
         }
     }
 
-    // 5. Preload inference endpoints from ~/.hex/inference-servers.json (ADR-2026-04-08-0813)
+    // 5. Preload inference endpoints from ~/.hex/inference-servers.json (ADR-2604080813)
     preload_inference_cache(stdb_host).await;
 
     report

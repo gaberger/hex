@@ -1,5 +1,5 @@
 //! `SecretShadowRouter` — second-port substrate migration
-//! (ADR-2026-04-26-1500 P10 first concrete second port).
+//! (ADR-2604261500 P10 first concrete second port).
 //!
 //! Mirrors `ISecretPort::resolve_secret` calls between the live secret
 //! adapter and a candidate. Uses the port-agnostic primitives from

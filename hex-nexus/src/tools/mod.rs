@@ -1,4 +1,4 @@
-//! Typed tool library (ADR-2026-05-08-2500).
+//! Typed tool library (ADR-2605082500).
 //!
 //! Provides typed primitives the LLM can compose deterministically via
 //! Anthropic function-calling. Each tool wraps an existing hex capability

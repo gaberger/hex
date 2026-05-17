@@ -1,4 +1,4 @@
-//! Taste graph management commands (ADR-2026-04-13-1500).
+//! Taste graph management commands (ADR-2604131500).
 //!
 //! `hex taste list|set|forget|pin` — manage developer preferences per scope/category.
 

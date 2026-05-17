@@ -1,8 +1,8 @@
 {
-  "adr": "ADR-2026-05-02-1400",
+  "adr": "ADR-2605021400",
   "created_at": "2026-05-02T14:30:00Z",
   "created_by": "claude+ADR-synthesis",
-  "description": "Phase 1 of ADR-2026-05-02-1400. Land the loop-closing trio of domain types (Objective, Hypothesis, Verdict) plus their supporting enums in hex-core. No port traits, no adapters — pure value types that subsequent phases (P2 IExperimentPort, P3 SpacetimeDB adapter, P4 CLI) build on. Persona / Workload / Trial / Failure are deferred to wp-experiment-loop-p2 (corresponding to ADR P5-P8).",
+  "description": "Phase 1 of ADR-2605021400. Land the loop-closing trio of domain types (Objective, Hypothesis, Verdict) plus their supporting enums in hex-core. No port traits, no adapters — pure value types that subsequent phases (P2 IExperimentPort, P3 SpacetimeDB adapter, P4 CLI) build on. Persona / Workload / Trial / Failure are deferred to wp-experiment-loop-p2 (corresponding to ADR P5-P8).",
   "feature": "Experimental Loop Representations — Phase 1 (Loop-Closing Trio)",
   "id": "wp-experiment-loop-p1",
   "phases": [
@@ -19,7 +19,7 @@
         {
           "agent": "hex-coder",
           "deps": [],
-          "description": "Create hex-core/src/domain/experiment/objective.rs. Types (all derive Debug + Clone + PartialEq + serde::Serialize + serde::Deserialize): (1) ObjectiveId(String) — newtype. (2) Objective { id: ObjectiveId, name: String, description: String, parent: Option<ObjectiveId>, priority: ObjectivePriority, target_value: f64, comparison: ComparisonOperator, unit: String, status: ObjectiveStatus, created_at: chrono::DateTime<chrono::Utc>, updated_at: chrono::DateTime<chrono::Utc> }. (3) ObjectivePriority enum: Critical | High | Medium | Low. (4) ComparisonOperator enum: GreaterThan | GreaterThanOrEqual | LessThan | LessThanOrEqual | Equal | WithinRange { tolerance: f64 }. (5) ObjectiveStatus enum: Active | Achieved | Abandoned | Superseded. Per ADR-2026-05-02-1400 §Decision: this is target-app Objective, distinct from `hex-cli/src/pipeline/objectives.rs` (dev-process). Add a doc comment on the module noting the distinction. No methods other than Default impls where natural.",
+          "description": "Create hex-core/src/domain/experiment/objective.rs. Types (all derive Debug + Clone + PartialEq + serde::Serialize + serde::Deserialize): (1) ObjectiveId(String) — newtype. (2) Objective { id: ObjectiveId, name: String, description: String, parent: Option<ObjectiveId>, priority: ObjectivePriority, target_value: f64, comparison: ComparisonOperator, unit: String, status: ObjectiveStatus, created_at: chrono::DateTime<chrono::Utc>, updated_at: chrono::DateTime<chrono::Utc> }. (3) ObjectivePriority enum: Critical | High | Medium | Low. (4) ComparisonOperator enum: GreaterThan | GreaterThanOrEqual | LessThan | LessThanOrEqual | Equal | WithinRange { tolerance: f64 }. (5) ObjectiveStatus enum: Active | Achieved | Abandoned | Superseded. Per ADR-2605021400 §Decision: this is target-app Objective, distinct from `hex-cli/src/pipeline/objectives.rs` (dev-process). Add a doc comment on the module noting the distinction. No methods other than Default impls where natural.",
           "files": [
             "hex-core/src/domain/experiment/objective.rs"
           ],
@@ -33,7 +33,7 @@
           "deps": [
             "P1.1"
           ],
-          "description": "Create hex-core/src/domain/experiment/hypothesis.rs. Imports super::objective::ObjectiveId. Types (all derive Debug + Clone + PartialEq + Serialize + Deserialize): (1) HypothesisId(String). (2) Hypothesis { id: HypothesisId, content: String, target_objective: ObjectiveId, predicted_delta: f64, predicted_confidence: f64, verification_plan: String, adr_id: Option<String>, status: HypothesisStatus, created_at: chrono::DateTime<chrono::Utc> }. (3) HypothesisStatus enum: Untested | Confirmed { confirmed_at: chrono::DateTime<chrono::Utc> } | Rejected { rejected_at: chrono::DateTime<chrono::Utc>, reason: String } | Inconclusive { reviewed_at: chrono::DateTime<chrono::Utc> }. Per ADR-2026-05-02-1400 §Citation, this type lifts stash's `hypothesis` shape verbatim and adds `target_objective: ObjectiveId` — keep the field set minimal so the StashExperimentAdapter (Phase 3) can projection-map cleanly.",
+          "description": "Create hex-core/src/domain/experiment/hypothesis.rs. Imports super::objective::ObjectiveId. Types (all derive Debug + Clone + PartialEq + Serialize + Deserialize): (1) HypothesisId(String). (2) Hypothesis { id: HypothesisId, content: String, target_objective: ObjectiveId, predicted_delta: f64, predicted_confidence: f64, verification_plan: String, adr_id: Option<String>, status: HypothesisStatus, created_at: chrono::DateTime<chrono::Utc> }. (3) HypothesisStatus enum: Untested | Confirmed { confirmed_at: chrono::DateTime<chrono::Utc> } | Rejected { rejected_at: chrono::DateTime<chrono::Utc>, reason: String } | Inconclusive { reviewed_at: chrono::DateTime<chrono::Utc> }. Per ADR-2605021400 §Citation, this type lifts stash's `hypothesis` shape verbatim and adds `target_objective: ObjectiveId` — keep the field set minimal so the StashExperimentAdapter (Phase 3) can projection-map cleanly.",
           "files": [
             "hex-core/src/domain/experiment/hypothesis.rs"
           ],

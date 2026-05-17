@@ -1,5 +1,5 @@
 /**
- * MergeGate.tsx — operator dashboard for ADR-2026-05-08-1126.
+ * MergeGate.tsx — operator dashboard for ADR-2605081126.
  *
  * Mirrors `hex worktree status` and the merge_gate REST surface. Lists every
  * merge_request in STDB with its three voters (validation-judge,
@@ -162,7 +162,7 @@ const MergeGate: Component = () => {
           <div>
             <h1 class="text-2xl font-bold mb-1">Merge Gate</h1>
             <p class="text-gray-400 text-sm">
-              ADR-2026-05-08-1126 · validation-judge · adversarial-red · adversarial-blue
+              ADR-2605081126 · validation-judge · adversarial-red · adversarial-blue
             </p>
           </div>
           <div class="text-xs text-gray-500">refresh {REFRESH_MS / 1000}s</div>

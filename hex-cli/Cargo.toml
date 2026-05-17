@@ -34,22 +34,22 @@ dialoguer = "0.11"
 gethostname = "0.4"
 # ADR compliance rule loading (ADR-045)
 toml = "0.8"
-# Agent/swarm YAML definitions (ADR-2026-03-24-0130)
+# Agent/swarm YAML definitions (ADR-2603240130)
 serde_yaml = "0.9"
-# Embedded asset bundle (ADR-2026-03-22-1522)
+# Embedded asset bundle (ADR-2603221522)
 rust-embed = "8"
-# TUI for `hex dev` (ADR-2026-03-23-2005)
+# TUI for `hex dev` (ADR-2603232005)
 ratatui = "0.29"
 pulldown-cmark = { version = "0.12", default-features = false }
 crossterm = "0.28"
-# Structured CLI table output (ADR-2026-03-24-1226)
+# Structured CLI table output (ADR-2603241226)
 tabled = { version = "0.17", features = ["ansi"] }
-# WebSocket client for hex inference watch (ADR-2026-04-01-1200)
+# WebSocket client for hex inference watch (ADR-2604011200)
 tokio-tungstenite = { version = "0.24", features = ["native-tls", "connect"] }
 futures-util = { version = "0.3", features = ["sink"] }
-# SHA256 verification for self-update (ADR-2026-04-08-0929)
+# SHA256 verification for self-update (ADR-2604080929)
 sha2 = "0.10"
-# Symbol extraction regex for reconcile evidence (ADR-2026-04-14-2201)
+# Symbol extraction regex for reconcile evidence (ADR-2604142201)
 regex = "1"
 
 [dev-dependencies]

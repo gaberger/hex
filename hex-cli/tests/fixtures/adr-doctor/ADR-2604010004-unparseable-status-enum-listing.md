@@ -1,4 +1,4 @@
-# ADR-2026-04-01-0004: Inline status enum listing
+# ADR-2604010004: Inline status enum listing
 
 **Status:** Proposed | Accepted | Deprecated
 **Date:** 2026-04-04

@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-11-0227",
+  "adr": "ADR-2604110227",
   "created_at": "2026-05-17T16:40:53.455403495-04:00",
   "id": "draft-2605171640-implement-phase-1-of-adr",
   "kind": "workplan-draft",
@@ -8,8 +8,8 @@
     "Or run `hex plan drafts approve draft-2605171640-implement-phase-1-of-adr.json`",
     "Or run `hex plan drafts clear --name draft-2605171640-implement-phase-1-of-adr`"
   ],
-  "notes": "This is a draft created by ADR-2026-04-11-0227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up.",
+  "notes": "This is a draft created by ADR-2604110227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up.",
   "origin": "auto-invoke",
-  "prompt": "Implement Phase 1 of ADR-2026-05-17-2030 SOP pipeline redesign: replace the org_responder Confirm/Silent prose contract with structured JSON output (decision enum: accept|defer|route|clarify|reject|request_tool, plus tool_plan/reason/target_persona/question fields). Add classifier_response STDB table. Add 2-reparse retry budget on malformed JSON, escalating to operator inbox on exhaustion. For from=operator, schema-enforce decision in {accept, route, clarify, request_tool} only. Acceptance gate: zero Silent-drops on from=operator traffic for 48h after deploy (already partially shipped via d2b3f06e — full Phase 1 finishes the structured-output rewrite).",
+  "prompt": "Implement Phase 1 of ADR-2605172030 SOP pipeline redesign: replace the org_responder Confirm/Silent prose contract with structured JSON output (decision enum: accept|defer|route|clarify|reject|request_tool, plus tool_plan/reason/target_persona/question fields). Add classifier_response STDB table. Add 2-reparse retry budget on malformed JSON, escalating to operator inbox on exhaustion. For from=operator, schema-enforce decision in {accept, route, clarify, request_tool} only. Acceptance gate: zero Silent-drops on from=operator traffic for 48h after deploy (already partially shipped via d2b3f06e — full Phase 1 finishes the structured-output rewrite).",
   "status": "pending-planner"
 }

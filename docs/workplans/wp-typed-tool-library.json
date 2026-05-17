@@ -1,7 +1,7 @@
 {
   "id": "wp-typed-tool-library",
   "title": "Typed tool library + SOP execution (the missing spine)",
-  "adr": "ADR-2026-05-08-2500",
+  "adr": "ADR-2605082500",
   "status": "in_progress",
   "paused": false,
   "target": "by morning 2026-05-09",

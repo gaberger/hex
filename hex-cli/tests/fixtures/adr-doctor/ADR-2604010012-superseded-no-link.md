@@ -1,4 +1,4 @@
-# ADR-2026-04-01-0012: Superseded with no Superseded by link
+# ADR-2604010012: Superseded with no Superseded by link
 
 **Status:** Superseded
 **Date:** 2026-04-12

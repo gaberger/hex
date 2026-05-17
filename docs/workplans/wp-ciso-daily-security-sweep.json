@@ -1,8 +1,8 @@
 {
-  "adr": "ADR-2026-05-10-0800",
+  "adr": "ADR-2605100800",
   "created_at": "2026-05-10T13:41:59.571505190+00:00",
   "created_by": "hex-coder",
-  "feature": "CISO Daily Security Sweep \u2014 unsafe-block + secret-pattern + ADR-disk-reconciliation audit",
+  "feature": "CISO Daily Security Sweep — unsafe-block + secret-pattern + ADR-disk-reconciliation audit",
   "id": "wp-ciso-daily-security-sweep",
   "phases": [
     {
@@ -17,7 +17,7 @@
           "id": "P0.1",
           "layer": "domain",
           "name": "repo_grep unsafe-block sweep: pattern='unsafe' glob='hex-nexus/src/**/*.rs,hex-cli/src/**/*.rs'. Write results to /tmp/unsafe-sweep-<date>.txt",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -43,7 +43,7 @@
           "id": "P1.1",
           "layer": "secondary",
           "name": "repo_grep -P secret patterns: AWS keys (AKIA[0-9A-Z]{16}), GCP service-account JSON (@.*\\.iam\\.gserviceaccount\\.com), Anthropic keys (sk-ant-[a-zA-Z0-9-_]{32,}). Write to /tmp/secret-audit-<date>.txt",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -52,7 +52,7 @@
           "id": "P1.2",
           "layer": "secondary",
           "name": "False-positive filtering: exclude docs/examples/, test fixtures, commented-out patterns. Surface high-confidence leaks only.",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -61,8 +61,8 @@
           ],
           "id": "P1.3",
           "layer": "secondary",
-          "name": "cargo audit integration: run dep_audit(severity_min='medium'), parse vulnerability findings (advisory_id, severity, package, version, url), cross-check /tmp/vuln-exceptions.txt (known-accepted vulns), write findings to docs/specs/security-sweep-<date>.md \u00a7 Dependency Vulnerabilities",
-          "status": "done"
+          "name": "cargo audit integration: run dep_audit(severity_min='medium'), parse vulnerability findings (advisory_id, severity, package, version, url), cross-check /tmp/vuln-exceptions.txt (known-accepted vulns), write findings to docs/specs/security-sweep-<date>.md § Dependency Vulnerabilities",
+          "status": "pending"
         }
       ],
       "tier": 1
@@ -79,7 +79,7 @@
           "id": "P2.1",
           "layer": "secondary",
           "name": "repo_grep pattern='ADR-[0-9]{10}' glob='docs/**/*.md' to collect all ADR references. Write to /tmp/ADR-refs-<date>.txt",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -115,7 +115,7 @@
           "id": "P3.1",
           "layer": "primary",
           "name": "Aggregate findings from P0/P1/P2 tmp files. Render as docs/specs/security-sweep-<YYYY-MM-DD>.md with sections: Summary, Unsafe Blocks (delta), Secret Patterns, Phantom ADRs, Recommendations.",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -125,7 +125,7 @@
           "id": "P3.2",
           "layer": "primary",
           "name": "Emit structured YAML companion: docs/specs/security-sweep-<YYYY-MM-DD>.yaml with finding_count, severity distribution, actionable_items[] for dashboard ingestion.",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 2
@@ -142,7 +142,7 @@
           "id": "P4.1",
           "layer": "integration",
           "name": "Document enqueue command in docs/runbooks/ciso-daily-sweep.md: 'hex brain enqueue workplan docs/workplans/wp-ciso-daily-security-sweep.json' to run daily at 0800 UTC.",
-          "status": "done"
+          "status": "pending"
         },
         {
           "files": [
@@ -151,7 +151,7 @@
           "id": "P4.2",
           "layer": "integration",
           "name": "Future integration: when leaking-abstraction reverify reducer ships (CTO parallel investigation), modify P2 to consume it for ADR-vs-implementation drift detection.",
-          "status": "done"
+          "status": "pending"
         }
       ],
       "tier": 3

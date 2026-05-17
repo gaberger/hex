@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-13-1238",
+  "adr": "ADR-2604131238",
   "created_at": "2026-04-13T12:38:00Z",
   "created_by": "human",
   "description": "hex inference bench <target> — run code-gen, reasoning, and identity prompts against a model, measure quality + speed, recommend hex agent tier. Replaces ad-hoc curl/python benchmarking.",

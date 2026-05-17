@@ -18,7 +18,7 @@ Five product specs written to `docs/specs/` on 2026-05-09:
 
 2. **`docs/specs/mission-control-ux-v2.md`** — single-landing operator triage surface (92 lines): 12-column responsive grid with Board Ask input, Pending Decisions (actions + commitments), Persona Health, Recent Activity, Open Anomalies, Top Processes by RSS. 5s auto-refresh cadence. Implementation artifact: `hex-nexus/assets/src/components/views/MissionControl.tsx`.
 
-3. **`docs/specs/tool-health-dashboard.md`** — tool reliability monitoring view (73 lines): traffic-light grid (tools × personas, 24h success rate), system-dep status panel (rg, cargo, Ollama models, API keys), recent gaps list, per-tool drill-down modal with latency sparklines + failure traces. Correlates OWASP LLM06 (content-filter blocks) and A02 (supply-chain gaps). Owned by tool-czar persona (ADR-2026-05-09-1800).
+3. **`docs/specs/tool-health-dashboard.md`** — tool reliability monitoring view (73 lines): traffic-light grid (tools × personas, 24h success rate), system-dep status panel (rg, cargo, Ollama models, API keys), recent gaps list, per-tool drill-down modal with latency sparklines + failure traces. Correlates OWASP LLM06 (content-filter blocks) and A02 (supply-chain gaps). Owned by tool-czar persona (ADR-2605091800).
 
 4. **`docs/specs/cost-ops-runbook.md`** — operational procedures around cost surfaces (173 lines): daily burn limit breach response, high-cost SOP run escalation matrix ($1/$5/$20/$50 tiers), cost anomaly triage, kill switch, audit cadence (weekly stakeholder report). COO-owned, references CPO cost spec.
 

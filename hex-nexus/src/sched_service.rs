@@ -85,7 +85,7 @@ fn state_key() -> String {
 /// On startup, seeds all known model Q-values so the RL engine has actions
 /// to choose from before any rewards are observed.
 pub fn spawn(state: SharedState) {
-    // Substrate promote-orchestrator tick (ADR-2026-04-26-1500 P6,
+    // Substrate promote-orchestrator tick (ADR-2604261500 P6,
     // wp-substrate-inference-consumer-rewires P5 follow-up). Spawned as
     // its own task with a tight 30s cadence so live-binding flips happen
     // promptly after the judge marks shadow_green. No-op when the
@@ -94,7 +94,7 @@ pub fn spawn(state: SharedState) {
     // shadow_green tickets exist.
     spawn_promote_orchestrator(state.clone());
 
-    // Substrate L4 shrinkage daemon (ADR-2026-04-26-1311 L4 / ADR-2026-04-26-1500
+    // Substrate L4 shrinkage daemon (ADR-2604261311 L4 / ADR-2604261500
     // C6). Hourly tick; evicts handles registered on the shadow router
     // that are not bound, not active shadow candidates, and either never
     // routed or last routed before the idle window. No-op when the
@@ -102,7 +102,7 @@ pub fn spawn(state: SharedState) {
     spawn_shrinkage_daemon(state.clone());
 
     // SubstrateAutopilot — the substrate uses itself to recommend its
-    // own next improvements (ADR-2026-04-26-1500 closing-the-loop). Hourly
+    // own next improvements (ADR-2604261500 closing-the-loop). Hourly
     // tick reads substrate state, calls the live inference binding, and
     // logs a typed Recommendation. Read-only today; future revision
     // gates auto-propose behind operator opt-in. No-op when inference
@@ -110,7 +110,7 @@ pub fn spawn(state: SharedState) {
     spawn_substrate_autopilot(state.clone());
 
     tokio::spawn(async move {
-        // ADR-2026-04-24-1820: seed Q-values before the loop starts so RL has priors.
+        // ADR-2604241820: seed Q-values before the loop starts so RL has priors.
         let state_key = state_key();
         if let Err(e) = seed_rl_q_values(&state_key).await {
             tracing::warn!("Failed to seed RL Q-values: {} — RL will explore from empty table", e);
@@ -225,8 +225,8 @@ fn spawn_promote_orchestrator(state: SharedState) {
                 state.inference_shadow_router.as_ref(),
             ) {
                 (Some(swap_port), Some(comp), Some(router)) => {
-                    // Wire L5 ADR conformance gate (ADR-2026-04-26-1311 L5 /
-                    // ADR-2026-04-26-1500 C6). The checker reads docs/adrs/
+                    // Wire L5 ADR conformance gate (ADR-2604261311 L5 /
+                    // ADR-2604261500 C6). The checker reads docs/adrs/
                     // fresh on each tick — operator edits to ADR Status
                     // fields take effect on the next 30s tick without a
                     // nexus restart.
@@ -315,7 +315,7 @@ pub async fn run_improvement_cycle(
         tools: None,
     };
 
-    // In-process call (ADR-2026-04-27-0145): bypass HTTP self-loopback to avoid
+    // In-process call (ADR-2604270145): bypass HTTP self-loopback to avoid
     // transient TCP-level transport errors that surfaced as
     // "error sending request for url (http://127.0.0.1:5555/...)" when the
     // local connection pool churned. Same SharedState, same handler logic;

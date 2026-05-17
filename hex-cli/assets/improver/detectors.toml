@@ -1,6 +1,6 @@
-# Improver discovery rule table — ADR-2026-04-27-1100 P1.1
+# Improver discovery rule table — ADR-2604271100 P1.1
 #
-# Detectors-as-data per ADR-2026-04-14-2243 (rules-as-data, not control flow).
+# Detectors-as-data per ADR-2604142243 (rules-as-data, not control flow).
 # One entry per `Source` variant in
 # hex-cli/src/commands/sched/improver/discover.rs.
 #
@@ -19,12 +19,12 @@
 [[detector]]
 source = "adr_doctor"
 cmd = "hex adr doctor --json"
-description = "ADR registry self-consistency (ADR-2026-04-27-0800)"
+description = "ADR registry self-consistency (ADR-2604270800)"
 
 [[detector]]
 source = "reconcile_strict"
 cmd = "hex plan reconcile --all --strict --json"
-description = "Workplan declared state diverging from git evidence (ADR-2026-04-14-2200)"
+description = "Workplan declared state diverging from git evidence (ADR-2604142200)"
 
 [[detector]]
 source = "git_drift"
@@ -44,7 +44,7 @@ description = "Stale Proposed / unlinked Superseded / abandoned ADRs (ADR-012)"
 [[detector]]
 source = "escalation_report"
 cmd = "hex inference escalation-report --json"
-description = "Tiers escalating repeatedly to the frontier (ADR-2026-04-12-0202)"
+description = "Tiers escalating repeatedly to the frontier (ADR-2604120202)"
 
 [[detector]]
 source = "punch_list"
@@ -90,7 +90,7 @@ allow_nonzero_exit = true
 # ─── Aspirational detectors (gated until enum + CLI surface land) ────
 #
 # Entries below reference `Source` variants and CLI flags that haven't
-# shipped yet (`rl_loop_health`, the ADR-2026-04-27-1200 architectural-health
+# shipped yet (`rl_loop_health`, the ADR-2604271200 architectural-health
 # detectors, `hex substrate telemetry`, `hex analyze --boundary-violations`,
 # etc.). Loading them today crashes `hex sched improver discover` on
 # TOML parse before the 7 working detectors above ever run, which gates
@@ -98,7 +98,7 @@ allow_nonzero_exit = true
 # variant + CLI flag land — DO NOT just add the variant; the detector
 # still needs the underlying command to produce JSON findings.
 #
-# Tracked by ADR-2026-04-27-1100 (rl_loop_health) and ADR-2026-04-27-1200
+# Tracked by ADR-2604271100 (rl_loop_health) and ADR-2604271200
 # (architectural-health detectors).
 
 # [[detector]]
@@ -107,7 +107,7 @@ allow_nonzero_exit = true
 # description = "RL self-improvement loops with flatlined reward variance, periodic timeouts, or selection skew."
 # allow_nonzero_exit = true
 
-# ── Architectural-health detectors (ADR-2026-04-27-1200) — pending ──
+# ── Architectural-health detectors (ADR-2604271200) — pending ──
 #
 # A. Static design
 #

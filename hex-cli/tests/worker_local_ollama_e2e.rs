@@ -1,4 +1,4 @@
-/// E2E integration test for ADR-2026-04-13-0010 — Worker Local Inference Discovery (P1.3).
+/// E2E integration test for ADR-2604130010 — Worker Local Inference Discovery (P1.3).
 ///
 /// Verifies the full coordinator → worker → nexus round-trip:
 ///

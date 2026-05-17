@@ -8,11 +8,11 @@
 
 **References:**
 - Hermes Agent docs — https://hermes-agent.nousresearch.com/docs/llms.txt and `/llms-full.txt`
-- ADR-2026-05-08-2500 — Typed-tool SOP foundation
-- ADR-2026-05-08-2300 — Digital-twin reviewer
-- ADR-2026-05-13-1500 — Fail-open twin judge + `hex goal` verb (Hermes Ralph-loop port)
+- ADR-2605082500 — Typed-tool SOP foundation
+- ADR-2605082300 — Digital-twin reviewer
+- ADR-2605131500 — Fail-open twin judge + `hex goal` verb (Hermes Ralph-loop port)
 - ADR-2605131849 — User-defined SOUL personas alongside c-suite (Hermes profile port)
-- ADR-2026-04-18-0001 — Workplan inference task stalling (the construction-loop bug)
+- ADR-2604180001 — Workplan inference task stalling (the construction-loop bug)
 - ADR-027 — HexFlo swarm coordination (the Kanban analog)
 - Commits this session: `488e1503`, `c1450b58`, `f336930a`, `e305fc21`, `04bf854a`, `8e929b58`, `11169fb1`
 - Memory: `project_typed_tool_sop_proven`, `project_self_managing_loop_2605091200`, `project_audit_autonomous_dev_2026_05_12`
@@ -65,12 +65,12 @@ Hermes Agent is a terminal-native autonomous agent built on a single `AIAgent` c
 What hex must add to reach "fully-featured Hermes harness" parity, ordered roughly by operator-leverage:
 
 1. **Working code-construction loop** — workplan executor → hex-coder IC workers. Today: broken. Without this, no multi-task feature can build itself; operator-Opus has to step through tasks. This is the single biggest blocker for the user's "i need to be confident we can autonomously build a non-trivial system" question.
-2. **`hex goal "<intent>"` Ralph loop** — ADR-2026-05-13-1500 §3 specs it; not built. The lightest possible primitive between `hex chat` (one turn) and `hex plan` (decomposed workplan).
+2. **`hex goal "<intent>"` Ralph loop** — ADR-2605131500 §3 specs it; not built. The lightest possible primitive between `hex chat` (one turn) and `hex plan` (decomposed workplan).
 3. **`hex persona create` user-defined SOUL personas** — ADR-2605131849 in flight; P1 (STDB schema + reducers) done in `04bf854a`; P2-P8 (~1030 LOC) pending.
 4. **Bounded memory + curator** — Hermes' MEMORY.md (2.2 KB cap, frozen snapshot, character-budget enforced) + USER.md (1.4 KB) + weekly curator pass with snapshot/rollback. hex's STDB `hexflo_memory_*` is unbounded and never curated.
 5. **`delegate_task` typed tool** — fork-join sub-SOP with isolated context, restricted toolset, optional cheaper model. Today the persona must inline every reasoning step; `delegate_task` lets it spawn focused child agents.
 6. **`execute_code` Programmatic Tool Calling** — current 5-phase SOP per persona round; PTC lets a persona run a script that calls multiple tools and emits one summary, slashing token cost on data-processing workflows.
-7. **Messaging gateway adapters** — start with Telegram (ADR-2026-05-08-2650 already Accepted: `telegram_notifier` stub shipped), then Discord, then Slack. Each unlocks operator-from-anywhere ergonomics.
+7. **Messaging gateway adapters** — start with Telegram (ADR-2605082650 already Accepted: `telegram_notifier` stub shipped), then Discord, then Slack. Each unlocks operator-from-anywhere ergonomics.
 8. **Cron with NL scheduling** — hex `sched` daemon exists but doesn't accept natural-language schedule grammars. Hermes' "every weekday at 9 send me a research brief" → `cron(...)` is the missing layer.
 9. **Plugin runtime + lifecycle hooks** — today's `hex-cli/assets/` is compiled into the binary via `rust-embed`. A runtime plugin loader lets third-party tools/hooks ship without forking hex.
 10. **OpenAI-compatible API server** — Hermes' `hermes api` exposes the agent as an OpenAI `/v1/chat/completions` server so any client (Cursor, Continue, OpenAI SDK, ...) can drive it. hex's nexus REST is structurally close; adapter shim is small.
@@ -116,7 +116,7 @@ Goal: fix the workplan executor → hex-coder IC worker dispatch so non-trivial 
 | Spawn hex-coder workers that actually register in `hex_agent` table at startup | engineering-lead | ~150 |
 | Replace cc_agent phantom UUID with real lookup against agent registry | engineering-lead | ~50 |
 | Per-task 120s → adaptive timeout (cargo check on big workspaces alone can take 90s+) | engineering-lead | ~30 |
-| Workplan reconciler false-positive fix (70% FP per `project_audit_autonomous_dev_2026_05_12`) — likely aux-model judge per ADR-2026-05-13-1500 §2 | engineering-lead | ~200 |
+| Workplan reconciler false-positive fix (70% FP per `project_audit_autonomous_dev_2026_05_12`) — likely aux-model judge per ADR-2605131500 §2 | engineering-lead | ~200 |
 | `hex plan run-local <wp>` synchronous fallback for when IC dispatch wedges | engineering-lead | ~200 |
 | Twin grounding gate calibration (accept bare module names like `org_responder`, lowercase `adr-...`, common `~/.hex/` paths) | engineering-lead | ~50 |
 | End-to-end demo: build `examples/hex-as-hermes-smoke/` — tiny Rust binary with domain fn + CLI adapter + 1 test, all driven by SOP | demo, n/a | n/a |
@@ -129,7 +129,7 @@ Goal: ship the two Hermes primitives that are most-asked for in this session, bo
 
 | Deliverable | Spec | LOC est |
 |---|---|---|
-| `hex goal "<intent>"` Ralph loop (set / status / pause / resume / clear, STDB-persisted, fail-open aux judge, 20-turn default budget) | ADR-2026-05-13-1500 §3 | ~250 |
+| `hex goal "<intent>"` Ralph loop (set / status / pause / resume / clear, STDB-persisted, fail-open aux judge, 20-turn default budget) | ADR-2605131500 §3 | ~250 |
 | `hex persona create <name> --soul <path>` user-defined SOUL personas — P2 (CLI verb), P3 (SOUL security scan), P4 (org-comms DM routing), P5 (responder), P6 (dashboard panel), P7 (distribution), P8 (smoke) | ADR-2605131849 + wp-user-defined-soul-personas | ~980 remaining |
 
 Exit criteria: operator can `hex goal "fix every failing test in tests/foo"` and Hermes-style continuation works; operator can `hex persona create coding-buddy --soul ./my-soul.md` and DM that persona via `POST /api/org/send-message`.
@@ -154,7 +154,7 @@ Goal: operator-from-anywhere. Start small, prove the contract, then add.
 | Deliverable | State | LOC est |
 |---|---|---|
 | `telegram_notifier` adapter (escalate_to_operator hook) | shipped 2026-05-08 via `d327a266` + `dc08f6f5` | done |
-| `hex gateway telegram start/stop` long-running bot with `/status`, `/ack <id>`, `/queue <intent>`, `/abort <task>` commands | proposed (ADR-2026-05-08-2650) | ~400 |
+| `hex gateway telegram start/stop` long-running bot with `/status`, `/ack <id>`, `/queue <intent>`, `/abort <task>` commands | proposed (ADR-2605082650) | ~400 |
 | Discord adapter (mirror Telegram contract) | future | ~300 |
 | Slack adapter (mirror) | future | ~300 |
 | Email adapter (IMAP/SMTP) | future | ~250 |
@@ -226,9 +226,9 @@ Every phase is additive. The c-suite topology, typed-tool SOP, twin reviewer, an
 
 | Risk | Mitigation |
 |---|---|
-| Phase 1's IC-dispatch fix turns out to be ADR-2026-04-18-0001's already-tracked but unsolved bug, ie. harder than estimated | The synchronous `hex plan run-local` fallback ships as part of Phase 1 anyway; if IC-dispatch can't be fixed cleanly, fallback covers the construction loop |
+| Phase 1's IC-dispatch fix turns out to be ADR-2604180001's already-tracked but unsolved bug, ie. harder than estimated | The synchronous `hex plan run-local` fallback ships as part of Phase 1 anyway; if IC-dispatch can't be fixed cleanly, fallback covers the construction loop |
 | Bounded memory (Phase 3) drops important lessons during curator consolidation | Curator never auto-deletes — only archives to `~/.hex/memory/.archive/`. Pre-run tar.gz snapshot, one-command rollback per Hermes pattern |
-| Messaging gateway (Phase 4) exposes a new attack surface | Bot-token gate, chat_id allowlist per `ADR-2026-05-08-2650`, rate limits per chat_id, secret-grant for token storage |
+| Messaging gateway (Phase 4) exposes a new attack surface | Bot-token gate, chat_id allowlist per `ADR-2605082650`, rate limits per chat_id, secret-grant for token storage |
 | Plugin runtime (Phase 6) introduces RCE via untrusted plugin | Plugin signing + SOUL.md security-scan pattern (P3 of wp-user-defined-soul-personas) extended to plugin manifest; default-deny outside `hex plugin allow <name>` |
 | 6-week timeline slips | Each phase is independently valuable. Phase 0 + 1 alone closes the autonomous-development-of-non-trivial-systems gap; Phases 2-6 are quality-of-life on top |
 

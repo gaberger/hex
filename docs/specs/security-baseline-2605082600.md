@@ -43,7 +43,7 @@ Tonight's audit against OWASP Top 10 (2021) and OWASP LLM Top 10 identifies **5 
 ### A04 Insecure Design — **LOW**
 **Finding**: Hexagonal architecture + SOP contract enforces separation of grounding (deterministic tools) and reasoning (LLM). Off-schema LLM output is dropped (org_responder.rs:466-484), not executed. Digital-twin review gate prevents runaway autonomy.
 
-**Strength**: `twin_reviewer.rs:149-156` auto-approves `proposed_by="tool:*"` actions that passed Phase 4 typed verifiers — this bypasses LLM-judges-LLM antipattern per ADR-2026-05-08-2500.
+**Strength**: `twin_reviewer.rs:149-156` auto-approves `proposed_by="tool:*"` actions that passed Phase 4 typed verifiers — this bypasses LLM-judges-LLM antipattern per ADR-2605082500.
 
 ### A05 Security Misconfiguration — **MEDIUM**
 **Finding**: Default hardcoded hosts (`127.0.0.1:3033`, `127.0.0.1:8642`) with no TLS. Env var fallback logic allows override but doesn't enforce secure defaults.

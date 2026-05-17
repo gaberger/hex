@@ -38,7 +38,7 @@ impl Tool for AdrStatusSet {
             "properties": {
                 "adr_id": {
                     "type": "string",
-                    "description": "ADR id (e.g. '2605082600' or 'ADR-2026-05-08-2600'). Resolves docs/adrs/ADR-<id>-*.md"
+                    "description": "ADR id (e.g. '2605082600' or 'ADR-2605082600'). Resolves docs/adrs/ADR-<id>-*.md"
                 },
                 "new_status": {
                     "type": "string",
@@ -163,7 +163,7 @@ impl Tool for AdrStatusSet {
                 "new_status": new_status,
                 "rationale": rationale,
                 "byte_len": new_content.len(),
-                "note": "proposed_action queued; twin auto-approves tool:* per ADR-2026-05-08-2500",
+                "note": "proposed_action queued; twin auto-approves tool:* per ADR-2605082500",
             }),
             start.elapsed().as_millis() as u64,
         )

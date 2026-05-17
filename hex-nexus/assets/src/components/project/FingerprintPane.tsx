@@ -1,7 +1,7 @@
 /**
  * FingerprintPane.tsx — Architecture fingerprint viewer for a project.
  *
- * Displays the stored architecture fingerprint (ADR-2026-03-30-1200) and provides
+ * Displays the stored architecture fingerprint (ADR-2603301200) and provides
  * a button to regenerate it from the current project state.
  */
 import { Component, Show, createResource, createSignal } from "solid-js";

@@ -50,20 +50,20 @@ struct SessionState {
     edits: u64,
     #[serde(default)]
     phase: Option<String>,
-    /// Active worktree path for current task (ADR-2026-03-23-1700)
+    /// Active worktree path for current task (ADR-2603231700)
     #[serde(default)]
     worktree_path: Option<String>,
-    /// Allowed file paths for adapter boundary enforcement (ADR-2026-03-23-1700)
+    /// Allowed file paths for adapter boundary enforcement (ADR-2603231700)
     #[serde(default)]
     allowed_paths: Vec<String>,
     /// Resolved worktree branch name from workplan step
     #[serde(default)]
     worktree_branch: Option<String>,
-    /// RFC-3339 timestamp of last architecture fingerprint generation (ADR-2026-03-30-1200).
+    /// RFC-3339 timestamp of last architecture fingerprint generation (ADR-2603301200).
     /// Used to detect staleness when key project files change.
     #[serde(default)]
     fingerprint_generated_at: Option<String>,
-    /// ADR-2026-04-11-0227: path to an in-flight workplan draft spawned by
+    /// ADR-2604110227: path to an in-flight workplan draft spawned by
     /// `hex plan draft` (auto-invoked when a T3 prompt is detected).
     /// Cleared on SessionEnd or when the user approves/clears the draft.
     #[serde(default)]
@@ -162,7 +162,7 @@ fn enforcement_mode(project_dir: &Path) -> &'static str {
     "mandatory"
 }
 
-/// ADR-2026-04-11-0227: Check whether auto-invoking the planner on T3
+/// ADR-2604110227: Check whether auto-invoking the planner on T3
 /// work-intent prompts is enabled for this project.
 ///
 /// Precedence (highest to lowest):
@@ -213,11 +213,11 @@ pub enum HookEvent {
     SubagentStart,
     /// Subagent completed — auto-complete task
     SubagentStop,
-    /// Before a tool call — fire-and-forget POST to /api/events (ADR-2026-04-01-2137)
+    /// Before a tool call — fire-and-forget POST to /api/events (ADR-2604012137)
     ObservePre,
-    /// After a tool call — fire-and-forget POST to /api/events (ADR-2026-04-01-2137)
+    /// After a tool call — fire-and-forget POST to /api/events (ADR-2604012137)
     ObservePost,
-    /// On Stop — fire-and-forget POST to /api/events with hook output (ADR-2026-04-01-2137)
+    /// On Stop — fire-and-forget POST to /api/events with hook output (ADR-2604012137)
     ObserveStop,
 }
 
@@ -297,12 +297,12 @@ async fn session_start(project_dir: &Path) -> Result<()> {
             // ADR-060: Check for restart checkpoint from a previous session
             let _ = recover_restart_checkpoint().await;
 
-            // ADR-2026-04-13-2330 + ADR-2026-04-14-1100: Summarise unacknowledged brain
+            // ADR-2604132330 + ADR-2604141100: Summarise unacknowledged brain
             // notifications so the operator notices them without running
             // `hex inbox list`. Silent when empty or on error.
             print_inbox_summary().await;
 
-            // ADR-2026-04-13-2300: Ensure brain daemon is running. Every Claude
+            // ADR-2604132300: Ensure brain daemon is running. Every Claude
             // session in a hex project should have autonomous supervision
             // active — operators shouldn't have to start the daemon manually
             // after a reboot or `hex brain daemon-stop`.
@@ -311,7 +311,7 @@ async fn session_start(project_dir: &Path) -> Result<()> {
             // ADR-050: Load active workplan from HexFlo memory
             let _ = load_workplan_context(id).await;
 
-            // ADR-2026-03-30-1200: Inject architecture fingerprint into Claude Code context.
+            // ADR-2603301200: Inject architecture fingerprint into Claude Code context.
             // stdout is picked up by Claude Code as session context — never skip this.
             // Strategy: fetch cached fingerprint → auto-generate if missing → print.
             let client = crate::nexus_client::NexusClient::from_env();
@@ -408,7 +408,7 @@ async fn session_start(project_dir: &Path) -> Result<()> {
         println!("  Arch:    run `hex analyze .` to check health");
     }
 
-    // ADR-2026-03-22-1939: Auto-upgrade settings — ensure Agent PreToolUse hook exists
+    // ADR-2603221939: Auto-upgrade settings — ensure Agent PreToolUse hook exists
     ensure_agent_hook(project_dir);
 
     Ok(())
@@ -457,7 +457,7 @@ fn ensure_brain_daemon_running() {
 }
 
 /// Fetch unacknowledged brain notifications with priority >= 1 and print a
-/// compact summary on session start (ADR-2026-04-13-2330 + ADR-2026-04-14-1100).
+/// compact summary on session start (ADR-2604132330 + ADR-2604141100).
 ///
 /// Prints nothing when the queue is empty or the request fails — silence keeps
 /// the banner clean when nexus is warming up or the operator has no pending
@@ -505,7 +505,7 @@ async fn print_inbox_summary() {
 /// Used as a fallback when nexus is offline or fingerprint generation failed.
 /// Reads go.mod / Cargo.toml / package.json for language detection and any
 /// active workplan for objective. Output matches the injection format from
-/// ADR-2026-03-30-1200 §3, trimmed to the most essential fields.
+/// ADR-2603301200 §3, trimmed to the most essential fields.
 fn minimal_fingerprint_block(project_dir: &Path, project_name: &str) -> String {
     minimal_fingerprint_block_inner(project_dir, project_name, false)
 }
@@ -599,7 +599,7 @@ fn minimal_fingerprint_block_inner(project_dir: &Path, project_name: &str, nexus
     block
 }
 
-/// Ensure `.claude/settings.json` has the Agent PreToolUse hook (ADR-2026-03-22-1939).
+/// Ensure `.claude/settings.json` has the Agent PreToolUse hook (ADR-2603221939).
 /// If the Agent matcher is missing, inject it automatically on session start.
 /// This upgrades existing projects without requiring `hex init --force`.
 fn ensure_agent_hook(project_dir: &std::path::Path) {
@@ -640,7 +640,7 @@ fn ensure_agent_hook(project_dir: &std::path::Path) {
 
         if let Ok(updated) = serde_json::to_string_pretty(&settings) {
             if std::fs::write(&settings_path, &updated).is_ok() {
-                println!("  Hooks:   {} Agent enforcement auto-installed (ADR-2026-03-22-1939)", "\u{2713}".green());
+                println!("  Hooks:   {} Agent enforcement auto-installed (ADR-2603221939)", "\u{2713}".green());
             }
         }
     }
@@ -710,7 +710,7 @@ pub async fn register_session_agent(project_dir: &Path, project_name: &str) -> R
 
         println!("  Agent:   {} ({})", "registered".green(), agent_name);
 
-        // Auto-launch inference watch sidecar (ADR-2026-04-01-1200)
+        // Auto-launch inference watch sidecar (ADR-2604011200)
         let hex_bin = std::env::current_exe()
             .unwrap_or_else(|_| std::path::PathBuf::from("hex"));
         let sessions_dir = dirs::home_dir()
@@ -741,7 +741,7 @@ pub async fn register_session_agent(project_dir: &Path, project_name: &str) -> R
 }
 
 /// SubagentStart — read stdin for HEXFLO_TASK:{uuid}, auto-assign the task.
-/// ADR-2026-03-22-1939 P2: Hardened with heartbeat, lazy connect, and ownership validation.
+/// ADR-2603221939 P2: Hardened with heartbeat, lazy connect, and ownership validation.
 async fn subagent_start() -> Result<()> {
     let stdin = std::io::read_to_string(std::io::stdin()).unwrap_or_default();
 
@@ -1234,7 +1234,7 @@ async fn subagent_stop() -> Result<()> {
     let mut state = state;
     state.current_task_id = None;
 
-    // Auto-merge and cleanup worktree if one was set for this task (ADR-2026-03-23-1700)
+    // Auto-merge and cleanup worktree if one was set for this task (ADR-2603231700)
     if let Some(ref branch) = state.worktree_branch.clone() {
         let branch = branch.clone();
 
@@ -1500,7 +1500,7 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
                     validate_workplan_boundary(project_dir, file_path, workplan_id)?;
                 }
 
-                // ADR-2026-03-23-1700: Enforce adapter boundary via allowed_paths.
+                // ADR-2603231700: Enforce adapter boundary via allowed_paths.
                 // Only active when allowed_paths is non-empty (set by step-2 worktree setup).
                 // Mode: HEX_BOUNDARY_MODE=mandatory|advisory (default: advisory for safe rollout).
                 if !state.allowed_paths.is_empty() && !state.is_path_allowed(file_path) {
@@ -1545,7 +1545,7 @@ async fn post_edit(project_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// PreAgent — enforce HEXFLO_TASK tracking for background agents (ADR-2026-03-22-1939).
+/// PreAgent — enforce HEXFLO_TASK tracking for background agents (ADR-2603221939).
 ///
 /// Background agents (`run_in_background: true`) MUST include `HEXFLO_TASK:{uuid}`
 /// in their prompt. Without it, the agent is invisible to HexFlo tracking, the
@@ -1579,7 +1579,7 @@ async fn pre_agent() -> Result<()> {
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
     let mode = enforcement_mode(&project_dir);
 
-    // ADR-2026-03-22-1939: Check workplan requirement for code-writing agents
+    // ADR-2603221939: Check workplan requirement for code-writing agents
     if is_background {
         let has_workplan = SessionState::load()
             .and_then(|s| s.workplan_id)
@@ -1588,7 +1588,7 @@ async fn pre_agent() -> Result<()> {
         if !has_workplan {
             if mode == "mandatory" {
                 println!(
-                    "\u{26d4} Background agent blocked — no active workplan (ADR-2026-03-22-1939)"
+                    "\u{26d4} Background agent blocked — no active workplan (ADR-2603221939)"
                 );
                 println!("  Pipeline: ADR → Workplan → Swarm → Agent");
                 println!("  Create a workplan first: hex plan create <requirements> --adr <ADR-ID>");
@@ -1601,7 +1601,7 @@ async fn pre_agent() -> Result<()> {
         }
     }
 
-    // ADR-2026-03-23-2000: Check active swarm exists for background agents
+    // ADR-2603232000: Check active swarm exists for background agents
     if is_background {
         let has_swarm = SessionState::load()
             .and_then(|s| s.swarm_id)
@@ -1610,7 +1610,7 @@ async fn pre_agent() -> Result<()> {
         if !has_swarm {
             if mode == "mandatory" {
                 println!(
-                    "\u{26d4} Background agent blocked — no active HexFlo swarm (ADR-2026-03-23-2000)"
+                    "\u{26d4} Background agent blocked — no active HexFlo swarm (ADR-2603232000)"
                 );
                 println!("  Pipeline: ADR → Workplan → Swarm → Task → Agent");
                 println!("  Create a swarm first: hex swarm init <name>");
@@ -1629,7 +1629,7 @@ async fn pre_agent() -> Result<()> {
     if is_background && !has_task {
         // BLOCK: background agent without task tracking
         println!(
-            "\u{26d4} Background agent blocked — missing HEXFLO_TASK:{{uuid}} in prompt (ADR-2026-03-22-1939)"
+            "\u{26d4} Background agent blocked — missing HEXFLO_TASK:{{uuid}} in prompt (ADR-2603221939)"
         );
         println!("  Create a swarm and task first:");
         println!("    hex swarm init <name>");
@@ -1658,13 +1658,13 @@ async fn pre_agent() -> Result<()> {
             let url = nexus_url(&format!("/api/hexflo/tasks/{}", task_id));
             match client.get(&url).send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    // ADR-2026-03-23-2000: Validate parent swarm is active
+                    // ADR-2603232000: Validate parent swarm is active
                     if let Ok(body) = resp.json::<serde_json::Value>().await {
                         let swarm_status = body["swarmStatus"].as_str().unwrap_or("unknown");
                         if swarm_status != "active" {
                             if mode == "mandatory" {
                                 println!(
-                                    "\u{26d4} HEXFLO_TASK:{} belongs to {} swarm — cannot proceed (ADR-2026-03-23-2000)",
+                                    "\u{26d4} HEXFLO_TASK:{} belongs to {} swarm — cannot proceed (ADR-2603232000)",
                                     &task_id[..8.min(task_id.len())],
                                     swarm_status
                                 );
@@ -1706,7 +1706,7 @@ async fn pre_bash() -> Result<()> {
                 if let Some(state) = SessionState::load() {
                     let in_ship_phase = state.phase.as_deref() == Some("SHIP");
                     if !in_ship_phase && state.workplan_id.is_some() {
-                        // ADR-2026-03-22-1939 P3: use println not eprintln so Claude sees the warning
+                        // ADR-2603221939 P3: use println not eprintln so Claude sees the warning
                         println!(
                             "{} Destructive command outside SHIP phase: `{}`",
                             "\u{26a0}".yellow(),
@@ -1721,7 +1721,7 @@ async fn pre_bash() -> Result<()> {
     Ok(())
 }
 
-/// ADR-2026-03-30-1200: Refresh the architecture fingerprint when key project files have changed.
+/// ADR-2603301200: Refresh the architecture fingerprint when key project files have changed.
 ///
 /// Key files: docs/adrs/*.md, docs/workplans/*.json, go.mod, Cargo.toml, package.json.
 /// The last generation timestamp is cached in session state — avoiding a nexus round-trip
@@ -1827,7 +1827,7 @@ async fn route(project_dir: &Path) -> Result<()> {
     // ADR-060: Check agent inbox for critical notifications
     let _ = check_inbox().await;
 
-    // ADR-2026-03-30-1200: Refresh architecture fingerprint if key project files have changed
+    // ADR-2603301200: Refresh architecture fingerprint if key project files have changed
     let _ = refresh_fingerprint_if_stale(project_dir).await;
 
     if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool_input) {
@@ -1840,7 +1840,7 @@ async fn route(project_dir: &Path) -> Result<()> {
                 println!("[HEX] {}", hints.join(", "));
             }
 
-            // ADR-2026-04-11-0227: Three-tier work-intent classifier.
+            // ADR-2604110227: Three-tier work-intent classifier.
             //
             // Replaces the old passive-warning path with active tier dispatch:
             //   T1Todo      → silent, let Claude's TodoWrite handle it
@@ -1953,7 +1953,7 @@ async fn route(project_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// ADR-2026-04-11-0227: Spawn `hex plan draft` in the background with the user prompt.
+/// ADR-2604110227: Spawn `hex plan draft` in the background with the user prompt.
 ///
 /// Returns the path of the created draft file on success. The draft is
 /// a minimal stub quarantined to `docs/workplans/drafts/` — no worktrees,
@@ -2175,7 +2175,7 @@ async fn check_inbox() -> Result<()> {
         let id = n["id"].as_u64().unwrap_or(0);
         println!("  [{}] #{}: {}", kind, id, payload);
 
-        // ADR-2026-04-01-0000 Path B: inference-queue notifications require the outer
+        // ADR-2604010000 Path B: inference-queue notifications require the outer
         // Claude Code session to spawn an Agent tool with the queued prompt, then
         // PATCH the queue entry status to Completed/Failed.
         if kind == "inference-queue" {
@@ -2621,7 +2621,7 @@ fn classify_prompt(prompt: &str) -> Vec<&'static str> {
     hints
 }
 
-// ── ADR-2026-04-11-0227: Three-tier work-intent classifier ─────────────────
+// ── ADR-2604110227: Three-tier work-intent classifier ─────────────────
 //
 // The existing `classify_prompt()` emits context hints; this classifier
 // decides whether a prompt is a:
@@ -2666,7 +2666,7 @@ impl Tier {
 /// (user manually invokes planner); false positives (T1 → T3) would
 /// spawn unwanted background agents, so the threshold errs high.
 ///
-/// Implemented as a precedence-ordered Rule table (ADR-2026-04-14-2243):
+/// Implemented as a precedence-ordered Rule table (ADR-2604142243):
 ///   P0 — Escape hatches (always T1, evaluated first)
 ///   P1 — Constraint signals: questions, trivial edits, confirmatory replies
 ///   P2 — Scored classification: feature verbs, subsystem nouns, cross-cutting
@@ -2868,7 +2868,7 @@ fn find_ancestor_claude_pid() -> Option<u32> {
     Some(std::os::unix::process::parent_id())
 }
 
-// ── Observe (ADR-2026-04-01-2137) ─────────────────────────────────────────────────
+// ── Observe (ADR-2604012137) ─────────────────────────────────────────────────
 
 /// Non-blocking tool-call observer: reads Claude Code hook JSON from stdin and
 /// POSTs it to `/api/events` with a 100 ms timeout (fire-and-forget).
@@ -2939,7 +2939,7 @@ async fn observe(event_type: &str) -> Result<()> {
     // After a Bash tool call that looks like a git commit, run the two
     // fast self-consistency checks: binary freshness and MCP↔CLI parity.
     // These complete in <2s and catch drift immediately after a commit.
-    // ── Insight extraction (ADR-2026-04-14-2345) ─────────────────────────
+    // ── Insight extraction (ADR-2604142345) ─────────────────────────
     // Scan text-carrying fields for `★ Insight` blocks and persist each
     // to ~/.hex/insights/<id>.yaml. Non-blocking: failures log to stderr
     // but never halt the hook or block the turn.
@@ -3068,7 +3068,7 @@ fn sanitize_id(id: &str) -> String {
 mod tests {
     use super::*;
 
-    // ─ ADR-2026-04-11-0227: classify_work_intent tier classifier ─
+    // ─ ADR-2604110227: classify_work_intent tier classifier ─
 
     #[test]
     fn t1_question_prompts() {

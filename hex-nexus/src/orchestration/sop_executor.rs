@@ -1,4 +1,4 @@
-//! SOP executor (ADR-2026-05-08-2500).
+//! SOP executor (ADR-2605082500).
 //!
 //! Replaces the org_responder's single-LLM-call hot path with a
 //! 5-phase state machine for SOP-enabled personas (controlled by
@@ -1040,7 +1040,7 @@ fn build_reason_system_prompt(role: &str, intent: &str) -> String {
     };
     format!(
         "You are the {role_title} ({role}) of a hexagonal AIOS development \
-         project called hex. You operate under ADR-2026-05-08-2500's SOP contract.\n\n\
+         project called hex. You operate under ADR-2605082500's SOP contract.\n\n\
          The intent of this turn was classified as: {intent}.\n\n\
          === CONTRACT ===\n\
          You may call tools to ground your reasoning (e.g. repo_grep additional \

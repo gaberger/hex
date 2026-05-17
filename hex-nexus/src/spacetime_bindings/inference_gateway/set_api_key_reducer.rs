@@ -1,5 +1,5 @@
 // THIS FILE IS MANUALLY AUTHORED TO MATCH THE WASM MODULE.
-// Mirrors the `set_api_key(provider_id, api_key)` reducer added in ADR-2026-03-30-0100 P2.2.
+// Mirrors the `set_api_key(provider_id, api_key)` reducer added in ADR-2603300100 P2.2.
 
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};

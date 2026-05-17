@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-13-1500",
+  "adr": "ADR-2604131500",
   "created_at": "2026-04-13T15:00:00Z",
   "created_by": "human+agent",
   "description": "Trust Decay, Taste Graph v1, P1 hardening. After this phase, hex learns developer preferences across projects and auto-adjusts trust when regressions occur.",

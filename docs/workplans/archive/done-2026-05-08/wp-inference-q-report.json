@@ -1,6 +1,6 @@
 {
-  "adr": "ADR-2026-04-15-1300",
-  "description": "Implement `hex inference q-report` per ADR-2026-04-15-1300. Reads rl_q_entry + rl_experience tables from SpacetimeDB via a new hex-nexus REST endpoint and renders a tier/model/Q/visits/trend table. P1 builds the nexus endpoint, P2 wires the CLI subcommand + renderers, P3 adds the --watch streaming path, P4 adds the doc + smoke test.",
+  "adr": "ADR-2604151300",
+  "description": "Implement `hex inference q-report` per ADR-2604151300. Reads rl_q_entry + rl_experience tables from SpacetimeDB via a new hex-nexus REST endpoint and renders a tier/model/Q/visits/trend table. P1 builds the nexus endpoint, P2 wires the CLI subcommand + renderers, P3 adds the --watch streaming path, P4 adds the doc + smoke test.",
   "id": "wp-inference-q-report",
   "phases": [
     {
@@ -189,7 +189,7 @@
           "id": "P4.3",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Wire the Q-report endpoint into the idle-research swarm performance analyst (ADR-2026-04-15-1200 P3.1) as one of its inputs — flag any model with trend ↓ AND visits ≥ 5 as a Finding with severity=med, suggested_action=adr."
+          "title": "Wire the Q-report endpoint into the idle-research swarm performance analyst (ADR-2604151200 P3.1) as one of its inputs — flag any model with trend ↓ AND visits ≥ 5 as a Finding with severity=med, suggested_action=adr."
         }
       ],
       "title": "Documentation + binary rebuild + smoke"

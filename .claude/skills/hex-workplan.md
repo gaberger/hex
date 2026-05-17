@@ -10,7 +10,7 @@ Workplans decompose a feature into dependency-ordered phases, each bounded by a 
 architecture layer. Execution creates HexFlo swarm tasks, isolates agents in git worktrees,
 and enforces phase gates before advancing.
 
-**Required pipeline order** (ADR-050, ADR-2026-04-05-1700):
+**Required pipeline order** (ADR-050, ADR-2604051700):
 ```
 ADR (docs/adrs/) → Specs (docs/specs/) → Workplan (docs/workplans/) → Execute
 ```

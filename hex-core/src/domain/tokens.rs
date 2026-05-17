@@ -54,7 +54,7 @@ impl TokenBudget {
 /// Pressure level for an agent's context window.
 ///
 /// Thresholds align with the `token_budget.pressure` block in agent YAMLs
-/// (ADR-2026-03-28-1000).
+/// (ADR-2603281000).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PressureLevel {
     /// < 70% — normal operation.

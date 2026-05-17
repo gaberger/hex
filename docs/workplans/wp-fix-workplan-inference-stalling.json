@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2026-04-18-0001",
+  "adr": "ADR-2604180001",
   "created_at": "2026-04-17T16:00:00Z",
   "description": "Critical: Workplan processes hang silently during inference. Implement task-level timeouts, heartbeats, state sync, and orphan cleanup to enable autonomous workplan execution.",
   "name": "wp-fix-workplan-inference-stalling",
@@ -9,7 +9,7 @@
       "number": 1,
       "tasks": [
         {
-          "description": "Add logging at every checkpoint:\n- Task state change (queued \u2192 running \u2192 done/error)\n- Inference call start/end\n- Ollama response received\n- Compile gate result\nFile: hex-cli/src/commands/plan/executor.rs",
+          "description": "Add logging at every checkpoint:\n- Task state change (queued → running → done/error)\n- Inference call start/end\n- Ollama response received\n- Compile gate result\nFile: hex-cli/src/commands/plan/executor.rs",
           "files": [
             "hex-cli/src/commands/plan/executor.rs"
           ],
@@ -24,17 +24,17 @@
             "hex-cli/src/commands/plan/executor.rs"
           ],
           "id": "P1-2",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "Run instrumented workplan on Bazzite and capture stall logs"
         },
         {
-          "description": "While workplan is stalled:\n1. ssh bazzite 'ollama ps' \u2014 is model running?\n2. ssh bazzite 'ollama list' \u2014 models still available?\n3. Check Bazzite system resources (free, top) \u2014 OOM? Disk full?\n4. Check hex-nexus logs: any errors?",
+          "description": "While workplan is stalled:\n1. ssh bazzite 'ollama ps' — is model running?\n2. ssh bazzite 'ollama list' — models still available?\n3. Check Bazzite system resources (free, top) — OOM? Disk full?\n4. Check hex-nexus logs: any errors?",
           "files": [
             "hex-cli/src/commands/plan/executor.rs"
           ],
           "id": "P1-3",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "Check Ollama status during stall"
         }
@@ -61,7 +61,7 @@
             "hex-cli/src/commands/plan/executor.rs"
           ],
           "id": "P2-2",
-          "status": "done",
+          "status": "pending",
           "strategy_hint": "codegen",
           "title": "Test timeout guard on Bazzite with artificial delay"
         }
@@ -82,7 +82,7 @@
           "title": "Add TaskHeartbeat emission to executor"
         },
         {
-          "description": "On each heartbeat, POST /api/hexflo/tasks/{id}/heartbeat with progress data.\nNexus stores last_heartbeat timestamp.\nUse for stale detection: if (now - last_heartbeat) > timeout \u2192 mark task dead",
+          "description": "On each heartbeat, POST /api/hexflo/tasks/{id}/heartbeat with progress data.\nNexus stores last_heartbeat timestamp.\nUse for stale detection: if (now - last_heartbeat) > timeout → mark task dead",
           "files": [
             "hex-cli/src/nexus_client.rs"
           ],
@@ -197,6 +197,6 @@
     }
   ],
   "priority": "P0",
-  "title": "Fix workplan inference task stalling and state sync (ADR-2026-04-18-0001)",
-  "status": "in_progress"
+  "status": "in_progress",
+  "title": "Fix workplan inference task stalling and state sync (ADR-2604180001)"
 }

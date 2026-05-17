@@ -1,4 +1,4 @@
-// Pre-existing clippy lints — tracked for cleanup in ADR-2026-03-22-2050
+// Pre-existing clippy lints — tracked for cleanup in ADR-2603222050
 #![allow(
     clippy::literal_string_with_formatting_args,
     clippy::too_many_arguments,
@@ -112,7 +112,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             app_state.agent_manager = Some(agent_mgr);
             app_state.state_port = Some(state_port);
 
-            // Substrate swap-ticket port (ADR-2026-04-26-1500). Construct a
+            // Substrate swap-ticket port (ADR-2604261500). Construct a
             // second SpacetimeStateAdapter pointed at the same STDB —
             // SpacetimeStateAdapter impls both IStatePort and
             // ISwapTicketStatePort independently. Two HTTP clients, one
@@ -128,7 +128,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 app_state.swap_ticket_port = Some(Arc::new(SpacetimeStateAdapter::new(stdb_cfg)));
             }
 
-            // Wire inference port for Path C headless dispatch (ADR-2026-04-12-0202 P5.1).
+            // Wire inference port for Path C headless dispatch (ADR-2604120202 P5.1).
             // In standalone mode, this is OllamaInferenceAdapter pointed at OLLAMA_HOST.
             if !orchestration::is_claude_code_session() {
                 app_state.inference_port = Some(composition::standalone::default_inference_adapter());
@@ -136,7 +136,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             }
 
             // Substrate runtime composition + shadow router for the
-            // inference port (ADR-2026-04-26-1500). Built only when both an
+            // inference port (ADR-2604261500). Built only when both an
             // inference port and a swap_ticket_port are available — the
             // substrate is opt-in for now, consumers route through it
             // instead of calling inference_port.complete() directly.
@@ -175,8 +175,8 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 );
             }
 
-            // Substrate SECRET port wiring (ADR-2026-04-26-1500 P10 +
-            // ADR-2026-04-26-2100 cookbook). Bind EnvSecretAdapter as the
+            // Substrate SECRET port wiring (ADR-2604261500 P10 +
+            // ADR-2604262100 cookbook). Bind EnvSecretAdapter as the
             // default-secret live binding. Operator can shadow-test
             // alternative ISecretPort impls (vault, OS keychain) against
             // it via the same hex substrate swap-inference flow once
@@ -395,7 +395,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             );
         }
 
-        // ADR-2026-05-08-1126 P4 — integrator subscriber drives merge-team voting:
+        // ADR-2605081126 P4 — integrator subscriber drives merge-team voting:
         // polls merge_request rows, dispatches validation-judge (cargo check),
         // tallies via the STDB reducer, runs `hex worktree merge` on approved.
         // Disabled with HEX_DISABLE_INTEGRATOR_SUBSCRIBER=1.
@@ -432,7 +432,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
 
             // ADR-[PHONE] — digital-twin loop. drafter turns
 
-            // ADR-2026-05-08-2300 — digital-twin loop. drafter turns
+            // ADR-2605082300 — digital-twin loop. drafter turns
             // commitments into proposed_action(file_write); twin reviews
             // against operator memory; executor writes the file via
             // SafeFileWriter and satisfies the commitment.
@@ -511,7 +511,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             }
         }
 
-        // P4: Background stale-model prune pass (ADR-2026-03-31-1000).
+        // P4: Background stale-model prune pass (ADR-2603311000).
         // Test each registered OpenRouter provider with a minimal prompt.
         // Providers returning empty content are removed — they are placeholder
         // model IDs that don't exist yet (e.g. gpt-5.x, grok-4.x) and would
@@ -742,7 +742,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             );
         }
     }
-    // Tool-call event log uses in-memory ring buffer (ADR-2026-04-02-0900) — initialized in AppState::new().
+    // Tool-call event log uses in-memory ring buffer (ADR-2604020900) — initialized in AppState::new().
 
     // P9.5: Wire live context adapter (composition root) — must be set before
     // WorkplanExecutor is created so enrich_prompt can call it.
@@ -755,7 +755,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
 
     if state.agent_manager.is_some() {
         // Pass inference_tx so workplan executor's inference_task_create broadcasts
-        // to /ws/inference subscribers (ADR-2026-04-01-1200 P2.T3 + P3.T1).
+        // to /ws/inference subscribers (ADR-2604011200 P2.T3 + P3.T1).
         if let Ok(state_port) = state_config::create_default_state_backend_with_inference(
             state.inference_tx.clone(),
         ) {
@@ -824,7 +824,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         orchestration::swarm_task_drainer::SwarmTaskDrainer::spawn(drainer_state);
     }
 
-    // Background sched self-improvement service (ADR-2026-04-10-2200):
+    // Background sched self-improvement service (ADR-2604102200):
     // Tests local models periodically, records outcomes to RL engine.
     {
         let sched_state = state.clone();

@@ -1,6 +1,6 @@
 //! Evidence-based verification for workplan task reconciliation.
 //!
-//! ADR-2026-04-14-2201: reconcile must require **positive file evidence** before
+//! ADR-2604142201: reconcile must require **positive file evidence** before
 //! promoting any task to `done`.  Two pure-ish functions:
 //!
 //! - `collect_evidence` — gathers filesystem, symbol, and git signals
@@ -43,7 +43,7 @@ pub fn collect_evidence(task: &WorkplanTask, repo_root: &Path, branch: &str) -> 
     collect_evidence_strict(task, repo_root, branch, None)
 }
 
-/// ADR-2026-04-27-0800 P0.2: workplan-aware variant.
+/// ADR-2604270800 P0.2: workplan-aware variant.
 ///
 /// When `require_workplan_id` is `Some(id)`, a commit only counts as evidence
 /// if its message references that workplan id in addition to a task pattern.
@@ -376,7 +376,7 @@ mod tests {
         assert!(matches!(verify(&ev), VerifyResult::Promote));
     }
 
-    /// ADR-2026-04-27-0800 P0.2 regression: a fresh git repo with one commit whose
+    /// ADR-2604270800 P0.2 regression: a fresh git repo with one commit whose
     /// subject contains `(p0.2)` from an UNRELATED workplan must not satisfy
     /// this workplan's P0.2. Reproduces the 2026-04-27 false-match.
     #[test]
@@ -408,7 +408,7 @@ mod tests {
             files: vec!["ci.rs".into()],
             done_command: String::new(),
             created_at: "2026-04-27T07:55:00Z".into(),
-            adr_scope: "ADR-2026-04-27-0800".into(),
+            adr_scope: "ADR-2604270800".into(),
         };
 
         // Loose mode: cross-workplan match incorrectly counts as evidence.
@@ -460,7 +460,7 @@ mod tests {
             files: vec!["ci.rs".into()],
             done_command: String::new(),
             created_at: "2026-04-27T07:55:00Z".into(),
-            adr_scope: "ADR-2026-04-27-0800".into(),
+            adr_scope: "ADR-2604270800".into(),
         };
         let strict = collect_evidence_strict(&task, &tmp, "", Some("wp-ADR-doctor-self-fix"));
         assert!(

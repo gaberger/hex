@@ -1,4 +1,4 @@
-//! C4 — `IAdapterGenerator` port (per ADR-2026-04-26-1500).
+//! C4 — `IAdapterGenerator` port (per ADR-2604261500).
 //!
 //! A port whose adapters are LLM agents that produce other adapters. The
 //! generator's output is a hex-conformant adapter source tree + manifest +

@@ -1,7 +1,7 @@
-//! Substrate P5 integration test (ADR-2026-04-26-1500).
+//! Substrate P5 integration test (ADR-2604261500).
 //!
 //! Wires the existing `IInferencePort` (the system's prototype port for the
-//! self-modifying-substrate frame, per ADR-2026-04-26-1303) behind
+//! self-modifying-substrate frame, per ADR-2604261303) behind
 //! `RuntimeComposition` and exercises the full circuit:
 //!
 //! 1. Two `MockInferencePort` adapters are registered as candidate

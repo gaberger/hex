@@ -1,4 +1,4 @@
-/// Integration tests for ADR-2026-03-29-1900 — Docker Worker First-Class Execution.
+/// Integration tests for ADR-2603291900 — Docker Worker First-Class Execution.
 ///
 /// Verifies the three seams of the worker delegation path without requiring
 /// a live Docker daemon or nexus instance:

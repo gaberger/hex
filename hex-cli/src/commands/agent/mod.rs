@@ -46,7 +46,7 @@ pub enum AgentAction {
         /// Remote source directory to sync project files to before spawning
         #[arg(long)]
         source_dir: Option<String>,
-        /// Run the remote agent inside a Docker AI Sandbox (ADR-2026-04-05-0900 P5.3)
+        /// Run the remote agent inside a Docker AI Sandbox (ADR-2604050900 P5.3)
         #[arg(long, default_value_t = false)]
         sandbox: bool,
         /// Override the default model for the remote agent (e.g. sonnet, opus)
@@ -68,9 +68,9 @@ pub enum AgentAction {
         #[arg(long)]
         json: bool,
     },
-    /// Audit recent commits against HexFlo task tracking (ADR-2026-03-22-1939)
+    /// Audit recent commits against HexFlo task tracking (ADR-2603221939)
     Audit,
-    /// Show active git worktrees with assigned agent, task, and age (ADR-2026-03-23-1700)
+    /// Show active git worktrees with assigned agent, task, and age (ADR-2603231700)
     WorktreeAudit,
     /// Evict dead/stale agents from the registry
     Evict,
@@ -889,7 +889,7 @@ async fn connect(nexus_url: &str) -> anyhow::Result<()> {
     println!("  Project:       {}", if project_name.is_empty() { "-" } else { &project_name });
     println!("  Session file:  {}", session_file.display());
 
-    // ADR-2026-04-13-0010 P2.1: Discover local inference and POST capabilities
+    // ADR-2604130010 P2.1: Discover local inference and POST capabilities
     if let Some(ref caps) = discover_local_inference_caps().await {
         let caps_path = format!("/api/hex-agents/{}/capabilities", agent_id);
         let caps_body = json!({
@@ -1456,7 +1456,7 @@ async fn fleet() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Audit recent commits against HexFlo task completions (ADR-2026-03-22-1939 P5).
+/// Audit recent commits against HexFlo task completions (ADR-2603221939 P5).
 ///
 /// Cross-references `git log` with completed HexFlo tasks to find "dark agents" —
 /// commits produced by AI agents that were not tracked in any swarm.
@@ -1622,7 +1622,7 @@ async fn worker(
     );
     println!("  Poll:     {}s", poll_interval);
 
-    // ADR-2026-04-13-0010 P2.1: Discover local inference and POST to dedicated capabilities endpoint
+    // ADR-2604130010 P2.1: Discover local inference and POST to dedicated capabilities endpoint
     let inference_caps = discover_local_inference_caps().await;
     if let Some(ref caps) = inference_caps {
         let caps_path = format!("/api/hex-agents/{}/capabilities", agent_id);
@@ -1662,7 +1662,7 @@ async fn worker(
     // Main task poll loop
     let poll_duration = std::time::Duration::from_secs(poll_interval);
     loop {
-// ADR-2026-04-10-2100: Poll for steering instructions BEFORE task polling
+// ADR-2604102100: Poll for steering instructions BEFORE task polling
         // Try both registered_id and agent_id (they may differ when --agent-id override is used)
         for steer_id in &[registered_id.clone(), agent_id.clone()] {
             if let Ok(instr_resp) = nexus.get(&format!("/api/steering/{}/instructions", steer_id)).await {
@@ -2091,7 +2091,7 @@ async fn execute_worker_task(
 
                 let full_prompt = format!("{}\n\n{}", hex_rules, current_step.description);
 
-                // GBNF grammar for code-only output (ADR-2026-04-12-0202)
+                // GBNF grammar for code-only output (ADR-2604120202)
                 let grammar = "root ::= code-line+\ncode-line ::= [^\\n]* \"\\n\"";
 
                 let ollama_body = json!({
@@ -2655,12 +2655,12 @@ async fn execute_worker_task(
     Ok(result)
 }
 
-// ── Worker inference discovery (ADR-2026-04-13-0010, P1.2) ───────────────────────
+// ── Worker inference discovery (ADR-2604130010, P1.2) ───────────────────────
 
 /// Probe OLLAMA_HOST/api/tags for available models on startup.
 /// Sets HEX_PROVIDER=ollama and HEX_MODEL to the largest available model
 /// if not already configured by the user.
-/// Discovery result for local inference providers (ADR-2026-04-13-0010 P2.1).
+/// Discovery result for local inference providers (ADR-2604130010 P2.1).
 #[derive(Debug, Clone, Default)]
 struct LocalInferenceCapabilities {
     models: Vec<String>,
@@ -2748,7 +2748,7 @@ async fn discover_local_inference_caps() -> Option<LocalInferenceCapabilities> {
         }
     }
 
-    // ADR-2026-04-13-0010 P2.1: Build capabilities struct from discovered models
+    // ADR-2604130010 P2.1: Build capabilities struct from discovered models
     let max_size_gb = model_list.first().map(|(_, s)| *s as f64 / 1_073_741_824.0).unwrap_or(0.0);
     let model_names: Vec<String> = model_list.iter().map(|(n, _)| n.to_string()).collect();
     Some(LocalInferenceCapabilities {

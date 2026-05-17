@@ -68,7 +68,7 @@ pub async fn spawn_agent(
     claims: Option<axum::Extension<VerifiedClaims>>,
     Json(body): Json<SpawnRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // ADR-2026-04-05-1800 P1: Agent spawning requires admin capability
+    // ADR-2604051800 P1: Agent spawning requires admin capability
     if let Err(status) = require_capability(
         claims.as_ref().map(|c| &c.0),
         |c| c.is_admin(),
@@ -278,7 +278,7 @@ pub async fn disconnect_agent(
         None => return (StatusCode::BAD_REQUEST, Json(json!({ "error": "missing agentId" }))),
     };
 
-    // Mark agent as completed with endedAt timestamp (ADR-2026-03-31-1000).
+    // Mark agent as completed with endedAt timestamp (ADR-2603311000).
     // Using agent_update_status instead of agent_remove so the session history
     // is preserved for audit — only status + endedAt change.
     if let Some(sp) = state.state_port.as_ref() {

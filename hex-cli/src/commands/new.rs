@@ -1,4 +1,4 @@
-//! Structured project intake (ADR-2026-04-13-1500 §2).
+//! Structured project intake (ADR-2604131500 §2).
 //!
 //! `hex new <path>` — create or adopt a directory, run `hex init`, register the
 //! project, seed trust at suggest level, and optionally copy taste preferences.

@@ -274,7 +274,7 @@ impl AnthropicPort for OpenAiCompatAdapter {
                 .unwrap_or_default();
         }
 
-        // OpenRouter routing preferences (ADR-2026-03-23-1600)
+        // OpenRouter routing preferences (ADR-2603231600)
         if self.is_openrouter() {
             body["provider"] = serde_json::json!({
                 "order": ["Together", "Lambda", "Fireworks"],
@@ -289,7 +289,7 @@ impl AnthropicPort for OpenAiCompatAdapter {
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json");
 
-        // OpenRouter-specific headers (ADR-2026-03-23-1600)
+        // OpenRouter-specific headers (ADR-2603231600)
         if self.is_openrouter() {
             request = request
                 .header("HTTP-Referer", "https://github.com/hex-intf")

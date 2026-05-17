@@ -60,6 +60,6 @@ fn enqueue_output_says_sched_not_brain() {
     );
     assert!(
         !source.contains(r#"enqueued brain task"#),
-        "sched.rs must NOT contain 'enqueued brain task' — rename to 'sched task' per ADR-2026-04-15-0000",
+        "sched.rs must NOT contain 'enqueued brain task' — rename to 'sched task' per ADR-2604150000",
     );
 }

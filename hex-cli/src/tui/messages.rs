@@ -1,4 +1,4 @@
-//! TUI message types for async phase communication (ADR-2026-03-24-1500).
+//! TUI message types for async phase communication (ADR-2603241500).
 //!
 //! Phases run on tokio tasks and send [`UiMessage`] to the render loop.
 //! The render loop never blocks — it reads messages via `try_recv()`.

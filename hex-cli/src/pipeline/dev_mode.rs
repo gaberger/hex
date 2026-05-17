@@ -1,4 +1,4 @@
-//! Execution modes for `hex dev` pipeline (ADR-2026-03-23-2005).
+//! Execution modes for `hex dev` pipeline (ADR-2603232005).
 //!
 //! Controls how the development pipeline runs:
 //! - **Interactive** (default): TUI with gates at each phase for human review
