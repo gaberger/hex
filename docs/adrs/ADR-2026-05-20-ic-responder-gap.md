@@ -1,7 +1,7 @@
 # ADR-2026-05-20-ic-responder-gap
 
-- **Status**: Proposed
-- **Date**: 2026-05-20
+**Status:** Proposed
+**Date:** 2026-05-20
 - **Authors**: cto (drafted via SOP), gary (implemented + revised post-ship)
 
 ## Context
