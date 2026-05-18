@@ -10,27 +10,13 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-/// Path to the built hex-agent binary (workspace target dir).
+/// Path to the built hex-agent binary. Uses CARGO_BIN_EXE_hex-agent
+/// (populated by Cargo for integration tests) so we hit the same
+/// debug-or-release target dir the test harness just built — works on
+/// `cargo test`, `cargo test --release`, and CI alike, without the
+/// previous "where did we put the release binary" guess.
 fn agent_binary() -> PathBuf {
-    // Prefer the per-crate target dir, fall back to the workspace dir.
-    let candidates = [
-        "../target/x86_64-unknown-linux-gnu/release/hex-agent",
-        "../target/release/hex-agent",
-        "target/x86_64-unknown-linux-gnu/release/hex-agent",
-        "target/release/hex-agent",
-    ];
-    for c in &candidates {
-        let p = PathBuf::from(c);
-        if p.exists() {
-            return p
-                .canonicalize()
-                .unwrap_or_else(|_| p);
-        }
-    }
-    panic!(
-        "hex-agent binary not found in any of: {:?}. Run `cargo build -p hex-agent --release` first.",
-        candidates
-    );
+    PathBuf::from(env!("CARGO_BIN_EXE_hex-agent"))
 }
 
 /// Trunk path (the workspace root).
