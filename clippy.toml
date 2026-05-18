@@ -1,16 +1,36 @@
 # Hexagonal architecture enforcement — workspace-wide clippy config.
 # Pairs with ADR-001-hexagonal-architecture.md and
 # scripts/check-dependencies.sh (P1.3) which does the path-scoped
-# domain/ -> adapters/ ban that rustc cannot express directly.
+# import bans that rustc cannot express directly.
+#
+# Hex import rules (canonical — see CLAUDE.md / ADR-001):
+#   1. domain/    imports only domain/
+#   2. ports/     imports domain/ only
+#   3. usecases/  imports domain/ + ports/ only
+#   4. adapters/  import ports/ only — never domain/, never usecases/,
+#                 never another adapter   <-- P1.2 focus
+#   5. composition_root is the ONLY file that imports from adapters/
+#
+# Clippy enforces what it can structurally (complexity, type/method bans);
+# the boundary-direction rules live in scripts/check-dependencies.sh and
+# `hex analyze .` (tree-sitter), since clippy lacks per-module path scoping.
 
 cognitive-complexity-threshold = 30
 too-many-arguments-threshold = 8
 type-complexity-threshold = 250
 too-many-lines-threshold = 400
 
-# Public ban list for concrete adapter types that must never leak into
-# domain/ or ports/. Add entries as new boundary-violating types appear;
-# the script in P1.3 catches the broader case (any path-based import).
+# Public ban list for concrete adapter / domain types that must never
+# leak across boundaries. Add an entry the moment a real violation is
+# observed in review — keep this list grounded, not speculative.
+# Each entry is a fully-qualified type path.
 disallowed-types = []
 
+# Banned method-level escape hatches frequently used to bypass the
+# adapters-only-via-ports rule (e.g. reaching back into a sibling
+# adapter through a global singleton). Same rule: add on observation.
 disallowed-methods = []
+
+# Banned macros that bypass module boundaries (e.g. include!/include_str!
+# pointing into adapter source trees). Empty by default; grown on observation.
+disallowed-macros = []
