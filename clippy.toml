@@ -1,0 +1,16 @@
+# Hexagonal architecture enforcement — workspace-wide clippy config.
+# Pairs with ADR-001-hexagonal-architecture.md and
+# scripts/check-dependencies.sh (P1.3) which does the path-scoped
+# domain/ -> adapters/ ban that rustc cannot express directly.
+
+cognitive-complexity-threshold = 30
+too-many-arguments-threshold = 8
+type-complexity-threshold = 250
+too-many-lines-threshold = 400
+
+# Public ban list for concrete adapter types that must never leak into
+# domain/ or ports/. Add entries as new boundary-violating types appear;
+# the script in P1.3 catches the broader case (any path-based import).
+disallowed-types = []
+
+disallowed-methods = []

@@ -1,0 +1,12 @@
+# Template for .cargo/config.toml. Copy or merge into your local
+# .cargo/config.toml (gitignored per ADR-064 — machine-specific).
+#
+# These aliases implement the hexagonal architecture lint gate
+# (workplan: wp-hexagonal-architecture-foundation, P1.1).
+#   cargo hex-lint    — clippy posture defined in clippy.toml
+#   cargo arch-check  — boundary analyzer (domain/ -> adapters/ ban
+#                       and friends); same gate used by CI in P1.3.
+
+[alias]
+hex-lint = "clippy --workspace --all-targets -- -D warnings"
+arch-check = "run --quiet --package hex-cli -- analyze ."
