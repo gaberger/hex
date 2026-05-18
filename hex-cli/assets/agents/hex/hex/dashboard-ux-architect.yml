@@ -11,6 +11,8 @@
 name: dashboard-ux-architect
 type: architect
 version: "1.0.0"
+role: Information Architect
+tier: ic
 description: >
   Information-architecture + redesign synthesis for the hex-nexus
   dashboard (Solid.js + Tailwind). Takes an ADR + scope + existing

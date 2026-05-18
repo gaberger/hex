@@ -1,7 +1,7 @@
 //! Org responder background task.
 //!
 //! Polls `agent_messages` for unanswered DMs addressed to ANY persona in the
-//! org chart (execs, leads, and ICs — see RESPONDER_ROLES). For each
+//! org chart (execs, leads, and ICs — see `Roster` / `roster()`). For each
 //! unanswered DM, generates a reply via the local `/api/inference/complete`
 //! endpoint using a persona-flavoured system prompt and writes the reply
 //! back as a DM to the original sender. Marks the source DM as read so it
@@ -24,8 +24,8 @@
 //! that prompts the persona for a one-line reasoning summary and writes a
 //! `kind=decision` row to chat-relay.agent_thought via SpacetimePersonaSupervisor.
 
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use tokio::sync::{Mutex, Semaphore};
@@ -79,114 +79,105 @@ const THOUGHT_SUMMARIZER_MODEL_DEFAULT: &str = "openai/gpt-4o-mini";
 /// requests at Ollama for a 4B model. Override with HEX_RESPONDER_CONCURRENCY.
 const REPLY_CONCURRENCY_DEFAULT: usize = 3;
 
-/// Roles the responder will reply on behalf of. Matches the personas under
-/// `hex-cli/assets/agents/hex/hex/`. Add a role here to enable auto-replies.
+/// The persona roster the responder will reply on behalf of. Sourced from
+/// `hex-cli/assets/agents/hex/hex/*.yml` at startup — every YAML with a
+/// `name:` field becomes a poll target, and its `role:` field becomes the
+/// title used in system prompts. No hardcoded allowlist to drift.
 ///
-/// Lead-tier roles (engineering-lead, product-lead, sre-lead) were added
-/// 2026-05-11 so the dashboard "Orchestrator" chat panel — which defaults
-/// to @engineering-lead — actually gets replies. Without this, DMs to lead
-/// personas landed in STDB but nothing picked them up.
-const RESPONDER_ROLES: &[&str] = &[
-    // Software / development workspace — executives
-    "cto",
-    "cpo",
-    "coo",
-    "ciso",
-    "ceo",
-    "chief-visionary",
-    "chief-architect",
-    // Software / development workspace — leads
-    "engineering-lead",
-    "product-lead",
-    "sre-lead",
-    "validation-judge",
-    // Software / development workspace — ICs (added 2026-05-18 to close
-    // the IC-responder gap; see module doc).
-    "hex-coder",
-    "hex-fixer",
-    "hex-tester",
-    "hex-reviewer",
-    "hex-ux",
-    "hex-documenter",
-    "rust-refactorer",
-    "integrator",
-    "scaffold-validator",
-    "behavioral-spec-writer",
-    "pm-agent",
-    "adr-reviewer",
-    "dead-code-analyzer",
-    "adversarial-red",
-    "adversarial-blue",
-    "cli-designer",
-    "ux-designer",
-    "dashboard-ux-architect",
-    "platform-engineer",
-    "sre-engineer",
-    // Marketing workspace (2026-05-15: operator request — personas should
-    // match the workflow, not be locked to a software-org c-suite)
-    "growth-lead",
-    "content-lead",
-    "brand-strategist",
-    "campaign-manager",
-    "analytics-lead",
-    // Research workspace
-    "research-lead",
-    "methodologist",
-    "data-scientist",
-    "writer",
-    "peer-reviewer",
+/// History:
+/// - 2026-05-11: lead-tier roles widened so dashboard's `@engineering-lead`
+///   default got replies.
+/// - 2026-05-18: 20 IC personas added (IC-responder-gap ADR).
+/// - 2026-05-18 (this refactor): replaced the hand-maintained array with
+///   `parse_agent_yamls()` — adding a new YAML now automatically enables
+///   responder coverage.
+#[derive(Debug, Default)]
+struct Roster {
+    /// Persona names, e.g. `["ceo", "cto", "hex-coder", ...]`.
+    names: Vec<String>,
+    /// Persona names as a HashSet for cheap @mention validation.
+    name_set: HashSet<String>,
+    /// `name -> role` map (role = the human-readable title from YAML).
+    titles: HashMap<String, String>,
+}
+
+/// Tiny fallback for the case where YAMLs aren't on disk (e.g. running
+/// hex-nexus from an unrelated cwd during dev). Just enough to keep the
+/// exec/leads loop alive — IC asks won't be answered, but the operator
+/// still has the c-suite. In production the YAML scan succeeds.
+const FALLBACK_ROLES: &[&str] = &[
+    "ceo", "cto", "cpo", "coo", "ciso", "chief-visionary", "chief-architect",
+    "engineering-lead", "product-lead", "sre-lead", "validation-judge",
 ];
 
-fn role_title(role: &str) -> &'static str {
-    match role {
-        // Software / dev — executives
-        "ceo" => "Chief Executive Officer",
-        "cto" => "Chief Technology Officer",
-        "cpo" => "Chief Product Officer",
-        "coo" => "Chief Operating Officer",
-        "ciso" => "Chief Information Security Officer",
-        "chief-visionary" => "Chief Visionary",
-        "chief-architect" => "Chief Architect",
-        // Software / dev — leads
-        "engineering-lead" => "Engineering Lead",
-        "product-lead" => "Product Lead",
-        "sre-lead" => "SRE Lead",
-        "validation-judge" => "Principal Architect",
-        // Software / dev — ICs (titles from hex-cli/assets/agents/hex/hex/*.yml `role:` field)
-        "hex-coder" => "Software Engineer",
-        "hex-fixer" => "Software Engineer",
-        "hex-tester" => "Test Engineer",
-        "hex-reviewer" => "Software Engineer",
-        "hex-ux" => "Frontend Engineer",
-        "hex-documenter" => "Technical Writer",
-        "rust-refactorer" => "Software Engineer",
-        "integrator" => "Integration Engineer",
-        "scaffold-validator" => "Product Engineer",
-        "behavioral-spec-writer" => "Product Engineer",
-        "pm-agent" => "Product Engineer",
-        "adr-reviewer" => "Product Engineer",
-        "dead-code-analyzer" => "Code Quality Engineer",
-        "adversarial-red" => "Security Engineer",
-        "adversarial-blue" => "QA Engineer",
-        "cli-designer" => "UX Designer",
-        "ux-designer" => "UX Designer",
-        "dashboard-ux-architect" => "Information Architect",
-        "platform-engineer" => "Platform Engineer",
-        "sre-engineer" => "Site Reliability Engineer",
-        // Marketing
-        "growth-lead" => "Growth Lead",
-        "content-lead" => "Content Lead",
-        "brand-strategist" => "Brand Strategist",
-        "campaign-manager" => "Campaign Manager",
-        "analytics-lead" => "Analytics Lead",
-        // Research
-        "research-lead" => "Research Lead",
-        "methodologist" => "Methodologist",
-        "data-scientist" => "Data Scientist",
-        "writer" => "Writer",
-        "peer-reviewer" => "Peer Reviewer",
-        _ => "Specialist",
+fn build_roster_from_yamls() -> Option<Roster> {
+    let nodes = match crate::routes::org_chart::parse_agent_yamls() {
+        Ok(n) if !n.is_empty() => n,
+        Ok(_) => {
+            tracing::warn!("org_responder: parse_agent_yamls returned empty set; using fallback");
+            return None;
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "org_responder: parse_agent_yamls failed; using fallback");
+            return None;
+        }
+    };
+    let mut names = Vec::with_capacity(nodes.len());
+    let mut name_set = HashSet::with_capacity(nodes.len());
+    let mut titles = HashMap::with_capacity(nodes.len());
+    for n in &nodes {
+        if n.name.is_empty() { continue; }
+        let title = if n.role.is_empty() || n.role == "Unknown" {
+            "Specialist".to_string()
+        } else {
+            n.role.clone()
+        };
+        names.push(n.name.clone());
+        name_set.insert(n.name.clone());
+        titles.insert(n.name.clone(), title);
     }
+    names.sort();
+    Some(Roster { names, name_set, titles })
+}
+
+fn build_fallback_roster() -> Roster {
+    let mut names: Vec<String> = FALLBACK_ROLES.iter().map(|s| s.to_string()).collect();
+    let name_set: HashSet<String> = FALLBACK_ROLES.iter().map(|s| s.to_string()).collect();
+    let titles: HashMap<String, String> = FALLBACK_ROLES
+        .iter()
+        .map(|r| ((*r).to_string(), "Executive".to_string()))
+        .collect();
+    names.sort();
+    Roster { names, name_set, titles }
+}
+
+fn roster() -> &'static Roster {
+    static ROSTER: OnceLock<Roster> = OnceLock::new();
+    ROSTER.get_or_init(|| {
+        let r = build_roster_from_yamls().unwrap_or_else(build_fallback_roster);
+        tracing::info!(
+            count = r.names.len(),
+            sample = ?r.names.iter().take(6).collect::<Vec<_>>(),
+            "org_responder: roster loaded"
+        );
+        r
+    })
+}
+
+fn role_title(role: &str) -> &'static str {
+    // The Roster owns its titles; we hand back &'static str by leaking once
+    // per unique role. The roster is bounded (≤ persona-YAML count) and the
+    // OnceLock makes initialization happen exactly once, so this leaks at
+    // most one short string per persona for the lifetime of the process.
+    static TITLE_CACHE: OnceLock<HashMap<String, &'static str>> = OnceLock::new();
+    let cache = TITLE_CACHE.get_or_init(|| {
+        roster()
+            .titles
+            .iter()
+            .map(|(k, v)| (k.clone(), &*Box::leak(v.clone().into_boxed_str())))
+            .collect()
+    });
+    cache.get(role).copied().unwrap_or("Specialist")
 }
 
 /// Detect operator-style conversational asks (questions, status requests,
@@ -228,28 +219,10 @@ fn is_conversational(content: &str) -> bool {
 ///      where the model says "Ask the UX-designer" without the @ prefix.
 /// Used by the inter-persona auto-CC.
 fn first_peer_mention(reply: &str, speaker: &str) -> Option<String> {
-    const VALID_PEERS: &[&str] = &[
-        // Execs + leads
-        "ceo", "cto", "cpo", "ciso", "coo",
-        "chief-visionary", "chief-architect",
-        "product-lead", "engineering-lead", "design-lead", "sre-lead",
-        "validation-judge",
-        // ICs (added 2026-05-18 so execs can CC them via @mention auto-forward
-        // — matches the widened RESPONDER_ROLES allowlist)
-        "hex-coder", "hex-fixer", "hex-tester", "hex-reviewer",
-        "hex-ux", "hex-documenter", "rust-refactorer", "integrator",
-        "scaffold-validator", "behavioral-spec-writer", "pm-agent",
-        "adr-reviewer", "dead-code-analyzer",
-        "adversarial-red", "adversarial-blue",
-        "cli-designer", "ux-designer", "dashboard-ux-architect",
-        "platform-engineer", "sre-engineer",
-        // Marketing
-        "growth-lead", "content-lead", "brand-strategist",
-        "campaign-manager", "analytics-lead",
-        // Research
-        "research-lead", "methodologist", "data-scientist",
-        "writer", "peer-reviewer",
-    ];
+    // Valid peers are exactly the persona roster (any persona with a YAML
+    // is a valid CC target). Same source as the responder roster — no separate
+    // allowlist to drift.
+    let valid_peers: &HashSet<String> = &roster().name_set;
     // Pass 1: explicit @ mentions
     for cap in reply
         .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_' && c != '@')
@@ -257,7 +230,7 @@ fn first_peer_mention(reply: &str, speaker: &str) -> Option<String> {
     {
         let name = cap.trim_start_matches('@').to_ascii_lowercase();
         if name == speaker { continue; }
-        if VALID_PEERS.contains(&name.as_str()) {
+        if valid_peers.contains(&name) {
             return Some(name);
         }
     }
@@ -267,8 +240,8 @@ fn first_peer_mention(reply: &str, speaker: &str) -> Option<String> {
     // rather than "ask the X". Operator gets a bit of cross-talk in
     // exchange for actual agent-to-agent collaboration.
     let lower = reply.to_ascii_lowercase();
-    for peer in VALID_PEERS {
-        if *peer == speaker { continue; }
+    for peer in valid_peers.iter() {
+        if peer == speaker { continue; }
         // Require word-boundary match so "cto" doesn't fire on "actor"
         let needles = [
             format!(" {} ", peer),
@@ -438,12 +411,16 @@ pub fn spawn(
             .unwrap_or_else(|_| REPLY_MODEL_COMMIT_DEFAULT.to_string())
     });
     let sem = Arc::new(Semaphore::new(concurrency));
+    // Warm the YAML-driven roster eagerly so the count + sample names show
+    // up in the log before the first tick rather than on lazy init.
+    let _ = roster();
     tokio::spawn(async move {
         tracing::info!(
             concurrency = concurrency,
             chat_model = %model_chat,
             commit_model = %model_commit,
-            "org_responder: parallelism + per-mode pinned models"
+            roster_size = roster().names.len(),
+            "org_responder: parallelism + per-mode pinned models + roster"
         );
         let http = match reqwest::Client::builder()
             .timeout(Duration::from_secs(120))
@@ -473,8 +450,10 @@ pub fn spawn(
             // its own message queue concurrently. Messages within a single
             // role are still serial to keep that persona's conversation
             // linear.
-            let mut handles = Vec::with_capacity(RESPONDER_ROLES.len());
-            for role in RESPONDER_ROLES {
+            let roles = &roster().names;
+            let mut handles = Vec::with_capacity(roles.len());
+            for role in roles {
+                let role = role.clone();
                 let comm = comm.clone();
                 let persona = persona.clone();
                 let http = http.clone();
@@ -484,7 +463,7 @@ pub fn spawn(
                 let model_chat = model_chat.clone();
                 let model_commit = model_commit.clone();
                 handles.push(tokio::spawn(async move {
-                    if let Err(e) = process_role(role, &comm, &persona, &http, &inference_url, &replied, &sem, &model_chat, &model_commit).await {
+                    if let Err(e) = process_role(&role, &comm, &persona, &http, &inference_url, &replied, &sem, &model_chat, &model_commit).await {
                         tracing::debug!(role = %role, error = %e, "org_responder: tick error");
                     }
                 }));
