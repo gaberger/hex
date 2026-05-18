@@ -1,0 +1,29 @@
+{
+  "id": "",
+  "title": "Plan: Implement Mission Control kanban orphan-row filter per ADR-2605151200 and spec docs/specs/kanban-hide-drained-orphans.md. Frontend in hex-nexus/assets/src/components/views/MissionControl.tsx (Solid.js). Add reactive isOrphaned() check, hide auto-drained orphaned rows from Ready+Failed lanes, show collapsible 'N tasks auto-drained' banner, default collapsed. Rebuild hex-nexus binary after asset change. No backend schema change.",
+  "feature": "",
+  "language": "typescript",
+  "status": "planned",
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Implement Mission Control kanban orphan-row filter per ADR-2605151200 and spec docs/specs/kanban-hide-drained-orphans.md. Frontend in hex-nexus/assets/src/components/views/MissionControl.tsx (Solid.js). Add reactive isOrphaned() check, hide auto-drained orphaned rows from Ready+Failed lanes, show collapsible 'N tasks auto-drained' banner, default collapsed. Rebuild hex-nexus binary after asset change. No backend schema change.",
+      "adapter": "primary/browser-adapter",
+      "tier": 2,
+      "dependencies": [
+        "ports"
+      ],
+      "status": "pending",
+      "done_condition": "",
+      "verify": "",
+      "files": [],
+      "done_command": ""
+    }
+  ],
+  "phases": [],
+  "created_at": "2026-05-18T14:45:00.166802356+00:00",
+  "adr": "",
+  "description": "",
+  "priority": "",
+  "superseded_by": ""
+}

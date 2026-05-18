@@ -1,6 +1,8 @@
 # ADR-2026-05-20-ic-responder-gap
 
-## Status: Proposed
+- **Status**: Proposed
+- **Date**: 2026-05-20
+- **Authors**: cto (drafted via SOP), gary (implemented + revised post-ship)
 
 ## Context
 
@@ -21,44 +23,60 @@ The current IC responder system is limited to only five executive roles, while t
 
 ## Decision
 
-We will implement option 2: **Add a Sister IcResponder Daemon**.
+We will implement a **hybrid of Option 1 (Widen Allowlist) and Option 3
+(Data-Driven from YAML)**, in a single existing daemon, instead of the
+originally-proposed Option 2 (sister daemon).
 
-### Rationale
+### Rationale (revised after implementation)
 
-- **Separation of Concerns**: By adding a separate daemon, we can maintain clarity and separation between the handling of executive roles and other non-executive roles.
-- **Scalability**: This approach is scalable and allows for future enhancements specific to each role without impacting the existing system.
-- **Data-Driven Design**: We will refactor the existing executive prompt-builder (lines 108-111 and 266-269 in `org_responder.rs`) to be data-driven, using YAML files to define prompts for all roles. This will make the system more flexible and easier to maintain.
+- **No new daemon**: `org_responder.rs` already polls inboxes on a 4s
+  tick with per-role fanout and a 3-slot semaphore. Spinning up a sister
+  daemon would duplicate the tick loop, semaphore, and STDB query path
+  with zero behavioral difference — pure overhead.
+- **Data-driven, not hardcoded**: the responder loads its roster at
+  startup from `parse_agent_yamls()` (already in
+  `routes/org_chart.rs`), keyed off the `name:` + `role:` fields of
+  every YAML in `hex-cli/assets/agents/hex/hex/`. Adding a new persona
+  YAML now auto-enables responder coverage without a code change.
+- **One source of truth**: `RESPONDER_ROLES`, `role_title()`, and
+  `VALID_PEERS` (the @mention auto-CC allowlist) all read from the
+  same `Roster` cache. No three-way drift.
 
-### Implementation
+### Implementation (shipped)
 
-1. **Create a New Daemon**: Develop a new daemon that will handle responses for non-executive personas.
-   - Location: `hex-nexus/src/orchestration/ic_responder_daemon.rs`
-   - Functionality: Poll inboxes for all roles listed in the persona pool and respond based on their YAML definitions.
+| Commit | What |
+|---|---|
+| `016174d1` | Phase 1: widen hardcoded allowlist from 5 execs to all 26 ICs (immediate unblock) |
+| `b3f26ce4` | Phase 2: replace the hardcoded array with `parse_agent_yamls()` at startup; titles + peer set derive from YAML. -136 / +117 LOC. |
+| n/a (YAML) | `dashboard-ux-architect.yml` was missing `role:` + `tier:` fields; one persona that was parsing as `Unknown`. Added in the same Phase 2 commit. |
 
-2. **Refactor Prompt Builder**:
-   - Modify the existing prompt-builder to use a data-driven approach.
-   - Update `org_responder.rs` to load prompts from YAML files, ensuring that each role receives a system prompt flavored to its specific needs.
+### Empirical validation
 
-3. **Integrate and Test**: Integrate the new daemon with the existing system and conduct thorough testing to ensure that all roles are being responded to appropriately.
+Within 5 seconds of nexus restart on 2026-05-18 11:46 UTC:
 
-### Timeline
+- `dashboard-ux-architect` cleared its 2-day-stuck DMs (msg 126990 from
+  2026-05-15 CC, msg 126995 from 2026-05-17 CEO ask) and emitted
+  `Confirm: I will draft docs/specs/kanban-hide-drained-orphans.md by EOW`.
+- `hex-coder` and `validation-judge` also polled their previously-ignored
+  inboxes and emitted contract-conforming replies.
+- `dashboard-ux-architect`'s Confirm row was consumed by the digital-twin
+  loop and the spec landed on disk as autonomous commit `8fa37d0c`.
 
-- **Week 1**: Design and development of the sister IcResponder daemon.
-- **Week 2**: Refactoring the prompt builder and integrating the new daemon.
-- **Week 3**: Testing and validation.
-- **Week 4**: Deployment and monitoring for any issues.
+## Consequences
 
-## Conclusion
-
-By implementing a sister IcResponder daemon, we address the gap in communication between non-executive personas and the organization. This solution ensures that every silent IC ask is responded to, improving overall operational efficiency and effectiveness.
+- Every persona with a YAML now receives `org_responder` coverage by
+  default — there is no longer any "online but silent" failure mode.
+- The hardcoded `marketing-*` / `research-*` role names that had been
+  in `RESPONDER_ROLES` but had no backing YAMLs were dropped (they were
+  unreachable anyway).
+- Fallback path: if `parse_agent_yamls()` fails (e.g. dev cwd without
+  the assets dir), a small static fallback covers the c-suite + leads.
+  In production deployments with the rust-embed assets extracted, the
+  scan always succeeds.
 
 ## References
 
-- `hex-nexus/src/orchestration/org_responder.rs`
-- `hex-cli/assets/agents/hex/hex/` (list of personas)
-- YAML persona definitions in `hex-cli/assets/agents/hex/hex/`
-
----
-
-Drafted by: cto
-Date: 2026-05-20
+- Code: `hex-nexus/src/orchestration/org_responder.rs`
+  (`fn build_roster_from_yamls`, `fn roster`)
+- Source data: `hex-cli/assets/agents/hex/hex/*.yml`
+- Parser: `hex-nexus/src/routes/org_chart.rs::parse_agent_yamls()`
