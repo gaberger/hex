@@ -1,7 +1,7 @@
 # ADR-2605151200 — kanban-orphan-row-filter
 
-- **Status**: Proposed
-- **Date**: 2026-05-18
+**Status:** Proposed
+**Date:** 2026-05-18
 - **Authors**: cto (autonomous, via `adr_draft` typed tool)
 
 ## Context
