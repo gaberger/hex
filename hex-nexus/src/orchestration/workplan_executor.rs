@@ -1172,12 +1172,21 @@ impl WorkplanExecutor {
             // ADR-2026-04-12-0202 P5.1: Classify task tier for routing
             let task_tier = classify_task_tier(task);
 
-            // ADR-2026-04-18-0001 P2: Tier-specific timeout guards
-            let timeout_secs = match task_tier {
-                TaskTier::T1 => 30u64,
-                TaskTier::T2 => 120u64,
-                TaskTier::T2_5 => 300u64,
-                TaskTier::T3 => 600u64,
+            // ADR-2026-04-18-0001 P2: Tier-specific timeout guards.
+            // ADR-2605141135 §Phase 1 #5: adaptive — `cargo check --workspace`
+            // alone exceeds 90s on this codebase, so the original T2=120s left
+            // ~30s for inference + writeback, causing routine codegen timeouts.
+            // Operator override via HEX_TASK_TIMEOUT_T{1,2,2_5,3}_SECS env vars.
+            let timeout_secs = {
+                let env_override = |key: &str| -> Option<u64> {
+                    std::env::var(key).ok().and_then(|v| v.parse::<u64>().ok())
+                };
+                match task_tier {
+                    TaskTier::T1   => env_override("HEX_TASK_TIMEOUT_T1_SECS").unwrap_or(60),
+                    TaskTier::T2   => env_override("HEX_TASK_TIMEOUT_T2_SECS").unwrap_or(240),
+                    TaskTier::T2_5 => env_override("HEX_TASK_TIMEOUT_T2_5_SECS").unwrap_or(420),
+                    TaskTier::T3   => env_override("HEX_TASK_TIMEOUT_T3_SECS").unwrap_or(900),
+                }
             };
 
             // Path C: headless inference dispatch for T1/T2/T2.5 in standalone mode.
