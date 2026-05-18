@@ -38,11 +38,19 @@ echo "Bumping workspace version to $VERSION..."
 sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
 rm -f Cargo.toml.bak
 
+# Keep package.json in lockstep — CI version-check (.github/workflows/ci.yml)
+# fails if Cargo.toml and package.json disagree. Past releases left this
+# stale; bumping both here fixes red version-check at the source.
+if [[ -f package.json ]]; then
+  sed -i.bak "s/^\(  \"version\": *\)\"[^\"]*\"/\1\"$VERSION\"/" package.json
+  rm -f package.json.bak
+fi
+
 echo "Running cargo check to update Cargo.lock..."
 cargo check -p hex-cli -p hex-nexus 2>&1 | tail -5
 
 echo "Staging changes..."
-git add Cargo.toml Cargo.lock
+git add Cargo.toml Cargo.lock package.json
 
 echo "Creating release commit..."
 git commit -m "chore(release): bump version to v${VERSION}"
