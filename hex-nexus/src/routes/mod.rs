@@ -52,6 +52,7 @@ pub mod trust;
 pub mod org_chart;
 pub mod stdb_registry;
 pub mod org_comms;
+pub mod sop;
 pub mod merge_gate;
 pub mod mission_control;
 pub mod resources;
@@ -583,6 +584,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/org/messages", get(org_comms::list_messages))
         .route("/api/org/conversation/{id}", get(org_comms::get_conversation))
         .route("/api/ops-sla", get(org_comms::ops_sla))
+        // SOP run telemetry (2026-05-18 — closes the IC-responder-gap follow-on)
+        .route("/api/org/sop/active", get(sop::list_active))
+        .route("/api/org/sop/recent", get(sop::list_recent))
+        .route("/api/org/sop/runs", get(sop::list_all))
         // ── ADR-2026-05-08-1126 dashboard surfaces ──────────────────────────
         .route("/api/merge/requests", get(merge_gate::list_merge_requests))
         .route("/api/merge/approve", post(merge_gate::approve_merge_request))

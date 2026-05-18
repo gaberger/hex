@@ -11,13 +11,129 @@
 //! Phase 4 VERIFY    — schema/cargo gate on the emitted action
 //! Phase 5 EMIT      — already handled by tools (proposed_action_open) + chat card
 
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::time::Duration;
+use std::collections::{HashSet, VecDeque};
+use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use serde::Serialize;
 use serde_json::{json, Value};
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::tools::ToolRegistry;
+
+// ---------------------------------------------------------------------------
+// In-memory SOP run store (2026-05-18 — closes the SOP telemetry gap from
+// ADR-2026-05-20-ic-responder-gap follow-on).
+//
+// Ring buffer of the last `SOP_RUN_RING_CAP` runs. Each run starts as
+// `in_flight` (no completed_at) and is patched to `completed`/`failed` when
+// `run()` returns. Dashboard polls `/api/org/sop/{active,recent,runs}`.
+//
+// State-loss on nexus restart is acceptable: the dashboard wants real-time
+// visibility, not historical archaeology. If durability ever matters, swap
+// the VecDeque for a STDB-backed table.
+
+const SOP_RUN_RING_CAP: usize = 200;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SopRunRecord {
+    pub id: u64,
+    pub role: String,
+    pub intent: String,
+    /// First 240 chars of the inbound DM. Enough for the dashboard preview
+    /// without bloating the JSON payload.
+    pub message_preview: String,
+    pub started_at_ms: u64,
+    pub completed_at_ms: Option<u64>,
+    /// `in_flight` | `completed` | `failed`
+    pub status: &'static str,
+    pub emitted_action_kind: Option<String>,
+    pub phase_trace: Vec<String>,
+    pub error: Option<String>,
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn ring() -> &'static AsyncMutex<VecDeque<SopRunRecord>> {
+    static RING: OnceLock<AsyncMutex<VecDeque<SopRunRecord>>> = OnceLock::new();
+    RING.get_or_init(|| AsyncMutex::new(VecDeque::with_capacity(SOP_RUN_RING_CAP)))
+}
+
+fn next_run_id() -> u64 {
+    static SEQ: AtomicU64 = AtomicU64::new(1);
+    SEQ.fetch_add(1, Ordering::Relaxed)
+}
+
+fn message_preview(s: &str) -> String {
+    let trimmed = s.trim();
+    if trimmed.chars().count() <= 240 {
+        trimmed.to_string()
+    } else {
+        let head: String = trimmed.chars().take(240).collect();
+        format!("{head}…")
+    }
+}
+
+/// Stamp an `in_flight` record at the start of `run()`. Returns the run ID
+/// so the caller can patch the record on completion.
+async fn record_start(role: &str, intent: &str, message: &str) -> u64 {
+    let id = next_run_id();
+    let rec = SopRunRecord {
+        id,
+        role: role.to_string(),
+        intent: intent.to_string(),
+        message_preview: message_preview(message),
+        started_at_ms: now_ms(),
+        completed_at_ms: None,
+        status: "in_flight",
+        emitted_action_kind: None,
+        phase_trace: Vec::new(),
+        error: None,
+    };
+    let mut g = ring().lock().await;
+    if g.len() >= SOP_RUN_RING_CAP {
+        g.pop_front();
+    }
+    g.push_back(rec);
+    id
+}
+
+/// Patch the record with the final SopResult.
+async fn record_end(id: u64, result: &SopResult) {
+    let mut g = ring().lock().await;
+    if let Some(rec) = g.iter_mut().find(|r| r.id == id) {
+        rec.completed_at_ms = Some(now_ms());
+        rec.status = if result.success { "completed" } else { "failed" };
+        rec.emitted_action_kind = result.emitted_action_kind.clone();
+        rec.phase_trace = result.phase_trace.clone();
+        rec.error = result.error.clone();
+    }
+}
+
+/// Snapshot helpers consumed by the `/api/org/sop/*` routes.
+pub async fn recent_runs(limit: usize) -> Vec<SopRunRecord> {
+    let g = ring().lock().await;
+    g.iter().rev().take(limit).cloned().collect()
+}
+
+pub async fn active_runs() -> Vec<SopRunRecord> {
+    let g = ring().lock().await;
+    g.iter()
+        .filter(|r| r.completed_at_ms.is_none())
+        .cloned()
+        .collect()
+}
+
+pub async fn all_runs() -> Vec<SopRunRecord> {
+    let g = ring().lock().await;
+    g.iter().rev().cloned().collect()
+}
 
 /// True if `role` is opted into the SOP path via env CSV
 /// `HEX_SOP_PERSONAS=cto,cpo`.
@@ -90,10 +206,22 @@ pub async fn run(
     operator_message: &str,
     repo_root: &str,
 ) -> SopResult {
-    let mut trace = Vec::new();
-
-    // PHASE 1 CLASSIFY
+    // PHASE 1 CLASSIFY (outside the inner fn so we can register the
+    // in_flight record with the correct intent before any LLM call).
     let intent = classify_intent(operator_message);
+    let run_id = record_start(role, intent, operator_message).await;
+    let result = run_inner(role, operator_message, repo_root, intent).await;
+    record_end(run_id, &result).await;
+    result
+}
+
+async fn run_inner(
+    role: &str,
+    operator_message: &str,
+    repo_root: &str,
+    intent: &'static str,
+) -> SopResult {
+    let mut trace = Vec::new();
     trace.push(format!("CLASSIFY → {}", intent));
 
     // GATE: paradigm questions escalate, no LLM.
