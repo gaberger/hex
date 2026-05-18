@@ -218,7 +218,15 @@ async fn derive_one(
         ],
         "tools": openai_tools,
         "tool_choice": { "type": "function", "function": { "name": "workplan_emit" } },
-        "max_tokens": 2048,
+        // Operator override: HEX_AUTO_EMITTER_MAX_TOKENS. Default 1024 because
+        // OpenRouter free-tier credit windows routinely cap below 2048 (live
+        // logs showed "can only afford 1221" — wedged the auto-emitter in a
+        // tight retry loop). 1024 fits within typical short-credit windows
+        // and is enough for a single workplan_emit tool-call payload.
+        "max_tokens": std::env::var("HEX_AUTO_EMITTER_MAX_TOKENS")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(1024),
     });
     let resp = http
         .post("https://openrouter.ai/api/v1/chat/completions")
