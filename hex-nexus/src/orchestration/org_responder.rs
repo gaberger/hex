@@ -1,10 +1,20 @@
-//! Executive responder background task.
+//! Org responder background task.
 //!
-//! Polls `agent_messages` for unanswered DMs addressed to executive personas
-//! (cto, cpo, coo, ciso, chief-visionary). For each unanswered DM, generates
-//! a reply via the local `/api/inference/complete` endpoint using a
-//! persona-flavoured system prompt and writes the reply back as a DM to the
-//! original sender. Marks the source DM as read so it isn't re-processed.
+//! Polls `agent_messages` for unanswered DMs addressed to ANY persona in the
+//! org chart (execs, leads, and ICs — see RESPONDER_ROLES). For each
+//! unanswered DM, generates a reply via the local `/api/inference/complete`
+//! endpoint using a persona-flavoured system prompt and writes the reply
+//! back as a DM to the original sender. Marks the source DM as read so it
+//! isn't re-processed.
+//!
+//! IC-responder widening (2026-05-18, ADR-2026-05-20-ic-responder-gap): the
+//! original responder only polled 5 execs. Asks routed to ICs (hex-coder,
+//! dashboard-ux-architect, validation-judge, etc.) registered as `online`
+//! in persona_pool but nothing read their inbox — silent black hole. The
+//! widened allowlist below covers every persona under
+//! hex-cli/assets/agents/hex/hex/. ICs use the same strict Confirm/Silent
+//! contract as execs; the factory pipeline (drafter→twin→executor) consumes
+//! their Confirm rows and produces the actual artifacts.
 //!
 //! "Unanswered" is determined by `read_by NOT contains role` — the responder
 //! always calls `mark_read(role, msg_id)` after replying, which doubles as
@@ -77,16 +87,41 @@ const REPLY_CONCURRENCY_DEFAULT: usize = 3;
 /// to @engineering-lead — actually gets replies. Without this, DMs to lead
 /// personas landed in STDB but nothing picked them up.
 const RESPONDER_ROLES: &[&str] = &[
-    // Software / development workspace
+    // Software / development workspace — executives
     "cto",
     "cpo",
     "coo",
     "ciso",
+    "ceo",
     "chief-visionary",
     "chief-architect",
+    // Software / development workspace — leads
     "engineering-lead",
     "product-lead",
     "sre-lead",
+    "validation-judge",
+    // Software / development workspace — ICs (added 2026-05-18 to close
+    // the IC-responder gap; see module doc).
+    "hex-coder",
+    "hex-fixer",
+    "hex-tester",
+    "hex-reviewer",
+    "hex-ux",
+    "hex-documenter",
+    "rust-refactorer",
+    "integrator",
+    "scaffold-validator",
+    "behavioral-spec-writer",
+    "pm-agent",
+    "adr-reviewer",
+    "dead-code-analyzer",
+    "adversarial-red",
+    "adversarial-blue",
+    "cli-designer",
+    "ux-designer",
+    "dashboard-ux-architect",
+    "platform-engineer",
+    "sre-engineer",
     // Marketing workspace (2026-05-15: operator request — personas should
     // match the workflow, not be locked to a software-org c-suite)
     "growth-lead",
@@ -104,17 +139,40 @@ const RESPONDER_ROLES: &[&str] = &[
 
 fn role_title(role: &str) -> &'static str {
     match role {
-        // Software / dev
+        // Software / dev — executives
+        "ceo" => "Chief Executive Officer",
         "cto" => "Chief Technology Officer",
         "cpo" => "Chief Product Officer",
         "coo" => "Chief Operating Officer",
         "ciso" => "Chief Information Security Officer",
         "chief-visionary" => "Chief Visionary",
         "chief-architect" => "Chief Architect",
+        // Software / dev — leads
         "engineering-lead" => "Engineering Lead",
         "product-lead" => "Product Lead",
         "sre-lead" => "SRE Lead",
-        "sre-engineer" => "SRE Engineer",
+        "validation-judge" => "Principal Architect",
+        // Software / dev — ICs (titles from hex-cli/assets/agents/hex/hex/*.yml `role:` field)
+        "hex-coder" => "Software Engineer",
+        "hex-fixer" => "Software Engineer",
+        "hex-tester" => "Test Engineer",
+        "hex-reviewer" => "Software Engineer",
+        "hex-ux" => "Frontend Engineer",
+        "hex-documenter" => "Technical Writer",
+        "rust-refactorer" => "Software Engineer",
+        "integrator" => "Integration Engineer",
+        "scaffold-validator" => "Product Engineer",
+        "behavioral-spec-writer" => "Product Engineer",
+        "pm-agent" => "Product Engineer",
+        "adr-reviewer" => "Product Engineer",
+        "dead-code-analyzer" => "Code Quality Engineer",
+        "adversarial-red" => "Security Engineer",
+        "adversarial-blue" => "QA Engineer",
+        "cli-designer" => "UX Designer",
+        "ux-designer" => "UX Designer",
+        "dashboard-ux-architect" => "Information Architect",
+        "platform-engineer" => "Platform Engineer",
+        "sre-engineer" => "Site Reliability Engineer",
         // Marketing
         "growth-lead" => "Growth Lead",
         "content-lead" => "Content Lead",
@@ -171,11 +229,20 @@ fn is_conversational(content: &str) -> bool {
 /// Used by the inter-persona auto-CC.
 fn first_peer_mention(reply: &str, speaker: &str) -> Option<String> {
     const VALID_PEERS: &[&str] = &[
+        // Execs + leads
         "ceo", "cto", "cpo", "ciso", "coo",
         "chief-visionary", "chief-architect",
         "product-lead", "engineering-lead", "design-lead", "sre-lead",
         "validation-judge",
-        "ux-designer", "dashboard-ux-architect",
+        // ICs (added 2026-05-18 so execs can CC them via @mention auto-forward
+        // — matches the widened RESPONDER_ROLES allowlist)
+        "hex-coder", "hex-fixer", "hex-tester", "hex-reviewer",
+        "hex-ux", "hex-documenter", "rust-refactorer", "integrator",
+        "scaffold-validator", "behavioral-spec-writer", "pm-agent",
+        "adr-reviewer", "dead-code-analyzer",
+        "adversarial-red", "adversarial-blue",
+        "cli-designer", "ux-designer", "dashboard-ux-architect",
+        "platform-engineer", "sre-engineer",
         // Marketing
         "growth-lead", "content-lead", "brand-strategist",
         "campaign-manager", "analytics-lead",
@@ -262,18 +329,9 @@ fn conversational_prompt(role: &str) -> String {
 /// of system prompt but eliminate the "I will respond with…" rambling
 /// path entirely.
 fn persona_prompt(role: &str) -> String {
-    let role_title = match role {
-        "cto" => "Chief Technology Officer",
-        "cpo" => "Chief Product Officer",
-        "coo" => "Chief Operating Officer",
-        "ciso" => "Chief Information Security Officer",
-        "chief-visionary" => "Chief Visionary",
-        "engineering-lead" => "Engineering Lead",
-        "product-lead" => "Product Lead",
-        "sre-lead" => "SRE Lead",
-        "sre-engineer" => "SRE Engineer",
-        _ => "Executive",
-    };
+    // Single source of truth for role titles — keeps IC titles in sync with
+    // the conversational path without duplicating the match arm.
+    let role_title = role_title(role);
     format!(
         "You are the {role_title} ({role}) in a hexagonal AIOS organization. \
          The CEO sent a message addressed to you or your role tier.\n\n\
