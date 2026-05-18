@@ -2,7 +2,7 @@
 
 ## Date: 2026-05-12
 
-## Status: Draft
+## Status: Proposed
 
 ## Context
 
