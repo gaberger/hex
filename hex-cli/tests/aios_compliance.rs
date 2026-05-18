@@ -24,26 +24,12 @@ use std::process::Command;
 /// Locate the hex binary. Prefer the debug build in target/debug since
 /// integration tests are run against debug builds by default.
 fn hex_bin() -> Command {
-    // `cargo test` sets CARGO_BIN_EXE_hex-cli for [[bin]] targets, but
-    // integration test files don't get that automatically. Use cargo's
-    // manifest dir to find the workspace target directory.
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let workspace_root = std::path::Path::new(manifest_dir)
-        .parent()
-        .expect("hex-cli must be inside workspace");
-    let debug_bin = workspace_root.join("target/debug/hex");
-    let release_bin = workspace_root.join("target/release/hex");
-
-    let bin_path = if debug_bin.exists() {
-        debug_bin
-    } else if release_bin.exists() {
-        release_bin
-    } else {
-        // Fall back to PATH
-        return Command::new("hex");
-    };
-
-    Command::new(bin_path)
+    // CARGO_BIN_EXE_hex IS available for [[bin]] targets in integration
+    // tests — the previous comment was wrong. It points at whichever
+    // profile cargo just built (debug for `cargo test`, release for
+    // `cargo test --release`), which is exactly what we want and which
+    // CI's target-triple build dir handles correctly.
+    Command::new(env!("CARGO_BIN_EXE_hex"))
 }
 
 /// Assert that `hex <args> --help` exits 0 (clap prints help and exits).

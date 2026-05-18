@@ -22,22 +22,12 @@ fn gated() -> bool {
 }
 
 fn hex_binary() -> PathBuf {
-    let candidates = [
-        "../target/x86_64-unknown-linux-gnu/release/hex",
-        "../target/release/hex",
-        "target/x86_64-unknown-linux-gnu/release/hex",
-        "target/release/hex",
-    ];
-    for c in &candidates {
-        let p = PathBuf::from(c);
-        if p.exists() {
-            return p.canonicalize().unwrap_or_else(|_| p);
-        }
-    }
-    panic!(
-        "hex binary not found in any of: {:?}. Build with `cargo build -p hex-cli --release` first.",
-        candidates
-    );
+    // Use Cargo's CARGO_BIN_EXE_* env var so we exercise whichever
+    // profile the test harness built (debug for `cargo test`, release
+    // for `cargo test --release`). Hard-coded path lookups failed on
+    // CI which only builds debug. Same fix as
+    // hex-agent/tests/daemon_worktree_required.rs.
+    PathBuf::from(env!("CARGO_BIN_EXE_hex"))
 }
 
 fn unique_path(label: &str) -> String {

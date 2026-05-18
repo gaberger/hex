@@ -13,23 +13,10 @@
 
 use std::process::Command;
 
-/// Locate the hex binary (debug preferred, release fallback, PATH last).
+/// Locate the hex binary via Cargo's CARGO_BIN_EXE_hex env var —
+/// works on debug, release, and CI's target-triple build dir alike.
 fn hex_bin() -> Command {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let workspace_root = std::path::Path::new(manifest_dir)
-        .parent()
-        .expect("hex-cli must be inside workspace");
-    let debug_bin = workspace_root.join("target/debug/hex");
-    let release_bin = workspace_root.join("target/release/hex");
-
-    let bin_path = if debug_bin.exists() {
-        debug_bin
-    } else if release_bin.exists() {
-        release_bin
-    } else {
-        return Command::new("hex");
-    };
-    Command::new(bin_path)
+    Command::new(env!("CARGO_BIN_EXE_hex"))
 }
 
 #[test]
