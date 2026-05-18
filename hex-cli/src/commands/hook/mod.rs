@@ -2670,7 +2670,6 @@ impl Tier {
 ///   P0 — Escape hatches (always T1, evaluated first)
 ///   P1 — Constraint signals: questions, trivial edits, confirmatory replies
 ///   P2 — Scored classification: feature verbs, subsystem nouns, cross-cutting
-
 #[allow(dead_code)]
 pub struct ClassifierRule {
     pub label: &'static str,

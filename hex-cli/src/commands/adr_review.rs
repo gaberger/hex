@@ -461,14 +461,17 @@ impl LocalAdrReviewer {
     }
 
     /// Field-line matcher accepting every ADR header style observed in
-    /// the corpus:
-    ///   - **Key**: value
-    ///   **Key**: value
-    ///   **Key:** value     (colon inside bold — ~60% of corpus)
-    ///   Key: value
-    ///   ## Key: value      (heading with inline value — ~6 ADRs use this)
-    ///   ## Key             (heading-only; value is on the next line —
-    ///                       handled separately at the parse-state level)
+    /// the corpus.
+    ///
+    /// ```text
+    /// - **Key**: value
+    /// **Key**: value
+    /// **Key:** value     (colon inside bold — ~60% of corpus)
+    /// Key: value
+    /// ## Key: value      (heading with inline value — ~6 ADRs use this)
+    /// ## Key             (heading-only; value is on the next line —
+    ///                     handled separately at the parse-state level)
+    /// ```
     fn field_line(trimmed_lower: &str, key: &str) -> bool {
         trimmed_lower.starts_with(&format!("- **{key}**:"))
             || trimmed_lower.starts_with(&format!("**{key}**:"))

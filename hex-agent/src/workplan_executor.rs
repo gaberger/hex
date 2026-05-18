@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use hex_core::ports::file_writer::IFileWriter;
@@ -68,7 +68,7 @@ fn validate_code_output(code: &str, file_path: Option<&str>) -> Result<(), Strin
         return Err(String::from("Code contains multiple empty vec![] - likely placeholder"));
     }
 
-    if code.matches("```").count() % 2 != 0 {
+    if !code.matches("```").count().is_multiple_of(2) {
         return Err(String::from("Unmatched markdown fences found"));
     }
 

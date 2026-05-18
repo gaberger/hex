@@ -5,7 +5,6 @@ mod agent_comms_subscriber;
 use agent_comms_subscriber::{subscribe_and_listen, AgentCommsConfig};
 use anyhow::Context;
 use clap::Parser;
-use uuid::Uuid;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};

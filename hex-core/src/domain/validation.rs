@@ -22,7 +22,7 @@ pub const CRITICAL_FILES: &[&str] = &[
 /// infrastructure file. Used by validation rules to prevent modification
 /// of sensitive files by autonomous agents (SafeFileWriter adapter).
 pub fn is_critical_path(path: &str) -> bool {
-    if CRITICAL_PATHS.iter().any(|&critical| path == critical) {
+    if CRITICAL_PATHS.contains(&path) {
         return true;
     }
     let normalized = path.trim_end_matches('/');

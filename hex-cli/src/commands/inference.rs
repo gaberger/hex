@@ -1964,7 +1964,7 @@ async fn bench_chat(
     }
 }
 
-/// Run the identity prompt — measures latency floor and basic responsiveness.
+// Run the identity prompt — measures latency floor and basic responsiveness.
 // ── Persona-task benchmarks (the three shapes hex actually uses) ────────────
 //
 // These mirror what hex-nexus/src/orchestration/org_responder.rs +

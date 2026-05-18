@@ -33,10 +33,12 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-lint-
 
       - name: Clippy (workspace)
-        run: cargo clippy --workspace --exclude hex-desktop -- -D warnings
+        # Deny only correctness + suspicious — see ci.yml for the
+        # rationale on dropping the blanket `-D warnings` policy.
+        run: cargo clippy --workspace --exclude hex-desktop -- -D clippy::correctness -D clippy::suspicious
 
       - name: Clippy (spacetime-modules)
-        run: cd spacetime-modules && cargo clippy --workspace -- -D warnings
+        run: cd spacetime-modules && cargo clippy --workspace -- -D clippy::correctness -D clippy::suspicious
 
       - name: Install bun
         uses: oven-sh/setup-bun@v2

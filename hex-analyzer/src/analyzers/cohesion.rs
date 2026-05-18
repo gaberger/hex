@@ -209,10 +209,16 @@ fn find_decl_list(node: Node<'_>) -> Option<Node<'_>> {
     if let Some(b) = node.child_by_field_name("body") {
         return Some(b);
     }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "declaration_list" {
-            return Some(child);
+    // `.find()` can't return through this cursor's drop — tree-sitter's
+    // Node<'cursor> borrows from cursor and the Option would dangle.
+    // Keep the explicit loop and silence the lint.
+    #[allow(clippy::manual_find)]
+    {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "declaration_list" {
+                return Some(child);
+            }
         }
     }
     None

@@ -275,8 +275,7 @@ fn parse_adr_status_and_date(content: &str) -> Option<(bool, String)> {
 ///   * `## Status: ...`        (heading)
 ///   * `- **Status**: ...`     (list item)
 fn field_value<'a>(line: &'a str, field: &str) -> Option<&'a str> {
-    let stripped =
-        line.trim_start_matches(|c: char| matches!(c, '#' | '*' | '-' | ' ' | '\t'));
+    let stripped = line.trim_start_matches(['#', '*', '-', ' ', '\t']);
     let lower = stripped.to_ascii_lowercase();
     if !lower.starts_with(&field.to_ascii_lowercase()) {
         return None;
@@ -284,8 +283,7 @@ fn field_value<'a>(line: &'a str, field: &str) -> Option<&'a str> {
     let after_field = &stripped[field.len()..];
     // Tolerate `**field**:` shape — strip any combination of `*`, `:`,
     // and whitespace before the value.
-    let trimmed = after_field
-        .trim_start_matches(|c: char| matches!(c, '*' | ':' | ' ' | '\t'));
+    let trimmed = after_field.trim_start_matches(['*', ':', ' ', '\t']);
     // Sanity: there must have been at least one ':' separating field
     // from value, otherwise we'd match a sentence starting with the
     // field name in prose.
