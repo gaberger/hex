@@ -1363,14 +1363,44 @@ impl WorkplanExecutor {
                         "workplan_id": workplan_id,
                         "summary": format!("Task queued: {}", task_label),
                     }).to_string();
-                    // Target the active CC agent directly (most recent session heartbeat).
-                    // Fall back to broadcast if no session found.
-                    if let Some(cc_agent_id) = find_active_cc_agent_id() {
+                    // Target an online worker — prefer the hex_agent registry (real-time
+                    // truth) over file-based session heartbeats (can be stale, leading
+                    // to the "phantom UUID" lookup miss documented in ADR-2605141135
+                    // §Phase 1 #4). File fallback only kicks in for Path B sessions
+                    // running outside the registry (legacy Claude Code wrapper).
+                    let registry_target: Option<String> = match sp.hex_agent_list().await {
+                        Ok(agents) => agents
+                            .iter()
+                            .filter(|a| {
+                                let status_ok = a.get("status")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s == "online" || s == "active")
+                                    .unwrap_or(false);
+                                let role_match = a.get("role")
+                                    .and_then(|v| v.as_str())
+                                    .map(|r| r == "hex-coder" || r.starts_with("hex-"))
+                                    .unwrap_or(false);
+                                status_ok && role_match
+                            })
+                            // Most recently heartbeated wins (string compare on RFC3339 ts).
+                            .max_by(|a, b| {
+                                let ah = a.get("last_heartbeat").and_then(|v| v.as_str()).unwrap_or("");
+                                let bh = b.get("last_heartbeat").and_then(|v| v.as_str()).unwrap_or("");
+                                ah.cmp(bh)
+                            })
+                            .and_then(|a| a.get("id").and_then(|v| v.as_str()).map(String::from)),
+                        Err(_) => None,
+                    };
+
+                    if let Some(agent_id) = registry_target {
+                        let _ = sp.inbox_notify(&agent_id, 2, "inference-queue", &payload).await;
+                        tracing::info!(queue_id = %queue_id, task_id = %task_id, agent_id = %agent_id, source = "hex_agent_registry", "Path B: task enqueued, inbox notified");
+                    } else if let Some(cc_agent_id) = find_active_cc_agent_id() {
                         let _ = sp.inbox_notify(&cc_agent_id, 2, "inference-queue", &payload).await;
-                        tracing::info!(queue_id = %queue_id, task_id = %task_id, cc_agent = %cc_agent_id, "Path B: task enqueued, inbox notified");
+                        tracing::info!(queue_id = %queue_id, task_id = %task_id, cc_agent = %cc_agent_id, source = "session_file", "Path B: task enqueued, inbox notified");
                     } else {
                         let _ = sp.inbox_notify_all("", 2, "inference-queue", &payload).await;
-                        tracing::info!(queue_id = %queue_id, task_id = %task_id, "Path B: task enqueued, broadcast notification (no session found)");
+                        tracing::info!(queue_id = %queue_id, task_id = %task_id, source = "broadcast", "Path B: task enqueued, no registered or session-tracked agent — broadcast");
                     }
                     // Poll STDB inference_task for completion (2s interval, faster than 5s memory poll)
                     // Timeout is tier-specific (ADR-2026-04-18-0001 P2): T1=30s, T2=120s, T2.5=300s, T3=600s
