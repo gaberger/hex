@@ -377,6 +377,17 @@ pub async fn inference_complete(
             format!("mistralai/{}", model)
         } else if model.starts_with("deepseek-") {
             format!("deepseek/{}", model)
+        } else if model.contains(':') {
+            // Ollama-style (e.g. qwen2.5-coder:14b) — won't resolve on OpenRouter.
+            // When no local Ollama provider is registered to serve it, substitute
+            // a tool-capable OpenRouter default so the drafter/SOP chain doesn't
+            // 502 on "not a valid model ID". Mirrors the tools fast-path at L146-156.
+            tracing::warn!(
+                requested = %model,
+                fallback = "anthropic/claude-haiku-4.5",
+                "legacy path: Ollama-style model substituted with OpenRouter-capable default"
+            );
+            "anthropic/claude-haiku-4.5".to_string()
         } else {
             model.to_string()
         }
