@@ -135,15 +135,32 @@ impl AdrConformanceChecker {
 
 fn parse_adr(path: &Path) -> Option<AdrRecord> {
     let stem = path.file_stem()?.to_str()?;
-    // Match the ADR-NNNNNNNNNN prefix (case-insensitive). Filenames
-    // observed in the project: "ADR-2026-04-26-1500-...", "ADR-2026-04-17-0001-...".
+    // Match either the legacy `ADR-047` shape or the timestamp shape
+    // `ADR-2026-04-26-1500` (case-insensitive on the `ADR` prefix).
+    // The old impl took only the first `-`-separated digit group, which
+    // collapsed `ADR-2026-04-26-1500-substrate` to `ADR-2026` — a bug
+    // the tests caught (parse_adr_extracts_id_and_status_from_real_file_shape,
+    // parse_adr_handles_lowercase_filename_prefix).
     let id = stem
         .split_once('-')
         .filter(|(prefix, _)| prefix.eq_ignore_ascii_case("adr"))
         .and_then(|(_, rest)| {
-            let id_part = rest.split('-').next()?;
-            // The id portion should be all digits.
-            if !id_part.chars().all(|c| c.is_ascii_digit()) {
+            let chars: Vec<char> = rest.chars().collect();
+            let mut id_part = String::new();
+            let mut i = 0;
+            while i < chars.len() {
+                let c = chars[i];
+                if c.is_ascii_digit() {
+                    id_part.push(c);
+                    i += 1;
+                } else if c == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
+                    id_part.push(c);
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            if id_part.is_empty() {
                 return None;
             }
             Some(format!("ADR-{}", id_part))
@@ -209,7 +226,24 @@ fn check_against(
 fn extract_adr_id(adapter_id: &str) -> Option<String> {
     let lower = adapter_id.to_lowercase();
     let rest = lower.strip_prefix("adr-")?;
-    let id_part: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    // Accept both legacy (`ADR-047`) and timestamp (`ADR-2026-04-12-0202`)
+    // ID shapes: consume digit-groups joined by single dashes, stopping
+    // at any non-digit-non-dash boundary.
+    let chars: Vec<char> = rest.chars().collect();
+    let mut id_part = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_ascii_digit() {
+            id_part.push(c);
+            i += 1;
+        } else if c == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
+            id_part.push(c);
+            i += 1;
+        } else {
+            break;
+        }
+    }
     if id_part.is_empty() {
         return None;
     }
@@ -368,7 +402,10 @@ mod tests {
         let checker = AdrConformanceChecker::new(dir.path());
         let reg = checker.load_registry();
         assert_eq!(reg.len(), 2);
-        assert_eq!(reg["ADR-2026-04-26-1500"].status, AdrStatus::Accepted);
-        assert_eq!(reg["ADR-2026-04-12-0202"].status, AdrStatus::Superseded);
+        // load_registry() canonicalizes keys to lowercase so consumers
+        // can look up case-insensitively. parse_adr() still returns the
+        // original `ADR-` cased id in the record's `id` field.
+        assert_eq!(reg["adr-2026-04-26-1500"].status, AdrStatus::Accepted);
+        assert_eq!(reg["adr-2026-04-12-0202"].status, AdrStatus::Superseded);
     }
 }

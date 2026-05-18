@@ -490,11 +490,30 @@ fn adr_id_from_filename(path: &Path) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("");
     let rest = stem.strip_prefix("ADR-").unwrap_or(stem);
-    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-    if digits.is_empty() {
+    // Accept two ID shapes:
+    //   legacy:    ADR-047               → consume digits only
+    //   timestamp: ADR-2026-03-22-1500   → consume digit-groups joined by single dashes
+    // Walk char by char, taking digits + interior dashes (where both
+    // sides are digits). Trim a trailing dash if the run ended there.
+    let mut id_part = String::new();
+    let chars: Vec<char> = rest.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_ascii_digit() {
+            id_part.push(c);
+            i += 1;
+        } else if c == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
+            id_part.push(c);
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    if id_part.is_empty() {
         stem.to_string()
     } else {
-        format!("ADR-{}", digits)
+        format!("ADR-{}", id_part)
     }
 }
 

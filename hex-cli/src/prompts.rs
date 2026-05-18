@@ -16,7 +16,7 @@ const PROMPTS_PREFIX: &str = "prompts/";
 /// A loaded prompt template with placeholder expansion.
 #[derive(Debug, Clone)]
 pub struct PromptTemplate {
-    /// Template name (e.g. "ADR-generate")
+    /// Template name (e.g. "adr-generate")
     pub name: String,
     /// Raw template content with `{{placeholder}}` tokens
     raw: String,
@@ -28,7 +28,7 @@ impl PromptTemplate {
     /// # Examples
     /// ```no_run
     /// use hex_cli::prompts::PromptTemplate;
-    /// let tmpl = PromptTemplate::load("ADR-generate").unwrap();
+    /// let tmpl = PromptTemplate::load("adr-generate").unwrap();
     /// ```
     pub fn load(name: &str) -> anyhow::Result<Self> {
         let asset_path = format!("{}{}.md", PROMPTS_PREFIX, name);
@@ -142,10 +142,10 @@ mod tests {
 
     #[test]
     fn load_adr_generate() {
-        let tmpl = PromptTemplate::load("ADR-generate");
-        assert!(tmpl.is_ok(), "ADR-generate template should load");
+        let tmpl = PromptTemplate::load("adr-generate");
+        assert!(tmpl.is_ok(), "adr-generate template should load");
         let tmpl = tmpl.unwrap();
-        assert_eq!(tmpl.name, "ADR-generate");
+        assert_eq!(tmpl.name, "adr-generate");
         assert!(tmpl.raw.contains("{{user_description}}"));
     }
 
@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn render_replaces_placeholders() {
-        let tmpl = PromptTemplate::load("ADR-generate").unwrap();
+        let tmpl = PromptTemplate::load("adr-generate").unwrap();
         let mut ctx = HashMap::new();
         ctx.insert("user_description".to_string(), "Add caching layer".to_string());
         ctx.insert("existing_adrs".to_string(), "ADR-001, ADR-002".to_string());
@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn missing_placeholder_becomes_empty() {
-        let tmpl = PromptTemplate::load("ADR-generate").unwrap();
+        let tmpl = PromptTemplate::load("adr-generate").unwrap();
         let ctx = HashMap::new(); // no values at all
         let rendered = tmpl.render(&ctx);
         // Placeholders should be gone (replaced with empty string)
@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn list_returns_all_templates() {
         let templates = PromptTemplate::list();
-        assert!(templates.contains(&"ADR-generate".to_string()));
+        assert!(templates.contains(&"adr-generate".to_string()));
         assert!(templates.contains(&"workplan-generate".to_string()));
         assert!(templates.contains(&"code-generate".to_string()));
         assert!(templates.contains(&"test-generate".to_string()));

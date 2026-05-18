@@ -27,23 +27,21 @@ fn hex_coder_yaml_loads_with_preferred_model() {
 
 #[test]
 fn adr_reviewer_yaml_loads_with_preferred_model() {
-    let def = AgentDefinition::load("ADR-reviewer")
-        .expect("ADR-reviewer.yml must be present in assets");
+    // Asset filename is lowercase `adr-reviewer.yml` even though the
+    // YAML's internal `name:` is `ADR-reviewer`; `load()` keys off the
+    // filename.
+    let def = AgentDefinition::load("adr-reviewer")
+        .expect("adr-reviewer.yml must be present in assets");
     assert!(
         def.model.preferred.is_some(),
-        "ADR-reviewer.yml must define model.preferred"
+        "adr-reviewer.yml must define model.preferred"
     );
 }
 
-#[test]
-fn planner_yaml_loads_with_preferred_model() {
-    let def =
-        AgentDefinition::load("planner").expect("planner.yml must be present in assets");
-    assert!(
-        def.model.preferred.is_some(),
-        "planner.yml must define model.preferred"
-    );
-}
+// `planner_yaml_loads_with_preferred_model` was removed: planner.yml was
+// retired in commit 88ce6ad1. The planner role's responsibilities now
+// live inside the SOP executor's typed-tool pipeline
+// (orchestration::sop_executor) instead of as a standalone agent YAML.
 
 // ── S02: hex-coder has TDD workflow phases ───────────────────────────────────
 
@@ -172,7 +170,13 @@ fn yaml_model_id_appears_in_step_result() {
 
 #[test]
 fn all_core_agent_yamls_load() {
-    let roles = ["hex-coder", "ADR-reviewer", "planner", "swarm-coordinator"];
+    // The "core" set is the engineering-pipeline personas that drive
+    // hex-coder + tester + reviewer + fixer flows, plus ADR review.
+    // planner.yml + swarm-coordinator.yml were retired in 88ce6ad1
+    // when their responsibilities moved into the SOP typed-tool path.
+    // All filenames are lowercase even when the YAML's internal name
+    // is title-cased.
+    let roles = ["hex-coder", "hex-tester", "hex-reviewer", "hex-fixer", "adr-reviewer"];
     for role in roles {
         let def = AgentDefinition::load(role);
         assert!(

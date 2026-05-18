@@ -141,10 +141,17 @@ fn reconcile_update_preserves_pending_when_files_missing() {
     let _ = std::fs::remove_dir(&tmp_dir);
 }
 
-// ── Test 3: Fully-evidenced workplan — promotion works ──────────────────
-
+// ── Test 3: File-mod alone is no longer sufficient evidence ─────────────
+//
+// The reconciler was tightened (commit ef35c6cd) to require a commit
+// message referencing the phase/task-id, not just file modifications —
+// this closes the "70% reconciler false positive" loop the autonomous
+// audit memory called out. A file like Cargo.toml has thousands of
+// commits, none of which reference our test's `P1.1` task id, so the
+// task correctly stays pending. The test now asserts that behavior
+// rather than the legacy file-modifications-are-evidence shape.
 #[test]
-fn reconcile_promotes_tasks_with_full_evidence() {
+fn reconcile_does_not_promote_on_file_mod_alone() {
     // Build a workplan in a temp file pointing to files that actually exist
     // in the repo, with real ADR and created_at in the distant past so
     // any commit qualifies as "evidence".
@@ -193,27 +200,30 @@ fn reconcile_promotes_tasks_with_full_evidence() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{}\n{}", stdout, stderr);
 
-    // Cargo.toml has been modified by many commits since 2020-01-01.
-    // With an empty ADR field, scoped git evidence won't match, but
-    // the identifier grep or unscoped heuristics should still fire.
-    // At minimum, the task should NOT show as "already done" (it's pending).
-    // The important thing: the reconcile machinery runs without error.
+    // The reconciler must report on P1.1 (machinery ran).
     assert!(
         combined.contains("P1.1"),
         "Expected P1.1 in output. Got:\n{}",
         combined
     );
 
-    // With empty ADR and broad created_at, the git evidence check should
-    // still find modifications. If the evidence system is working,
-    // 1/1 tasks should be confirmed.
-    let has_promotion = combined.contains("1/1 steps confirmed done")
+    // P1.1 must NOT be promoted: Cargo.toml's many commits don't carry
+    // a message referencing this workplan's `P1.1` token. Under the
+    // tightened evidence rule (commit ef35c6cd) this is the correct
+    // verdict — file modifications alone are no longer sufficient.
+    let did_promote = combined.contains("1/1 steps confirmed done")
         || combined.contains("1/1 tasks confirmed done")
         || task_promoted(&combined, "P1.1");
-
     assert!(
-        has_promotion,
-        "Expected P1.1 to be promoted (Cargo.toml exists with git history). Got:\n{}",
+        !did_promote,
+        "Expected P1.1 to STAY PENDING (no commit-msg evidence). Got:\n{}",
+        combined
+    );
+    // Positive signal that the new contract fired: either "kept pending"
+    // wording or the 0/1 confirmed line.
+    assert!(
+        combined.contains("kept pending") || combined.contains("0/1 steps confirmed done"),
+        "Expected explicit `kept pending` or `0/1 ... confirmed done` signal. Got:\n{}",
         combined
     );
 

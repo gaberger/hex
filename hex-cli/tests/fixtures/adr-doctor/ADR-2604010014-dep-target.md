@@ -1,4 +1,4 @@
-# ADR-2026-04-01-0014: Dependency target
+# ADR-2604010014: Dependency target
 
 **Status:** Accepted
 **Date:** 2026-04-14

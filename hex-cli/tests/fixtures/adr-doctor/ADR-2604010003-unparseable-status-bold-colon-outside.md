@@ -1,4 +1,4 @@
-# ADR-2026-04-01-0003: Bold-colon-outside Status
+# ADR-2604010003: Bold-colon-outside Status
 
 **Status**: Accepted
 **Date:** 2026-04-03

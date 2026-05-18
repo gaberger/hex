@@ -1739,7 +1739,7 @@ mod tests {
 
     fn fixture_dir() -> PathBuf {
         let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        p.push("tests/fixtures/ADR-doctor");
+        p.push("tests/fixtures/adr-doctor");
         p
     }
 
@@ -1756,24 +1756,24 @@ mod tests {
 
     // UnparseableStatus ─────────────────────────────────────────────────
 
-    const FX_CLEAN: &str = "ADR-2026-04-01-0001-clean.md";
-    const FX_UNPARSE_BULLET: &str = "ADR-2026-04-01-0002-unparseable-status-bullet-bold.md";
-    const FX_UNPARSE_BOLD_OUT: &str = "ADR-2026-04-01-0003-unparseable-status-bold-colon-outside.md";
-    const FX_UNPARSE_ENUM: &str = "ADR-2026-04-01-0004-unparseable-status-enum-listing.md";
-    const FX_UNPARSE_INVALID: &str = "ADR-2026-04-01-0005-unparseable-status-invalid-value.md";
-    const FX_ID_MISMATCH: &str = "ADR-2026-04-01-0006-id-mismatch.md";
-    const FX_MISSING_STATUS: &str = "ADR-2026-04-01-0007-missing-status.md";
-    const FX_MISSING_DATE: &str = "ADR-2026-04-01-0008-missing-date.md";
-    const FX_MISSING_H1: &str = "ADR-2026-04-01-0009-missing-h1.md";
-    const FX_STALE: &str = "ADR-2026-04-01-0010-stale-proposed.md";
-    const FX_RECENT: &str = "ADR-2026-04-01-0011-recent-proposed.md";
-    const FX_SUPER_NO_LINK: &str = "ADR-2026-04-01-0012-superseded-no-link.md";
-    const FX_SUPER_LINKED: &str = "ADR-2026-04-01-0013-superseded-with-link.md";
-    const FX_DEP_TARGET: &str = "ADR-2026-04-01-0014-dep-target.md";
-    const FX_DEP_GOOD: &str = "ADR-2026-04-01-0015-dep-good.md";
-    const FX_DEP_DANGLING: &str = "ADR-2026-04-01-0016-dep-dangling.md";
-    const FX_DUP_A: &str = "ADR-2026-04-01-0099-a.md";
-    const FX_DUP_B: &str = "ADR-2026-04-01-0099-b.md";
+    const FX_CLEAN: &str = "ADR-2604010001-clean.md";
+    const FX_UNPARSE_BULLET: &str = "ADR-2604010002-unparseable-status-bullet-bold.md";
+    const FX_UNPARSE_BOLD_OUT: &str = "ADR-2604010003-unparseable-status-bold-colon-outside.md";
+    const FX_UNPARSE_ENUM: &str = "ADR-2604010004-unparseable-status-enum-listing.md";
+    const FX_UNPARSE_INVALID: &str = "ADR-2604010005-unparseable-status-invalid-value.md";
+    const FX_ID_MISMATCH: &str = "ADR-2604010006-id-mismatch.md";
+    const FX_MISSING_STATUS: &str = "ADR-2604010007-missing-status.md";
+    const FX_MISSING_DATE: &str = "ADR-2604010008-missing-date.md";
+    const FX_MISSING_H1: &str = "ADR-2604010009-missing-h1.md";
+    const FX_STALE: &str = "ADR-2604010010-stale-proposed.md";
+    const FX_RECENT: &str = "ADR-2604010011-recent-proposed.md";
+    const FX_SUPER_NO_LINK: &str = "ADR-2604010012-superseded-no-link.md";
+    const FX_SUPER_LINKED: &str = "ADR-2604010013-superseded-with-link.md";
+    const FX_DEP_TARGET: &str = "ADR-2604010014-dep-target.md";
+    const FX_DEP_GOOD: &str = "ADR-2604010015-dep-good.md";
+    const FX_DEP_DANGLING: &str = "ADR-2604010016-dep-dangling.md";
+    const FX_DUP_A: &str = "ADR-2604010099-a.md";
+    const FX_DUP_B: &str = "ADR-2604010099-b.md";
 
     #[test]
     fn unparseable_status_flags_bullet_bold_form() {
@@ -1831,8 +1831,8 @@ mod tests {
         let (path, content) = read_fixture(FX_ID_MISMATCH);
         let findings = detect_id_format_mismatch(&path, &content);
         assert_eq!(kinds(&findings), vec![FindingKind::IdFormatMismatch]);
-        assert_eq!(findings[0].adr_id, "ADR-2026-04-01-0006");
-        assert!(findings[0].detail.contains("ADR-2026-04-01-0006"));
+        assert_eq!(findings[0].adr_id, "ADR-2604010006");
+        assert!(findings[0].detail.contains("ADR-2604010006"));
         assert!(findings[0].detail.contains("ADR-2099-99-99-9999"));
     }
 
@@ -1861,7 +1861,7 @@ mod tests {
         // Use a temp file outside any git repo so file_has_git_history
         // returns false deterministically.
         let temp = tempfile::tempdir().expect("tempdir");
-        let path = temp.path().join("ADR-2026-04-01-0008-missing-date.md");
+        let path = temp.path().join("ADR-2604010008-missing-date.md");
         let (_, content) = read_fixture(FX_MISSING_DATE);
         std::fs::write(&path, &content).expect("write tempfile");
         let findings = detect_missing_required_field(&path, &content);
@@ -1980,7 +1980,7 @@ mod tests {
         assert_eq!(findings.len(), 2, "both colliding files should be flagged");
         for f in &findings {
             assert_eq!(f.kind, FindingKind::DuplicateId);
-            assert_eq!(f.adr_id, "ADR-2026-04-01-0099");
+            assert_eq!(f.adr_id, "ADR-2604010099");
         }
         let paths: HashSet<&PathBuf> = findings.iter().map(|f| &f.file_path).collect();
         assert!(paths.contains(&path_a));
@@ -2037,8 +2037,8 @@ mod tests {
 
     fn unparseable_finding() -> Finding {
         finding(
-            "ADR-2026-04-01-0002",
-            PathBuf::from("ADR-2026-04-01-0002.md"),
+            "ADR-2604010002",
+            PathBuf::from("ADR-2604010002.md"),
             FindingKind::UnparseableStatus,
             "buggy frontmatter form",
         )
@@ -2139,7 +2139,7 @@ mod tests {
     #[test]
     fn auto_fix_patch_is_idempotent_on_canonical_content() {
         let canonical = "\
-# ADR-2026-04-01-0001: Clean
+# ADR-2604010001: Clean
 
 **Status:** Accepted
 **Date:** 2026-04-15

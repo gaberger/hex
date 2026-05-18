@@ -30,6 +30,9 @@ fn daemon_starts_and_exits_cleanly_without_stdb() {
         .env("NEXUS_HOST", "127.0.0.1")
         .env("NEXUS_PORT", "19999") // nothing listening — fallback path
         .env("SPACETIMEDB_URL", "ws://127.0.0.1:19998") // nothing listening
+        // Bypass the ADR-2026-05-08-1126 worktree gate — this test is
+        // exercising the StDB-unreachable fallback, not worktree policy.
+        .env("HEXFLO_WORKTREE_REQUIRED", "0")
         .env("RUST_LOG", "off")
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -61,6 +64,8 @@ fn daemon_accepts_cli_flags() {
         .args(["--nexus-port", "19999"])
         .env("HEX_PROJECT_DIR", dir.path())
         .env("SPACETIMEDB_URL", "ws://127.0.0.1:19998")
+        // ADR-2026-05-08-1126 worktree gate — not under test here.
+        .env("HEXFLO_WORKTREE_REQUIRED", "0")
         .env("RUST_LOG", "off")
         .stdout(Stdio::null())
         .stderr(Stdio::null())

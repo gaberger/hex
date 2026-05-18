@@ -1,4 +1,4 @@
-# ADR-2026-04-01-0002: Bullet-prefixed bold-colon-outside Status
+# ADR-2604010002: Bullet-prefixed bold-colon-outside Status
 
 - **Status**: Proposed
 - **Date**: 2026-04-02

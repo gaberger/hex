@@ -656,8 +656,13 @@ mod tests {
     }
 
     #[test]
-    fn planner_has_no_phase_workflow() {
-        let def = AgentDefinition::load("planner").unwrap();
+    fn non_coder_agent_has_no_phase_workflow() {
+        // Negative case: agents like pm-agent / ADR-reviewer drive
+        // step-based or LLM-only flows, not the phase+feedback loop that
+        // hex-coder uses. (Was `planner_has_no_phase_workflow` —
+        // planner.yml was retired in 88ce6ad1; pm-agent is the closest
+        // remaining persona with the same shape.)
+        let def = AgentDefinition::load("pm-agent").unwrap();
         assert!(!has_phase_workflow(&def));
         assert!(!has_feedback_loop(&def));
     }
