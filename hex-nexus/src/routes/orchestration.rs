@@ -394,6 +394,46 @@ pub async fn execute_workplan(
     }
 }
 
+/// GET /api/workplan/execute/{id}/status — per-execution status poll
+///
+/// Returns the full ExecutionState flattened at the top level so polling
+/// clients (`hex plan execute`'s loop at hex-cli/src/commands/plan/mod.rs:1070)
+/// can read `.status` and `.result` directly. ADR-2605141135 §Phase 1 #2.
+pub async fn execute_status(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let exec = match state.workplan_executor.get() {
+        Some(e) => e,
+        None => return no_executor(),
+    };
+
+    match exec.get_by_id(&id).await {
+        Ok(Some(execution)) => {
+            // Flatten ExecutionState fields at the top so clients can read
+            // `.status` directly (matches the CLI poller contract).
+            let value = match serde_json::to_value(&execution) {
+                Ok(v) => v,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": format!("serialize execution: {}", e) })),
+                    );
+                }
+            };
+            (StatusCode::OK, Json(value))
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("execution '{}' not found", id) })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e })),
+        ),
+    }
+}
+
 /// GET /api/workplan/status — get current workplan execution state
 pub async fn workplan_status(
     State(state): State<SharedState>,

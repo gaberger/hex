@@ -794,6 +794,9 @@ pub fn build_router(state: SharedState) -> Router {
         // Workplan execution
         .route("/api/workplan/execute", post(orchestration::execute_workplan)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        // Per-execution status poll — must precede /api/workplan/{id} so axum's
+        // matcher doesn't capture "execute" as an id (ADR-2605141135 Phase 1 #2).
+        .route("/api/workplan/execute/{id}/status", get(orchestration::execute_status))
         .route("/api/workplan/status", get(orchestration::workplan_status))
         .route("/api/workplan/fail", post(orchestration::fail_workplan))
         .route("/api/workplan/pause", post(orchestration::pause_workplan))
