@@ -155,6 +155,12 @@ fn extract_declared_symbols(description: &str) -> Vec<String> {
 
 /// Grep for each declared symbol in the existing task files.
 /// Returns `(symbol, file_path)` pairs for every hit.
+///
+/// Uses `grep -w` (word-boundary match) so short symbol names like `Buf`
+/// don't false-match against `WriteBuffer`, `buffer`, etc. This is the
+/// source of the ~70% reconciler false-positive rate noted in the autonomy
+/// audit (memory: project_audit_autonomous_dev_2026_05_12) and ADR-2605141135
+/// §Phase 1 #6.
 fn find_symbol_hits(
     symbols: &[String],
     existing_files: &[&Path],
@@ -168,7 +174,7 @@ fn find_symbol_hits(
         for file in existing_files {
             let abs = repo_root.join(file);
             let output = std::process::Command::new("grep")
-                .args(["-l", sym.as_str()])
+                .args(["-wl", sym.as_str()])
                 .arg(&abs)
                 .output();
             if let Ok(out) = output {
