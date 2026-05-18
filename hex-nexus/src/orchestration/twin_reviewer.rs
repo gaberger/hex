@@ -651,23 +651,45 @@ fn parse_verdict(raw: &str) -> Result<(String, String, String), String> {
 /// look like hallucinated prose instead of grounded engineering writeups.
 fn content_has_grounding(content: &str) -> bool {
     // ADR ID — both hyphen-date `ADR-YYYY-MM-DD-HHMM` and timestamp
-    // `ADR-YYMMDDHHMM` forms.
+    // `ADR-YYMMDDHHMM` forms. Case-insensitive — operator notes routinely
+    // write `adr-...` in lowercase, and the persona output respects that.
+    // ADR-2605141135 §Phase 1 #8: twin grounding-gate calibration.
     static ADR_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let adr_re = ADR_RE.get_or_init(|| {
-        regex::Regex::new(r"ADR-(?:\d{4}-\d{2}-\d{2}-\d{4}|\d{10})").unwrap()
+        regex::Regex::new(r"(?i)ADR-(?:\d{4}-\d{2}-\d{2}-\d{4}|\d{10})").unwrap()
     });
     if adr_re.is_match(content) {
         return true;
     }
 
     // Repo paths — any known crate prefix or docs subdirectory.
+    // ADR-2605141135 §Phase 1 #8 also accepts operator-side `~/.hex/` paths
+    // (e.g. ~/.hex/sessions/, ~/.hex/secrets, ~/.hex/cost-policy.yml) since
+    // runbooks routinely cite operator config rather than repo source.
     const REPO_PREFIXES: &[&str] = &[
         "hex-nexus/", "hex-cli/", "hex-core/", "hex-agent/", "hex-parser/",
         "hex-desktop/", "hex-analyzer/", "spacetime-modules/",
         "docs/adrs/", "docs/specs/", "docs/workplans/", "docs/analysis/",
-        "scripts/", ".hex/project.json", "CLAUDE.md",
+        "scripts/", ".hex/project.json", "CLAUDE.md", "~/.hex/", ".hex/",
     ];
     if REPO_PREFIXES.iter().any(|p| content.contains(p)) {
+        return true;
+    }
+
+    // Bare module names — `org_responder`, `twin_reviewer`, `code_phase_worker`.
+    // Matches `snake_case` with at least one underscore so it doesn't false-fire
+    // on common English words. Cross-checks against a curated list of known
+    // hex modules + Rust files to avoid catching arbitrary user content.
+    // ADR-2605141135 §Phase 1 #8.
+    const KNOWN_MODULES: &[&str] = &[
+        "org_responder", "twin_reviewer", "drafter", "sop_executor",
+        "persona_supervisor", "supervisor_subscriber", "workplan_executor",
+        "agent_manager", "action_executor", "code_phase_worker",
+        "inference_task_queue", "swarm_task_drainer", "swarm_task_bridge",
+        "rate_limiter", "config_sync", "state_config", "spacetime_state",
+        "live_context", "capability_token", "secret_resolver",
+    ];
+    if KNOWN_MODULES.iter().any(|m| content.contains(m)) {
         return true;
     }
 
