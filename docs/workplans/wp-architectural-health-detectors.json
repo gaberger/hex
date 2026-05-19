@@ -1,0 +1,157 @@
+{
+  "adr": "ADR-2026-04-27-1200",
+  "created_at": "2026-05-19T11:30:00.000000+00:00",
+  "created_by": "operator",
+  "feature": "Wire hex-analyzer detectors into the sched improver discover phase",
+  "id": "wp-architectural-health-detectors",
+  "description": "hex-analyzer already implements four design-quality detectors (god_types, cohesion, composition_churn, duplication) that run via `hex analyze`. The sched improver's discover phase only consumes AdrDoctor today (72 hypotheses per tick, all from one source). Bridging the analyzer outputs into the Hypothesis stream gives the improver real architectural-health signal — the README's claim that the loop 'watches its own design' becomes true rather than aspirational.",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Detector → Hypothesis adapter",
+      "tier": 1,
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Define DetectorFinding -> Hypothesis mapping",
+          "files": [
+            "hex-cli/src/commands/sched/improver/detectors.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "fn finding_to_hypothesis(f: DetectorFinding) -> Hypothesis maps each detector kind to a Hypothesis with appropriate severity (god_type=warning, kitchen_sink_port=error, dead_layer=error, composition_churn=info, duplication=warning). source field encodes the detector name.",
+          "verify": "cargo test -p hex-cli --lib commands::sched::improver::detectors::tests::mapping_covers_all_finding_kinds"
+        },
+        {
+          "id": "P1.2",
+          "name": "Stable hypothesis IDs for dedup",
+          "files": [
+            "hex-cli/src/commands/sched/improver/detectors.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "fn hypothesis_id(source: &str, scope: &str) -> String returns a content-addressed ID (hash of source+scope+finding-key) so the same finding from successive ticks dedups to one row.",
+          "verify": "cargo test -p hex-cli --lib commands::sched::improver::detectors::tests::same_finding_twice_dedups"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Wire each hex-analyzer detector",
+      "tier": 1,
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "god_types analyzer source",
+          "files": [
+            "hex-cli/src/commands/sched/improver/discover.rs",
+            "hex-analyzer/src/analyzers/god_types.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "discover.rs::collect_hypotheses() calls hex_analyzer::god_types::scan(repo_root) and folds each finding into a Hypothesis via P1.1. New rows visible with source=\"GodTypes\".",
+          "verify": "hex sched improver discover --once includes rows with source=GodTypes after a deliberately-bloated test fixture is added under hex-cli/tests/fixtures/improver/god-type-violation/"
+        },
+        {
+          "id": "P2.2",
+          "name": "cohesion analyzer source",
+          "files": [
+            "hex-cli/src/commands/sched/improver/discover.rs",
+            "hex-analyzer/src/analyzers/cohesion.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "discover.rs calls cohesion::scan(). Findings with cluster_count >= MIN_CLUSTER_COUNT emit Hypothesis source=\"PortCohesion\".",
+          "verify": "hex sched improver discover --once includes source=PortCohesion when run against the test corpus"
+        },
+        {
+          "id": "P2.3",
+          "name": "composition_churn analyzer source",
+          "files": [
+            "hex-cli/src/commands/sched/improver/discover.rs",
+            "hex-analyzer/src/analyzers/composition_churn.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "discover.rs calls composition_churn::scan(). Findings emit source=\"CompositionChurn\" — flags substrate.composition entries that have changed 3+ times in the past 30 days.",
+          "verify": "hex sched improver discover --once includes source=CompositionChurn after seeding a churning composition adapter"
+        },
+        {
+          "id": "P2.4",
+          "name": "duplication analyzer source",
+          "files": [
+            "hex-cli/src/commands/sched/improver/discover.rs",
+            "hex-analyzer/src/analyzers/duplication.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "discover.rs calls duplication::scan(). Findings with multiset_jaccard >= 0.6 emit source=\"AdapterDuplication\" with both adapter IDs in the scope field.",
+          "verify": "hex sched improver discover --once includes source=AdapterDuplication after seeding two adapters with overlapping impl bodies"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Detector budget + perf gate",
+      "tier": 1,
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Per-detector budget cap",
+          "files": [
+            "hex-cli/src/commands/sched/improver/discover.rs",
+            "hex-cli/assets/improver/detectors.toml"
+          ],
+          "layer": "infrastructure",
+          "status": "pending",
+          "done_condition": "detectors.toml gates each detector with [max_findings_per_tick]. Default 10. discover.rs respects the cap. Op env override: HEX_IMPROVER_DETECTOR_BUDGET.",
+          "verify": "cargo test -p hex-cli --lib commands::sched::improver::discover::tests::budget_caps_findings"
+        },
+        {
+          "id": "P3.2",
+          "name": "Tick latency SLO",
+          "files": [
+            "hex-cli/src/commands/sched/improver/discover.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "discover() returns within 5s on the hex-intf workspace itself (the most realistic worst case). Each detector wrapped in tokio::time::timeout; on timeout, emits a Hypothesis source=\"DetectorTimeout\" and continues.",
+          "verify": "cargo bench -p hex-cli --bench improver_discover_latency"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "End-to-end + dashboard",
+      "tier": 5,
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Multi-source discover test",
+          "files": [
+            "hex-cli/tests/improver_multi_source_test.rs"
+          ],
+          "layer": "integration",
+          "status": "pending",
+          "done_condition": "Test fixture contains one ADR-doctor finding + one god-type fixture + one cohesion fixture + one duplication fixture. discover --once returns >= 4 hypotheses with distinct source values.",
+          "verify": "cargo test -p hex-cli --test improver_multi_source_test passes"
+        },
+        {
+          "id": "P4.2",
+          "name": "Dashboard: detector breakdown",
+          "files": [
+            "hex-nexus/assets/src/components/views/Improver.tsx"
+          ],
+          "layer": "primary/browser-adapter",
+          "status": "pending",
+          "done_condition": "Improver dashboard view shows hypothesis count grouped by source (bar chart or simple table). Updates in real time via STDB subscription on improver_event.",
+          "verify": "dashboard hashroute #/improver shows >= 2 distinct sources after running P4.1"
+        }
+      ]
+    }
+  ]
+}

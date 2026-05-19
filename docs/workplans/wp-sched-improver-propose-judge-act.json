@@ -1,0 +1,223 @@
+{
+  "adr": "ADR-2605190721",
+  "created_at": "2026-05-19T11:25:00.000000+00:00",
+  "created_by": "operator",
+  "feature": "Close the MAPE-K loop: propose_strategic + judge + act + K phase",
+  "id": "wp-sched-improver-propose-judge-act",
+  "description": "Implements the PLAN, EXECUTE, and KNOWLEDGE phases of the self-improvement loop. Discover (the A phase) already works and emits 72 hypotheses per tick today, all from AdrDoctor. After this lands, every hypothesis flows: propose 3 variants at T2.5 → score on 5-axis rubric → apply winner via shadow-promotion → write event row → judge consults history. End-to-end smoke test verifies the operator-asks-nothing loop closes on a synthetic hypothesis.",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "propose_strategic — adversarial swarm variant generation",
+      "tier": 2,
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Implement propose_strategic() in adversarial_swarm.rs",
+          "files": [
+            "hex-nexus/src/orchestration/adversarial_swarm.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "fn propose_strategic accepts a Hypothesis and returns Vec<ProposedVariant> of length 3. Each variant has a distinct strategy_label (conservative|aggressive|targeted) and includes a serializable patch payload. unimplemented!() removed.",
+          "verify": "cargo test -p hex-nexus --lib orchestration::adversarial_swarm::tests::propose_strategic_returns_three_distinct_variants"
+        },
+        {
+          "id": "P1.2",
+          "name": "Wire propose_strategic into tick_improver",
+          "files": [
+            "hex-nexus/src/orchestration/sched.rs",
+            "hex-cli/src/commands/sched/improver/mod.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "tick_improver iterates the hypotheses returned by discover.rs and calls propose_strategic on each. Variants land in STDB proposed_action table with related_hypothesis_id set.",
+          "verify": "hex sched improver discover --once writes >= 3 proposed_action rows per hypothesis when --apply flag is set"
+        },
+        {
+          "id": "P1.3",
+          "name": "Variant prompt templates",
+          "files": [
+            "hex-cli/assets/improver/strategy-conservative.md",
+            "hex-cli/assets/improver/strategy-aggressive.md",
+            "hex-cli/assets/improver/strategy-targeted.md"
+          ],
+          "layer": "infrastructure",
+          "status": "pending",
+          "done_condition": "Each strategy template is < 800 tokens, lists the file-count cap, and instructs the model to emit a strict JSON envelope { files_touched: [path], diff: string, rationale: string }. Embedded via rust-embed.",
+          "verify": "cargo test -p hex-cli --lib pipeline::prompts::tests::improver_strategies_load"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Structured Judge — 5-axis rubric scoring",
+      "tier": 2,
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Implement axis scorers",
+          "files": [
+            "hex-nexus/src/orchestration/improver_judge.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "Five pure functions score_alignment, score_blast_radius, score_dependency_satisfaction, score_reversibility, score_historical_reject_rate. Each returns f64 in [0.0, 1.0]. No LLM calls.",
+          "verify": "cargo test -p hex-nexus --lib orchestration::improver_judge::tests:: — at least one positive + one negative case per axis"
+        },
+        {
+          "id": "P2.2",
+          "name": "Weighted aggregate + tie-breaker",
+          "files": [
+            "hex-nexus/src/orchestration/improver_judge.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "fn judge(&[ProposedVariant], weights: &Weights) -> JudgeVerdict returns the winning variant_id + per-axis breakdown. Ties resolved in favor of strategy=targeted.",
+          "verify": "cargo test -p hex-nexus --lib orchestration::improver_judge::tests::ties_resolve_to_targeted"
+        },
+        {
+          "id": "P2.3",
+          "name": "Operator-tunable weights",
+          "files": [
+            ".hex/improver-weights.toml",
+            "hex-cli/src/commands/sched/improver/weights.rs"
+          ],
+          "layer": "infrastructure",
+          "status": "pending",
+          "done_condition": "Weights load from .hex/improver-weights.toml at sched daemon start. Missing file -> hardcoded defaults. Reload on SIGHUP. CLI: hex sched improver weights show.",
+          "verify": "hex sched improver weights show prints the current 5-axis values"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Act — shadow-promotion of the winning variant",
+      "tier": 2,
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Branch + apply patch",
+          "files": [
+            "hex-nexus/src/orchestration/improver_act.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "fn act(verdict: JudgeVerdict) creates worktree sched/improver/<hyp_id>, applies the variant's diff via git apply, commits with subject 'chore(improver): <hyp_id> <variant_id>'. Returns Result<ActedBranch, ActError>.",
+          "verify": "cargo test -p hex-nexus --test improver_act_e2e — uses tempfile + git2 to assert branch + commit exist"
+        },
+        {
+          "id": "P3.2",
+          "name": "Tier-A auto-merge gate",
+          "files": [
+            "hex-nexus/src/orchestration/improver_act.rs",
+            "hex-nexus/src/orchestration/promotion_judge.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "If hypothesis.tier == A, hex worktree merge fast-forwards to main. Tier B writes to docs/workplans/drafts/ + inbox P2. Tier C writes inbox P1, no branch action.",
+          "verify": "cargo test -p hex-nexus --lib orchestration::improver_act::tests::tier_routing"
+        },
+        {
+          "id": "P3.3",
+          "name": "Archive losing variants",
+          "files": [
+            "hex-nexus/src/orchestration/improver_act.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "Non-winning variants serialize to docs/workplans/rejected/<hyp_id>-<variant_id>.json with judge scores included for audit. Path is git-tracked.",
+          "verify": "after end-to-end smoke run (P5), docs/workplans/rejected/ contains 2 rows per hypothesis"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "K phase — improver_event + sched scores",
+      "tier": 1,
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "improver_event STDB schema + reducer",
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs"
+          ],
+          "layer": "infrastructure",
+          "status": "pending",
+          "done_condition": "Table improver_event { id: u64, hyp_id: String, phase: String, variant_id: Option<String>, score: Option<f64>, action: Option<String>, verdict: String, ts: Timestamp }. Reducer improver_event_record(...) appends; never updates.",
+          "verify": "spacetime sql --query 'SELECT count(*) FROM improver_event' returns ≥ 0 after WASM publish"
+        },
+        {
+          "id": "P4.2",
+          "name": "Phase transitions write events",
+          "files": [
+            "hex-nexus/src/orchestration/adversarial_swarm.rs",
+            "hex-nexus/src/orchestration/improver_judge.rs",
+            "hex-nexus/src/orchestration/improver_act.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "Each of propose / judge / act calls improver_event_record at completion with the appropriate phase string. Failure-path is also recorded with verdict=error.",
+          "verify": "after one hypothesis goes through all 3 phases, improver_event has ≥ 3 rows for that hyp_id"
+        },
+        {
+          "id": "P4.3",
+          "name": "hex sched scores reads improver_event",
+          "files": [
+            "hex-cli/src/commands/sched/scores.rs"
+          ],
+          "layer": "primary/cli",
+          "status": "pending",
+          "done_condition": "hex sched scores groups improver_event by (source, scope), computes accept_rate = applied / (applied + rejected), and prints a table. Replaces the 'No scores yet' stub.",
+          "verify": "after end-to-end smoke, hex sched scores returns at least one row"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "End-to-end smoke — close the loop on a synthetic hypothesis",
+      "tier": 5,
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Synthetic hypothesis fixture",
+          "files": [
+            "hex-cli/tests/fixtures/improver/synthetic-adr-draft.md"
+          ],
+          "layer": "infrastructure",
+          "status": "pending",
+          "done_condition": "Fixture ADR with status=Draft (non-canonical) so AdrDoctor emits a real hypothesis at hex-cli/tests/fixtures/improver/. Used by the e2e test below.",
+          "verify": "ls hex-cli/tests/fixtures/improver/synthetic-adr-draft.md"
+        },
+        {
+          "id": "P5.2",
+          "name": "E2E test: discover → propose → judge → act → events",
+          "files": [
+            "hex-nexus/tests/improver_loop_e2e.rs"
+          ],
+          "layer": "integration",
+          "status": "pending",
+          "done_condition": "Test boots in-process nexus + stub LLM (canned variants), feeds the synthetic ADR, asserts: (a) one proposed_action with 3 variants, (b) one judge_verdict row, (c) one acted_branch with the expected commit, (d) ≥ 3 improver_event rows. Runtime < 30s.",
+          "verify": "cargo test -p hex-nexus --test improver_loop_e2e -- --nocapture passes"
+        },
+        {
+          "id": "P5.3",
+          "name": "Documentation + dashboard surface",
+          "files": [
+            "docs/SELF-IMPROVEMENT.md",
+            "hex-nexus/assets/src/components/views/Improver.tsx"
+          ],
+          "layer": "primary/browser-adapter",
+          "status": "pending",
+          "done_condition": "SELF-IMPROVEMENT.md updated with the now-shipped 5-phase flow + a worked example from P5.2. Improver dashboard view shows per-hypothesis lifecycle (proposed/judged/acted/applied) via STDB subscription.",
+          "verify": "dashboard hashroute #/improver renders ≥ 1 row from the smoke test"
+        }
+      ]
+    }
+  ]
+}
