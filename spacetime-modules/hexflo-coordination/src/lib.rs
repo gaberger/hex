@@ -4750,7 +4750,60 @@ pub fn supervisor_tick(
     }
     let now_micros = parse_ts_micros(&now_str).unwrap_or(0);
 
+    // ── Stale-heartbeat reap pass (ADR-2605190900 P3.2) ──
+    //
+    // Before the spawn/crash accounting runs, mark any worker whose
+    // last_heartbeat is older than STALE_HEARTBEAT_SECS as exited. Without
+    // this pass, a worker that stops beating WITHOUT setting exited_at
+    // (the 11-day zombie sched daemon pattern from the 2026-05-19
+    // postmortem) is counted as `alive_count` forever and the supervisor
+    // never asks for a respawn.
+    //
+    // Threshold rationale: heartbeats land every 15s (IHeartbeatPort
+    // recommended cadence). 60s = 4 missed beats — enough margin to
+    // tolerate GC pauses or transient STDB reconnects without false
+    // reaping, narrow enough that an actually-dead worker triggers
+    // respawn within 1-2 minutes.
+    const STALE_HEARTBEAT_SECS: i64 = 60;
+    let stale_cutoff_micros = now_micros - (STALE_HEARTBEAT_SECS * 1_000_000);
+    if now_micros != 0 {
+        let alive_rows: Vec<WorkerProcess> = ctx.db.worker_process().iter()
+            .filter(|p| p.exited_at.is_empty())
+            .collect();
+        for row in alive_rows {
+            let last_beat_micros = parse_ts_micros(&row.last_heartbeat).unwrap_or(0);
+            if last_beat_micros == 0 || last_beat_micros >= stale_cutoff_micros {
+                continue;
+            }
+            let mut updated = row.clone();
+            updated.exited_at = now_str.clone();
+            updated.exit_reason = "stale_heartbeat".to_string();
+            updated.status = "stopping".to_string();
+            ctx.db.worker_process().id().update(updated);
+            ctx.db.supervisor_event().insert(SupervisorEvent {
+                id: 0,
+                ts: now_str.clone(),
+                kind: "stale_heartbeat".to_string(),
+                pool_id: row.pool_id.clone(),
+                worker_id: row.id.clone(),
+                payload: format!(
+                    r#"{{"last_heartbeat":"{}","threshold_secs":{}}}"#,
+                    row.last_heartbeat, STALE_HEARTBEAT_SECS
+                ),
+                handled: false,
+                handled_at: String::new(),
+                handled_by: String::new(),
+            });
+            log::warn!(
+                "supervisor: reaped stale worker {} (pool {}, last_heartbeat {})",
+                row.id, row.pool_id, row.last_heartbeat
+            );
+        }
+    }
+
     // Snapshot all worker_process rows once; we'll scan per-pool.
+    // Re-snapshot after the reap pass so the alive_count below sees the
+    // freshly-set exited_at values.
     let processes: Vec<WorkerProcess> = ctx.db.worker_process().iter().collect();
     let pools: Vec<WorkerPoolIntent> = ctx.db.worker_pool_intent().iter().collect();
 
