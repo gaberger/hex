@@ -20,3 +20,4 @@ pub mod sandbox;
 pub mod secret;
 pub mod validator;
 pub mod web;
+pub mod worker_pool;

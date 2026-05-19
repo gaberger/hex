@@ -54,6 +54,7 @@ pub mod stdb_registry;
 pub mod org_comms;
 pub mod sop;
 pub mod dead_letter;
+pub mod worker_pool;
 pub mod merge_gate;
 pub mod mission_control;
 pub mod resources;
@@ -593,6 +594,8 @@ pub fn build_router(state: SharedState) -> Router {
         // visible audit of brain-tasks that exceeded their retry budget.
         .route("/api/dead-letter", get(dead_letter::list))
         .route("/api/dead-letter/{id}/replay", post(dead_letter::replay))
+        // Worker-pool consumer-availability gate (ADR-2605190900 §1 + P3.4)
+        .route("/api/worker-pool/check", get(worker_pool::check))
         // ── ADR-2026-05-08-1126 dashboard surfaces ──────────────────────────
         .route("/api/merge/requests", get(merge_gate::list_merge_requests))
         .route("/api/merge/approve", post(merge_gate::approve_merge_request))

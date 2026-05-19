@@ -17,6 +17,7 @@ pub mod spacetime_persona;
 pub mod spacetime_secrets;
 pub mod spacetime_session;
 pub mod spacetime_state;
+pub mod spacetime_worker_pool;
 pub mod remote_registry;
 pub mod agent_lifecycle;
 pub mod inference_router;
