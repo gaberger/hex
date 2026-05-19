@@ -4484,6 +4484,134 @@ pub fn worker_process_deregister(ctx: &ReducerContext, id: String) -> Result<(),
     Ok(())
 }
 
+// ============================================================
+// dead_letter — bounded-retry quarantine for brain-tasks (ADR-2605190900 P2.1).
+// ============================================================
+// A dedicated audit row for brain-tasks that exceeded their retry budget.
+// Distinct from BrainTaskStatus::DeadLetter — that's a status flag on the
+// brain-task row; this table is the durable record of WHY a task was
+// quarantined and HOW to replay it.
+//
+// The dispatcher (hex-nexus/src/orchestration/brain_dispatch_reconciler.rs)
+// writes one row here on the Nth consecutive failure of a brain-task. The
+// dashboard's #/dead-letter view reads from here; `dead_letter_replay` is
+// the operator-driven "try again" path that moves the row back into the
+// sched_task pending queue.
+//
+// Why a separate table, not just a status:
+//   1) BrainTaskStatus::DeadLetter doesn't capture HOW MANY tries or WHEN
+//      they happened — both are needed for the dispatch_retry_quota
+//      hypothesis the improver consumes (P2.4).
+//   2) The 2026-05-19 postmortem observed brain-tasks getting NEW ids
+//      every minute instead of being marked failed — the existing
+//      retry_count on the brain-task row never incremented for those.
+//      A dedicated table sidesteps the bug regardless of how the
+//      dispatcher counts.
+//   3) Replay should be auditable. Moving the row out of dead_letter
+//      back to sched_task pending is one reducer; the operation is
+//      visible in the event log.
+// ============================================================
+
+#[table(name = dead_letter, public)]
+#[derive(Clone, Debug)]
+pub struct DeadLetter {
+    /// Original brain-task / sched_task id. Same handle the dashboard
+    /// already shows in #/queue.
+    #[primary_key]
+    pub task_id: String,
+    /// "workplan" | "hex-command" | "shell" — matches the brain-task kind.
+    pub kind: String,
+    /// The original payload (workplan path, command args, shell line).
+    pub payload: String,
+    /// Most recent error message from the dispatcher / executor. Bounded
+    /// to ~1 KB at write time — long stack traces get truncated.
+    pub last_error: String,
+    /// How many attempts before quarantine. Single source of truth — the
+    /// brain-task's retry_count gets reset by reschedules, this stays
+    /// monotonic.
+    pub attempt_count: u32,
+    /// RFC 3339 timestamps. Useful for "how old is this and is it worth
+    /// bothering" triage on the dashboard.
+    pub first_failed_at: String,
+    pub last_failed_at: String,
+    /// Operator-tunable priority at the time of quarantine — `replay`
+    /// preserves it so the re-enqueued task lands in the same bucket.
+    pub original_priority: i32,
+}
+
+/// Append a dead-letter row. Called by the dispatcher when a brain-task's
+/// attempt_count exceeds the configured threshold (HEX_DEAD_LETTER_THRESHOLD).
+/// On duplicate task_id the row is upserted — attempt_count bumps to the
+/// new value, last_failed_at refreshes. first_failed_at preserved.
+#[reducer]
+pub fn dead_letter_record(
+    ctx: &ReducerContext,
+    task_id: String,
+    kind: String,
+    payload: String,
+    last_error: String,
+    attempt_count: u32,
+    original_priority: i32,
+    timestamp: String,
+) -> Result<(), String> {
+    if task_id.is_empty() {
+        return Err("empty task_id".to_string());
+    }
+    // Bound the error string so an oversize traceback doesn't blow up the
+    // STDB row size limit (see ADR-2026-05-08-2600).
+    const MAX_ERR_LEN: usize = 1024;
+    let last_error = if last_error.len() > MAX_ERR_LEN {
+        let mut truncated = last_error[..MAX_ERR_LEN].to_string();
+        truncated.push_str("… [truncated]");
+        truncated
+    } else {
+        last_error
+    };
+    if let Some(existing) = ctx.db.dead_letter().task_id().find(&task_id) {
+        ctx.db.dead_letter().task_id().update(DeadLetter {
+            kind,
+            payload,
+            last_error,
+            attempt_count,
+            last_failed_at: timestamp,
+            first_failed_at: existing.first_failed_at,
+            original_priority,
+            ..existing
+        });
+    } else {
+        ctx.db.dead_letter().insert(DeadLetter {
+            task_id,
+            kind,
+            payload,
+            last_error,
+            attempt_count,
+            first_failed_at: timestamp.clone(),
+            last_failed_at: timestamp,
+            original_priority,
+        });
+    }
+    Ok(())
+}
+
+/// Operator-driven replay — copy the dead-letter row back into the
+/// sched_task pending queue (or whichever queue the dispatcher reads
+/// from) and remove the dead_letter row. Returns the rehydrated kind +
+/// payload + priority so the caller can re-enqueue at the API layer.
+/// Idempotent: calling on an unknown task_id returns an empty result
+/// rather than erroring, so the dashboard "Replay" button is safe to
+/// double-click.
+#[reducer]
+pub fn dead_letter_replay(ctx: &ReducerContext, task_id: String) -> Result<(), String> {
+    if let Some(row) = ctx.db.dead_letter().task_id().find(&task_id) {
+        // The actual re-enqueue happens on the nexus side — the dispatcher
+        // owns sched_task creation. This reducer just opens the gate by
+        // removing the dead-letter quarantine; nexus subscribes to deletes
+        // and re-enqueues. Wiring lives in P2.3.
+        ctx.db.dead_letter().task_id().delete(&row.task_id);
+    }
+    Ok(())
+}
+
 /// Record process exit. nexus calls this when it observes the spawned
 /// hex-agent terminate. exit_reason: "normal" (status 0), "crashed" (any
 /// non-zero), "killed" (signal), "unknown" (fall-through).

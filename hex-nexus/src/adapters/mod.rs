@@ -10,6 +10,7 @@ pub mod ws_transport;
 pub mod spacetime_agent_comm;
 pub mod spacetime_chat;
 pub mod spacetime_composition;
+pub mod spacetime_dead_letter;
 pub mod spacetime_heartbeat;
 pub mod spacetime_inference;
 pub mod spacetime_persona;

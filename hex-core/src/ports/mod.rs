@@ -5,6 +5,7 @@ pub mod brain;
 pub mod build;
 pub mod consolidation_memory;
 pub mod context_compressor;
+pub mod dead_letter;
 pub mod coordination;
 pub mod enforcement;
 pub mod experiment;
