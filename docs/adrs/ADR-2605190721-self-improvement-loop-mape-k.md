@@ -66,6 +66,19 @@ improver_event { hyp_id, phase, variant_id?, score?, action?, verdict, ts }
 
 See `docs/workplans/wp-sched-improver-propose-judge-act.json` for the phase decomposition. Each phase is independently shippable; the loop is closed after P3 lands.
 
+### Operator-only wire-up (one line, after P1 ships)
+
+The workplan can't include this step because `hex-nexus/src/orchestration/sched.rs` is on the SafeFileWriter protected-files list (per `hex-core/src/domain/validation.rs::CRITICAL_FILES`) — autonomous agents cannot edit it. After P1.1–P1.3 land, the operator manually adds the call site:
+
+```rust
+// hex-nexus/src/orchestration/sched.rs, inside tick_improver():
+for hyp in hypotheses {
+    let _ = crate::orchestration::dispatch_propose_for_hypothesis(hyp).await;
+}
+```
+
+This is a deliberate guardrail, not a bug: the loop refusing to autonomously rewrite its own dispatcher is the whole point of the protected-files list. The single-line edit takes ~30 seconds and gives the operator a clear injection point to audit before the autonomy loop closes.
+
 ## References
 
 - ADR-2026-04-12-0202 (Tiered Inference Routing) — T2.5 model selection for the propose phase.

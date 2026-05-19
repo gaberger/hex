@@ -25,15 +25,15 @@
         },
         {
           "id": "P1.2",
-          "name": "Wire propose_strategic into tick_improver",
+          "name": "Export propose_strategic + add public dispatch entry point",
           "files": [
-            "hex-nexus/src/orchestration/sched.rs",
+            "hex-nexus/src/orchestration/mod.rs",
             "hex-cli/src/commands/sched/improver/mod.rs"
           ],
           "layer": "usecases",
           "status": "pending",
-          "done_condition": "tick_improver iterates the hypotheses returned by discover.rs and calls propose_strategic on each. Variants land in STDB proposed_action table with related_hypothesis_id set.",
-          "verify": "hex sched improver discover --once writes >= 3 proposed_action rows per hypothesis when --apply flag is set"
+          "done_condition": "orchestration/mod.rs re-exports propose_strategic. New pub fn dispatch_propose_for_hypothesis(h: Hypothesis) lives in a new adversarial_dispatch.rs (NOT in sched.rs — that file is on the SafeFileWriter protected list). The dispatch fn handles inference + STDB writes; sched.rs only needs a one-line call (P1.4).",
+          "verify": "hex sched improver discover --once --apply writes >= 3 proposed_action rows per hypothesis"
         },
         {
           "id": "P1.3",
@@ -47,7 +47,7 @@
           "status": "pending",
           "done_condition": "Each strategy template is < 800 tokens, lists the file-count cap, and instructs the model to emit a strict JSON envelope { files_touched: [path], diff: string, rationale: string }. Embedded via rust-embed.",
           "verify": "cargo test -p hex-cli --lib pipeline::prompts::tests::improver_strategies_load"
-        }
+        },
       ]
     },
     {
