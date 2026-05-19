@@ -23,6 +23,7 @@ pub mod org_responder;
 pub mod repo_grounding;
 pub mod resource_observer;
 pub mod sop_executor;
+pub mod zombie_sweeper;
 pub mod twin_reviewer;
 pub mod workplan_auto_emitter;
 pub mod regression;
