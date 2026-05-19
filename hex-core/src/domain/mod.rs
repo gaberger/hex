@@ -5,6 +5,7 @@ pub mod capability;
 pub mod consolidation;
 pub mod enforcement;
 pub mod experiment;
+pub mod heartbeat;
 pub mod hooks;
 pub mod messages;
 pub mod sandbox;

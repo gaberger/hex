@@ -4392,6 +4392,16 @@ pub struct WorkerProcess {
     pub in_crash_loop: bool,
     pub exited_at: String,
     pub exit_reason: String,
+    /// Self-reported liveness ("healthy" | "degraded" | "stopping"). Added
+    /// 2026-05-19 for ADR-2605190900 P1.2 — IHeartbeatPort lets components
+    /// downgrade themselves proactively when they know they can't fully
+    /// serve their contract (e.g. STDB downstream unreachable). Supervisor
+    /// reads this to escalate Degraded → operator after a TTL even if
+    /// last_heartbeat is fresh.
+    pub status: String,
+    /// Free-form note attached to the latest beat — surfaced to the
+    /// dashboard. Empty string when unused (STDB has no Option<String>).
+    pub evidence: String,
 }
 
 /// Register a freshly-spawned worker. Called by hex-nexus subscriber after
@@ -4417,6 +4427,8 @@ pub fn worker_process_register(
         in_crash_loop: false,
         exited_at: String::new(),
         exit_reason: String::new(),
+        status: "healthy".to_string(),
+        evidence: String::new(),
     };
     ctx.db.worker_process().insert(row);
     Ok(())
@@ -4432,6 +4444,43 @@ pub fn worker_process_heartbeat(ctx: &ReducerContext, id: String) -> Result<(), 
         .ok_or_else(|| format!("worker_process '{}' not found", id))?;
     row.last_heartbeat = format!("{:?}", ctx.timestamp);
     ctx.db.worker_process().id().update(row);
+    Ok(())
+}
+
+/// Self-reported status update. The component publishes `healthy`, downgrades
+/// to `degraded` when an upstream is unreachable, or to `stopping` on graceful
+/// shutdown. Same row as last_heartbeat — supervisor reads both together.
+/// Added 2026-05-19 for ADR-2605190900 P1.2 to match the IHeartbeatPort
+/// contract (hex-core/src/ports/heartbeat.rs).
+#[reducer]
+pub fn worker_process_status(
+    ctx: &ReducerContext,
+    id: String,
+    status: String,
+    evidence: String,
+) -> Result<(), String> {
+    if !matches!(status.as_str(), "healthy" | "degraded" | "stopping") {
+        return Err(format!("invalid status '{}' — expected healthy|degraded|stopping", status));
+    }
+    let mut row = ctx.db.worker_process().id().find(&id)
+        .ok_or_else(|| format!("worker_process '{}' not found", id))?;
+    row.last_heartbeat = format!("{:?}", ctx.timestamp);
+    row.status = status;
+    row.evidence = evidence;
+    ctx.db.worker_process().id().update(row);
+    Ok(())
+}
+
+/// Graceful deregistration — removes the row outright. Idempotent: calling
+/// twice or on an unknown id returns Ok so the adapter's Drop impl can be
+/// best-effort. Distinct from worker_process_record_exit which keeps the
+/// row for crash-loop accounting; deregister is the clean-shutdown path.
+#[reducer]
+pub fn worker_process_deregister(ctx: &ReducerContext, id: String) -> Result<(), String> {
+    // The unique column accessor's delete() takes the column value, not
+    // the row — pass &id directly. Find-then-delete is unnecessary; STDB
+    // returns false on missing rows so idempotence is built in.
+    let _existed = ctx.db.worker_process().id().delete(&id);
     Ok(())
 }
 
