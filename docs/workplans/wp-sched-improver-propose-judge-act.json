@@ -47,7 +47,7 @@
           "status": "pending",
           "done_condition": "Each strategy template is < 800 tokens, lists the file-count cap, and instructs the model to emit a strict JSON envelope { files_touched: [path], diff: string, rationale: string }. Embedded via rust-embed.",
           "verify": "cargo test -p hex-cli --lib pipeline::prompts::tests::improver_strategies_load"
-        },
+        }
       ]
     },
     {
