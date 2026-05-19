@@ -1,0 +1,266 @@
+{
+  "adr": "ADR-2605190900",
+  "created_at": "2026-05-19T12:20:00.000000+00:00",
+  "created_by": "operator",
+  "feature": "Runtime supervision layer — heartbeat, bounded retry, dead-letter, pool supervisor, endpoint discovery, liveness self-test",
+  "id": "wp-runtime-supervision",
+  "description": "Implements ADR-2605190900 in 5 independently-shippable phases ordered to maximize operator value per phase. Phase 1 (heartbeat contract) is pure additive — costs nothing if no consumer reads beats yet. Phase 2 (dead-letter + bounded retry) is the single biggest user-visible jump: invisible 60s churn becomes a P1 inbox event. Phases 3-5 close the class of bugs that produced the 2026-05-19 postmortem.",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Heartbeat contract — IHeartbeatPort + STDB worker_process table",
+      "tier": 0,
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Define IHeartbeatPort trait + Heartbeat domain type",
+          "files": [
+            "hex-core/src/ports/heartbeat.rs",
+            "hex-core/src/domain/heartbeat.rs"
+          ],
+          "layer": "domain",
+          "status": "pending",
+          "done_condition": "trait IHeartbeatPort { async fn beat(&self, role: &str, status: HeartbeatStatus, evidence: Option<String>) -> Result<()>; async fn list_alive(&self, role: &str, ttl: Duration) -> Result<Vec<HeartbeatRow>>; }. HeartbeatStatus enum: Healthy | Degraded | Stopping. Pure trait, no I/O.",
+          "verify": "cargo test -p hex-core --lib ports::heartbeat::tests::trait_object_safe"
+        },
+        {
+          "id": "P1.2",
+          "name": "STDB worker_process table + register_worker / heartbeat reducers",
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs"
+          ],
+          "layer": "infrastructure",
+          "status": "pending",
+          "done_condition": "Table worker_process { worker_id: String, pool_id: String, role: String, pid: u32, host: String, registered_at: Timestamp, last_heartbeat_at: Timestamp, status: String }. Reducers: register_worker (insert), heartbeat (update last_heartbeat_at), deregister_worker (delete). Indexed by (pool_id, role).",
+          "verify": "spacetime publish + spacetime sql 'SELECT count(*) FROM worker_process' returns 0 on fresh deploy"
+        },
+        {
+          "id": "P1.3",
+          "name": "SpacetimeHeartbeatAdapter implementing IHeartbeatPort",
+          "files": [
+            "hex-nexus/src/adapters/secondary/spacetime_heartbeat.rs"
+          ],
+          "layer": "adapters/secondary",
+          "status": "pending",
+          "done_condition": "Calls register_worker on adapter construct, beat() invokes heartbeat reducer, Drop impl calls deregister_worker. Defaults: role read from HEX_AGENT_ROLE env, host from hostname crate, pid from std::process::id().",
+          "verify": "cargo test -p hex-nexus --test heartbeat_adapter_e2e — spawns adapter, asserts row appears in worker_process within 2s, drops adapter, asserts row removed within 2s"
+        },
+        {
+          "id": "P1.4",
+          "name": "Wire heartbeat into sched daemon + nexus + workplan_executor",
+          "files": [
+            "hex-cli/src/commands/sched.rs",
+            "hex-nexus/src/lib.rs"
+          ],
+          "layer": "primary/cli",
+          "status": "pending",
+          "done_condition": "Each long-running component creates a SpacetimeHeartbeatAdapter at startup and beats every 15s on a background tokio task. Role strings: 'sched-daemon', 'nexus-server', 'workplan-executor'. NOTE: sched.rs is on CRITICAL_FILES — this task may be Tier-C operator-only (autonomous agents can't write it). Adjust workplan execution accordingly.",
+          "verify": "after restart, spacetime sql 'SELECT role, last_heartbeat_at FROM worker_process' shows ≥ 2 rows beating within 30s"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Bounded retry + dead-letter — replace silent re-enqueue loop",
+      "tier": 0,
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "dead_letter STDB table + reducer",
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs"
+          ],
+          "layer": "infrastructure",
+          "status": "pending",
+          "done_condition": "Table dead_letter { task_id, kind, payload, last_error, attempt_count, first_failed_at, last_failed_at, original_priority }. Reducer dead_letter_record(...) appends; never updates. Reducer dead_letter_replay(task_id) moves the row back to sched_task pending and deletes the dead_letter row.",
+          "verify": "spacetime sql 'SELECT count(*) FROM dead_letter' returns 0 on fresh deploy"
+        },
+        {
+          "id": "P2.2",
+          "name": "Dispatcher tracks attempt_count + escalates on N",
+          "files": [
+            "hex-nexus/src/orchestration/brain_dispatch_reconciler.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "Reconciler tracks (task_id, attempt_count) in a per-process HashMap or via the brain-task's stored fields. On Nth failure (default N=5 over 10 min, configurable via HEX_DEAD_LETTER_THRESHOLD), call dead_letter_record + send P1 inbox notification. Stop re-enqueueing.",
+          "verify": "cargo test -p hex-nexus --lib orchestration::brain_dispatch_reconciler::tests::nth_failure_dead_letters"
+        },
+        {
+          "id": "P2.3",
+          "name": "REST endpoint + dashboard surface",
+          "files": [
+            "hex-nexus/src/routes/dead_letter.rs",
+            "hex-nexus/src/routes/mod.rs",
+            "hex-nexus/assets/src/components/views/DeadLetter.tsx"
+          ],
+          "layer": "primary/browser-adapter",
+          "status": "pending",
+          "done_condition": "GET /api/dead-letter returns the full table. POST /api/dead-letter/<id>/replay invokes dead_letter_replay. Dashboard route #/dead-letter shows rows with task_id, kind, age, last_error, attempt_count, and a Replay button.",
+          "verify": "curl /api/dead-letter returns JSON array; dashboard hashroute #/dead-letter renders; after P2.2's test fires, the seeded dead-letter row appears in the response"
+        },
+        {
+          "id": "P2.4",
+          "name": "Audit existing brain-task retries",
+          "files": [
+            "hex-nexus/src/orchestration/brain_dispatch_reconciler.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "Reconciler emits an improver_event { kind: 'retry_quota_exceeded', task_id } when dead-lettering. Improver discovers these as Hypotheses with source=DispatchRetryQuota so the loop can propose changes (e.g. raise N, or split the workplan).",
+          "verify": "after a dead-letter event, hex sched improver discover --once returns a Hypothesis with source=DispatchRetryQuota"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Pool supervisor — reap zombies, ensure consumer-exists-before-publish",
+      "tier": 1,
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "worker_pool table + invariant trait",
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs",
+            "hex-core/src/ports/worker_pool.rs"
+          ],
+          "layer": "infrastructure",
+          "status": "pending",
+          "done_condition": "Table worker_pool { pool_id, role, min_workers, max_workers, last_supervisor_tick_at }. trait IWorkerPoolPort { async fn ensure_consumer(role: &str) -> Result<ConsumerStatus>; }. ConsumerStatus: Alive | Degraded { age_secs } | None.",
+          "verify": "cargo test -p hex-core --lib ports::worker_pool::tests::trait_signature_stable"
+        },
+        {
+          "id": "P3.2",
+          "name": "Supervisor reducer: reap + spawn",
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs"
+          ],
+          "layer": "infrastructure",
+          "status": "pending",
+          "done_condition": "Reducer supervisor_tick(pool_id) runs every 15s. Walks worker_process WHERE pool_id = X. Removes rows whose last_heartbeat_at is older than 60s. Emits worker_pool_alarm event if live_count < min_workers (operator notification path lives in nexus, not the reducer).",
+          "verify": "spacetime call supervisor_tick on a pool with a stale row deletes the row + appends a worker_pool_alarm row"
+        },
+        {
+          "id": "P3.3",
+          "name": "Local process reaper for hex-agent zombies",
+          "files": [
+            "hex-nexus/src/orchestration/pool_supervisor.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "Background tokio task on nexus: every 60s walks /proc looking for [hex-agent] <defunct> entries owned by this user. For each, sends SIGCHLD to the ppid or logs ppid=1 cases that need manual cleanup. Records each to worker_pool_alarm.",
+          "verify": "cargo test -p hex-nexus --lib orchestration::pool_supervisor::tests::detects_synthetic_defunct (uses unshare or just-finished child with delayed wait)"
+        },
+        {
+          "id": "P3.4",
+          "name": "Dispatcher: refuse to publish without consumer",
+          "files": [
+            "hex-nexus/src/orchestration/brain_dispatch_reconciler.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "Before dispatching a brain-task, call IWorkerPoolPort::ensure_consumer(role). On ConsumerStatus::None: skip dispatch, record a brain_task_blocked event, fire P2 inbox at most once per 5-min window. Today the dispatcher fires into the void; after this it fails closed.",
+          "verify": "cargo test -p hex-nexus --lib orchestration::brain_dispatch_reconciler::tests::no_consumer_means_no_dispatch"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "STDB endpoint re-discovery",
+      "tier": 1,
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Discovery hierarchy + on-failure re-validation",
+          "files": [
+            "hex-nexus/src/adapters/secondary/stdb_endpoint.rs"
+          ],
+          "layer": "adapters/secondary",
+          "status": "pending",
+          "done_condition": "fn discover_stdb_endpoint() walks: 1) .hex/project.json coordination.host, 2) HEX_STDB_HOST env, 3) localhost:3033, 4) HEX_STDB_FALLBACK_HOST env. Returns first that responds to a /v1/ping within 2s. .hex/state.json is read-only telemetry; never an input.",
+          "verify": "cargo test -p hex-nexus --lib adapters::secondary::stdb_endpoint::tests::fallback_chain_walks_in_order"
+        },
+        {
+          "id": "P4.2",
+          "name": "Re-discovery on connection failure",
+          "files": [
+            "hex-nexus/src/adapters/secondary/spacetime_state.rs"
+          ],
+          "layer": "adapters/secondary",
+          "status": "pending",
+          "done_condition": "Every STDB call wraps in a retry-with-rediscovery: on transport error, call discover_stdb_endpoint(), retry once. Log the host swap as an improver_event { kind: stdb_endpoint_drift, old, new }.",
+          "verify": "integration test: start with HEX_STDB_HOST=127.0.0.1:bogus, expect adapter to fall through to localhost:3033 + succeed; improver_event recorded"
+        },
+        {
+          "id": "P4.3",
+          "name": "state.json read-only enforcement",
+          "files": [
+            "hex-nexus/src/config_sync.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "config_sync.rs no longer treats state.json as a source of truth for endpoint config. State.json continues to receive write-only telemetry (current STDB host, current swarm count, etc.) for the dashboard, but configuration always re-reads project.json + env.",
+          "verify": "manual scenario: edit .hex/state.json to point at a bogus host, restart nexus, nexus connects to project.json's host instead of state.json's"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "hex doctor liveness — end-to-end self-test + CI gate",
+      "tier": 1,
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Synthetic ping/pong flow",
+          "files": [
+            "hex-cli/src/commands/doctor/liveness.rs",
+            "hex-nexus/src/orchestration/liveness_ping.rs"
+          ],
+          "layer": "usecases",
+          "status": "pending",
+          "done_condition": "hex doctor liveness emits a sched_task { kind: 'ping', payload: <uuid> }. The dispatcher's ping handler is a no-op that writes improver_event { kind: 'pong', related: <uuid> } within its handler. The CLI waits up to 60s for the pong, then reports per-stage timing (enqueued, claimed, executed, ponged).",
+          "verify": "hex doctor liveness exits 0 with a green stage table on a healthy system; exits non-zero with the first failing stage named on a broken one"
+        },
+        {
+          "id": "P5.2",
+          "name": "Dashboard liveness badge",
+          "files": [
+            "hex-nexus/assets/src/components/StatusBadge.tsx",
+            "hex-nexus/src/routes/liveness.rs"
+          ],
+          "layer": "primary/browser-adapter",
+          "status": "pending",
+          "done_condition": "Dashboard top-bar badge reads from GET /api/liveness which returns the most recent doctor liveness result + age. Badge color: green if last result was Pass within 60s, yellow within 5min, red beyond. The current 'hex-nexus is running' badge upgrades to track end-to-end health, not process-alive.",
+          "verify": "dashboard renders the badge; killing the agent worker turns it red within 60s"
+        },
+        {
+          "id": "P5.3",
+          "name": "CI workflow runs doctor liveness on every push",
+          "files": [
+            ".github/workflows/liveness.yml"
+          ],
+          "layer": "infrastructure",
+          "status": "pending",
+          "done_condition": "New workflow boots STDB + nexus + a hex-agent worker, runs hex doctor liveness, asserts exit 0. Required for branch protection. Today the only end-to-end gate is the integration step which is now a skip-friendly probe (PR #53b9b3fe). This is the actual liveness gate.",
+          "verify": "CI run on a push to a test branch where the dispatcher is broken fails the liveness workflow"
+        },
+        {
+          "id": "P5.4",
+          "name": "Postmortem evidence appendix in EVIDENCE.md",
+          "files": [
+            "docs/EVIDENCE.md"
+          ],
+          "layer": "infrastructure",
+          "status": "pending",
+          "done_condition": "EVIDENCE.md gains a 'Liveness' section that lists the 2026-05-19 postmortem (the failure mode this workplan was authored to close) + the reproducer steps for hex doctor liveness exit 0 vs exit non-zero. Closes the loop the ADR opened.",
+          "verify": "EVIDENCE.md contains the section + the reproducer commands work as documented"
+        }
+      ]
+    }
+  ]
+}
