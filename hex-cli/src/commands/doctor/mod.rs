@@ -7,6 +7,7 @@
 //! `hex validate pipeline` — runs full build pipeline (build → test → analyze → validate)
 
 pub mod composition;
+pub mod liveness;
 
 use colored::Colorize;
 

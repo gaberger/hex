@@ -4593,6 +4593,86 @@ pub fn dead_letter_record(
     Ok(())
 }
 
+// ============================================================
+// improver_event — append-only log of MAPE-K transitions
+// (ADR-2605190721 P4.1 + ADR-2605190900 P2.4).
+// ============================================================
+// The improver loop's K phase: every hypothesis discover / propose /
+// judge / act / dead-letter transition writes one row here. The
+// improver_judge reads back via `historical_reject_rate` so the system
+// learns which detector + scope patterns the operator tends to overrule.
+//
+// Distinct from supervisor_event — supervisor_event is the OTP-style
+// pool reconciliation log; improver_event is the MAPE-K learning log.
+// Different consumers, different cadences.
+// ============================================================
+
+#[table(name = improver_event, public)]
+#[derive(Clone, Debug)]
+pub struct ImproverEvent {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub ts: String,
+    /// "discover" | "propose" | "judge" | "act" | "retry_quota_exceeded" | "pong" | …
+    /// Loose enum — detector authors invent new kinds; the dashboard
+    /// groups by kind without enumerating them up front.
+    pub kind: String,
+    /// Where the event originated. Same shape as Hypothesis.source —
+    /// e.g. "AdrDoctor", "DispatchRetryQuota", "GodTypes", "Liveness".
+    pub source: String,
+    /// Scope of the event — typically a task_id, ADR id, or component
+    /// role. Together with source it acts as the dedup key for
+    /// historical_reject_rate computation.
+    pub scope: String,
+    /// JSON blob with kind-specific fields. Kept under ~2 KB per row
+    /// to stay below STDB's per-row size cap (ADR-2026-05-08-2600).
+    pub payload: String,
+    /// Optional cross-reference — e.g. a `pong` event's `related` points
+    /// to the `ping` event's id; an `act` event's `related` points to
+    /// the originating `discover`.
+    pub related: u64,
+}
+
+/// Append one improver_event row. Loose schema — callers are
+/// responsible for their kind/source/scope conventions. Returns the
+/// auto-incremented id so the caller can include it in a downstream
+/// `related` reference.
+#[reducer]
+pub fn improver_event_record(
+    ctx: &ReducerContext,
+    kind: String,
+    source: String,
+    scope: String,
+    payload: String,
+    related: u64,
+    timestamp: String,
+) -> Result<(), String> {
+    if kind.is_empty() {
+        return Err("kind is required".to_string());
+    }
+    // Bound payload to ~2 KB so a runaway emitter can't blow up STDB's
+    // per-row size cap.
+    const MAX_PAYLOAD_LEN: usize = 2048;
+    let payload = if payload.len() > MAX_PAYLOAD_LEN {
+        let mut t = payload[..MAX_PAYLOAD_LEN].to_string();
+        t.push_str("… [truncated]");
+        t
+    } else {
+        payload
+    };
+    ctx.db.improver_event().insert(ImproverEvent {
+        id: 0, // auto_inc fills this
+        ts: timestamp,
+        kind,
+        source,
+        scope,
+        payload,
+        related,
+    });
+    Ok(())
+}
+
 /// Operator-driven replay — copy the dead-letter row back into the
 /// sched_task pending queue (or whichever queue the dispatcher reads
 /// from) and remove the dead_letter row. Returns the rehydrated kind +

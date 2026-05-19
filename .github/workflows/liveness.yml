@@ -1,0 +1,86 @@
+name: hex doctor liveness
+
+# ADR-2605190900 P5.3 — end-to-end liveness gate. Boots a minimal stack
+# (STDB + nexus + a synthetic worker), runs `hex doctor liveness`, asserts
+# the loop closes within the 60s deadline.
+#
+# Today's `hex test pipeline` validates that processes start; THIS gate
+# validates that they're actually connected end-to-end. The 2026-05-19
+# postmortem captured the gap: nexus reported healthy, daemon reported
+# healthy, but the dispatcher had no consumer for 11 days. A liveness
+# gate would have surfaced that within 60 seconds of the breakage.
+#
+# Tolerated to fail until the operator wires the dispatcher's pong
+# handler (Tier-C edit in sched.rs — see hex-cli/src/commands/doctor/
+# liveness.rs trailing comment). `continue-on-error: true` reflects
+# that; remove the flag once the pong handler is wired and this gate
+# can hold the line.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  liveness:
+    name: Liveness self-test
+    runs-on: ubuntu-latest
+    # Soft-fail until the dispatcher pong handler lands. Remove this
+    # line to make liveness a hard gate.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-liveness-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-liveness-
+
+      - name: Ensure dashboard assets directory exists
+        run: mkdir -p hex-nexus/assets/dist
+
+      - name: Build hex-nexus (release)
+        run: cargo build -p hex-nexus --release
+
+      - name: Build hex-cli (release)
+        run: cargo build -p hex-cli --release
+
+      # No SpacetimeDB in CI — the liveness probe will fail at the STDB
+      # stage with a named failure rather than a silent hang. That is
+      # itself a useful diagnostic; CI logs will record which stage
+      # broke. When CI grows a STDB step (separate ADR), drop the
+      # continue-on-error at the job level.
+      - name: Start hex-nexus
+        env:
+          HEX_STATE_BACKEND: stdb
+        run: |
+          ./target/release/hex-nexus &
+          sleep 3
+
+      - name: Run hex doctor liveness
+        run: |
+          # `hex doctor liveness` exits 0 when the loop closes within 60s.
+          # On any broken stage it exits non-zero with the first failing
+          # stage named in stdout — that's the diagnostic.
+          ./target/release/hex doctor liveness || {
+            echo "::warning::liveness self-test reported a broken stage above";
+            exit 1;
+          }
+
+      - name: Stop hex-nexus
+        if: always()
+        run: pkill hex-nexus || true

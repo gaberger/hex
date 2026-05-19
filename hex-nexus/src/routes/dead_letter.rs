@@ -165,6 +165,14 @@ pub async fn replay(
 /// Internal helper — same surface as `record` for callers inside the
 /// nexus that already have an `Arc<AppState>`. Not exposed as a route
 /// to prevent external poison.
+///
+/// Side effect (ADR-2605190900 P2.4): every dead-letter records an
+/// `improver_event { kind: retry_quota_exceeded, source: DispatchRetryQuota }`
+/// so the improver discover phase can surface stuck task patterns as
+/// Hypothesis rows. The K-phase event write is best-effort — a failure
+/// there shouldn't unwind the dead-letter (the operator-visible
+/// dashboard row matters more than the learning loop). Errors logged
+/// at WARN.
 pub async fn record_internal(
     state: &AppState,
     task_id: &str,
@@ -178,7 +186,66 @@ pub async fn record_internal(
     adapter
         .record(task_id, kind, payload, last_error, attempt_count, original_priority)
         .await
-        .map_err(|e| format!("dead_letter record: {e}"))
+        .map_err(|e| format!("dead_letter record: {e}"))?;
+
+    // Emit the K-phase event. Best-effort.
+    let event_payload = serde_json::json!({
+        "task_id": task_id,
+        "kind": kind,
+        "attempt_count": attempt_count,
+        "original_priority": original_priority,
+        "last_error_preview": last_error.chars().take(200).collect::<String>(),
+    })
+    .to_string();
+    if let Err(e) = emit_improver_event(
+        state,
+        "retry_quota_exceeded",
+        "DispatchRetryQuota",
+        task_id,
+        &event_payload,
+        0, // no related event for this kind
+    )
+    .await
+    {
+        tracing::warn!(error = %e, task_id, "dead_letter: improver_event emit failed");
+    }
+
+    Ok(())
+}
+
+/// Best-effort improver_event_record reducer call. Used by P2.4 to log
+/// dead-letter events to the K-phase log; other consumers (P5 doctor
+/// liveness, future improver hypotheses) will reuse it via the same
+/// state-bound helper.
+pub async fn emit_improver_event(
+    _state: &AppState,
+    kind: &str,
+    source: &str,
+    scope: &str,
+    payload: &str,
+    related: u64,
+) -> Result<(), String> {
+    let host = std::env::var("HEX_SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+    let database = std::env::var("HEX_STDB_DATABASE").unwrap_or_else(|_| "hex".to_string());
+    let url = format!("{host}/v1/database/{database}/call/improver_event_record");
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("http build: {e}"))?;
+    let res = http
+        .post(&url)
+        .json(&serde_json::json!([kind, source, scope, payload, related, timestamp]))
+        .send()
+        .await
+        .map_err(|e| format!("improver_event_record: {e}"))?;
+    if !res.status().is_success() {
+        let status = res.status();
+        let body = res.text().await.unwrap_or_else(|_| "<no body>".to_string());
+        return Err(format!("improver_event_record HTTP {}: {}", status, body));
+    }
+    Ok(())
 }
 
 /// Internal flavor of Value-friendly listing — exposed only for the
