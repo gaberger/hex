@@ -5,6 +5,7 @@ pub mod agent_manager;
 pub mod supervisor_subscriber;
 pub mod integrator_subscriber;
 pub mod brain_dispatch_reconciler;
+pub mod heartbeat_client;
 pub mod brain_progress_streamer;
 pub mod swarm_task_drainer;
 pub mod swarm_task_bridge;

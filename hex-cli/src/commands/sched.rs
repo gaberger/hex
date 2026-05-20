@@ -2545,6 +2545,17 @@ pub async fn tick_adr_health(_state: &SchedState) {
 /// Foreground supervisor loop. Validates every `interval` seconds; after
 /// `max_failures` consecutive failures, pauses for 5x interval before retrying.
 /// Exits cleanly on ctrl-C.
+/// Read /etc/hostname for the heartbeat worker_id suffix. Falls back to
+/// "unknown" on any failure — the worker_id stays unique because PID is
+/// also part of it.
+fn hostname_local() -> String {
+    std::fs::read_to_string("/etc/hostname")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
     // Write the PID so DaemonStop can find a foreground instance too.
     let pid = std::process::id();
@@ -2577,6 +2588,57 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         max_failures,
         pid
     );
+
+    // Heartbeat client (ADR-2605190900 P1.4) — sched daemon publishes
+    // its liveness to worker_process every 15s. supervisor_tick reaps
+    // any row with last_heartbeat > 60s, so a hung daemon is visible
+    // in /api/liveness within one supervisor cycle (today: 10s) instead
+    // of going silent for 11 days like the May 8 zombie did. Detached
+    // task — on STDB outage we miss beats but the daemon keeps draining.
+    {
+        let role = "sched-daemon";
+        let worker_id = format!("{}-{}-{}", role, hostname_local(), pid);
+        tokio::spawn(async move {
+            let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
+                .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+            let database = std::env::var("HEX_STDB_DATABASE")
+                .unwrap_or_else(|_| "hex".to_string());
+            let http = match reqwest::Client::builder()
+                .timeout(Duration::from_secs(3))
+                .build()
+            {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+            // First-time register via worker_process_register. Best-effort.
+            let _ = http
+                .post(format!("{stdb_host}/v1/database/{database}/call/worker_process_register"))
+                .json(&serde_json::json!([
+                    worker_id,
+                    "sched-daemon-default",
+                    role,
+                    hostname_local(),
+                    pid as i64,
+                ]))
+                .send()
+                .await;
+            let mut ticker = tokio::time::interval(Duration::from_secs(15));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            ticker.tick().await; // consume immediate first tick — register handled it
+            loop {
+                ticker.tick().await;
+                let _ = http
+                    .post(format!("{stdb_host}/v1/database/{database}/call/worker_process_status"))
+                    .json(&serde_json::json!([
+                        worker_id,
+                        "healthy",
+                        "",
+                    ]))
+                    .send()
+                    .await;
+            }
+        });
+    }
 
     let mut consecutive_failures: u32 = 0;
     let mut paused_cycles: u32 = 0;

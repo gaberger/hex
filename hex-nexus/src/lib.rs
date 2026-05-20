@@ -831,6 +831,28 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         sched_service::spawn(sched_state);
     }
 
+    // Heartbeat client (ADR-2605190900 P1.4) — nexus self-registers as
+    // a worker_process row + beats every 15s. supervisor_tick reaps any
+    // row whose last_heartbeat is > 60s old, so a missed nexus equals a
+    // visible row drop in /api/liveness rather than a silent "still
+    // running" state. No corresponding deregister — the supervisor's
+    // stale-heartbeat reaper is the shutdown path.
+    {
+        let _heartbeat_handle = orchestration::heartbeat_client::HeartbeatClient::spawn(
+            "nexus-server",
+            "nexus-default",
+        );
+    }
+
+    // Zombie sweeper (ADR-2605190900 P3.3) — walks /proc every 60s
+    // looking for [hex-agent]/<defunct> rows whose ppid drifted to init.
+    // Surfaces them as audit rows so the operator (or a future systemd
+    // service) can reap. Cheap, non-blocking.
+    {
+        let sweeper_state = state.clone();
+        orchestration::zombie_sweeper::ZombieSweeper::spawn(sweeper_state);
+    }
+
     // Background task: evict completed commands older than 1 hour (every 60s)
     let evict_state = state.clone();
     tokio::spawn(async move {
