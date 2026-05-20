@@ -170,14 +170,31 @@ async fn check_supervisor_recent(http: &reqwest::Client, host: &str, db: &str) -
         let ts = arr.first().and_then(|v| v.as_str()).unwrap_or("");
         let key = "__timestamp_micros_since_unix_epoch__:";
         if let Some(pos) = ts.find(key) {
-            let tail = &ts[pos + key.len()..];
+            // The STDB Debug format renders as `: 1234567 }` — note the
+            // leading space and the trailing ` }`. Trim leading whitespace
+            // BEFORE the digit scan; the prior version found `.is_ascii_digit()`
+            // false on the first char (space) and aborted with end=0.
+            let tail = ts[pos + key.len()..].trim_start();
             let end = tail.find(|c: char| !c.is_ascii_digit()).unwrap_or(tail.len());
-            if let Ok(n) = tail[..end].trim().parse::<i64>() {
+            if let Ok(n) = tail[..end].parse::<i64>() {
                 if n > newest_micros {
                     newest_micros = n;
                 }
             }
         }
+    }
+    // Guard against the unparseable-timestamp case — newest_micros == 0
+    // means we have rows but couldn't parse any ts (e.g. STDB schema
+    // change). Reporting "age = unix epoch from now" produces an
+    // absurd 1_779_000_000s — useless. Be explicit instead.
+    if newest_micros == 0 {
+        return ProbeStage {
+            ok: false,
+            detail: format!(
+                "{} supervisor_event row(s) present but timestamps unparseable — schema drift?",
+                rows.len()
+            ),
+        };
     }
     let age_micros = now_micros - newest_micros;
     let age_secs = age_micros / 1_000_000;

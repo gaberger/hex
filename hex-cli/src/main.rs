@@ -677,11 +677,13 @@ async fn main() -> anyhow::Result<()> {
         Commands::Sandbox { action } => commands::sandbox::run(action).await,
         Commands::Fingerprint { action } => commands::fingerprint::run(action).await,
         Commands::Doctor { verbose, fix, check } => {
-            if check.as_deref() == Some("composition") {
-                doctor::composition::run_composition_check().await;
-                Ok(())
-            } else {
-                doctor::run_doctor(verbose, fix).await
+            match check.as_deref() {
+                Some("composition") => {
+                    doctor::composition::run_composition_check().await;
+                    Ok(())
+                }
+                Some("liveness") => doctor::liveness::run().await,
+                _ => doctor::run_doctor(verbose, fix).await,
             }
         }
         Commands::Context { action } => commands::context::run(action).await,

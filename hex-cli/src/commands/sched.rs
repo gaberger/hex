@@ -4787,6 +4787,42 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
     } else {
         None
     };
+    // ADR-2605190900 P5 — liveness ping. Synthetic task the doctor
+    // liveness probe enqueues to walk the full dispatch chain. Handled
+    // INLINE rather than shelling out: emit a `pong` improver_event row
+    // with scope=<uuid> so the probe's SQL poll sees it. No agent claim,
+    // no inference call, no side effects beyond the event row.
+    if kind == "hex-command" && payload.starts_with("ping ") {
+        let uuid = payload[5..].trim();
+        let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
+            .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+        let database = std::env::var("HEX_STDB_DATABASE").unwrap_or_else(|_| "hex".to_string());
+        let url = format!("{stdb_host}/v1/database/{database}/call/improver_event_record");
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let http = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => return (false, format!("ping handler http build: {e}")),
+        };
+        match http
+            .post(&url)
+            .json(&serde_json::json!(["pong", "Liveness", uuid, "{}", 0u64, timestamp]))
+            .send()
+            .await
+        {
+            Ok(res) if res.status().is_success() => {
+                return (true, format!("pong emitted for {uuid}"));
+            }
+            Ok(res) => {
+                let status = res.status();
+                let body = res.text().await.unwrap_or_else(|_| "<no body>".to_string());
+                return (false, format!("improver_event_record HTTP {status}: {body}"));
+            }
+            Err(e) => return (false, format!("improver_event_record: {e}")),
+        }
+    }
     let output = match kind {
         "hex-command" => std::process::Command::new("hex")
             .args(payload.split_whitespace())

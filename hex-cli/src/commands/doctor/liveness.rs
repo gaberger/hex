@@ -169,25 +169,26 @@ async fn probe_nexus() -> bool {
 }
 
 async fn enqueue_ping(ping_id: &str) -> Result<(), String> {
-    let host = nexus_base_url();
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let res = http
-        .post(format!("{host}/api/sched/queue"))
-        .json(&serde_json::json!({
-            "kind": "ping",
-            "payload": ping_id,
-            "priority": 9,
-        }))
-        .send()
+    // /api/hexflo/memory requires X-Hex-Agent-Id — easiest to delegate to
+    // the existing `hex brain enqueue` path which already plumbs the
+    // registered-session auth. This also matches the operator's actual
+    // queue surface: the liveness probe rides the same path real work
+    // takes, so a successful ping really did exercise the dispatcher.
+    let output = tokio::process::Command::new("hex")
+        .args(["brain", "enqueue", "hex-command", "--priority", "9", "--"])
+        .arg(format!("ping {}", ping_id))
+        .output()
         .await
-        .map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        let status = res.status();
-        let body = res.text().await.unwrap_or_else(|_| "<no body>".to_string());
-        return Err(format!("HTTP {}: {}", status, body));
+        .map_err(|e| format!("spawn `hex brain enqueue`: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(format!(
+            "hex brain enqueue failed (exit {:?}): {} {}",
+            output.status.code(),
+            stderr.trim(),
+            stdout.trim()
+        ));
     }
     Ok(())
 }
