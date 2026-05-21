@@ -9,6 +9,16 @@
 # The URL ends in /v1beta/openai (NOT /v1) — the chat URL builder in
 # routes/chat.rs:openai_compat_chat_url recognises that suffix as a
 # compat root and avoids the /v1/v1 double-prefix bug.
+#
+# Current lineup (per Wikipedia, May 2026):
+#   - Gemini 3 Flash         — Dec 2025, balanced default in the Gemini app
+#   - Gemini 3.1 Flash-Lite  — Mar 2026, cheapest/fastest tier
+#   - Gemini 2.5 Pro / Flash — prior generation, still available
+# Verify the exact API model IDs with:
+#   curl -sS "https://generativelanguage.googleapis.com/v1beta/openai/models" \
+#     -H "Authorization: Bearer $GOOGLE_API_KEY" | jq -r '.data[].id'
+# and update the entries below if Google has rotated names. Operator's
+# `--model` flag at registration time overrides this list anyway.
 name: gemini
 display_name: Google Gemini
 base_url: https://generativelanguage.googleapis.com/v1beta/openai
@@ -21,32 +31,38 @@ rate_limits:
   daily_requests: null
   daily_tokens: null
   tpm: 1000000
-# Approximate Gemini 2.5 pricing as of May 2026 — operator should
+# Approximate Gemini 3 Flash pricing as of May 2026 — operator should
 # refresh from https://ai.google.dev/pricing if substantially stale.
 # Used by cost-watchdog telemetry; the model picks the actual rate
 # from its server-side pricing — these are operator-side estimates.
 cost:
-  input_per_mtok: 0.075
-  output_per_mtok: 0.30
+  input_per_mtok: 0.10
+  output_per_mtok: 0.40
 models:
-  - id: gemini-2.5-flash
+  - id: gemini-3-flash
     tier: cloud
     context_window: 1048576
     coding_optimized: true
     task_types: [general, reasoning, code_generation]
-  - id: gemini-2.5-flash-lite
+  - id: gemini-3.1-flash-lite
     tier: cloud
     context_window: 1048576
     coding_optimized: false
-    task_types: [general]
+    task_types: [general, scaffold]
   - id: gemini-2.5-pro
     tier: cloud
     context_window: 1048576
     coding_optimized: true
     task_types: [reasoning, code_generation]
+  - id: gemini-2.5-flash
+    tier: cloud
+    context_window: 1048576
+    coding_optimized: true
+    task_types: [general, code_generation]
 routing:
-  # Fast, cheap, tools-capable — well-suited to T1 (scaffold/transform/
-  # script) and T2 (codegen). Pro for T2.5 reasoning.
+  # Fast, cheap, tools-capable — gemini-3-flash for T2 (codegen) and
+  # T2.5 (reasoning), gemini-3.1-flash-lite for T1 (scaffold/transform/
+  # script). gemini-2.5-pro held back for heavy reasoning fallback.
   preferred_for: interactive
   workload_class: interactive
   priority: 2
