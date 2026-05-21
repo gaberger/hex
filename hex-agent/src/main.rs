@@ -502,8 +502,18 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 None => {
-                    // No tasks available — short sleep to avoid busy-loop on REST fallback
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    // No tasks available — sleep before next poll. Was 2s
+                    // when only 1-2 agents existed; at 30+ agents that
+                    // produced 16 reqs/sec → ~5 cores in nexus task-claim
+                    // handler. 15s matches the heartbeat + agent-comms
+                    // cadence; same end-to-end SLA for inbound work.
+                    // HEX_AGENT_TASK_POLL_SECS env var for hot-tweaking.
+                    let task_poll_secs = std::env::var("HEX_AGENT_TASK_POLL_SECS")
+                        .ok()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .filter(|v| (1..=300).contains(v))
+                        .unwrap_or(15);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(task_poll_secs)).await;
                 }
             }
         }
