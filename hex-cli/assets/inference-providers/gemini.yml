@@ -1,0 +1,52 @@
+# Google Gemini — OpenAI-compatible endpoint
+#
+# Speaks OpenAI chat/completions schema (including the `tools` array)
+# at https://generativelanguage.googleapis.com/v1beta/openai/chat/completions.
+# Cheaper than OpenRouter for the Flash tier; non-zero cost (not free)
+# but the Free Tier on AI Studio gives operators a small daily quota
+# at no charge.
+#
+# The URL ends in /v1beta/openai (NOT /v1) — the chat URL builder in
+# routes/chat.rs:openai_compat_chat_url recognises that suffix as a
+# compat root and avoids the /v1/v1 double-prefix bug.
+name: gemini
+display_name: Google Gemini
+base_url: https://generativelanguage.googleapis.com/v1beta/openai
+api_key_env: GOOGLE_API_KEY
+provider_type: openai-compat
+openai_compatible: true
+is_free_tier: false
+rate_limits:
+  rpm: 1000
+  daily_requests: null
+  daily_tokens: null
+  tpm: 1000000
+# Approximate Gemini 2.5 pricing as of May 2026 — operator should
+# refresh from https://ai.google.dev/pricing if substantially stale.
+# Used by cost-watchdog telemetry; the model picks the actual rate
+# from its server-side pricing — these are operator-side estimates.
+cost:
+  input_per_mtok: 0.075
+  output_per_mtok: 0.30
+models:
+  - id: gemini-2.5-flash
+    tier: cloud
+    context_window: 1048576
+    coding_optimized: true
+    task_types: [general, reasoning, code_generation]
+  - id: gemini-2.5-flash-lite
+    tier: cloud
+    context_window: 1048576
+    coding_optimized: false
+    task_types: [general]
+  - id: gemini-2.5-pro
+    tier: cloud
+    context_window: 1048576
+    coding_optimized: true
+    task_types: [reasoning, code_generation]
+routing:
+  # Fast, cheap, tools-capable — well-suited to T1 (scaffold/transform/
+  # script) and T2 (codegen). Pro for T2.5 reasoning.
+  preferred_for: interactive
+  workload_class: interactive
+  priority: 2

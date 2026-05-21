@@ -20,7 +20,7 @@ use crate::assets::Assets;
 use crate::nexus_client::NexusClient;
 
 /// Known free-tier provider template names (ADR-2026-04-05-2125).
-const PROVIDER_TEMPLATES: &[&str] = &["groq", "cerebras", "sambanova", "together", "openrouter", "ollama"];
+const PROVIDER_TEMPLATES: &[&str] = &["groq", "cerebras", "sambanova", "together", "openrouter", "ollama", "gemini"];
 
 /// Parsed provider template from YAML (ADR-2026-04-05-2125).
 #[derive(Debug, serde::Deserialize)]
@@ -85,7 +85,7 @@ fn load_provider_template(name: &str) -> Option<ProviderTemplate> {
 pub enum InferenceAction {
     /// Register a new inference provider (template name or manual type+URL)
     Add {
-        /// Provider type or template name: groq, cerebras, sambanova, together, openrouter, ollama, vllm, openai-compat
+        /// Provider type or template name: groq, cerebras, sambanova, together, openrouter, ollama, gemini, vllm, openai-compat
         provider_type: String,
         /// Base URL (e.g., http://bazzite.local:11434). Optional for template providers.
         url: Option<String>,
