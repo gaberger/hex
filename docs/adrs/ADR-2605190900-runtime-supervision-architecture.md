@@ -1,7 +1,8 @@
 # ADR-2605190900: Runtime Supervision Architecture — closing the autonomous-loop liveness gap
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-19
+**Accepted:** 2026-05-21 — all 5 phases shipped via wp-runtime-supervision (19/19 tasks done); reproducers landed in docs/EVIDENCE.md "Runtime supervision" appendix.
 **Drivers:** A 2-hour live investigation of "the queue isn't draining" surfaced six independent failures that all share one missing layer: **the system has no architecture for component liveness**. The hexagonal substrate handles app-code structure cleanly, but there is no equivalent supervision layer governing the runtime processes that make the loop go. As long as that gap exists, every fix is whack-a-mole — patching the symptom under one component while four others are silently broken.
 
 ## Context
