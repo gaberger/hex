@@ -135,13 +135,63 @@ pub async fn all_runs() -> Vec<SopRunRecord> {
     g.iter().rev().cloned().collect()
 }
 
-/// True if `role` is opted into the SOP path via env CSV
-/// `HEX_SOP_PERSONAS=cto,cpo`.
+/// True if `role` is opted into the SOP path. Source precedence:
+///   1. `HEX_SOP_PERSONAS` env var CSV (operator override)
+///   2. `.hex/project.json` → `sop.personas` (array of strings)
+///   3. Default roster — every C-suite role + the chief-of-X tier
+///
+/// Tier-3 is the structural fix for the 2026-05-21 outage: when
+/// `hex nexus start` adopts an orphan daemon, the cmd.env() default-setter
+/// is bypassed and the SOP path goes dark for the entire session — every
+/// operator board ask routes to the free-prose Confirm/Silent path,
+/// no typed tools fire, zero `proposed_action` rows land. With this
+/// default the autonomous pipeline survives env-var inheritance loss
+/// across restart cycles.
 pub fn is_sop_persona(role: &str) -> bool {
+    // Tier 1: explicit env override.
     let csv = std::env::var("HEX_SOP_PERSONAS").unwrap_or_default();
-    csv.split(',')
-        .map(|s| s.trim())
-        .any(|s| !s.is_empty() && s.eq_ignore_ascii_case(role))
+    if !csv.trim().is_empty() {
+        return csv.split(',')
+            .map(|s| s.trim())
+            .any(|s| !s.is_empty() && s.eq_ignore_ascii_case(role));
+    }
+
+    // Tier 2: project.json sop.personas array.
+    if let Some(personas) = read_project_json_personas() {
+        return personas.iter().any(|p| p.eq_ignore_ascii_case(role));
+    }
+
+    // Tier 3: default roster — every exec role gets typed-tool dispatch.
+    // Matches the seed list in hex-cli/src/commands/nexus.rs:399 plus the
+    // four lead roles whose pools the persona supervisor seeds.
+    const DEFAULT_SOP_ROSTER: &[&str] = &[
+        "ceo", "cto", "cpo", "coo", "ciso",
+        "chief-architect", "chief-visionary",
+        "engineering-lead", "product-lead", "sre-lead",
+    ];
+    DEFAULT_SOP_ROSTER.iter().any(|r| r.eq_ignore_ascii_case(role))
+}
+
+/// Read `.hex/project.json` → `sop.personas` array. Returns None on
+/// missing/invalid file (caller falls through to defaults). Path
+/// resolved via `HEX_PROJECT_DIR` if set, else current dir — matches
+/// stdb_endpoint::locate_project_json (P4.3 convention).
+fn read_project_json_personas() -> Option<Vec<String>> {
+    let root = std::env::var("HEX_PROJECT_DIR")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())?;
+    let path = root.join(".hex").join("project.json");
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    json.get("sop")
+        .and_then(|s| s.get("personas"))
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
 }
 
 /// Coarse intent classification — regex + keyword heuristics. Zero
@@ -1240,13 +1290,55 @@ mod tests {
         assert_eq!(classify_intent("hello"), "code_question");
     }
 
-    #[test]
-    fn sop_persona_csv() {
+    // Serialize env-mutating tests against the workspace test lock.
+    // Without it, parallel cargo test runs race on HEX_SOP_PERSONAS +
+    // HEX_PROJECT_DIR (same hazard as stdb_endpoint::tests).
+    #[tokio::test]
+    async fn sop_persona_csv() {
+        let _lock = crate::adapters::test_env_lock().lock_owned().await;
+        let prev_sop = std::env::var("HEX_SOP_PERSONAS").ok();
+        let prev_dir = std::env::var("HEX_PROJECT_DIR").ok();
         std::env::set_var("HEX_SOP_PERSONAS", "cto, cpo");
+        std::env::set_var("HEX_PROJECT_DIR", "/tmp/hex-sop-test-no-such-dir");
         assert!(is_sop_persona("cto"));
         assert!(is_sop_persona("CPO"));
         assert!(!is_sop_persona("ciso"));
+        // Restore prior state.
+        match prev_sop { Some(v) => std::env::set_var("HEX_SOP_PERSONAS", v), None => std::env::remove_var("HEX_SOP_PERSONAS") }
+        match prev_dir { Some(v) => std::env::set_var("HEX_PROJECT_DIR", v), None => std::env::remove_var("HEX_PROJECT_DIR") }
+    }
+
+    #[tokio::test]
+    async fn sop_persona_default_roster_when_env_unset() {
+        // The 2026-05-21 outage: env unset → sop path went dark. Default
+        // roster is the structural fix. Restart-safe.
+        let _lock = crate::adapters::test_env_lock().lock_owned().await;
+        let prev_sop = std::env::var("HEX_SOP_PERSONAS").ok();
+        let prev_dir = std::env::var("HEX_PROJECT_DIR").ok();
         std::env::remove_var("HEX_SOP_PERSONAS");
+        std::env::set_var("HEX_PROJECT_DIR", "/tmp/hex-sop-test-no-such-dir-2");
+        assert!(is_sop_persona("cto"));
+        assert!(is_sop_persona("CEO"));
+        assert!(is_sop_persona("chief-architect"));
+        assert!(is_sop_persona("engineering-lead"));
+        assert!(!is_sop_persona("random-role"));
+        match prev_sop { Some(v) => std::env::set_var("HEX_SOP_PERSONAS", v), None => std::env::remove_var("HEX_SOP_PERSONAS") }
+        match prev_dir { Some(v) => std::env::set_var("HEX_PROJECT_DIR", v), None => std::env::remove_var("HEX_PROJECT_DIR") }
+    }
+
+    #[tokio::test]
+    async fn sop_persona_env_overrides_default() {
+        // Operator can EXCLUDE a default roster member by setting an
+        // explicit CSV that doesn't include them.
+        let _lock = crate::adapters::test_env_lock().lock_owned().await;
+        let prev_sop = std::env::var("HEX_SOP_PERSONAS").ok();
+        let prev_dir = std::env::var("HEX_PROJECT_DIR").ok();
+        std::env::set_var("HEX_SOP_PERSONAS", "cto");
+        std::env::set_var("HEX_PROJECT_DIR", "/tmp/hex-sop-test-no-such-dir-3");
+        assert!(is_sop_persona("cto"));
+        assert!(!is_sop_persona("ceo"));
+        match prev_sop { Some(v) => std::env::set_var("HEX_SOP_PERSONAS", v), None => std::env::remove_var("HEX_SOP_PERSONAS") }
+        match prev_dir { Some(v) => std::env::set_var("HEX_PROJECT_DIR", v), None => std::env::remove_var("HEX_PROJECT_DIR") }
     }
 
     #[test]

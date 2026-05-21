@@ -730,13 +730,28 @@ async fn draft_one(
          Your committed action: {action}\n\
          Required success artifact: {artifact}{ceo_ask}{existing}\n\n\
          Produce the ACTUAL FULL CONTENTS of `{artifact}` NOW.\n\n\
-         Rules:\n\
+         HARD RULE — GROUNDING CITATIONS (twin_reviewer::content_has_grounding will reject \
+         your output otherwise; this is not a stylistic preference, the gate is regex-checked):\n\
+         The body MUST contain at least ONE of:\n\
+         • An ADR ID in form `ADR-YYYY-MM-DD-HHMM` (e.g. ADR-2026-05-19-0721)\n\
+         • A repo path with a known hex prefix — `hex-nexus/...`, `hex-cli/...`, `hex-core/...`, \
+           `hex-agent/...`, `hex-parser/...`, `hex-analyzer/...`, `spacetime-modules/...`, \
+           `docs/adrs/...`, `docs/specs/...`, `docs/workplans/...`\n\
+         • A known module name — `org_responder`, `twin_reviewer`, `drafter`, `sop_executor`, \
+           `workplan_executor`, `agent_manager`, `action_executor`, `code_phase_worker`, \
+           `supervisor_subscriber`, `state_config`, `spacetime_state`\n\
+         • A git short-SHA (7+ lowercase hex chars, must mix letters + digits)\n\
+         • A `hex <verb>` CLI invocation (e.g. `hex analyze`, `hex plan reconcile --strict`)\n\
+         The CEO brief above almost always contains citations to ECHO into your output. Use them.\n\n\
+         Other rules:\n\
          - The file MUST directly answer the CEO request above. Do NOT drift to a generic 'enterprise tooling' \
            or off-topic document — match the SPECIFIC question the CEO asked.\n\
          - Output ONLY the file body — no preamble, no markdown code fence, no explanation about what you are doing.\n\
          - Aim for a one-pager (under 10 KB).\n\
          - Use Markdown if the path ends in .md, the appropriate language syntax otherwise.\n\
-         - Reference real repo paths and concrete entities. Do not invent.\n\
+         - Do not invent paths or IDs. If you need a citation and the CEO didn't give you one, \
+           re-use one from the existing-file block above, or cite the parent directory \
+           (`docs/specs/` is a valid prefix even if your file is the first there).\n\
          - If you genuinely cannot produce a useful draft (the CEO's request is ambiguous or requires \
            information you do not have), output ONLY the literal string `INSUFFICIENT_CONTEXT: <one-line reason>` \
            and nothing else.",
