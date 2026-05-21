@@ -24,13 +24,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
 };
 use hex_core::domain::worker_pool::ConsumerStatus;
 use hex_core::ports::worker_pool::IWorkerPoolPort;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use crate::adapters::spacetime_worker_pool::SpacetimeWorkerPoolAdapter;
 use crate::state::AppState;
@@ -111,4 +112,70 @@ pub async fn check(
     };
 
     Ok(Json(response))
+}
+
+/// POST /api/worker-process/:id/heartbeat — refresh last_heartbeat on
+/// the worker_process row identified by `id`.
+///
+/// Called by hex-agent on a 15s cadence (when launched with the
+/// `HEX_WORKER_PROCESS_ID` env var set by `spawn_local_agent`). The
+/// supervisor_tick reaps any row whose last_heartbeat is older than
+/// 60s; without this endpoint the row goes stale and the supervisor
+/// keeps spawning replacements while the hex-agent process is still
+/// alive. Observed 2026-05-21: ~3 hex-agents/pool/min growth → 246
+/// processes after ~30 min, with the supervisor unable to detect that
+/// the originals were still running.
+///
+/// Delegates to the WASM reducer `worker_process_heartbeat`. Returns:
+///   - 200 + `{ok:true}` on success
+///   - 404 if the row id doesn't exist (caller should fall through to
+///     `/api/hex-agents/{id}/heartbeat` — the legacy surface still
+///     applies to swarm-task agents that weren't spawned via the
+///     supervisor)
+///   - 503 if STDB is unreachable (transient — caller retries next tick)
+pub async fn process_heartbeat(
+    State(_state): State<std::sync::Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let host = std::env::var("HEX_SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+    let database = std::env::var("HEX_STDB_DATABASE").unwrap_or_else(|_| "hex".to_string());
+    let url = format!("{host}/v1/database/{database}/call/worker_process_heartbeat");
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("http client: {e}")})),
+        ))?;
+
+    let resp = client
+        .post(&url)
+        .json(&json!([id]))
+        .send()
+        .await
+        .map_err(|e| (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": format!("STDB: {e}")})),
+        ))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        // Reducer error "worker_process 'X' not found" → 404
+        let lower = body.to_ascii_lowercase();
+        if lower.contains("not found") {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "worker_process row not found", "id": id})),
+            ));
+        }
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": format!("STDB HTTP {status}: {body}")})),
+        ));
+    }
+
+    Ok(Json(json!({"ok": true, "id": id})))
 }

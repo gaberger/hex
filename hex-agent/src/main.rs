@@ -419,14 +419,32 @@ async fn main() -> anyhow::Result<()> {
         let heartbeat_shutdown = shutdown.clone();
         let heartbeat_nexus_url = nexus_url.clone();
         let heartbeat_agent_uuid = agent_uuid.clone();
+        // HEX_WORKER_PROCESS_ID is set by nexus's spawn_local_agent so
+        // hex-agent can heartbeat the EXACT worker_process row the
+        // supervisor created for it. Without this, supervisor_tick
+        // reaps the row as stale_heartbeat every 60s and spawns a
+        // replacement — observed 2026-05-21: ~3 hex-agents/pool/min
+        // growth and unbounded orphan accumulation.
+        let worker_process_id = std::env::var("HEX_WORKER_PROCESS_ID").ok();
         tokio::spawn(async move {
             let client = reqwest::Client::new();
+            // 15s cadence = 4× headroom against the 60s stale threshold,
+            // mirroring HeartbeatClient in hex-nexus.
+            let interval_secs: u64 = if worker_process_id.is_some() { 15 } else { 30 };
             while !heartbeat_shutdown.load(Ordering::SeqCst) {
-                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)).await;
+                // Always beat the legacy hex_agent row.
                 let _ = client
                     .post(format!("{}/api/hex-agents/{}/heartbeat", heartbeat_nexus_url, heartbeat_agent_uuid))
                     .send()
                     .await;
+                // If a worker_process row backs us, beat that too.
+                if let Some(ref wpid) = worker_process_id {
+                    let _ = client
+                        .post(format!("{}/api/worker-process/{}/heartbeat", heartbeat_nexus_url, wpid))
+                        .send()
+                        .await;
+                }
             }
         });
 

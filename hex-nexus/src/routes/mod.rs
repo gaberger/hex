@@ -597,6 +597,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/dead-letter/{id}/replay", post(dead_letter::replay))
         // Worker-pool consumer-availability gate (ADR-2605190900 §1 + P3.4)
         .route("/api/worker-pool/check", get(worker_pool::check))
+        // Self-heartbeat endpoint used by hex-agent (when launched with
+        // HEX_WORKER_PROCESS_ID env var). Closes the gap where supervisor_tick
+        // reaped still-alive workers because nobody was refreshing their row.
+        .route("/api/worker-process/{id}/heartbeat", post(worker_pool::process_heartbeat))
         // End-to-end liveness probe (ADR-2605190900 P5.2)
         .route("/api/liveness", get(liveness::get_liveness))
         // ── ADR-2026-05-08-1126 dashboard surfaces ──────────────────────────

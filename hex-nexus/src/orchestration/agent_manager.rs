@@ -656,6 +656,13 @@ impl AgentManager {
         // config.worktree_branch set) and are unaffected.
         cmd.env("HEXFLO_WORKTREE_REQUIRED", "0");
 
+        // Pass the worker_process row id so the hex-agent can heartbeat
+        // its OWN supervision row instead of a fresh UUID. Without this,
+        // supervisor_tick reaps the row as stale_heartbeat every 60s
+        // and the supervisor spawns a replacement — observed 2026-05-21:
+        // ~3 hex-agents per pool per minute, growing unboundedly.
+        cmd.env("HEX_WORKER_PROCESS_ID", &process_id);
+
         let child = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn hex-agent at {}: {}", agent_bin.display(), e))?;
