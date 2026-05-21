@@ -699,6 +699,33 @@ pub(crate) type InferenceResult = (String, String, u64, u64, String);
 /// Used by `call_inference_endpoint_with_tools` so the same
 /// ToolRegistry::anthropic_schema() that simple_agent emits also flows
 /// through OpenRouter (which speaks OpenAI-compat).
+/// Build the OpenAI-compatible chat/completions URL from a provider's
+/// configured base URL. Used by both `call_inference_endpoint` and
+/// `call_inference_endpoint_with_tools`. Recognizes the common compat
+/// roots so we don't double-append `/v1`:
+///
+///   base                                                  | result suffix
+///   ------------------------------------------------------|---------------
+///   https://api.openai.com/v1                             | /chat/completions
+///   https://generativelanguage.googleapis.com/v1beta/openai | /chat/completions
+///   https://example.com/openai                            | /chat/completions
+///   http://localhost:8000   (vLLM bare host)              | /v1/chat/completions
+///
+/// Without the suffix recognition, the Google endpoint expands to
+/// `.../v1beta/openai/v1/chat/completions` (404) — the operator-reported
+/// "url does not work" failure mode from 2026-05-21.
+pub(crate) fn openai_compat_chat_url(base_url: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let already_compat_root = base.ends_with("/v1")
+        || base.ends_with("/openai")
+        || base.ends_with("/v1beta/openai");
+    if already_compat_root {
+        format!("{base}/chat/completions")
+    } else {
+        format!("{base}/v1/chat/completions")
+    }
+}
+
 fn anthropic_tool_to_openai(t: &serde_json::Value) -> serde_json::Value {
     let name = t.get("name").cloned().unwrap_or(serde_json::Value::Null);
     let description = t.get("description").cloned().unwrap_or(serde_json::Value::Null);
@@ -853,14 +880,10 @@ pub(crate) async fn call_inference_endpoint_with_tools(
             }),
         )
     } else {
-        // openai / openai-compat / vllm — append /v1/chat/completions.
-        // Tolerate a base that already includes /v1.
-        let base = ep.url.trim_end_matches('/');
-        let url = if base.ends_with("/v1") {
-            format!("{base}/chat/completions")
-        } else {
-            format!("{base}/v1/chat/completions")
-        };
+        // openai / openai-compat / vllm — append /chat/completions.
+        // Different vendors use different OpenAI-compat root paths;
+        // openai_compat_chat_url handles all of them.
+        let url = openai_compat_chat_url(&ep.url);
         (
             url,
             json!({
@@ -1001,8 +1024,8 @@ pub(crate) async fn call_inference_endpoint(
                 (url, body)
             }
             _ => {
-                // OpenAI-compatible (vLLM, etc.)
-                let url = format!("{}/v1/chat/completions", ep.url);
+                // OpenAI-compatible (vLLM, Google Gemini compat layer, etc).
+                let url = openai_compat_chat_url(&ep.url);
                 let body = json!({
                     "model": model,
                     "messages": messages,
@@ -1309,6 +1332,59 @@ pub(crate) fn strip_think_block(raw: &str) -> String {
         }
     }
     out.trim().to_string()
+}
+
+#[cfg(test)]
+mod compat_url_tests {
+    use super::openai_compat_chat_url;
+
+    #[test]
+    fn google_gemini_openai_compat_root() {
+        // The 2026-05-21 "url does not work" report — Google's
+        // OpenAI-compat root ends with /v1beta/openai; appending /v1
+        // produces 404. We must just add /chat/completions.
+        assert_eq!(
+            openai_compat_chat_url("https://generativelanguage.googleapis.com/v1beta/openai"),
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        );
+    }
+
+    #[test]
+    fn openai_canonical_v1_root() {
+        assert_eq!(
+            openai_compat_chat_url("https://api.openai.com/v1"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn vllm_bare_host_gets_v1_prefix() {
+        assert_eq!(
+            openai_compat_chat_url("http://localhost:8000"),
+            "http://localhost:8000/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn generic_openai_path() {
+        // Any path ending in /openai is treated as a compat root.
+        assert_eq!(
+            openai_compat_chat_url("https://example.com/openai"),
+            "https://example.com/openai/chat/completions"
+        );
+    }
+
+    #[test]
+    fn trailing_slash_tolerated() {
+        assert_eq!(
+            openai_compat_chat_url("https://api.openai.com/v1/"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert_eq!(
+            openai_compat_chat_url("https://generativelanguage.googleapis.com/v1beta/openai/"),
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        );
+    }
 }
 
 #[cfg(test)]
