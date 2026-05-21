@@ -183,9 +183,15 @@ pub struct InferenceApiKey {
 
 /// One-shot schedule row that triggers `execute_inference` for a queued request.
 ///
-/// Inserted by `request_inference` with `ScheduleAt::Interval(Duration::ZERO)`
-/// so the procedure fires in the next scheduling tick. The row is automatically
-/// deleted by SpacetimeDB after the procedure runs.
+/// Inserted by `request_inference` with `ScheduleAt::Time(now)` so the
+/// procedure fires once and the row is auto-deleted by SpacetimeDB.
+///
+/// **DO NOT** use `ScheduleAt::Interval(Duration::ZERO)` here. That makes
+/// the schedule **repeat** every 0 seconds instead of fire once — STDB
+/// re-queues the row infinitely, burning the WASM executor and starving
+/// SQL queries on this database (observed 2026-05-21: 18 stale requests
+/// from a misconfigured "auto" provider cycled at ~100 Hz, making
+/// `/api/inference/endpoints` time out and breaking `hex inference list`).
 #[table(name = inference_execute_schedule, scheduled(execute_inference))]
 #[derive(Clone, Debug)]
 pub struct InferenceExecuteSchedule {
@@ -292,12 +298,15 @@ pub fn request_inference(
         created_at,
     });
 
-    // 4. Schedule immediate procedure execution for this request
+    // 4. Schedule immediate procedure execution for this request.
+    // ScheduleAt::Time(now) = fire once at that instant, then STDB deletes
+    // the row. Interval(ZERO) was a bug — it made the schedule repeat
+    // every 0s, causing infinite re-execution (see schema doc above).
     ctx.db
         .inference_execute_schedule()
         .insert(InferenceExecuteSchedule {
             scheduled_id: 0, // auto_inc
-            scheduled_at: ScheduleAt::Interval(std::time::Duration::ZERO.into()),
+            scheduled_at: ScheduleAt::Time(ctx.timestamp),
             request_id: inserted.request_id,
         });
 
@@ -746,8 +755,8 @@ pub fn set_api_key(ctx: &ReducerContext, provider_id: String, api_key: String) {
 
 /// Execute one queued inference request by calling the provider's LLM API.
 ///
-/// Scheduled by `request_inference` with `ScheduleAt::Interval(Duration::ZERO)`
-/// so it fires in the next tick. The schedule row is deleted by SpacetimeDB
+/// Scheduled by `request_inference` with `ScheduleAt::Time(ctx.timestamp)`
+/// so it fires once in the next tick. The schedule row is deleted by SpacetimeDB
 /// automatically after the procedure returns.
 ///
 /// Flow:
