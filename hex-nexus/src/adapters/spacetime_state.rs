@@ -42,7 +42,57 @@ impl Default for SpacetimeConfig {
 #[cfg(feature = "spacetimedb")]
 mod real {
     use super::*;
+    use std::sync::Arc;
     use tokio::sync::RwLock;
+
+    /// HTTP body shape accepted by `send_with_rediscovery`. Lets the
+    /// helper rebuild a request from scratch on the retry path.
+    #[derive(Clone)]
+    enum HttpBody {
+        Json(serde_json::Value),
+        Raw(String),
+    }
+
+    /// Was the error a transport-class failure (connect / timeout)
+    /// that rediscovery can plausibly recover from? Reducer-level
+    /// errors and HTTP 4xx/5xx are NOT transport errors — those mean
+    /// "STDB heard us and refused"; the host is fine, the call isn't.
+    fn is_transport_error(e: &reqwest::Error) -> bool {
+        e.is_connect() || e.is_timeout() || e.is_request()
+    }
+
+    /// Fire a best-effort `improver_event { kind: stdb_endpoint_drift, .. }`
+    /// against `host` (the new, presumed-working endpoint). Returns
+    /// Err(String) on failure; callers ignore the result — observability
+    /// must never block the user's call.
+    async fn record_endpoint_drift(
+        http: &reqwest::Client,
+        host: &str,
+        database: &str,
+        old: &str,
+        new: &str,
+    ) -> Result<(), String> {
+        let url = format!("{host}/v1/database/{database}/call/improver_event_record");
+        let payload = serde_json::json!({"old": old, "new": new});
+        let body = serde_json::json!([
+            "stdb_endpoint_drift",        // kind
+            "SpacetimeStateAdapter",      // source
+            "transport",                  // scope
+            payload.to_string(),          // payload (string-serialized JSON)
+            0u64,                         // related (no related row id)
+            chrono::Utc::now().to_rfc3339(),
+        ]);
+        let resp = http
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("send: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("HTTP {}", resp.status()));
+        }
+        Ok(())
+    }
 
     /// SpacetimeDB-backed state adapter using the real SDK.
     ///
@@ -53,6 +103,12 @@ mod real {
     /// - Events: table callbacks (on_insert/on_delete/on_update) feed the broadcast channel
     pub struct SpacetimeStateAdapter {
         config: SpacetimeConfig,
+        /// Live host string. Diverges from `config.host` when
+        /// `send_with_rediscovery` swaps to a working candidate after a
+        /// transport failure (ADR-2605190900 P4.2). All HTTP transport
+        /// reads from here; `config.host` retains the originally
+        /// configured value for diagnostics + drift logging.
+        current_host: Arc<RwLock<String>>,
         event_tx: broadcast::Sender<StateEvent>,
         _connected: RwLock<bool>,
         /// HTTP client for calling hexflo-coordination reducers via SpacetimeDB HTTP API.
@@ -65,13 +121,104 @@ mod real {
     impl SpacetimeStateAdapter {
         pub fn new(config: SpacetimeConfig) -> Self {
             let (event_tx, _) = broadcast::channel(256);
+            let initial_host = config.host.clone();
             Self {
                 config,
+                current_host: Arc::new(RwLock::new(initial_host)),
                 event_tx,
                 _connected: RwLock::new(false),
                 http: reqwest::Client::new(),
                 inference_tx: None,
             }
+        }
+
+        /// Read the live host string (may differ from `config.host`
+        /// after a P4.2 rediscovery swap).
+        async fn host(&self) -> String {
+            self.current_host.read().await.clone()
+        }
+
+        /// On a transport failure (`is_connect`/`is_timeout`), probe the
+        /// discovery hierarchy for a working candidate. Returns Some(new)
+        /// when the swap should happen; None when staying on the current
+        /// host is correct (rediscovery returned the same value, or the
+        /// error wasn't a transport class).
+        ///
+        /// Also fires a best-effort `improver_event { kind:
+        /// stdb_endpoint_drift, old, new }` so the K-phase log captures
+        /// the swap. Failure to record the event is silent — we'd rather
+        /// finish the user's call than block on observability.
+        async fn rediscover_after_transport_error(
+            &self,
+            prev_host: &str,
+            err: &reqwest::Error,
+        ) -> Option<String> {
+            if !is_transport_error(err) {
+                return None;
+            }
+            let candidate = crate::adapters::stdb_endpoint::discover_validated().await;
+            if candidate == prev_host {
+                return None;
+            }
+            tracing::warn!(
+                old = %prev_host,
+                new = %candidate,
+                error = %err,
+                "stdb endpoint drift — swapping host"
+            );
+            *self.current_host.write().await = candidate.clone();
+            // Best-effort drift log. Use the NEW host (the old one is
+            // unreachable, and the dead_letter helper reads the env var
+            // which may also be stale).
+            let _ = record_endpoint_drift(&self.http, &candidate, &self.config.database, prev_host, &candidate).await;
+            Some(candidate)
+        }
+
+        /// Build, send, retry-once-with-rediscovery. Returns the raw
+        /// `reqwest::Response` so each caller can keep its own body
+        /// parsing rules (`call_reducer` inspects body text for embedded
+        /// error fields; `query_table` parses STDB row format; etc.).
+        async fn send_with_rediscovery(
+            &self,
+            method: reqwest::Method,
+            url_path: &str,
+            body: HttpBody,
+        ) -> Result<reqwest::Response, reqwest::Error> {
+            let host = self.host().await;
+            let first = self.build_request(method.clone(), &host, url_path, body.clone());
+            match first.send().await {
+                Ok(resp) => Ok(resp),
+                Err(e) => match self.rediscover_after_transport_error(&host, &e).await {
+                    Some(new_host) => {
+                        let retry = self.build_request(method, &new_host, url_path, body);
+                        retry.send().await
+                    }
+                    None => Err(e),
+                },
+            }
+        }
+
+        /// Assemble a request against `host + url_path` with the
+        /// configured auth header. Pure builder — no I/O.
+        fn build_request(
+            &self,
+            method: reqwest::Method,
+            host: &str,
+            url_path: &str,
+            body: HttpBody,
+        ) -> reqwest::RequestBuilder {
+            let url = format!("{host}{url_path}");
+            let mut req = self.http.request(method, &url);
+            req = match body {
+                HttpBody::Json(v) => req.json(&v),
+                HttpBody::Raw(s) => req.body(s),
+            };
+            if let Some(ref token) = self.config.auth_token {
+                if !token.is_empty() {
+                    req = req.header("Authorization", format!("Bearer {}", token));
+                }
+            }
+            req
         }
 
         /// Wire in the inference broadcast channel so `inference_task_create` can push
@@ -84,17 +231,11 @@ mod real {
         /// Call a SpacetimeDB reducer via the HTTP API.
         /// POST {host}/database/call/{database}/{reducer}
         async fn call_reducer(&self, reducer: &str, args: serde_json::Value) -> Result<serde_json::Value, StateError> {
-            let url = format!(
-                "{}/v1/database/{}/call/{}",
-                self.config.host, self.config.database, reducer
-            );
-            let mut req = self.http.post(&url).json(&args);
-            if let Some(ref token) = self.config.auth_token {
-                if !token.is_empty() {
-                    req = req.header("Authorization", format!("Bearer {}", token));
-                }
-            }
-            let resp = req.send().await.map_err(|e| StateError::Connection(e.to_string()))?;
+            let path = format!("/v1/database/{}/call/{}", self.config.database, reducer);
+            let resp = self
+                .send_with_rediscovery(reqwest::Method::POST, &path, HttpBody::Json(args))
+                .await
+                .map_err(|e| StateError::Connection(e.to_string()))?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
@@ -129,17 +270,11 @@ mod real {
 
         /// Call a reducer on a specific SpacetimeDB database (for cross-module calls).
         async fn call_reducer_on(&self, database: &str, reducer: &str, args: serde_json::Value) -> Result<serde_json::Value, StateError> {
-            let url = format!(
-                "{}/v1/database/{}/call/{}",
-                self.config.host, database, reducer
-            );
-            let mut req = self.http.post(&url).json(&args);
-            if let Some(ref token) = self.config.auth_token {
-                if !token.is_empty() {
-                    req = req.header("Authorization", format!("Bearer {}", token));
-                }
-            }
-            let resp = req.send().await.map_err(|e| StateError::Connection(e.to_string()))?;
+            let path = format!("/v1/database/{}/call/{}", database, reducer);
+            let resp = self
+                .send_with_rediscovery(reqwest::Method::POST, &path, HttpBody::Json(args))
+                .await
+                .map_err(|e| StateError::Connection(e.to_string()))?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
@@ -156,17 +291,11 @@ mod real {
 
         /// Query a specific SpacetimeDB database via SQL (for cross-module queries).
         async fn query_table_on(&self, database: &str, sql: &str) -> Result<Vec<serde_json::Value>, StateError> {
-            let url = format!(
-                "{}/v1/database/{}/sql",
-                self.config.host, database
-            );
-            let mut req = self.http.post(&url).body(sql.to_string());
-            if let Some(ref token) = self.config.auth_token {
-                if !token.is_empty() {
-                    req = req.header("Authorization", format!("Bearer {}", token));
-                }
-            }
-            let resp = req.send().await.map_err(|e| StateError::Connection(e.to_string()))?;
+            let path = format!("/v1/database/{}/sql", database);
+            let resp = self
+                .send_with_rediscovery(reqwest::Method::POST, &path, HttpBody::Raw(sql.to_string()))
+                .await
+                .map_err(|e| StateError::Connection(e.to_string()))?;
             if !resp.status().is_success() {
                 let body = resp.text().await.unwrap_or_default();
                 return Err(StateError::Storage(format!("SQL query failed: {}", body)));
@@ -178,17 +307,11 @@ mod real {
         /// Query a SpacetimeDB table via the HTTP API.
         /// POST {host}/database/sql/{database} with SQL query
         async fn query_table(&self, sql: &str) -> Result<Vec<serde_json::Value>, StateError> {
-            let url = format!(
-                "{}/v1/database/{}/sql",
-                self.config.host, self.config.database
-            );
-            let mut req = self.http.post(&url).body(sql.to_string());
-            if let Some(ref token) = self.config.auth_token {
-                if !token.is_empty() {
-                    req = req.header("Authorization", format!("Bearer {}", token));
-                }
-            }
-            let resp = req.send().await.map_err(|e| StateError::Connection(e.to_string()))?;
+            let path = format!("/v1/database/{}/sql", self.config.database);
+            let resp = self
+                .send_with_rediscovery(reqwest::Method::POST, &path, HttpBody::Raw(sql.to_string()))
+                .await
+                .map_err(|e| StateError::Connection(e.to_string()))?;
             if !resp.status().is_success() {
                 let body = resp.text().await.unwrap_or_default();
                 return Err(StateError::Storage(format!("SQL query failed: {}", body)));
@@ -2025,6 +2148,165 @@ mod real {
                 .into_iter()
                 .filter_map(|v| serde_json::from_value(v).ok())
                 .collect())
+        }
+    }
+
+    #[cfg(test)]
+    mod p4_2_rediscovery_tests {
+        //! ADR-2605190900 P4.2 — adapter must swap to a working STDB
+        //! endpoint when the configured host stops responding, rather
+        //! than failing every downstream call until an operator restarts
+        //! the daemon.
+        //!
+        //! Tests serialize on a shared tokio Mutex because they mutate
+        //! HEX_SPACETIMEDB_HOST + HEX_STDB_FALLBACK_HOST + HEX_PROJECT_DIR,
+        //! which are process-global. Same pattern as the env_secret tests.
+        use super::*;
+        use httpmock::prelude::*;
+        use std::sync::Arc;
+        use tokio::sync::{Mutex, OwnedMutexGuard};
+
+        fn env_lock() -> Arc<Mutex<()>> {
+            static ONCE: std::sync::OnceLock<Arc<Mutex<()>>> = std::sync::OnceLock::new();
+            ONCE.get_or_init(|| Arc::new(Mutex::new(()))).clone()
+        }
+
+        /// Captures + restores env vars across one test. The owned
+        /// MutexGuard keeps env-touching tests serialised even when
+        /// cargo test runs them in parallel.
+        struct EnvGuard {
+            keys: Vec<(&'static str, Option<String>)>,
+            _lock: OwnedMutexGuard<()>,
+        }
+        impl EnvGuard {
+            async fn capture(keys: &[&'static str]) -> Self {
+                let lock = env_lock().lock_owned().await;
+                let snapshot = keys
+                    .iter()
+                    .map(|k| (*k, std::env::var(k).ok()))
+                    .collect();
+                Self { keys: snapshot, _lock: lock }
+            }
+        }
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                for (k, v) in &self.keys {
+                    match v {
+                        Some(val) => std::env::set_var(k, val),
+                        None => std::env::remove_var(k),
+                    }
+                }
+            }
+        }
+
+        /// Spawn an httpmock server that answers /v1/ping with 200 and
+        /// any POST to /v1/database/.../call/... or .../sql with 200 +
+        /// empty JSON body. Mimics the responses the adapter expects.
+        fn spawn_mock_stdb() -> MockServer {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET).path("/v1/ping");
+                then.status(200).body("");
+            });
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path_matches(regex::Regex::new(r"^/v1/database/[^/]+/call/.*$").unwrap());
+                then.status(200).body("");
+            });
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path_matches(regex::Regex::new(r"^/v1/database/[^/]+/sql$").unwrap());
+                then.status(200).body("[]");
+            });
+            server
+        }
+
+        #[tokio::test]
+        async fn rediscovery_swaps_host_after_transport_error() {
+            let _g = EnvGuard::capture(&[
+                "HEX_SPACETIMEDB_HOST",
+                "HEX_STDB_FALLBACK_HOST",
+                "HEX_PROJECT_DIR",
+            ])
+            .await;
+
+            // Mock server is the rediscovery target. Point both
+            // HEX_SPACETIMEDB_HOST and (as a belt-and-suspenders) the
+            // fallback at it — candidate_list puts env first so probing
+            // succeeds before reaching the localhost:3033 default that
+            // might be live in dev.
+            let mock = spawn_mock_stdb();
+            let mock_url = mock.base_url();
+            std::env::set_var("HEX_SPACETIMEDB_HOST", &mock_url);
+            std::env::set_var("HEX_STDB_FALLBACK_HOST", &mock_url);
+            std::env::set_var("HEX_PROJECT_DIR", "/tmp/hex-p4-2-no-such-dir");
+
+            // Adapter is constructed with an unreachable host. First
+            // call hits transport error → rediscover_validated picks the
+            // mock from candidate_list → retry succeeds.
+            let config = SpacetimeConfig {
+                host: "http://127.0.0.1:1".to_string(),
+                database: "p4_2_test".to_string(),
+                auth_token: None,
+            };
+            let adapter = SpacetimeStateAdapter::new(config);
+
+            // Sanity: starting host is the unreachable one.
+            assert_eq!(adapter.host().await, "http://127.0.0.1:1");
+
+            // Drive a reducer call. The 'reducer name' doesn't matter —
+            // the mock matches any /call/... path.
+            let result = adapter.call_reducer("noop", serde_json::json!([])).await;
+            assert!(
+                result.is_ok(),
+                "expected success after rediscovery, got {:?}",
+                result
+            );
+
+            // Adapter's live host should now be the mock URL.
+            let now = adapter.host().await;
+            assert_eq!(
+                now, mock_url,
+                "current_host should swap to the discovered endpoint"
+            );
+        }
+
+        #[tokio::test]
+        async fn non_transport_errors_do_not_trigger_rediscovery() {
+            let _g = EnvGuard::capture(&[
+                "HEX_SPACETIMEDB_HOST",
+                "HEX_STDB_FALLBACK_HOST",
+                "HEX_PROJECT_DIR",
+            ])
+            .await;
+
+            // Mock returns HTTP 500 on the reducer path — that's a
+            // reducer-level failure, not a transport one. The adapter
+            // must NOT rediscover (the host is fine; the call is broken).
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path_matches(regex::Regex::new(r"^/v1/database/[^/]+/call/.*$").unwrap());
+                then.status(500).body("reducer panic");
+            });
+            let base = server.base_url();
+
+            std::env::set_var("HEX_SPACETIMEDB_HOST", &base);
+            std::env::set_var("HEX_PROJECT_DIR", "/tmp/hex-p4-2-no-such-dir");
+
+            let config = SpacetimeConfig {
+                host: base.clone(),
+                database: "p4_2_test".to_string(),
+                auth_token: None,
+            };
+            let adapter = SpacetimeStateAdapter::new(config);
+
+            let result = adapter.call_reducer("noop", serde_json::json!([])).await;
+            assert!(result.is_err(), "500 response must surface as Err");
+
+            // Host must NOT have changed — the original host is the
+            // working one, the call just failed at the reducer level.
+            assert_eq!(adapter.host().await, base);
         }
     }
 }

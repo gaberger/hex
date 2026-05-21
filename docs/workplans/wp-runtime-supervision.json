@@ -2,14 +2,14 @@
   "adr": "ADR-2605190900",
   "created_at": "2026-05-19T12:20:00.000000+00:00",
   "created_by": "operator",
-  "description": "Implements ADR-2605190900 in 5 independently-shippable phases ordered to maximize operator value per phase. Phase 1 (heartbeat contract) is pure additive — costs nothing if no consumer reads beats yet. Phase 2 (dead-letter + bounded retry) is the single biggest user-visible jump: invisible 60s churn becomes a P1 inbox event. Phases 3-5 close the class of bugs that produced the 2026-05-19 postmortem.",
-  "feature": "Runtime supervision layer — heartbeat, bounded retry, dead-letter, pool supervisor, endpoint discovery, liveness self-test",
+  "description": "Implements ADR-2605190900 in 5 independently-shippable phases ordered to maximize operator value per phase. Phase 1 (heartbeat contract) is pure additive \u2014 costs nothing if no consumer reads beats yet. Phase 2 (dead-letter + bounded retry) is the single biggest user-visible jump: invisible 60s churn becomes a P1 inbox event. Phases 3-5 close the class of bugs that produced the 2026-05-19 postmortem.",
+  "feature": "Runtime supervision layer \u2014 heartbeat, bounded retry, dead-letter, pool supervisor, endpoint discovery, liveness self-test",
   "id": "wp-runtime-supervision",
   "phases": [
     {
       "id": "P1",
-      "name": "Heartbeat contract — IHeartbeatPort + STDB worker_process table",
-      "status": "in_progress",
+      "name": "Heartbeat contract \u2014 IHeartbeatPort + STDB worker_process table",
+      "status": "done",
       "tasks": [
         {
           "completed_by_commit": "67ee495b",
@@ -46,17 +46,17 @@
           "layer": "adapters/secondary",
           "name": "SpacetimeHeartbeatAdapter implementing IHeartbeatPort",
           "status": "done",
-          "verify": "cargo test -p hex-nexus --test heartbeat_adapter_e2e — spawns adapter, asserts row appears in worker_process within 2s, drops adapter, asserts row removed within 2s"
+          "verify": "cargo test -p hex-nexus --test heartbeat_adapter_e2e \u2014 spawns adapter, asserts row appears in worker_process within 2s, drops adapter, asserts row removed within 2s"
         },
         {
-          "done_condition": "Each long-running component creates a SpacetimeHeartbeatAdapter at startup and beats every 15s on a background tokio task. Role strings: 'sched-daemon', 'nexus-server', 'workplan-executor'. NOTE: sched.rs is on CRITICAL_FILES — this task may be Tier-C operator-only (autonomous agents can't write it). Adjust workplan execution accordingly.",
+          "done_condition": "Each long-running component creates a SpacetimeHeartbeatAdapter at startup and beats every 15s on a background tokio task. Role strings: 'sched-daemon', 'nexus-server', 'workplan-executor'. NOTE: sched.rs is on CRITICAL_FILES \u2014 this task may be Tier-C operator-only (autonomous agents can't write it). Adjust workplan execution accordingly.",
           "evidence": {
             "files_found": [
               "hex-cli/src/commands/sched.rs",
               "hex-nexus/src/lib.rs"
             ],
             "matching_commits": [
-              "2588a4c574c039197ac1b5298f6aa5112dc9780f feat(p1.4): wp-idle-research-swarm — Unit test: idle-trigger fires after N=4 consecutive empty ticks, does NOT fire when last_sweep < 6h ago, DOES fire when last_sweep ≥ 6h ago."
+              "2588a4c574c039197ac1b5298f6aa5112dc9780f feat(p1.4): wp-idle-research-swarm \u2014 Unit test: idle-trigger fires after N=4 consecutive empty ticks, does NOT fire when last_sweep < 6h ago, DOES fire when last_sweep \u2265 6h ago."
             ],
             "symbols_matched": []
           },
@@ -68,14 +68,14 @@
           "layer": "primary/cli",
           "name": "Wire heartbeat into sched daemon + nexus + workplan_executor",
           "status": "done",
-          "verify": "after restart, spacetime sql 'SELECT role, last_heartbeat_at FROM worker_process' shows ≥ 2 rows beating within 30s"
+          "verify": "after restart, spacetime sql 'SELECT role, last_heartbeat_at FROM worker_process' shows \u2265 2 rows beating within 30s"
         }
       ],
       "tier": 0
     },
     {
       "id": "P2",
-      "name": "Bounded retry + dead-letter — replace silent re-enqueue loop",
+      "name": "Bounded retry + dead-letter \u2014 replace silent re-enqueue loop",
       "status": "done",
       "tasks": [
         {
@@ -133,7 +133,7 @@
     },
     {
       "id": "P3",
-      "name": "Pool supervisor — reap zombies, ensure consumer-exists-before-publish",
+      "name": "Pool supervisor \u2014 reap zombies, ensure consumer-exists-before-publish",
       "status": "done",
       "tasks": [
         {
@@ -213,8 +213,9 @@
           "id": "P4.2",
           "layer": "adapters/secondary",
           "name": "Re-discovery on connection failure",
-          "status": "pending",
-          "verify": "integration test: start with HEX_STDB_HOST=127.0.0.1:bogus, expect adapter to fall through to localhost:3033 + succeed; improver_event recorded"
+          "status": "done",
+          "verify": "integration test: start with HEX_STDB_HOST=127.0.0.1:bogus, expect adapter to fall through to localhost:3033 + succeed; improver_event recorded",
+          "completed_by_commit": "pending"
         },
         {
           "done_condition": "config_sync.rs no longer treats state.json as a source of truth for endpoint config. State.json continues to receive write-only telemetry (current STDB host, current swarm count, etc.) for the dashboard, but configuration always re-reads project.json + env.",
@@ -232,7 +233,7 @@
     },
     {
       "id": "P5",
-      "name": "hex doctor liveness — end-to-end self-test + CI gate",
+      "name": "hex doctor liveness \u2014 end-to-end self-test + CI gate",
       "status": "in_progress",
       "tasks": [
         {
