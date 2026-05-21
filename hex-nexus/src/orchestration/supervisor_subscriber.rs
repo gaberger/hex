@@ -226,13 +226,17 @@ impl SupervisorSubscriber {
             "supervisor: spawning hex-agent for pool '{}' (role={})",
             pool_id, role
         );
-        let pid = mgr
+        // CRITICAL: use the process_id RETURNED BY spawn_local_agent — that
+        // same UUID is passed to the child via HEX_WORKER_PROCESS_ID env, and
+        // hex-agent heartbeats /api/worker-process/{that-uuid}/heartbeat.
+        // Registering the worker_process row under a DIFFERENT fresh UUID
+        // (the prior behaviour) caused every heartbeat to hit a non-existent
+        // row → row stayed stale → supervisor reaped → respawned. Observed
+        // 2026-05-21: 572 rows for ceo-default alone, 5.7-core CPU burn.
+        let (pid, process_id) = mgr
             .spawn_local_agent(&hub_url, &project_dir, Some(&role))
             .await
             .map_err(|e| format!("spawn_local_agent: {}", e))?;
-
-        // Register the worker_process row so the supervisor_tick stops asking.
-        let process_id = uuid::Uuid::new_v4().to_string();
         let host = gethostname::gethostname().to_string_lossy().to_string();
         if let Err(e) = port
             .worker_process_register(&process_id, pool_id, &role, &host, pid as i64)

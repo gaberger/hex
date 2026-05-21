@@ -1002,7 +1002,7 @@ pub async fn start_server(config: HubConfig) {
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             let hub_url = format!("http://127.0.0.1:{}", config.port);
             match agent_mgr.spawn_local_agent(&hub_url, &cwd, None).await {
-                Ok(pid) => {
+                Ok((pid, _process_id)) => {
                     tracing::info!(
                         pid = pid,
                         project = %cwd.display(),

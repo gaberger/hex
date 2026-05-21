@@ -607,12 +607,22 @@ impl AgentManager {
     /// The child process handle is stored for lifecycle management — killed on nexus shutdown.
     ///
     /// Returns the PID of the spawned process, or an error if the binary is not found.
+    /// Spawn a hex-agent child process and return both its OS pid AND the
+    /// `process_id` UUID used for hex_agent + worker_process registration.
+    ///
+    /// Caller (supervisor_subscriber) MUST use the returned process_id when
+    /// it calls `worker_process_register` — otherwise it registers the
+    /// row under a different UUID than the one passed to the child via
+    /// `HEX_WORKER_PROCESS_ID`, and the child's heartbeats target a row
+    /// that doesn't exist. Observed 2026-05-21: that mismatch produced
+    /// 572+ stale `worker_process` rows per pool with 5.7-core CPU burn
+    /// from the supervisor's spawn-reap cycle.
     pub async fn spawn_local_agent(
         &self,
         hub_url: &str,
         project_dir: &std::path::Path,
         role: Option<&str>,
-    ) -> Result<u32, String> {
+    ) -> Result<(u32, String), String> {
         let agent_bin = crate::find_agent_binary()
             .ok_or_else(|| "hex-agent binary not found (checked sibling dir, ~/.hex/bin/, PATH, cargo target)".to_string())?;
 
@@ -688,13 +698,13 @@ impl AgentManager {
 
         // Store child handle for lifecycle management
         self.local_children.lock().await.push(LocalAgent {
-            id: process_id,
+            id: process_id.clone(),
             pid,
             child,
             project_dir: project_dir_str,
         });
 
-        Ok(pid)
+        Ok((pid, process_id))
     }
 
     /// Stop all locally-spawned child agents (called on nexus shutdown).
