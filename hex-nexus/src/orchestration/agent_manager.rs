@@ -646,6 +646,16 @@ impl AgentManager {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped());
 
+        // Persona-pool + default-agent spawns operate from trunk and use
+        // typed-tool mediation (twin → executor) instead of direct file
+        // writes, so the worktree gate from ADR-2026-05-08-1126 doesn't
+        // apply. Without this override the supervisor spawns workers
+        // that immediately exit with "refusing to run from trunk",
+        // producing the persistent-zombie pattern observed 2026-05-21.
+        // Feature-dev coding agents take the `spawn_agent` path (with
+        // config.worktree_branch set) and are unaffected.
+        cmd.env("HEXFLO_WORKTREE_REQUIRED", "0");
+
         let child = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn hex-agent at {}: {}", agent_bin.display(), e))?;
