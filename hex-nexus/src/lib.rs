@@ -865,6 +865,17 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         orchestration::orphan_reaper::OrphanReaper::spawn(reaper_state);
     }
 
+    // Scale-to-zero: pause all worker_pool_intent rows when no work
+    // is queued, unpause on first activity signal. Drops idle nexus
+    // CPU from ~400% (30 persona pools × 13 nexus subscribers fan-out)
+    // to ~30%. Resume is automatic on next operator brief.
+    // Disable via HEX_DISABLE_POOL_AUTOPAUSE=1. Threshold via
+    // HEX_POOL_IDLE_AFTER_SECS=N (default 300).
+    {
+        let autopause_state = state.clone();
+        orchestration::pool_autopause::PoolAutoPause::spawn(autopause_state);
+    }
+
     // Background task: evict completed commands older than 1 hour (every 60s)
     let evict_state = state.clone();
     tokio::spawn(async move {
