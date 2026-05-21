@@ -2158,18 +2158,12 @@ mod real {
         //! than failing every downstream call until an operator restarts
         //! the daemon.
         //!
-        //! Tests serialize on a shared tokio Mutex because they mutate
-        //! HEX_SPACETIMEDB_HOST + HEX_STDB_FALLBACK_HOST + HEX_PROJECT_DIR,
-        //! which are process-global. Same pattern as the env_secret tests.
+        //! Tests acquire the workspace `test_env_lock` to serialize with
+        //! `stdb_endpoint::tests` — both modules mutate
+        //! HEX_SPACETIMEDB_HOST + HEX_STDB_FALLBACK_HOST + HEX_PROJECT_DIR.
         use super::*;
         use httpmock::prelude::*;
-        use std::sync::Arc;
-        use tokio::sync::{Mutex, OwnedMutexGuard};
-
-        fn env_lock() -> Arc<Mutex<()>> {
-            static ONCE: std::sync::OnceLock<Arc<Mutex<()>>> = std::sync::OnceLock::new();
-            ONCE.get_or_init(|| Arc::new(Mutex::new(()))).clone()
-        }
+        use tokio::sync::OwnedMutexGuard;
 
         /// Captures + restores env vars across one test. The owned
         /// MutexGuard keeps env-touching tests serialised even when
@@ -2180,7 +2174,7 @@ mod real {
         }
         impl EnvGuard {
             async fn capture(keys: &[&'static str]) -> Self {
-                let lock = env_lock().lock_owned().await;
+                let lock = crate::adapters::test_env_lock().lock_owned().await;
                 let snapshot = keys
                     .iter()
                     .map(|k| (*k, std::env::var(k).ok()))

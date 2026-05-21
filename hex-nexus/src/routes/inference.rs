@@ -122,55 +122,147 @@ pub async fn inference_complete(
     }
 
     // ── Tools fast-path (hex agent run / typed-tool dispatch) ──────────
-    // When the request includes a `tools` schema, bypass the elaborate
-    // free-tier fallback chain and route directly through OpenRouter
-    // with the schema translated to OpenAI function-calling format.
-    // Surfaces `tool_calls` in the response so simple_agent's extractor
-    // can dispatch them without prose round-trips.
+    // When the request includes a `tools` schema, iterate registered
+    // inference providers in priority order (local first → paid last)
+    // and use the first one that supports tools AND completes the call.
+    // This replaces an older hardcoded-OpenRouter path that burned
+    // credits even when a local Ollama was registered (observed
+    // 2026-05-21: 6 persona tasks all failed with "OpenRouter:
+    // insufficient credits" while Ollama sat idle on localhost).
+    //
+    // Fallback chain in priority order:
+    //   1. Registered tools-capable providers, sorted by
+    //      `priority_for_tools` (ollama/vllm/llama-cpp → openai-compat
+    //      → openrouter, healthy > unknown > unhealthy within tier)
+    //   2. Synthetic OpenRouter endpoint from OPENROUTER_API_KEY env
+    //      (preserves legacy behavior for operators with no registered
+    //      providers)
+    //   3. Fall through to the no-tools chain — the simple_agent
+    //      text-mode parser still gets a chance to surface structured
+    //      output from prose
     if let Some(ref tools_schema) = body.tools {
         if !tools_schema.is_empty() {
+            // Convert STDB ProviderRow → secrets::InferenceEndpointEntry
+            // (the shape `call_inference_endpoint_with_tools` consumes).
+            // ProviderRow has multi-model JSON; we expand each row into
+            // one entry per advertised model, then dedupe later in the
+            // priority sort.
+            let registered: Vec<crate::routes::secrets::InferenceEndpointEntry> =
+                if let Some(ref stdb) = state.inference_stdb {
+                    let rows = stdb.list_providers().await.unwrap_or_default();
+                    let mut out: Vec<crate::routes::secrets::InferenceEndpointEntry> =
+                        Vec::with_capacity(rows.len() * 2);
+                    for r in rows {
+                        // Pick the first model from models_json (defensive
+                        // parse — strings work, JSON arrays work).
+                        let model = serde_json::from_str::<Vec<String>>(&r.models_json)
+                            .ok()
+                            .and_then(|v| v.into_iter().next())
+                            .unwrap_or_else(|| {
+                                r.models_json
+                                    .trim_start_matches('[')
+                                    .trim_end_matches(']')
+                                    .split(',')
+                                    .next()
+                                    .unwrap_or(&r.models_json)
+                                    .trim()
+                                    .trim_matches('"')
+                                    .to_string()
+                            });
+                        out.push(crate::routes::secrets::InferenceEndpointEntry {
+                            id: r.provider_id,
+                            url: r.base_url,
+                            provider: r.provider_type,
+                            model,
+                            status: if r.healthy == 1 { "healthy".into() } else { "unknown".into() },
+                            requires_auth: !r.api_key_ref.is_empty(),
+                            secret_key: r.api_key_ref,
+                            health_checked_at: r.last_health_check,
+                        });
+                    }
+                    out
+                } else {
+                    Vec::new()
+                };
+
+            // Build the candidate list. Filter to tools-capable, sort
+            // by priority. Within Ollama family, prefer entries whose
+            // model matches the request's model hint (if any).
+            let requested_model = body.model.clone();
+            let mut candidates: Vec<crate::routes::secrets::InferenceEndpointEntry> = registered
+                .into_iter()
+                .filter(super::chat::provider_supports_tools)
+                .collect();
+            candidates.sort_by_key(super::chat::priority_for_tools);
+
+            // If the caller specified a model, prefer endpoints that
+            // serve it within their tier.
+            if let Some(ref m) = requested_model {
+                candidates.sort_by(|a, b| {
+                    let pa = super::chat::priority_for_tools(a);
+                    let pb = super::chat::priority_for_tools(b);
+                    let am = if a.model == *m { 0 } else { 1 };
+                    let bm = if b.model == *m { 0 } else { 1 };
+                    (pa, am).cmp(&(pb, bm))
+                });
+            }
+
+            // Always append a synthetic OpenRouter env-key endpoint as
+            // the last-resort fallback. Skipped if no key is available.
             let openrouter_key: Option<String> = state.openrouter_api_key.clone()
                 .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
                 .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()
                     .filter(|k| k.starts_with("sk-or-")));
-            if let Some(or_key) = openrouter_key {
-                let raw_model = body.model.clone().unwrap_or_else(|| "anthropic/claude-haiku-4.5".to_string());
-                // OpenRouter requires a fully-qualified slug (vendor/model).
-                // qwen2.5-coder:14b style (Ollama-native) won't resolve.
-                let or_model = if raw_model.contains('/') {
-                    raw_model
-                } else if raw_model.starts_with("claude") {
-                    format!("anthropic/{}", raw_model)
-                } else if raw_model.starts_with("gpt") || raw_model.starts_with("o1") {
-                    format!("openai/{}", raw_model)
-                } else if raw_model.contains(':') {
-                    // Ollama-style (e.g. qwen2.5-coder:14b) — won't work on
-                    // OpenRouter. Substitute a sane tool-capable default
-                    // and log the fallback so the operator sees what
-                    // happened.
-                    tracing::warn!(
-                        requested = %raw_model,
-                        fallback = "anthropic/claude-haiku-4.5",
-                        "tools fast-path: Ollama-style model substituted with OpenRouter-capable default"
-                    );
-                    "anthropic/claude-haiku-4.5".to_string()
-                } else {
-                    raw_model
-                };
-                let synth = crate::routes::secrets::InferenceEndpointEntry {
-                    id: "openrouter-tools-fastpath".into(),
-                    url: "https://openrouter.ai/api/v1".into(),
-                    provider: "openrouter".into(),
-                    model: or_model.clone(),
-                    status: "unknown".into(),
-                    requires_auth: true,
-                    secret_key: or_key.clone(),
-                    health_checked_at: String::new(),
-                };
-                match super::chat::call_inference_endpoint_with_tools(&synth, &messages, tools_schema).await {
-                    Ok(((content, model, input_tokens, output_tokens, openrouter_cost), tool_calls)) => {
+            if let Some(or_key) = openrouter_key.clone() {
+                // Skip if a registered openrouter entry is already
+                // first-class — no point queueing two of them.
+                let already_have_or = candidates.iter().any(|c| {
+                    c.provider.eq_ignore_ascii_case("openrouter")
+                        || c.url.contains("openrouter.ai")
+                });
+                if !already_have_or {
+                    let raw_model = requested_model
+                        .clone()
+                        .unwrap_or_else(|| "anthropic/claude-haiku-4.5".to_string());
+                    // OpenRouter needs vendor/model slug; tolerate
+                    // Ollama-style names by substituting a sane default.
+                    let or_model = if raw_model.contains('/') {
+                        raw_model
+                    } else if raw_model.starts_with("claude") {
+                        format!("anthropic/{}", raw_model)
+                    } else if raw_model.starts_with("gpt") || raw_model.starts_with("o1") {
+                        format!("openai/{}", raw_model)
+                    } else if raw_model.contains(':') {
+                        "anthropic/claude-haiku-4.5".to_string()
+                    } else {
+                        raw_model
+                    };
+                    candidates.push(crate::routes::secrets::InferenceEndpointEntry {
+                        id: "openrouter-env-fastpath".into(),
+                        url: "https://openrouter.ai/api/v1".into(),
+                        provider: "openrouter".into(),
+                        model: or_model,
+                        status: "unknown".into(),
+                        requires_auth: true,
+                        secret_key: or_key,
+                        health_checked_at: String::new(),
+                    });
+                }
+            }
+
+            // Walk the candidate list. First success wins.
+            let mut last_err = String::new();
+            for ep in &candidates {
+                tracing::debug!(
+                    provider = %ep.provider,
+                    model = %ep.model,
+                    "tools fast-path: trying candidate"
+                );
+                match super::chat::call_inference_endpoint_with_tools(ep, &messages, tools_schema).await {
+                    Ok(((content, model_used, input_tokens, output_tokens, cost), tool_calls)) => {
                         tracing::info!(
-                            model = %model,
+                            provider = %ep.provider,
+                            model = %model_used,
                             input_tokens,
                             output_tokens,
                             tool_calls = tool_calls.len(),
@@ -178,22 +270,34 @@ pub async fn inference_complete(
                         );
                         let mut resp = json!({
                             "content": content,
-                            "model": model,
+                            "model": model_used,
                             "input_tokens": input_tokens,
                             "output_tokens": output_tokens,
                             "tool_calls": tool_calls,
+                            "provider": ep.provider,
                         });
-                        if !openrouter_cost.is_empty() {
-                            resp["openrouter_cost_usd"] = json!(openrouter_cost);
+                        if !cost.is_empty() {
+                            resp["openrouter_cost_usd"] = json!(cost);
                         }
                         return (StatusCode::OK, Json(resp));
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "tools fast-path failed — falling through to tools-free chain");
-                        // Fall through to legacy path; the model still
-                        // gets the request but won't emit tool_calls.
+                        tracing::warn!(
+                            provider = %ep.provider,
+                            error = %e,
+                            "tools fast-path: candidate failed; trying next"
+                        );
+                        last_err = e;
                     }
                 }
+            }
+
+            if !candidates.is_empty() {
+                tracing::warn!(
+                    last_err = %last_err,
+                    candidates = candidates.len(),
+                    "tools fast-path: all candidates exhausted — falling through to no-tools chain"
+                );
             }
         }
     }

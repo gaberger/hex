@@ -131,33 +131,33 @@ fn locate_project_json() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use tokio::sync::OwnedMutexGuard;
 
-    /// Serialize env-mutating tests in this module. cargo test runs cases
-    /// in parallel by default; the first run of these tests caught
-    /// HEX_SPACETIMEDB_HOST leaking between cases (CI failure on commit
-    /// 4f129e95: "expected default or fallback, got http://from-env:9000"
-    /// — the env var bled in from a sibling test that hadn't dropped
-    /// its EnvGuard yet). Holding this mutex around every test keeps
-    /// the env mutations linear without forcing --test-threads=1 on
-    /// the whole workspace.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    /// Saves + restores env vars across a test. Avoids cross-test
-    /// contamination when each case wants a clean baseline.
+    /// Saves + restores env vars across a test. Holds the workspace
+    /// env-mutation lock for the test duration so parallel cases that
+    /// touch HEX_SPACETIMEDB_HOST et al. queue rather than interleave.
+    ///
+    /// Async API + tokio::sync::Mutex so callers can hold the guard
+    /// across `.await` points (the rediscovery tests in
+    /// `spacetime_state::p4_2_rediscovery_tests` need that). Sync
+    /// callers use `block_on` on the same lock — fine inside a Tokio
+    /// runtime via `Handle::current().block_on`. To keep these tests
+    /// `#[test]` (not `#[tokio::test]`) we own a runtime for the lock
+    /// acquisition only.
     struct EnvGuard {
         keys: Vec<(&'static str, Option<String>)>,
-        // Keep the mutex guard alive for the duration of the test so
-        // parallel test cases queue behind us. Mutex is poison-resistant
-        // (unwrap_or_else(PoisonError::into_inner)) so a panicked sibling
-        // doesn't permanently jam this module's tests.
-        _lock: std::sync::MutexGuard<'static, ()>,
+        _lock: OwnedMutexGuard<()>,
     }
     impl EnvGuard {
         fn capture(keys: &[&'static str]) -> Self {
-            let lock = ENV_LOCK
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            // Acquire the shared workspace lock. Spin up a small
+            // current-thread runtime — we're already in a sync test
+            // context so we can't await directly.
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build current-thread runtime");
+            let lock = rt.block_on(super::super::test_env_lock().lock_owned());
             let snapshot = keys
                 .iter()
                 .map(|k| (*k, std::env::var(k).ok()))

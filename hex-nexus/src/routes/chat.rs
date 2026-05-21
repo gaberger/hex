@@ -717,32 +717,94 @@ fn anthropic_tool_to_openai(t: &serde_json::Value) -> serde_json::Value {
     })
 }
 
+/// Provider families that accept an OpenAI-compatible `tools` array on
+/// chat/completion calls. The tools fast-path in `inference_complete`
+/// uses this to pick a candidate; falls back to no-tools delegation
+/// for everything else.
+pub(crate) fn provider_supports_tools(ep: &crate::routes::secrets::InferenceEndpointEntry) -> bool {
+    let p = ep.provider.to_ascii_lowercase();
+    matches!(
+        p.as_str(),
+        "openrouter"
+            | "openai"
+            | "openai-compat"
+            | "openai_compat"
+            | "openai-compatible"
+            | "ollama"
+            | "vllm"
+            | "llama-cpp"
+            | "llamacpp"
+    ) || ep.url.contains("openrouter.ai")
+}
+
+/// Priority order for tools-capable providers. Lower wins.
+///
+/// Default order is "free + local first, paid + remote last":
+///   0  ollama / vllm / llama-cpp        (local, free)
+///   1  anthropic-direct (handled outside this fn)
+///   2  openai-compat (custom hosted)
+///   3  openrouter (free models)
+///   4  openrouter (paid, marked unhealthy)
+///
+/// Within a tier, healthy beats unknown beats unhealthy. This lets an
+/// operator's `hex inference add ollama …` automatically out-prioritize
+/// the env-var OpenRouter fallback without anyone editing code.
+pub(crate) fn priority_for_tools(ep: &crate::routes::secrets::InferenceEndpointEntry) -> i32 {
+    let provider_tier: i32 = match ep.provider.to_ascii_lowercase().as_str() {
+        "ollama" | "vllm" | "llama-cpp" | "llamacpp" => 0,
+        "openai-compat" | "openai_compat" | "openai-compatible" => 2,
+        "openai" => 2,
+        "openrouter" => 3,
+        _ => 5,
+    };
+    let health: i32 = match ep.status.to_ascii_lowercase().as_str() {
+        "healthy" => 0,
+        "" | "unknown" => 1,
+        _ => 2,
+    };
+    provider_tier * 10 + health
+}
+
 /// Like `call_inference_endpoint` but propagates a tools schema to the
 /// provider and extracts `tool_calls` from the response. Returns
 /// (InferenceResult, tool_calls_array). When the model emits no tool
 /// calls the second element is an empty Vec.
 ///
-/// Only OpenRouter (OpenAI-compat) is wired here today. Anthropic-direct
-/// and Ollama paths fall back to no-tools behavior (returning empty
-/// tool_calls) — caller's text-mode parser still has a chance.
+/// Supported provider families (OpenAI-compatible tools schema):
+///   - openrouter (HTTP POST {url}/chat/completions with OpenAI shape)
+///   - openai / openai-compat / vllm (HTTP POST {url}/v1/chat/completions)
+///   - ollama (HTTP POST {url}/api/chat with `tools` field)
+///
+/// Anything else: delegates to the no-tools `call_inference_endpoint`
+/// path and returns Vec::new() for tool_calls — caller's text-mode
+/// parser is the fallback.
 pub(crate) async fn call_inference_endpoint_with_tools(
     ep: &crate::routes::secrets::InferenceEndpointEntry,
     messages: &[serde_json::Value],
     tools: &[serde_json::Value],
 ) -> Result<(InferenceResult, Vec<serde_json::Value>), String> {
-    let is_openrouter = ep.provider == "openrouter"
-        || ep.url.contains("openrouter.ai");
-
-    // Non-OpenRouter providers: delegate to the tools-free path. The
-    // simple_agent text-mode parser is the safety net for Ollama et al.
-    if !is_openrouter {
+    if !provider_supports_tools(ep) {
+        // Unknown provider — fall back to no-tools. Caller's text-mode
+        // parser still gets a chance to surface structured output.
         let r = call_inference_endpoint(ep, messages).await?;
         return Ok((r, Vec::new()));
     }
 
+    let p = ep.provider.to_ascii_lowercase();
+    let is_openrouter = p == "openrouter" || ep.url.contains("openrouter.ai");
+    let is_ollama = matches!(p.as_str(), "ollama");
+
+    // Local providers (Ollama / vLLM) may need 5-10 min to cold-load
+    // a quantized weight on first use. Remote APIs are capped at 4 min.
+    let inference_timeout = if matches!(p.as_str(), "ollama" | "vllm" | "llama-cpp" | "llamacpp") {
+        Duration::from_secs(600)
+    } else {
+        Duration::from_secs(240)
+    };
+
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(240))
+        .timeout(inference_timeout)
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
     let model = if ep.model.is_empty() { "default".to_string() } else { ep.model.clone() };
@@ -752,40 +814,116 @@ pub(crate) async fn call_inference_endpoint_with_tools(
         .map(anthropic_tool_to_openai)
         .collect();
 
-    let url = "https://openrouter.ai/api/v1/chat/completions".to_string();
-    let body = json!({
-        "model": model,
-        "messages": messages,
-        "max_tokens": 4096,
-        "tools": openai_tools,
-    });
+    // Build URL + body per provider family.
+    let (url, body) = if is_openrouter {
+        // ep.url typically `https://openrouter.ai/api/v1`. Append
+        // /chat/completions. Tolerate trailing slash.
+        let base = ep.url.trim_end_matches('/');
+        (
+            format!("{base}/chat/completions"),
+            json!({
+                "model": model,
+                "messages": messages,
+                "max_tokens": 4096,
+                "tools": openai_tools,
+            }),
+        )
+    } else if is_ollama {
+        // Ollama exposes /api/chat with native tool-calling since 0.3.x.
+        // Response shape differs from OpenAI: tool_calls live under
+        // `message.tool_calls`, not `choices[0].message.tool_calls`.
+        let base = ep.url.trim_end_matches('/');
+        let num_predict: u32 = std::env::var("HEX_OLLAMA_NUM_PREDICT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2048);
+        let think_enabled = std::env::var("HEX_OLLAMA_THINK")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        (
+            format!("{base}/api/chat"),
+            json!({
+                "model": model,
+                "messages": messages,
+                "stream": false,
+                "think": think_enabled,
+                "tools": openai_tools,
+                "options": { "num_predict": num_predict },
+            }),
+        )
+    } else {
+        // openai / openai-compat / vllm — append /v1/chat/completions.
+        // Tolerate a base that already includes /v1.
+        let base = ep.url.trim_end_matches('/');
+        let url = if base.ends_with("/v1") {
+            format!("{base}/chat/completions")
+        } else {
+            format!("{base}/v1/chat/completions")
+        };
+        (
+            url,
+            json!({
+                "model": model,
+                "messages": messages,
+                "max_tokens": 4096,
+                "tools": openai_tools,
+            }),
+        )
+    };
 
-    if ep.secret_key.is_empty() {
-        return Err("OPENROUTER_API_KEY not set".into());
+    let mut req = client.post(&url).json(&body);
+    if is_openrouter {
+        if ep.secret_key.is_empty() {
+            return Err("openrouter: API key not configured".into());
+        }
+        req = req
+            .bearer_auth(&ep.secret_key)
+            .header("HTTP-Referer", "https://hex.local")
+            .header("X-Title", "hex-nexus");
+    } else if !ep.secret_key.is_empty() {
+        req = req.bearer_auth(&ep.secret_key);
     }
-    let req = client
-        .post(&url)
-        .bearer_auth(&ep.secret_key)
-        .header("HTTP-Referer", "https://hex.local")
-        .header("X-Title", "hex-nexus")
-        .json(&body);
+    // Ollama doesn't need auth by default — leave header off.
 
     let resp = req.send().await.map_err(|e| format!("connection: {e}"))?;
     let status = resp.status();
     if !status.is_success() {
         let err = resp.text().await.unwrap_or_default();
-        return Err(format!("OpenRouter HTTP {status}: {}", truncate_str(&err, 200)));
+        // Preserve the specific OpenRouter 402 message so credit
+        // exhaustion is visible in logs + dashboard.
+        if is_openrouter {
+            return match status.as_u16() {
+                402 => Err("openrouter: insufficient credits — top up at https://openrouter.ai/credits".into()),
+                429 => Err("openrouter: rate limited".into()),
+                _ => Err(format!("openrouter HTTP {status}: {}", truncate_str(&err, 200))),
+            };
+        }
+        return Err(format!("{p} HTTP {status}: {}", truncate_str(&err, 200)));
     }
 
     let data: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
+
+    if is_ollama {
+        // Ollama shape: { "message": { "content": "...", "tool_calls": [...] }, "model": "...", "eval_count": N, "prompt_eval_count": N }
+        let content = data["message"]["content"].as_str().unwrap_or("").to_string();
+        let model_used = data["model"].as_str().unwrap_or(&model).to_string();
+        let input_tokens = data["prompt_eval_count"].as_u64().unwrap_or(0);
+        let output_tokens = data["eval_count"].as_u64().unwrap_or(0);
+        // Ollama doesn't return cost (it's free); leave empty.
+        let cost = String::new();
+        let tool_calls: Vec<serde_json::Value> = data["message"]["tool_calls"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        return Ok(((content, model_used, input_tokens, output_tokens, cost), tool_calls));
+    }
+
+    // OpenAI-compat shape (OpenRouter, OpenAI, vLLM).
     let content_val = data["choices"][0]["message"]["content"].as_str();
     let reasoning_val = data["choices"][0]["message"]["reasoning"].as_str();
     // When the model emits tool_calls and no text, content may be null.
-    // That's OK — caller will look at the tool_calls array instead.
-    let content = content_val
-        .or(reasoning_val)
-        .unwrap_or("")
-        .to_string();
+    let content = content_val.or(reasoning_val).unwrap_or("").to_string();
     let model_used = data["model"].as_str().unwrap_or(&model).to_string();
     let input_tokens = data["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
     let output_tokens = data["usage"]["completion_tokens"].as_u64().unwrap_or(0);
