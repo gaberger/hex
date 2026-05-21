@@ -103,6 +103,34 @@ pub enum OpsAction {
         nexus: String,
     },
 
+    /// Approve (or reject) a proposed_action that the twin escalated to
+    /// the operator. Calls `proposed_action_operator_override` on
+    /// hexflo-coordination, flipping the row's status so the action
+    /// executor picks it up on the next tick. The autonomous-commit
+    /// path then lands the file + git commit just like a twin-approved
+    /// action would have.
+    ///
+    /// Find escalated actions with:
+    ///   hex stdb query "SELECT id, payload_json, twin_rationale \
+    ///     FROM proposed_action WHERE status = 'escalated'"
+    Approve {
+        /// proposed_action.id (numeric) to flip.
+        action_id: u64,
+        /// New status. Defaults to "approved"; use "rejected" to drop the
+        /// action permanently (executor will skip it).
+        #[arg(long, default_value = "approved")]
+        status: String,
+        /// Audit reason recorded with the override.
+        #[arg(long, default_value = "operator: approved via hex ops approve")]
+        reason: String,
+        /// STDB host (default http://127.0.0.1:3033).
+        #[arg(long, default_value = STDB_DEFAULT)]
+        stdb: String,
+        /// STDB database name (default hex).
+        #[arg(long, default_value = STDB_DB_DEFAULT)]
+        database: String,
+    },
+
     /// Abandon an open commitment with a reason. Use when the SOP path
     /// has wedged on a commitment the operator no longer wants (typo'd
     /// path, stale brief, etc.).
@@ -144,6 +172,13 @@ pub async fn run(action: OpsAction) -> anyhow::Result<()> {
             json,
             nexus,
         } => read(agent, limit, from, full, json, nexus).await,
+        OpsAction::Approve {
+            action_id,
+            status,
+            reason,
+            stdb,
+            database,
+        } => approve(action_id, status, reason, stdb, database).await,
         OpsAction::Abandon {
             commitment_id,
             reason,
@@ -357,6 +392,55 @@ fn urlencode(s: &str) -> String {
             _ => format!("%{:02X}", c as u32),
         })
         .collect()
+}
+
+async fn approve(
+    action_id: u64,
+    new_status: String,
+    reason: String,
+    stdb: String,
+    database: String,
+) -> anyhow::Result<()> {
+    if !matches!(
+        new_status.as_str(),
+        "approved" | "rejected" | "pending" | "escalated"
+    ) {
+        anyhow::bail!(
+            "hex ops approve: invalid --status '{}' (must be approved|rejected|pending|escalated)",
+            new_status
+        );
+    }
+    let url = format!(
+        "{}/v1/database/{}/call/proposed_action_operator_override",
+        stdb.trim_end_matches('/'),
+        database
+    );
+    // Reducer signature: (id: u64, new_status: String, reason: String).
+    let req_body = serde_json::json!([action_id, new_status, reason]);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()?;
+    let resp = client.post(&url).json(&req_body).send().await?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        anyhow::bail!(
+            "hex ops approve #{}: nexus returned {}: {}",
+            action_id,
+            status,
+            body.chars().take(400).collect::<String>()
+        );
+    }
+    println!(
+        "proposed_action #{} → {} (reason: {})",
+        action_id, new_status, reason
+    );
+    if new_status == "approved" {
+        println!(
+            "  → action_executor will pick it up on the next tick and emit the autonomous commit"
+        );
+    }
+    Ok(())
 }
 
 async fn abandon(
