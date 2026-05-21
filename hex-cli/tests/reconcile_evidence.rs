@@ -1,13 +1,13 @@
-/// ADR-2026-04-14-2201 Reconcile Evidence Verification — Regression Tests (R1.3)
-///
-/// Verifies that `hex plan reconcile` does NOT auto-promote tasks whose
-/// target files are missing from the filesystem, even when other heuristic
-/// signals (identifier grep, cargo check) might fire.
-///
-/// Two scenarios:
-///   1. Partial workplan (wp-partial.json): P1 already done, P2/P3 pending
-///      with non-existent files → P2/P3 must stay "needs work".
-///   2. Fully-evidenced tasks: files exist in the repo → promotion works.
+//! ADR-2026-04-14-2201 Reconcile Evidence Verification — Regression Tests (R1.3)
+//!
+//! Verifies that `hex plan reconcile` does NOT auto-promote tasks whose
+//! target files are missing from the filesystem, even when other heuristic
+//! signals (identifier grep, cargo check) might fire.
+//!
+//! Two scenarios:
+//!   1. Partial workplan (wp-partial.json): P1 already done, P2/P3 pending
+//!      with non-existent files → P2/P3 must stay "needs work".
+//!   2. Fully-evidenced tasks: files exist in the repo → promotion works.
 
 use std::process::Command;
 

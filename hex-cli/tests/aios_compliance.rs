@@ -1,23 +1,23 @@
-/// ADR-2026-04-13-1500 AIOS Developer Experience — Compliance Smoke Test (P5.2)
-///
-/// Verifies that all 7 ADR sections are wired into the hex CLI:
-///
-///   §1 — `hex brief show`           narrative briefing
-///   §2 — `hex decide resolve`       decision resolution with auto-expiry
-///   §3 — `hex steer direct`         directive classification
-///   §4 — `hex trust show/elevate/reduce/pin/history`
-///   §5 — `hex taste list/set/forget/pin` + prompt injection resilience
-///   §6 — `hex new`                  project intake with trust seeding
-///   §7 — `hex pause/resume/override` emergency controls
-///
-/// Strategy: invoke the compiled binary with `--help` for each subcommand.
-/// Clap exits 0 for `--help` regardless of nexus state, so these tests
-/// are hermetic — no live nexus required.
-///
-/// For commands that *don't* have a subcommand `--help` (top-level like
-/// `hex pause`), we invoke without args and accept either exit-0 (help)
-/// or exit-1 (runtime error from missing nexus), but NOT exit-2 (clap
-/// parse error, meaning the command doesn't exist).
+//! ADR-2026-04-13-1500 AIOS Developer Experience — Compliance Smoke Test (P5.2)
+//!
+//! Verifies that all 7 ADR sections are wired into the hex CLI:
+//!
+//!   §1 — `hex brief show`           narrative briefing
+//!   §2 — `hex decide resolve`       decision resolution with auto-expiry
+//!   §3 — `hex steer direct`         directive classification
+//!   §4 — `hex trust show/elevate/reduce/pin/history`
+//!   §5 — `hex taste list/set/forget/pin` + prompt injection resilience
+//!   §6 — `hex new`                  project intake with trust seeding
+//!   §7 — `hex pause/resume/override` emergency controls
+//!
+//! Strategy: invoke the compiled binary with `--help` for each subcommand.
+//! Clap exits 0 for `--help` regardless of nexus state, so these tests
+//! are hermetic — no live nexus required.
+//!
+//! For commands that *don't* have a subcommand `--help` (top-level like
+//! `hex pause`), we invoke without args and accept either exit-0 (help)
+//! or exit-1 (runtime error from missing nexus), but NOT exit-2 (clap
+//! parse error, meaning the command doesn't exist).
 
 use std::process::Command;
 

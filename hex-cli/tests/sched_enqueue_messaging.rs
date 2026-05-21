@@ -1,15 +1,15 @@
-/// wp-brain-string-cleanup P2.2 — Smoke test for `hex sched enqueue` output.
-///
-/// Verifies that `hex sched enqueue shell -- 'true'` prints
-/// "enqueued sched task <uuid>" and NOT "enqueued brain task <uuid>".
-///
-/// Strategy:
-///   1. `hex sched enqueue --help` exits 0 — proves the subcommand exists
-///      under "sched" (not only under the deprecated "brain" alias).
-///   2. Source-level assertion: grep the sched.rs enqueue handler for the
-///      exact println! string.  This catches regressions even when nexus
-///      is offline (the command errors before printing when it can't reach
-///      the nexus REST API, so a live invocation is not hermetic).
+//! wp-brain-string-cleanup P2.2 — Smoke test for `hex sched enqueue` output.
+//!
+//! Verifies that `hex sched enqueue shell -- 'true'` prints
+//! "enqueued sched task <uuid>" and NOT "enqueued brain task <uuid>".
+//!
+//! Strategy:
+//!   1. `hex sched enqueue --help` exits 0 — proves the subcommand exists
+//!      under "sched" (not only under the deprecated "brain" alias).
+//!   2. Source-level assertion: grep the sched.rs enqueue handler for the
+//!      exact println! string.  This catches regressions even when nexus
+//!      is offline (the command errors before printing when it can't reach
+//!      the nexus REST API, so a live invocation is not hermetic).
 
 use std::process::Command;
 

@@ -1,14 +1,14 @@
-/// Integration tests for ADR-2026-03-29-1900 — Docker Worker First-Class Execution.
-///
-/// Verifies the three seams of the worker delegation path without requiring
-/// a live Docker daemon or nexus instance:
-///
-/// 1. WorkerResult JSON deserialization — the exact format workers store in hexflo memory
-/// 2. Memory key naming conventions — {task_id}:result and {task_id}:step_metadata
-/// 3. Filesystem-based objective evaluation — CodeGenerated passes when worker writes files
-///
-/// The full end-to-end path (Docker spawn → task poll → file commit) is exercised
-/// manually via `hex dev start --auto` with Docker available.
+//! Integration tests for ADR-2026-03-29-1900 — Docker Worker First-Class Execution.
+//!
+//! Verifies the three seams of the worker delegation path without requiring
+//! a live Docker daemon or nexus instance:
+//!
+//! 1. WorkerResult JSON deserialization — the exact format workers store in hexflo memory
+//! 2. Memory key naming conventions — {task_id}:result and {task_id}:step_metadata
+//! 3. Filesystem-based objective evaluation — CodeGenerated passes when worker writes files
+//!
+//! The full end-to-end path (Docker spawn → task poll → file commit) is exercised
+//! manually via `hex dev start --auto` with Docker available.
 
 use hex_cli::pipeline::objectives::{evaluate_all, Objective};
 use hex_cli::pipeline::supervisor::WorkerResult;

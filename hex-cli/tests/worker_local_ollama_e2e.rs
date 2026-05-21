@@ -1,21 +1,21 @@
-/// E2E integration test for ADR-2026-04-13-0010 — Worker Local Inference Discovery (P1.3).
-///
-/// Verifies the full coordinator → worker → nexus round-trip:
-///
-/// 1. Coordinator creates a swarm + task on nexus (Mac side)
-/// 2. Worker discovers local Ollama via /api/tags probe (P1.2)
-/// 3. Worker claims the pending task via PATCH /api/hexflo/tasks/{id}
-/// 4. Worker generates code via direct Ollama call (NOT through nexus inference)
-/// 5. Worker runs compile gate (rustc/cargo check on generated code)
-/// 6. Worker stores structured WorkerResult with compile_pass=true in hexflo memory
-/// 7. Worker reports task completed via PATCH /api/hexflo/tasks/{id}
-/// 8. hex report swarm (GET /api/swarms/active) shows task completed with compile=true
-///
-/// Requires:
-///   - hex-nexus running on localhost:5555 (or HEX_NEXUS_URL)
-///   - Ollama running on localhost:11434 (or OLLAMA_HOST)
-///
-/// Run manually: cargo test -p hex-cli --test worker_local_ollama_e2e -- --nocapture
+//! E2E integration test for ADR-2026-04-13-0010 — Worker Local Inference Discovery (P1.3).
+//!
+//! Verifies the full coordinator → worker → nexus round-trip:
+//!
+//! 1. Coordinator creates a swarm + task on nexus (Mac side)
+//! 2. Worker discovers local Ollama via /api/tags probe (P1.2)
+//! 3. Worker claims the pending task via PATCH /api/hexflo/tasks/{id}
+//! 4. Worker generates code via direct Ollama call (NOT through nexus inference)
+//! 5. Worker runs compile gate (rustc/cargo check on generated code)
+//! 6. Worker stores structured WorkerResult with compile_pass=true in hexflo memory
+//! 7. Worker reports task completed via PATCH /api/hexflo/tasks/{id}
+//! 8. hex report swarm (GET /api/swarms/active) shows task completed with compile=true
+//!
+//! Requires:
+//!   - hex-nexus running on localhost:5555 (or HEX_NEXUS_URL)
+//!   - Ollama running on localhost:11434 (or OLLAMA_HOST)
+//!
+//! Run manually: cargo test -p hex-cli --test worker_local_ollama_e2e -- --nocapture
 
 use serde_json::json;
 

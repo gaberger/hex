@@ -1,8 +1,8 @@
-/// P2.5 — Q-report rendering tests.
-///
-/// - Golden test: table renderer vs fixture under tests/golden/q-report-default.txt
-/// - JSON round-trip: QReportEntry serialise → deserialise identity
-/// - Trend symbol boundary: -0.05, 0.0, +0.05
+//! P2.5 — Q-report rendering tests.
+//!
+//! - Golden test: table renderer vs fixture under tests/golden/q-report-default.txt
+//! - JSON round-trip: QReportEntry serialise → deserialise identity
+//! - Trend symbol boundary: -0.05, 0.0, +0.05
 
 use hex_cli::commands::inference::{format_trend, render_q_report_table, trend_symbol};
 use serde_json::json;

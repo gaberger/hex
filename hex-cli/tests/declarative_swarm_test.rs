@@ -1,10 +1,10 @@
-/// Integration tests for ADR-2026-03-24-0130 — Declarative Swarm Agent Behavior from YAML.
-///
-/// Verifies that all agent/swarm YAML definitions load correctly and that the
-/// runtime wiring (model selection, phases, cardinality) matches expectations
-/// without making real inference calls.
-///
-/// Covers specs S09, S10.
+//! Integration tests for ADR-2026-03-24-0130 — Declarative Swarm Agent Behavior from YAML.
+//!
+//! Verifies that all agent/swarm YAML definitions load correctly and that the
+//! runtime wiring (model selection, phases, cardinality) matches expectations
+//! without making real inference calls.
+//!
+//! Covers specs S09, S10.
 
 use hex_cli::pipeline::agent_def::AgentDefinition;
 use hex_cli::pipeline::model_selection::ModelSelector;

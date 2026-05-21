@@ -121,19 +121,38 @@ fn locate_project_json() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serialize env-mutating tests in this module. cargo test runs cases
+    /// in parallel by default; the first run of these tests caught
+    /// HEX_SPACETIMEDB_HOST leaking between cases (CI failure on commit
+    /// 4f129e95: "expected default or fallback, got http://from-env:9000"
+    /// — the env var bled in from a sibling test that hadn't dropped
+    /// its EnvGuard yet). Holding this mutex around every test keeps
+    /// the env mutations linear without forcing --test-threads=1 on
+    /// the whole workspace.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Saves + restores env vars across a test. Avoids cross-test
     /// contamination when each case wants a clean baseline.
     struct EnvGuard {
         keys: Vec<(&'static str, Option<String>)>,
+        // Keep the mutex guard alive for the duration of the test so
+        // parallel test cases queue behind us. Mutex is poison-resistant
+        // (unwrap_or_else(PoisonError::into_inner)) so a panicked sibling
+        // doesn't permanently jam this module's tests.
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
     impl EnvGuard {
         fn capture(keys: &[&'static str]) -> Self {
+            let lock = ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let snapshot = keys
                 .iter()
                 .map(|k| (*k, std::env::var(k).ok()))
                 .collect();
-            Self { keys: snapshot }
+            Self { keys: snapshot, _lock: lock }
         }
     }
     impl Drop for EnvGuard {
