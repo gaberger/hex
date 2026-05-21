@@ -853,6 +853,18 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         orchestration::zombie_sweeper::ZombieSweeper::spawn(sweeper_state);
     }
 
+    // GC for live-but-unregistered hex-agent processes. Companion to
+    // the zombie sweeper above. Walks /proc every 60s; any hex-agent
+    // daemon not claimed by a `worker_process` row in status
+    // {healthy,degraded,starting} gets SIGTERM'd; if it survives the
+    // next sweep, SIGKILL. Catches the "nexus restart orphans every
+    // live worker" pattern observed 2026-05-21 (94 hex-agent procs
+    // vs 32 worker_process rows after one restart cycle).
+    {
+        let reaper_state = state.clone();
+        orchestration::orphan_reaper::OrphanReaper::spawn(reaper_state);
+    }
+
     // Background task: evict completed commands older than 1 hour (every 60s)
     let evict_state = state.clone();
     tokio::spawn(async move {
