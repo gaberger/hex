@@ -75,6 +75,34 @@ pub enum OpsAction {
         nexus: String,
     },
 
+    /// Read DMs received by an agent (default: operator). Symmetric
+    /// counterpart to `hex ops send` — replaces the raw
+    /// `hex stdb query --db agent-comms "SELECT * FROM agent_messages …"`
+    /// that operators were typing by hand to check persona replies.
+    Read {
+        /// Recipient to read (e.g. operator, ceo). Defaults to operator
+        /// so the common case ("did the team reply yet?") is one word.
+        #[arg(long, default_value = "operator")]
+        agent: String,
+        /// Max messages to return. Default 20 — enough to see the
+        /// last wave of board asks + replies in one screenful.
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+        /// Only show messages from this sender. Useful for
+        /// `hex ops read --from cto` to see one persona's stream.
+        #[arg(long)]
+        from: Option<String>,
+        /// Print full message body instead of truncating to 200 chars.
+        #[arg(long)]
+        full: bool,
+        /// Output as JSON instead of formatted text.
+        #[arg(long)]
+        json: bool,
+        /// Nexus URL (default http://127.0.0.1:5555).
+        #[arg(long, default_value = NEXUS_DEFAULT)]
+        nexus: String,
+    },
+
     /// Abandon an open commitment with a reason. Use when the SOP path
     /// has wedged on a commitment the operator no longer wants (typo'd
     /// path, stale brief, etc.).
@@ -108,6 +136,14 @@ pub async fn run(action: OpsAction) -> anyhow::Result<()> {
             subject,
             nexus,
         } => send(to, subject, content, nexus).await,
+        OpsAction::Read {
+            agent,
+            limit,
+            from,
+            full,
+            json,
+            nexus,
+        } => read(agent, limit, from, full, json, nexus).await,
         OpsAction::Abandon {
             commitment_id,
             reason,
@@ -220,6 +256,107 @@ async fn send(
     }
     println!("{}", body);
     Ok(())
+}
+
+async fn read(
+    agent: String,
+    limit: u32,
+    from: Option<String>,
+    full: bool,
+    json_out: bool,
+    nexus: String,
+) -> anyhow::Result<()> {
+    let url = format!(
+        "{}/api/org/messages?agent={}&limit={}",
+        nexus.trim_end_matches('/'),
+        urlencode(&agent),
+        limit
+    );
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+    let resp = client.get(&url).send().await?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        anyhow::bail!(
+            "hex ops read: nexus returned {}: {}",
+            status,
+            body.chars().take(400).collect::<String>()
+        );
+    }
+
+    if json_out {
+        println!("{}", body);
+        return Ok(());
+    }
+
+    // Parse + pretty-print. Falls back to raw JSON on parse failure so
+    // operators never lose data — uglier output but always works.
+    let parsed: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(_) => {
+            println!("{}", body);
+            return Ok(());
+        }
+    };
+
+    let messages = parsed
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    if messages.is_empty() {
+        println!("⬡ no messages for {agent}");
+        return Ok(());
+    }
+
+    println!(
+        "⬡ {} message(s) for {}",
+        messages.len(),
+        agent
+    );
+    println!();
+
+    for msg in &messages {
+        let sender = msg.get("from").and_then(|v| v.as_str()).unwrap_or("?");
+        let when = msg
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let content = msg
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        // Take the timestamp's HH:MM:SS portion for compact display.
+        let ts = when.split('T').nth(1).and_then(|s| s.split('.').next()).unwrap_or(when);
+        // Skip if --from filter set and sender doesn't match.
+        if let Some(ref f) = from {
+            if sender != f.as_str() { continue; }
+        }
+        let body_text = if full || content.len() <= 200 {
+            content.trim().to_string()
+        } else {
+            format!("{}…", &content[..200].trim_end())
+        };
+        println!("─── {} @ {} ──────────────────", sender, ts);
+        println!("{}", body_text);
+        println!();
+    }
+    Ok(())
+}
+
+/// Minimal URL-encode for query-string values. Just handles space + & +
+/// = + # + ? — enough for agent role names which are kebab-case ASCII.
+fn urlencode(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
+            ' ' => "%20".to_string(),
+            _ => format!("%{:02X}", c as u32),
+        })
+        .collect()
 }
 
 async fn abandon(
