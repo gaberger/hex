@@ -7,7 +7,7 @@
 //! TypeScript rolls back the same way broken Rust does for
 //! `cargo_check` (ADR-2026-05-11-0700 R1).
 //!
-//! Closes the gap surfaced by ADR-2605141631 dogfood: when
+//! Closes the gap surfaced by ADR-2026-05-14-1631 dogfood: when
 //! `hex agent run` autonomously scaffolded `AttentionFeed.tsx`
 //! (commit 613f2475), the agent's success report was misleadingly
 //! green because no typecheck ran — the LLM had hallucinated an

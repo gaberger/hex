@@ -167,7 +167,7 @@ fn read_yaml_description(path: &Path) -> String {
 ///
 ///   "ADR-059-foo"                  → "059"               (legacy sequential)
 ///   "ADR-2026-05-08-1126-foo"      → "2026-05-08-1126"   (hyphenated timestamp)
-///   "ADR-2603221500-foo"           → "2603221500"        (legacy 10-digit)
+///   "ADR-2026-03-22-1500-foo"           → "2603221500"        (legacy 10-digit)
 fn extract_adr_id(stem: &str) -> String {
     let rest = match stem.strip_prefix("ADR-").or_else(|| stem.strip_prefix("adr-")) {
         Some(r) => r,

@@ -17,7 +17,7 @@
           "id": "P0.1",
           "layer": "infrastructure",
           "name": "Document hexagonal architecture decision and rationale",
-          "status": "pending"
+          "status": "done"
         }
       ],
       "tier": 0

@@ -1,4 +1,4 @@
-//! Defunct-process detector for `hex-agent` workers (ADR-2605190900 P3.3).
+//! Defunct-process detector for `hex-agent` workers (ADR-2026-05-19-0900 P3.3).
 //!
 //! Walks `/proc` every `SWEEP_INTERVAL_SECS` looking for entries whose
 //! command name starts with `hex-agent` AND whose state field in

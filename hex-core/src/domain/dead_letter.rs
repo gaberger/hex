@@ -1,5 +1,5 @@
 //! Dead-letter domain types — runtime quarantine for brain-tasks that
-//! exceeded their retry budget (ADR-2605190900 P2.1).
+//! exceeded their retry budget (ADR-2026-05-19-0900 P2.1).
 //!
 //! Pure domain shape, no I/O. Adapters in
 //! `hex-nexus/src/adapters/spacetime_dead_letter.rs` translate between

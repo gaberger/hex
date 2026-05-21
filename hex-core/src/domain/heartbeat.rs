@@ -1,6 +1,6 @@
 //! Heartbeat domain types — runtime liveness signal for long-running components.
 //!
-//! Part of ADR-2605190900 (Runtime Supervision Architecture). The
+//! Part of ADR-2026-05-19-0900 (Runtime Supervision Architecture). The
 //! supervision layer's contract: every long-running adapter (sched
 //! daemon, nexus server, workplan_executor, hex-agent worker, STDB
 //! gateway, Ollama bridge) emits a heartbeat row at a known cadence;

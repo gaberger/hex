@@ -229,7 +229,7 @@ async fn execute_file_write(
         .map(|v| v != "1" && !v.eq_ignore_ascii_case("true"))
         .unwrap_or(true);
     if gate_enabled && (rel_path.ends_with(".tsx") || rel_path.ends_with(".ts")) {
-        // ADR-2605141631 follow-up — TypeScript writes get the same
+        // ADR-2026-05-14-1631 follow-up — TypeScript writes get the same
         // compile-or-rollback discipline as Rust. Without this, the
         // 2026-05-14 dogfood run on AttentionFeed.tsx landed a file
         // with a hallucinated `import { AttentionItem } from './types'`
@@ -274,7 +274,7 @@ async fn execute_file_write(
                 hex_db,
                 action.id,
                 &format!(
-                    "ADR-2605141631 R1: typescript_check failed after write — rolled back. Errors: {}",
+                    "ADR-2026-05-14-1631 R1: typescript_check failed after write — rolled back. Errors: {}",
                     errors_summary.chars().take(800).collect::<String>()
                 ),
             )
@@ -895,7 +895,7 @@ mod autonomous_commit_tests {
     #[test]
     fn scope_adr() {
         assert_eq!(
-            derive_commit_scope("docs/adrs/ADR-2605131849-foo.md"),
+            derive_commit_scope("docs/adrs/ADR-2026-05-13-1849-foo.md"),
             ("docs", "adr")
         );
     }

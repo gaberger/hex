@@ -1,4 +1,4 @@
-//! SpacetimeDB dead-letter adapter — IDeadLetterPort impl (ADR-2605190900 P2.2).
+//! SpacetimeDB dead-letter adapter — IDeadLetterPort impl (ADR-2026-05-19-0900 P2.2).
 //!
 //! Wraps the `dead_letter_record` / `dead_letter_replay` reducers in
 //! `hexflo-coordination` + a SQL read path for the dashboard `/api/dead-letter`

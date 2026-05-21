@@ -1,4 +1,4 @@
-//! `/api/liveness` — dashboard badge endpoint (ADR-2605190900 P5.2).
+//! `/api/liveness` — dashboard badge endpoint (ADR-2026-05-19-0900 P5.2).
 //!
 //! Returns a snapshot of the chain's end-to-end health: nexus + STDB
 //! reachable, supervisor_tick observed recently, at least one healthy

@@ -17,7 +17,7 @@
           "id": "P0.1",
           "layer": "infrastructure",
           "name": "Record ADR-001 hexagonal architecture decision",
-          "status": "pending"
+          "status": "done"
         }
       ],
       "tier": 0

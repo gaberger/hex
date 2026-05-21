@@ -1173,7 +1173,7 @@ impl WorkplanExecutor {
             let task_tier = classify_task_tier(task);
 
             // ADR-2026-04-18-0001 P2: Tier-specific timeout guards.
-            // ADR-2605141135 §Phase 1 #5: adaptive — `cargo check --workspace`
+            // ADR-2026-05-14-1135 §Phase 1 #5: adaptive — `cargo check --workspace`
             // alone exceeds 90s on this codebase, so the original T2=120s left
             // ~30s for inference + writeback, causing routine codegen timeouts.
             // Operator override via HEX_TASK_TIMEOUT_T{1,2,2_5,3}_SECS env vars.
@@ -1374,7 +1374,7 @@ impl WorkplanExecutor {
                     }).to_string();
                     // Target an online worker — prefer the hex_agent registry (real-time
                     // truth) over file-based session heartbeats (can be stale, leading
-                    // to the "phantom UUID" lookup miss documented in ADR-2605141135
+                    // to the "phantom UUID" lookup miss documented in ADR-2026-05-14-1135
                     // §Phase 1 #4). File fallback only kicks in for Path B sessions
                     // running outside the registry (legacy Claude Code wrapper).
                     let registry_target: Option<String> = match sp.hex_agent_list().await {

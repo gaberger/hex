@@ -591,17 +591,17 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/org/sop/active", get(sop::list_active))
         .route("/api/org/sop/recent", get(sop::list_recent))
         .route("/api/org/sop/runs", get(sop::list_all))
-        // Dead-letter quarantine surface (ADR-2605190900 P2.3) — operator-
+        // Dead-letter quarantine surface (ADR-2026-05-19-0900 P2.3) — operator-
         // visible audit of brain-tasks that exceeded their retry budget.
         .route("/api/dead-letter", get(dead_letter::list))
         .route("/api/dead-letter/{id}/replay", post(dead_letter::replay))
-        // Worker-pool consumer-availability gate (ADR-2605190900 §1 + P3.4)
+        // Worker-pool consumer-availability gate (ADR-2026-05-19-0900 §1 + P3.4)
         .route("/api/worker-pool/check", get(worker_pool::check))
         // Self-heartbeat endpoint used by hex-agent (when launched with
         // HEX_WORKER_PROCESS_ID env var). Closes the gap where supervisor_tick
         // reaped still-alive workers because nobody was refreshing their row.
         .route("/api/worker-process/{id}/heartbeat", post(worker_pool::process_heartbeat))
-        // End-to-end liveness probe (ADR-2605190900 P5.2)
+        // End-to-end liveness probe (ADR-2026-05-19-0900 P5.2)
         .route("/api/liveness", get(liveness::get_liveness))
         // ── ADR-2026-05-08-1126 dashboard surfaces ──────────────────────────
         .route("/api/merge/requests", get(merge_gate::list_merge_requests))
@@ -815,7 +815,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/workplan/execute", post(orchestration::execute_workplan)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         // Per-execution status poll — must precede /api/workplan/{id} so axum's
-        // matcher doesn't capture "execute" as an id (ADR-2605141135 Phase 1 #2).
+        // matcher doesn't capture "execute" as an id (ADR-2026-05-14-1135 Phase 1 #2).
         .route("/api/workplan/execute/{id}/status", get(orchestration::execute_status))
         .route("/api/workplan/status", get(orchestration::workplan_status))
         .route("/api/workplan/fail", post(orchestration::fail_workplan))

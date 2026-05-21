@@ -2,7 +2,7 @@
 
 **Repo:** /home/gary/hex-intf
 **Driver:** Operator directive "i want the teams to go through the backlog, make all fixes, if get stuck find a way around it"
-**Reference ADRs:** ADR-2605141631 (dashboard refactor on Hermes model), ADR-2605141135 (hex-as-hermes harness roadmap)
+**Reference ADRs:** ADR-2026-05-14-1631 (dashboard refactor on Hermes model), ADR-2026-05-14-1135 (hex-as-hermes harness roadmap)
 **Verb:** hex agent run · hex ops abandon · hex worktree status
 
 ## Inventory (as of 2026-05-14)

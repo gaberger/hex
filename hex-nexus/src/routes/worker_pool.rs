@@ -1,5 +1,5 @@
 //! `/api/worker-pool` — runtime consumer-availability gate
-//! (ADR-2605190900 §1 + P3.4).
+//! (ADR-2026-05-19-0900 §1 + P3.4).
 //!
 //! One endpoint:
 //!   GET /api/worker-pool/check?role=<role>&ttl_secs=<n>

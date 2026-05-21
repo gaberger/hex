@@ -159,7 +159,7 @@ fn extract_declared_symbols(description: &str) -> Vec<String> {
 /// Uses `grep -w` (word-boundary match) so short symbol names like `Buf`
 /// don't false-match against `WriteBuffer`, `buffer`, etc. This is the
 /// source of the ~70% reconciler false-positive rate noted in the autonomy
-/// audit (memory: project_audit_autonomous_dev_2026_05_12) and ADR-2605141135
+/// audit (memory: project_audit_autonomous_dev_2026_05_12) and ADR-2026-05-14-1135
 /// §Phase 1 #6.
 fn find_symbol_hits(
     symbols: &[String],

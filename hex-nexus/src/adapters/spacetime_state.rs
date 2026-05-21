@@ -105,7 +105,7 @@ mod real {
         config: SpacetimeConfig,
         /// Live host string. Diverges from `config.host` when
         /// `send_with_rediscovery` swaps to a working candidate after a
-        /// transport failure (ADR-2605190900 P4.2). All HTTP transport
+        /// transport failure (ADR-2026-05-19-0900 P4.2). All HTTP transport
         /// reads from here; `config.host` retains the originally
         /// configured value for diagnostics + drift logging.
         current_host: Arc<RwLock<String>>,
@@ -2153,7 +2153,7 @@ mod real {
 
     #[cfg(test)]
     mod p4_2_rediscovery_tests {
-        //! ADR-2605190900 P4.2 — adapter must swap to a working STDB
+        //! ADR-2026-05-19-0900 P4.2 — adapter must swap to a working STDB
         //! endpoint when the configured host stops responding, rather
         //! than failing every downstream call until an operator restarts
         //! the daemon.

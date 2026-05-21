@@ -1,5 +1,5 @@
 //! `hex doctor liveness` — end-to-end self-test of the autonomous loop
-//! (ADR-2605190900 P5).
+//! (ADR-2026-05-19-0900 P5).
 //!
 //! Walks the synthetic ping/pong shape:
 //!   1. POST a sched-task `kind=ping payload=<uuid>` to `/api/sched/queue`.

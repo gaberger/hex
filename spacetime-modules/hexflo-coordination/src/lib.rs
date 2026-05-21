@@ -4393,7 +4393,7 @@ pub struct WorkerProcess {
     pub exited_at: String,
     pub exit_reason: String,
     /// Self-reported liveness ("healthy" | "degraded" | "stopping"). Added
-    /// 2026-05-19 for ADR-2605190900 P1.2 — IHeartbeatPort lets components
+    /// 2026-05-19 for ADR-2026-05-19-0900 P1.2 — IHeartbeatPort lets components
     /// downgrade themselves proactively when they know they can't fully
     /// serve their contract (e.g. STDB downstream unreachable). Supervisor
     /// reads this to escalate Degraded → operator after a TTL even if
@@ -4450,7 +4450,7 @@ pub fn worker_process_heartbeat(ctx: &ReducerContext, id: String) -> Result<(), 
 /// Self-reported status update. The component publishes `healthy`, downgrades
 /// to `degraded` when an upstream is unreachable, or to `stopping` on graceful
 /// shutdown. Same row as last_heartbeat — supervisor reads both together.
-/// Added 2026-05-19 for ADR-2605190900 P1.2 to match the IHeartbeatPort
+/// Added 2026-05-19 for ADR-2026-05-19-0900 P1.2 to match the IHeartbeatPort
 /// contract (hex-core/src/ports/heartbeat.rs).
 #[reducer]
 pub fn worker_process_status(
@@ -4485,7 +4485,7 @@ pub fn worker_process_deregister(ctx: &ReducerContext, id: String) -> Result<(),
 }
 
 // ============================================================
-// dead_letter — bounded-retry quarantine for brain-tasks (ADR-2605190900 P2.1).
+// dead_letter — bounded-retry quarantine for brain-tasks (ADR-2026-05-19-0900 P2.1).
 // ============================================================
 // A dedicated audit row for brain-tasks that exceeded their retry budget.
 // Distinct from BrainTaskStatus::DeadLetter — that's a status flag on the
@@ -4595,7 +4595,7 @@ pub fn dead_letter_record(
 
 // ============================================================
 // improver_event — append-only log of MAPE-K transitions
-// (ADR-2605190721 P4.1 + ADR-2605190900 P2.4).
+// (ADR-2026-05-19-0721 P4.1 + ADR-2026-05-19-0900 P2.4).
 // ============================================================
 // The improver loop's K phase: every hypothesis discover / propose /
 // judge / act / dead-letter transition writes one row here. The
@@ -4830,7 +4830,7 @@ pub fn supervisor_tick(
     }
     let now_micros = parse_ts_micros(&now_str).unwrap_or(0);
 
-    // ── Stale-heartbeat reap pass (ADR-2605190900 P3.2) ──
+    // ── Stale-heartbeat reap pass (ADR-2026-05-19-0900 P3.2) ──
     //
     // Before the spawn/crash accounting runs, mark any worker whose
     // last_heartbeat is older than STALE_HEARTBEAT_SECS as exited. Without
@@ -5091,7 +5091,7 @@ pub struct PersonaTickSchedule {
 }
 
 // ============================================================
-// User-defined SOUL personas (ADR-2605131849, wp-user-defined-soul-personas P1)
+// User-defined SOUL personas (ADR-2026-05-13-1849, wp-user-defined-soul-personas P1)
 // ============================================================
 // Flat-peer personas that coexist with the built-in c-suite. Storage on
 // disk at ~/.hex/personas/<name>/SOUL.md; this table tracks the rows so

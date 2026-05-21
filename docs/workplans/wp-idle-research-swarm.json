@@ -2,15 +2,15 @@
   "adr": "ADR-2026-04-15-1200",
   "auto_promote": false,
   "created_by": "planner",
-  "description": "Stub workplan for ADR-2026-04-15-1200. Wires an idle-research swarm into the sched daemon: idle-trigger + throttle, structured Finding schema, T1 deterministic analysts (architecture/code-quality/drift), T2/T2.5 LLM-synthesis analysts (naming/performance/UX), routing of severity\u2265med findings into draft ADRs / draft workplans / idle-sweep memory entries, and dashboard visibility. Drafts are NEVER auto-promoted to Accepted; nothing auto-executes. Promote via /hex-feature-dev when ready.",
+  "description": "Stub workplan for ADR-2026-04-15-1200. Wires an idle-research swarm into the sched daemon: idle-trigger + throttle, structured Finding schema, T1 deterministic analysts (architecture/code-quality/drift), T2/T2.5 LLM-synthesis analysts (naming/performance/UX), routing of severity≥med findings into draft ADRs / draft workplans / idle-sweep memory entries, and dashboard visibility. Drafts are NEVER auto-promoted to Accepted; nothing auto-executes. Promote via /hex-feature-dev when ready.",
   "id": "wp-idle-research-swarm",
   "non_goals": [
-    "Continuous background scan independent of activity \u2014 sweeps run on idle only.",
+    "Continuous background scan independent of activity — sweeps run on idle only.",
     "Auto-promoting drafts to Accepted ADRs / activated workplans.",
-    "Replacing or duplicating `hex analyze` \u2014 the architecture analyst CALLS it.",
-    "Running sweeps on remote agent hosts \u2014 initial scope is local sched daemon only."
+    "Replacing or duplicating `hex analyze` — the architecture analyst CALLS it.",
+    "Running sweeps on remote agent hosts — initial scope is local sched daemon only."
   ],
-  "notes": "DRAFT STUB \u2014 do not auto-promote. Companion narrative in wp-idle-research-swarm.md. Task content mirrors the ADR; phase ordering follows the inside-out hex tier pattern (schema in hex-core first, then analysts/coordinator in hex-nexus, then primary surfaces in hex-cli + dashboard).",
+  "notes": "DRAFT STUB — do not auto-promote. Companion narrative in wp-idle-research-swarm.md. Task content mirrors the ADR; phase ordering follows the inside-out hex tier pattern (schema in hex-core first, then analysts/coordinator in hex-nexus, then primary surfaces in hex-cli + dashboard).",
   "phases": [
     {
       "gate": {
@@ -34,7 +34,7 @@
           "layer": "domain",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Define structured Finding schema in hex-core/src/research_finding.rs \u2014 Finding { id, domain, severity (high|med|low), title, evidence[] (\u22651 entry required), suggested_action: { kind: adr|workplan|memory|noop, draft_ref } }. Include serde + serde_yaml round-trip test; reject zero-evidence findings at deserialize time."
+          "title": "Define structured Finding schema in hex-core/src/research_finding.rs — Finding { id, domain, severity (high|med|low), title, evidence[] (≥1 entry required), suggested_action: { kind: adr|workplan|memory|noop, draft_ref } }. Include serde + serde_yaml round-trip test; reject zero-evidence findings at deserialize time."
         },
         {
           "evidence": [
@@ -48,7 +48,7 @@
           "layer": "primary",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Add idle_tick_count tracking to queue_drain in hex-cli/src/commands/sched.rs \u2014 increment when pending=0 AND in_flight=0, reset on any non-zero. Threshold default 4 ticks; configurable via .hex/project.json sched.idle_threshold_ticks."
+          "title": "Add idle_tick_count tracking to queue_drain in hex-cli/src/commands/sched.rs — increment when pending=0 AND in_flight=0, reset on any non-zero. Threshold default 4 ticks; configurable via .hex/project.json sched.idle_threshold_ticks."
         },
         {
           "deps": [
@@ -65,7 +65,7 @@
           "layer": "primary",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "Throttle + self-enqueue. When idle threshold reached AND now \u2212 last_research_sweep \u2265 min_sweep_interval_h (default 6h), self-enqueue a kind: research-sweep task. Persist last_research_sweep at ~/.hex/sched/last_research_sweep so the throttle survives daemon restarts."
+          "title": "Throttle + self-enqueue. When idle threshold reached AND now − last_research_sweep ≥ min_sweep_interval_h (default 6h), self-enqueue a kind: research-sweep task. Persist last_research_sweep at ~/.hex/sched/last_research_sweep so the throttle survives daemon restarts."
         },
         {
           "deps": [
@@ -80,9 +80,9 @@
           ],
           "id": "P1.4",
           "layer": "primary",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
-          "title": "Unit tests for idle-trigger + throttle. Cover: (a) trigger fires after exactly N=4 consecutive empty ticks, (b) does NOT fire when last_sweep < min_sweep_interval_h, (c) DOES fire when last_sweep \u2265 min_sweep_interval_h, (d) any non-empty tick resets the idle counter."
+          "title": "Unit tests for idle-trigger + throttle. Cover: (a) trigger fires after exactly N=4 consecutive empty ticks, (b) does NOT fire when last_sweep < min_sweep_interval_h, (c) DOES fire when last_sweep ≥ min_sweep_interval_h, (d) any non-empty tick resets the idle counter."
         }
       ],
       "tier": 0,
@@ -121,7 +121,7 @@
           ],
           "id": "P2.2",
           "layer": "secondary",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Code-quality analyst: run `cargo check --workspace --message-format=json` and `cargo clippy --workspace --message-format=json`, parse warnings/errors into Finding records (domain=code_quality)."
         },
@@ -135,7 +135,7 @@
           ],
           "id": "P2.3",
           "layer": "secondary",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Drift analyst: shell out to `hex plan reconcile --all --dry-run --json`, parse status/file mismatches into Finding records. Include workplan-vs-ADR drift as a sub-domain."
         },
@@ -155,7 +155,7 @@
         }
       ],
       "tier": 1,
-      "title": "Deterministic (T1) analysts \u2014 code-first, zero LLM cost"
+      "title": "Deterministic (T1) analysts — code-first, zero LLM cost"
     },
     {
       "gate": {
@@ -223,7 +223,7 @@
         }
       ],
       "tier": 1,
-      "title": "T2 / T2.5 LLM-synthesis analysts \u2014 gated behind code-first evidence"
+      "title": "T2 / T2.5 LLM-synthesis analysts — gated behind code-first evidence"
     },
     {
       "gate": {
@@ -305,7 +305,7 @@
           ],
           "id": "P4.4",
           "layer": "primary",
-          "status": "pending",
+          "status": "done",
           "strategy_hint": "codegen",
           "title": "Preemption: if queue_drain finds a non-research task while a sweep is in-flight, signal-abort the sweep cleanly (drop in-progress LLM call, persist partial findings) and re-enqueue research-sweep for the next idle window. Integration test injects a workplan task mid-sweep and asserts clean abort + re-enqueue."
         }
@@ -372,16 +372,16 @@
           "layer": "primary",
           "status": "done",
           "strategy_hint": "codegen",
-          "title": "hex ci gate (insight-routing rule): reject any new docs/analysis/*.md without a matching .yaml of the same basename. Enforces 'no dead reports' \u2014 freeform Markdown without structured findings fails CI."
+          "title": "hex ci gate (insight-routing rule): reject any new docs/analysis/*.md without a matching .yaml of the same basename. Enforces 'no dead reports' — freeform Markdown without structured findings fails CI."
         }
       ],
       "tier": 2,
-      "title": "Visibility \u2014 sched status + dashboard panel"
+      "title": "Visibility — sched status + dashboard panel"
     }
   ],
   "status": "in_progress",
   "success_criteria": [
-    "Idle-trigger fires after exactly idle_threshold_ticks consecutive empty ticks AND only when last_sweep age \u2265 min_sweep_interval_h.",
+    "Idle-trigger fires after exactly idle_threshold_ticks consecutive empty ticks AND only when last_sweep age ≥ min_sweep_interval_h.",
     "Throttle survives daemon restarts via ~/.hex/sched/last_research_sweep.",
     "Every sweep writes docs/analysis/idle-sweep-YYYYMMDD-HHMM.yaml; .md is rendering only.",
     "Schema rejects findings without evidence at deserialize time.",
@@ -391,5 +391,5 @@
     "Sweep with zero T2.5-eligible evidence makes zero LLM calls (regression-tested via clean-fixture repo).",
     "`hex ci` rejects docs/analysis/*.md without matching .yaml (insight-routing rule)."
   ],
-  "title": "Idle Research Swarm \u2014 sched-daemon idle-time tiered analysts with structured-finding routing"
+  "title": "Idle Research Swarm — sched-daemon idle-time tiered analysts with structured-finding routing"
 }

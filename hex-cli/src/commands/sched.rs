@@ -2589,7 +2589,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         pid
     );
 
-    // Heartbeat client (ADR-2605190900 P1.4) — sched daemon publishes
+    // Heartbeat client (ADR-2026-05-19-0900 P1.4) — sched daemon publishes
     // its liveness to worker_process every 15s. supervisor_tick reaps
     // any row with last_heartbeat > 60s, so a hung daemon is visible
     // in /api/liveness within one supervisor cycle (today: 10s) instead
@@ -4849,7 +4849,7 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
     } else {
         None
     };
-    // ADR-2605190900 P5 — liveness ping. Synthetic task the doctor
+    // ADR-2026-05-19-0900 P5 — liveness ping. Synthetic task the doctor
     // liveness probe enqueues to walk the full dispatch chain. Handled
     // INLINE rather than shelling out: emit a `pong` improver_event row
     // with scope=<uuid> so the probe's SQL poll sees it. No agent claim,

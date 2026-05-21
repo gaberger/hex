@@ -398,7 +398,7 @@ pub async fn execute_workplan(
 ///
 /// Returns the full ExecutionState flattened at the top level so polling
 /// clients (`hex plan execute`'s loop at hex-cli/src/commands/plan/mod.rs:1070)
-/// can read `.status` and `.result` directly. ADR-2605141135 §Phase 1 #2.
+/// can read `.status` and `.result` directly. ADR-2026-05-14-1135 §Phase 1 #2.
 pub async fn execute_status(
     State(state): State<SharedState>,
     Path(id): Path<String>,

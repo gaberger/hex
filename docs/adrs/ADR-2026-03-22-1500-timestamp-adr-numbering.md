@@ -64,7 +64,7 @@ The `hex adr search` and `hex adr status` commands accept either format.
 
 Two ADRs created in the same minute would still collide. This is acceptable because:
 - ADR creation is a deliberative act (minutes apart, not seconds)
-- If a same-minute collision occurs, append a single alpha suffix: `ADR-2603221500a`
+- If a same-minute collision occurs, append a single alpha suffix: `ADR-2026-03-22-1500a`
 
 ## Consequences
 

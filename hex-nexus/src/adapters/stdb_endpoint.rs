@@ -1,4 +1,4 @@
-//! SpacetimeDB endpoint discovery (ADR-2605190900 P4).
+//! SpacetimeDB endpoint discovery (ADR-2026-05-19-0900 P4).
 //!
 //! Today's `std::env::var("HEX_SPACETIMEDB_HOST").unwrap_or_else(...)`
 //! pattern is fine when the env var is set correctly. It fails silently
@@ -15,7 +15,7 @@
 //! `.hex/state.json` is read-only telemetry. It must NOT be a configuration
 //! input — that bug is exactly what makes the cache-drift class possible.
 //! Other code paths that read it for endpoint config should migrate to
-//! this module. See ADR-2605190900 §5.
+//! this module. See ADR-2026-05-19-0900 §5.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn hex_stdb_host_alias_is_honored() {
-        // ADR-2605190900 P4.3 — state_config.rs and several legacy scripts
+        // ADR-2026-05-19-0900 P4.3 — state_config.rs and several legacy scripts
         // export `HEX_STDB_HOST`. discover_endpoint accepts it as an
         // alias for `HEX_SPACETIMEDB_HOST` so the migration off
         // state.json doesn't break operator env scripts.

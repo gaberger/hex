@@ -1,4 +1,4 @@
-# ADR-2605190720: Evidence Gate for Workplan Completion
+# ADR-2026-05-19-0720: Evidence Gate for Workplan Completion
 
 **Status:** Accepted
 **Date:** 2026-05-19

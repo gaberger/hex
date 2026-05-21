@@ -1,5 +1,5 @@
 //! Heartbeat client — spawn a background tokio task that beats every
-//! 15 s on behalf of a long-running component (ADR-2605190900 P1.4).
+//! 15 s on behalf of a long-running component (ADR-2026-05-19-0900 P1.4).
 //!
 //! Usage from a startup path:
 //!
@@ -10,7 +10,7 @@
 //! The task registers a `worker_process` row on first beat (the reducer
 //! is upsert by id so no separate register call is needed), then beats
 //! every 15 s with status=Healthy. STDB-side `supervisor_tick`
-//! (ADR-2605190900 P3.2) reaps any row whose `last_heartbeat` is older
+//! (ADR-2026-05-19-0900 P3.2) reaps any row whose `last_heartbeat` is older
 //! than 60 s — so as long as this client is alive it stays "alive" in
 //! the supervision layer's eyes.
 //!

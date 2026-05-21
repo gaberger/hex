@@ -5,7 +5,7 @@ Date: 2026-05-12
 
 ## Context
 
-The SOP self-management loop (ADR-2605082500 typed-tool library) documents seven typed primitives the persona path is meant to use:
+The SOP self-management loop (ADR-2026-05-08-2500 typed-tool library) documents seven typed primitives the persona path is meant to use:
 
 | Tool             | Purpose                                                |
 |------------------|--------------------------------------------------------|
@@ -141,7 +141,7 @@ Same safety envelope as `file_write` — operates only inside `repo_root`, singl
 
 ## Links
 
-- ADR-2605082500 — typed-tool library spine (the roster this ADR fulfils item 3 of)
-- ADR-2605082400 — personas-as-commitment-creators (the upstream contract)
-- ADR-2605082300 — digital-twin auto-validator (the gate this ADR plugs into)
+- ADR-2026-05-08-2500 — typed-tool library spine (the roster this ADR fulfils item 3 of)
+- ADR-2026-05-08-2400 — personas-as-commitment-creators (the upstream contract)
+- ADR-2026-05-08-2300 — digital-twin auto-validator (the gate this ADR plugs into)
 - Memory: `gap:sop_drafter_only_emits_file_write` (the 2026-05-12 finding that triggered this)

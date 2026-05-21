@@ -1,4 +1,4 @@
-# ADR-2605190900: Runtime Supervision Architecture — closing the autonomous-loop liveness gap
+# ADR-2026-05-19-0900: Runtime Supervision Architecture — closing the autonomous-loop liveness gap
 
 **Status:** Accepted
 **Date:** 2026-05-19
@@ -124,8 +124,8 @@ Phases 1+2 alone resolve the symptoms observed today. Phases 3–5 close the cla
 
 - ADR-060 (Agent Notification Inbox) — P1/P2 priorities used by the dispatcher's escalation path.
 - ADR-061 (Workplan Lifecycle Management) — the state model the dead-letter table extends.
-- ADR-2605190720 (Evidence Gate) — the contract that already inverts "stored status" for workplans; this ADR applies the same inversion to runtime components.
-- ADR-2605190721 (Self-Improvement Loop) — the MAPE-K loop this supervision layer makes actually possible. Without supervision the loop's discover/propose/judge phases run, but the act phase cannot land because no worker claims the resulting swarm-tasks. This ADR is the prerequisite.
+- ADR-2026-05-19-0720 (Evidence Gate) — the contract that already inverts "stored status" for workplans; this ADR applies the same inversion to runtime components.
+- ADR-2026-05-19-0721 (Self-Improvement Loop) — the MAPE-K loop this supervision layer makes actually possible. Without supervision the loop's discover/propose/judge phases run, but the act phase cannot land because no worker claims the resulting swarm-tasks. This ADR is the prerequisite.
 - ADR-2026-04-26-1311 (Six-Layer Governance) — supervision is the runtime equivalent of governance: same idea, different time-scale.
 - ADR-2026-04-13-2300 (Brain Daemon Loop) — the tick mechanism this ADR extends with action-on-miss semantics.
 - Workplan: `docs/workplans/wp-runtime-supervision.json`.

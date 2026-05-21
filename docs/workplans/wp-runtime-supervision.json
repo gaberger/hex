@@ -1,8 +1,8 @@
 {
-  "adr": "ADR-2605190900",
+  "adr": "ADR-2026-05-19-0900",
   "created_at": "2026-05-19T12:20:00.000000+00:00",
   "created_by": "operator",
-  "description": "Implements ADR-2605190900 in 5 independently-shippable phases ordered to maximize operator value per phase. Phase 1 (heartbeat contract) is pure additive \u2014 costs nothing if no consumer reads beats yet. Phase 2 (dead-letter + bounded retry) is the single biggest user-visible jump: invisible 60s churn becomes a P1 inbox event. Phases 3-5 close the class of bugs that produced the 2026-05-19 postmortem.",
+  "description": "Implements ADR-2026-05-19-0900 in 5 independently-shippable phases ordered to maximize operator value per phase. Phase 1 (heartbeat contract) is pure additive \u2014 costs nothing if no consumer reads beats yet. Phase 2 (dead-letter + bounded retry) is the single biggest user-visible jump: invisible 60s churn becomes a P1 inbox event. Phases 3-5 close the class of bugs that produced the 2026-05-19 postmortem.",
   "feature": "Runtime supervision layer \u2014 heartbeat, bounded retry, dead-letter, pool supervisor, endpoint discovery, liveness self-test",
   "id": "wp-runtime-supervision",
   "phases": [

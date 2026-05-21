@@ -1,4 +1,4 @@
-//! SpacetimeDB heartbeat adapter — IHeartbeatPort impl (ADR-2605190900 P1.3).
+//! SpacetimeDB heartbeat adapter — IHeartbeatPort impl (ADR-2026-05-19-0900 P1.3).
 //!
 //! Wraps the `worker_process_register` / `worker_process_status` /
 //! `worker_process_deregister` reducers in `hexflo-coordination` so any

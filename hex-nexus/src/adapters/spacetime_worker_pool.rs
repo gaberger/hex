@@ -1,4 +1,4 @@
-//! SpacetimeWorkerPoolAdapter — IWorkerPoolPort impl (ADR-2605190900 §1 + P3.4).
+//! SpacetimeWorkerPoolAdapter — IWorkerPoolPort impl (ADR-2026-05-19-0900 §1 + P3.4).
 //!
 //! Wraps the existing `worker_process` STDB table. The supervisor_tick
 //! reducer (P3.2) keeps that table honest by reaping stale rows; this

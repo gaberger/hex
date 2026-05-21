@@ -1,6 +1,6 @@
 # hex-fizzbuzz-hermes
 
-Minimal hexagonal-architecture Rust example. Built **end-to-end by the hex autonomous SOP loop** as the Phase 0+ proof for ADR-2605141135 (hex-as-hermes-harness roadmap).
+Minimal hexagonal-architecture Rust example. Built **end-to-end by the hex autonomous SOP loop** as the Phase 0+ proof for ADR-2026-05-14-1135 (hex-as-hermes-harness roadmap).
 
 ## Layers
 

@@ -1,6 +1,6 @@
 //! Worker-pool domain types — runtime consumer availability for the dispatcher.
 //!
-//! ADR-2605190900 §1 (worker-pool invariant): the dispatcher publishes
+//! ADR-2026-05-19-0900 §1 (worker-pool invariant): the dispatcher publishes
 //! work to a logical pool; the pool guarantees a live consumer or fails
 //! fast. The 2026-05-19 postmortem captured the cost of NOT having this
 //! invariant: 30+ re-enqueue cycles, no agent listening, no signal to

@@ -347,7 +347,7 @@ fn parse_enforced_by(content: &str) -> Option<String> {
 /// Extract the ADR ID from a filename stem. Handles three forms:
 ///   "ADR-059-foo"                    → "ADR-059"            (legacy sequential)
 ///   "ADR-2026-03-22-1500-foo"        → "ADR-2026-03-22-1500" (hyphenated timestamp)
-///   "ADR-2603221500-foo"             → "ADR-2603221500"     (legacy 10-digit)
+///   "ADR-2026-03-22-1500-foo"             → "ADR-2026-03-22-1500"     (legacy 10-digit)
 ///
 /// The naive split-on-hyphen previously returned "ADR-2026" for every
 /// hyphenated file, causing `hex adr doctor` to report 154 duplicates.
@@ -368,7 +368,7 @@ fn extract_adr_id(filename: &str) -> String {
         return format!("ADR-{}-{}-{}-{}", parts[0], parts[1], parts[2], parts[3]);
     }
 
-    // Fall back to leading-digit run (covers ADR-059 + ADR-2603221500 legacy).
+    // Fall back to leading-digit run (covers ADR-059 + ADR-2026-03-22-1500 legacy).
     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     if !digits.is_empty() {
         return format!("ADR-{}", digits);

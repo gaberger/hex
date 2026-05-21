@@ -1,315 +1,315 @@
 {
   "id": "wp-autonomous-workplan-execution",
-  "title": "Autonomous Workplan Execution",
   "phases": [
     {
       "id": "P1",
-      "title": "hex-agent workplan executor",
       "tasks": [
         {
-          "id": "P1.1",
-          "title": "Add hex-agent binary entry point with --workplan <id> --background flags. Reads workplan JSON from disk (or memory via hex memory get workplan:<id>).",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-agent/src/main.rs",
-            "hex-agent/Cargo.toml"
-          ],
           "evidence": [
             "hex-agent --help | grep workplan",
             "cargo build -p hex-agent --release",
             "cargo test -p hex-agent cli_args"
-          ]
-        },
-        {
-          "id": "P1.2",
-          "title": "Implement task iterator: reads workplan JSON, filters tasks with status=pending, returns Vec<Task> with id, title, strategy_hint, files, evidence.",
+          ],
+          "files": [
+            "hex-agent/src/main.rs",
+            "hex-agent/Cargo.toml"
+          ],
+          "id": "P1.1",
           "status": "done",
           "strategy_hint": "codegen",
-          "files": [
-            "hex-agent/src/workplan.rs"
-          ],
+          "title": "Add hex-agent binary entry point with --workplan <id> --background flags. Reads workplan JSON from disk (or memory via hex memory get workplan:<id>)."
+        },
+        {
           "evidence": [
             "grep -n 'fn pending_tasks' hex-agent/src/workplan.rs",
             "cargo test -p hex-agent pending_tasks"
-          ]
-        },
-        {
-          "id": "P1.3",
-          "title": "Implement tier mapper: strategy_hint -> tier (scaffold/transform/script -> T1, codegen -> T2, inference -> T2.5). Returns InferenceTier enum.",
+          ],
+          "files": [
+            "hex-agent/src/workplan.rs"
+          ],
+          "id": "P1.2",
           "status": "done",
           "strategy_hint": "codegen",
-          "files": [
-            "hex-agent/src/tier_mapper.rs"
-          ],
+          "title": "Implement task iterator: reads workplan JSON, filters tasks with status=pending, returns Vec<Task> with id, title, strategy_hint, files, evidence."
+        },
+        {
           "evidence": [
             "grep -n 'fn map_strategy_to_tier' hex-agent/src/tier_mapper.rs",
             "cargo test -p hex-agent tier_mapper"
-          ]
-        },
-        {
-          "id": "P1.4",
-          "title": "Implement task executor: for each task, build prompt from title + evidence, call inference backend (via InferenceRouter), parse response, write files, return success/failure.",
+          ],
+          "files": [
+            "hex-agent/src/tier_mapper.rs"
+          ],
+          "id": "P1.3",
           "status": "done",
           "strategy_hint": "codegen",
+          "title": "Implement tier mapper: strategy_hint -> tier (scaffold/transform/script -> T1, codegen -> T2, inference -> T2.5). Returns InferenceTier enum."
+        },
+        {
+          "evidence": [
+            "grep -n 'fn execute_task' hex-agent/src/executor.rs",
+            "cargo test -p hex-agent execute_task"
+          ],
           "files": [
             "hex-agent/src/executor.rs",
             "hex-agent/src/inference.rs"
           ],
-          "evidence": [
-            "grep -n 'fn execute_task' hex-agent/src/executor.rs",
-            "cargo test -p hex-agent execute_task"
-          ]
-        },
-        {
-          "id": "P1.5",
-          "title": "Implement status updater: after task success/failure, updates workplan JSON on disk with new status, writes atomic (tmp + rename).",
+          "id": "P1.4",
           "status": "done",
           "strategy_hint": "codegen",
-          "files": [
-            "hex-agent/src/workplan.rs"
-          ],
+          "title": "Implement task executor: for each task, build prompt from title + evidence, call inference backend (via InferenceRouter), parse response, write files, return success/failure."
+        },
+        {
           "evidence": [
             "grep -n 'fn update_task_status' hex-agent/src/workplan.rs",
             "cargo test -p hex-agent update_task_status"
-          ]
-        },
-        {
-          "id": "P1.6",
-          "title": "Main loop: iterate pending tasks, execute each, update status, collect summary {completed: N, failed: N, duration_s: T}, print JSON to stdout, exit 0 if all succeeded else 1.",
+          ],
+          "files": [
+            "hex-agent/src/workplan.rs"
+          ],
+          "id": "P1.5",
           "status": "done",
           "strategy_hint": "codegen",
-          "files": [
-            "hex-agent/src/main.rs"
-          ],
+          "title": "Implement status updater: after task success/failure, updates workplan JSON on disk with new status, writes atomic (tmp + rename)."
+        },
+        {
           "evidence": [
             "hex-agent --workplan test.json --background 2>&1 | jq '.completed'",
             "cargo test -p hex-agent main_loop"
-          ]
+          ],
+          "files": [
+            "hex-agent/src/main.rs"
+          ],
+          "id": "P1.6",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Main loop: iterate pending tasks, execute each, update status, collect summary {completed: N, failed: N, duration_s: T}, print JSON to stdout, exit 0 if all succeeded else 1."
         }
-      ]
+      ],
+      "title": "hex-agent workplan executor"
     },
     {
       "id": "P2",
-      "title": "Daemon integration (Path C)",
       "tasks": [
         {
-          "id": "P2.1",
-          "title": "Add session detection helper: fn has_active_session() -> bool checks CLAUDE_SESSION_ID env var. Returns true if set.",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-cli/src/commands/sched.rs"
-          ],
           "evidence": [
             "grep -n 'fn has_active_session' hex-cli/src/commands/sched.rs",
             "cargo test -p hex-cli has_active_session"
-          ]
-        },
-        {
-          "id": "P2.2",
-          "title": "Implement Path C spawner: fn spawn_autonomous_agent(task_id, workplan_path) spawns hex-agent --workplan <path> --background, captures stdout/stderr, returns exit code + output.",
-          "status": "done",
-          "strategy_hint": "codegen",
+          ],
           "files": [
             "hex-cli/src/commands/sched.rs"
           ],
+          "id": "P2.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add session detection helper: fn has_active_session() -> bool checks CLAUDE_SESSION_ID env var. Returns true if set."
+        },
+        {
           "evidence": [
             "grep -n 'fn spawn_autonomous_agent' hex-cli/src/commands/sched.rs",
             "cargo test -p hex-cli spawn_autonomous_agent"
-          ]
-        },
-        {
-          "id": "P2.3",
-          "title": "Wire Path C into execute_brain_task: for workplan kind, check has_active_session(). If false, call spawn_autonomous_agent() instead of nexus dispatch. Parse summary JSON from stdout, update brain-task status.",
-          "status": "done",
-          "strategy_hint": "codegen",
+          ],
           "files": [
             "hex-cli/src/commands/sched.rs"
           ],
+          "id": "P2.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Implement Path C spawner: fn spawn_autonomous_agent(task_id, workplan_path) spawns hex-agent --workplan <path> --background, captures stdout/stderr, returns exit code + output."
+        },
+        {
           "evidence": [
             "grep -n 'Path C: autonomous' hex-cli/src/commands/sched.rs",
             "cargo test -p hex-cli execute_brain_task_path_c"
-          ]
-        },
-        {
-          "id": "P2.4",
-          "title": "Add daemon logging: when Path C activates, log '\u2b21 spawned autonomous agent for workplan <id>'. When agent exits, log summary (completed, failed, duration).",
-          "status": "done",
-          "strategy_hint": "codegen",
+          ],
           "files": [
             "hex-cli/src/commands/sched.rs"
           ],
+          "id": "P2.3",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Wire Path C into execute_brain_task: for workplan kind, check has_active_session(). If false, call spawn_autonomous_agent() instead of nexus dispatch. Parse summary JSON from stdout, update brain-task status."
+        },
+        {
           "evidence": [
             "grep -n 'spawned autonomous agent' hex-cli/src/commands/sched.rs"
-          ]
+          ],
+          "files": [
+            "hex-cli/src/commands/sched.rs"
+          ],
+          "id": "P2.4",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add daemon logging: when Path C activates, log '⬡ spawned autonomous agent for workplan <id>'. When agent exits, log summary (completed, failed, duration)."
         }
-      ]
+      ],
+      "title": "Daemon integration (Path C)"
     },
     {
       "id": "P3",
-      "title": "Inference tier routing",
       "tasks": [
         {
-          "id": "P3.1",
-          "title": "Implement InferenceRouter in hex-agent: reads .hex/project.json inference.tier_models, maps tier -> backend URL. Falls back to T2.5 if T3 unavailable.",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-agent/src/inference_router.rs"
-          ],
           "evidence": [
             "grep -n 'struct InferenceRouter' hex-agent/src/inference_router.rs",
             "cargo test -p hex-agent inference_router"
-          ]
-        },
-        {
-          "id": "P3.2",
-          "title": "Wire router into executor: execute_task() uses InferenceRouter::route(tier) to get backend, sends prompt, receives response. Handles 503/timeout as transient failure.",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-agent/src/executor.rs"
           ],
-          "evidence": [
-            "grep -n 'InferenceRouter::route' hex-agent/src/executor.rs",
-            "cargo test -p hex-agent executor_routing"
-          ]
-        },
-        {
-          "id": "P3.3",
-          "title": "Add tier fallback logic: if T3 request fails with 'CLAUDE_SESSION_ID not set', retry with T2.5. Log fallback event.",
-          "status": "done",
-          "strategy_hint": "codegen",
           "files": [
             "hex-agent/src/inference_router.rs"
           ],
-          "evidence": [
-            "grep -n 'tier_fallback' hex-agent/src/inference_router.rs",
-            "cargo test -p hex-agent tier_fallback"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "P4",
-      "title": "Compile gate + rollback",
-      "tasks": [
-        {
-          "id": "P4.1",
-          "title": "Implement compile gate: after writing files, detect project type (Cargo.toml -> Rust, package.json + tsconfig.json -> TypeScript), run cargo check or tsc --noEmit. Return pass/fail + errors.",
+          "id": "P3.1",
           "status": "done",
           "strategy_hint": "codegen",
-          "files": [
-            "hex-agent/src/compile_gate.rs"
-          ],
-          "evidence": [
-            "grep -n 'fn run_compile_gate' hex-agent/src/compile_gate.rs",
-            "cargo test -p hex-agent compile_gate"
-          ]
+          "title": "Implement InferenceRouter in hex-agent: reads .hex/project.json inference.tier_models, maps tier -> backend URL. Falls back to T2.5 if T3 unavailable."
         },
         {
-          "id": "P4.2",
-          "title": "Implement rollback: fn rollback_task() runs git reset --hard HEAD to undo uncommitted changes. Called when compile gate fails.",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-agent/src/git.rs"
-          ],
           "evidence": [
-            "grep -n 'fn rollback_task' hex-agent/src/git.rs",
-            "cargo test -p hex-agent rollback_task"
-          ]
-        },
-        {
-          "id": "P4.3",
-          "title": "Wire gate into executor: after writing files, call run_compile_gate(). If pass, commit with 'feat(<task.id>): <task.title>'. If fail, call rollback_task(), mark task failed with compiler errors in result, stop workplan.",
-          "status": "done",
-          "strategy_hint": "codegen",
+            "grep -n 'InferenceRouter::route' hex-agent/src/executor.rs",
+            "cargo test -p hex-agent executor_routing"
+          ],
           "files": [
             "hex-agent/src/executor.rs"
           ],
+          "id": "P3.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Wire router into executor: execute_task() uses InferenceRouter::route(tier) to get backend, sends prompt, receives response. Handles 503/timeout as transient failure."
+        },
+        {
+          "evidence": [
+            "grep -n 'tier_fallback' hex-agent/src/inference_router.rs",
+            "cargo test -p hex-agent tier_fallback"
+          ],
+          "files": [
+            "hex-agent/src/inference_router.rs"
+          ],
+          "id": "P3.3",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add tier fallback logic: if T3 request fails with 'CLAUDE_SESSION_ID not set', retry with T2.5. Log fallback event."
+        }
+      ],
+      "title": "Inference tier routing"
+    },
+    {
+      "id": "P4",
+      "tasks": [
+        {
+          "evidence": [
+            "grep -n 'fn run_compile_gate' hex-agent/src/compile_gate.rs",
+            "cargo test -p hex-agent compile_gate"
+          ],
+          "files": [
+            "hex-agent/src/compile_gate.rs"
+          ],
+          "id": "P4.1",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Implement compile gate: after writing files, detect project type (Cargo.toml -> Rust, package.json + tsconfig.json -> TypeScript), run cargo check or tsc --noEmit. Return pass/fail + errors."
+        },
+        {
+          "evidence": [
+            "grep -n 'fn rollback_task' hex-agent/src/git.rs",
+            "cargo test -p hex-agent rollback_task"
+          ],
+          "files": [
+            "hex-agent/src/git.rs"
+          ],
+          "id": "P4.2",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Implement rollback: fn rollback_task() runs git reset --hard HEAD to undo uncommitted changes. Called when compile gate fails."
+        },
+        {
           "evidence": [
             "grep -n 'compile_gate.*pass' hex-agent/src/executor.rs",
             "cargo test -p hex-agent executor_compile_gate"
-          ]
+          ],
+          "files": [
+            "hex-agent/src/executor.rs"
+          ],
+          "id": "P4.3",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Wire gate into executor: after writing files, call run_compile_gate(). If pass, commit with 'feat(<task.id>): <task.title>'. If fail, call rollback_task(), mark task failed with compiler errors in result, stop workplan."
         },
         {
-          "id": "P4.4",
-          "title": "Add config flag: .hex/project.json -> autonomous.compile_gate (default true). If false, skip gate (trust inference output, always commit).",
-          "status": "done",
-          "strategy_hint": "scaffold",
+          "evidence": [
+            "jq '.autonomous.compile_gate' .hex/project.json"
+          ],
           "files": [
             ".hex/project.json",
             "hex-core/src/config.rs"
           ],
-          "evidence": [
-            "jq '.autonomous.compile_gate' .hex/project.json"
-          ]
+          "id": "P4.4",
+          "status": "done",
+          "strategy_hint": "scaffold",
+          "title": "Add config flag: .hex/project.json -> autonomous.compile_gate (default true). If false, skip gate (trust inference output, always commit)."
         }
-      ]
+      ],
+      "title": "Compile gate + rollback"
     },
     {
       "id": "P5",
-      "title": "Observability",
       "tasks": [
         {
-          "id": "P5.1",
-          "title": "Update hex monitor to show autonomous agents: parse brain-tasks with kind=workplan, check if active agent process exists (ps aux | grep hex-agent --workplan <id>), show 'background agent: <workplan-id>' in queue status.",
-          "status": "done",
-          "strategy_hint": "codegen",
-          "files": [
-            "hex-cli/src/commands/monitor.rs"
-          ],
           "evidence": [
             "hex monitor | grep 'background agent'",
             "cargo test -p hex-cli monitor_autonomous"
-          ]
-        },
-        {
-          "id": "P5.2",
-          "title": "Add autonomous execution panel to dashboard: fetches /api/brain/queue, filters workplan tasks with active agents, shows workplan name, duration, progress (completed/total tasks).",
+          ],
+          "files": [
+            "hex-cli/src/commands/monitor.rs"
+          ],
+          "id": "P5.1",
           "status": "done",
           "strategy_hint": "codegen",
+          "title": "Update hex monitor to show autonomous agents: parse brain-tasks with kind=workplan, check if active agent process exists (ps aux | grep hex-agent --workplan <id>), show 'background agent: <workplan-id>' in queue status."
+        },
+        {
+          "evidence": [
+            "grep -n 'AutonomousExecution' hex-nexus/assets/src/App.tsx",
+            "curl -s http://localhost:5555/ | grep autonomous"
+          ],
           "files": [
             "hex-nexus/assets/src/pages/AutonomousExecution.tsx",
             "hex-nexus/assets/src/App.tsx"
           ],
-          "evidence": [
-            "grep -n 'AutonomousExecution' hex-nexus/assets/src/App.tsx",
-            "curl -s http://localhost:5555/ | grep autonomous"
-          ]
-        },
-        {
-          "id": "P5.3",
-          "title": "Add agent logging: hex-agent writes logs to ~/.hex/agent-<workplan-id>.log including task execution, inference calls, compile gate results. Rotates after 10MB.",
+          "id": "P5.2",
           "status": "done",
           "strategy_hint": "codegen",
+          "title": "Add autonomous execution panel to dashboard: fetches /api/brain/queue, filters workplan tasks with active agents, shows workplan name, duration, progress (completed/total tasks)."
+        },
+        {
+          "evidence": [
+            "ls ~/.hex/agent-*.log",
+            "tail -20 ~/.hex/agent-*.log | grep 'compile gate'"
+          ],
           "files": [
             "hex-agent/src/logging.rs",
             "hex-agent/src/main.rs"
           ],
-          "evidence": [
-            "ls ~/.hex/agent-*.log",
-            "tail -20 ~/.hex/agent-*.log | grep 'compile gate'"
-          ]
+          "id": "P5.3",
+          "status": "done",
+          "strategy_hint": "codegen",
+          "title": "Add agent logging: hex-agent writes logs to ~/.hex/agent-<workplan-id>.log including task execution, inference calls, compile gate results. Rotates after 10MB."
         },
         {
-          "id": "P5.4",
-          "title": "Add config schema: .hex/project.json -> autonomous.enabled (default true), autonomous.max_concurrent_agents (default 3), autonomous.rollback_on_failure (default true). Load in daemon + hex-agent.",
-          "status": "failed",
-          "strategy_hint": "scaffold",
+          "evidence": [
+            "jq '.autonomous' .hex/project.json",
+            "cargo check -p hex-core"
+          ],
           "files": [
             ".hex/project.json",
             "hex-core/src/config.rs"
           ],
-          "evidence": [
-            "jq '.autonomous' .hex/project.json",
-            "cargo check -p hex-core"
-          ]
+          "id": "P5.4",
+          "status": "done",
+          "strategy_hint": "scaffold",
+          "title": "Add config schema: .hex/project.json -> autonomous.enabled (default true), autonomous.max_concurrent_agents (default 3), autonomous.rollback_on_failure (default true). Load in daemon + hex-agent."
         }
-      ]
+      ],
+      "title": "Observability"
     }
   ],
-  "status": "in_progress"
+  "status": "in_progress",
+  "title": "Autonomous Workplan Execution"
 }

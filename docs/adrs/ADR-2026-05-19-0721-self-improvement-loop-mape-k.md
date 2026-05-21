@@ -1,4 +1,4 @@
-# ADR-2605190721: Self-Improvement Loop — Closing MAPE-K (Plan / Execute / Knowledge)
+# ADR-2026-05-19-0721: Self-Improvement Loop — Closing MAPE-K (Plan / Execute / Knowledge)
 
 **Status:** Proposed
 **Date:** 2026-05-19
@@ -85,7 +85,7 @@ This is a deliberate guardrail, not a bug: the loop refusing to autonomously rew
 - ADR-2026-04-13-2300 (Brain Daemon Loop) — the tick mechanism this ADR extends.
 - ADR-2026-04-26-1311 (Six-Layer Governance) — shadow-promotion contract used by P3.
 - ADR-2026-04-27-1200 (Architectural Health Detectors) — sibling work that produces additional hypothesis sources for P1.
-- ADR-2605190720 (Evidence Gate) — preconditions for trusting variant `done` claims.
+- ADR-2026-05-19-0720 (Evidence Gate) — preconditions for trusting variant `done` claims.
 - Workplan: `docs/workplans/wp-sched-improver-propose-judge-act.json`.
 - Code (current scaffolds):
   - `hex-cli/src/commands/sched/improver/discover.rs` (live)

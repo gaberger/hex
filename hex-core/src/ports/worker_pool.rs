@@ -1,5 +1,5 @@
 //! IWorkerPoolPort — contract for the dispatcher's "is there a consumer?"
-//! gate (ADR-2605190900 §1 + P3.4).
+//! gate (ADR-2026-05-19-0900 §1 + P3.4).
 //!
 //! Long-running dispatchers call `ensure_consumer(role)` before publishing
 //! work. Production impl wraps the `worker_process` STDB table; tests use

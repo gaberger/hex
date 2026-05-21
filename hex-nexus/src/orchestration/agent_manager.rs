@@ -414,7 +414,7 @@ impl AgentManager {
 
         // Bypass the worktree-guard for supervisor-spawned workers.
         //
-        // ADR-2605081126 P2.1 made hex-agent refuse to run from trunk to
+        // ADR-2026-05-08-1126 P2.1 made hex-agent refuse to run from trunk to
         // prevent the 2026-05-07 hijacker-style overwrite. That defense
         // is correct for ad-hoc operator-invoked hex-agent runs, but the
         // supervisor IS the operator in the single-host model: it spawns
@@ -428,7 +428,7 @@ impl AgentManager {
         // hex_agent table only ever holds the 10 persona-virtualized
         // rows, never the real IC workers → workplan_executor's
         // cc_agent UUID lookup misses → tasks time out at 120s. This is
-        // the construction-loop break diagnosed in ADR-2605141135 Phase 1.
+        // the construction-loop break diagnosed in ADR-2026-05-14-1135 Phase 1.
         //
         // Override is supervisor-scoped only. Direct `hex-agent daemon`
         // invocations from a developer shell still hit the guard.

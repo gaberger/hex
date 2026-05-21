@@ -12,7 +12,7 @@
 //! in this file came from the operator's literal-content body sent
 //! once via curl, the rest of the chain ran on its own.
 //!
-//! See ADR-2605141135 (hex-as-hermes-harness roadmap) for context;
+//! See ADR-2026-05-14-1135 (hex-as-hermes-harness roadmap) for context;
 //! commit `f33c7a37` for the original spec smoke; this file for the
 //! source-guard exception proof.
 

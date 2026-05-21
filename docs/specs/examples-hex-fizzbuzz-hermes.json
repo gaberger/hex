@@ -1,6 +1,6 @@
 {
   "feature": "examples-hex-fizzbuzz-hermes",
-  "description": "Hexagonal fizzbuzz example built by the hex autonomous SOP loop as the Phase 0+ proof for ADR-2605141135.",
+  "description": "Hexagonal fizzbuzz example built by the hex autonomous SOP loop as the Phase 0+ proof for ADR-2026-05-14-1135.",
   "behavioral_specs": [
     {
       "id": "BS-1",

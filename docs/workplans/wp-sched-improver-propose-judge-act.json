@@ -1,5 +1,5 @@
 {
-  "adr": "ADR-2605190721",
+  "adr": "ADR-2026-05-19-0721",
   "created_at": "2026-05-19T11:25:00.000000+00:00",
   "created_by": "operator",
   "feature": "Close the MAPE-K loop: propose_strategic + judge + act + K phase",

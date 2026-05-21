@@ -1,4 +1,4 @@
-//! IDeadLetterPort — contract for runtime quarantine + replay (ADR-2605190900 P2.2).
+//! IDeadLetterPort — contract for runtime quarantine + replay (ADR-2026-05-19-0900 P2.2).
 //!
 //! Long-running components (dispatcher, retry loops, watchdog) call this
 //! port when a brain-task exceeds its retry budget. The production impl

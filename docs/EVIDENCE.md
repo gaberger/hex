@@ -198,7 +198,7 @@ If a claim elsewhere in the docs lacks a reproducer on this page, it's not yet v
 
 ---
 
-## Appendix: Runtime supervision (ADR-2605190900)
+## Appendix: Runtime supervision (ADR-2026-05-19-0900)
 
 The 2026-05-19 postmortem documented six failure modes in the
 "AI-developer-as-OS" runtime — silent dead workers, infinite-retry

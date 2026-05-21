@@ -1,7 +1,7 @@
 {
   "id": "wp-user-defined-soul-personas",
-  "title": "Implement user-defined SOUL personas alongside the c-suite (ADR-2605131849)",
-  "adr": "ADR-2605131849",
+  "title": "Implement user-defined SOUL personas alongside the c-suite (ADR-2026-05-13-1849)",
+  "adr": "ADR-2026-05-13-1849",
   "phases": [
     {
       "id": "P1",

@@ -1,4 +1,4 @@
-//! `/api/dead-letter` REST surface (ADR-2605190900 P2.3).
+//! `/api/dead-letter` REST surface (ADR-2026-05-19-0900 P2.3).
 //!
 //! Two endpoints over the same store:
 //!   GET  /api/dead-letter            — list quarantined brain-tasks.
@@ -166,7 +166,7 @@ pub async fn replay(
 /// nexus that already have an `Arc<AppState>`. Not exposed as a route
 /// to prevent external poison.
 ///
-/// Side effect (ADR-2605190900 P2.4): every dead-letter records an
+/// Side effect (ADR-2026-05-19-0900 P2.4): every dead-letter records an
 /// `improver_event { kind: retry_quota_exceeded, source: DispatchRetryQuota }`
 /// so the improver discover phase can surface stuck task patterns as
 /// Hypothesis rows. The K-phase event write is best-effort — a failure

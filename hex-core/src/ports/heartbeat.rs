@@ -1,4 +1,4 @@
-//! IHeartbeatPort — contract for runtime liveness signals (ADR-2605190900 P1.1).
+//! IHeartbeatPort — contract for runtime liveness signals (ADR-2026-05-19-0900 P1.1).
 //!
 //! Long-running components (sched daemon, nexus server, workplan_executor,
 //! hex-agent worker, etc.) implement this port via a secondary adapter so

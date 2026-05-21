@@ -1,4 +1,4 @@
-# ADR-2605141631: Dashboard refactor — Hermes Agent as the model
+# ADR-2026-05-14-1631: Dashboard refactor — Hermes Agent as the model
 
 **Status:** Proposed
 **Date:** 2026-05-14
@@ -10,7 +10,7 @@
 - [Hermes Agent — Mission Control / TUI / `/agents` overlay](https://hermes-agent.nousresearch.com/docs/user-guide/tui)
 - [Hermes Agent — Delegation `/agents` overlay](https://hermes-agent.nousresearch.com/docs/user-guide/features/delegation)
 - ADR-2026-05-09-1200 — hex Mission Control design (initial unified landing)
-- ADR-2605141135 — hex-as-hermes-harness roadmap (this ADR is the dashboard slice of that effort)
+- ADR-2026-05-14-1135 — hex-as-hermes-harness roadmap (this ADR is the dashboard slice of that effort)
 - Commit `f4001ce5` — Mission Control single landing surface (current state of the art)
 - Commit `eaeb5886` + `c96ceb57` + `2aa9c14d` — `hex agent run` simple_agent loop (the new flat path the dashboard must surface)
 - Commit `f7a685b7` — `hex ops` CLI verbs (the operator-grade primitives needing dashboard parity)

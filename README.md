@@ -25,9 +25,9 @@ Three claims define hex:
 
 1. **Architecture is enforced, not encouraged.** Tree-sitter parses every commit; cross-layer imports fail the build. `hex-core` (zero external deps), `ports/`, `adapters/`, `usecases/` — the seams are named, machine-checked, and runtime-swappable through a substrate composition root (ADR-2026-04-26-1303, ADR-2026-04-26-1500).
 
-2. **Completion is derived from evidence, not self-reported.** Agents claim done; hex doesn't believe them. Every task has a file-evidence gate (`hex-nexus/src/orchestration/workplan_executor.rs::check_evidence_gate`) and a workplan-scoped commit-subject reconciler (`hex plan reconcile --strict`). Lying agents get marked `failed`; a P1 inbox notification fires (ADR-2605190720, ADR-061).
+2. **Completion is derived from evidence, not self-reported.** Agents claim done; hex doesn't believe them. Every task has a file-evidence gate (`hex-nexus/src/orchestration/workplan_executor.rs::check_evidence_gate`) and a workplan-scoped commit-subject reconciler (`hex plan reconcile --strict`). Lying agents get marked `failed`; a P1 inbox notification fires (ADR-2026-05-19-0720, ADR-061).
 
-3. **The system adapts itself within a bounded autonomy envelope.** A control loop ticks every 30s observing the running system, plans changes through adversarial competition, judges them against a structured rubric, and applies them via shadow-promotion. Tier-A changes auto-merge; Tier-C halts at the operator. The loop's targets include hex's own ADRs, workplans, port telemetry, and architectural design (ADR-2026-04-26-1311, ADR-2605190721, ADR-2026-04-27-1200).
+3. **The system adapts itself within a bounded autonomy envelope.** A control loop ticks every 30s observing the running system, plans changes through adversarial competition, judges them against a structured rubric, and applies them via shadow-promotion. Tier-A changes auto-merge; Tier-C halts at the operator. The loop's targets include hex's own ADRs, workplans, port telemetry, and architectural design (ADR-2026-04-26-1311, ADR-2026-05-19-0721, ADR-2026-04-27-1200).
 
 Work is tracked as **workplan JSON** (phases, tasks, adapter boundaries, gates). Architecture decisions are tracked as **ADRs** (228 in tree). State lives in **SpacetimeDB** as an append-only event log. Every coupling has a name, every mutation has a record.
 
@@ -45,7 +45,7 @@ The substrate ADRs (2604261500, 2604261311, 2604261800, 2604262100) describe hex
 | **E**xecute | Structured judge scores variants on 5 axes (alignment, blast-radius, dependency-satisfaction, reversibility, historical-reject-rate); winner is applied via shadow-promotion on a `sched/improver/<id>` worktree branch; losers archived to `docs/workplans/rejected/`. | `hex-nexus/src/orchestration/improver_judge.rs` + `improver_act.rs` | `wp-sched-improver` P3+P4 |
 | **K**nowledge | All transitions append to `improver_event` STDB rows: hypothesis text, variants, verdict, action taken, outcome. The judge consults this history (`historical_reject_rate` axis) so the system learns which variant patterns the operator tends to overrule. | STDB `improver_event` table | `wp-sched-improver` P5 |
 
-The autonomy envelope (ADR-2605190720 §1a) is a three-tier table that names exactly which actions the loop may apply without operator consent:
+The autonomy envelope (ADR-2026-05-19-0720 §1a) is a three-tier table that names exactly which actions the loop may apply without operator consent:
 
 | Tier | Examples | Auto? | Rollback envelope |
 |---|---|---|---|
@@ -59,7 +59,7 @@ This is the structural answer to "agents wreck repos when given autonomy." hex d
 
 The improver doesn't only watch application code. It watches **itself**:
 
-- **`hex adr doctor`** scans the ADR registry every tick. Unparseable status → Tier-A auto-fix. Duplicate ID → Tier-C operator review. Stale-Proposed ADR → Tier-B drafted demotion. (ADR-2605190720)
+- **`hex adr doctor`** scans the ADR registry every tick. Unparseable status → Tier-A auto-fix. Duplicate ID → Tier-C operator review. Stale-Proposed ADR → Tier-B drafted demotion. (ADR-2026-05-19-0720)
 - **`hex plan reconcile --strict`** demotes any task whose stored `done` doesn't match the event log. Removes the multi-writer race that produces false-completes. (ADR-061)
 - **`hex substrate telemetry`** rollups detect port latency drift, adapter skew, traffic concentration, idle adapters, swap starvation — the substrate auditing whether its own hot-swap machinery is paying its way. (ADR-2026-04-27-1200)
 - **Architectural detectors** find god-domain-types, kitchen-sink ports, orphan adapters, dead layers, composition drift — design-quality findings, not just compile errors.
@@ -91,9 +91,9 @@ The positioning that makes everything click: **hex is a Linux kernel for coding 
 |---|---|---|
 | Compile gate on agent output | best-of-N + language-specific validation (auto-detected: Rust → `cargo check`, TS → `tsc --noEmit`, Go → `go build`); failed candidates feed back into the next attempt | Most agents trust the model. hex doesn't. |
 | Layer-boundary enforcement at commit | tree-sitter scan in `hex analyze`; pre-commit hook; CI gate | Hexagonal rules without enforcement aren't rules. |
-| Evidence-gated `done` | files-exist + workplan-scoped commit-subject match (ADR-2605190720 P0) | Other systems store `status: "done"` and trust the writer. hex demotes any task without git evidence. |
+| Evidence-gated `done` | files-exist + workplan-scoped commit-subject match (ADR-2026-05-19-0720 P0) | Other systems store `status: "done"` and trust the writer. hex demotes any task without git evidence. |
 | Adversarial governance for changes | adversarial-swarm proposes 3 variants; structured judge with 5-axis rubric; shadow-promote (ADR-2026-04-26-1311) | Single-shot LLM proposals are biased. hex makes them compete. |
-| Continuous self-improvement | sched-daemon `tick_improver` discovers → proposes → judges → enqueues; ~20 detectors across operational + architectural classes (ADR-2605190721, ADR-2026-04-27-1200) | Most "agentic" systems run a loop on user prompts. hex runs a loop without one. |
+| Continuous self-improvement | sched-daemon `tick_improver` discovers → proposes → judges → enqueues; ~20 detectors across operational + architectural classes (ADR-2026-05-19-0721, ADR-2026-04-27-1200) | Most "agentic" systems run a loop on user prompts. hex runs a loop without one. |
 | Architectural-health interrogation | god-types, port cohesion, adapter skew, latency drift, swap-starvation, composition drift — all become hypotheses | Linters check syntax. hex's improver checks whether the *design* is paying its way. |
 | Tier-routed local-first inference | T1 4B / T2 32B / T2.5 24B / T3 frontier; `strategy_hint` selects; compile gate validates | Pricing-driven routing without a verifier produces worse code. hex pairs them. |
 | Bounded-autonomy state mutation | Tier A: auto-apply via shadow-promote on a sched/auto-fix branch; Tier B: write fix, P2 inbox; Tier C: P1 inbox, no action | Agents that mutate without rollback envelopes wreck repos. hex's mutations are addressable for `git revert`. |
@@ -202,7 +202,7 @@ Before bootstrap, hex required 45 minutes of manual setup (downloading models, c
 hex                           # status + next steps
 hex analyze .                 # boundary violations + dead code + (soon) architectural detectors
 hex adr list                  # 228 decisions in tree
-hex adr doctor                # registry health (ADR-2605190720)
+hex adr doctor                # registry health (ADR-2026-05-19-0720)
 
 # workplans
 hex plan draft "<prompt>"     # auto-invoked on T3 prompts
@@ -432,7 +432,7 @@ Two operating modes:
 
 ## Status
 
-Alpha — but a different kind of alpha than most. Every mechanical claim above has a reproducer in [EVIDENCE.md](docs/EVIDENCE.md): exact command, prerequisites, expected output. The substrate (ADR-2026-04-26-1500), six-layer governance (ADR-2026-04-26-1311), evidence gate (ADR-2605190720, **Accepted — live in `workplan_executor.rs::check_evidence_gate` and `hex plan reconcile --strict`**), workplan state model (ADR-061), self-improvement loop (ADR-2605190721, **Proposed — Monitor + Analyze phases live; Plan + Execute + Knowledge tracked in `wp-sched-improver-propose-judge-act`**), and architectural-health detectors (ADR-2026-04-27-1200, **detector code in `hex-analyzer` lands as Hypothesis sources via `wp-architectural-health-detectors`**) are all named. The chain that closes the operator-asks-nothing loop is the active development frontier — `hex sched scores` reads empty today because the K phase has no rows yet. ADR drift, false-done propagation, and detector blind spots are themselves visible in the system as findings the improver will surface — not hidden.
+Alpha — but a different kind of alpha than most. Every mechanical claim above has a reproducer in [EVIDENCE.md](docs/EVIDENCE.md): exact command, prerequisites, expected output. The substrate (ADR-2026-04-26-1500), six-layer governance (ADR-2026-04-26-1311), evidence gate (ADR-2026-05-19-0720, **Accepted — live in `workplan_executor.rs::check_evidence_gate` and `hex plan reconcile --strict`**), workplan state model (ADR-061), self-improvement loop (ADR-2026-05-19-0721, **Proposed — Monitor + Analyze phases live; Plan + Execute + Knowledge tracked in `wp-sched-improver-propose-judge-act`**), and architectural-health detectors (ADR-2026-04-27-1200, **detector code in `hex-analyzer` lands as Hypothesis sources via `wp-architectural-health-detectors`**) are all named. The chain that closes the operator-asks-nothing loop is the active development frontier — `hex sched scores` reads empty today because the K phase has no rows yet. ADR drift, false-done propagation, and detector blind spots are themselves visible in the system as findings the improver will surface — not hidden.
 
 **Language support**: The `BuildAdapter` (ADR-018) detects project language from manifest files (`Cargo.toml`, `package.json`, `go.mod`) and dispatches to the appropriate toolchain. Rust workplan execution is production-ready (see `examples/task-board/`); TypeScript and Go support exists in the build adapter but workplan integration is in progress (currently hardcoded to `cargo check` in `workplan_executor.rs` — test case in `examples/food-delivery-ts/`, integration tracked in roadmap).
 
@@ -479,6 +479,6 @@ Builds on hexagonal architecture ([Alistair Cockburn, 2005](https://alistair.coc
 
 [MIT](LICENSE)
 
-<!-- Last manual edit: 2026-05-19 — ADR count 189→228, replaced 3 invented ADR refs with ADR-2605190720 (Evidence Gate), ADR-2605190721 (Self-Improvement Loop), and ADR-061 (Workplan Lifecycle); renamed `hex substrate composition` → `hex substrate status`; refreshed §Status to name the workplans implementing the in-flight phases. -->
+<!-- Last manual edit: 2026-05-19 — ADR count 189→228, replaced 3 invented ADR refs with ADR-2026-05-19-0720 (Evidence Gate), ADR-2026-05-19-0721 (Self-Improvement Loop), and ADR-061 (Workplan Lifecycle); renamed `hex substrate composition` → `hex substrate status`; refreshed §Status to name the workplans implementing the in-flight phases. -->
 
 

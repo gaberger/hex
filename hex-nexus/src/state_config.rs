@@ -1,5 +1,5 @@
 //! Runtime backend configuration for IStatePort (ADR-025 Phase 4, ADR-032,
-//! ADR-2605190900 P4.3).
+//! ADR-2026-05-19-0900 P4.3).
 //!
 //! SpacetimeDB is the only backend. SQLite has been removed.
 //!
@@ -64,7 +64,7 @@ fn default_stdb_database() -> String {
 /// 4. `HEX_STDB_FALLBACK_HOST` env var (operator escape hatch)
 ///
 /// Database + auth come from env vars + module defaults. `.hex/state.json`
-/// is **not** read as config (ADR-2605190900 P4.3); it survives as the
+/// is **not** read as config (ADR-2026-05-19-0900 P4.3); it survives as the
 /// dashboard's write-only telemetry surface. If a state.json with a
 /// config-shaped payload is found, we warn so the operator knows to
 /// clean it up.
@@ -107,7 +107,7 @@ fn warn_on_legacy_state_json_config() {
                 "Legacy .hex/state.json config fields detected (host/backend/database). \
                  These are IGNORED — endpoint is resolved via stdb_endpoint::discover_endpoint. \
                  Move host config to HEX_SPACETIMEDB_HOST or .hex/project.json coordination.host \
-                 to silence this warning (ADR-2605190900 P4.3)."
+                 to silence this warning (ADR-2026-05-19-0900 P4.3)."
             );
             return; // one warning is enough
         }

@@ -653,7 +653,7 @@ fn content_has_grounding(content: &str) -> bool {
     // ADR ID — both hyphen-date `ADR-YYYY-MM-DD-HHMM` and timestamp
     // `ADR-YYMMDDHHMM` forms. Case-insensitive — operator notes routinely
     // write `adr-...` in lowercase, and the persona output respects that.
-    // ADR-2605141135 §Phase 1 #8: twin grounding-gate calibration.
+    // ADR-2026-05-14-1135 §Phase 1 #8: twin grounding-gate calibration.
     static ADR_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let adr_re = ADR_RE.get_or_init(|| {
         regex::Regex::new(r"(?i)ADR-(?:\d{4}-\d{2}-\d{2}-\d{4}|\d{10})").unwrap()
@@ -663,7 +663,7 @@ fn content_has_grounding(content: &str) -> bool {
     }
 
     // Repo paths — any known crate prefix or docs subdirectory.
-    // ADR-2605141135 §Phase 1 #8 also accepts operator-side `~/.hex/` paths
+    // ADR-2026-05-14-1135 §Phase 1 #8 also accepts operator-side `~/.hex/` paths
     // (e.g. ~/.hex/sessions/, ~/.hex/secrets, ~/.hex/cost-policy.yml) since
     // runbooks routinely cite operator config rather than repo source.
     const REPO_PREFIXES: &[&str] = &[
@@ -680,7 +680,7 @@ fn content_has_grounding(content: &str) -> bool {
     // Matches `snake_case` with at least one underscore so it doesn't false-fire
     // on common English words. Cross-checks against a curated list of known
     // hex modules + Rust files to avoid catching arbitrary user content.
-    // ADR-2605141135 §Phase 1 #8.
+    // ADR-2026-05-14-1135 §Phase 1 #8.
     const KNOWN_MODULES: &[&str] = &[
         "org_responder", "twin_reviewer", "drafter", "sop_executor",
         "persona_supervisor", "supervisor_subscriber", "workplan_executor",
@@ -735,7 +735,7 @@ mod grounding_tests {
 
     #[test]
     fn detects_adr_id_timestamp() {
-        assert!(content_has_grounding("supersedes ADR-2605082500"));
+        assert!(content_has_grounding("supersedes ADR-2026-05-08-2500"));
     }
 
     #[test]

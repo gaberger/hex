@@ -4,7 +4,7 @@
 # architecture design proposal that downstream hex-coder consumes.
 #
 # Origin: 2026-05-14 — ux-designer YAML's output schema is findings-only;
-# ADR-2605141631 (dashboard refactor on Hermes model) needs synthesis,
+# ADR-2026-05-14-1631 (dashboard refactor on Hermes model) needs synthesis,
 # not extraction. New role created per CLAUDE.md HARD RULE 0 ("build the
 # verb before doing the work").
 
@@ -65,7 +65,7 @@ inputs:
   adr_path:
     type: string
     required: true
-    description: "Repo-relative path to the driving ADR (e.g. docs/adrs/ADR-2605141631-dashboard-refactor-hermes-model.md)"
+    description: "Repo-relative path to the driving ADR (e.g. docs/adrs/ADR-2026-05-14-1631-dashboard-refactor-hermes-model.md)"
   scope:
     type: string
     required: true
