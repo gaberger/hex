@@ -29,9 +29,13 @@ const DEFAULT_HOST: &str = "http://127.0.0.1:3033";
 /// This is the synchronous answer to "what host should I aim at?" —
 /// suitable for nexus-startup paths where you can't await.
 pub fn discover_endpoint() -> String {
-    if let Ok(v) = std::env::var("HEX_SPACETIMEDB_HOST") {
-        if !v.trim().is_empty() {
-            return v;
+    // Primary env var; `HEX_STDB_HOST` is the historical alias used by
+    // state_config.rs and several scripts — honor it identically.
+    for var in &["HEX_SPACETIMEDB_HOST", "HEX_STDB_HOST"] {
+        if let Ok(v) = std::env::var(var) {
+            if !v.trim().is_empty() {
+                return v;
+            }
         }
     }
     if let Some(host) = read_project_json_host() {
@@ -73,16 +77,22 @@ pub async fn discover_validated() -> String {
 /// came from) and for testing.
 pub fn candidate_list() -> Vec<String> {
     let mut out = Vec::with_capacity(4);
-    if let Ok(v) = std::env::var("HEX_SPACETIMEDB_HOST") {
-        let v = v.trim();
-        if !v.is_empty() {
-            out.push(v.to_string());
+    for var in &["HEX_SPACETIMEDB_HOST", "HEX_STDB_HOST"] {
+        if let Ok(v) = std::env::var(var) {
+            let v = v.trim();
+            if !v.is_empty() && !out.iter().any(|c| c == v) {
+                out.push(v.to_string());
+            }
         }
     }
     if let Some(host) = read_project_json_host() {
-        out.push(host);
+        if !out.iter().any(|c| c == &host) {
+            out.push(host);
+        }
     }
-    out.push(DEFAULT_HOST.to_string());
+    if !out.iter().any(|c| c == DEFAULT_HOST) {
+        out.push(DEFAULT_HOST.to_string());
+    }
     if let Ok(v) = std::env::var("HEX_STDB_FALLBACK_HOST") {
         let v = v.trim();
         if !v.is_empty() && !out.iter().any(|c| c == v) {
@@ -211,5 +221,28 @@ mod tests {
         assert_eq!(list[0], "http://env:1");
         assert!(list.contains(&"http://127.0.0.1:3033".to_string()));
         assert!(list.contains(&"http://fb:2".to_string()));
+    }
+
+    #[test]
+    fn hex_stdb_host_alias_is_honored() {
+        // ADR-2605190900 P4.3 — state_config.rs and several legacy scripts
+        // export `HEX_STDB_HOST`. discover_endpoint accepts it as an
+        // alias for `HEX_SPACETIMEDB_HOST` so the migration off
+        // state.json doesn't break operator env scripts.
+        let _g = EnvGuard::capture(&["HEX_SPACETIMEDB_HOST", "HEX_STDB_HOST", "HEX_PROJECT_DIR"]);
+        std::env::remove_var("HEX_SPACETIMEDB_HOST");
+        std::env::set_var("HEX_STDB_HOST", "http://legacy-alias:9000");
+        std::env::set_var("HEX_PROJECT_DIR", "/tmp/hex-endpoint-no");
+        assert_eq!(discover_endpoint(), "http://legacy-alias:9000");
+    }
+
+    #[test]
+    fn spacetimedb_host_wins_over_stdb_host_alias() {
+        // Both set — canonical name takes priority over the alias.
+        let _g = EnvGuard::capture(&["HEX_SPACETIMEDB_HOST", "HEX_STDB_HOST", "HEX_PROJECT_DIR"]);
+        std::env::set_var("HEX_SPACETIMEDB_HOST", "http://canonical:1");
+        std::env::set_var("HEX_STDB_HOST", "http://alias:2");
+        std::env::set_var("HEX_PROJECT_DIR", "/tmp/hex-endpoint-no");
+        assert_eq!(discover_endpoint(), "http://canonical:1");
     }
 }

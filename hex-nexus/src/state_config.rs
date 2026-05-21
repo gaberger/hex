@@ -1,8 +1,18 @@
-//! Runtime backend configuration for IStatePort (ADR-025 Phase 4, ADR-032).
+//! Runtime backend configuration for IStatePort (ADR-025 Phase 4, ADR-032,
+//! ADR-2605190900 P4.3).
 //!
 //! SpacetimeDB is the only backend. SQLite has been removed.
 //!
-//! Priority: `HEX_STATE_BACKEND` env var > `.hex/state.json` file > default (SpacetimeDB localhost:3033, database hexflo-coordination).
+//! `host` precedence is delegated to `adapters::stdb_endpoint::discover_endpoint`
+//! (the canonical hierarchy: HEX_SPACETIMEDB_HOST / HEX_STDB_HOST env →
+//! `.hex/project.json` coordination.host → localhost:3033 default →
+//! HEX_STDB_FALLBACK_HOST). `.hex/state.json` is NO LONGER a configuration
+//! source — it remains write-only telemetry for the dashboard (current
+//! STDB host, swarm count, etc.). The cache-drift class of bugs from
+//! 2026-05-19 was rooted in state.json being treated as config.
+//!
+//! `database` and `auth_token` still come from env vars (HEX_STDB_DATABASE,
+//! HEX_STDB_AUTH_TOKEN) with module defaults.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -45,73 +55,63 @@ fn default_stdb_database() -> String {
 
 /// Resolve SpacetimeDB connection configuration.
 ///
-/// Priority:
-/// 1. `HEX_STDB_HOST` / `HEX_STDB_DATABASE` / `HEX_STDB_AUTH_TOKEN` env vars
-/// 2. `.hex/state.json` in the current working directory or `~/.hex/state.json`
-/// 3. Default: SpacetimeDB at `http://localhost:3033` database `hexflo-coordination`
+/// Host comes from the canonical hierarchy in
+/// [`crate::adapters::stdb_endpoint::discover_endpoint`]:
+///
+/// 1. `HEX_SPACETIMEDB_HOST` / `HEX_STDB_HOST` env vars
+/// 2. `.hex/project.json` → `coordination.host`
+/// 3. `http://127.0.0.1:3033` default
+/// 4. `HEX_STDB_FALLBACK_HOST` env var (operator escape hatch)
+///
+/// Database + auth come from env vars + module defaults. `.hex/state.json`
+/// is **not** read as config (ADR-2605190900 P4.3); it survives as the
+/// dashboard's write-only telemetry surface. If a state.json with a
+/// config-shaped payload is found, we warn so the operator knows to
+/// clean it up.
 pub fn resolve_config() -> StateBackendConfig {
-    // 1. Environment variables
-    let has_env = std::env::var("HEX_STDB_HOST").is_ok()
-        || std::env::var("HEX_STDB_DATABASE").is_ok();
+    let host = crate::adapters::stdb_endpoint::discover_endpoint();
+    let database = std::env::var("HEX_STDB_DATABASE")
+        .unwrap_or_else(|_| default_stdb_database());
+    let auth_token = std::env::var("HEX_STDB_AUTH_TOKEN")
+        .ok()
+        .filter(|s| !s.is_empty());
 
-    if has_env {
-        let cfg = StateBackendConfig {
-            host: std::env::var("HEX_STDB_HOST")
-                .unwrap_or_else(|_| default_stdb_host()),
-            database: std::env::var("HEX_STDB_DATABASE")
-                .unwrap_or_else(|_| default_stdb_database()),
-            auth_token: std::env::var("HEX_STDB_AUTH_TOKEN").ok(),
-        };
-        tracing::info!(
-            host = %cfg.host,
-            database = %cfg.database,
-            "State backend: SpacetimeDB (from env vars)",
-        );
-        return cfg;
-    }
+    warn_on_legacy_state_json_config();
 
-    // 2. Config file
-    if let Some(cfg) = load_config_file() {
-        tracing::info!(
-            host = %cfg.host,
-            database = %cfg.database,
-            "State backend: SpacetimeDB (from .hex/state.json)",
-        );
-        return cfg;
-    }
-
-    // 3. Default
-    let cfg = StateBackendConfig::default();
     tracing::info!(
-        host = %cfg.host,
-        database = %cfg.database,
-        "State backend: SpacetimeDB (default)",
+        host = %host,
+        database = %database,
+        "State backend: SpacetimeDB (host via stdb_endpoint::discover_endpoint)",
     );
-    cfg
+    StateBackendConfig { host, database, auth_token }
 }
 
-/// Try to read `.hex/state.json` from the current working directory,
-/// falling back to `~/.hex/state.json` for global configuration.
-fn load_config_file() -> Option<StateBackendConfig> {
+/// Detect the legacy "state.json with backend config in it" shape and
+/// log a deprecation warning. Doesn't mutate the file — operators clean
+/// it up on their own schedule. Best-effort: file missing / unparseable
+/// is silent.
+fn warn_on_legacy_state_json_config() {
     let candidates = [
         PathBuf::from(".hex/state.json"),
         dirs_next().map(|h| h.join(".hex/state.json")).unwrap_or_default(),
     ];
-
     for path in &candidates {
-        if let Ok(contents) = std::fs::read_to_string(path) {
-            match serde_json::from_str::<StateBackendConfig>(&contents) {
-                Ok(cfg) => {
-                    tracing::info!(path = %path.display(), "Loaded state config");
-                    return Some(cfg);
-                }
-                Err(e) => {
-                    tracing::warn!(path = %path.display(), "Failed to parse state.json: {}", e);
-                }
-            }
+        let Ok(contents) = std::fs::read_to_string(path) else { continue };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&contents) else { continue };
+        let has_legacy = value.get("host").and_then(|h| h.as_str()).is_some()
+            || value.get("backend").is_some()
+            || value.get("database").and_then(|d| d.as_str()).is_some();
+        if has_legacy {
+            tracing::warn!(
+                path = %path.display(),
+                "Legacy .hex/state.json config fields detected (host/backend/database). \
+                 These are IGNORED — endpoint is resolved via stdb_endpoint::discover_endpoint. \
+                 Move host config to HEX_SPACETIMEDB_HOST or .hex/project.json coordination.host \
+                 to silence this warning (ADR-2605190900 P4.3)."
+            );
+            return; // one warning is enough
         }
     }
-    None
 }
 
 /// Return the user's home directory.

@@ -195,3 +195,159 @@ Honest inventory of gaps between the docs and the reproducers:
 - **TLA+ models in `docs/algebra/`** — model-checked for safety and liveness (see [FORMAL-VERIFICATION.md](FORMAL-VERIFICATION.md)), but the CI pipeline does not run TLC on every PR yet.
 
 If a claim elsewhere in the docs lacks a reproducer on this page, it's not yet validated. File an issue and we'll either add a reproducer or remove the claim.
+
+---
+
+## Appendix: Runtime supervision (ADR-2605190900)
+
+The 2026-05-19 postmortem documented six failure modes in the
+"AI-developer-as-OS" runtime — silent dead workers, infinite-retry
+loops, stale-endpoint cache drift, missing liveness contract, etc.
+This section lists the reproducers that prove each failure mode is
+closed.
+
+### Liveness probe (P5.1–P5.3)
+
+**Claim:** `hex doctor liveness` exits 0 only when nexus + SpacetimeDB
++ supervisor + worker heartbeats are all healthy. Any red sub-probe
+exits non-zero, and the CI workflow blocks PR merges on that signal.
+
+**Live — green case:**
+```bash
+hex nexus start          # waits for STDB + nexus to come up
+hex doctor liveness
+echo "exit=$?"
+```
+Expected: `Summary: All checks passed`, exit `0`. Typical wall-clock
+on a warm host: 5–15 s.
+
+**Live — red case (synthetic):**
+```bash
+hex nexus stop
+hex doctor liveness; echo "exit=$?"
+```
+Expected: `✗ hex-nexus` line in the composition section, non-zero
+exit. Re-running after `hex nexus start` returns to green.
+
+**Liveness REST surface (used by the dashboard badge):**
+```bash
+curl -s http://localhost:5555/api/liveness | jq .
+```
+Expected shape:
+```json
+{
+  "status": "green",
+  "probed_at": "2026-05-21T...",
+  "stdb":       { "ok": true, "detail": "http://127.0.0.1:3033 reachable" },
+  "nexus":      { "ok": true, "detail": "http://127.0.0.1:5555 responding" },
+  "supervisor": { "ok": true, "detail": "last event Xs ago" },
+  "workers":    { "ok": true, "detail": "N non-exited worker(s)" }
+}
+```
+
+### Endpoint rediscovery (P4.1–P4.2)
+
+**Claim:** When the configured SpacetimeDB endpoint stops responding
+(crash, port shift, host rotation), the state adapter rediscovers a
+working candidate and retries the in-flight call. The user-facing
+operation succeeds without an operator restart, and the swap is
+recorded as `improver_event { kind: stdb_endpoint_drift, .. }`.
+
+**Hermetic — two integration tests with `httpmock`:**
+```bash
+cargo test -p hex-nexus --lib p4_2_rediscovery
+```
+Reads `hex-nexus/src/adapters/spacetime_state.rs::p4_2_rediscovery_tests`.
+Covers (a) successful host swap after transport error, (b) reducer-level
+errors NOT triggering a swap. Expected: `2 passed`.
+
+**Hermetic — discovery hierarchy + legacy alias:**
+```bash
+cargo test -p hex-nexus --lib adapters::stdb_endpoint
+```
+Expected: `6 passed` (env precedence, fallback, candidate ordering,
+`HEX_STDB_HOST` legacy alias).
+
+**Live — operator scenario:**
+```bash
+# 1) Start STDB on the wrong port, point nexus at the right one
+hex stdb start --port 3033
+hex nexus start
+
+# 2) Kill STDB out from under nexus
+pkill -f "spacetimedb-standalone.*3033"
+
+# 3) Start STDB on a different reachable port and add it to the fallback list
+hex stdb start --port 3033          # same port — rediscovery finds it
+hex doctor liveness; echo "exit=$?"  # green within ~3s without restarting nexus
+```
+Expected: nexus self-heals; `hex doctor liveness` green. The drift
+event is queryable via `hex stdb query -- "SELECT * FROM improver_event
+WHERE kind = 'stdb_endpoint_drift' ORDER BY timestamp DESC LIMIT 5"`.
+
+### state.json read-only enforcement (P4.3)
+
+**Claim:** `.hex/state.json` is no longer a config source. Editing its
+`host` field has no effect — the daemon resolves the endpoint through
+`stdb_endpoint::discover_endpoint` instead.
+
+**Live — proves state.json is ignored:**
+```bash
+# Write a bogus host into state.json
+jq '.host = "http://192.0.2.1:9999"' .hex/state.json > .hex/state.json.tmp
+mv .hex/state.json.tmp .hex/state.json
+
+# Restart nexus and confirm it still talks to the real STDB
+hex nexus stop && hex nexus start
+hex doctor liveness; echo "exit=$?"
+```
+Expected: green. Nexus logs include a `Legacy .hex/state.json config
+fields detected … IGNORED` warning pointing at the offending file.
+
+### Bounded retry + dead-letter (P2)
+
+**Claim:** A dispatcher with a poison task no longer loops forever.
+After N attempts, the task lands in `dead_letter` and an
+`improver_event { kind: retry_quota_exceeded, .. }` is recorded.
+
+**Hermetic — retry-quota unit tests:**
+```bash
+cargo test -p hex-nexus --lib dead_letter
+```
+Expected: tests for retry counting, dead-letter row insertion, and the
+improver_event emit path pass.
+
+**REST surface (dashboard reads this):**
+```bash
+curl -s http://localhost:5555/api/dead-letter | jq .
+```
+
+### Pool supervisor (P3)
+
+**Claim:** A pool with intent for N workers and 0 live workers triggers
+a supervisor tick that spawns the gap. Workers that miss heartbeats
+for >60s are reaped.
+
+**Live — observe the supervisor tick:**
+```bash
+hex pulse
+hex stdb query -- "SELECT pool_id, intent_count, COUNT(*) FROM worker_process WHERE status = 'healthy' GROUP BY pool_id"
+```
+The `supervisor_event` table records each reap + spawn:
+```bash
+hex stdb query -- "SELECT kind, pool_id, detail, timestamp FROM supervisor_event ORDER BY timestamp DESC LIMIT 20"
+```
+
+### Heartbeat clients (P1.4)
+
+**Claim:** Every long-running nexus component (server, sched daemon,
+workplan executor) registers a `worker_process` row on startup and
+beats every 15 s. The supervisor reaps any row whose last heartbeat
+is older than 60 s.
+
+**Live — confirm heartbeats are arriving:**
+```bash
+hex stdb query -- "SELECT role, COUNT(*), MAX(last_heartbeat) FROM worker_process GROUP BY role"
+```
+Expected: `nexus-server`, `sched-daemon`, and `workplan-executor`
+roles each report a `last_heartbeat` within the last 15 s.

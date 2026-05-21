@@ -191,7 +191,7 @@
     {
       "id": "P4",
       "name": "STDB endpoint re-discovery",
-      "status": "in_progress",
+      "status": "done",
       "tasks": [
         {
           "completed_by_commit": "cf63b5e9",
@@ -225,8 +225,9 @@
           "id": "P4.3",
           "layer": "usecases",
           "name": "state.json read-only enforcement",
-          "status": "pending",
-          "verify": "manual scenario: edit .hex/state.json to point at a bogus host, restart nexus, nexus connects to project.json's host instead of state.json's"
+          "status": "done",
+          "verify": "manual scenario: edit .hex/state.json to point at a bogus host, restart nexus, nexus connects to project.json's host instead of state.json's",
+          "completed_by_commit": "pending"
         }
       ],
       "tier": 1
@@ -234,7 +235,7 @@
     {
       "id": "P5",
       "name": "hex doctor liveness \u2014 end-to-end self-test + CI gate",
-      "status": "in_progress",
+      "status": "done",
       "tasks": [
         {
           "completed_by_commit": "c43a4cdd",
@@ -282,8 +283,9 @@
           "id": "P5.4",
           "layer": "infrastructure",
           "name": "Postmortem evidence appendix in EVIDENCE.md",
-          "status": "pending",
-          "verify": "EVIDENCE.md contains the section + the reproducer commands work as documented"
+          "status": "done",
+          "verify": "EVIDENCE.md contains the section + the reproducer commands work as documented",
+          "completed_by_commit": "pending"
         }
       ],
       "tier": 1
