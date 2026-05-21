@@ -13,9 +13,9 @@
 //!
 //! Disabled with HEX_DISABLE_WORKPLAN_AUTO_EMITTER=1.
 
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::time::Duration;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -23,6 +23,19 @@ use crate::tools::ToolRegistry;
 
 const POLL_INTERVAL_SECS: u64 = 60;
 const MAX_PER_TICK: usize = 1;
+/// Cooldown for an ADR that failed derivation. Skip it for this long
+/// before retrying. Without this gate, the auto-emitter retries the
+/// same FIRST uncovered ADR every tick — observed 2026-05-21: ADR-035
+/// failed "no tool_calls in response" once per minute for an hour,
+/// burning inference calls and feeding the nexus-CPU runaway.
+const RETRY_COOLDOWN_SECS: u64 = 3600;
+
+/// Per-ADR last-failure timestamp. Tick skips any ADR whose last
+/// failure is within `RETRY_COOLDOWN_SECS`.
+fn failure_cache() -> &'static Mutex<HashMap<String, Instant>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 pub fn spawn(stdb_host: String, hex_db: String) {
     if std::env::var("HEX_DISABLE_WORKPLAN_AUTO_EMITTER").is_ok() {
@@ -128,15 +141,27 @@ async fn run_one(
         }
     }
 
-    // 3. Pick the FIRST uncovered ADR (one per tick to keep inference cost bounded).
+    // 3. Pick the FIRST uncovered ADR not in failure cooldown
+    //    (one per tick to keep inference cost bounded).
+    let now = Instant::now();
+    let cooldown = Duration::from_secs(RETRY_COOLDOWN_SECS);
     let mut to_process: Vec<(String, String, std::path::PathBuf)> = Vec::new();
-    for (id, name, path) in adr_entries {
-        if covered_adr_ids.contains(&id) {
-            continue;
-        }
-        to_process.push((id, name, path));
-        if to_process.len() >= MAX_PER_TICK {
-            break;
+    {
+        let cache = failure_cache().lock().unwrap();
+        for (id, name, path) in adr_entries {
+            if covered_adr_ids.contains(&id) {
+                continue;
+            }
+            if let Some(last_fail) = cache.get(&id) {
+                if now.saturating_duration_since(*last_fail) < cooldown {
+                    // Recently failed — skip until cooldown expires.
+                    continue;
+                }
+            }
+            to_process.push((id, name, path));
+            if to_process.len() >= MAX_PER_TICK {
+                break;
+            }
         }
     }
     if to_process.is_empty() {
@@ -144,8 +169,20 @@ async fn run_one(
     }
 
     for (adr_id, adr_name, adr_path) in to_process {
-        if let Err(e) = derive_one(http, inference_url, registry, &adr_id, &adr_name, &adr_path).await {
-            tracing::warn!(adr = %adr_name, error = %e, "workplan_auto_emitter: derive_one failed");
+        match derive_one(http, inference_url, registry, &adr_id, &adr_name, &adr_path).await {
+            Ok(()) => {
+                // Successful derive — clear any prior failure record.
+                failure_cache().lock().unwrap().remove(&adr_id);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    adr = %adr_name,
+                    error = %e,
+                    cooldown_secs = RETRY_COOLDOWN_SECS,
+                    "workplan_auto_emitter: derive_one failed — backing off"
+                );
+                failure_cache().lock().unwrap().insert(adr_id, now);
+            }
         }
     }
     Ok(())

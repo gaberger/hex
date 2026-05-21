@@ -113,9 +113,18 @@ impl OrphanReaper {
         };
 
         // Step 3: split running into orphans vs. claimed.
+        // Filter out the default hex-agent (`spawn_local_agent` called
+        // with role=None → agent_id="hex-agent"). It never registers a
+        // worker_process row — only persona pools do — so the reaper
+        // would mistake it for an orphan every tick and kill it,
+        // producing a continuous spawn/reap loop. Observed 2026-05-21:
+        // 519% nexus CPU with the default agent recycling every 60s
+        // and feeding the workplan_auto_emitter retry loop.
+        const DEFAULT_AGENT_ROLE: &str = "hex-agent";
         let orphans: Vec<&HexAgentProcess> = running
             .iter()
             .filter(|p| !claimed.contains(&p.pid))
+            .filter(|p| p.agent_id != DEFAULT_AGENT_ROLE)
             .collect();
 
         if orphans.is_empty() {
