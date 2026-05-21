@@ -1,6 +1,6 @@
 # ADR-2026-05-17-2030 — SOP Pipeline Redesign: Tool-Only Artifact Production, Closed-Loop Retries, Structured Classifier
 
-## Status: Proposed
+**Status:** Proposed
 
 **Drafted by:** Operator (direct authorship — SOP path is the subject of this ADR and cannot author it)
 **Drivers:** 9-day diagnosis (`docs/specs/workflow-failure-modes.md`) shows the persona-free-form path has a **0% commitment-satisfaction rate** (0/47 commitments closed in 9 days). The typed-tool path has a **100% auto-approve rate** (429/429). The operator is the de-facto load-bearing component while the dashboard advertises autonomy.

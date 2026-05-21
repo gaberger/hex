@@ -36,7 +36,7 @@ impl Tool for AdrDraft {
             "properties": {
                 "id": {
                     "type": "string",
-                    "description": "ADR id, timestamp form (e.g. '2605082600'). Must be unique.",
+                    "description": "ADR id. Canonical form: 'YYYY-MM-DD-HHMM' (e.g. '2026-05-21-1400'). Compact form '2605211400' is also accepted and auto-expanded to canonical. The compact form looks like a phone number to LLM PII filters and silently corrupts to [PHONE] in downstream responses; prefer the dashed form. Must be unique.",
                 },
                 "title": {
                     "type": "string",
@@ -49,7 +49,7 @@ impl Tool for AdrDraft {
                 },
                 "body": {
                     "type": "string",
-                    "description": "Full ADR markdown body. Must include `## Context`, `## Decision`, and `## Consequences` sections. 200-50000 bytes.",
+                    "description": "Full ADR markdown body. Must include `## Context`, `## Decision`, and `## Consequences` sections. 200-24000 bytes.",
                 }
             },
             "required": ["id", "title", "status", "body"]
@@ -86,19 +86,20 @@ impl Tool for AdrDraft {
                 );
             }
         }
-        // ID format
-        if !id.chars().all(|c| c.is_ascii_digit()) || id.len() < 10 {
-            return ToolResult::err(
-                "id must be a 10+ digit timestamp (e.g. 2605082600)",
+        // ID format — accept both forms, normalize to canonical dashed.
+        let canonical_id = match normalize_adr_id(&id) {
+            Some(c) => c,
+            None => return ToolResult::err(
+                "id must be canonical 'YYYY-MM-DD-HHMM' (e.g. '2026-05-21-1400') OR 10-digit compact form 'YYMMDDHHMM' (e.g. '2605211400')",
                 start.elapsed().as_millis() as u64,
-            );
-        }
+            ),
+        };
 
         let slug = slugify(&title);
-        let target_path = format!("docs/adrs/ADR-{}-{}.md", id, slug);
+        let target_path = format!("docs/adrs/ADR-{}-{}.md", canonical_id, slug);
         let full_body = format!(
             "# ADR-{} — {}\n\nStatus: **{}**\nDate: {}\n\n{}",
-            id,
+            canonical_id,
             title,
             initial_caps(&status),
             chrono::Utc::now().format("%Y-%m-%d"),
@@ -157,6 +158,53 @@ impl Tool for AdrDraft {
     }
 }
 
+/// Canonicalise an ADR id to the dashed `YYYY-MM-DD-HHMM` form.
+/// Accepts:
+///   - Already-canonical `2026-05-21-1400` → returned verbatim
+///   - 10-digit compact `2605211400` → expanded with `20` century prefix
+///     to `2026-05-21-1400`
+///   - 12-digit compact `202605211400` → expanded to `2026-05-21-1400`
+///
+/// Returns None for unparseable shapes. The dashed form is canonical
+/// because LLM PII filters in the OpenRouter pipeline classify the
+/// 10-digit compact form as a phone number and silently rewrite it to
+/// `[PHONE]` in downstream replies — exactly the bug that triggered
+/// the 2026-05-21 ADR rename (commit 490eb227).
+pub(crate) fn normalize_adr_id(id: &str) -> Option<String> {
+    // Already-canonical: `YYYY-MM-DD-HHMM` — 4 digits, dash, 2, dash, 2, dash, 4.
+    let parts: Vec<&str> = id.split('-').collect();
+    if parts.len() == 4
+        && parts[0].len() == 4
+        && parts[1].len() == 2
+        && parts[2].len() == 2
+        && parts[3].len() == 4
+        && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit()))
+    {
+        return Some(id.to_string());
+    }
+    // Compact: 10 or 12 digits. 10 = YYMMDDHHMM (assume century 20xx); 12 = YYYYMMDDHHMM.
+    if id.chars().all(|c| c.is_ascii_digit()) {
+        match id.len() {
+            10 => {
+                let yy = &id[0..2];
+                let mm = &id[2..4];
+                let dd = &id[4..6];
+                let hhmm = &id[6..10];
+                return Some(format!("20{}-{}-{}-{}", yy, mm, dd, hhmm));
+            }
+            12 => {
+                let yyyy = &id[0..4];
+                let mm = &id[4..6];
+                let dd = &id[6..8];
+                let hhmm = &id[8..12];
+                return Some(format!("{}-{}-{}-{}", yyyy, mm, dd, hhmm));
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
 fn slugify(s: &str) -> String {
     s.chars()
         .map(|c| {
@@ -188,6 +236,44 @@ mod tests {
     fn slugifies() {
         assert_eq!(slugify("Typed Tool Library + SOP Execution"), "typed-tool-library-sop-execution");
     }
+    #[test]
+    fn normalize_canonical_passthrough() {
+        // Already-canonical dashed form returns as-is.
+        assert_eq!(
+            normalize_adr_id("2026-05-21-1400"),
+            Some("2026-05-21-1400".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_compact_10_digit_expands() {
+        // 10-digit compact gets century prefix.
+        assert_eq!(
+            normalize_adr_id("2605211400"),
+            Some("2026-05-21-1400".to_string())
+        );
+        // Exact bug that produced ADR-2605211400-child-reap-on-spawn-local-agent.md
+        // before the fix — should now expand correctly.
+    }
+
+    #[test]
+    fn normalize_compact_12_digit_expands() {
+        // Full 4-digit year compact also accepted.
+        assert_eq!(
+            normalize_adr_id("202605211400"),
+            Some("2026-05-21-1400".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_rejects_garbage() {
+        assert_eq!(normalize_adr_id(""), None);
+        assert_eq!(normalize_adr_id("foo"), None);
+        assert_eq!(normalize_adr_id("2026-05"), None);
+        assert_eq!(normalize_adr_id("123"), None);
+        assert_eq!(normalize_adr_id("ADR-2026-05-21-1400"), None);
+    }
+
     #[test]
     fn schema_requires_all() {
         let s = AdrDraft.input_schema();

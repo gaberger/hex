@@ -1,6 +1,6 @@
 # ADR-2026-05-12-structural-smell
 
-## Status: Proposed
+**Status:** Proposed
 
 ## Context
 

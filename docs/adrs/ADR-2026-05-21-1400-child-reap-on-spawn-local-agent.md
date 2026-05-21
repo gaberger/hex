@@ -1,4 +1,4 @@
-# ADR-2605211400 — child-reap-on-spawn-local-agent
+# ADR-2026-05-21-1400 — child-reap-on-spawn-local-agent
 
 Status: **Proposed**
 Date: 2026-05-21

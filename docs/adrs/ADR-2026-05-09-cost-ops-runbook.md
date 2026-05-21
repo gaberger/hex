@@ -2,7 +2,7 @@
 
 ## Title: HEX Cost Operations Runbook
 
-## Status: Proposed
+**Status:** Proposed
 
 ## Date: 2026-05-09
 
