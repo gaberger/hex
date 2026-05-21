@@ -140,6 +140,15 @@ impl SwarmTaskBridge {
 /// Decide whether a swarm_task is worth bridging. Excludes obvious junk
 /// (test rows, empty titles) so the live worker pool doesn't churn on
 /// noise. The 24h drainer cleans those up separately.
+///
+/// Also excludes deterministic sched-task kinds (`[hex-command]`, plus
+/// `[analyze]` payloads whose body is a literal shell command) — those
+/// belong to the sched daemon's shell executor, not the LLM-required
+/// persona workers. Without this filter the bridge sends pings + `hex
+/// analyze` runs to OpenRouter, burning credits on work that doesn't
+/// need a model (observed 2026-05-21: all 6 stuck brain-lease tasks
+/// were `[hex-command] ping` / `[analyze] {"command":"hex analyze"}`
+/// and they all failed with "insufficient credits").
 fn is_bridgeable(title: &str) -> bool {
     let t = title.trim();
     if t.is_empty() { return false; }
@@ -147,6 +156,16 @@ fn is_bridgeable(title: &str) -> bool {
     let lo = t.to_ascii_lowercase();
     if lo.contains("test-visible-pending") { return false; }
     if lo.starts_with("brain-task:test-") { return false; }
+    // `[hex-command]` tasks are always shell — never route to LLM workers.
+    if lo.contains("[hex-command]") { return false; }
+    // `[analyze]` tasks come in two flavours:
+    //   1. shell:  `{"command":"hex analyze . --json", ...}`  (deterministic)
+    //   2. agentic: `{"role":"hex-coder", ...}`               (LLM-driven)
+    // The shell flavour has a top-level `command` field — refuse to
+    // bridge it. The agentic flavour falls through to the role check.
+    if lo.contains("[analyze]") && lo.contains("\"command\"") && !lo.contains("\"role\"") {
+        return false;
+    }
     // Must mention SOMETHING actionable: a persona role, a workplan, an ADR,
     // a phase id, or a clear command verb.
     lo.contains("hex-coder")
@@ -233,6 +252,21 @@ mod tests {
     fn includes_workplan_rows() {
         assert!(is_bridgeable("P1.1: hex-coder add a file"));
         assert!(is_bridgeable("[workplan] docs/workplans/wp-foo.json"));
+        assert!(is_bridgeable("brain-task:abc [analyze] {\"role\":\"hex-coder\"}"));
+    }
+
+    #[test]
+    fn excludes_deterministic_sched_tasks() {
+        // The 6 stuck brain-lease tasks from 2026-05-21 had exactly these
+        // shapes. Each ran on a persona, called OpenRouter, and failed
+        // with "insufficient credits" — they should never have been
+        // bridged in the first place.
+        assert!(!is_bridgeable("brain-task:7f332210 [hex-command] ping 2989e603"));
+        assert!(!is_bridgeable(
+            "brain-task:5420d5c1 [analyze] {\"command\":\"hex analyze . --json\",\"project_id\":\"\"}"
+        ));
+        // Agentic [analyze] with a role must STILL bridge — that's
+        // legitimate LLM-driven analysis work.
         assert!(is_bridgeable("brain-task:abc [analyze] {\"role\":\"hex-coder\"}"));
     }
 
