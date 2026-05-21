@@ -4907,6 +4907,24 @@ pub fn supervisor_tick(
         // its lifetime can never recover — the supervisor would re-trip the
         // breaker every tick because all-time exits dwarfs max_restarts.
         // Window: max_restart_window_secs from the pool config.
+        //
+        // ALSO exclude `stale_heartbeat` exits from the crash-loop tally.
+        // That reason is set when the worker's heartbeat stops, which
+        // happens for two distinct causes:
+        //   (a) actual worker crash / hang — a true crash-loop signal
+        //   (b) nexus restart orphaning live workers — they get reaped
+        //       en masse on the next tick, NOT a crash
+        // Counting (b) as crash-loops false-trips the breaker on every
+        // nexus restart that had >max_restarts personas running, marking
+        // every pool dead until an operator clears it. Observed
+        // 2026-05-21: 31/31 pools went into crash_loop after a routine
+        // nexus restart because the supervisor reaped 30+ orphaned
+        // workers in one tick.
+        //
+        // True-crash signals that DO count: "panic", "killed", "oom",
+        // "abort", "exit_nonzero", "unknown" (from /proc-watchdog path
+        // which fires on any non-graceful termination). "normal" never
+        // counts.
         let window_micros: i64 = (pool.max_restart_window_secs as i64) * 1_000_000;
         let cutoff_micros = now_micros - window_micros;
         let exited_in_pool: Vec<&WorkerProcess> = processes.iter()
@@ -4921,7 +4939,12 @@ pub fn supervisor_tick(
                 }
             })
             .collect();
-        let recent_exits = exited_in_pool.len() as u32;
+        // Crash-loop tally excludes stale_heartbeat (see comment above).
+        // The `exited_in_pool` set above is still used for `transient`
+        // restart_strategy decisions, which depend on the FULL exit set.
+        let recent_exits: u32 = exited_in_pool.iter()
+            .filter(|p| p.exit_reason != "stale_heartbeat")
+            .count() as u32;
 
         // Crash-loop check (pool-level, sticky until operator resumes).
         if !pool.in_crash_loop && recent_exits > pool.max_restarts {
