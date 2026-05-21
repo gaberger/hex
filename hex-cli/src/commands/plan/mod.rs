@@ -259,58 +259,115 @@ pub(super) struct Step {
 /// A workplan document — supports both legacy (steps) and current (phases/tasks) formats.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(super) struct Workplan {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) title: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) feature: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) language: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) status: String,
     #[serde(default)]
     pub(super) steps: Vec<Step>,
     #[serde(default, deserialize_with = "flexible_phases")]
     pub(super) phases: Vec<Phase>,
-    #[serde(default, alias = "createdAt", alias = "created")]
+    #[serde(default, alias = "createdAt", alias = "created", deserialize_with = "nullable_string")]
     pub(super) created_at: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) adr: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) description: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) priority: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) superseded_by: String,
 }
 
 /// A phase in the current workplan format.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(super) struct Phase {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) id: String,
-    #[serde(default)]
+    // `name` is the canonical field; older drafts used `title` for the
+    // human-readable phase header. Accept both via alias.
+    #[serde(default, alias = "title", deserialize_with = "nullable_string")]
     pub(super) name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "flexible_tasks")]
     pub(super) tasks: Vec<PhaseTask>,
 }
 
 /// A task within a phase.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(super) struct PhaseTask {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) id: String,
-    #[serde(default)]
+    // `name` is canonical; some drafts use `title`. Accept either.
+    #[serde(default, alias = "title", deserialize_with = "nullable_string")]
     pub(super) name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) status: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) layer: String,
-    #[serde(default)]
+    // Tolerate `file` (singular string) in addition to `files` (array).
+    #[serde(default, deserialize_with = "flexible_files")]
     pub(super) files: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) done_command: String,
+}
+
+/// Accept `files: ["a", "b"]` (canonical) or `file: "a"` lifted from a
+/// sibling field. This deserializer only handles the array side; the
+/// `file` -> `files` lift is done via serde alias above when feasible.
+/// Bare string → single-element vec.
+fn flexible_files<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let val = serde_json::Value::deserialize(d)?;
+    match val {
+        serde_json::Value::Null => Ok(Vec::new()),
+        serde_json::Value::String(s) => Ok(vec![s]),
+        serde_json::Value::Array(arr) => arr
+            .into_iter()
+            .map(|v| match v {
+                serde_json::Value::String(s) => Ok(s),
+                serde_json::Value::Null => Ok(String::new()),
+                other => Ok(other.to_string()),
+            })
+            .collect(),
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// Accept tasks as either objects (current schema) or bare strings
+/// (legacy / hand-drafted workplans where a task was written as just a
+/// description). String tasks are lifted to `PhaseTask { name: s,
+/// status: "pending", .. }` so list/reconcile surfaces stop reporting
+/// them as "parse error".
+fn flexible_tasks<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<PhaseTask>, D::Error> {
+    let val = serde_json::Value::deserialize(d)?;
+    let arr = match val {
+        serde_json::Value::Array(a) => a,
+        _ => return Ok(Vec::new()),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for item in arr {
+        match item {
+            serde_json::Value::String(s) => {
+                out.push(PhaseTask {
+                    name: s,
+                    status: "pending".to_string(),
+                    ..Default::default()
+                });
+            }
+            obj @ serde_json::Value::Object(_) => {
+                let task: PhaseTask = serde_json::from_value(obj)
+                    .map_err(serde::de::Error::custom)?;
+                out.push(task);
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
 }
 
 impl Workplan {
