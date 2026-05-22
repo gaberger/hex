@@ -173,7 +173,7 @@ impl Tool for ModuleRegister {
             );
         }
 
-        let code_patch = CodePatch;
+        let _code_patch = CodePatch;
 
         // (a) Add pub mod line alphabetically
         // Find the last pub mod line for alphabetical insertion

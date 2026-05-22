@@ -3,7 +3,7 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::{Tool, ToolResult};
 

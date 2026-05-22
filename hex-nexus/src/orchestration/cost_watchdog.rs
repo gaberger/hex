@@ -23,7 +23,7 @@ const COST_WINDOW_SECS: u64 = 3600; // 1 hour lookback
 /// - `HEX_COST_HOURLY_USD_THRESHOLD` (default 1.00)
 ///
 /// Logs every tick at `tracing::info` regardless of breach for audit trail.
-pub async fn run(stdb_host: String, hex_db: String) {
+pub async fn run(_stdb_host: String, _hex_db: String) {
     let interval_secs = std::env::var("HEX_COST_WATCHDOG_INTERVAL_SECS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())

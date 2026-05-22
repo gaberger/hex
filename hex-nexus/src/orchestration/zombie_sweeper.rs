@@ -14,7 +14,6 @@
 //! can clean up. It also acts as evidence that the dispatcher launched
 //! workers it didn't manage to track.
 
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time;

@@ -1201,15 +1201,23 @@ impl WorkplanExecutor {
             // ADR-2026-05-14-1135 §Phase 1 #5: adaptive — `cargo check --workspace`
             // alone exceeds 90s on this codebase, so the original T2=120s left
             // ~30s for inference + writeback, causing routine codegen timeouts.
-            // Operator override via HEX_TASK_TIMEOUT_T{1,2,2_5,3}_SECS env vars.
+            //
+            // 2026-05-22 retune: T2=600s, T2.5=600s. Best-of-N with a compile
+            // gate on a hex-nexus-sized codebase routinely runs 250–400s end
+            // to end; the prior T2=240s default tripped on wp-sop-pipeline-
+            // redesign-phase-1 P1.2 (a small ports trait) when N candidates
+            // had to be evaluated against `cargo check -p hex-nexus`. Path B
+            // (Claude Code subprocess) adds another ~30s of cold-start. 600s
+            // leaves headroom for 2-3 best-of-N iterations under realistic
+            // load. Operator override via HEX_TASK_TIMEOUT_T{1,2,2_5,3}_SECS.
             let timeout_secs = {
                 let env_override = |key: &str| -> Option<u64> {
                     std::env::var(key).ok().and_then(|v| v.parse::<u64>().ok())
                 };
                 match task_tier {
                     TaskTier::T1   => env_override("HEX_TASK_TIMEOUT_T1_SECS").unwrap_or(60),
-                    TaskTier::T2   => env_override("HEX_TASK_TIMEOUT_T2_SECS").unwrap_or(240),
-                    TaskTier::T2_5 => env_override("HEX_TASK_TIMEOUT_T2_5_SECS").unwrap_or(420),
+                    TaskTier::T2   => env_override("HEX_TASK_TIMEOUT_T2_SECS").unwrap_or(600),
+                    TaskTier::T2_5 => env_override("HEX_TASK_TIMEOUT_T2_5_SECS").unwrap_or(600),
                     TaskTier::T3   => env_override("HEX_TASK_TIMEOUT_T3_SECS").unwrap_or(900),
                 }
             };

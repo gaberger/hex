@@ -28,14 +28,20 @@ shared_prefix:
 # ── Model routing (ADR-2026-04-12-0202 tier config) ────────────────────────
 model:
   tier: T2
-  preferred: gpt-4o-mini        # → openai/gpt-4o-mini (capable, reliable)
-  fallback: haiku               # → anthropic/claude-haiku-4-5 (fast paid fallback)
-  upgrade_to: sonnet            # → anthropic/claude-sonnet-4-6 (after 3 failed iterations)
+  # 2026-05-22: swapped from openai/gpt-4o-mini → local Ollama after measuring
+  # 34/35 brain-lease tasks failing in <10s with OpenRouter HTTP 500
+  # ("provider or API key not configured") + HTTP 402 (credits exhausted).
+  # qwen2.5-coder:14b ties 32B quality at 2× speed per the 2026-05-13 bench
+  # (see memory: project_t2_5_bench_results). T3 frontier escalation still
+  # routes via the Anthropic API.
+  preferred: qwen2.5-coder:14b  # → local Ollama (no API cost, no credit dependency)
+  fallback: qwen2.5-coder:14b   # → local Ollama (same model — warm cache after first load)
+  upgrade_to: sonnet            # → anthropic/claude-sonnet-4-6 (frontier escalation only)
   upgrade_condition: >
     Upgrade to Sonnet when: feedback loop exceeds 3 iterations without resolution,
     or when the adapter requires complex algorithmic logic. Upgrade to Opus when
     the task involves cross-cutting architecture changes or security-sensitive code.
-  timeout_secs: 180
+  timeout_secs: 600
 
 # ── Context loading (FRONT-LOADED before instructions) ────────────────
 context:

@@ -206,7 +206,7 @@ impl IntegratorSubscriber {
         //    deliberately tight — we'd rather abstain quickly than block
         //    the merge gate's tally loop.
         let mut attempt = 0u32;
-        let mut last_err = String::new();
+        let mut last_err: String;
         let (verdict, reason) = loop {
             attempt += 1;
             match adversarial_review(

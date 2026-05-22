@@ -268,7 +268,7 @@ pub async fn run(
 async fn run_inner(
     role: &str,
     operator_message: &str,
-    repo_root: &str,
+    _repo_root: &str,
     intent: &'static str,
 ) -> SopResult {
     let mut trace = Vec::new();

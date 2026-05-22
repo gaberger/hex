@@ -7,7 +7,7 @@
 
 use async_trait::async_trait;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -251,7 +251,7 @@ fn parse_workspace_dependencies(cargo_toml: &Path) -> Result<Vec<String>, String
 
     let mut deps = Vec::new();
     if let Some(dependencies) = toml.get("dependencies").and_then(|v| v.as_table()) {
-        for (dep_name, dep_spec) in dependencies {
+        for (_dep_name, dep_spec) in dependencies {
             // Check if this is a workspace dependency (has `path = "../<crate>"`)
             if let Some(table) = dep_spec.as_table() {
                 if let Some(path) = table.get("path").and_then(|v| v.as_str()) {

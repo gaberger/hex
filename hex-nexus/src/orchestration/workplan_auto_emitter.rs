@@ -84,8 +84,8 @@ pub fn spawn(stdb_host: String, hex_db: String) {
 
 async fn run_one(
     http: &reqwest::Client,
-    stdb_host: &str,
-    hex_db: &str,
+    _stdb_host: &str,
+    _hex_db: &str,
     inference_url: &str,
     registry: &Arc<ToolRegistry>,
 ) -> Result<(), String> {

@@ -247,7 +247,14 @@ fn scan_proc(allow: &[String]) -> std::io::Result<Vec<ProcEntry>> {
             .map(|p| p.rsplit('/').next().unwrap_or(p).to_string())
             .unwrap_or_default();
 
-        if !allow.iter().any(|prefix| comm.starts_with(prefix)) {
+        // ADR-2026-05-22: always observe nexus itself regardless of allow-list
+        // tuning. Measured 2026-05-22 against the post-MALLOC_ARENA_MAX
+        // regression — without this branch, an operator who narrows
+        // `HEX_RESOURCE_OBSERVER_ALLOW` to e.g. `ollama` silently loses
+        // visibility into nexus's own RSS / CPU, and the next 25 GB drift
+        // only surfaces when someone runs scripts/hud-tui.sh by hand.
+        let is_self = pid == std::process::id();
+        if !is_self && !allow.iter().any(|prefix| comm.starts_with(prefix)) {
             continue;
         }
 

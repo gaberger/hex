@@ -9,7 +9,7 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Instant;
 
 use super::{Tool, ToolResult};
