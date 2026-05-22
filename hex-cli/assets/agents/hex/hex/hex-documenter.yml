@@ -23,12 +23,14 @@ shared_prefix:
 
 model:
   tier: 2
-  preferred: qwen-coder
-  fallback: gpt-4o-mini
+  preferred: qwen2.5-coder:14b
+  fallback: qwen2.5-coder:14b
   reasoning: >
     Doc generation is structural — descriptions of existing public surfaces.
-    Local qwen-coder is fast + offline; gpt-4o-mini is the cloud fallback.
-  timeout_secs: 90
+    qwen2.5-coder:14b is fast + offline; same model on the fallback path so
+    Ollama serves out of warm cache (gpt-4o-mini cloud fallback retired
+    2026-05-22 — OpenRouter HTTP 500/402 made it unreliable).
+  timeout_secs: 600
 
 context:
   load_on_start:

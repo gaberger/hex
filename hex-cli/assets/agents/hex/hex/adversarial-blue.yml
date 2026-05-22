@@ -30,9 +30,13 @@ shared_prefix:
 # ── Model routing — DIFFERENT provider from red ──────────────────────
 model:
   tier: T3
-  preferred: gpt-4o              # OpenAI flagship
-  fallback: gpt-4o-mini          # OpenAI cheap fallback
-  alt_local: devstral-small-2:24b # Local fallback if cloud-OpenAI unavailable
+  # 2026-05-22: gpt-4o + gpt-4o-mini both blocked on OpenRouter (HTTP 500/402);
+  # swapped to local Ollama models that preserve the provider_lock contract
+  # (NOT Anthropic — red's stack). devstral-small-2:24b for reasoning depth
+  # in adversarial review; qwen2.5-coder:14b for the cheaper fallback path.
+  preferred: devstral-small-2:24b # Local reasoning model
+  fallback: qwen2.5-coder:14b     # Local cheaper fallback
+  alt_local: devstral-small-2:24b # Reserved for explicit-local override paths
   provider_lock: openai_or_local # Refuse to run on Anthropic (red's stack)
   reasoning: >
     UX/correctness adversarial reasoning benefits from a model with

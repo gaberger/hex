@@ -24,11 +24,13 @@ shared_prefix:
 model:
   tier: T2
   preferred: sonnet
-  fallback: gpt-4o-mini
+  fallback: qwen2.5-coder:14b
   reasoning: >
-    CLI design is opinionated synthesis, not deep reasoning. Sonnet is
-    the right tier — fast, cheap, and good at applying conventions.
-  timeout_secs: 120
+    CLI design is opinionated synthesis, not deep reasoning. Sonnet
+    (Anthropic API) is the right tier — fast and good at applying
+    conventions. qwen2.5-coder:14b is the local fallback (gpt-4o-mini
+    retired 2026-05-22 — OpenRouter HTTP 500/402 made it unreliable).
+  timeout_secs: 600
 
 context:
   load_on_start:

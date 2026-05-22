@@ -29,13 +29,14 @@ shared_prefix:
 
 model:
   tier: 2
-  preferred: qwen-coder
-  fallback: gpt-4o-mini
+  preferred: qwen2.5-coder:14b
+  fallback: qwen2.5-coder:14b
   reasoning: >
-    UI micro-fixes are pattern-application work — local qwen-coder is fast
-    + offline; gpt-4o-mini is the cloud fallback. Heavier UX changes should
-    be planned by @ux-designer + applied by @hex-coder.
-  timeout_secs: 120
+    UI micro-fixes are pattern-application work — qwen2.5-coder:14b is fast
+    + offline; same model on the fallback path so Ollama serves out of warm
+    cache (gpt-4o-mini cloud fallback retired 2026-05-22). Heavier UX
+    changes should be planned by @ux-designer + applied by @hex-coder.
+  timeout_secs: 600
 
 context:
   load_on_start:

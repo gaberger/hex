@@ -70,20 +70,23 @@ const THOUGHT_MAX_TOKENS: u32 = 96;
 // those Ollama names fail with HTTP 400 "not a valid model ID". Defaults
 // are now OpenRouter slugs that work in either path.
 //
-// gpt-4o-mini over claude-haiku-4.5 because Anthropic safety-filters
-// persona prompts that mention "security audit", "OWASP", "exploit",
-// etc. — common terms for the CTO/CISO roles. OpenAI's filter is much
-// more permissive for legit ops/dev content. Switch back to anthropic
-// via HEX_RESPONDER_CHAT_MODEL when filtering relaxes.
+// 2026-05-22: defaults swapped from openai/gpt-4o-mini → local Ollama
+// after measuring 34/35 brain-lease tasks failing this session with
+// OpenRouter HTTP 500/402 (credits + provider config). qwen2.5-coder:14b
+// is the pinned T2 model per .hex/project.json tier_models; it has no
+// hosted-safety-filter rejection of "security audit"/"OWASP"/"exploit"
+// terms the CTO/CISO personas commonly use (the original rationale for
+// preferring gpt-4o-mini over haiku). Local inference also removes the
+// credit dependency that took the loop down for ~24h.
 //
-// Set HEX_RESPONDER_CHAT_MODEL=qwen3.5:9b when local Ollama is
-// registered and the bench-pinned models are preferred.
-const REPLY_MODEL_CHAT_DEFAULT: &str = "openai/gpt-4o-mini";
-const REPLY_MODEL_COMMIT_DEFAULT: &str = "openai/gpt-4o-mini";
+// Operator override: HEX_RESPONDER_CHAT_MODEL / HEX_RESPONDER_COMMIT_MODEL.
+const REPLY_MODEL_CHAT_DEFAULT: &str = "qwen2.5-coder:14b";
+const REPLY_MODEL_COMMIT_DEFAULT: &str = "qwen2.5-coder:14b";
 /// Model for the secondary "why this reply" prompt. Pinned to a small
-/// non-thinking format-follower so summaries don't burn THOUGHT_MAX_TOKENS=96
-/// on `<think>` reasoning. Override: HEX_THOUGHT_SUMMARIZER_MODEL.
-const THOUGHT_SUMMARIZER_MODEL_DEFAULT: &str = "openai/gpt-4o-mini";
+/// non-thinking format-follower (nemotron-mini per the 2026-05-13 commit
+/// 7671f7d3) so summaries don't burn THOUGHT_MAX_TOKENS=96 on `<think>`
+/// reasoning. Override: HEX_THOUGHT_SUMMARIZER_MODEL.
+const THOUGHT_SUMMARIZER_MODEL_DEFAULT: &str = "nemotron-mini";
 /// Cap concurrent inference calls so we don't queue 9 simultaneous
 /// requests at Ollama for a 4B model. Override with HEX_RESPONDER_CONCURRENCY.
 const REPLY_CONCURRENCY_DEFAULT: usize = 3;
