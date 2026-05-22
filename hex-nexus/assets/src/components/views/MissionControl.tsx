@@ -545,15 +545,15 @@ const MissionControl: Component = () => {
   };
 
   return (
-    <div class="flex flex-col h-screen bg-zinc-950 text-zinc-100 font-sans">
+    <div class="flex flex-col h-screen bg-gray-950 text-gray-100 font-sans">
       {/* ─── Minimal top bar ─── */}
-      <header class="px-6 py-3 border-b border-zinc-800 flex items-center justify-between text-[11px]">
+      <header class="px-6 py-3 border-b border-gray-800 flex items-center justify-between text-[11px]">
         <div class="flex items-baseline gap-3">
           <h1 class="text-base font-semibold tracking-tight">hex</h1>
-          <span class="text-zinc-500">·</span>
-          <span class="text-zinc-500">workspace</span>
+          <span class="text-gray-500">·</span>
+          <span class="text-gray-500">workspace</span>
           <select
-            class="bg-zinc-900 border border-zinc-700 rounded px-2 py-0.5 text-zinc-200"
+            class="bg-gray-900 border border-gray-700 rounded px-2 py-0.5 text-gray-200"
             value={workspaceId()}
             onChange={(e) => setWorkspaceId(e.currentTarget.value)}
             title={workspace().description}
@@ -566,14 +566,14 @@ const MissionControl: Component = () => {
         <div class="flex items-center gap-2">
           <span class={data()?.stdb_alive ? "text-green-400" : "text-red-400"}>STDB {data()?.stdb_alive ? "✓" : "✗"}</span>
           <Show when={attentionCount() > 0}>
-            <span class="text-zinc-500">·</span>
+            <span class="text-gray-500">·</span>
             <span class="text-amber-400" title={`${attentionCount()} attention items inline in the stream`}>
               {attentionCount()} attention
             </span>
           </Show>
-          <span class="text-zinc-500">·</span>
+          <span class="text-gray-500">·</span>
           <button
-            class="px-2 py-0.5 rounded border border-zinc-700 hover:bg-zinc-900 text-zinc-400"
+            class="px-2 py-0.5 rounded border border-gray-700 hover:bg-gray-900 text-gray-400"
             onClick={() => setTeamOpen(!teamOpen())}
             title="Toggle team list (12 personas). The team replies as a unit by default; use @role to address one."
           >
@@ -587,7 +587,7 @@ const MissionControl: Component = () => {
           Resources / Commitments / Missions / Ops SLA / Agent Runs)
           into in-surface filters over `attention_feed`. */}
       <div
-        class="px-6 py-2 border-b border-zinc-800 flex items-center gap-1.5 overflow-x-auto text-[11px]"
+        class="px-6 py-2 border-b border-gray-800 flex items-center gap-1.5 overflow-x-auto text-[11px]"
         role="tablist"
         aria-label="Attention filter"
       >
@@ -598,7 +598,7 @@ const MissionControl: Component = () => {
           class="px-2.5 py-0.5 rounded-full border whitespace-nowrap transition-colors"
           classList={{
             "border-cyan-600 bg-cyan-900/40 text-cyan-100": filter() === "",
-            "border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500": filter() !== "",
+            "border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500": filter() !== "",
           }}
           onClick={() => writeFilterToHash("")}
           title="Show all attention items"
@@ -611,7 +611,7 @@ const MissionControl: Component = () => {
             class="px-2.5 py-0.5 rounded-full border whitespace-nowrap transition-colors"
             classList={{
               "border-cyan-600 bg-cyan-900/40 text-cyan-100": filter() === chip.id,
-              "border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500": filter() !== chip.id,
+              "border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500": filter() !== chip.id,
             }}
             onClick={() => writeFilterToHash(chip.id)}
             title={`Show only ${chip.label.toLowerCase()} attention items (kind: ${chip.prefixes.join(", ")})`}
@@ -626,10 +626,10 @@ const MissionControl: Component = () => {
       <div class="flex-1 flex overflow-hidden">
         {/* ─── Flow visualization: WHO is working right now ─── */}
         <Show when={teamOpen()}>
-          <aside class="w-72 shrink-0 border-r border-zinc-800 overflow-y-auto">
-            <div class="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
-              <span class="text-[10px] uppercase tracking-wide text-zinc-500">Factory</span>
-              <span class="text-[10px] text-zinc-600">click → DM</span>
+          <aside class="w-72 shrink-0 border-r border-gray-800 overflow-y-auto">
+            <div class="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+              <span class="text-[10px] uppercase tracking-wide text-gray-500">Factory</span>
+              <span class="text-[10px] text-gray-600">click → DM</span>
             </div>
             <Index each={personas()}>{(pGet) => {
               const p = pGet();
@@ -641,25 +641,25 @@ const MissionControl: Component = () => {
                 tier === 3 ? "border-l-red-600 bg-red-950/15" :
                 tier === 2 ? "border-l-amber-600 bg-amber-950/10" :
                 tier === 1 ? "border-l-cyan-700 bg-cyan-950/10" :
-                "border-l-zinc-700";
+                "border-l-gray-700";
               return (
                 <button
-                  class={`w-full text-left px-3 py-2 border-b border-zinc-900 border-l-4 hover:bg-zinc-900 ${heatBorder}`}
+                  class={`w-full text-left px-3 py-2 border-b border-gray-900 border-l-4 hover:bg-gray-900 ${heatBorder}`}
                   onClick={() => setIntent(`@${p.role} `)}
                   title={`Address @${p.role} directly. ${capabilityFor(p.role)}`}
                 >
                   <div class="flex items-center gap-2 text-xs">
-                    <span class={p.paused ? "text-yellow-400" : count > 0 ? "text-green-400" : "text-zinc-500"}>●</span>
-                    <span class="font-mono text-zinc-200 flex-1">{p.role}</span>
+                    <span class={p.paused ? "text-yellow-400" : count > 0 ? "text-green-400" : "text-gray-500"}>●</span>
+                    <span class="font-mono text-gray-200 flex-1">{p.role}</span>
                     <Show when={count > 0}>
-                      <span class="text-[10px] text-zinc-400 tabular-nums">{count}↑</span>
+                      <span class="text-[10px] text-gray-400 tabular-nums">{count}↑</span>
                     </Show>
                   </div>
-                  <div class="text-[10px] text-zinc-500 mt-0.5">{capabilityFor(p.role)}</div>
+                  <div class="text-[10px] text-gray-500 mt-0.5">{capabilityFor(p.role)}</div>
                   <Show when={h?.workingOn}>
                     <div class="text-[10px] mt-1 line-clamp-2">
-                      <span class="text-zinc-500">{h!.workingKind}: </span>
-                      <span class="text-zinc-300">{h!.workingOn.slice(0, 100)}</span>
+                      <span class="text-gray-500">{h!.workingKind}: </span>
+                      <span class="text-gray-300">{h!.workingOn.slice(0, 100)}</span>
                     </div>
                   </Show>
                 </button>
@@ -672,7 +672,7 @@ const MissionControl: Component = () => {
         <main ref={el => { streamScrollRef = el; }} class="flex-1 overflow-y-auto order-1">
           <div class="max-w-4xl mx-auto px-6 py-4 space-y-3">
             <Show when={turns().length === 0}>
-              <div class="text-zinc-500 text-sm italic py-12 text-center">
+              <div class="text-gray-500 text-sm italic py-12 text-center">
                 Quiet. Type below to start something.
               </div>
             </Show>
@@ -680,29 +680,29 @@ const MissionControl: Component = () => {
               <section class="space-y-2">
                 {/* Turn header — operator question or Background activity */}
                 <div class="flex items-center gap-3 pt-4">
-                  <div class="flex-1 border-t border-zinc-800"></div>
-                  <span class="text-[10px] uppercase tracking-wide text-zinc-500">
+                  <div class="flex-1 border-t border-gray-800"></div>
+                  <span class="text-[10px] uppercase tracking-wide text-gray-500">
                     {turn.headerLabel}
                   </span>
-                  <div class="flex-1 border-t border-zinc-800"></div>
+                  <div class="flex-1 border-t border-gray-800"></div>
                 </div>
                 <Show when={turn.headerBody}>
                   <div class="flex justify-end">
                     <div class="max-w-2xl rounded-lg px-3 py-2 text-sm bg-cyan-900/30 border border-cyan-800">
                       <div class="flex items-baseline gap-2 mb-1 text-[10px]">
                         <span class="font-mono text-cyan-300">operator</span>
-                        <span class="text-zinc-600 ml-auto">
+                        <span class="text-gray-600 ml-auto">
                           {ageSec(Math.max(0, Math.floor((Date.now() - turn.headerTs) / 1000)))} ago
                         </span>
                       </div>
-                      <div class="text-zinc-100 whitespace-pre-wrap break-words leading-relaxed">
+                      <div class="text-gray-100 whitespace-pre-wrap break-words leading-relaxed">
                         {turn.headerBody}
                       </div>
                     </div>
                   </div>
                 </Show>
                 <Show when={turn.items.length === 0 && turn.headerBody}>
-                  <div class="text-[11px] text-zinc-500 italic ml-2">
+                  <div class="text-[11px] text-gray-500 italic ml-2">
                     (no team response yet)
                   </div>
                 </Show>
@@ -718,20 +718,20 @@ const MissionControl: Component = () => {
                           class="max-w-2xl rounded-lg px-3 py-2 text-sm"
                           classList={{
                             "bg-cyan-900/30 border border-cyan-800": isOp,
-                            "bg-zinc-900 border border-zinc-700": !isOp,
+                            "bg-gray-900 border border-gray-700": !isOp,
                             "opacity-60 italic": !!c.pending,
                           }}
                         >
                           <div class="flex items-baseline gap-2 mb-1 text-[10px]">
                             <span class={`font-mono ${actorColor(c.from)}`}>{c.from}</span>
                             <Show when={c.to && c.to !== "operator"}>
-                              <span class="text-zinc-600">→ {c.to}</span>
+                              <span class="text-gray-600">→ {c.to}</span>
                             </Show>
-                            <span class="text-zinc-600 ml-auto">
+                            <span class="text-gray-600 ml-auto">
                               {ageSec(Math.max(0, Math.floor((Date.now() - item.ts) / 1000)))} ago
                             </span>
                           </div>
-                          <div class="text-zinc-100 whitespace-pre-wrap break-words leading-relaxed">{c.body}</div>
+                          <div class="text-gray-100 whitespace-pre-wrap break-words leading-relaxed">{c.body}</div>
                         </div>
                       </div>
                     );
@@ -743,10 +743,10 @@ const MissionControl: Component = () => {
                     const fname = c.path.split("/").pop() || c.path;
                     return (
                       <div class="flex justify-center">
-                        <div class="text-[11px] text-zinc-500 px-3 py-1 rounded bg-cyan-950/20 border border-cyan-900/50">
+                        <div class="text-[11px] text-gray-500 px-3 py-1 rounded bg-cyan-950/20 border border-cyan-900/50">
                           <span class="text-cyan-400">✎</span> <span class={`font-mono ${actorColor(c.actor)}`}>{c.actor}</span>
-                          {" "}wrote <span class="font-mono text-zinc-300">{fname}</span>{" "}
-                          <span class="text-zinc-600">· {ageSec(Math.max(0, Math.floor((Date.now() - item.ts) / 1000)))} ago</span>
+                          {" "}wrote <span class="font-mono text-gray-300">{fname}</span>{" "}
+                          <span class="text-gray-600">· {ageSec(Math.max(0, Math.floor((Date.now() - item.ts) / 1000)))} ago</span>
                         </div>
                       </div>
                     );
@@ -769,23 +769,23 @@ const MissionControl: Component = () => {
                           classList={{
                             "border-red-800 bg-red-950/20": a.priority === 0,
                             "border-amber-800 bg-amber-950/10": a.priority === 1,
-                            "border-zinc-800 bg-zinc-900/40": a.priority === 2,
+                            "border-gray-800 bg-gray-900/40": a.priority === 2,
                           }}
                         >
                           <div class="flex items-baseline gap-2 mb-1 text-[10px]">
                             <span class={a.priority === 0 ? "text-red-400" : a.priority === 1 ? "text-amber-400" : "text-blue-400"}>● {a.kind}</span>
-                            <span class="text-zinc-600 ml-auto">{ageSec(a.age_seconds)}</span>
+                            <span class="text-gray-600 ml-auto">{ageSec(a.age_seconds)}</span>
                           </div>
-                          <div class="text-zinc-100 flex items-center gap-2">
+                          <div class="text-gray-100 flex items-center gap-2">
                             <span>{a.title}</span>
                             <Show when={isGroup}>
                               <span
-                                class="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-[10px] tabular-nums text-zinc-300"
+                                class="px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 text-[10px] tabular-nums text-gray-300"
                                 title={`${group.length} items collapsed into this class`}
                               >×{group.length}</span>
                             </Show>
                           </div>
-                          <div class="text-[11px] text-zinc-500 mt-1">{a.subtitle}</div>
+                          <div class="text-[11px] text-gray-500 mt-1">{a.subtitle}</div>
                           <div class="flex gap-1.5 mt-2 items-center">
                             <Show when={a.kind === "merge_vote_needed" && a.worktree_path}>
                               <button
@@ -808,14 +808,14 @@ const MissionControl: Component = () => {
                             </Show>
                             <Show when={!isGroup && numId !== undefined && a.kind === "resource_anomaly"}>
                               <button
-                                class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] disabled:opacity-50"
+                                class="px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-200 text-[10px] disabled:opacity-50"
                                 disabled={attnBusy() === a.id}
                                 onClick={() => ackAnomaly(a.id, numId!, groupKey)}
                               >Ack</button>
                             </Show>
                             <Show when={isGroup && a.kind === "resource_anomaly"}>
                               <button
-                                class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] disabled:opacity-50"
+                                class="px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-200 text-[10px] disabled:opacity-50"
                                 disabled={attnBusy() === groupKey}
                                 onClick={() => ackAllGroup(group, groupKey)}
                                 title={`Ack all ${group.length} items in this class and suppress for 5 minutes`}
@@ -830,25 +830,25 @@ const MissionControl: Component = () => {
                             </Show>
                             <Show when={isGroup}>
                               <button
-                                class="ml-auto px-2 py-0.5 rounded hover:bg-zinc-800 text-zinc-400 text-[10px]"
+                                class="ml-auto px-2 py-0.5 rounded hover:bg-gray-800 text-gray-400 text-[10px]"
                                 onClick={() => toggleGroup(groupKey)}
                                 title={expanded() ? "Collapse" : `Show all ${group.length} items`}
                               >{expanded() ? "▲ collapse" : `▼ show ${group.length}`}</button>
                             </Show>
                           </div>
                           <Show when={isGroup && expanded()}>
-                            <div class="mt-2 pt-2 border-t border-zinc-800 space-y-1">
+                            <div class="mt-2 pt-2 border-t border-gray-800 space-y-1">
                               <For each={group}>{(row) => {
                                 const rowMatch = row.id.match(/^[a-z]+-(\d+)/);
                                 const rowNumId = rowMatch ? parseInt(rowMatch[1], 10) : undefined;
                                 return (
                                   <div class="flex items-baseline gap-2 text-[11px]">
-                                    <span class="text-zinc-500 font-mono">{row.id}</span>
-                                    <span class="text-zinc-300 flex-1 truncate" title={row.subtitle}>{row.subtitle}</span>
-                                    <span class="text-zinc-600 tabular-nums">{ageSec(row.age_seconds)}</span>
+                                    <span class="text-gray-500 font-mono">{row.id}</span>
+                                    <span class="text-gray-300 flex-1 truncate" title={row.subtitle}>{row.subtitle}</span>
+                                    <span class="text-gray-600 tabular-nums">{ageSec(row.age_seconds)}</span>
                                     <Show when={rowNumId !== undefined && row.kind === "resource_anomaly"}>
                                       <button
-                                        class="px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] disabled:opacity-50"
+                                        class="px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-200 text-[10px] disabled:opacity-50"
                                         disabled={attnBusy() === row.id}
                                         onClick={() => ackAnomaly(row.id, rowNumId!, groupKey)}
                                       >Ack</button>
@@ -872,10 +872,10 @@ const MissionControl: Component = () => {
       </div>
 
       {/* ─── Compose (sticky bottom) ─── */}
-      <div class="border-t border-zinc-800 bg-zinc-900/60 px-6 py-3">
+      <div class="border-t border-gray-800 bg-gray-900/60 px-6 py-3">
         <div class="max-w-4xl mx-auto flex gap-2">
           <textarea
-            class="flex-1 bg-zinc-950 border border-zinc-700 focus:border-cyan-600 focus:outline-none rounded px-3 py-2 text-sm font-mono resize-none"
+            class="flex-1 bg-gray-950 border border-gray-700 focus:border-cyan-600 focus:outline-none rounded px-3 py-2 text-sm font-mono resize-none"
             rows={2}
             placeholder='Tell the team. Plain text broadcasts to the c-suite. "@cto …" addresses one. ⌘↵ to send.'
             value={intent()}

@@ -48,27 +48,27 @@ const AgentRuns: Component<AgentRunsProps> = (props) => {
       <Show
         when={props.runs.length > 0}
         fallback={
-          <div class="border border-zinc-700 rounded bg-zinc-900 p-6 text-center">
-            <p class="text-zinc-500 text-sm font-mono">
-              No agent runs yet — try <span class="text-zinc-300">hex agent run "..."</span>
+          <div class="border border-gray-700 rounded bg-gray-900 p-6 text-center">
+            <p class="text-gray-500 text-sm font-mono">
+              No agent runs yet — try <span class="text-gray-300">hex agent run "..."</span>
             </p>
           </div>
         }
       >
         <For each={props.runs}>
           {(run) => (
-            <div class="border border-zinc-700 rounded bg-zinc-900 p-3">
+            <div class="border border-gray-700 rounded bg-gray-900 p-3">
               <div class="flex items-center gap-2 text-xs">
-                <span class="font-mono text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded">
+                <span class="font-mono text-gray-400 bg-gray-800 px-2 py-0.5 rounded">
                   {run.run_id.slice(0, 8)}
                 </span>
                 <span class={`px-2 py-0.5 rounded ${statusPill(run.stop_reason)}`}>
                   {run.stop_reason}
                 </span>
-                <span class="text-zinc-500 ml-auto">{getElapsedAge(run.started_at)}</span>
+                <span class="text-gray-500 ml-auto">{getElapsedAge(run.started_at)}</span>
               </div>
-              <p class="text-sm text-zinc-100 mt-1">{truncate(run.intent, 100)}</p>
-              <div class="flex items-center gap-4 text-xs text-zinc-400 mt-1">
+              <p class="text-sm text-gray-100 mt-1">{truncate(run.intent, 100)}</p>
+              <div class="flex items-center gap-4 text-xs text-gray-400 mt-1">
                 <span>{run.iterations} iter</span>
                 <span>{run.steps} steps</span>
                 <span>{formatDuration(run.elapsed_ms)}</span>
