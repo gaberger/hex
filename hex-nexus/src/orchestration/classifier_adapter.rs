@@ -182,16 +182,39 @@ impl StrictJsonClassifierAdapter {
         operator_message: &str,
         from_operator: bool,
     ) -> Result<ClassifierResponse, InvariantError> {
+        self.classify_with_attempts(STRICT_JSON_SYSTEM_PROMPT, operator_message, from_operator)
+            .await
+            .map(|(resp, _attempts)| resp)
+    }
+
+    /// Same retry contract as [`Self::classify`] but takes an explicit
+    /// persona-flavoured `system_prompt` and reports how many inference
+    /// attempts were consumed. Used by `org_responder` (P4.1) so the
+    /// `classifier_response` STDB row captures the attempt count alongside
+    /// the parsed decision, and so each persona can ship its own
+    /// JSON-schema system prompt instead of the generic
+    /// [`STRICT_JSON_SYSTEM_PROMPT`].
+    ///
+    /// The reparse-hint suffix is appended to the supplied `system_prompt`
+    /// verbatim — callers should ensure their prompt already declares the
+    /// strict-JSON output contract documented in the constant above.
+    pub async fn classify_with_attempts(
+        &self,
+        system_prompt: &str,
+        user_msg: &str,
+        from_operator: bool,
+    ) -> Result<(ClassifierResponse, u32), InvariantError> {
         // The user turn carries the inbound message plus a from=operator
         // annotation so the model has the same identity signal the parser
         // will enforce. We keep this rendering centralized so tests can
         // verify the inference adapter receives a deterministic prompt.
-        let user_text = render_user_turn(operator_message, from_operator);
+        let user_text = render_user_turn(user_msg, from_operator);
 
         let mut last_malformed: Option<InvariantError> = None;
         // attempt = 0 is the first try; attempts 1..=REPARSE_BUDGET are reparse retries.
         for attempt in 0..=REPARSE_BUDGET {
-            let request = self.build_request(&user_text, last_malformed.as_ref());
+            let request =
+                self.build_request(system_prompt, &user_text, last_malformed.as_ref());
             let response = match self.inference.complete(request).await {
                 Ok(r) => r,
                 Err(e) => {
@@ -212,9 +235,14 @@ impl StrictJsonClassifierAdapter {
 
             let raw = extract_text(&response.content);
             match self.parser.parse(&raw, from_operator) {
-                Ok(resp) => return Ok(resp),
+                Ok(resp) => return Ok((resp, attempt as u32 + 1)),
                 // Schema invariants are not retryable — escalate immediately.
-                Err(e @ InvariantError::DecisionNotAllowedForOperator(_)) => return Err(e),
+                // attempts=1 because the model produced a parseable JSON object,
+                // it's just one whose decision violates the contract; we burned
+                // exactly one inference call to learn that.
+                Err(e @ InvariantError::DecisionNotAllowedForOperator(_)) => {
+                    return Err(e)
+                }
                 Err(e @ InvariantError::MissingRequiredField { .. }) => return Err(e),
                 // MalformedJson consumes a retry slot and feeds the error back
                 // into the next prompt so the model has a hint about what
@@ -238,19 +266,21 @@ impl StrictJsonClassifierAdapter {
     /// Build the per-attempt inference request. When `last_error` is
     /// `Some` (reparse pass), the system prompt gets a trailing
     /// "previous-attempt failed with X" hint so the model knows what to
-    /// fix.
+    /// fix. `base_system_prompt` is the caller-supplied (persona-flavoured)
+    /// prompt; the reparse hint is appended to it verbatim.
     fn build_request(
         &self,
+        base_system_prompt: &str,
         user_text: &str,
         last_error: Option<&InvariantError>,
     ) -> InferenceRequest {
         let system_prompt = match last_error {
-            None => STRICT_JSON_SYSTEM_PROMPT.to_string(),
+            None => base_system_prompt.to_string(),
             Some(InvariantError::MalformedJson(msg)) => format!(
-                "{STRICT_JSON_SYSTEM_PROMPT}\n\nPREVIOUS ATTEMPT FAILED — your last response could not be parsed as JSON:\n{msg}\n\nReturn ONLY a valid JSON object this time. No prose, no fences, no commentary."
+                "{base_system_prompt}\n\nPREVIOUS ATTEMPT FAILED — your last response could not be parsed as JSON:\n{msg}\n\nReturn ONLY a valid JSON object this time. No prose, no fences, no commentary."
             ),
             Some(other) => format!(
-                "{STRICT_JSON_SYSTEM_PROMPT}\n\nPREVIOUS ATTEMPT FAILED: {other}"
+                "{base_system_prompt}\n\nPREVIOUS ATTEMPT FAILED: {other}"
             ),
         };
 

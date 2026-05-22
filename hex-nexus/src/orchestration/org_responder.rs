@@ -28,12 +28,21 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use tokio::sync::{Mutex, Semaphore};
 
 use crate::adapters::spacetime_agent_comm::SpacetimeAgentCommAdapter;
 use crate::adapters::spacetime_persona::SpacetimePersonaSupervisor;
+use crate::orchestration::classifier_adapter::StrictJsonClassifierAdapter;
+use crate::orchestration::classifier_parser::InvariantError;
+use crate::orchestration::classifier_types::{ClassifierDecision, ClassifierResponse};
 use crate::routes::chat::strip_think_block;
+use hex_core::domain::messages::{ContentBlock, StopReason};
 use hex_core::ports::agent_comm::IAgentCommPort;
+use hex_core::ports::inference::{
+    futures_stream, HealthStatus, IInferencePort, InferenceCapabilities, InferenceError,
+    InferenceRequest, InferenceResponse, ModelInfo, ModelTier, StreamChunk,
+};
 
 const POLL_INTERVAL_SECS: u64 = 4;
 const MAX_RECENT_DMS: u32 = 25;
@@ -290,56 +299,59 @@ fn conversational_prompt(role: &str) -> String {
     )
 }
 
-/// Persona-flavoured system prompt for replies.
+/// Persona-flavoured system prompt for the structured-decision classifier
+/// (ADR-2026-05-17-2030 Phase 1, workplan wp-sop-pipeline-redesign-phase-1 P4.1).
 ///
-/// Per ADR-2026-05-08-2400, personas are commitment-creators, not artifact-
-/// producers. Output is restricted to ONE Confirm: line OR the literal
-/// string "Silent". Anything else is dropped at the parser.
+/// Replaces the prior Confirm:/Silent prose contract. The persona now emits
+/// a single JSON object with a `decision` enum + per-decision required
+/// fields; the StrictJsonClassifierAdapter (P3.1) parses, validates, and
+/// reparses on malformed output. Off-contract responses no longer drop
+/// silently — they escalate to the operator inbox via P5.
 ///
-/// v2 (2026-05-12): added few-shot examples after benchmark
-/// (scripts/bench-persona-prompts.py) showed they lift nemotron-mini's
-/// commit-mode score from 0.67 → 1.00. The two examples cost ~80 tokens
-/// of system prompt but eliminate the "I will respond with…" rambling
-/// path entirely.
+/// The from=operator invariant is documented here for the model but
+/// authoritatively enforced by the parser (P1.2): operator-direct asks
+/// may only resolve to `accept`, `route`, `clarify`, or `request_tool`.
 fn persona_prompt(role: &str) -> String {
     // Single source of truth for role titles — keeps IC titles in sync with
     // the conversational path without duplicating the match arm.
     let role_title = role_title(role);
     format!(
         "You are the {role_title} ({role}) in a hexagonal AIOS organization. \
-         The CEO sent a message addressed to you or your role tier.\n\n\
-         === STRICT OUTPUT CONTRACT (HARD — replies that don't match are silently dropped) ===\n\n\
-         Emit EXACTLY ONE of the following two outputs and nothing else:\n\n\
-         (A) `Confirm: I (<role>) will <one-line concrete action> by <deadline> — success: <artifact>`\n\n\
-            Where <artifact> is one of:\n\
-              - a repo file path under docs/, src/, tests/, examples/, scripts/, hex-nexus/assets/src/\n\
-                (the digital-twin loop will draft it, review it, and write it for you)\n\
-              - a dashboard hashroute (e.g. #/merge-gate, #/resources, #/commitments)\n\
-              - the literal string `requires-operator-action — <one-line of what the operator must do>`\n\
-                (when the action genuinely cannot be automated)\n\n\
-            Pick ONE concrete deliverable. Keep the action under 25 words. The deadline can be `EOD`, \
-            `EOW`, `tomorrow`, `in 2h`, etc.\n\n\
-         (B) `Silent`\n\n\
-            Choose this when:\n\
-              - You have no specific role in this request (a peer is better-fit)\n\
-              - The CEO's ask is too vague to produce a concrete Confirm\n\
-              - You would otherwise be padding (\"I'll facilitate\", \"I'll ensure\", etc.)\n\n\
+         You are acting as an inbox classifier for ONE inbound message.\n\n\
+         === STRICT OUTPUT CONTRACT (HARD — malformed output is escalated, not dropped) ===\n\n\
+         Respond with EXACTLY ONE JSON object and nothing else. No prose, no markdown, no code fences.\n\n\
+         Top-level keys:\n\
+           - `decision` (required): one of the snake_case strings below.\n\
+           - `cost_usd` (required, number — you may use 0).\n\n\
+         Per-decision required field (omit unused optional keys; do not include nulls):\n\
+           - `accept`        — this persona will act NOW. Requires `tool_plan`: \
+                              array of `{{ \"tool\": string, \"intent\": string }}`.\n\
+           - `defer`         — busy/blocked. Requires `reason`. Forbidden on from=operator traffic.\n\
+           - `route`         — forward to a peer. Requires `target_persona`: peer role name.\n\
+           - `clarify`       — need more information. Requires `question`.\n\
+           - `reject`        — refuse the ask. Requires `reason`. Forbidden on from=operator traffic.\n\
+           - `request_tool`  — need a new tool. Requires `tool_spec`: JSON object \
+                              with at minimum `name` + `rationale`.\n\n\
+         === FROM=OPERATOR INVARIANT ===\n\
+         When the user turn begins with `from=operator`, you MUST NOT pick `defer` or `reject`. \
+         Operator-direct asks resolve to `accept`, `route`, `clarify`, or `request_tool` only. \
+         If the ask is genuinely outside your domain, prefer `route` with a `target_persona`.\n\n\
          === FORBIDDEN ===\n\
-         - Free prose, multi-line replies, paragraphs, bullet lists, PLAN: blocks\n\
-         - Acknowledgments (\"Got it CEO\", \"Understood\")\n\
-         - Status updates (\"shortly\", \"immediately\", \"I'll get back to you\")\n\
-         - Proposing peer coordination (\"@cpo and I will sync\") — that's not your tool\n\
-         - Multiple Confirm lines — pick ONE\n\
-         - Any output whose first non-whitespace character is not `C` (for Confirm) or `S` (for Silent)\n\n\
-         You have NO tools beyond emitting this Confirm row. The factory pipeline (drafter→twin→\
-         executor) will consume your Confirm and produce the artifact. If you write Silent, no \
-         artifact is produced — that is correct when you genuinely have nothing concrete to add.\n\n\
-         === EXAMPLES (these are the ONLY valid output shapes) ===\n\
-         Confirm: I ({role}) will write docs/specs/cost-runbook.md by EOD — success: docs/specs/cost-runbook.md\n\
-         Confirm: I ({role}) will draft ADR-2026-05-12-0900-pool-rebalance by EOW — success: docs/adrs/ADR-2026-05-12-0900-pool-rebalance.md\n\
-         Confirm: I ({role}) will patch hex-cli/src/commands/plan.rs in 2h — success: hex-cli/src/commands/plan.rs\n\
-         Silent\n\n\
-         Begin your reply with the first character now. No preface."
+         - Free prose, acknowledgments, status updates outside the JSON object\n\
+         - Multiple JSON objects — pick ONE decision\n\
+         - Confirm: / Silent prefixes (legacy contract — retired)\n\
+         - Markdown fences, leading whitespace, trailing commentary\n\
+         - `null` values — omit the key instead\n\n\
+         You have NO tools beyond emitting this classifier object. The factory pipeline \
+         (drafter→twin→executor) will consume the parsed `tool_plan` from an `accept`, the \
+         `target_persona` from a `route`, the `question` from a `clarify`, etc., and produce \
+         the actual artifact.\n\n\
+         === EXAMPLES (these are the only valid output shapes) ===\n\
+         {{\"decision\":\"accept\",\"tool_plan\":[{{\"tool\":\"code_patch\",\"intent\":\"patch hex-cli/src/commands/plan.rs\"}}],\"cost_usd\":0}}\n\
+         {{\"decision\":\"route\",\"target_persona\":\"ciso\",\"cost_usd\":0}}\n\
+         {{\"decision\":\"clarify\",\"question\":\"Which workplan should I target — wp-sop-phase-1 or wp-sop-phase-2?\",\"cost_usd\":0}}\n\
+         {{\"decision\":\"request_tool\",\"tool_spec\":{{\"name\":\"grep_workplan\",\"rationale\":\"need wp dep lookups\"}},\"cost_usd\":0}}\n\n\
+         Begin your reply with `{{` now."
     )
 }
 
@@ -640,207 +652,404 @@ async fn process_role(
 
         let is_board = thread_id.as_deref().map(|t| t.starts_with("board-")).unwrap_or(false);
         // Operator-style asks (questions, "what/how/status/explain/…") use a
-        // free-form conversational prompt and skip the strict Confirm/Silent
-        // parser. Applies to board broadcasts too — a "status check" sent to
-        // all execs is still informational, not a directive. Without this,
-        // exec replies to status asks were dropped as off-contract.
+        // free-form conversational prompt and skip the structured classifier.
+        // Applies to board broadcasts too — a "status check" sent to all execs
+        // is still informational, not a directive.
         let chat_mode = is_conversational(&content);
-        // Pick the right model for this mode. chat = rambling-tolerant; commit
-        // = strict-format model so the Confirm:/Silent contract holds.
-        let model = if chat_mode { model_chat } else { model_commit };
+        let from_operator = from == "operator";
+        // Pick the right model per mode. chat = rambling-tolerant; commit =
+        // strict JSON-output classifier.
+        let model_for_mode = if chat_mode { model_chat } else { model_commit };
         // Acquire a concurrency slot before firing inference so we don't
         // queue 9 simultaneous calls at a small local model.
         let _permit = match sem.clone().acquire_owned().await {
             Ok(p) => p,
             Err(_) => continue, // semaphore closed — bail
         };
-        let reply = match generate_reply(http, inference_url, role, &content, &history, &thoughts, is_board, chat_mode, model).await {
-            Ok(r) => r,
-            Err(e) => {
+
+        if chat_mode {
+            // -- Conversational path (chat_mode bypass). Unchanged contract:
+            // free-form prose reply, send verbatim, CC any @peer mention. --
+            let reply = match generate_reply(
+                http,
+                inference_url,
+                role,
+                &content,
+                &history,
+                &thoughts,
+                is_board,
+                true,
+                model_for_mode,
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    let dropped = replied.lock().await.record_failure(role, msg_id);
+                    tracing::warn!(role = %role, msg_id, error = %e, dropped, "org_responder: chat inference failed; will retry");
+                    let (status_code, model_id) = parse_inference_error(&e);
+                    persona.record_failure(role, &model_id, status_code).await;
+                    continue;
+                }
+            };
+
+            if reply.trim().is_empty() {
+                tracing::debug!(role = %role, msg_id, "org_responder: empty chat reply; will retry");
+                continue;
+            }
+
+            persona.record_success(role).await;
+            replied.lock().await.clear_failures(role, msg_id);
+
+            let reply_for_send = reply.clone();
+            let reply_for_journal = reply.clone();
+            let reply_for_commitment = reply.clone();
+            let thread_id_for_commitment = thread_id.clone().unwrap_or_default();
+
+            if let Err(e) = comm
+                .send_dm(
+                    role_string.clone(),
+                    from.clone(),
+                    reply_for_send.clone(),
+                    thread_id.clone(),
+                )
+                .await
+            {
+                tracing::warn!(role = %role, msg_id, to = %from, error = %e, "org_responder: send_dm failed; will retry");
+                continue;
+            }
+            if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
+                tracing::warn!(role = %role, msg_id, error = %e, "org_responder: mark_read after reply failed");
+            }
+
+            // Inter-persona @mention CC — kept for chat-mode only. The new
+            // classifier path uses an explicit `route` decision instead.
+            if from_operator {
+                if let Some(peer) = first_peer_mention(&reply_for_send, role) {
+                    let coord = format!(
+                        "[CC from @{} — operator asked: \"{}\"]\n\n@{} you said:\n{}\n\nYour input is requested.",
+                        role,
+                        msg.message.chars().take(200).collect::<String>(),
+                        role,
+                        reply_for_send.chars().take(400).collect::<String>(),
+                    );
+                    let role_for_cc = role_string.clone();
+                    let peer_clone = peer.clone();
+                    if let Err(e) = comm
+                        .send_dm(role_for_cc, peer.clone(), coord, thread_id.clone())
+                        .await
+                    {
+                        tracing::warn!(role = %role, peer = %peer_clone, error = %e, "org_responder: inter-persona CC failed");
+                    } else {
+                        tracing::info!(role = %role, peer = %peer, "org_responder: CC'd peer based on @mention");
+                    }
+                }
+            }
+
+            spawn_commitment_and_journal(
+                role,
+                msg_id,
+                content.clone(),
+                reply_for_commitment,
+                reply_for_journal,
+                thread_id_for_commitment,
+                persona.clone(),
+                http.clone(),
+                inference_url.to_string(),
+            );
+            continue;
+        }
+
+        // -- Structured-decision classifier path (ADR-2026-05-17-2030 P4.1).
+        // Replaces the d2b3f06e Confirm/Silent prose parser. Off-contract
+        // output no longer drops silently — exhausted reparse budget +
+        // invariant violations escalate to the operator inbox via P5. --
+        let system_prompt = persona_prompt(role);
+        let shim: Arc<dyn IInferencePort> = Arc::new(HttpInferenceShim::new(
+            http.clone(),
+            inference_url.to_string(),
+        ));
+        let classifier = StrictJsonClassifierAdapter::new(shim, model_for_mode.to_string());
+        let (resp, attempts) = match classifier
+            .classify_with_attempts(&system_prompt, &content, from_operator)
+            .await
+        {
+            Ok(t) => t,
+            Err(invariant) => {
                 let dropped = replied.lock().await.record_failure(role, msg_id);
-                tracing::warn!(role = %role, msg_id, error = %e, dropped, "org_responder: inference failed; will retry");
-                let (status_code, model_id) = parse_inference_error(&e);
-                persona.record_failure(role, &model_id, status_code).await;
+                tracing::warn!(
+                    role = %role,
+                    msg_id,
+                    error = %invariant,
+                    dropped,
+                    "org_responder: classifier failed; escalating to operator inbox"
+                );
+                escalate_classifier_failure(
+                    &comm,
+                    &role_string,
+                    msg_id,
+                    &from,
+                    role,
+                    &content,
+                    thread_id.as_deref(),
+                    &invariant,
+                )
+                .await;
                 continue;
             }
         };
 
-        if reply.trim().is_empty() {
-            tracing::debug!(role = %role, msg_id, "org_responder: empty inference reply; will retry");
-            continue;
-        }
-
-        // ADR-2026-05-08-2400 strict output filter applies ONLY to commitment-
-        // mode replies. Conversational replies (chat_mode=true) bypass the
-        // parser and ship verbatim.
-        let trimmed_reply = reply.trim();
-        let first = trimmed_reply
-            .lines()
-            .next()
-            .map(|l| l.trim_start())
-            .unwrap_or("");
-        let is_confirm = first.to_ascii_lowercase().starts_with("confirm:");
-        let is_silent_token = trimmed_reply.eq_ignore_ascii_case("silent")
-            || trimmed_reply.eq_ignore_ascii_case("silent.")
-            || first.to_ascii_lowercase().starts_with("silent");
-        if !chat_mode && !is_confirm && !is_silent_token {
-            tracing::warn!(
-                role = %role,
-                msg_id,
-                preview = %trimmed_reply.chars().take(80).collect::<String>(),
-                "org_responder: off-contract reply dropped (not Confirm: or Silent)"
-            );
-            persona.record_success(role).await;
-            if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
-                tracing::debug!(role = %role, error = %e, "mark_read after off-contract failed");
-            }
-            continue;
-        }
-
-        // Inference succeeded — clear any pending ban + failure counter
-        // (both the persona-level supervisor counter and our per-message one).
         persona.record_success(role).await;
         replied.lock().await.clear_failures(role, msg_id);
 
-        // ADR-2026-05-08-2400 Silent sentinel — applies to commitment-mode
-        // DMs only. Conversational replies ship verbatim even if they happen
-        // to start with the word "silent".
-        //
-        // ADR-2026-05-17-2030 Phase 1: Silent is ILLEGAL for from=operator.
-        // Operator-direct asks must produce action or surfaced escalation —
-        // never silent drop. Convert to a structured decline DM back to
-        // operator so the ask is visible, not buried in a log line.
-        if is_silent_token && !chat_mode {
-            if from == "operator" {
-                tracing::warn!(
-                    role = %role,
-                    msg_id,
-                    "org_responder: persona chose Silent on operator-direct ask — escalating as decline DM (Silent banned for from=operator per ADR-2026-05-17-2030)"
-                );
-                let decline = format!(
-                    "Decline: I cannot answer this ask from my current context. \
-                     Operator: please re-fire with more grounding (cite file paths, \
-                     ADR IDs, commit SHAs), route to a different persona, or \
-                     operator-author the artifact via `hex ops write`. Original \
-                     msg_id={}.",
-                    msg_id
-                );
-                if let Err(e) = comm
-                    .send_dm(role_string.clone(), from.clone(), decline, thread_id.clone())
-                    .await
-                {
-                    tracing::warn!(role = %role, msg_id, error = %e, "org_responder: decline DM send failed");
-                }
-                if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
-                    tracing::warn!(role = %role, msg_id, error = %e, "org_responder: mark_read after operator-decline failed");
-                }
-                continue;
-            }
-            tracing::info!(role = %role, msg_id, "org_responder: persona chose Silent");
-            if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
-                tracing::warn!(role = %role, msg_id, error = %e, "org_responder: mark_read after silent failed");
-            }
-            continue;
-        }
+        // Persist the parsed classifier row (best-effort — STDB outage MUST
+        // NOT block dispatch).
+        let tool_plan_json = serde_json::to_string(&resp.tool_plan)
+            .unwrap_or_else(|_| "null".to_string());
+        let tool_spec_json = serde_json::to_string(&resp.tool_spec)
+            .unwrap_or_else(|_| "null".to_string());
+        post_classifier_response_open(
+            msg_id,
+            &from,
+            role,
+            decision_str(&resp.decision),
+            &tool_plan_json,
+            resp.reason.as_deref().unwrap_or(""),
+            resp.target_persona.as_deref().unwrap_or(""),
+            resp.question.as_deref().unwrap_or(""),
+            &tool_spec_json,
+            attempts,
+            "parsed",
+            resp.cost_usd,
+        )
+        .await;
 
-        let reply_for_send = reply.clone();
-        let reply_for_journal = reply.clone();
-        let reply_for_commitment = reply.clone();
+        // Route per decision. `route` triggers a peer forward; `request_tool`
+        // raises an operator inbox notification. Every decision also produces
+        // a structured reply to the source so the ask is never silently
+        // dropped.
+        let routed_reply = route_decision(
+            &comm,
+            &role_string,
+            role,
+            &from,
+            &content,
+            thread_id.as_deref(),
+            &resp,
+            msg_id,
+        )
+        .await;
+
+        let reply_for_send = routed_reply.clone();
+        let reply_for_journal = routed_reply.clone();
+        let reply_for_commitment = routed_reply.clone();
         let thread_id_for_commitment = thread_id.clone().unwrap_or_default();
 
         if let Err(e) = comm
-            .send_dm(role_string.clone(), from.clone(), reply_for_send.clone(), thread_id.clone())
+            .send_dm(
+                role_string.clone(),
+                from.clone(),
+                reply_for_send,
+                thread_id.clone(),
+            )
             .await
         {
-            tracing::warn!(role = %role, msg_id, to = %from, error = %e, "org_responder: send_dm failed; will retry");
+            tracing::warn!(role = %role, msg_id, to = %from, error = %e, "org_responder: send_dm (classifier reply) failed; will retry");
             continue;
         }
-
-        // Only mark as read after a successful reply was committed.
         if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
-            tracing::warn!(role = %role, msg_id, error = %e, "org_responder: mark_read after reply failed");
+            tracing::warn!(role = %role, msg_id, error = %e, "org_responder: mark_read after classifier reply failed");
         }
 
-        // Inter-persona forwarding: if the reply mentions @<role>, send a
-        // coordination DM to that peer so personas can collaborate without
-        // going through the operator. Gated on `from == operator` so
-        // persona→persona→persona chains can't form. At most ONE peer DM
-        // per reply to bound cost.
-        if from == "operator" {
-            if let Some(peer) = first_peer_mention(&reply_for_send, role) {
-                let coord = format!(
-                    "[CC from @{} — operator asked: \"{}\"]\n\n@{} you said:\n{}\n\nYour input is requested.",
-                    role,
-                    msg.message.chars().take(200).collect::<String>(),
-                    role,
-                    reply_for_send.chars().take(400).collect::<String>(),
-                );
-                let role_for_cc = role_string.clone();
-                let peer_clone = peer.clone();
-                if let Err(e) = comm
-                    .send_dm(role_for_cc, peer.clone(), coord, thread_id.clone())
-                    .await
-                {
-                    tracing::warn!(role = %role, peer = %peer_clone, error = %e, "org_responder: inter-persona CC failed");
-                } else {
-                    tracing::info!(role = %role, peer = %peer, "org_responder: CC'd peer based on @mention");
-                }
-            }
-        }
-
-        // Parse Confirm/PLAN lines and write commitments to STDB. Detached
-        // — failures here MUST NOT block the responder loop.
-        let role_for_commitment = role.to_string();
-        tokio::spawn(async move {
-            crate::orchestration::commitment_parser::extract_and_record(
-                &role_for_commitment,
-                &reply_for_commitment,
-                &thread_id_for_commitment,
-                msg_id,
-            )
-            .await;
-        });
-
-        // Journal a thought (Phase 2) — best-effort, in a detached task so
-        // it can't block the responder loop.
-        let persona_for_journal = persona.clone();
-        let role_for_journal = role.to_string();
-        let content_for_journal = content.clone();
-        let inference_url_for_journal = inference_url.to_string();
-        let http_for_journal = http.clone();
-        tokio::spawn(async move {
-            match generate_thought_summary(
-                &http_for_journal,
-                &inference_url_for_journal,
-                &role_for_journal,
-                &content_for_journal,
-                &reply_for_journal,
-            )
-            .await
-            {
-                Ok(summary) if !summary.trim().is_empty() => {
-                    persona_for_journal
-                        .journal_thought(
-                            &role_for_journal,
-                            "decision",
-                            summary.trim(),
-                            "",
-                            msg_id,
-                            0.0,
-                        )
-                        .await;
-                }
-                Ok(_) => {
-                    tracing::debug!(role = %role_for_journal, msg_id, "thought summary empty; skipped");
-                }
-                Err(e) => {
-                    tracing::debug!(role = %role_for_journal, msg_id, error = %e, "thought summary failed");
-                }
-            }
-        });
+        spawn_commitment_and_journal(
+            role,
+            msg_id,
+            content.clone(),
+            reply_for_commitment,
+            reply_for_journal,
+            thread_id_for_commitment,
+            persona.clone(),
+            http.clone(),
+            inference_url.to_string(),
+        );
     }
 
     Ok(())
+}
+
+/// Map a [`ClassifierDecision`] to its wire-format snake_case string. Used
+/// when persisting the `classifier_response` STDB row — the column expects
+/// the same vocabulary the LLM emits, kept here as a `&'static str` so the
+/// hot path doesn't go through serde for a six-arm match.
+fn decision_str(d: &ClassifierDecision) -> &'static str {
+    match d {
+        ClassifierDecision::Accept => "accept",
+        ClassifierDecision::Defer => "defer",
+        ClassifierDecision::Route => "route",
+        ClassifierDecision::Clarify => "clarify",
+        ClassifierDecision::Reject => "reject",
+        ClassifierDecision::RequestTool => "request_tool",
+    }
+}
+
+/// Synthesize a structured reply for the source persona based on the
+/// classifier's decision. Side-effects:
+/// - `Route` → forwards the original ask to `target_persona`.
+/// - `RequestTool` → raises a priority-2 inbox notification for the operator.
+///
+/// Returns the textual reply that will be sent back to `from` (operator or
+/// peer). Every decision produces a reply — silent drops are eliminated by
+/// the ADR-2026-05-17-2030 contract.
+#[allow(clippy::too_many_arguments)]
+async fn route_decision(
+    comm: &Arc<SpacetimeAgentCommAdapter>,
+    role_string: &str,
+    role: &str,
+    from: &str,
+    original_content: &str,
+    thread_id: Option<&str>,
+    resp: &ClassifierResponse,
+    msg_id: u64,
+) -> String {
+    let thread_id_owned = thread_id.map(|s| s.to_string());
+    match &resp.decision {
+        ClassifierDecision::Accept => {
+            let plan_str = resp
+                .tool_plan
+                .as_ref()
+                .map(|steps| {
+                    steps
+                        .iter()
+                        .map(|s| format!("- {}: {}", s.tool, s.intent))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default();
+            format!(
+                "Confirm: I ({}) will execute the tool plan (msg_id={}).\n{}",
+                role, msg_id, plan_str
+            )
+        }
+        ClassifierDecision::Defer => format!(
+            "Defer: {}",
+            resp.reason.as_deref().unwrap_or("(no reason given)")
+        ),
+        ClassifierDecision::Route => {
+            let tp = resp.target_persona.as_deref().unwrap_or("");
+            if !tp.is_empty() {
+                let forward = format!(
+                    "[Routed from @{} on behalf of @{}]: \"{}\"",
+                    role,
+                    from,
+                    original_content.chars().take(400).collect::<String>(),
+                );
+                if let Err(e) = comm
+                    .send_dm(
+                        role_string.to_string(),
+                        tp.to_string(),
+                        forward,
+                        thread_id_owned,
+                    )
+                    .await
+                {
+                    tracing::warn!(role = %role, peer = %tp, error = %e, "org_responder: route forward failed");
+                } else {
+                    tracing::info!(role = %role, peer = %tp, "org_responder: routed ask to peer");
+                }
+                format!("Routed to @{}.", tp)
+            } else {
+                "Route: (target_persona empty — dispatch suppressed)".to_string()
+            }
+        }
+        ClassifierDecision::Clarify => format!(
+            "Clarify: {}",
+            resp.question.as_deref().unwrap_or("(no question given)")
+        ),
+        ClassifierDecision::Reject => format!(
+            "Reject: {}",
+            resp.reason.as_deref().unwrap_or("(no reason given)")
+        ),
+        ClassifierDecision::RequestTool => {
+            let spec_compact = resp
+                .tool_spec
+                .as_ref()
+                .map(|v| serde_json::to_string(v).unwrap_or_default())
+                .unwrap_or_default();
+            let payload = serde_json::json!({
+                "role": role,
+                "msg_id": msg_id,
+                "thread_id": thread_id.unwrap_or_default(),
+                "from": from,
+                "tool_spec": resp.tool_spec,
+                "summary": "persona requests a new tool",
+            })
+            .to_string();
+            post_inbox_notify("operator", 2, "request_tool", &payload).await;
+            format!(
+                "Requested new tool — escalated to operator inbox. Spec: {}",
+                spec_compact.chars().take(160).collect::<String>()
+            )
+        }
+    }
+}
+
+/// Spawn the detached commitment-parser + journal-thought tasks the
+/// responder fires after every successful DM. Same shape for both
+/// `chat_mode` and classifier paths so the audit trail stays uniform.
+#[allow(clippy::too_many_arguments)]
+fn spawn_commitment_and_journal(
+    role: &str,
+    msg_id: u64,
+    inbound_content: String,
+    reply_for_commitment: String,
+    reply_for_journal: String,
+    thread_id_for_commitment: String,
+    persona: Arc<SpacetimePersonaSupervisor>,
+    http: reqwest::Client,
+    inference_url: String,
+) {
+    let role_for_commitment = role.to_string();
+    tokio::spawn(async move {
+        crate::orchestration::commitment_parser::extract_and_record(
+            &role_for_commitment,
+            &reply_for_commitment,
+            &thread_id_for_commitment,
+            msg_id,
+        )
+        .await;
+    });
+
+    let role_for_journal = role.to_string();
+    tokio::spawn(async move {
+        match generate_thought_summary(
+            &http,
+            &inference_url,
+            &role_for_journal,
+            &inbound_content,
+            &reply_for_journal,
+        )
+        .await
+        {
+            Ok(summary) if !summary.trim().is_empty() => {
+                persona
+                    .journal_thought(
+                        &role_for_journal,
+                        "decision",
+                        summary.trim(),
+                        "",
+                        msg_id,
+                        0.0,
+                    )
+                    .await;
+            }
+            Ok(_) => {
+                tracing::debug!(role = %role_for_journal, msg_id, "thought summary empty; skipped");
+            }
+            Err(e) => {
+                tracing::debug!(role = %role_for_journal, msg_id, error = %e, "thought summary failed");
+            }
+        }
+    });
 }
 
 async fn generate_reply(
@@ -1152,4 +1361,335 @@ fn parse_inference_error(err: &str) -> (u16, String) {
         .unwrap_or("")
         .to_string();
     (status, model_id)
+}
+
+// ============================================================================
+// Classifier wiring (ADR-2026-05-17-2030 P4.1)
+// ============================================================================
+
+/// Thin [`IInferencePort`] shim that forwards `complete()` to the existing
+/// nexus-local `/api/inference/complete` HTTP endpoint. Lets the new
+/// `StrictJsonClassifierAdapter` reuse the same routing + provider plumbing
+/// the responder already used via `generate_reply`, without threading a
+/// full inference port through `spawn()`.
+///
+/// The shim only implements `complete()`; `stream()` panics because the
+/// classifier adapter calls `complete()` exclusively (P3.1 contract).
+struct HttpInferenceShim {
+    http: reqwest::Client,
+    url: String,
+}
+
+impl HttpInferenceShim {
+    fn new(http: reqwest::Client, url: String) -> Self {
+        Self { http, url }
+    }
+}
+
+#[async_trait]
+impl IInferencePort for HttpInferenceShim {
+    async fn complete(
+        &self,
+        request: InferenceRequest,
+    ) -> Result<InferenceResponse, InferenceError> {
+        // Flatten our single-Text-block user turn into an OpenAI-style
+        // `{role, content}` message. The classifier adapter always sends one
+        // user message with one Text block, so the join is effectively
+        // identity for our case.
+        let messages_json: Vec<serde_json::Value> = request
+            .messages
+            .iter()
+            .map(|m| {
+                let role = match m.role {
+                    hex_core::domain::messages::Role::User => "user",
+                    hex_core::domain::messages::Role::Assistant => "assistant",
+                };
+                let text = m
+                    .content
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                serde_json::json!({ "role": role, "content": text })
+            })
+            .collect();
+
+        let body = serde_json::json!({
+            "model": request.model,
+            "messages": messages_json,
+            "system": request.system_prompt,
+            "max_tokens": request.max_tokens,
+        });
+
+        let resp = self
+            .http
+            .post(&self.url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| InferenceError::Network(e.to_string()))?;
+        let status = resp.status();
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| InferenceError::Network(e.to_string()))?;
+        if !status.is_success() {
+            return Err(InferenceError::ApiError {
+                status: status.as_u16(),
+                body: json.to_string(),
+            });
+        }
+        let content_str = json
+            .get("content")
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .to_string();
+        let model_used = json
+            .get("model")
+            .and_then(|m| m.as_str())
+            .unwrap_or(&request.model)
+            .to_string();
+        let input_tokens = json
+            .get("input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let output_tokens = json
+            .get("output_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        Ok(InferenceResponse {
+            content: vec![ContentBlock::Text { text: content_str }],
+            model_used,
+            stop_reason: StopReason::EndTurn,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            latency_ms: 0,
+        })
+    }
+
+    async fn stream(
+        &self,
+        _request: InferenceRequest,
+    ) -> Result<
+        Box<dyn futures_stream::Stream<Item = StreamChunk> + Send + Unpin>,
+        InferenceError,
+    > {
+        Err(InferenceError::ProviderUnavailable(
+            "HttpInferenceShim does not implement stream()".to_string(),
+        ))
+    }
+
+    async fn health(&self) -> Result<HealthStatus, InferenceError> {
+        Ok(HealthStatus::Ok { models: vec![] })
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities {
+            models: vec![ModelInfo {
+                id: "shim".to_string(),
+                provider: "http-shim".to_string(),
+                tier: ModelTier::Local,
+                context_window: 8_192,
+            }],
+            supports_tool_use: false,
+            supports_thinking: false,
+            supports_caching: false,
+            supports_streaming: false,
+            max_context_tokens: 8_192,
+            cost_per_mtok_input: 0.0,
+            cost_per_mtok_output: 0.0,
+        }
+    }
+}
+
+/// STDB host + database lookup used by the reducer-call helpers.
+/// Same env vars as [`try_claim_thread`] / `escalate_to_operator` so the
+/// classifier writers can't drift onto a different database.
+fn stdb_endpoint(reducer: &str) -> (reqwest::Client, String) {
+    let host = std::env::var("HEX_SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+    let db = std::env::var("HEX_STDB_DATABASE")
+        .unwrap_or_else(|_| hex_core::stdb_database_for_module("hexflo-coordination").to_string());
+    let url = format!("{}/v1/database/{}/call/{}", host, db, reducer);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    (client, url)
+}
+
+/// Persist a single `classifier_response` row via the STDB reducer
+/// (ADR-2026-05-17-2030 P2.1). Best-effort — STDB outage or a missing
+/// reducer (P2.1 still in flight) MUST NOT block dispatch.
+#[allow(clippy::too_many_arguments)]
+async fn post_classifier_response_open(
+    msg_id: u64,
+    from_role: &str,
+    to_role: &str,
+    decision: &str,
+    tool_plan_json: &str,
+    reason: &str,
+    target_persona: &str,
+    question: &str,
+    tool_spec_json: &str,
+    reparse_attempts: u32,
+    final_outcome: &str,
+    cost_usd: f32,
+) {
+    let (client, url) = stdb_endpoint("classifier_response_open");
+    let body = serde_json::json!([
+        msg_id,
+        from_role,
+        to_role,
+        decision,
+        tool_plan_json,
+        reason,
+        target_persona,
+        question,
+        tool_spec_json,
+        reparse_attempts,
+        final_outcome,
+        cost_usd,
+    ]);
+    match client.post(&url).json(&body).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            tracing::debug!(
+                msg_id,
+                decision = %decision,
+                final_outcome = %final_outcome,
+                attempts = reparse_attempts,
+                "classifier_response_open: persisted"
+            );
+        }
+        Ok(resp) => {
+            tracing::warn!(
+                msg_id,
+                decision = %decision,
+                status = %resp.status(),
+                "classifier_response_open: STDB reducer rejected call"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                msg_id,
+                decision = %decision,
+                error = %e,
+                "classifier_response_open: STDB transport failed"
+            );
+        }
+    }
+}
+
+/// Fire-and-forget `notify_agent` reducer call. Used by `request_tool`
+/// decisions and by `escalate_classifier_failure` to surface
+/// classifier-loop blowups to the operator inbox.
+async fn post_inbox_notify(agent_id: &str, priority: u8, kind: &str, payload: &str) {
+    let (client, url) = stdb_endpoint("notify_agent");
+    let now = chrono::Utc::now().to_rfc3339();
+    let body = serde_json::json!([agent_id, priority, kind, payload, now]);
+    match client.post(&url).json(&body).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            tracing::info!(
+                agent_id = %agent_id,
+                kind = %kind,
+                priority,
+                "notify_agent: operator-inbox escalation queued"
+            );
+        }
+        Ok(resp) => {
+            tracing::warn!(
+                agent_id = %agent_id,
+                kind = %kind,
+                status = %resp.status(),
+                "notify_agent: STDB reducer rejected call (operator may not be registered as agent)"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                agent_id = %agent_id,
+                kind = %kind,
+                error = %e,
+                "notify_agent: STDB transport failed"
+            );
+        }
+    }
+}
+
+/// Escalate a classifier failure to the operator inbox + persist a
+/// `classifier_response` row tagged with the appropriate `final_outcome`.
+///
+/// This is the operator-inbox escalation primitive referenced by the P5.1
+/// task — placed here in P4.1 so the new dispatch path has somewhere to
+/// branch on its `Err(InvariantError)` arm. P5.1 may elaborate the helper
+/// (e.g. structured payload schema) but the call sites belong to P4.1.
+#[allow(clippy::too_many_arguments)]
+async fn escalate_classifier_failure(
+    comm: &Arc<SpacetimeAgentCommAdapter>,
+    role_string: &str,
+    msg_id: u64,
+    from: &str,
+    role: &str,
+    original_content: &str,
+    thread_id: Option<&str>,
+    invariant: &InvariantError,
+) {
+    let (final_outcome, attempts_used) = match invariant {
+        // MalformedJson reached us only after the budget exhausted.
+        InvariantError::MalformedJson(_) => ("escalated", 3),
+        // Schema-violations cost exactly one inference call.
+        InvariantError::DecisionNotAllowedForOperator(_)
+        | InvariantError::MissingRequiredField { .. } => ("invariant_violation", 1),
+    };
+    let decision_label = match invariant {
+        InvariantError::DecisionNotAllowedForOperator(d) => decision_str(d),
+        _ => "invariant_error",
+    };
+    post_classifier_response_open(
+        msg_id,
+        from,
+        role,
+        decision_label,
+        "null",
+        &invariant.to_string(),
+        "",
+        "",
+        "null",
+        attempts_used,
+        final_outcome,
+        0.0,
+    )
+    .await;
+
+    let payload = serde_json::json!({
+        "role": role,
+        "msg_id": msg_id,
+        "thread_id": thread_id.unwrap_or_default(),
+        "from": from,
+        "original_message": original_content.chars().take(400).collect::<String>(),
+        "error": invariant.to_string(),
+        "final_outcome": final_outcome,
+        "attempts": attempts_used,
+    })
+    .to_string();
+    post_inbox_notify("operator", 2, "classifier_escalation", &payload).await;
+
+    // Mark the source DM read so the responder loop doesn't re-fire on the
+    // same message every 4s tick. The escalation row + inbox notification
+    // are now the durable record of the ask — the inbound DM has done its job.
+    if let Err(e) = comm
+        .mark_read(role_string.to_string(), msg_id)
+        .await
+    {
+        tracing::warn!(
+            role = %role,
+            msg_id,
+            error = %e,
+            "org_responder: mark_read after classifier escalation failed"
+        );
+    }
 }
