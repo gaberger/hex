@@ -1,15 +1,273 @@
 {
-  "adr": "ADR-2026-04-11-0227",
+  "acceptance_gate": "Zero Silent-drops on from=operator traffic for 48h after deploy. Off-contract classifier output never silent-drops — exhausted reparse budget escalates to operator inbox. STDB classifier_response row written for every operator-direct ask.",
+  "adr": "ADR-2026-05-17-2030",
   "created_at": "2026-05-17T16:40:53.455403495-04:00",
-  "id": "draft-2605171640-implement-phase-1-of-adr",
-  "kind": "workplan-draft",
-  "next_steps": [
-    "Run /hex-feature-dev to expand this draft into a full workplan",
-    "Or run `hex plan drafts approve draft-2605171640-implement-phase-1-of-adr.json`",
-    "Or run `hex plan drafts clear --name draft-2605171640-implement-phase-1-of-adr`"
+  "created_by": "planner",
+  "description": "Replace org_responder Confirm/Silent prose contract with a JSON-schema classifier output (decision ∈ {accept,defer,route,clarify,reject,request_tool}). Adds classifier_response STDB table, 2-reparse retry budget with operator-inbox escalation, and schema-enforces decision ∈ {accept,route,clarify,request_tool} on from=operator traffic. Phase 1 of ADR-2026-05-17-2030. Builds on the partial work already shipped in d2b3f06e (operator Silent ban).",
+  "draft_id": "draft-2605171640-implement-phase-1-of-adr",
+  "feature": "SOP pipeline Phase 1 — structured-output classifier",
+  "id": "wp-sop-pipeline-redesign-phase-1",
+  "phases": [
+    {
+      "description": "Pure-Rust types for the new structured contract. Defines ClassifierDecision enum, ClassifierResponse struct, and a ClassifierParser trait that converts raw LLM text → ClassifierResponse with reparse-attempt accounting. Zero I/O, zero STDB, zero inference calls. Source for the new contract is ADR-2026-05-17-2030 §Schema Changes #3.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check -p hex-nexus",
+        "type": "build"
+      },
+      "id": "P1",
+      "name": "Classifier domain types + parser trait",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "New module hex-nexus/src/orchestration/classifier_types.rs. Define: enum ClassifierDecision { Accept, Defer, Route, Clarify, Reject, RequestTool }; struct ToolPlanStep { tool: String, intent: String }; struct ClassifierResponse { decision: ClassifierDecision, tool_plan: Option<Vec<ToolPlanStep>>, reason: Option<String>, target_persona: Option<String>, question: Option<String>, tool_spec: Option<serde_json::Value>, cost_usd: f32 }. Derive Serialize/Deserialize. Add unit tests exercising serde round-trip for each variant. Pure types — no I/O.",
+          "files": [
+            "hex-nexus/src/orchestration/classifier_types.rs"
+          ],
+          "id": "P1.1",
+          "layer": "domain",
+          "name": "Define ClassifierDecision + ClassifierResponse + ToolPlanStep",
+          "status": "done",
+          "strategy_hint": "codegen"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1"
+          ],
+          "description": "New module hex-nexus/src/orchestration/classifier_parser.rs. Define: enum InvariantError { MalformedJson(String), DecisionNotAllowedForOperator(ClassifierDecision), MissingRequiredField { decision: ClassifierDecision, field: &'static str } }; trait ClassifierParser { fn parse(&self, raw: &str, from_operator: bool) -> Result<ClassifierResponse, InvariantError>; }. Provide a default impl SerdeJsonClassifierParser using serde_json::from_str with a strip-fences preamble (LLMs often wrap JSON in ```json ... ```). Implement the from-operator invariant: when from_operator=true, reject decisions Defer/Reject (return DecisionNotAllowedForOperator). Validate per-decision required fields: Accept requires tool_plan; Route requires target_persona; Clarify requires question; Reject/Defer require reason; RequestTool requires tool_spec. Unit tests: 6 happy-path JSON fixtures (one per decision), 4 invariant-violation fixtures, 3 malformed-JSON fixtures.",
+          "files": [
+            "hex-nexus/src/orchestration/classifier_parser.rs"
+          ],
+          "id": "P1.2",
+          "layer": "ports",
+          "name": "Define ClassifierParser trait + InvariantError type",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "description": "Adds the classifier_response table to the hexflo-coordination SpacetimeDB module per ADR-2026-05-17-2030 §Schema Changes #3. Includes the open-row reducer, indices for fast operator-direct-traffic queries, and the WASM build gate.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo build --manifest-path spacetime-modules/hexflo-coordination/Cargo.toml --target wasm32-unknown-unknown --release",
+        "type": "build"
+      },
+      "id": "P2",
+      "name": "STDB classifier_response table + reducer",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "Append a new table to spacetime-modules/hexflo-coordination/src/lib.rs (place it alongside proposed_action, ~line 6457). Schema: #[table(name = classifier_response, public)] pub struct ClassifierResponse { #[primary_key] #[auto_inc] pub id: u64, pub msg_id: u64, pub from_role: String, pub to_role: String, pub decision: String, pub tool_plan_json: String, pub reason: String, pub target_persona: String, pub question: String, pub tool_spec_json: String, pub reparse_attempts: u32, pub final_outcome: String, pub cost_usd: f32, pub created_at: Timestamp }. Decision stored as String (one of accept/defer/route/clarify/reject/request_tool). final_outcome ∈ {parsed, escalated, invariant_violation}. Add reducer classifier_response_open(ctx, msg_id, from_role, to_role, decision, tool_plan_json, reason, target_persona, question, tool_spec_json, reparse_attempts, final_outcome, cost_usd). Build via the standard wasm32 toolchain. Confirm row insertion via hex stdb tables.",
+          "evidence": {
+            "files_found": [
+              "spacetime-modules/hexflo-coordination/src/lib.rs"
+            ],
+            "matching_commits": [
+              "d05515f02cb9cf3a3c0772e70bbf9341e83c2500 feat(supervision): land wp-runtime-supervision P2 — dead-letter quarantine",
+              "b1f56928be28e087344ca7d90936ce8b99131dd9 feat(stdb-supervisor): P1.2 + P1.3 + P2.1 — actual state, event log, scheduled tick",
+              "4773a7ade8449fbb3b65cd7843ca8051d062ebb2 feat(stdb-supervisor): P1.1 — worker_pool_intent table + setter reducers"
+            ],
+            "symbols_matched": []
+          },
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs"
+          ],
+          "id": "P2.1",
+          "layer": "secondary",
+          "name": "Add classifier_response table + classifier_response_open reducer",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "description": "Secondary adapter that wraps the existing persona inference call to (a) inject the new JSON-output system prompt, (b) prefer HEX_RESPONDER_MODEL_STRICT (already exists per ADR-2026-05-17-2030 §Costs), and (c) execute a bounded reparse loop (max 2 retries with stricter re-prompts before declaring exhaustion). Returns a parsed ClassifierResponse or InvariantError. Independent of the orchestration loop — pure secondary adapter.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check -p hex-nexus",
+        "type": "build"
+      },
+      "id": "P3",
+      "name": "Strict-JSON inference adapter + reparse budget",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1",
+            "P1.2"
+          ],
+          "description": "New module hex-nexus/src/orchestration/classifier_adapter.rs. Struct StrictJsonClassifierAdapter holding model name (default $HEX_RESPONDER_MODEL_STRICT → fallback nemotron-mini), Ollama host, parser: Arc<dyn ClassifierParser>. Method classify(&self, system_prompt: &str, user_msg: &str, from_operator: bool) -> Result<(ClassifierResponse, u32 /*attempts*/), InvariantError>. Loop body: call inference → parse → on InvariantError::MalformedJson re-prompt with appended hint 'Your previous output was not valid JSON: <err>. Reply with exactly one JSON object matching the schema. No markdown fences.' up to 2 retries. On 3rd failure return last InvariantError. Cost accounting: sum per-call cost into ClassifierResponse.cost_usd. Unit tests using a MockInferenceTransport: malformed→malformed→valid succeeds in 3 calls; malformed×3 returns error; operator-invariant violation returns immediately without retry.",
+          "evidence": {
+            "files_found": [
+              "hex-nexus/src/orchestration/classifier_adapter.rs"
+            ],
+            "matching_commits": [
+              "31befefca6de6c9ebffefa751d6a179be5caa283 secondary(p3.1): wp-sop-pipeline-redesign-phase-1 — StrictJsonClassifierAdapter with 2-reparse budget"
+            ],
+            "symbols_matched": []
+          },
+          "files": [
+            "hex-nexus/src/orchestration/classifier_adapter.rs"
+          ],
+          "id": "P3.1",
+          "layer": "secondary",
+          "name": "Implement StrictJsonClassifierAdapter with 2-reparse budget",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "description": "Primary adapter rewrite. Replace the off-contract-drop + Silent-handling block in hex-nexus/src/orchestration/org_responder.rs (currently around L673-744) with a structured dispatch that calls StrictJsonClassifierAdapter, persists ClassifierResponse to STDB, and routes per decision: accept→open commitment with tool_plan; defer→reply with reason; route→forward DM to target_persona; clarify→reply with question; reject→reply with reason; request_tool→escalate to operator inbox. Keeps the existing chat_mode bypass intact (chat asks still use the conversational prompt, unchanged). The d2b3f06e operator-Silent-ban code path is removed in favor of the schema invariant being enforced upstream in P1.2.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo build -p hex-nexus --release",
+        "type": "build"
+      },
+      "id": "P4",
+      "name": "Replace org_responder Confirm/Silent dispatch with structured-decision router",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1",
+            "P1.2",
+            "P2.1",
+            "P3.1"
+          ],
+          "description": "In hex-nexus/src/orchestration/org_responder.rs: replace persona_prompt() with a JSON-output variant that documents the new schema (decision enum + per-decision required fields + the from=operator invariant). Replace the post-inference Confirm/Silent parser block (currently L673-744) with: let classifier = StrictJsonClassifierAdapter::new(...); let (resp, attempts) = classifier.classify(&system_prompt, &user_msg, from == \"operator\").await?; ctx.db.classifier_response_open(msg_id, from, role, resp.decision.to_string(), serde_json::to_string(&resp.tool_plan)?, resp.reason.unwrap_or_default(), resp.target_persona.unwrap_or_default(), resp.question.unwrap_or_default(), serde_json::to_string(&resp.tool_spec)?, attempts, \"parsed\", resp.cost_usd); then match resp.decision and route. Remove the d2b3f06e Silent-ban early-return — the invariant now lives in the parser. Keep chat_mode bypass + existing CC-to-peer logic untouched. Update the off-contract handler to invoke the operator-inbox escalation primitive (P5.1) instead of mark_read+continue.",
+          "evidence": {
+            "files_found": [
+              "hex-nexus/src/orchestration/org_responder.rs"
+            ],
+            "matching_commits": [
+              "e361a1ab5ee4616c66bdc354b5d48c3b7ce22a41 primary(p4.1): wp-sop-pipeline-redesign-phase-1 — rewrite org_responder dispatch with structured-decision router",
+              "707493c90139a3c1eca13879c6985ba026ae8688 primary(p4.1): wp-sop-pipeline-redesign-phase-1 — Rewrite classifier prompt + dispatch in org_responder.rs"
+            ],
+            "symbols_matched": []
+          },
+          "files": [
+            "hex-nexus/src/orchestration/org_responder.rs"
+          ],
+          "id": "P4.1",
+          "layer": "primary",
+          "name": "Rewrite classifier prompt + dispatch in org_responder.rs",
+          "status": "done",
+          "strategy_hint": "inference"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "description": "Usecase wiring: when StrictJsonClassifierAdapter returns InvariantError (budget exhausted or operator-invariant violation), write a classifier_response row with final_outcome=escalated and notify the operator's inbox via the existing agent_inbox primitive. This is the structural replacement for the existing d2b3f06e decline-DM-back-to-operator handler.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo build -p hex-nexus --release",
+        "type": "build"
+      },
+      "id": "P5",
+      "name": "Operator-inbox escalation on reparse-budget exhaustion",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P2.1",
+            "P3.1",
+            "P4.1"
+          ],
+          "description": "Add fn escalate_classifier_failure(comm, db, msg_id, from, to, err: InvariantError, attempts: u32). Behavior: (1) insert classifier_response row with final_outcome=escalated/invariant_violation + reparse_attempts=attempts; (2) call comm.send_inbox_notify(\"operator\", priority=2, title=format!(\"classifier escalation for msg {}\", msg_id), body containing the original message + err + attempt count); (3) WARN-level tracing log. Call sites: org_responder match-arm on classifier.classify() Err and the operator-invariant violation arm. Add an integration test exercising malformed×3 → escalation path: assert exactly one inbox row + one classifier_response row with final_outcome=escalated.",
+          "evidence": {
+            "files_found": [
+              "hex-nexus/src/orchestration/org_responder.rs"
+            ],
+            "matching_commits": [
+              "653261a652ca3fbc80fe50c8e0a3a769c5e36ff2 primary(p5.1): wp-sop-pipeline-redesign-phase-1 — escalate_classifier_failure unit tests + verification"
+            ],
+            "symbols_matched": []
+          },
+          "files": [
+            "hex-nexus/src/orchestration/org_responder.rs"
+          ],
+          "id": "P5.1",
+          "layer": "primary",
+          "name": "Escalation helper + agent_inbox notify on parser exhaustion",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "description": "End-to-end fixtures + the dashboard query that will measure the 48h acceptance gate. Pure tests + a SQL view — no production behavior change. Closes Phase 1.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-nexus --test classifier_pipeline",
+        "type": "test"
+      },
+      "id": "P6",
+      "name": "Integration tests + acceptance-gate observability",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P4.1",
+            "P5.1"
+          ],
+          "description": "New integration test file hex-nexus/tests/classifier_pipeline.rs. Spin up a MockInferenceTransport + an in-memory comm + the real StrictJsonClassifierAdapter + a stubbed STDB writer. For each of the 6 decision variants × {from=operator, from=peer}, send a canned LLM response and assert: (a) correct downstream call (open_commitment / send_dm / forward_dm / inbox_notify); (b) classifier_response row written with the right decision; (c) for from=operator with decision∈{defer,reject}: zero downstream sends, one escalation, one inbox_notify. Final assertion: across 12 cases, zero silent drops (no case where mark_read fires without an artifact).",
+          "evidence": {
+            "files_found": [
+              "hex-nexus/tests/classifier_pipeline.rs"
+            ],
+            "matching_commits": [
+              "8ab917599bb68c640b6234487ee22de2aec32e1b primary(p6.1): wp-sop-pipeline-redesign-phase-1 — end-to-end classifier pipeline integration test"
+            ],
+            "symbols_matched": []
+          },
+          "files": [
+            "hex-nexus/tests/classifier_pipeline.rs"
+          ],
+          "id": "P6.1",
+          "layer": "primary",
+          "name": "End-to-end pipeline test: 6 decisions × from={operator,peer}",
+          "status": "done",
+          "strategy_hint": "codegen"
+        },
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P2.1"
+          ],
+          "description": "Add a GET /api/observability/silent-drops route. Query: count classifier_response rows where from_role='operator' AND final_outcome='silent_drop' in the last 48h. Expected value after Phase 1 deploy: 0. Wire it into the dashboard summary card via the existing observability route module. No new dashboard UI required for Phase 1 — the JSON endpoint is enough to verify the acceptance gate with curl + jq. Document the gate verification one-liner in docs/specs/sop-phase1-acceptance.md (one-paragraph file is fine).",
+          "evidence": {
+            "files_found": [
+              "hex-nexus/src/routes/observability.rs"
+            ],
+            "matching_commits": [
+              "78b73253cd5b0acdf9f6536f5e1a7997ae2eed90 secondary(p6.2): wp-sop-pipeline-redesign-phase-1 — silent-drop counter SQL view + /api/observability/silent-drops"
+            ],
+            "symbols_matched": []
+          },
+          "files": [
+            "hex-nexus/src/routes/observability.rs"
+          ],
+          "id": "P6.2",
+          "layer": "secondary",
+          "name": "Silent-drop counter SQL view for the 48h acceptance gate",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 4
+    }
   ],
-  "notes": "This is a draft created by ADR-2026-04-11-0227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up.",
-  "origin": "auto-invoke",
+  "priority": "high",
   "prompt": "Implement Phase 1 of ADR-2026-05-17-2030 SOP pipeline redesign: replace the org_responder Confirm/Silent prose contract with structured JSON output (decision enum: accept|defer|route|clarify|reject|request_tool, plus tool_plan/reason/target_persona/question fields). Add classifier_response STDB table. Add 2-reparse retry budget on malformed JSON, escalating to operator inbox on exhaustion. For from=operator, schema-enforce decision in {accept, route, clarify, request_tool} only. Acceptance gate: zero Silent-drops on from=operator traffic for 48h after deploy (already partially shipped via d2b3f06e — full Phase 1 finishes the structured-output rewrite).",
-  "status": "pending-planner"
+  "status": "done"
 }

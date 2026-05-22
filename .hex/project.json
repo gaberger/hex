@@ -9,6 +9,7 @@
       "t1": "qwen3:4b",
       "t2": "qwen2.5-coder:14b",
       "t2.5": "qwen2.5-coder:14b"
-    }
+    },
+    "timeout_secs": 600
   }
 }
