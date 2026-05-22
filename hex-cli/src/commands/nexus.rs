@@ -402,6 +402,15 @@ async fn start(port: u16, bind: &str, token: Option<&str>, _no_agent: bool) -> a
             "cto,cpo,coo,ciso,chief-visionary,chief-architect",
         );
     }
+    // Cap glibc per-thread malloc arenas. Default is 8 × num_cpus → up to 256
+    // arenas on a 32-core box, each pulling 128 MB chunks via mmap. Measured
+    // 2026-05-22: 15h-uptime nexus with default arenas held 25 GB RSS across
+    // 390 anon regions; ARENA_MAX=2 brought the same workload to 3 GB / 67
+    // regions with a 30% CPU reduction (less arena-lock contention). User-set
+    // env wins.
+    if std::env::var("MALLOC_ARENA_MAX").is_err() {
+        cmd.env("MALLOC_ARENA_MAX", "2");
+    }
     let child = cmd.stdout(log).stderr(log_err).spawn()?;
 
     let pid = child.id();
