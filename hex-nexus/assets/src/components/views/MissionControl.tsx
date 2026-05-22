@@ -34,6 +34,50 @@ interface Payload {
 }
 
 const REFRESH_MS = 5000;
+
+// P2.1 (wp-dashboard-ux-remediation-2026-05-22): filter chips collapsed
+// from 10 dead sidebar entries. Each chip narrows `attention_feed` to
+// items whose `kind` starts with the listed prefixes. `All` clears the
+// filter. The selected chip lives in the hash as `?filter=<id>` so the
+// URL is shareable AND backwards-compatible with the redirector in
+// app/App.tsx::LEGACY_HASH_REDIRECTS.
+interface ChipDef { id: string; label: string; prefixes: string[]; }
+const FILTER_CHIPS: ChipDef[] = [
+  { id: "brain",           label: "Brain",         prefixes: ["brain_"] },
+  { id: "brain-decisions", label: "Decisions",     prefixes: ["brain_decision", "decision_", "proposed_action"] },
+  { id: "merge-gate",      label: "Merge Gate",    prefixes: ["merge_"] },
+  { id: "persona-health",  label: "Personas",      prefixes: ["persona_"] },
+  { id: "thoughts",        label: "Thoughts",      prefixes: ["thought_"] },
+  { id: "resources",       label: "Resources",     prefixes: ["resource_"] },
+  { id: "commitments",     label: "Commitments",   prefixes: ["commitment_"] },
+  { id: "missions",        label: "Missions",      prefixes: ["mission_", "workplan_"] },
+  { id: "ops-sla",         label: "Ops SLA",       prefixes: ["ops_", "sla_"] },
+  { id: "agent-runs",      label: "Agent Runs",    prefixes: ["agent_"] },
+];
+
+/** Pull `?filter=<id>` out of a hash like `#/mission-control?filter=brain`. */
+function readFilterFromHash(): string {
+  if (typeof window === "undefined") return "";
+  const h = window.location.hash;
+  const q = h.indexOf("?");
+  if (q < 0) return "";
+  const params = new URLSearchParams(h.slice(q + 1));
+  return params.get("filter") || "";
+}
+
+/** Write `?filter=<id>` into the hash without losing the route prefix. */
+function writeFilterToHash(filterId: string) {
+  if (typeof window === "undefined") return;
+  const h = window.location.hash || "#/mission-control";
+  const q = h.indexOf("?");
+  const base = q >= 0 ? h.slice(0, q) : h;
+  // Always anchor at mission-control so a fresh write from any chip
+  // lands on the canonical surface even if the operator clicked through
+  // from an alias.
+  const anchor = base.startsWith("#/mission-control") ? base : "#/mission-control";
+  const next = filterId ? `${anchor}?filter=${filterId}` : anchor;
+  if (next !== h) window.location.hash = next;
+}
 // Workspaces — different role sets per workflow. The c-suite makes
 // sense for software development; marketing and research need their
 // own personas. Backend org_responder recognizes all of these (see
@@ -151,6 +195,24 @@ const MissionControl: Component = () => {
   const [attnBusy, setAttnBusy] = createSignal<string | null>(null);
   const [attnSuppressed, setAttnSuppressed] = createSignal<Set<string>>(new Set());
   const [expandedGroups, setExpandedGroups] = createSignal<Set<string>>(new Set());
+
+  // P2.1: chip filter id (empty string = "All"). Reads from `?filter=`
+  // on mount + on hashchange so the URL is the source of truth. Chip
+  // clicks call writeFilterToHash → hashchange → setFilter.
+  const [filter, setFilter] = createSignal<string>(readFilterFromHash());
+  const onHashChange = () => setFilter(readFilterFromHash());
+  onMount(() => { window.addEventListener("hashchange", onHashChange); });
+  onCleanup(() => { window.removeEventListener("hashchange", onHashChange); });
+  const chipPrefixes = createMemo<string[]>(() => {
+    const id = filter();
+    if (!id) return [];
+    return FILTER_CHIPS.find((c) => c.id === id)?.prefixes || [];
+  });
+  const matchesFilter = (kind: string): boolean => {
+    const ps = chipPrefixes();
+    if (ps.length === 0) return true;
+    return ps.some((p) => kind.startsWith(p));
+  };
 
   // Group key for collapsing duplicate anomalies. Tuple of
   // (kind, priority, title.slice(0,30)) — used for both stream
@@ -359,6 +421,8 @@ const MissionControl: Component = () => {
     const groups = new Map<string, AttentionItem[]>();
     for (const i of (d.attention_feed || [])) {
       if (sup.has(i.id)) continue;
+      // P2.1: chip filter — narrow by attention kind prefix (client-side).
+      if (!matchesFilter(i.kind)) continue;
       const key = groupKeyFor(i);
       if (sup.has(key)) continue;
       if (seenIds.has(i.id)) continue;
@@ -517,6 +581,43 @@ const MissionControl: Component = () => {
           </button>
         </div>
       </header>
+
+      {/* P2.1: filter chip row — collapses the 10 dead sidebar items
+          (Brain / Decisions / Merge Gate / Personas / Thoughts /
+          Resources / Commitments / Missions / Ops SLA / Agent Runs)
+          into in-surface filters over `attention_feed`. */}
+      <div
+        class="px-6 py-2 border-b border-zinc-800 flex items-center gap-1.5 overflow-x-auto text-[11px]"
+        role="tablist"
+        aria-label="Attention filter"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={filter() === ""}
+          class="px-2.5 py-0.5 rounded-full border whitespace-nowrap transition-colors"
+          classList={{
+            "border-cyan-600 bg-cyan-900/40 text-cyan-100": filter() === "",
+            "border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500": filter() !== "",
+          }}
+          onClick={() => writeFilterToHash("")}
+          title="Show all attention items"
+        >All</button>
+        <For each={FILTER_CHIPS}>{(chip) => (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={filter() === chip.id}
+            class="px-2.5 py-0.5 rounded-full border whitespace-nowrap transition-colors"
+            classList={{
+              "border-cyan-600 bg-cyan-900/40 text-cyan-100": filter() === chip.id,
+              "border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500": filter() !== chip.id,
+            }}
+            onClick={() => writeFilterToHash(chip.id)}
+            title={`Show only ${chip.label.toLowerCase()} attention items (kind: ${chip.prefixes.join(", ")})`}
+          >{chip.label}</button>
+        )}</For>
+      </div>
 
       <Show when={error()}>
         <div class="px-6 py-2 bg-red-950/40 border-b border-red-900 text-red-300 text-xs">{error()}</div>

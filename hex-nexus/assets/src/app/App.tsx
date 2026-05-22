@@ -36,20 +36,10 @@ const InboxPanel = lazy(() => import('../components/inbox/InboxPanel'));
 const ResearchLab = lazy(() => import('../components/neural-lab/ResearchLab'));
 const SwapsView = lazy(() => import('../components/swaps/SwapsView'));
 const ActivityPanel = lazy(() => import('../components/views/ActivityPanel'));
-const BrainDecisions = lazy(() => import('../components/views/BrainDecisions'));
-const Brain = lazy(() => import('../components/views/Brain'));
 const OrgChart = lazy(() => import('../components/views/OrgChart'));
 const OrgComms = lazy(() => import('../components/views/OrgComms'));
 const TeamDashboard = lazy(() => import('../components/views/TeamDashboard'));
-const MergeGate = lazy(() => import('../components/views/MergeGate'));
-const PersonaHealth = lazy(() => import('../components/views/PersonaHealth'));
-const Thoughts = lazy(() => import('../components/views/Thoughts'));
-const Resources = lazy(() => import('../components/views/Resources'));
-const Commitments = lazy(() => import('../components/views/Commitments'));
 const MissionControl = lazy(() => import('../components/views/MissionControl'));
-const Missions = lazy(() => import('../components/views/Missions'));
-const OpsSla = lazy(() => import('../components/views/OpsSla'));
-const AgentRuns = lazy(() => import('../components/views/AgentRuns'));
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
 
@@ -258,53 +248,53 @@ const App: Component = () => {
     window.removeEventListener('keydown', handleKeyboard);
   });
 
-  // ADR-2026-05-15: single-surface operator console. The standalone
-  // Resources / Commitments / MergeGate / PersonaHealth / Thoughts /
-  // Brain / AgentRuns / Missions / OpsSla pages now all render Mission
-  // Control so the operator never switches off the dense single page.
-  // The drill-down hashes (#/resources, #/commitments, …) stay valid
-  // for backward compat — they just point at the same surface now.
-  const DRILLDOWN_PAGES = new Set<string>([
-    "resources",
-    "commitments",
-    "merge-gate",
-    "persona-health",
-    "thoughts",
-    "brain",
-    "brain-decisions",
-    "ops-sla",
-    "missions",
-    "mission-detail",
-    "agent-runs",
-  ]);
-  const isBrainPage = () => false;
+  // P2.1 (wp-dashboard-ux-remediation-2026-05-22): drill-down hashes
+  // (#/brain, #/resources, …) used to alias to Mission Control via a
+  // DRILLDOWN_PAGES set, leaving 11 dead sidebar links. They are now
+  // redirected to #/mission-control?filter=<name> by the legacy-hash
+  // redirector (see onMount below). Only OrgChart / OrgComms / Team
+  // still render full-screen outside Mission Control.
   const isOrgChartPage = () => route().page === "org-chart";
   const isOrgCommsPage = () => route().page === "org-comms";
   const isTeamPage = () => route().page === "team";
-  const isMergeGatePage = () => false;
-  const isPersonaHealthPage = () => false;
-  const isThoughtsPage = () => false;
-  const isResourcesPage = () => false;
-  const isCommitmentsPage = () => false;
-  const isMissionControlPage = () =>
-    route().page === "mission-control" || DRILLDOWN_PAGES.has(route().page);
-  const isAgentRunsPage = () => false;
-  const isMissionsPage = () => false;
-  const isOpsSlaPage = () => false;
+  const isMissionControlPage = () => route().page === "mission-control";
+
+  // ── Legacy-hash redirect ──
+  // Bookmarks for the dead drill-down pages are rewritten to the
+  // canonical surface with a filter chip pre-selected.
+  const LEGACY_HASH_REDIRECTS: Record<string, string> = {
+    "#/brain": "#/mission-control?filter=brain",
+    "#/decisions": "#/mission-control?filter=brain-decisions",
+    "#/merge-gate": "#/mission-control?filter=merge-gate",
+    "#/persona-health": "#/mission-control?filter=persona-health",
+    "#/thoughts": "#/mission-control?filter=thoughts",
+    "#/resources": "#/mission-control?filter=resources",
+    "#/commitments": "#/mission-control?filter=commitments",
+    "#/missions": "#/mission-control?filter=missions",
+    "#/ops-sla": "#/mission-control?filter=ops-sla",
+    "#/agent-runs": "#/mission-control?filter=agent-runs",
+  };
+  const maybeRedirectLegacyHash = () => {
+    const h = window.location.hash;
+    // Strip any query suffix so "#/brain?foo=bar" still matches.
+    const bare = h.split("?")[0];
+    const target = LEGACY_HASH_REDIRECTS[bare];
+    if (target) {
+      const qIdx = h.indexOf("?");
+      const suffix = qIdx >= 0 && !target.includes("?") ? h.slice(qIdx) : "";
+      window.location.replace(target + suffix);
+    }
+  };
+  onMount(() => {
+    maybeRedirectLegacyHash();
+    window.addEventListener("hashchange", maybeRedirectLegacyHash);
+  });
+  onCleanup(() => {
+    window.removeEventListener("hashchange", maybeRedirectLegacyHash);
+  });
 
   return (
     <>
-      {/* Full-screen Brain page */}
-      <Show when={isBrainPage()}>
-        <ConnectionStatusBanner />
-        <Brain />
-        <SpawnDialog />
-        <SwarmInitDialog />
-        <CommandPalette />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
-
       {/* Full-screen OrgChart page */}
       <Show when={isOrgChartPage()}>
         <ConnectionStatusBanner />
@@ -329,46 +319,6 @@ const App: Component = () => {
         <ShortcutsOverlay />
       </Show>
 
-      {/* Full-screen Merge Gate (ADR-2026-05-08-1126) */}
-      <Show when={isMergeGatePage()}>
-        <ConnectionStatusBanner />
-        <MergeGate />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
-
-      {/* Full-screen Persona Health */}
-      <Show when={isPersonaHealthPage()}>
-        <ConnectionStatusBanner />
-        <PersonaHealth />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
-
-      {/* Full-screen Thought stream */}
-      <Show when={isThoughtsPage()}>
-        <ConnectionStatusBanner />
-        <Thoughts />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
-
-      {/* Full-screen Resources */}
-      <Show when={isResourcesPage()}>
-        <ConnectionStatusBanner />
-        <Resources />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
-
-      {/* Full-screen Commitments */}
-      <Show when={isCommitmentsPage()}>
-        <ConnectionStatusBanner />
-        <Commitments />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
-
       {/* Full-screen Mission Control */}
       <Show when={isMissionControlPage()}>
         <ConnectionStatusBanner />
@@ -377,42 +327,8 @@ const App: Component = () => {
         <ShortcutsOverlay />
       </Show>
 
-      {/* Full-screen Missions (workplans-as-missions rollup, B6) */}
-      <Show when={isMissionsPage()}>
-        <ConnectionStatusBanner />
-        <Missions />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
-
-      {/* Full-screen Operator-Acceptance SLA tile */}
-      <Show when={isOpsSlaPage()}>
-        <ConnectionStatusBanner />
-        <OpsSla />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
-
-      {/* Full-screen Agent Runs (hex agent run execution stream) */}
-      <Show when={isAgentRunsPage()}>
-        <ConnectionStatusBanner />
-        <div class="flex flex-col bg-gray-950 min-h-screen text-gray-100">
-          <div class="px-6 py-4 border-b border-gray-800">
-            <h1 class="text-2xl font-bold">Agent Runs</h1>
-            <p class="text-gray-400 text-xs mt-1">
-              Recent <code class="text-cyan-300">hex agent run</code> executions · flat-loop typed-tool dispatches
-            </p>
-          </div>
-          <div class="px-6 py-4">
-            <AgentRuns runs={[]} />
-          </div>
-        </div>
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
-
       {/* Standard layout with sidebar for all other pages */}
-      <Show when={!isBrainPage() && !isOrgChartPage() && !isOrgCommsPage() && !isTeamPage() && !isMergeGatePage() && !isPersonaHealthPage() && !isThoughtsPage() && !isResourcesPage() && !isCommitmentsPage() && !isMissionControlPage() && !isMissionsPage() && !isOpsSlaPage() && !isAgentRunsPage()}>
+      <Show when={!isOrgChartPage() && !isOrgCommsPage() && !isTeamPage() && !isMissionControlPage()}>
         <div class="flex h-screen flex-col bg-gray-950 text-gray-100">
           {/* Connection status banner — shown when nexus or SpacetimeDB is unavailable */}
           <ConnectionStatusBanner />
@@ -695,197 +611,13 @@ const App: Component = () => {
               </svg>
               <Show when={!sidebarCollapsed()}>Research Lab</Show>
             </button>
-            {/* Mission Control is rendered at the top of the sidebar (P1.3) */}
-            {/* Agent Runs — hex agent run execution stream */}
-            <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
-              classList={{
-                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "agent-runs",
-                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "agent-runs",
-                "justify-center px-0": sidebarCollapsed(),
-              }}
-              aria-label={sidebarCollapsed() ? "Agent Runs" : undefined}
-              aria-current={route().page === "agent-runs" ? "page" : undefined}
-              onClick={() => { navigate({ page: "agent-runs" }); setMobileDrawerOpen(false); }}
-            >
-              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                classList={{ "text-cyan-400": route().page === "agent-runs" }}>
-                <path d="M8 5v14l11-7z" />
-              </svg>
-              <Show when={!sidebarCollapsed()}>Agent Runs</Show>
-            </button>
-            {/* Missions — workplans-as-missions rollup (B6, Factory paradigm) */}
-            <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
-              classList={{
-                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "missions" || route().page === "mission-detail",
-                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "missions" && route().page !== "mission-detail",
-                "justify-center px-0": sidebarCollapsed(),
-              }}
-              aria-label={sidebarCollapsed() ? "Missions" : undefined}
-              aria-current={(route().page === "missions" || route().page === "mission-detail") ? "page" : undefined}
-              onClick={() => { navigate({ page: "missions" }); setMobileDrawerOpen(false); }}
-            >
-              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                classList={{ "text-cyan-400": route().page === "missions" || route().page === "mission-detail" }}>
-                <path d="M9 11l3 3L22 4" />
-                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-              </svg>
-              <Show when={!sidebarCollapsed()}>Missions</Show>
-            </button>
-            {/* Operator-Acceptance SLA tile */}
-            <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
-              classList={{
-                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "ops-sla",
-                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "ops-sla",
-                "justify-center px-0": sidebarCollapsed(),
-              }}
-              aria-label={sidebarCollapsed() ? "Ops SLA" : undefined}
-              aria-current={route().page === "ops-sla" ? "page" : undefined}
-              onClick={() => { navigate({ page: "ops-sla" }); setMobileDrawerOpen(false); }}
-            >
-              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                classList={{ "text-cyan-400": route().page === "ops-sla" }}>
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-              </svg>
-              <Show when={!sidebarCollapsed()}>Ops SLA</Show>
-            </button>
-            {/* Brain — full three-pane (TEAM | KANBAN+DECISIONS+SWARMS+HEALTH | CHAT) */}
-            <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
-              classList={{
-                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "brain",
-                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "brain",
-                "justify-center px-0": sidebarCollapsed(),
-              }}
-              aria-label={sidebarCollapsed() ? "Brain" : undefined}
-              aria-current={route().page === "brain" ? "page" : undefined}
-              onClick={() => { navigate({ page: "brain" }); setMobileDrawerOpen(false); }}
-            >
-              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                classList={{ "text-cyan-400": route().page === "brain" }}>
-                <path d="M9.5 2A2.5 2.5 0 007 4.5v15A2.5 2.5 0 009.5 22h0a2.5 2.5 0 002.5-2.5v-15A2.5 2.5 0 009.5 2z" />
-                <path d="M14.5 2A2.5 2.5 0 0112 4.5v15a2.5 2.5 0 002.5 2.5h0a2.5 2.5 0 002.5-2.5v-15A2.5 2.5 0 0014.5 2z" />
-              </svg>
-              <Show when={!sidebarCollapsed()}>Brain</Show>
-            </button>
-            {/* Brain Decisions (wp-brain-dashboard M1) */}
-            <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
-              classList={{
-                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "brain-decisions",
-                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "brain-decisions",
-                "justify-center px-0": sidebarCollapsed(),
-              }}
-              aria-label={sidebarCollapsed() ? "Decisions" : undefined}
-              aria-current={route().page === "brain-decisions" ? "page" : undefined}
-              onClick={() => { navigate({ page: "brain-decisions" }); setMobileDrawerOpen(false); }}
-            >
-              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                classList={{ "text-cyan-400": route().page === "brain-decisions" }}>
-                <path d="M9 11l3 3L22 4" />
-                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-              </svg>
-              <Show when={!sidebarCollapsed()}>Decisions</Show>
-            </button>
-            {/* Merge Gate (ADR-2026-05-08-1126) */}
-            <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
-              classList={{
-                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "merge-gate",
-                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "merge-gate",
-                "justify-center px-0": sidebarCollapsed(),
-              }}
-              aria-label={sidebarCollapsed() ? "Merge Gate" : undefined}
-              aria-current={route().page === "merge-gate" ? "page" : undefined}
-              onClick={() => { navigate({ page: "merge-gate" }); setMobileDrawerOpen(false); }}
-            >
-              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                classList={{ "text-cyan-400": route().page === "merge-gate" }}>
-                <circle cx="6" cy="6" r="3" />
-                <circle cx="6" cy="18" r="3" />
-                <circle cx="18" cy="6" r="3" />
-                <path d="M6 9v6" />
-                <path d="M9 6h6" />
-              </svg>
-              <Show when={!sidebarCollapsed()}>Merge Gate</Show>
-            </button>
-            {/* Persona Health */}
-            <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
-              classList={{
-                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "persona-health",
-                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "persona-health",
-                "justify-center px-0": sidebarCollapsed(),
-              }}
-              aria-label={sidebarCollapsed() ? "Persona Health" : undefined}
-              aria-current={route().page === "persona-health" ? "page" : undefined}
-              onClick={() => { navigate({ page: "persona-health" }); setMobileDrawerOpen(false); }}
-            >
-              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                classList={{ "text-cyan-400": route().page === "persona-health" }}>
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-              </svg>
-              <Show when={!sidebarCollapsed()}>Personas</Show>
-            </button>
-            {/* Thoughts */}
-            <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
-              classList={{
-                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "thoughts",
-                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "thoughts",
-                "justify-center px-0": sidebarCollapsed(),
-              }}
-              aria-label={sidebarCollapsed() ? "Thoughts" : undefined}
-              aria-current={route().page === "thoughts" ? "page" : undefined}
-              onClick={() => { navigate({ page: "thoughts" }); setMobileDrawerOpen(false); }}
-            >
-              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                classList={{ "text-cyan-400": route().page === "thoughts" }}>
-                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-              </svg>
-              <Show when={!sidebarCollapsed()}>Thoughts</Show>
-            </button>
-            {/* Resources (ADR-2026-05-08-2200) */}
-            <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
-              classList={{
-                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "resources",
-                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "resources",
-                "justify-center px-0": sidebarCollapsed(),
-              }}
-              aria-label={sidebarCollapsed() ? "Resources" : undefined}
-              aria-current={route().page === "resources" ? "page" : undefined}
-              onClick={() => { navigate({ page: "resources" }); setMobileDrawerOpen(false); }}
-            >
-              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                classList={{ "text-cyan-400": route().page === "resources" }}>
-                <rect x="2" y="3" width="20" height="14" rx="2" />
-                <line x1="8" y1="21" x2="16" y2="21" />
-                <line x1="12" y1="17" x2="12" y2="21" />
-              </svg>
-              <Show when={!sidebarCollapsed()}>Resources</Show>
-            </button>
-            {/* Commitments */}
-            <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
-              classList={{
-                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "commitments",
-                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "commitments",
-                "justify-center px-0": sidebarCollapsed(),
-              }}
-              aria-label={sidebarCollapsed() ? "Commitments" : undefined}
-              aria-current={route().page === "commitments" ? "page" : undefined}
-              onClick={() => { navigate({ page: "commitments" }); setMobileDrawerOpen(false); }}
-            >
-              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                classList={{ "text-cyan-400": route().page === "commitments" }}>
-                <path d="M9 11l3 3L22 4" />
-                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-              </svg>
-              <Show when={!sidebarCollapsed()}>Commitments</Show>
-            </button>
+            {/* P2.1 (wp-dashboard-ux-remediation-2026-05-22):
+                Brain, Brain Decisions, Merge Gate, Persona Health,
+                Thoughts, Resources, Commitments, Missions, Ops SLA,
+                Agent Runs were removed from the sidebar — all 10 alias
+                to Mission Control. They are now reachable via the
+                filter-chip row at the top of Mission Control, and old
+                bookmarks redirect via LEGACY_HASH_REDIRECTS above. */}
             {/* Substrate Swaps (ADR-2026-04-26-1500) */}
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
@@ -947,8 +679,6 @@ const App: Component = () => {
             <Match when={route().page === "fleet"}><ControlPlane /></Match>
             <Match when={route().page === "research-lab"}><ResearchLab /></Match>
             <Match when={route().page === "swaps"}><SwapsView /></Match>
-            <Match when={route().page === "brain-decisions"}><BrainDecisions /></Match>
-            <Match when={route().page === "brain"}><Brain /></Match>
             <Match when={route().page === "org-chart"}><OrgChart /></Match>
           </Switch>
           {/* BottomBar -- inside center content so it doesn't span under sidebar */}
