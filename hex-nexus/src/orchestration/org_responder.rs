@@ -1954,4 +1954,276 @@ mod tests {
         assert!(!is_conversational("patch hex-cli"));
         assert!(!is_conversational(""));
     }
+
+    // ============================================================================
+    // P5.1 — escalate_classifier_failure I/O contract
+    // ============================================================================
+    //
+    // Verifies the three observable side-effects of `escalate_classifier_failure`
+    // (added by P4.1) against a mock STDB:
+    //   (a) writes a `classifier_response` row via the `classifier_response_open`
+    //       reducer with the correct `(final_outcome, reparse_attempts,
+    //       decision_label)` tuple per InvariantError variant;
+    //   (b) raises an operator inbox notification via the `notify_agent` reducer
+    //       with priority=2 and kind="classifier_escalation";
+    //   (c) marks the source DM read via the agent-comms adapter.
+    //
+    // Tests are serialised via `crate::adapters::test_env_lock` because they
+    // mutate the process-wide HEX_SPACETIMEDB_HOST + HEX_STDB_DATABASE env vars.
+    // The `EnvGuard` pattern mirrors `adapters::spacetime_state::p4_2_rediscovery_tests`.
+
+    mod p5_1_escalate_classifier_failure {
+        use super::super::*;
+        use crate::adapters::spacetime_agent_comm::SpacetimeAgentCommAdapter;
+        use crate::orchestration::classifier_parser::InvariantError;
+        use crate::orchestration::classifier_types::ClassifierDecision;
+        use httpmock::prelude::*;
+        use std::sync::Arc;
+        use tokio::sync::OwnedMutexGuard;
+
+        const ENV_KEYS: &[&str] = &["HEX_SPACETIMEDB_HOST", "HEX_STDB_DATABASE"];
+
+        struct EnvGuard {
+            keys: Vec<(&'static str, Option<String>)>,
+            _lock: OwnedMutexGuard<()>,
+        }
+        impl EnvGuard {
+            async fn capture(keys: &[&'static str]) -> Self {
+                let lock = crate::adapters::test_env_lock().lock_owned().await;
+                let snapshot = keys
+                    .iter()
+                    .map(|k| (*k, std::env::var(k).ok()))
+                    .collect();
+                Self { keys: snapshot, _lock: lock }
+            }
+        }
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                for (k, v) in &self.keys {
+                    match v {
+                        Some(val) => std::env::set_var(k, val),
+                        None => std::env::remove_var(k),
+                    }
+                }
+            }
+        }
+
+        /// Database segment used in the mocked reducer paths. Matches the
+        /// `HEX_STDB_DATABASE` env var we set in each test.
+        const TEST_DB: &str = "p5_1_test";
+
+        /// Catch-all 200 OK for any `/v1/database/<db>/call/<reducer>` POST
+        /// so unmatched calls don't 404 and break the helper's mark_read step.
+        fn mount_catchall(server: &MockServer) {
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path_matches(regex::Regex::new(r"^/v1/database/[^/]+/call/.*$").unwrap());
+                then.status(200).body("");
+            });
+        }
+
+        fn mount_classifier_open_matcher<'a>(
+            server: &'a MockServer,
+            expected_outcome: &str,
+            expected_attempts: u32,
+            expected_decision_label: &str,
+        ) -> httpmock::Mock<'a> {
+            // classifier_response_open body is positional:
+            //   [msg_id, from, to, decision, tool_plan_json, reason,
+            //    target_persona, question, tool_spec_json, reparse_attempts,
+            //    final_outcome, cost_usd]
+            // Match by substring so we're not coupled to JSON key ordering.
+            let outcome_marker = format!(",\"{expected_outcome}\",");
+            let attempts_marker = format!(",{expected_attempts},");
+            let decision_marker = format!(",\"{expected_decision_label}\",");
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path_matches(regex::Regex::new(r"^/v1/database/[^/]+/call/classifier_response_open$").unwrap())
+                    .body_contains(outcome_marker)
+                    .body_contains(attempts_marker)
+                    .body_contains(decision_marker);
+                then.status(200).body("");
+            })
+        }
+
+        fn mount_notify_priority_matcher<'a>(server: &'a MockServer) -> httpmock::Mock<'a> {
+            // notify_agent body: [agent_id, priority, kind, payload, ts]
+            // Match priority=2 + the `classifier_escalation` kind literal.
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path_matches(regex::Regex::new(r"^/v1/database/[^/]+/call/notify_agent$").unwrap())
+                    .body_contains("\"operator\"")
+                    .body_contains(",2,")
+                    .body_contains("\"classifier_escalation\"");
+                then.status(200).body("");
+            })
+        }
+
+        fn mount_mark_read_matcher<'a>(server: &'a MockServer, role: &str, msg_id: u64) -> httpmock::Mock<'a> {
+            // The SpacetimeAgentCommAdapter `mark_read` reducer takes
+            // [agent, message_id]. Match positionally.
+            let agent_marker = format!("\"{role}\"");
+            let id_marker = format!(",{msg_id}");
+            server.mock(|when, then| {
+                when.method(POST)
+                    .path_matches(regex::Regex::new(r"^/v1/database/[^/]+/call/mark_read$").unwrap())
+                    .body_contains(agent_marker)
+                    .body_contains(id_marker);
+                then.status(200).body("");
+            })
+        }
+
+        async fn setup_env(server_url: &str) -> EnvGuard {
+            let g = EnvGuard::capture(ENV_KEYS).await;
+            std::env::set_var("HEX_SPACETIMEDB_HOST", server_url);
+            std::env::set_var("HEX_STDB_DATABASE", TEST_DB);
+            g
+        }
+
+        fn build_comm(server_url: &str) -> Arc<SpacetimeAgentCommAdapter> {
+            Arc::new(SpacetimeAgentCommAdapter::new(
+                server_url.to_string(),
+                TEST_DB.to_string(),
+            ))
+        }
+
+        #[tokio::test]
+        async fn malformed_json_after_budget_exhaust_writes_escalated_with_attempts_3() {
+            let server = MockServer::start();
+            let _g = setup_env(&server.base_url()).await;
+
+            // Specific matcher for the (escalated, 3, invariant_error) row.
+            let classifier_mock = mount_classifier_open_matcher(
+                &server,
+                "escalated",
+                3,
+                "invariant_error",
+            );
+            // Catch-all AFTER the specific mock so the specific one wins.
+            mount_catchall(&server);
+
+            let comm = build_comm(&server.base_url());
+            let err = InvariantError::MalformedJson("unterminated string".into());
+            escalate_classifier_failure(
+                &comm,
+                "cto",
+                4242,
+                "operator",
+                "cto",
+                "ship the migration please",
+                None,
+                &err,
+            )
+            .await;
+
+            // Exactly one classifier_response_open with our expected shape.
+            assert_eq!(
+                classifier_mock.hits(),
+                1,
+                "expected classifier_response_open with final_outcome=escalated, attempts=3, decision_label=invariant_error"
+            );
+        }
+
+        #[tokio::test]
+        async fn operator_invariant_violation_writes_invariant_violation_with_inner_decision_label() {
+            let server = MockServer::start();
+            let _g = setup_env(&server.base_url()).await;
+
+            // Inner decision is `defer` — DecisionNotAllowedForOperator(Defer)
+            // is the canonical "operator asked, persona tried to defer"
+            // schema violation. Decision label in the row must be `defer`,
+            // not the placeholder `invariant_error`.
+            let classifier_mock = mount_classifier_open_matcher(
+                &server,
+                "invariant_violation",
+                1,
+                "defer",
+            );
+            mount_catchall(&server);
+
+            let comm = build_comm(&server.base_url());
+            let err = InvariantError::DecisionNotAllowedForOperator(ClassifierDecision::Defer);
+            escalate_classifier_failure(
+                &comm,
+                "ciso",
+                7777,
+                "operator",
+                "ciso",
+                "audit the auth path",
+                Some("board-2026-05-22"),
+                &err,
+            )
+            .await;
+
+            assert_eq!(
+                classifier_mock.hits(),
+                1,
+                "expected classifier_response_open with final_outcome=invariant_violation, attempts=1, decision_label=defer"
+            );
+        }
+
+        #[tokio::test]
+        async fn escalation_raises_priority_2_operator_inbox_notify_with_classifier_escalation_kind() {
+            let server = MockServer::start();
+            let _g = setup_env(&server.base_url()).await;
+
+            // We don't care about the classifier_response_open shape here —
+            // this test pins the inbox-notify side effect.
+            let notify_mock = mount_notify_priority_matcher(&server);
+            mount_catchall(&server);
+
+            let comm = build_comm(&server.base_url());
+            let err = InvariantError::MalformedJson("trailing comma".into());
+            escalate_classifier_failure(
+                &comm,
+                "cpo",
+                999,
+                "operator",
+                "cpo",
+                "draft a cost spec",
+                None,
+                &err,
+            )
+            .await;
+
+            assert_eq!(
+                notify_mock.hits(),
+                1,
+                "expected notify_agent call with agent=operator, priority=2, kind=classifier_escalation"
+            );
+        }
+
+        #[tokio::test]
+        async fn escalation_marks_source_dm_read_to_break_4s_retry_loop() {
+            let server = MockServer::start();
+            let _g = setup_env(&server.base_url()).await;
+
+            // mark_read goes through the SpacetimeAgentCommAdapter, which
+            // uses its own host+database fields (NOT the stdb_endpoint env
+            // vars). We constructed the adapter pointing at the same mock
+            // URL + TEST_DB, so it hits the same server.
+            let mark_read_mock = mount_mark_read_matcher(&server, "cto", 4242);
+            mount_catchall(&server);
+
+            let comm = build_comm(&server.base_url());
+            let err = InvariantError::MalformedJson("truncated".into());
+            escalate_classifier_failure(
+                &comm,
+                "cto",
+                4242,
+                "operator",
+                "cto",
+                "kick off the rollout",
+                None,
+                &err,
+            )
+            .await;
+
+            assert_eq!(
+                mark_read_mock.hits(),
+                1,
+                "expected mark_read(role, msg_id) after escalation so the 4s tick doesn't refire"
+            );
+        }
+    }
 }
