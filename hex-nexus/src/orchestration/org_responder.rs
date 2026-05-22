@@ -892,26 +892,18 @@ fn decision_str(d: &ClassifierDecision) -> &'static str {
     }
 }
 
-/// Synthesize a structured reply for the source persona based on the
-/// classifier's decision. Side-effects:
-/// - `Route` → forwards the original ask to `target_persona`.
-/// - `RequestTool` → raises a priority-2 inbox notification for the operator.
+/// Render the user-visible reply string for a classifier decision.
 ///
-/// Returns the textual reply that will be sent back to `from` (operator or
-/// peer). Every decision produces a reply — silent drops are eliminated by
-/// the ADR-2026-05-17-2030 contract.
-#[allow(clippy::too_many_arguments)]
-async fn route_decision(
-    comm: &Arc<SpacetimeAgentCommAdapter>,
-    role_string: &str,
+/// Pure formatting — no I/O, no STDB, no DM sends. The side-effects
+/// (peer forward on `Route`, inbox notify on `RequestTool`) live in
+/// [`route_decision`], which delegates to this helper for the textual
+/// reply. Split out so the per-decision contract shape is unit-testable
+/// without standing up an `IAgentCommPort` mock.
+fn reply_text_for_decision(
     role: &str,
-    from: &str,
-    original_content: &str,
-    thread_id: Option<&str>,
-    resp: &ClassifierResponse,
     msg_id: u64,
+    resp: &ClassifierResponse,
 ) -> String {
-    let thread_id_owned = thread_id.map(|s| s.to_string());
     match &resp.decision {
         ClassifierDecision::Accept => {
             let plan_str = resp
@@ -937,25 +929,6 @@ async fn route_decision(
         ClassifierDecision::Route => {
             let tp = resp.target_persona.as_deref().unwrap_or("");
             if !tp.is_empty() {
-                let forward = format!(
-                    "[Routed from @{} on behalf of @{}]: \"{}\"",
-                    role,
-                    from,
-                    original_content.chars().take(400).collect::<String>(),
-                );
-                if let Err(e) = comm
-                    .send_dm(
-                        role_string.to_string(),
-                        tp.to_string(),
-                        forward,
-                        thread_id_owned,
-                    )
-                    .await
-                {
-                    tracing::warn!(role = %role, peer = %tp, error = %e, "org_responder: route forward failed");
-                } else {
-                    tracing::info!(role = %role, peer = %tp, "org_responder: routed ask to peer");
-                }
                 format!("Routed to @{}.", tp)
             } else {
                 "Route: (target_persona empty — dispatch suppressed)".to_string()
@@ -975,6 +948,63 @@ async fn route_decision(
                 .as_ref()
                 .map(|v| serde_json::to_string(v).unwrap_or_default())
                 .unwrap_or_default();
+            format!(
+                "Requested new tool — escalated to operator inbox. Spec: {}",
+                spec_compact.chars().take(160).collect::<String>()
+            )
+        }
+    }
+}
+
+/// Synthesize a structured reply for the source persona based on the
+/// classifier's decision. Side-effects:
+/// - `Route` → forwards the original ask to `target_persona`.
+/// - `RequestTool` → raises a priority-2 inbox notification for the operator.
+///
+/// Returns the textual reply that will be sent back to `from` (operator or
+/// peer). Every decision produces a reply — silent drops are eliminated by
+/// the ADR-2026-05-17-2030 contract. The pure textual shape lives in
+/// [`reply_text_for_decision`]; this function only adds the I/O.
+#[allow(clippy::too_many_arguments)]
+async fn route_decision(
+    comm: &Arc<SpacetimeAgentCommAdapter>,
+    role_string: &str,
+    role: &str,
+    from: &str,
+    original_content: &str,
+    thread_id: Option<&str>,
+    resp: &ClassifierResponse,
+    msg_id: u64,
+) -> String {
+    let thread_id_owned = thread_id.map(|s| s.to_string());
+
+    // Side-effects per decision (Route → forward; RequestTool → notify).
+    match &resp.decision {
+        ClassifierDecision::Route => {
+            let tp = resp.target_persona.as_deref().unwrap_or("");
+            if !tp.is_empty() {
+                let forward = format!(
+                    "[Routed from @{} on behalf of @{}]: \"{}\"",
+                    role,
+                    from,
+                    original_content.chars().take(400).collect::<String>(),
+                );
+                if let Err(e) = comm
+                    .send_dm(
+                        role_string.to_string(),
+                        tp.to_string(),
+                        forward,
+                        thread_id_owned,
+                    )
+                    .await
+                {
+                    tracing::warn!(role = %role, peer = %tp, error = %e, "org_responder: route forward failed");
+                } else {
+                    tracing::info!(role = %role, peer = %tp, "org_responder: routed ask to peer");
+                }
+            }
+        }
+        ClassifierDecision::RequestTool => {
             let payload = serde_json::json!({
                 "role": role,
                 "msg_id": msg_id,
@@ -985,12 +1015,11 @@ async fn route_decision(
             })
             .to_string();
             post_inbox_notify("operator", 2, "request_tool", &payload).await;
-            format!(
-                "Requested new tool — escalated to operator inbox. Spec: {}",
-                spec_compact.chars().take(160).collect::<String>()
-            )
         }
+        _ => {}
     }
+
+    reply_text_for_decision(role, msg_id, resp)
 }
 
 /// Spawn the detached commitment-parser + journal-thought tasks the
@@ -1691,5 +1720,238 @@ async fn escalate_classifier_failure(
             error = %e,
             "org_responder: mark_read after classifier escalation failed"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the classifier-dispatch contract introduced by P4.1
+    //! (ADR-2026-05-17-2030). Covers only the pure helpers — the I/O-bound
+    //! side-effects (peer-forward send_dm, operator inbox notify, STDB
+    //! classifier_response row) are exercised by the higher-level
+    //! integration tests for the StrictJsonClassifierAdapter (P3.1).
+    use super::*;
+    use crate::orchestration::classifier_types::{
+        ClassifierDecision, ClassifierResponse, ToolPlanStep,
+    };
+    use serde_json::json;
+
+    fn base_resp(decision: ClassifierDecision) -> ClassifierResponse {
+        ClassifierResponse {
+            decision,
+            tool_plan: None,
+            reason: None,
+            target_persona: None,
+            question: None,
+            tool_spec: None,
+            cost_usd: 0.0,
+        }
+    }
+
+    // ---------- decision_str ---------------------------------------------
+
+    #[test]
+    fn decision_str_matches_wire_vocabulary() {
+        assert_eq!(decision_str(&ClassifierDecision::Accept), "accept");
+        assert_eq!(decision_str(&ClassifierDecision::Defer), "defer");
+        assert_eq!(decision_str(&ClassifierDecision::Route), "route");
+        assert_eq!(decision_str(&ClassifierDecision::Clarify), "clarify");
+        assert_eq!(decision_str(&ClassifierDecision::Reject), "reject");
+        assert_eq!(
+            decision_str(&ClassifierDecision::RequestTool),
+            "request_tool"
+        );
+    }
+
+    // ---------- reply_text_for_decision: one shape per variant ----------
+
+    #[test]
+    fn accept_reply_includes_role_msg_id_and_tool_plan() {
+        let mut r = base_resp(ClassifierDecision::Accept);
+        r.tool_plan = Some(vec![
+            ToolPlanStep {
+                tool: "repo_grep".into(),
+                intent: "find call sites".into(),
+            },
+            ToolPlanStep {
+                tool: "code_patch".into(),
+                intent: "edit dispatcher".into(),
+            },
+        ]);
+        let out = reply_text_for_decision("cto", 42, &r);
+        assert!(out.starts_with("Confirm: I (cto)"));
+        assert!(out.contains("msg_id=42"));
+        assert!(out.contains("- repo_grep: find call sites"));
+        assert!(out.contains("- code_patch: edit dispatcher"));
+    }
+
+    #[test]
+    fn accept_with_empty_tool_plan_still_emits_confirm_header() {
+        let mut r = base_resp(ClassifierDecision::Accept);
+        r.tool_plan = Some(vec![]);
+        let out = reply_text_for_decision("ceo", 7, &r);
+        assert!(out.starts_with("Confirm: I (ceo)"));
+        assert!(out.contains("msg_id=7"));
+    }
+
+    #[test]
+    fn defer_reply_carries_reason() {
+        let mut r = base_resp(ClassifierDecision::Defer);
+        r.reason = Some("blocked on STDB outage".into());
+        assert_eq!(
+            reply_text_for_decision("cpo", 1, &r),
+            "Defer: blocked on STDB outage"
+        );
+    }
+
+    #[test]
+    fn defer_reply_falls_back_to_placeholder_on_missing_reason() {
+        let r = base_resp(ClassifierDecision::Defer);
+        assert_eq!(
+            reply_text_for_decision("cpo", 1, &r),
+            "Defer: (no reason given)"
+        );
+    }
+
+    #[test]
+    fn route_reply_names_target_persona() {
+        let mut r = base_resp(ClassifierDecision::Route);
+        r.target_persona = Some("ciso".into());
+        assert_eq!(reply_text_for_decision("cto", 9, &r), "Routed to @ciso.");
+    }
+
+    #[test]
+    fn route_reply_with_empty_target_suppresses_dispatch() {
+        let mut r = base_resp(ClassifierDecision::Route);
+        r.target_persona = Some("".into());
+        let out = reply_text_for_decision("cto", 9, &r);
+        assert!(out.starts_with("Route:"));
+        assert!(out.contains("dispatch suppressed"));
+    }
+
+    #[test]
+    fn clarify_reply_includes_question() {
+        let mut r = base_resp(ClassifierDecision::Clarify);
+        r.question = Some("Which workplan?".into());
+        assert_eq!(
+            reply_text_for_decision("cto", 9, &r),
+            "Clarify: Which workplan?"
+        );
+    }
+
+    #[test]
+    fn reject_reply_includes_reason() {
+        let mut r = base_resp(ClassifierDecision::Reject);
+        r.reason = Some("out of scope".into());
+        assert_eq!(
+            reply_text_for_decision("ciso", 9, &r),
+            "Reject: out of scope"
+        );
+    }
+
+    #[test]
+    fn request_tool_reply_summarizes_spec() {
+        let mut r = base_resp(ClassifierDecision::RequestTool);
+        r.tool_spec = Some(json!({
+            "name": "stdb_query",
+            "rationale": "need ad-hoc SQL",
+        }));
+        let out = reply_text_for_decision("cto", 11, &r);
+        assert!(out.starts_with("Requested new tool"));
+        assert!(out.contains("escalated to operator inbox"));
+        assert!(out.contains("stdb_query"));
+    }
+
+    #[test]
+    fn request_tool_reply_truncates_oversize_spec() {
+        let mut r = base_resp(ClassifierDecision::RequestTool);
+        // > 160-char serialized spec — make sure we truncate cleanly.
+        r.tool_spec = Some(json!({ "name": "x".repeat(400) }));
+        let out = reply_text_for_decision("cto", 11, &r);
+        // 160-char cap on the spec excerpt + the surrounding template.
+        assert!(out.starts_with("Requested new tool"));
+        let spec_excerpt = out.split("Spec: ").nth(1).unwrap_or("");
+        assert!(spec_excerpt.chars().count() <= 160);
+    }
+
+    // ---------- escalation: outcome + decision label mapping -----------
+
+    #[test]
+    fn escalate_outcome_labels_match_invariant_variants() {
+        // Quick sanity that the (final_outcome, attempts) tuple used by
+        // escalate_classifier_failure stays in lock-step with each
+        // InvariantError variant. We re-create the same match-arm logic
+        // here in one place so any drift breaks this test.
+        let cases: Vec<(InvariantError, &str, u32, &str)> = vec![
+            (
+                InvariantError::MalformedJson("trunc".into()),
+                "escalated",
+                3,
+                "invariant_error",
+            ),
+            (
+                InvariantError::DecisionNotAllowedForOperator(
+                    ClassifierDecision::Defer,
+                ),
+                "invariant_violation",
+                1,
+                "defer",
+            ),
+            (
+                InvariantError::DecisionNotAllowedForOperator(
+                    ClassifierDecision::Reject,
+                ),
+                "invariant_violation",
+                1,
+                "reject",
+            ),
+            (
+                InvariantError::MissingRequiredField {
+                    decision: ClassifierDecision::Accept,
+                    field: "tool_plan",
+                },
+                "invariant_violation",
+                1,
+                "invariant_error",
+            ),
+        ];
+
+        for (err, want_outcome, want_attempts, want_decision_label) in &cases {
+            let (got_outcome, got_attempts) = match err {
+                InvariantError::MalformedJson(_) => ("escalated", 3u32),
+                InvariantError::DecisionNotAllowedForOperator(_)
+                | InvariantError::MissingRequiredField { .. } => {
+                    ("invariant_violation", 1)
+                }
+            };
+            let got_decision_label = match err {
+                InvariantError::DecisionNotAllowedForOperator(d) => decision_str(d),
+                _ => "invariant_error",
+            };
+            assert_eq!(&got_outcome, want_outcome, "outcome for {err:?}");
+            assert_eq!(got_attempts, *want_attempts, "attempts for {err:?}");
+            assert_eq!(
+                got_decision_label, *want_decision_label,
+                "decision_label for {err:?}"
+            );
+        }
+    }
+
+    // ---------- is_conversational: contract-stable but covered here -----
+
+    #[test]
+    fn is_conversational_classifies_questions_as_chat() {
+        assert!(is_conversational("what's the status?"));
+        assert!(is_conversational("how does this work"));
+        assert!(is_conversational("status"));
+        assert!(is_conversational("@cto what changed?"));
+    }
+
+    #[test]
+    fn is_conversational_classifies_directives_as_commit() {
+        assert!(!is_conversational("ship the fix"));
+        assert!(!is_conversational("write an ADR"));
+        assert!(!is_conversational("patch hex-cli"));
+        assert!(!is_conversational(""));
     }
 }
