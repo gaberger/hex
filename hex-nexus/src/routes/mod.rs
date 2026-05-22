@@ -59,6 +59,7 @@ pub mod liveness;
 pub mod merge_gate;
 pub mod mission_control;
 pub mod resources;
+pub mod observability;
 // pub mod workplan; // removed stub module
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit, http::StatusCode};
@@ -618,6 +619,9 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/commitments/satisfy", post(resources::satisfy_commitment))
         .route("/api/commitments/abandon", post(resources::abandon_commitment))
         .route("/api/mission-control", get(mission_control::get_mission_control))
+        // ── ADR-2026-05-17-2030 SOP pipeline redesign (P6.2) ────────────────
+        // Silent-drop counter — drives the 48h acceptance gate.
+        .route("/api/observability/silent-drops", get(observability::silent_drops))
         // SpacetimeDB registry — database identities
         .route("/api/stdb/registry", get(stdb_registry::get_registry))
         // Per-project queries (browser reads)
