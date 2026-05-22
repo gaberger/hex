@@ -881,7 +881,11 @@ async fn process_role(
 /// when persisting the `classifier_response` STDB row — the column expects
 /// the same vocabulary the LLM emits, kept here as a `&'static str` so the
 /// hot path doesn't go through serde for a six-arm match.
-fn decision_str(d: &ClassifierDecision) -> &'static str {
+///
+/// Exposed for the P6.1 end-to-end pipeline integration test
+/// (`hex-nexus/tests/classifier_pipeline.rs`) which exercises the full
+/// dispatch path across all 6 decisions × 2 from-roles.
+pub fn decision_str(d: &ClassifierDecision) -> &'static str {
     match d {
         ClassifierDecision::Accept => "accept",
         ClassifierDecision::Defer => "defer",
@@ -965,8 +969,11 @@ fn reply_text_for_decision(
 /// peer). Every decision produces a reply — silent drops are eliminated by
 /// the ADR-2026-05-17-2030 contract. The pure textual shape lives in
 /// [`reply_text_for_decision`]; this function only adds the I/O.
+///
+/// Exposed for the P6.1 end-to-end pipeline integration test
+/// (`hex-nexus/tests/classifier_pipeline.rs`).
 #[allow(clippy::too_many_arguments)]
-async fn route_decision(
+pub async fn route_decision(
     comm: &Arc<SpacetimeAgentCommAdapter>,
     role_string: &str,
     role: &str,
@@ -1555,8 +1562,11 @@ fn stdb_endpoint(reducer: &str) -> (reqwest::Client, String) {
 /// Persist a single `classifier_response` row via the STDB reducer
 /// (ADR-2026-05-17-2030 P2.1). Best-effort — STDB outage or a missing
 /// reducer (P2.1 still in flight) MUST NOT block dispatch.
+///
+/// Exposed for the P6.1 end-to-end pipeline integration test
+/// (`hex-nexus/tests/classifier_pipeline.rs`).
 #[allow(clippy::too_many_arguments)]
-async fn post_classifier_response_open(
+pub async fn post_classifier_response_open(
     msg_id: u64,
     from_role: &str,
     to_role: &str,
@@ -1656,8 +1666,11 @@ async fn post_inbox_notify(agent_id: &str, priority: u8, kind: &str, payload: &s
 /// task — placed here in P4.1 so the new dispatch path has somewhere to
 /// branch on its `Err(InvariantError)` arm. P5.1 may elaborate the helper
 /// (e.g. structured payload schema) but the call sites belong to P4.1.
+///
+/// Exposed for the P6.1 end-to-end pipeline integration test
+/// (`hex-nexus/tests/classifier_pipeline.rs`).
 #[allow(clippy::too_many_arguments)]
-async fn escalate_classifier_failure(
+pub async fn escalate_classifier_failure(
     comm: &Arc<SpacetimeAgentCommAdapter>,
     role_string: &str,
     msg_id: u64,
