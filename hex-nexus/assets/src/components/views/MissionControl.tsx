@@ -168,6 +168,53 @@ const actorColor = (actor: string): string => {
   return palette[h % palette.length];
 };
 
+// P2.2 (wp-dashboard-ux-remediation-2026-05-22): pending replies render
+// as a distinct skeleton row so the operator can tell at a glance the
+// team is WORKING (not stalled). The outer bubble shape stays identical
+// to a delivered reply so the flip-to-real has no layout jolt — only
+// the interior contents change.
+//
+//   [spinner]  thinking…  <N>s elapsed
+//
+// Each instance owns its own 1-second interval (cleaned up onCleanup
+// when the row unmounts — happens as soon as the real reply arrives
+// and the pending entry is filtered out of `pendingChat`).
+interface PendingBubbleProps {
+  from: string;
+  to: string;
+  startedAt: number; // ms-epoch
+}
+const PendingBubble: Component<PendingBubbleProps> = (props) => {
+  const [elapsed, setElapsed] = createSignal(
+    Math.max(0, Math.floor((Date.now() - props.startedAt) / 1000)),
+  );
+  const id = setInterval(() => {
+    setElapsed(Math.max(0, Math.floor((Date.now() - props.startedAt) / 1000)));
+  }, 1000);
+  onCleanup(() => clearInterval(id));
+  return (
+    <div class="flex">
+      <div class="max-w-2xl rounded-lg px-3 py-2 text-sm bg-gray-900 border border-gray-700 animate-pulse">
+        <div class="flex items-baseline gap-2 mb-1 text-[10px]">
+          <span class={`font-mono ${actorColor(props.from)}`}>{props.from}</span>
+          <Show when={props.to && props.to !== "operator"}>
+            <span class="text-gray-600">→ {props.to}</span>
+          </Show>
+          <span class="text-gray-600 ml-auto tabular-nums">{elapsed()}s elapsed</span>
+        </div>
+        <div class="flex items-center gap-2 text-gray-400">
+          {/* Inline spinner — Tailwind animate-spin on a bordered ring */}
+          <span
+            class="inline-block h-3 w-3 rounded-full border-2 border-gray-600 border-t-cyan-400 animate-spin"
+            aria-hidden="true"
+          />
+          <span class="italic">thinking…</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const MissionControl: Component = () => {
   const [data, setData] = createSignal<Payload | null>(null);
   const [error, setError] = createSignal<string | null>(null);
@@ -231,6 +278,13 @@ const MissionControl: Component = () => {
   let streamScrollRef: HTMLElement | undefined;
   let lastStreamCount = 0;
 
+  // P2.2 (wp-dashboard-ux-remediation-2026-05-22): 1Hz wall-clock signal
+  // drives the elapsed counter on pending-reply skeletons. One shared
+  // interval covers every in-flight bubble — cheaper than per-row timers
+  // and naturally stops painting when no pending bubble is rendered.
+  const [nowMs, setNowMs] = createSignal(Date.now());
+  let elapsedTimer: ReturnType<typeof setInterval> | null = null;
+
   const refresh = async () => {
     try {
       const d = await restClient.get("/api/mission-control");
@@ -240,8 +294,15 @@ const MissionControl: Component = () => {
       setError(e?.message || String(e));
     }
   };
-  onMount(() => { refresh(); timer = setInterval(refresh, REFRESH_MS); });
-  onCleanup(() => { if (timer) clearInterval(timer); });
+  onMount(() => {
+    refresh();
+    timer = setInterval(refresh, REFRESH_MS);
+    elapsedTimer = setInterval(() => setNowMs(Date.now()), 1000);
+  });
+  onCleanup(() => {
+    if (timer) clearInterval(timer);
+    if (elapsedTimer) clearInterval(elapsedTimer);
+  });
 
   const suppressAttn = (id: string, cls?: string) => {
     const s = new Set(attnSuppressed());
@@ -712,6 +773,13 @@ const MissionControl: Component = () => {
                   {(() => {
                     const c = item.chat!;
                     const isOp = c.from === "operator";
+                    // P2.2: pending replies render as a distinct
+                    // skeleton row (spinner + elapsed counter) instead
+                    // of a faded normal bubble so the operator can
+                    // tell working vs stalled at a glance.
+                    if (c.pending) {
+                      return <PendingBubble from={c.from} to={c.to} startedAt={item.ts} />;
+                    }
                     return (
                       <div class="flex" classList={{ "justify-end": isOp }}>
                         <div
@@ -719,7 +787,6 @@ const MissionControl: Component = () => {
                           classList={{
                             "bg-cyan-900/30 border border-cyan-800": isOp,
                             "bg-gray-900 border border-gray-700": !isOp,
-                            "opacity-60 italic": !!c.pending,
                           }}
                         >
                           <div class="flex items-baseline gap-2 mb-1 text-[10px]">
