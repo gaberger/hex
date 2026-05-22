@@ -240,6 +240,47 @@ pub async fn list_personas(
     .await
     .unwrap_or_default();
 
+    // 2026-05-22 fix: STDB returns `last_tick_at` as the Rust Debug
+    // formatting of its Timestamp struct (e.g.
+    // `Timestamp { __timestamp_micros_since_unix_epoch__: 1779491821453421 }`).
+    // Without parsing here, the dashboard receives a string it cannot format
+    // as a date AND a null health (when persona_health is empty), then
+    // renders every exec as "shutdown" — even when the supervisor is
+    // healthily ticking once a minute (which it is, see persona_pool's fresh
+    // last_tick_at micros above). Two fixes baked in here:
+    //
+    //   1. Parse the Timestamp Debug string → ISO-8601 RFC-3339 for
+    //      `last_tick_at`. Empty string if unparseable so the dashboard
+    //      shows "—" rather than a malformed date.
+    //   2. Derive a `health.status` (`alive` / `stale` / `paused` /
+    //      `banned`) from last_tick_at freshness + persona_health when
+    //      present, so the dashboard renders execs as alive whenever the
+    //      supervisor IS ticking, regardless of whether persona_health
+    //      has been populated for them yet.
+    fn parse_stdb_timestamp_micros(s: &str) -> Option<i64> {
+        // Match `Timestamp { __timestamp_micros_since_unix_epoch__: <N> }`.
+        let key = "__timestamp_micros_since_unix_epoch__:";
+        let i = s.find(key)?;
+        let tail = &s[i + key.len()..];
+        let digits: String = tail
+            .chars()
+            .skip_while(|c| c.is_whitespace())
+            .take_while(|c| c.is_ascii_digit() || *c == '-')
+            .collect();
+        digits.parse::<i64>().ok()
+    }
+    fn micros_to_rfc3339(micros: i64) -> String {
+        let secs = micros / 1_000_000;
+        let nsec = ((micros % 1_000_000) * 1_000) as u32;
+        chrono::DateTime::<chrono::Utc>::from_timestamp(secs, nsec)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_default()
+    }
+    let now_micros = chrono::Utc::now().timestamp_micros();
+    // 60-second freshness gate matches the persona supervisor's 25s tick
+    // plus ~2x slack — anything older than 60s is genuinely stale.
+    const STALE_AFTER_MICROS: i64 = 60 * 1_000_000;
+
     let personas: Vec<Value> = pool_rows
         .into_iter()
         .filter_map(|p| {
@@ -247,25 +288,56 @@ pub async fn list_personas(
                 return None;
             }
             let role = p[0].as_str()?.to_string();
+            let paused = p[3].as_bool().unwrap_or(false);
+            let last_tick_raw = p[4].as_str().unwrap_or("");
+            let last_tick_micros = parse_stdb_timestamp_micros(last_tick_raw);
+            let last_tick_iso = last_tick_micros
+                .map(micros_to_rfc3339)
+                .unwrap_or_default();
+            let last_tick_age_secs = last_tick_micros
+                .map(|m| (now_micros - m) / 1_000_000)
+                .unwrap_or(i64::MAX);
+            let is_stale = last_tick_age_secs > STALE_AFTER_MICROS / 1_000_000;
+
             let h = health_rows
                 .iter()
                 .find(|h| h.first().and_then(|s| s.as_str()) == Some(role.as_str()));
-            let health = h.map(|hh| {
-                json!({
-                    "recent_failures":     hh.get(1).and_then(|x| x.as_u64()).unwrap_or(0),
-                    "last_failure_at":     hh.get(2).and_then(|x| x.as_str()).unwrap_or(""),
-                    "last_failure_model":  hh.get(3).and_then(|x| x.as_str()).unwrap_or(""),
-                    "last_failure_status": hh.get(4).and_then(|x| x.as_u64()).unwrap_or(0),
-                    "banned_until":        hh.get(5).and_then(|x| x.as_str()).unwrap_or(""),
-                })
+            let banned_until = h
+                .and_then(|hh| hh.get(5).and_then(|x| x.as_str()))
+                .unwrap_or("");
+            let recent_failures = h
+                .and_then(|hh| hh.get(1).and_then(|x| x.as_u64()))
+                .unwrap_or(0);
+
+            // Derived status — the field the dashboard should render off.
+            let status = if !banned_until.is_empty() {
+                "banned"
+            } else if paused {
+                "paused"
+            } else if is_stale {
+                "stale"
+            } else {
+                "alive"
+            };
+
+            let health = json!({
+                "status":              status,
+                "recent_failures":     recent_failures,
+                "last_failure_at":     h.and_then(|hh| hh.get(2).and_then(|x| x.as_str())).unwrap_or(""),
+                "last_failure_model":  h.and_then(|hh| hh.get(3).and_then(|x| x.as_str())).unwrap_or(""),
+                "last_failure_status": h.and_then(|hh| hh.get(4).and_then(|x| x.as_u64())).unwrap_or(0),
+                "banned_until":        banned_until,
             });
+
             Some(json!({
-                "role":          role,
-                "display_name":  p[1].as_str().unwrap_or(""),
-                "tier":          p[2].as_str().unwrap_or(""),
-                "paused":        p[3].as_bool().unwrap_or(false),
-                "last_tick_at":  p[4].as_str().unwrap_or(""),
-                "health":        health,
+                "role":              role,
+                "display_name":      p[1].as_str().unwrap_or(""),
+                "tier":              p[2].as_str().unwrap_or(""),
+                "paused":            paused,
+                "last_tick_at":      last_tick_iso,
+                "last_tick_age_secs": last_tick_age_secs.max(0),
+                "status":            status,
+                "health":            health,
             }))
         })
         .collect();
