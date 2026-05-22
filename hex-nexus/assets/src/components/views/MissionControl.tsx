@@ -150,6 +150,20 @@ const MissionControl: Component = () => {
   const [pendingChat, setPendingChat] = createSignal<{from: string; to: string; body: string; ts: number}[]>([]);
   const [attnBusy, setAttnBusy] = createSignal<string | null>(null);
   const [attnSuppressed, setAttnSuppressed] = createSignal<Set<string>>(new Set());
+  const [expandedGroups, setExpandedGroups] = createSignal<Set<string>>(new Set());
+
+  // Group key for collapsing duplicate anomalies. Tuple of
+  // (kind, priority, title.slice(0,30)) — used for both stream
+  // grouping AND class-level suppression so "Ack all" hushes the
+  // whole class for 5min the same way single ack does today.
+  const groupKeyFor = (a: AttentionItem): string =>
+    `class:${a.kind}|${a.priority}|${a.title.slice(0, 30)}`;
+
+  const toggleGroup = (key: string) => {
+    const s = new Set(expandedGroups());
+    if (s.has(key)) s.delete(key); else s.add(key);
+    setExpandedGroups(s);
+  };
 
   let timer: ReturnType<typeof setInterval> | null = null;
   let streamScrollRef: HTMLElement | undefined;
@@ -232,6 +246,24 @@ const MissionControl: Component = () => {
       });
     } finally { setAttnBusy(null); await refresh(); }
   };
+  // Group ack — POST ack for every member of an anomaly group AND
+  // suppress the group key for 5min so the class doesn't immediately
+  // reappear on the next refresh tick.
+  const ackAllGroup = async (group: AttentionItem[], groupKey: string) => {
+    setAttnBusy(groupKey);
+    suppressAttn(groupKey, groupKey);
+    try {
+      await Promise.all(group.map(async (a) => {
+        const idMatch = a.id.match(/^[a-z]+-(\d+)/);
+        const numId = idMatch ? parseInt(idMatch[1], 10) : undefined;
+        if (numId === undefined || a.kind !== "resource_anomaly") return;
+        await fetch(`/v1/database/hex/call/resource_anomaly_ack`, {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify([numId, "operator-ack-all via dashboard"]),
+        });
+      }));
+    } finally { setAttnBusy(null); await refresh(); }
+  };
   const decideMerge = async (id: string, worktreePath: string, decision: "approved"|"rejected") => {
     setAttnBusy(id);
     suppressAttn(id);
@@ -260,6 +292,12 @@ const MissionControl: Component = () => {
     chat?: { from: string; to: string; body: string; pending?: boolean };
     commit?: { id: number; path: string; actor: string };
     attention?: AttentionItem;
+    // When attention items collapse into a class group, the
+    // representative is in `attention` and the full set (length >= 1)
+    // is here. Single-item groups still set this to one element so
+    // the renderer can rely on `attentionGroup` being present.
+    attentionGroup?: AttentionItem[];
+    groupKey?: string;
   }
   // Group the stream into "turns": each operator message is the head
   // of a turn; everything that happened between it and the next
@@ -311,16 +349,31 @@ const MissionControl: Component = () => {
       items.push({ kind: "commit", ts, commit: { id: ex.id, path: ex.path, actor: m ? m[1] : "executor" } });
     }
 
-    // Attention items — inline cards, oldest at top
+    // Attention items — group by class (kind|priority|title-prefix)
+    // and emit one stream item per group. Single-item groups still
+    // produce a stream entry so the renderer can fall back to the
+    // existing single-card shape. Dedup-by-id guarantees the same
+    // anomaly never appears twice within or across groups.
     const sup = attnSuppressed();
-    const af = (d.attention_feed || []).filter((i) => {
-      if (sup.has(i.id)) return false;
-      const cls = `class:${i.kind}:${i.subtitle.slice(0, 40)}`;
-      return !sup.has(cls);
-    });
-    for (const a of af) {
-      const ts = Date.now() - a.age_seconds * 1000;
-      items.push({ kind: "attention", ts, attention: a });
+    const seenIds = new Set<string>();
+    const groups = new Map<string, AttentionItem[]>();
+    for (const i of (d.attention_feed || [])) {
+      if (sup.has(i.id)) continue;
+      const key = groupKeyFor(i);
+      if (sup.has(key)) continue;
+      if (seenIds.has(i.id)) continue;
+      seenIds.add(i.id);
+      const arr = groups.get(key);
+      if (arr) arr.push(i); else groups.set(key, [i]);
+    }
+    for (const [key, group] of groups) {
+      // Representative = newest (smallest age_seconds) so the title /
+      // subtitle shown match what just fired; ts = oldest occurrence
+      // so the group sorts where the class first showed up.
+      const newest = group.reduce((a, b) => (a.age_seconds <= b.age_seconds ? a : b));
+      const oldestAge = group.reduce((mx, x) => (x.age_seconds > mx ? x.age_seconds : mx), 0);
+      const ts = Date.now() - oldestAge * 1000;
+      items.push({ kind: "attention", ts, attention: newest, attentionGroup: group, groupKey: key });
     }
 
     items.sort((a, b) => a.ts - b.ts);
@@ -601,6 +654,10 @@ const MissionControl: Component = () => {
                 <Match when={item.kind === "attention" && item.attention}>
                   {(() => {
                     const a = item.attention!;
+                    const group = item.attentionGroup || [a];
+                    const groupKey = item.groupKey || groupKeyFor(a);
+                    const isGroup = group.length > 1;
+                    const expanded = () => expandedGroups().has(groupKey);
                     const idMatch = a.id.match(/^[a-z]+-(\d+)/);
                     const numId = idMatch ? parseInt(idMatch[1], 10) : undefined;
                     const isStdb = a.kind === "resource_anomaly" && (a.subtitle.includes("spacetimedb-standalone") || a.title.includes("rss_oversize"));
@@ -618,9 +675,17 @@ const MissionControl: Component = () => {
                             <span class={a.priority === 0 ? "text-red-400" : a.priority === 1 ? "text-amber-400" : "text-blue-400"}>● {a.kind}</span>
                             <span class="text-zinc-600 ml-auto">{ageSec(a.age_seconds)}</span>
                           </div>
-                          <div class="text-zinc-100">{a.title}</div>
+                          <div class="text-zinc-100 flex items-center gap-2">
+                            <span>{a.title}</span>
+                            <Show when={isGroup}>
+                              <span
+                                class="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-[10px] tabular-nums text-zinc-300"
+                                title={`${group.length} items collapsed into this class`}
+                              >×{group.length}</span>
+                            </Show>
+                          </div>
                           <div class="text-[11px] text-zinc-500 mt-1">{a.subtitle}</div>
-                          <div class="flex gap-1.5 mt-2">
+                          <div class="flex gap-1.5 mt-2 items-center">
                             <Show when={a.kind === "merge_vote_needed" && a.worktree_path}>
                               <button
                                 class="px-2 py-0.5 rounded bg-green-900/40 hover:bg-green-900 border border-green-800 text-green-200 text-[10px] disabled:opacity-50"
@@ -640,12 +705,20 @@ const MissionControl: Component = () => {
                                 onClick={() => restartStdb(a.id)}
                               >Restart STDB</button>
                             </Show>
-                            <Show when={numId !== undefined && a.kind === "resource_anomaly"}>
+                            <Show when={!isGroup && numId !== undefined && a.kind === "resource_anomaly"}>
                               <button
                                 class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] disabled:opacity-50"
                                 disabled={attnBusy() === a.id}
-                                onClick={() => ackAnomaly(a.id, numId!, `class:${a.kind}:${a.subtitle.slice(0, 40)}`)}
+                                onClick={() => ackAnomaly(a.id, numId!, groupKey)}
                               >Ack</button>
+                            </Show>
+                            <Show when={isGroup && a.kind === "resource_anomaly"}>
+                              <button
+                                class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] disabled:opacity-50"
+                                disabled={attnBusy() === groupKey}
+                                onClick={() => ackAllGroup(group, groupKey)}
+                                title={`Ack all ${group.length} items in this class and suppress for 5 minutes`}
+                              >Ack all ({group.length})</button>
                             </Show>
                             <Show when={numId !== undefined && a.kind === "escalation"}>
                               <button
@@ -654,7 +727,36 @@ const MissionControl: Component = () => {
                                 onClick={() => abandonAction(a.id, numId!)}
                               >Abandon</button>
                             </Show>
+                            <Show when={isGroup}>
+                              <button
+                                class="ml-auto px-2 py-0.5 rounded hover:bg-zinc-800 text-zinc-400 text-[10px]"
+                                onClick={() => toggleGroup(groupKey)}
+                                title={expanded() ? "Collapse" : `Show all ${group.length} items`}
+                              >{expanded() ? "▲ collapse" : `▼ show ${group.length}`}</button>
+                            </Show>
                           </div>
+                          <Show when={isGroup && expanded()}>
+                            <div class="mt-2 pt-2 border-t border-zinc-800 space-y-1">
+                              <For each={group}>{(row) => {
+                                const rowMatch = row.id.match(/^[a-z]+-(\d+)/);
+                                const rowNumId = rowMatch ? parseInt(rowMatch[1], 10) : undefined;
+                                return (
+                                  <div class="flex items-baseline gap-2 text-[11px]">
+                                    <span class="text-zinc-500 font-mono">{row.id}</span>
+                                    <span class="text-zinc-300 flex-1 truncate" title={row.subtitle}>{row.subtitle}</span>
+                                    <span class="text-zinc-600 tabular-nums">{ageSec(row.age_seconds)}</span>
+                                    <Show when={rowNumId !== undefined && row.kind === "resource_anomaly"}>
+                                      <button
+                                        class="px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] disabled:opacity-50"
+                                        disabled={attnBusy() === row.id}
+                                        onClick={() => ackAnomaly(row.id, rowNumId!, groupKey)}
+                                      >Ack</button>
+                                    </Show>
+                                  </div>
+                                );
+                              }}</For>
+                            </div>
+                          </Show>
                         </div>
                       </div>
                     );
