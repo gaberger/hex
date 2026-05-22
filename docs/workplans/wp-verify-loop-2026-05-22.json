@@ -1,0 +1,42 @@
+{
+  "created_at": "2026-05-22T17:30:00Z",
+  "id": "wp-verify-loop-2026-05-22",
+  "notes": "Smoke-test the autonomous loop after the 2026-05-22 fixes (MALLOC_ARENA_MAX, skip-completed, PATH, timeout=600, Ollama routing for hex-coder). One trivial new module — no existing-code modification, no dependencies. Pass condition: workplan completes without operator intervention, the file lands on disk, cargo check passes, the reconciler attributes the work to this workplan's task.",
+  "phases": [
+    {
+      "gate": {
+        "blocking": true,
+        "command": "cargo check -p hex-nexus",
+        "gate_type": "cargo_check"
+      },
+      "id": "P1",
+      "name": "Trivial utility module",
+      "tasks": [
+        {
+          "description": "Create new module hex-nexus/src/build_banner.rs containing ONE pure function:\n\n```rust\n/// Returns a one-line human-readable banner identifying this nexus build.\n/// Used by `hex nexus status` and the dashboard header.\npub fn build_banner() -> String {\n    format!(\"hex-nexus {}\", env!(\"CARGO_PKG_VERSION\"))\n}\n```\n\nAdd ONE unit test that asserts the returned string starts with `hex-nexus ` (with trailing space).\n\nAlso add `pub mod build_banner;` to `hex-nexus/src/lib.rs` so cargo check sees the module. Place the `pub mod` declaration alphabetically among the existing top-level module declarations.\n\nDO NOT modify any other files. DO NOT wire `build_banner()` into any caller — this is a pure addition. Cargo check is the gate; if it passes, the task is done.",
+          "done_condition": "file hex-nexus/src/build_banner.rs exists and defines pub fn build_banner; lib.rs declares pub mod build_banner; cargo check -p hex-nexus passes",
+          "evidence": {
+            "files_found": [
+              "hex-nexus/src/build_banner.rs"
+            ],
+            "matching_commits": [
+              "7a55efb263212b42fd66bf6a5ace5bd63845bab9 domain(p1.1): wp-verify-loop-2026-05-22 — Create build_banner module"
+            ],
+            "symbols_matched": []
+          },
+          "files": [
+            "hex-nexus/src/build_banner.rs"
+          ],
+          "id": "P1.1",
+          "layer": "domain",
+          "name": "Create build_banner module",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 0
+    }
+  ],
+  "status": "done",
+  "title": "Path B end-to-end verification — single tiny task"
+}

@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Ensure cargo is reachable. On Bazzite / immutable Fedora and other
+# distros where rustup installs cargo to ~/.cargo/bin but the user's
+# default shell PATH doesn't pick it up, the `cargo check` call below
+# fails with "command not found" AFTER the Cargo.toml edit has already
+# landed — leaving the working tree in a partially-bumped state.
+# Measured 2026-05-22 during the 26.5.1 release. Same root cause as
+# the nexus PATH fix in hex-cli/src/commands/nexus.rs.
+if [[ -d "$HOME/.cargo/bin" ]]; then
+  export PATH="$HOME/.cargo/bin:$PATH"
+fi
+
 VERSION="${1:-}"
 
 # Derive default version from current date in YY.MM.0 format
