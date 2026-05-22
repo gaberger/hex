@@ -3,6 +3,7 @@ pub mod adversarial_swarm;
 pub mod agent;
 pub mod agent_manager;
 pub mod classifier_types;
+pub mod classifier_parser;
 pub mod supervisor_subscriber;
 pub mod integrator_subscriber;
 pub mod brain_dispatch_reconciler;
