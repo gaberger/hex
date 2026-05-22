@@ -385,6 +385,13 @@ pub struct WorkplanTask {
     /// JSON, bypasses the automatic classifier. Values: "T1", "T2", "T2.5", "T3".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tier: Option<crate::remote::transport::TaskTier>,
+    /// Task completion status — read from the workplan JSON so the dispatch loop
+    /// can skip tasks that `hex plan reconcile --update` already marked done.
+    /// Accepts canonical `"completed"`, legacy `"done"` (what reconcile.rs writes),
+    /// plus the rest of the TaskStatus lifecycle. Default is empty for backward
+    /// compat with workplans that omit the field entirely.
+    #[serde(default)]
+    pub status: String,
 }
 
 /// Classify a workplan task into an inference routing tier (ADR-2026-04-12-0202 P1.3).
@@ -1025,6 +1032,24 @@ impl WorkplanExecutor {
             // ADR-2026-04-10-0000: Task heartbeat for observability
             let task_id = if !task.id.is_empty() { task.id.clone() } else { task.name.clone() };
             let task_name = task.name.clone();
+
+            // Skip tasks that reconcile already marked done. Re-dispatching a
+            // done task re-runs codegen, regenerates the same files (zero diff),
+            // and trips the post-phase compile gate when the prior fix-up commit
+            // isn't replayed — burning Claude tokens for no progress. Accept both
+            // "completed" (canonical TaskStatus) and "done" (what reconcile.rs
+            // writes today) so existing on-disk workplans skip correctly without
+            // a re-reconcile pass.
+            if matches!(task.status.as_str(), "completed" | "done") {
+                tracing::info!(
+                    task_id = %task_id,
+                    task_name = %task_name,
+                    status = %task.status,
+                    "Task SKIP — already done per workplan status (reconcile evidence)"
+                );
+                continue;
+            }
+
             let task_start = chrono::Utc::now().to_rfc3339();
             tracing::info!(
                 task_id = %task_id,

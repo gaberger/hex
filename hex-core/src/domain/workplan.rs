@@ -7,6 +7,7 @@ pub enum WorkplanStatus {
     #[default]
     Planned,
     InProgress,
+    #[serde(alias = "done")]
     Complete,
     Failed,
     /// This workplan's scope was absorbed by another workplan.
@@ -105,6 +106,7 @@ pub enum TaskStatus {
     #[default]
     Pending,
     InProgress,
+    #[serde(alias = "done")]
     Completed,
     Failed,
     Blocked,

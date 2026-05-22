@@ -411,6 +411,24 @@ async fn start(port: u16, bind: &str, token: Option<&str>, _no_agent: bool) -> a
     if std::env::var("MALLOC_ARENA_MAX").is_err() {
         cmd.env("MALLOC_ARENA_MAX", "2");
     }
+    // Ensure cargo (and other rustup-installed binaries) are reachable from
+    // nexus-spawned shell commands. Without this, phase gates like
+    // `cargo check -p hex-nexus` fail with "command not found" (exit 127) and
+    // every workplan dispatch aborts after Phase 1, regardless of whether the
+    // generated code is actually correct. Measured 2026-05-22 against
+    // wp-sop-pipeline-redesign-phase-1. Prepend so user's existing PATH wins.
+    if let Some(home) = std::env::var_os("HOME") {
+        let cargo_bin = std::path::Path::new(&home).join(".cargo/bin");
+        if cargo_bin.exists() {
+            let existing = std::env::var("PATH").unwrap_or_default();
+            let new_path = if existing.is_empty() {
+                cargo_bin.display().to_string()
+            } else {
+                format!("{}:{}", cargo_bin.display(), existing)
+            };
+            cmd.env("PATH", new_path);
+        }
+    }
     let child = cmd.stdout(log).stderr(log_err).spawn()?;
 
     let pid = child.id();
