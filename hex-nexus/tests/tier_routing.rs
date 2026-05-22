@@ -285,6 +285,7 @@ fn task_with(layer: Option<&str>, agent: Option<&str>, deps: Vec<&str>, tier: Op
         done_condition: None,
         done_command: None,
         tier,
+        status: String::new(),
     }
 }
 

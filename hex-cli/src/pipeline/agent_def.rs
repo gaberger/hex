@@ -850,13 +850,17 @@ mod tests {
         assert_eq!(def.name, "hex-coder");
         assert_eq!(def.agent_type, "coder");
         assert_eq!(def.model.tier, 2);
-        assert_eq!(def.model.preferred.as_deref(), Some("gpt-4o-mini"));
-        assert_eq!(def.model.fallback.as_deref(), Some("haiku"));
+        // 2026-05-22: model.preferred/fallback retired from gpt-4o-mini/haiku
+        // to local Ollama. See commit c2ab4a3a + 17f1b154 and the rationale
+        // block in hex-cli/assets/agents/hex/hex/hex-coder.yml. The Anthropic
+        // path is preserved via model.upgrade_to (sonnet) for frontier work.
+        assert_eq!(def.model.preferred.as_deref(), Some("qwen2.5-coder:14b"));
+        assert_eq!(def.model.fallback.as_deref(), Some("qwen2.5-coder:14b"));
         assert_eq!(def.model.upgrade_to.as_deref(), Some("sonnet"));
 
-        // Model ID resolution
-        assert_eq!(def.model.preferred_model_id(), "openai/gpt-4o-mini");
-        assert_eq!(def.model.fallback_model_id(), "claude-haiku-4-5-20251001");
+        // Model ID resolution — local Ollama IDs pass through unchanged.
+        assert_eq!(def.model.preferred_model_id(), "qwen2.5-coder:14b");
+        assert_eq!(def.model.fallback_model_id(), "qwen2.5-coder:14b");
         assert_eq!(def.model.upgrade_model_id(), Some("claude-sonnet-4-6"));
 
         // Context load_strategy
