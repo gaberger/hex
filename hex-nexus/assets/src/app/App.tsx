@@ -512,8 +512,30 @@ const App: Component = () => {
           }}
         >
 
-          {/* Control Plane link */}
+          {/* Mission Control — operator's primary surface (P1.3: promoted to top with distinct treatment) */}
           <div class="px-3 pt-3 pb-1">
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              classList={{
+                "border-l-2 border-cyan-500 bg-cyan-500/10 text-cyan-100 pl-2": route().page === "mission-control",
+                "text-gray-200 hover:bg-gray-900/40 hover:text-cyan-200": route().page !== "mission-control",
+                "justify-center px-0": sidebarCollapsed(),
+              }}
+              aria-label="Mission Control"
+              aria-current={route().page === "mission-control" ? "page" : undefined}
+              onClick={() => { navigate({ page: "mission-control" }); setMobileDrawerOpen(false); }}
+            >
+              <svg class="h-4 w-4 shrink-0 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="2" x2="12" y2="22" />
+                <path d="M2 12h20" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Mission Control</Show>
+            </button>
+          </div>
+
+          {/* Control Plane link */}
+          <div class="px-3 pt-1 pb-1">
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
               classList={{
@@ -673,26 +695,7 @@ const App: Component = () => {
               </svg>
               <Show when={!sidebarCollapsed()}>Research Lab</Show>
             </button>
-            {/* Mission Control — operator's primary landing */}
-            <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
-              classList={{
-                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "mission-control",
-                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "mission-control",
-                "justify-center px-0": sidebarCollapsed(),
-              }}
-              aria-label={sidebarCollapsed() ? "Mission Control" : undefined}
-              aria-current={route().page === "mission-control" ? "page" : undefined}
-              onClick={() => { navigate({ page: "mission-control" }); setMobileDrawerOpen(false); }}
-            >
-              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                classList={{ "text-cyan-400": route().page === "mission-control" }}>
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="2" x2="12" y2="22" />
-                <path d="M2 12h20" />
-              </svg>
-              <Show when={!sidebarCollapsed()}>Mission Control</Show>
-            </button>
+            {/* Mission Control is rendered at the top of the sidebar (P1.3) */}
             {/* Agent Runs — hex agent run execution stream */}
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
