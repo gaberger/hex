@@ -278,13 +278,6 @@ const MissionControl: Component = () => {
   let streamScrollRef: HTMLElement | undefined;
   let lastStreamCount = 0;
 
-  // P2.2 (wp-dashboard-ux-remediation-2026-05-22): 1Hz wall-clock signal
-  // drives the elapsed counter on pending-reply skeletons. One shared
-  // interval covers every in-flight bubble — cheaper than per-row timers
-  // and naturally stops painting when no pending bubble is rendered.
-  const [nowMs, setNowMs] = createSignal(Date.now());
-  let elapsedTimer: ReturnType<typeof setInterval> | null = null;
-
   const refresh = async () => {
     try {
       const d = await restClient.get("/api/mission-control");
@@ -294,15 +287,8 @@ const MissionControl: Component = () => {
       setError(e?.message || String(e));
     }
   };
-  onMount(() => {
-    refresh();
-    timer = setInterval(refresh, REFRESH_MS);
-    elapsedTimer = setInterval(() => setNowMs(Date.now()), 1000);
-  });
-  onCleanup(() => {
-    if (timer) clearInterval(timer);
-    if (elapsedTimer) clearInterval(elapsedTimer);
-  });
+  onMount(() => { refresh(); timer = setInterval(refresh, REFRESH_MS); });
+  onCleanup(() => { if (timer) clearInterval(timer); });
 
   const suppressAttn = (id: string, cls?: string) => {
     const s = new Set(attnSuppressed());
