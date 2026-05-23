@@ -1,8 +1,8 @@
 {
   "adr": "ADR-056",
-  "created_at": "2026-05-23T21:51:28.375154275+00:00",
+  "created_at": "2026-05-23T21:52:25.572284777+00:00",
   "created_by": "hex-coder",
-  "feature": "Apply hexagonal architecture principles to frontend (SolidJS) code",
+  "feature": "Apply hexagonal architecture principles to frontend SolidJS code",
   "id": "wp-frontend-hexagonal-architecture",
   "phases": [
     {
@@ -12,33 +12,23 @@
       "tasks": [
         {
           "files": [
-            "hex-nexus/src/stores/chat.ts",
-            "hex-nexus/src/services/spacetimedb.ts"
+            "hex-nexus/src/services/spacetimedb.ts",
+            "hex-nexus/src/services/chat-ws.ts",
+            "hex-nexus/src/services/rest-client.ts"
           ],
           "id": "P1.1",
           "layer": "secondary",
-          "name": "Move fetch logic from stores/chat.ts to services/spacetimedb.ts",
+          "name": "Move fetch() and new WebSocket() calls to services/",
           "status": "pending"
         },
         {
           "files": [
-            "hex-nexus/src/stores/connection.ts",
-            "hex-nexus/src/services/spacetimedb.ts"
+            "hex-nexus/src/stores/chat.ts",
+            "hex-nexus/src/stores/connection.ts"
           ],
           "id": "P1.2",
-          "layer": "secondary",
-          "name": "Move WebSocket connections from stores/connection.ts to services/spacetimedb.ts",
-          "status": "pending"
-        },
-        {
-          "files": [
-            "hex-nexus/src/services/spacetimedb.ts",
-            "hex-nexus/src/services/rest-client.ts",
-            "hex-nexus/src/services/chat-ws.ts"
-          ],
-          "id": "P1.3",
-          "layer": "secondary",
-          "name": "Ensure services are singletons (spacetimedb.ts, rest-client.ts, chat-ws.ts)",
+          "layer": "domain",
+          "name": "Update stores to import from services/",
           "status": "pending"
         }
       ],
@@ -46,7 +36,7 @@
     },
     {
       "id": "P2",
-      "name": "Replace inline styles with Tailwind during component rewrites (F5, F9)",
+      "name": "Replace inline styles with Tailwind during component rewrites",
       "status": "pending",
       "tasks": [
         {
@@ -55,7 +45,7 @@
           ],
           "id": "P2.1",
           "layer": "primary",
-          "name": "Convert hardcoded colors to Tailwind classes in components",
+          "name": "Identify and replace style={{}} instances in components/",
           "status": "pending"
         },
         {
@@ -64,7 +54,7 @@
           ],
           "id": "P2.2",
           "layer": "primary",
-          "name": "Replace inline styles with Tailwind classes in components",
+          "name": "Ensure no hardcoded colors in components/",
           "status": "pending"
         }
       ],
@@ -72,26 +62,25 @@
     },
     {
       "id": "P3",
-      "name": "Add hex analyze rules for frontend boundary checking (all rules)",
+      "name": "Add hex analyze rules for frontend boundary checking",
       "status": "pending",
       "tasks": [
         {
           "files": [
-            "hex-nexus/src/tools/hex-analyze.ts"
+            "hex-core/src/analysis/frontend_analyzer.rs"
           ],
           "id": "P3.1",
           "layer": "infrastructure",
-          "name": "Extend hex analyze to check frontend code (F1, F2, F3, F4, F5, F6, F7, F8, F9)",
+          "name": "Extend tree-sitter analysis to check frontend code",
           "status": "pending"
         },
         {
           "files": [
-            ".husky/pre-commit",
-            ".github/workflows/lint.yml"
+            "hex-core/src/rules/frontend_rules.rs"
           ],
           "id": "P3.2",
           "layer": "infrastructure",
-          "name": "Configure hex analyze for frontend checks",
+          "name": "Add checks for all frontend rules in hex analyze",
           "status": "pending"
         }
       ],
