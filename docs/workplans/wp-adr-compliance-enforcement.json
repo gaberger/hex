@@ -1,83 +1,100 @@
 {
   "adr": "ADR-054",
-  "created_at": "2026-05-23T21:04:24.548551380+00:00",
+  "created_at": "2026-05-23T21:06:30.983534756+00:00",
   "created_by": "hex-coder",
-  "feature": "Implement ADR compliance enforcement in hex analyze and pre-commit hook",
+  "feature": "Implementing ADR compliance enforcement to prevent architectural drift",
   "id": "wp-adr-compliance-enforcement",
   "phases": [
     {
       "id": "P0",
-      "name": "Define ADR Compliance Rules in `hex analyze`",
+      "name": "Domain + ports scaffolding for ADR rules and violations",
       "status": "pending",
       "tasks": [
         {
           "files": [
-            "hex-nexus/src/analyze/compliance.rs"
+            "hex-core/src/domain/adr_rules.rs"
           ],
           "id": "P0.1",
-          "layer": "primary",
-          "name": "Add new analysis pass for ADR compliance",
+          "layer": "domain",
+          "name": "Define the domain type for ADR rules",
           "status": "pending"
         },
         {
           "files": [
-            ".hex/ADR-rules.toml"
+            "hex-core/src/ports/adr_violations_port.rs"
           ],
           "id": "P0.2",
-          "layer": "configuration",
-          "name": "Define initial rule set in ADR-rules.toml",
+          "layer": "ports",
+          "name": "Define the port interface for ADR violations",
           "status": "pending"
         }
       ],
-      "tier": 2
+      "tier": 0
     },
     {
       "id": "P1",
-      "name": "Enforce ADR Frontmatter Tags and Pre-Commit Hook",
+      "name": "Secondary adapter implementation for ADR compliance check",
       "status": "pending",
       "tasks": [
         {
           "files": [
-            "docs/adrs/template.md"
+            "hex-nexus/src/adapters/adr_rules_adapter.rs"
           ],
           "id": "P1.1",
-          "layer": "infrastructure",
-          "name": "Update ADR template to include `enforced_by` frontmatter field",
+          "layer": "secondary",
+          "name": "Implement the secondary adapter for ADR rules",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "Primary usecase implementation for ADR compliance enforcement",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/usecases/adr_compliance_checker.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Implement the primary usecase for ADR compliance check",
           "status": "pending"
         },
         {
           "files": [
             ".git/hooks/pre-commit"
           ],
-          "id": "P1.2",
-          "layer": "secondary",
-          "name": "Implement pre-commit hook for ADR compliance",
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Integrate the pre-commit hook for ADR compliance",
           "status": "pending"
         }
       ],
-      "tier": 3
+      "tier": 2
     },
     {
-      "id": "P2",
-      "name": "Agent Context Injection and SpacetimeDB Table Migration",
+      "id": "P3",
+      "name": "Infrastructure setup for shared state in SpacetimeDB",
       "status": "pending",
       "tasks": [
         {
           "files": [
-            "hex-nexus/src/agents/prompt_generator.rs"
+            "hex-nexus/src/spacetimedb/adr_violations_table.rs"
           ],
-          "id": "P2.1",
-          "layer": "secondary",
-          "name": "Inject ADR summaries into agent prompts for code generation",
+          "id": "P3.1",
+          "layer": "infrastructure",
+          "name": "Migrate ADR compliance results to dedicated SpacetimeDB table",
           "status": "pending"
         },
         {
           "files": [
-            "hex-core/src/spacetimedb/adr_violations.rs"
+            "hex-dashboard/src/components/AdrViolations.vue"
           ],
-          "id": "P2.2",
-          "layer": "primary",
-          "name": "Migrate to dedicated SpacetimeDB table for ADR violations",
+          "id": "P3.2",
+          "layer": "infrastructure",
+          "name": "Update dashboard for real-time ADR violation updates",
           "status": "pending"
         }
       ],
