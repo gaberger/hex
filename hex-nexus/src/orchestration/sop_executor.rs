@@ -262,7 +262,107 @@ pub async fn run(
     let run_id = record_start(role, intent, operator_message).await;
     let result = run_inner(role, operator_message, repo_root, intent).await;
     record_end(run_id, &result).await;
+
+    // Auto-write the outcome to memory so the next SOP run (this role
+    // OR another) can ground against it. Closes
+    // gap:no-auto-memory-write-on-sop-failure — personas can now
+    // recall their own and others' past actions/failures in GROUND
+    // via memory_search.
+    persist_sop_outcome_to_memory(role, intent, run_id, &result).await;
+
     result
+}
+
+/// Write a per-run memory entry summarising what the SOP produced.
+/// Key conventions:
+///   action:<role>:<intent>:<run_id>  — successful action emissions
+///   nopact:<role>:<intent>:<run_id>  — completed runs with no action
+///   failure:<role>:<intent>:<run_id> — REASON / VERIFY failures
+///
+/// All three are prefix-searchable so GROUND can pull "what has <role>
+/// done lately" (action:<role>:) and "where has <role> failed lately"
+/// (failure:<role>:). Best-effort: a memory_store transport error is
+/// logged but does not affect the SOP result the caller sees.
+async fn persist_sop_outcome_to_memory(
+    role: &str,
+    intent: &'static str,
+    run_id: u64,
+    result: &SopResult,
+) {
+    let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
+    let url = format!("http://127.0.0.1:{}/api/hexflo/memory", port);
+
+    // Cap stored value at ~1KB so the memory table doesn't bloat from
+    // chat-card prose. Operators / agents look this up for the SHAPE
+    // (what was attempted + outcome), not the full text.
+    let summary: String = match (result.success, result.emitted_action_kind.as_deref()) {
+        (true, Some(action)) => format!(
+            "emitted={} intent={} card_chars={} trace={}",
+            action,
+            intent,
+            result.chat_card.chars().count(),
+            result.phase_trace.join(" | ").chars().take(400).collect::<String>(),
+        ),
+        (true, None) => format!(
+            "no_action intent={} card_chars={} trace={}",
+            intent,
+            result.chat_card.chars().count(),
+            result.phase_trace.join(" | ").chars().take(400).collect::<String>(),
+        ),
+        (false, _) => format!(
+            "FAILED intent={} error={} trace={}",
+            intent,
+            result.error.as_deref().unwrap_or("unknown").chars().take(200).collect::<String>(),
+            result.phase_trace.join(" | ").chars().take(400).collect::<String>(),
+        ),
+    };
+
+    let prefix = match (result.success, result.emitted_action_kind.is_some()) {
+        (true, true) => "action",
+        (true, false) => "nopact",
+        (false, _) => "failure",
+    };
+    let key = format!("{}:{}:{}:{}", prefix, role, intent, run_id);
+    let body = serde_json::json!({
+        "key": key,
+        "value": summary,
+        "scope": "sop-history",
+    });
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::debug!(error = %e, "persist_sop_outcome_to_memory: http build failed");
+            return;
+        }
+    };
+    // The /api/hexflo/* guarded paths require x-hex-agent-id. The middleware
+    // only checks the header is non-empty (see middleware/agent_guard.rs);
+    // a stable nexus-internal id satisfies the contract.
+    let resp = client
+        .post(&url)
+        .header("x-hex-agent-id", "nexus-sop-executor")
+        .json(&body)
+        .send()
+        .await;
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            tracing::debug!(key = %key, "persist_sop_outcome_to_memory: stored");
+        }
+        Ok(r) => {
+            tracing::warn!(
+                key = %key,
+                status = %r.status(),
+                "persist_sop_outcome_to_memory: store rejected"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, key = %key, "persist_sop_outcome_to_memory: store transport failed");
+        }
+    }
 }
 
 async fn run_inner(
@@ -300,7 +400,7 @@ async fn run_inner(
 
     // PHASE 2 GROUND — parallel tool calls relevant to the intent.
     let registry = Arc::new(ToolRegistry::default());
-    let ground_pack = ground_for_intent(&registry, intent, operator_message).await;
+    let ground_pack = ground_for_intent(&registry, role, intent, operator_message).await;
     let grep_n = ground_pack
         .get("repo_grep")
         .and_then(|v| v.get("total_matches"))
@@ -314,11 +414,14 @@ async fn run_inner(
             .unwrap_or(0)
     };
     trace.push(format!(
-        "GROUND → {} repo_grep matches, memory: {} lessons / {} gaps / {} intent",
+        "GROUND → {} repo_grep matches, memory: {} lessons / {} gaps / {} intent / {} own-actions / {} own-nopact / {} own-failures",
         grep_n,
         mem_n(&ground_pack, "lessons"),
         mem_n(&ground_pack, "gaps"),
         mem_n(&ground_pack, "intent_match"),
+        mem_n(&ground_pack, "own_actions"),
+        mem_n(&ground_pack, "own_nopact"),
+        mem_n(&ground_pack, "own_failures"),
     ));
 
     // PHASE 3 REASON — Anthropic call with tools attached.
@@ -382,6 +485,7 @@ struct ReasonResult {
 /// (which is not redacted) instead of file NAMES (which can be).
 async fn ground_for_intent(
     registry: &Arc<ToolRegistry>,
+    role: &str,
     intent: &str,
     operator_message: &str,
 ) -> Value {
@@ -426,15 +530,24 @@ async fn ground_for_intent(
     };
     let grep_result = registry.execute("repo_grep", grep_input).await;
 
-    // Memory pull — closes the structural gap where personas had no
-    // read access to hex memory (lessons / gaps / projects). Fires
-    // three queries in parallel: lesson:, gap:, and the intent-derived
-    // pattern (so a workplan_emit ask pulls workplan-related memory).
-    // Cap each at 6 results so the prompt budget stays tight. If the
-    // search endpoint isn't reachable, GROUND returns an empty memory
-    // pack — REASON still runs.
+    // Memory pull — five parallel queries so the persona arrives at REASON
+    // with: prior LESSONS (don't-repeat), known GAPS (the system's blind
+    // spots), context for the INTENT pattern, and — critically for agent
+    // continuity — its OWN prior actions and failures. Without the per-role
+    // history pulls (closes gap:no-auto-memory-write-on-sop-failure +
+    // user ask 2026-05-23 "agents shouldn't lose context, they should
+    // be able to examine memory to understand what they have done and
+    // what needs to be done"), each SOP run was effectively amnesiac
+    // about the persona's own work.
+    //
+    // Caps tuned to keep the prompt budget bounded: 6 lessons + 6 gaps +
+    // 6 intent + 8 own-actions + 4 own-failures ≈ 30 memory rows max
+    // (~15KB at the conventional 500-byte row size).
     let memory_pattern = derive_grep_pattern(operator_message);
-    let (mem_lessons, mem_gaps, mem_intent) = tokio::join!(
+    let action_prefix = format!("action:{}:", role);
+    let nopact_prefix = format!("nopact:{}:", role);
+    let failure_prefix = format!("failure:{}:", role);
+    let (mem_lessons, mem_gaps, mem_intent, mem_own_actions, mem_own_nopact, mem_own_failures) = tokio::join!(
         registry.execute(
             "memory_search",
             json!({ "query": "lesson:", "max_results": 6 }),
@@ -447,12 +560,28 @@ async fn ground_for_intent(
             "memory_search",
             json!({ "query": memory_pattern.clone(), "max_results": 6 }),
         ),
+        registry.execute(
+            "memory_search",
+            json!({ "query": action_prefix.clone(), "max_results": 6 }),
+        ),
+        registry.execute(
+            "memory_search",
+            json!({ "query": nopact_prefix.clone(), "max_results": 4 }),
+        ),
+        registry.execute(
+            "memory_search",
+            json!({ "query": failure_prefix.clone(), "max_results": 4 }),
+        ),
     );
     let memory_pack = json!({
-        "lessons":      if mem_lessons.ok { mem_lessons.output } else { json!({"error": mem_lessons.error}) },
-        "gaps":         if mem_gaps.ok    { mem_gaps.output    } else { json!({"error": mem_gaps.error}) },
-        "intent_match": if mem_intent.ok  { mem_intent.output  } else { json!({"error": mem_intent.error}) },
-        "intent_query": memory_pattern,
+        "lessons":       if mem_lessons.ok      { mem_lessons.output      } else { json!({"error": mem_lessons.error}) },
+        "gaps":          if mem_gaps.ok         { mem_gaps.output         } else { json!({"error": mem_gaps.error}) },
+        "intent_match":  if mem_intent.ok       { mem_intent.output       } else { json!({"error": mem_intent.error}) },
+        "intent_query":  memory_pattern,
+        "own_actions":   if mem_own_actions.ok  { mem_own_actions.output  } else { json!({"error": mem_own_actions.error}) },
+        "own_nopact":    if mem_own_nopact.ok   { mem_own_nopact.output   } else { json!({"error": mem_own_nopact.error}) },
+        "own_failures":  if mem_own_failures.ok { mem_own_failures.output } else { json!({"error": mem_own_failures.error}) },
+        "role":          role,
     });
 
     json!({
