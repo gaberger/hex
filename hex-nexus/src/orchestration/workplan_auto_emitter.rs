@@ -203,26 +203,88 @@ async fn derive_one(
     }
     let trimmed = body_text.chars().take(24 * 1024).collect::<String>();
 
+    // System prompt with a one-shot example. The example is the most-
+    // load-bearing part: empirically observed 2026-05-23 that abstract
+    // rules alone produced ~30% schema-error rate (model emitting empty
+    // phase ids, missing slug, empty phases array). A concrete example
+    // showing the exact shape — every required field populated — cuts
+    // that rate sharply. Keep the example minimal (1-2 phases, 1-2 tasks
+    // each) so the model doesn't try to over-mimic structure.
     let system = format!(
         "You are the workplan-derivation persona. Read this ADR and emit a hex \
-         workplan via the workplan_emit tool. Rules:\n\
-         - The workplan slug should be a kebab-case summary of the ADR title (max 60 chars)\n\
-         - The 'feature' field is a one-line human description\n\
-         - The 'adr' field MUST be exactly: ADR-{adr_id}\n\
-         - Phases are dependency-ordered. Use P0 for domain/ports work, P1 for \
-           secondary adapters, P2 for primary, P3 for usecases, P4 for integration\n\
-         - Each phase has 1-5 concrete tasks; each task has id (e.g. P0.1), name \
-           (concrete deliverable), layer (domain|ports|usecases|primary|secondary|infrastructure|integration), \
-           AND files[] (1+ repo-relative paths the task creates or modifies — REQUIRED for hex plan reconcile).\n\
-         - Map the ADR's Decision section into 1-3 phases minimum. Don't over-decompose.\n\
-         - For files[]: extract concrete paths from the ADR text. Examples:\n\
-           * 'modify hex-nexus/src/orchestration/drafter.rs' → files: ['hex-nexus/src/orchestration/drafter.rs']\n\
-           * 'add new tool foo' → files: ['hex-nexus/src/tools/foo.rs']\n\
-           * 'doc-only ADR with no code' → files: ['docs/adrs/ADR-{adr_id}-*.md'] for the ADR itself\n\
-         - If the ADR is a pure-doc decision (no code work), emit ONE phase 'P0 Documentation' \
-           with one task layer=infrastructure files=['docs/adrs/ADR-{adr_id}-*.md']. Reconciler marks done immediately.\n\
-         You MUST call workplan_emit exactly once. Do not chat. Do not call other tools.",
+         workplan by calling the workplan_emit tool exactly ONCE. Do not chat. \
+         Do not call other tools.\n\n\
+         REQUIRED FIELDS (all 4 mandatory; missing any = rejection):\n\
+           slug    — kebab-case, ≤60 chars, derived from ADR title\n\
+           feature — one-line human description\n\
+           adr     — MUST be exactly: ADR-{adr_id}\n\
+           phases  — non-empty array; each phase has id, name, tier, tasks[]\n\n\
+         PER-PHASE REQUIRED FIELDS:\n\
+           id    — MUST match ^P\\d+$ (e.g. \"P0\", \"P1\", \"P2\")\n\
+           name  — what this phase delivers\n\
+           tier  — integer 0..5 (0=domain/ports, 1=secondary, 2=primary, 3=usecases, 4=integration)\n\
+           tasks — non-empty array\n\n\
+         PER-TASK REQUIRED FIELDS:\n\
+           id    — e.g. \"P0.1\" (phase-id . sequence)\n\
+           name  — concrete deliverable\n\
+           layer — one of: domain | ports | usecases | primary | secondary | infrastructure | integration\n\
+           files — non-empty array of repo-relative paths the task creates or modifies\n\n\
+         === ONE-SHOT EXAMPLE — call workplan_emit with arguments shaped EXACTLY like this ===\n\
+         {{\n\
+           \"slug\":    \"example-feature-name\",\n\
+           \"feature\": \"Short human description of what ships\",\n\
+           \"adr\":     \"ADR-{adr_id}\",\n\
+           \"phases\": [\n\
+             {{\n\
+               \"id\": \"P0\",\n\
+               \"name\": \"Domain + ports scaffolding\",\n\
+               \"tier\": 0,\n\
+               \"tasks\": [\n\
+                 {{\n\
+                   \"id\": \"P0.1\",\n\
+                   \"name\": \"Define the domain type\",\n\
+                   \"layer\": \"domain\",\n\
+                   \"files\": [\"hex-core/src/domain/feature.rs\"]\n\
+                 }},\n\
+                 {{\n\
+                   \"id\": \"P0.2\",\n\
+                   \"name\": \"Define the port interface\",\n\
+                   \"layer\": \"ports\",\n\
+                   \"files\": [\"hex-core/src/ports/feature_port.rs\"]\n\
+                 }}\n\
+               ]\n\
+             }},\n\
+             {{\n\
+               \"id\": \"P1\",\n\
+               \"name\": \"Secondary adapter implementation\",\n\
+               \"tier\": 1,\n\
+               \"tasks\": [\n\
+                 {{\n\
+                   \"id\": \"P1.1\",\n\
+                   \"name\": \"Implement the adapter\",\n\
+                   \"layer\": \"secondary\",\n\
+                   \"files\": [\"hex-nexus/src/adapters/feature_adapter.rs\"]\n\
+                 }}\n\
+               ]\n\
+             }}\n\
+           ]\n\
+         }}\n\
+         === END EXAMPLE ===\n\n\
+         DERIVATION RULES:\n\
+         - Map the ADR's Decision section into 1-3 phases minimum (don't over-decompose).\n\
+         - For files[]: extract concrete paths from the ADR text where possible:\n\
+             'modify hex-nexus/src/orchestration/drafter.rs' → files: [\"hex-nexus/src/orchestration/drafter.rs\"]\n\
+             'add new tool foo'                              → files: [\"hex-nexus/src/tools/foo.rs\"]\n\
+         - DOC-ONLY ADR (no code work in the Decision section): emit ONE phase exactly:\n\
+             {{\"id\":\"P0\",\"name\":\"Documentation\",\"tier\":0,\n\
+               \"tasks\":[{{\"id\":\"P0.1\",\"name\":\"Document the decision\",\n\
+                          \"layer\":\"infrastructure\",\n\
+                          \"files\":[\"docs/adrs/{adr_file_glob}\"]}}]}}\n\
+           Reconciler will mark this done immediately because the ADR file already exists.\n\n\
+         REMINDER: call workplan_emit ONCE with the arguments shaped like the example above. \
+         Every required field present. No commentary.",
         adr_id = adr_id,
+        adr_file_glob = format!("ADR-{}-*.md", adr_id),
     );
     let user_msg = format!("ADR file: docs/adrs/{}\n\n{}", adr_name, trimmed);
 
