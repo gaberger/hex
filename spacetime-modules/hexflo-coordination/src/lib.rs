@@ -5519,6 +5519,191 @@ pub fn persona_prompt_rollback(
 }
 
 // ============================================================
+// persona_prompt_proposal — successful-applies-only verdict ledger
+// (Path B item 4, ADR-2026-05-23-0900 follow-up).
+//
+// Records every SUCCESSFUL gated apply with the full verdict chain
+// attached. Rejections are not recorded here — STDB reducers are
+// transactional, so an Err return rolls back the row insert anyway.
+// Rejection audit lives in the nexus tracing log (hive_improver +
+// CLI both log structured rejection events).
+//
+// This is the complement to persona_prompt_history: history records
+// every successful write (seed / apply / rollback) with body+model;
+// proposal additionally records the verdict chain that authorised
+// the gated apply. Queryable join key is (role, applied_at ≈ created_at).
+//
+// Schema notes:
+//   - composite primary key uses role + creation timestamp, formatted
+//     so STDB SQL ORDER BY id sorts chronologically per role
+//   - provider strings are the divergence-class tags ("anthropic",
+//     "openai", "ollama", "openrouter"). Caller passes them; reducer
+//     compares for inequality. Empty string is rejected.
+//   - decision is always "applied" for rows that land in this table;
+//     the field is kept (rather than dropped) so future RL outcome
+//     classifiers (Path B item 2) can extend it to "applied" /
+//     "applied-then-rolled-back" without a schema migration.
+// ============================================================
+
+#[table(name = persona_prompt_proposal, public)]
+#[derive(Clone, Debug)]
+pub struct PersonaPromptProposal {
+    /// `{role}::{created_at_micros:020}` — chronological per role
+    #[primary_key]
+    pub id: String,
+    pub role: String,
+    pub classify_body: String,
+    pub reason_body: String,
+    pub model_preferred: String,
+    pub model_upgrade_to: String,
+    pub red_provider: String,
+    pub red_verdict: String,
+    pub blue_provider: String,
+    pub blue_verdict: String,
+    pub judge_verdict: String,
+    pub decision: String,
+    pub decision_reason: String,
+    pub created_at: Timestamp,
+    pub created_by: String,
+    pub applied_version: Option<u64>,
+}
+
+fn is_approving_verdict(v: &str) -> bool {
+    matches!(v, "approve" | "approve-with-changes" | "approve_with_changes")
+}
+
+/// Verdict-gated apply: the only path the autonomous improver and the
+/// CLI's debate-enabled improve take. Enforces — at the STDB reducer
+/// boundary — what the CLI / nexus orchestrators were enforcing in
+/// process. Future callers (other clients, MCP, RL agents) cannot
+/// bypass: this reducer is the contract.
+///
+/// Validations (fail-closed; the first failed check returns Err and
+/// rolls back the entire reducer transaction):
+///   1. role non-empty, exists in `persona_prompt`
+///   2. classify_body / reason_body within PERSONA_PROMPT_BODY_MAX
+///   3. red_verdict, blue_verdict, judge_verdict all approving
+///   4. red_provider and blue_provider both non-empty
+///   5. red_provider != blue_provider (provider divergence)
+///
+/// On success the reducer:
+///   - writes the new active row to persona_prompt (seeded_by = "gated:<sender>")
+///   - appends a history row with event_kind = "apply-gated"
+///   - inserts a proposal row with decision = "applied"
+///
+/// On failure: STDB rolls back; persona_prompt unchanged; no proposal
+/// row recorded. Rejection audit lives in the caller's logs (the
+/// hive_improver and CLI both emit structured rejection events).
+#[reducer]
+pub fn persona_prompt_apply_gated(
+    ctx: &ReducerContext,
+    role: String,
+    classify_body: String,
+    reason_body: String,
+    model_preferred: String,
+    model_upgrade_to: String,
+    red_provider: String,
+    red_verdict: String,
+    blue_provider: String,
+    blue_verdict: String,
+    judge_verdict: String,
+) -> Result<(), String> {
+    if role.is_empty() {
+        return Err("role is required".into());
+    }
+    if classify_body.len() > PERSONA_PROMPT_BODY_MAX {
+        return Err(format!(
+            "classify_body size {} exceeds {} byte cap",
+            classify_body.len(),
+            PERSONA_PROMPT_BODY_MAX
+        ));
+    }
+    if reason_body.len() > PERSONA_PROMPT_BODY_MAX {
+        return Err(format!(
+            "reason_body size {} exceeds {} byte cap",
+            reason_body.len(),
+            PERSONA_PROMPT_BODY_MAX
+        ));
+    }
+    if !is_approving_verdict(&red_verdict) {
+        return Err(format!("red verdict '{}' is not approving", red_verdict));
+    }
+    if !is_approving_verdict(&blue_verdict) {
+        return Err(format!("blue verdict '{}' is not approving", blue_verdict));
+    }
+    if !is_approving_verdict(&judge_verdict) {
+        return Err(format!(
+            "judge verdict '{}' is not approving",
+            judge_verdict
+        ));
+    }
+    if red_provider.is_empty() || blue_provider.is_empty() {
+        return Err("red_provider and blue_provider must both be specified".into());
+    }
+    if red_provider == blue_provider {
+        return Err(format!(
+            "provider divergence violation: red and blue both ran on '{}'",
+            red_provider
+        ));
+    }
+    if ctx.db.persona_prompt().role().find(&role).is_none() {
+        return Err(format!(
+            "persona_prompt_apply_gated: role '{}' not yet seeded — call seed_persona_prompt first",
+            role
+        ));
+    }
+
+    // All gates passed — write the active row.
+    let created_at = ctx.timestamp;
+    let created_by = format!("gated:{}", ctx.sender);
+    let new_row = PersonaPrompt {
+        role: role.clone(),
+        classify_body: classify_body.clone(),
+        reason_body: reason_body.clone(),
+        model_preferred: model_preferred.clone(),
+        model_upgrade_to: model_upgrade_to.clone(),
+        seeded_at: ctx.timestamp,
+        seeded_by: created_by.clone(),
+    };
+    ctx.db.persona_prompt().role().update(new_row);
+
+    let version = next_persona_prompt_version(ctx, &role);
+    record_persona_prompt_history(
+        ctx,
+        &role,
+        version,
+        &classify_body,
+        &reason_body,
+        &model_preferred,
+        &model_upgrade_to,
+        &created_by,
+        "apply-gated",
+    );
+
+    let id = format!("{}::{:?}", role, created_at);
+    ctx.db.persona_prompt_proposal().insert(PersonaPromptProposal {
+        id,
+        role: role.clone(),
+        classify_body,
+        reason_body,
+        model_preferred,
+        model_upgrade_to,
+        red_provider,
+        red_verdict,
+        blue_provider,
+        blue_verdict,
+        judge_verdict,
+        decision: "applied".into(),
+        decision_reason: String::new(),
+        created_at,
+        created_by,
+        applied_version: Some(version),
+    });
+
+    Ok(())
+}
+
+// ============================================================
 // User-defined SOUL personas (ADR-2026-05-13-1849, wp-user-defined-soul-personas P1)
 // ============================================================
 // Flat-peer personas that coexist with the built-in c-suite. Storage on

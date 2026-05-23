@@ -1,118 +1,124 @@
 {
-  "id": "wp-dashboard-ux-remediation-2026-05-22",
-  "title": "Dashboard UX remediation — top P0/P1 findings from 2026-05-22 audit",
-  "status": "planned",
   "created_at": "2026-05-22T18:00:00Z",
+  "id": "wp-dashboard-ux-remediation-2026-05-22",
   "notes": "Drives the dashboard from 'terrible' to coherent. Sourced from docs/specs/dashboard-ux-audit-2026-05-22.md — 5 highest-ROI items, all within hex-ux's bounded primary-adapter scope (no domain/ports changes). Each task = one component file. Gates check that the dashboard still builds via Vite. The audit explicitly recommends Claude in-session subagent for structural tasks (P1.2, P2.1) and Path C autonomous for mechanical tasks (P1.1, P1.3, P2.2) — the executor's tier routing should pick this up via strategy_hint.",
   "phases": [
     {
+      "gate": {
+        "blocking": true,
+        "command": "cd hex-nexus/assets && npm run build",
+        "gate_type": "vite_build"
+      },
       "id": "P1",
       "name": "Cohesion — visual dialect + sidebar priority",
-      "tier": 2,
       "tasks": [
         {
-          "id": "P1.1",
-          "name": "Global zinc-* → gray-* Tailwind replace",
-          "layer": "primary",
-          "strategy_hint": "transform",
+          "description": "Mechanical Tailwind palette replace. The dashboard has three components using `zinc-*` (MissionControl.tsx, AttentionFeed.tsx, AgentRuns.tsx); the rest uses `gray-*` which the theme layer overrides via CSS vars in `assets/src/dashboard.css:112-134`. zinc is NOT overridden → light mode breaks on Mission Control, dark mode runs visibly bluer than chrome.\n\nFor each file: replace ALL `zinc-` substrings with `gray-` (zinc-50 → gray-50, zinc-100 → gray-100, ..., zinc-950 → gray-950). Preserve everything else. Do not modify other files. Verify by grep: after the change, `grep -rn 'zinc-' hex-nexus/assets/src/` returns zero matches in these three files.",
+          "done_condition": "grep -rn 'zinc-' hex-nexus/assets/src/components/{MissionControl,AttentionFeed,AgentRuns}.tsx returns 0 lines; vite build still succeeds",
           "files": [
             "hex-nexus/assets/src/components/MissionControl.tsx",
             "hex-nexus/assets/src/components/AttentionFeed.tsx",
             "hex-nexus/assets/src/components/AgentRuns.tsx"
           ],
-          "description": "Mechanical Tailwind palette replace. The dashboard has three components using `zinc-*` (MissionControl.tsx, AttentionFeed.tsx, AgentRuns.tsx); the rest uses `gray-*` which the theme layer overrides via CSS vars in `assets/src/dashboard.css:112-134`. zinc is NOT overridden → light mode breaks on Mission Control, dark mode runs visibly bluer than chrome.\n\nFor each file: replace ALL `zinc-` substrings with `gray-` (zinc-50 → gray-50, zinc-100 → gray-100, ..., zinc-950 → gray-950). Preserve everything else. Do not modify other files. Verify by grep: after the change, `grep -rn 'zinc-' hex-nexus/assets/src/` returns zero matches in these three files.",
-          "done_condition": "grep -rn 'zinc-' hex-nexus/assets/src/components/{MissionControl,AttentionFeed,AgentRuns}.tsx returns 0 lines; vite build still succeeds"
+          "id": "P1.1",
+          "layer": "primary",
+          "name": "Global zinc-* → gray-* Tailwind replace",
+          "strategy_hint": "transform"
         },
         {
-          "id": "P1.2",
-          "name": "Mission Control anomaly grouping with collapse + count badge",
-          "layer": "primary",
-          "strategy_hint": "inference",
+          "description": "Mission Control currently renders every `attention_feed` item as a separate inline card (MissionControl.tsx:316-324). Live payload shows 14 of 15 items are duplicate `resource_anomaly` rows (kinds `rss_oversize` + `cpu_pin`), drowning real conversation.\n\nImplement client-side grouping:\n1. Before rendering, group attention items by `(kind, severity)` — collapsing items where `title.slice(0,30)` matches into one group.\n2. Render each group as a single card with: title showing the kind + count badge (e.g. `rss_oversize (×12)`), severity color, a chevron to expand for the individual rows, and a single 'Ack all' button that POSTs ack for each row's id.\n3. If a group has exactly 1 item, render the existing card shape (no chevron, no count badge) — same as today.\n4. Preserve the existing 5-min suppress-by-key behavior — applying suppress to the GROUP key suppresses the whole class.\n5. Keep the existing dedup-by-id contract — items with `id` already in the in-memory map don't double-render.\n\nDon't change the data fetch (still the same `/api/mission-control` endpoint). Don't change the suppress storage shape. Don't change AttentionFeed.tsx (separate component).\n\nGate: vite build still succeeds; manual eyeball test would show 1-2 grouped cards instead of 15 single rows when nexus is reporting the current anomaly mix.",
+          "done_condition": "MissionControl.tsx renders attention_feed items grouped by (kind, severity); single-item groups still show as today; vite build passes",
           "files": [
             "hex-nexus/assets/src/components/MissionControl.tsx"
           ],
-          "description": "Mission Control currently renders every `attention_feed` item as a separate inline card (MissionControl.tsx:316-324). Live payload shows 14 of 15 items are duplicate `resource_anomaly` rows (kinds `rss_oversize` + `cpu_pin`), drowning real conversation.\n\nImplement client-side grouping:\n1. Before rendering, group attention items by `(kind, severity)` — collapsing items where `title.slice(0,30)` matches into one group.\n2. Render each group as a single card with: title showing the kind + count badge (e.g. `rss_oversize (×12)`), severity color, a chevron to expand for the individual rows, and a single 'Ack all' button that POSTs ack for each row's id.\n3. If a group has exactly 1 item, render the existing card shape (no chevron, no count badge) — same as today.\n4. Preserve the existing 5-min suppress-by-key behavior — applying suppress to the GROUP key suppresses the whole class.\n5. Keep the existing dedup-by-id contract — items with `id` already in the in-memory map don't double-render.\n\nDon't change the data fetch (still the same `/api/mission-control` endpoint). Don't change the suppress storage shape. Don't change AttentionFeed.tsx (separate component).\n\nGate: vite build still succeeds; manual eyeball test would show 1-2 grouped cards instead of 15 single rows when nexus is reporting the current anomaly mix.",
-          "done_condition": "MissionControl.tsx renders attention_feed items grouped by (kind, severity); single-item groups still show as today; vite build passes"
+          "id": "P1.2",
+          "layer": "primary",
+          "name": "Mission Control anomaly grouping with collapse + count badge",
+          "strategy_hint": "inference"
         },
         {
-          "id": "P1.3",
-          "name": "Promote Mission Control to top of sidebar with distinct treatment",
-          "layer": "primary",
-          "strategy_hint": "transform",
+          "description": "Mission Control is the operator's primary surface — currently buried mid-sidebar.\n\n1. In `Sidebar.tsx`, move the Mission Control nav entry to the TOP of the global section (above all project-scoped entries if they exist there, or as the first item overall).\n2. Apply distinct visual treatment: bold weight, slightly larger text (`text-sm font-semibold` vs the current default), a left-edge accent (e.g. `border-l-2 border-cyan-500 pl-2`) when active.\n3. In `App.tsx`, leave the existing route aliases alone (P2.1 will collapse those — out of scope here).\n4. Don't change the sidebar's structural layout, just the Mission Control entry's position + classes.\n\nGate: vite build passes; Mission Control sidebar entry renders at the top, visibly distinct.",
+          "done_condition": "Sidebar.tsx renders Mission Control as the first nav entry with distinct font-weight and active-border treatment; vite build passes",
           "files": [
             "hex-nexus/assets/src/components/Sidebar.tsx",
             "hex-nexus/assets/src/App.tsx"
           ],
-          "description": "Mission Control is the operator's primary surface — currently buried mid-sidebar.\n\n1. In `Sidebar.tsx`, move the Mission Control nav entry to the TOP of the global section (above all project-scoped entries if they exist there, or as the first item overall).\n2. Apply distinct visual treatment: bold weight, slightly larger text (`text-sm font-semibold` vs the current default), a left-edge accent (e.g. `border-l-2 border-cyan-500 pl-2`) when active.\n3. In `App.tsx`, leave the existing route aliases alone (P2.1 will collapse those — out of scope here).\n4. Don't change the sidebar's structural layout, just the Mission Control entry's position + classes.\n\nGate: vite build passes; Mission Control sidebar entry renders at the top, visibly distinct.",
-          "done_condition": "Sidebar.tsx renders Mission Control as the first nav entry with distinct font-weight and active-border treatment; vite build passes"
+          "id": "P1.3",
+          "layer": "primary",
+          "name": "Promote Mission Control to top of sidebar with distinct treatment",
+          "strategy_hint": "transform"
         }
       ],
-      "gate": {
-        "gate_type": "vite_build",
-        "command": "cd hex-nexus/assets && npm run build",
-        "blocking": true
-      }
+      "tier": 2
     },
     {
+      "depends_on": [
+        "P1"
+      ],
+      "gate": {
+        "blocking": true,
+        "command": "cd hex-nexus/assets && npm run build",
+        "gate_type": "vite_build"
+      },
       "id": "P2",
       "name": "Information architecture — sidebar IA + loading states",
-      "tier": 2,
-      "depends_on": ["P1"],
       "tasks": [
         {
-          "id": "P2.1",
-          "name": "Collapse 11 dead sidebar items into Mission Control filter chips",
-          "layer": "primary",
-          "strategy_hint": "inference",
+          "description": "App.tsx:267-290 aliases 11 hashroutes to the same `<MissionControl>` component (Brain, Brain Decisions, Merge Gate, Personas, Thoughts, Resources, Commitments, Missions, Ops SLA, etc.). Operator clicks any of these → URL changes, page doesn't visibly change. The sidebar IA hasn't caught up.\n\n1. In `Sidebar.tsx`, REMOVE the 11 dead entries from the sidebar. Keep only entries that route to distinct components.\n2. In `MissionControl.tsx`, add a horizontal filter-chip row near the top with one chip per former-sidebar-item (Brain, Missions, Resources, etc.). Selecting a chip sets a `filter` query param on the location (e.g. `#/mission-control?filter=resources`).\n3. The chip-row reads the current `filter` from the route on mount and on route change; clicking a chip updates the route via Solid's router.\n4. The chip filter narrows the rendered `attention_feed` items to those matching the chip's domain (e.g. `resources` → items where `kind` starts with `resource_`). Leave an 'All' chip that clears the filter.\n5. In `App.tsx`, REMOVE the 11 hashroute aliases — those URLs become 404s, which is fine (the sidebar no longer points to them). Add ONE catch-all redirect from the old hash paths to `#/mission-control?filter={derived-from-old-path}` so existing bookmarks survive.\n\nNon-goals: don't change the `attention_feed` data shape. Don't add server-side filtering. The chip filter is purely client-side.\n\nGate: vite build passes; sidebar has ≤7 entries; visiting `#/brain` redirects to `#/mission-control?filter=brain`.",
+          "done_condition": "Sidebar.tsx has ≤7 entries; MissionControl.tsx has a filter-chip row that updates the route query param and narrows the attention_feed; App.tsx removes the 11 dead aliases and adds a single redirect; vite build passes",
           "files": [
             "hex-nexus/assets/src/components/Sidebar.tsx",
             "hex-nexus/assets/src/App.tsx",
             "hex-nexus/assets/src/components/MissionControl.tsx"
           ],
-          "description": "App.tsx:267-290 aliases 11 hashroutes to the same `<MissionControl>` component (Brain, Brain Decisions, Merge Gate, Personas, Thoughts, Resources, Commitments, Missions, Ops SLA, etc.). Operator clicks any of these → URL changes, page doesn't visibly change. The sidebar IA hasn't caught up.\n\n1. In `Sidebar.tsx`, REMOVE the 11 dead entries from the sidebar. Keep only entries that route to distinct components.\n2. In `MissionControl.tsx`, add a horizontal filter-chip row near the top with one chip per former-sidebar-item (Brain, Missions, Resources, etc.). Selecting a chip sets a `filter` query param on the location (e.g. `#/mission-control?filter=resources`).\n3. The chip-row reads the current `filter` from the route on mount and on route change; clicking a chip updates the route via Solid's router.\n4. The chip filter narrows the rendered `attention_feed` items to those matching the chip's domain (e.g. `resources` → items where `kind` starts with `resource_`). Leave an 'All' chip that clears the filter.\n5. In `App.tsx`, REMOVE the 11 hashroute aliases — those URLs become 404s, which is fine (the sidebar no longer points to them). Add ONE catch-all redirect from the old hash paths to `#/mission-control?filter={derived-from-old-path}` so existing bookmarks survive.\n\nNon-goals: don't change the `attention_feed` data shape. Don't add server-side filtering. The chip filter is purely client-side.\n\nGate: vite build passes; sidebar has ≤7 entries; visiting `#/brain` redirects to `#/mission-control?filter=brain`.",
-          "done_condition": "Sidebar.tsx has ≤7 entries; MissionControl.tsx has a filter-chip row that updates the route query param and narrows the attention_feed; App.tsx removes the 11 dead aliases and adds a single redirect; vite build passes"
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Collapse 11 dead sidebar items into Mission Control filter chips",
+          "strategy_hint": "inference"
         },
         {
-          "id": "P2.2",
-          "name": "Thinking/loading skeleton + elapsed counter for pending persona replies",
-          "layer": "primary",
-          "strategy_hint": "codegen",
+          "description": "Currently pending replies render as italic 'thinking…' text inside the same bubble shape as real replies — operator can't tell at a glance whether the team is working or stalled.\n\n1. When an item has `status === 'pending'` (or whatever the schema flag is for in-flight replies; read the existing rendering branch to see what's checked), render it as a distinct skeleton row: a left-edge spinner + grayed-out text 'thinking…' + an elapsed counter showing `<seconds>s elapsed` that updates every 1s using a Solid `createSignal` + `setInterval`.\n2. Use a Tailwind animated pulse class (`animate-pulse`) on the skeleton text background to make it visually distinct from settled replies.\n3. When the reply lands (status flips), the row transitions to the normal bubble shape — no full re-render flicker if avoidable (use the same outer container, just swap inner content).\n4. Clean up the interval timer when the component unmounts or the row's status changes.\n\nGate: vite build passes.",
+          "done_condition": "MissionControl.tsx renders pending-status items with a spinner + elapsed counter that ticks every 1s; counter cleans up on status change or unmount; vite build passes",
           "files": [
             "hex-nexus/assets/src/components/MissionControl.tsx"
           ],
-          "description": "Currently pending replies render as italic 'thinking…' text inside the same bubble shape as real replies — operator can't tell at a glance whether the team is working or stalled.\n\n1. When an item has `status === 'pending'` (or whatever the schema flag is for in-flight replies; read the existing rendering branch to see what's checked), render it as a distinct skeleton row: a left-edge spinner + grayed-out text 'thinking…' + an elapsed counter showing `<seconds>s elapsed` that updates every 1s using a Solid `createSignal` + `setInterval`.\n2. Use a Tailwind animated pulse class (`animate-pulse`) on the skeleton text background to make it visually distinct from settled replies.\n3. When the reply lands (status flips), the row transitions to the normal bubble shape — no full re-render flicker if avoidable (use the same outer container, just swap inner content).\n4. Clean up the interval timer when the component unmounts or the row's status changes.\n\nGate: vite build passes.",
-          "done_condition": "MissionControl.tsx renders pending-status items with a spinner + elapsed counter that ticks every 1s; counter cleans up on status change or unmount; vite build passes"
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Thinking/loading skeleton + elapsed counter for pending persona replies",
+          "strategy_hint": "codegen"
         }
       ],
-      "gate": {
-        "gate_type": "vite_build",
-        "command": "cd hex-nexus/assets && npm run build",
-        "blocking": true
-      }
+      "tier": 2
     },
     {
+      "depends_on": [
+        "P1",
+        "P2"
+      ],
+      "gate": {
+        "blocking": true,
+        "command": "cargo build -p hex-nexus --release",
+        "gate_type": "cargo_build"
+      },
       "id": "P3",
       "name": "Embedded-asset rebuild — propagate to nexus binary",
-      "tier": 2,
-      "depends_on": ["P1", "P2"],
       "tasks": [
         {
-          "id": "P3.1",
-          "name": "Rebuild hex-nexus so updated dashboard ships embedded",
-          "layer": "secondary",
-          "strategy_hint": "script",
+          "description": "After the dashboard JS/CSS rebuild, the rust-embed wrapping inside hex-nexus needs a `cargo build -p hex-nexus --release` to re-bundle the dist/ output. The rust-embed crate reads `assets/dist/` at compile time.\n\n1. Touch `hex-nexus/Cargo.toml` (no actual content change needed — `touch -m` to bump mtime forces cargo to re-embed assets next build). If `touch` isn't available, add or refresh a harmless comment like `# dist re-embed marker: <date>` near the top.\n2. Don't bump the version (release.sh owns that).\n\nGate: `cargo build -p hex-nexus --release` succeeds. After this, restart of nexus serves the new dashboard.",
+          "done_condition": "hex-nexus/Cargo.toml mtime is newer than dist/index.html; cargo build -p hex-nexus --release succeeds",
           "files": [
             "hex-nexus/Cargo.toml"
           ],
-          "description": "After the dashboard JS/CSS rebuild, the rust-embed wrapping inside hex-nexus needs a `cargo build -p hex-nexus --release` to re-bundle the dist/ output. The rust-embed crate reads `assets/dist/` at compile time.\n\n1. Touch `hex-nexus/Cargo.toml` (no actual content change needed — `touch -m` to bump mtime forces cargo to re-embed assets next build). If `touch` isn't available, add or refresh a harmless comment like `# dist re-embed marker: <date>` near the top.\n2. Don't bump the version (release.sh owns that).\n\nGate: `cargo build -p hex-nexus --release` succeeds. After this, restart of nexus serves the new dashboard.",
-          "done_condition": "hex-nexus/Cargo.toml mtime is newer than dist/index.html; cargo build -p hex-nexus --release succeeds"
+          "id": "P3.1",
+          "layer": "secondary",
+          "name": "Rebuild hex-nexus so updated dashboard ships embedded",
+          "status": "done",
+          "strategy_hint": "script"
         }
       ],
-      "gate": {
-        "gate_type": "cargo_build",
-        "command": "cargo build -p hex-nexus --release",
-        "blocking": true
-      }
+      "tier": 2
     }
-  ]
+  ],
+  "status": "planned",
+  "title": "Dashboard UX remediation — top P0/P1 findings from 2026-05-22 audit"
 }

@@ -173,6 +173,26 @@ fn hex_db() -> String {
     std::env::var("HEX_STDB_HEXFLO_DB").unwrap_or_else(|_| DEFAULT_HEX_DB.to_string())
 }
 
+/// Provider divergence class for a model id. Mirrors the helper in
+/// hex-nexus/src/orchestration/hive_improver.rs — kept duplicated
+/// here because the CLI and nexus crates have no shared module yet
+/// for prompt-pipeline helpers, and pulling either into hex-core
+/// would drag inference details into the domain layer.
+fn provider_class_of(model: &str) -> &'static str {
+    let m = model.to_ascii_lowercase();
+    if m.starts_with("claude-") || m.starts_with("anthropic/") {
+        "anthropic"
+    } else if m.starts_with("gpt-") || m.starts_with("openai/") || m.starts_with("o1-") {
+        "openai"
+    } else if m.starts_with("openrouter/") {
+        "openrouter"
+    } else if m.contains(':') {
+        "ollama"
+    } else {
+        "unknown"
+    }
+}
+
 async fn sql(query: &str) -> Result<Vec<Vec<Value>>> {
     let url = format!("{}/v1/database/{}/sql", stdb_host(), hex_db());
     let http = reqwest::Client::builder()
@@ -977,8 +997,10 @@ async fn improve(
     } else if dry_run {
         println!("--dry-run; would apply ({} bytes)", proposed_body.len());
         false
-    } else {
-        // Re-use the existing apply path for consistency.
+    } else if skip_debate {
+        // skip_debate is an operator escape hatch — no red/blue verdicts
+        // to pass to the gated reducer, so call the non-gated path. The
+        // operator's judgment is the sole authority in this branch.
         let url = format!(
             "{}/v1/database/{}/call/persona_prompt_apply",
             stdb_host(),
@@ -987,7 +1009,7 @@ async fn improve(
         let payload = serde_json::json!([
             role,
             proposed_body,
-            proposed_body, // mirror classify into reason for v1
+            proposed_body,
             model_preferred,
             model_upgrade_to,
         ]);
@@ -998,11 +1020,59 @@ async fn improve(
             .await
             .context("apply call failed")?;
         if res.status().is_success() {
-            println!("applied → persona_prompt updated");
+            println!("applied → persona_prompt updated (non-gated, skip-debate)");
             true
         } else {
             println!(
                 "apply REJECTED — HTTP {}: {}",
+                res.status(),
+                res.text().await.unwrap_or_default()
+            );
+            false
+        }
+    } else {
+        // Default path: gated apply. The reducer re-checks verdicts +
+        // provider divergence even though we already passed them in-
+        // process — STDB is the contract surface, not the CLI.
+        let red_model = red_out
+            .as_ref()
+            .map(|p| p.model.as_str())
+            .unwrap_or("claude-sonnet-4-6");
+        let blue_model = blue_out
+            .as_ref()
+            .map(|p| p.model.as_str())
+            .unwrap_or("devstral-small-2:24b");
+        let red_provider = provider_class_of(red_model);
+        let blue_provider = provider_class_of(blue_model);
+        let url = format!(
+            "{}/v1/database/{}/call/persona_prompt_apply_gated",
+            stdb_host(),
+            hex_db()
+        );
+        let payload = serde_json::json!([
+            role,
+            proposed_body,
+            proposed_body,
+            model_preferred,
+            model_upgrade_to,
+            red_provider,
+            red_verdict.as_str(),
+            blue_provider,
+            blue_verdict.as_str(),
+            judge_v.as_str(),
+        ]);
+        let res = http
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
+            .context("gated apply call failed")?;
+        if res.status().is_success() {
+            println!("applied → persona_prompt updated (gated)");
+            true
+        } else {
+            println!(
+                "gated apply REJECTED — HTTP {}: {}",
                 res.status(),
                 res.text().await.unwrap_or_default()
             );
@@ -1116,7 +1186,7 @@ fn build_audit_doc(
     out.push_str(&format!(
         "## Phase 5 — APPLY\n\n{}\n",
         if applied {
-            "Applied via `persona_prompt_apply`. Auto-rollback observer will revert if regressions appear."
+            "Applied via `persona_prompt_apply_gated` (Path B item 4 — verdict + provider divergence checked at the reducer). Auto-rollback observer will revert if regressions appear."
         } else if dry_run {
             "Skipped (--dry-run)."
         } else {
@@ -1182,5 +1252,25 @@ fallback_directive: |
         let audit = "just plain markdown no yaml here";
         let err = extract_system_prompt_from_audit(audit).unwrap_err();
         assert!(err.to_string().contains("no fenced"));
+    }
+
+    #[test]
+    fn provider_class_diverges_for_red_blue_defaults() {
+        // The CLI's improve path runs adversarial-red on claude-sonnet-4-6
+        // (Anthropic) and adversarial-blue on devstral-small-2:24b (Ollama).
+        // These MUST map to different provider classes or the gated
+        // reducer rejects every apply.
+        let red = provider_class_of("claude-sonnet-4-6");
+        let blue = provider_class_of("devstral-small-2:24b");
+        assert_ne!(red, blue);
+        assert_eq!(red, "anthropic");
+        assert_eq!(blue, "ollama");
+    }
+
+    #[test]
+    fn provider_class_unknown_for_bare_strings() {
+        // No prefix and no `:` separator — unknown, which makes the
+        // gated reducer reject (caller must pass a known provider).
+        assert_eq!(provider_class_of("custom-rolled-model"), "unknown");
     }
 }

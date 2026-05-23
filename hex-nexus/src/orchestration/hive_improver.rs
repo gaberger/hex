@@ -459,13 +459,19 @@ async fn run_improve(
     let judge_ms = judge_t0.elapsed().as_millis();
     let judge_verdict = parse_verdict(&judge_text);
 
-    // APPLY gate.
-    let approved = is_approving(&red_verdict)
+    // APPLY gate — use persona_prompt_apply_gated. The reducer re-checks
+    // every gate condition (Path B item 4): verdicts must approve, body
+    // size cap, provider divergence. Hive_improver's in-process gate
+    // (approved && all-approving) is now a fast-path skip when we know
+    // the gate would reject anyway, but the reducer is the source of truth.
+    let red_provider = provider_class_of("claude-sonnet-4-6");
+    let blue_provider = provider_class_of("devstral-small-2:24b");
+    let approved_in_process = is_approving(&red_verdict)
         && is_approving(&blue_verdict)
         && is_approving(&judge_verdict);
-    let applied = if approved {
+    let applied = if approved_in_process {
         let url = format!(
-            "{}/v1/database/{}/call/persona_prompt_apply",
+            "{}/v1/database/{}/call/persona_prompt_apply_gated",
             stdb_host, hex_db
         );
         let payload = serde_json::json!([
@@ -474,6 +480,11 @@ async fn run_improve(
             &proposed_body,
             &pick.model_preferred,
             &pick.model_upgrade_to,
+            red_provider,
+            &red_verdict,
+            blue_provider,
+            &blue_verdict,
+            &judge_verdict,
         ]);
         match http.post(&url).json(&payload).send().await {
             Ok(r) if r.status().is_success() => true,
@@ -481,12 +492,12 @@ async fn run_improve(
                 warn!(
                     role = %pick.role,
                     status = %r.status(),
-                    "hive_improver: apply rejected by reducer"
+                    "hive_improver: gated apply rejected by reducer"
                 );
                 false
             }
             Err(e) => {
-                warn!(role = %pick.role, error = %e, "hive_improver: apply transport error");
+                warn!(role = %pick.role, error = %e, "hive_improver: gated apply transport error");
                 false
             }
         }
@@ -600,6 +611,27 @@ fn parse_verdict(text: &str) -> String {
 
 fn is_approving(v: &str) -> bool {
     v == "approve" || v == "approve-with-changes"
+}
+
+/// Provider divergence class for a model id. Used by the gated apply
+/// reducer to enforce red ≠ blue provider. The classes are configured-
+/// target classes (the model the agent YAML asked for); the actual
+/// inference call may fall back through OpenRouter, but the divergence
+/// contract is defined at the configured layer.
+pub(crate) fn provider_class_of(model: &str) -> &'static str {
+    let m = model.to_ascii_lowercase();
+    if m.starts_with("claude-") || m.starts_with("anthropic/") {
+        "anthropic"
+    } else if m.starts_with("gpt-") || m.starts_with("openai/") || m.starts_with("o1-") {
+        "openai"
+    } else if m.starts_with("openrouter/") {
+        "openrouter"
+    } else if m.contains(':') {
+        // ollama tag format (model:tag) — qwen2.5-coder:14b, devstral-small-2:24b
+        "ollama"
+    } else {
+        "unknown"
+    }
 }
 
 /// STDB serializes `Timestamp` as `[micros_i64]` (single-element array
@@ -741,5 +773,38 @@ mod tests {
     fn parse_verdict_fails_closed_on_no_verdict_keyword() {
         assert_eq!(parse_verdict("looks fine to me"), "reject");
         assert_eq!(parse_verdict(""), "reject");
+    }
+
+    #[test]
+    fn provider_class_anthropic_for_claude_models() {
+        assert_eq!(provider_class_of("claude-sonnet-4-6"), "anthropic");
+        assert_eq!(provider_class_of("claude-opus-4-7"), "anthropic");
+        assert_eq!(provider_class_of("anthropic/claude-haiku"), "anthropic");
+    }
+
+    #[test]
+    fn provider_class_ollama_for_tagged_models() {
+        assert_eq!(provider_class_of("qwen2.5-coder:14b"), "ollama");
+        assert_eq!(provider_class_of("devstral-small-2:24b"), "ollama");
+        assert_eq!(provider_class_of("nemotron-mini:4b"), "ollama");
+    }
+
+    #[test]
+    fn provider_class_openai_for_gpt() {
+        assert_eq!(provider_class_of("gpt-4o-mini"), "openai");
+        assert_eq!(provider_class_of("openai/gpt-4o"), "openai");
+    }
+
+    #[test]
+    fn provider_class_diverges_between_red_and_blue_default_models() {
+        // Critical: the default red (claude-sonnet-4-6) and blue
+        // (devstral-small-2:24b) hive_improver models MUST map to
+        // different provider classes, else the gated reducer rejects
+        // every autonomous apply.
+        let red = provider_class_of("claude-sonnet-4-6");
+        let blue = provider_class_of("devstral-small-2:24b");
+        assert_ne!(red, blue);
+        assert_ne!(red, "unknown");
+        assert_ne!(blue, "unknown");
     }
 }
