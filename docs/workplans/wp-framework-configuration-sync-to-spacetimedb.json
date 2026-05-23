@@ -1,0 +1,166 @@
+{
+  "adr": "ADR-053",
+  "created_at": "2026-05-23T20:02:40.882280998+00:00",
+  "created_by": "hex-coder",
+  "feature": "Implement config sync layer for Hex Nexus AIIDE framework",
+  "id": "wp-framework-configuration-sync-to-spacetimedb",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Add tables to hexflo-coordination module",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hexflo-coordination/src/tables/project_config.rs"
+          ],
+          "id": "P1.1",
+          "layer": "domain",
+          "name": "Define ProjectConfig table in hexflo-coordination module",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hexflo-coordination/src/tables/skill_entry.rs"
+          ],
+          "id": "P1.2",
+          "layer": "domain",
+          "name": "Define SkillEntry table in hexflo-coordination module",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hexflo-coordination/src/tables/agent_definition.rs"
+          ],
+          "id": "P1.3",
+          "layer": "domain",
+          "name": "Define AgentDefinition table in hexflo-coordination module",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P2",
+      "name": "Nexus startup sync reads files → calls reducers",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/config_sync.rs"
+          ],
+          "id": "P2.1",
+          "layer": "ports",
+          "name": "Implement file reading logic in hex-nexus/src/config_sync.rs",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/lib.rs"
+          ],
+          "id": "P2.2",
+          "layer": "ports",
+          "name": "Integrate config sync into nexus startup in lib.rs",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hexflo-coordination/src/reducers.rs"
+          ],
+          "id": "P2.3",
+          "layer": "domain",
+          "name": "Implement reducers for pushing data to SpacetimeDB",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P3",
+      "name": "Dashboard subscribes to new tables",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "dashboard/src/subscriptions.rs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Implement WebSocket subscription in dashboard for SpacetimeDB tables",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P4",
+      "name": "Config views use SpacetimeDB data instead of REST/hardcoded",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "dashboard/src/config_views.rs"
+          ],
+          "id": "P4.1",
+          "layer": "usecases",
+          "name": "Update dashboard config views to use SpacetimeDB data",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P5",
+      "name": "`hex init` scaffolds config directory structure",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/commands/init.rs"
+          ],
+          "id": "P5.1",
+          "layer": "primary",
+          "name": "Implement `hex init` command to scaffold config directory",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P6",
+      "name": "Dashboard config edits sync back to repo files",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "dashboard/src/sync_back.rs"
+          ],
+          "id": "P6.1",
+          "layer": "usecases",
+          "name": "Implement logic for syncing dashboard edits back to repo files",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P7",
+      "name": "Optional: fsnotify for auto-sync on file change",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/file_watch.rs"
+          ],
+          "id": "P7.1",
+          "layer": "secondary",
+          "name": "Implement fsnotify for detecting file changes and re-syncing",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}
