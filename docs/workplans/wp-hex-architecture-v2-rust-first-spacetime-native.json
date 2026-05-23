@@ -1,0 +1,145 @@
+{
+  "adr": "ADR-035",
+  "created_at": "2026-05-23T17:03:11.286820556+00:00",
+  "created_by": "hex-coder",
+  "feature": "Restructure hex into four Rust crates with clear boundaries, a SpacetimeDB-native coordination plane, and pluggable inference adapters.",
+  "id": "wp-hex-architecture-v2-rust-first-spacetime-native",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain/Ports Work",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-intf/hex-core/domain/architecture.rs",
+            "hex-intf/hex-core/domain/agent.rs",
+            "hex-intf/hex-core/domain/task.rs",
+            "hex-intf/hex-core/domain/file_lock.rs",
+            "hex-intf/hex-core/domain/token_budget.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Extract hex-core as Shared Domain Library",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-intf/hex-core/ports/coordination.rs",
+            "hex-intf/hex-core/ports/inference.rs",
+            "hex-intf/hex-core/ports/analysis.rs",
+            "hex-intf/hex-core/ports/file_system.rs",
+            "hex-intf/hex-core/ports/secret.rs"
+          ],
+          "id": "P0.2",
+          "layer": "ports",
+          "name": "Define ports in hex-core",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary Adapters",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-intf/hex-nexus/adapters/spacetime_coordination.rs",
+            "hex-intf/hex-nexus/adapters/spacetime_secrets.rs",
+            "hex-intf/hex-nexus/adapters/tree_sitter_analysis.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement secondary adapters in hex-nexus",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P2",
+      "name": "Primary Adapters",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-intf/hex-agent/adapters/anthropic.rs",
+            "hex-intf/hex-agent/adapters/openai_compat.rs",
+            "hex-intf/hex-agent/adapters/claude_code_bridge.rs",
+            "hex-intf/hex-agent/adapters/sandboxed_fs.rs",
+            "hex-intf/hex-agent/adapters/spacetime_rl.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Implement primary adapters in hex-agent",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P3",
+      "name": "Usecases and Integration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-intf/hex-agent/usecases/conversation.rs",
+            "hex-intf/hex-agent/usecases/context_packer.rs",
+            "hex-intf/hex-agent/usecases/code_writer.rs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Implement usecases in hex-agent",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-intf/hex-chat/adapters/spacetime_subscriber.rs",
+            "hex-intf/hex-chat/adapters/nexus_client.rs"
+          ],
+          "id": "P3.2",
+          "layer": "integration",
+          "name": "Integrate hex-chat with SpacetimeDB",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P4",
+      "name": "SpacetimeDB Modules and Hex-CLI",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "spacetime-modules/agent-registry/src/lib.rs",
+            "spacetime-modules/task-orchestration/src/lib.rs",
+            "spacetime-modules/file-lock-manager/src/lib.rs",
+            "spacetime-modules/architecture-enforcer/src/lib.rs",
+            "spacetime-modules/conflict-resolver/src/lib.rs"
+          ],
+          "id": "P4.1",
+          "layer": "infrastructure",
+          "name": "Expand SpacetimeDB modules for coordination plane",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-intf/hex-cli/Cargo.toml",
+            "hex-intf/hex-cli/src/main.rs"
+          ],
+          "id": "P4.2",
+          "layer": "infrastructure",
+          "name": "Create hex-cli Rust crate with clap",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}
