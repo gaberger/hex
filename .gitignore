@@ -50,6 +50,7 @@ docs/*
 !docs/guides/
 !docs/algebra/
 !docs/reference/
+!docs/STATUS-*.md
 # TLC model-checker state cache — per-run scratch, do not commit
 docs/algebra/states/
 !docs/ARCHITECTURE.md
