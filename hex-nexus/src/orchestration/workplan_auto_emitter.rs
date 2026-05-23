@@ -261,10 +261,17 @@ async fn derive_one(
         ],
         "tools": openai_tools,
         "tool_choice": { "type": "function", "function": { "name": "workplan_emit" } },
+        // 4096 covers a typical multi-phase workplan (~2-3k tokens). The
+        // earlier 1024 was set when we called OpenRouter direct and were
+        // budget-constrained ("can only afford 372 tokens" errors); now
+        // the proxy prefers local Ollama (no credit cap), so we can give
+        // the model enough room to emit a complete JSON payload. If the
+        // proxy falls all the way through to a credit-bound provider,
+        // operator can override down via HEX_AUTO_EMITTER_MAX_TOKENS.
         "max_tokens": std::env::var("HEX_AUTO_EMITTER_MAX_TOKENS")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
-            .unwrap_or(1024),
+            .unwrap_or(4096),
     });
     let resp = http
         .post(inference_url)
