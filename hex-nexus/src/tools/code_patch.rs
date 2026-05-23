@@ -109,6 +109,18 @@ impl Tool for CodePatch {
                 start.elapsed().as_millis() as u64,
             );
         }
+        // Critical-path / critical-prefix guard. The allowlist above permits
+        // `hex-cli/assets/` for legitimate template edits, but persona YAMLs
+        // (`agents/hex/hex/*.yml`) ride that same prefix and were writable by
+        // autonomous agents — closing the v0 persona-prompts ADR attack chain
+        // at the foundation. Per ADR-2026-05-23-0900 §5: route through the
+        // domain validator so CRITICAL_FILES + CRITICAL_PREFIXES both apply.
+        if hex_core::domain::validation::is_critical_path(&rel_path) {
+            return ToolResult::err(
+                format!("path '{}' is critical (CRITICAL_FILES or CRITICAL_PREFIXES) — code_patch cannot modify it; requires explicit operator action", rel_path),
+                start.elapsed().as_millis() as u64,
+            );
+        }
         let mode = match input.get("mode").and_then(|v| v.as_str()) {
             Some(m @ "replace_lines" | m @ "replace_string" | m @ "append" | m @ "create") => m.to_string(),
             _ => return ToolResult::err("mode must be replace_lines|replace_string|append|create", start.elapsed().as_millis() as u64),

@@ -5091,6 +5091,120 @@ pub struct PersonaTickSchedule {
 }
 
 // ============================================================
+// Persona prompt — STDB mirror of the seed bodies in
+// hex-nexus::orchestration::persona_prompt_seeds (ADR-2026-05-23-0900).
+//
+// One row per role. Read by org_responder / sop_executor at every SOP
+// tick, ahead of the hardcoded fallback. Seeded by nexus at cold-start
+// via `seed_persona_prompt` below. Body cap 8 KB per field; row cap
+// well under the BSATN 24 KB payload threshold.
+//
+// Notable absences (deferred to future ADRs that ship the consumers):
+//   - no `version` field — single row per role in v1; history table
+//     will be added when there's a rollback consumer
+//   - no `rl_score_*` fields — no RL producer keyed to per-prompt
+//     versions exists yet
+//   - no audit table — no audit consumer
+//
+// Identity binding: `seeded_by` is set to ctx.sender.to_hex() inside
+// the reducer, NOT supplied by the caller. This is the only enforced
+// identity field in v1; future apply-gate ADR will add an allowlist
+// of acceptable senders.
+// ============================================================
+
+#[table(name = persona_prompt, public)]
+#[derive(Clone, Debug)]
+pub struct PersonaPrompt {
+    #[primary_key]
+    pub role: String,
+    /// Body used by org_responder's CLASSIFY phase (strict-JSON classifier).
+    pub classify_body: String,
+    /// Body used by sop_executor's REASON phase (post-CLASSIFY, post-GROUND).
+    pub reason_body: String,
+    pub model_preferred: String,
+    pub model_upgrade_to: String,
+    pub seeded_at: Timestamp,
+    /// STDB principal hex of the caller — bound from ctx.sender, NOT a
+    /// caller-supplied label. Adversarial review of v0 ADR
+    /// (2026-05-23-0815) flagged free-text identity fields as a P0;
+    /// this field closes that finding at the v1 reducer surface.
+    pub seeded_by: String,
+}
+
+const PERSONA_PROMPT_BODY_MAX: usize = 8192;
+
+/// Idempotent seed for one persona role. Called by nexus cold-start for
+/// each role in `persona_prompt_seeds::SEEDED_ROLES`. If the row exists
+/// and the body fields are byte-identical, no-op. If bodies differ, the
+/// row is updated and `seeded_at` is bumped to ctx.timestamp.
+///
+/// **Not** a runtime-mutation pathway — v1 of the persona-prompts ADR
+/// explicitly does not include `persona_prompt_apply` (no improver),
+/// `persona_prompt_rollback` (no history), or `promote_to_yaml` (the
+/// v0 attack chain leg).
+#[reducer]
+pub fn seed_persona_prompt(
+    ctx: &ReducerContext,
+    role: String,
+    classify_body: String,
+    reason_body: String,
+    model_preferred: String,
+    model_upgrade_to: String,
+) -> Result<(), String> {
+    if role.is_empty() {
+        return Err("role is required".into());
+    }
+    if classify_body.len() > PERSONA_PROMPT_BODY_MAX {
+        return Err(format!(
+            "classify_body size {} exceeds {} byte cap",
+            classify_body.len(),
+            PERSONA_PROMPT_BODY_MAX
+        ));
+    }
+    if reason_body.len() > PERSONA_PROMPT_BODY_MAX {
+        return Err(format!(
+            "reason_body size {} exceeds {} byte cap",
+            reason_body.len(),
+            PERSONA_PROMPT_BODY_MAX
+        ));
+    }
+    // Role allowlist: must exist in persona_pool. Prevents arbitrary-row
+    // injection (an attacker that can call the reducer cannot seed
+    // a row for a role the supervisor doesn't know about).
+    if ctx.db.persona_pool().role().find(&role).is_none() {
+        return Err(format!(
+            "persona_prompt: role '{}' is not in persona_pool — seed persona_pool first",
+            role
+        ));
+    }
+
+    let seeded_by = ctx.sender.to_string();
+    let new_row = PersonaPrompt {
+        role: role.clone(),
+        classify_body,
+        reason_body,
+        model_preferred,
+        model_upgrade_to,
+        seeded_at: ctx.timestamp,
+        seeded_by,
+    };
+    if let Some(existing) = ctx.db.persona_prompt().role().find(&role) {
+        if existing.classify_body == new_row.classify_body
+            && existing.reason_body == new_row.reason_body
+            && existing.model_preferred == new_row.model_preferred
+            && existing.model_upgrade_to == new_row.model_upgrade_to
+        {
+            // Byte-equal — no-op. seeded_at preserved.
+            return Ok(());
+        }
+        ctx.db.persona_prompt().role().update(new_row);
+    } else {
+        ctx.db.persona_prompt().insert(new_row);
+    }
+    Ok(())
+}
+
+// ============================================================
 // User-defined SOUL personas (ADR-2026-05-13-1849, wp-user-defined-soul-personas P1)
 // ============================================================
 // Flat-peer personas that coexist with the built-in c-suite. Storage on

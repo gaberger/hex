@@ -1,6 +1,6 @@
 # ADR-2026-05-23-0900 — persona-prompts-stdb-mirror
 
-Status: **Proposed**
+Status: **Accepted** (2026-05-23, verified by live cold-start seed of 8/8 personas at 13:02:38 UTC)
 Date: 2026-05-23
 Supersedes: `ADR-2026-05-23-0815-persona-prompts-runtime-mutable.md` (Rejected — see its "Why rejected" header)
 

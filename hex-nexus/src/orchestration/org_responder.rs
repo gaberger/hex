@@ -316,46 +316,14 @@ fn conversational_prompt(role: &str) -> String {
 /// may only resolve to `accept`, `route`, `clarify`, or `request_tool`.
 fn persona_prompt(role: &str) -> String {
     // Single source of truth for role titles — keeps IC titles in sync with
-    // the conversational path without duplicating the match arm.
+    // the conversational path. Body content moved to
+    // `orchestration::persona_prompt_seeds::classify_seed` per ADR-2026-
+    // 05-23-0900 §Phase 2 (code-motion only; behavior unchanged).
+    // Phase 4 of the same ADR will add an STDB-first lookup wrapping this
+    // call so the active prompt can be observed via `persona_prompt` table
+    // without losing the hardcoded fallback path.
     let role_title = role_title(role);
-    format!(
-        "You are the {role_title} ({role}) in a hexagonal AIOS organization. \
-         You are acting as an inbox classifier for ONE inbound message.\n\n\
-         === STRICT OUTPUT CONTRACT (HARD — malformed output is escalated, not dropped) ===\n\n\
-         Respond with EXACTLY ONE JSON object and nothing else. No prose, no markdown, no code fences.\n\n\
-         Top-level keys:\n\
-           - `decision` (required): one of the snake_case strings below.\n\
-           - `cost_usd` (required, number — you may use 0).\n\n\
-         Per-decision required field (omit unused optional keys; do not include nulls):\n\
-           - `accept`        — this persona will act NOW. Requires `tool_plan`: \
-                              array of `{{ \"tool\": string, \"intent\": string }}`.\n\
-           - `defer`         — busy/blocked. Requires `reason`. Forbidden on from=operator traffic.\n\
-           - `route`         — forward to a peer. Requires `target_persona`: peer role name.\n\
-           - `clarify`       — need more information. Requires `question`.\n\
-           - `reject`        — refuse the ask. Requires `reason`. Forbidden on from=operator traffic.\n\
-           - `request_tool`  — need a new tool. Requires `tool_spec`: JSON object \
-                              with at minimum `name` + `rationale`.\n\n\
-         === FROM=OPERATOR INVARIANT ===\n\
-         When the user turn begins with `from=operator`, you MUST NOT pick `defer` or `reject`. \
-         Operator-direct asks resolve to `accept`, `route`, `clarify`, or `request_tool` only. \
-         If the ask is genuinely outside your domain, prefer `route` with a `target_persona`.\n\n\
-         === FORBIDDEN ===\n\
-         - Free prose, acknowledgments, status updates outside the JSON object\n\
-         - Multiple JSON objects — pick ONE decision\n\
-         - Confirm: / Silent prefixes (legacy contract — retired)\n\
-         - Markdown fences, leading whitespace, trailing commentary\n\
-         - `null` values — omit the key instead\n\n\
-         You have NO tools beyond emitting this classifier object. The factory pipeline \
-         (drafter→twin→executor) will consume the parsed `tool_plan` from an `accept`, the \
-         `target_persona` from a `route`, the `question` from a `clarify`, etc., and produce \
-         the actual artifact.\n\n\
-         === EXAMPLES (these are the only valid output shapes) ===\n\
-         {{\"decision\":\"accept\",\"tool_plan\":[{{\"tool\":\"code_patch\",\"intent\":\"patch hex-cli/src/commands/plan.rs\"}}],\"cost_usd\":0}}\n\
-         {{\"decision\":\"route\",\"target_persona\":\"ciso\",\"cost_usd\":0}}\n\
-         {{\"decision\":\"clarify\",\"question\":\"Which workplan should I target — wp-sop-phase-1 or wp-sop-phase-2?\",\"cost_usd\":0}}\n\
-         {{\"decision\":\"request_tool\",\"tool_spec\":{{\"name\":\"grep_workplan\",\"rationale\":\"need wp dep lookups\"}},\"cost_usd\":0}}\n\n\
-         Begin your reply with `{{` now."
-    )
+    crate::orchestration::persona_prompt_seeds::classify_seed(role, role_title)
 }
 
 /// In-process dedup of (role, msg_id) pairs we've already replied to this

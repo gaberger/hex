@@ -73,6 +73,15 @@ impl SupervisorSubscriber {
             }
         }
 
+        // Auto-seed persona_prompt rows from `persona_prompt_seeds` per
+        // ADR-2026-05-23-0900 Phase 3. Idempotent on byte-equality —
+        // already-seeded rows are no-ops. Failures are non-fatal: the SOP
+        // read path falls back to the same in-process seed function, so
+        // the system is functional whether the STDB call succeeds or not.
+        if let Err(e) = self.seed_persona_prompts().await {
+            warn!("auto-seed persona_prompt skipped: {}", e);
+        }
+
         loop {
             interval.tick().await;
             if let Err(e) = self.tick().await {
@@ -136,6 +145,103 @@ impl SupervisorSubscriber {
             info!(
                 "supervisor: seeded {} pool placeholders from persona YAMLs (desired={}, paused={})",
                 seeded, seed_desired, seed_paused_flag
+            );
+        }
+        Ok(())
+    }
+
+    /// Per ADR-2026-05-23-0900 §Phase 3 — seed the `persona_prompt` STDB
+    /// table at cold start with the byte-current bodies from the in-process
+    /// `persona_prompt_seeds` module. Idempotent (the STDB reducer no-ops
+    /// when bodies are byte-equal). Best-effort: any HTTP / STDB failure
+    /// is logged at warn and ignored — the in-process seed body remains
+    /// the authoritative fallback path.
+    async fn seed_persona_prompts(&self) -> Result<(), String> {
+        use crate::orchestration::persona_prompt_seeds::{
+            classify_seed, reason_seed, SEEDED_ROLES,
+        };
+
+        let stdb_host = std::env::var("HEX_STDB_HOST")
+            .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+        let hex_db = std::env::var("HEX_STDB_HEXFLO_DB")
+            .unwrap_or_else(|_| "hex".to_string());
+        let url = format!("{}/v1/database/{}/call/seed_persona_prompt", stdb_host, hex_db);
+
+        let http = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => return Err(format!("http client init: {}", e)),
+        };
+
+        // Role title source: match the existing reason_seed match arm. This
+        // duplicates the small table in persona_prompt_seeds (which is
+        // private to that module's `reason_seed` body); keeping it local
+        // here avoids exporting another helper for the same tiny mapping.
+        fn role_title(role: &str) -> &'static str {
+            match role {
+                "cto" => "Chief Technology Officer",
+                "cpo" => "Chief Product Officer",
+                "coo" => "Chief Operating Officer",
+                "ciso" => "Chief Information Security Officer",
+                "chief-visionary" => "Chief Visionary",
+                "chief-architect" => "Chief Architect",
+                "engineering-lead" => "Engineering Lead",
+                "product-lead" => "Product Lead",
+                "sre-lead" => "SRE Lead",
+                _ => "Executive",
+            }
+        }
+
+        // The reducer stores ONE reason_body per role. Seed with the
+        // representative `code_question` intent — the most common intent
+        // hit by the SOP path historically (per 2026-05-21 logs analyzed
+        // in the v1 ADR Context). A future ADR can extend the schema to
+        // store per-intent variants when an improver needs them.
+        const SEED_REASON_INTENT: &str = "code_question";
+
+        // Model defaults match the 2026-05-22 routing fix in
+        // hex-cli/assets/agents/hex/hex/hex-coder.yml — local Ollama for
+        // T2/T2.5, sonnet for frontier upgrade.
+        const MODEL_PREFERRED: &str = "qwen2.5-coder:14b";
+        const MODEL_UPGRADE_TO: &str = "claude-sonnet-4-6";
+
+        let mut seeded = 0usize;
+        let mut failed = 0usize;
+        for role in SEEDED_ROLES {
+            let title = role_title(role);
+            let classify_body = classify_seed(role, title);
+            let reason_body = reason_seed(role, SEED_REASON_INTENT);
+            let payload = serde_json::json!([
+                role,
+                classify_body,
+                reason_body,
+                MODEL_PREFERRED,
+                MODEL_UPGRADE_TO,
+            ]);
+            match http.post(&url).json(&payload).send().await {
+                Ok(r) if r.status().is_success() => {
+                    seeded += 1;
+                }
+                Ok(r) => {
+                    failed += 1;
+                    debug!(
+                        role = %role,
+                        status = %r.status(),
+                        "seed_persona_prompt non-2xx"
+                    );
+                }
+                Err(e) => {
+                    failed += 1;
+                    debug!(role = %role, error = %e, "seed_persona_prompt transport error");
+                }
+            }
+        }
+        if seeded > 0 || failed > 0 {
+            info!(
+                "supervisor: persona_prompt cold-start seed — {} ok, {} skipped/failed",
+                seeded, failed
             );
         }
         Ok(())

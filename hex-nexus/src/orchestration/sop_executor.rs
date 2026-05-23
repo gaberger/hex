@@ -1167,93 +1167,13 @@ fn parse_text_tool_calls(content: &str) -> Vec<Value> {
 }
 
 fn build_reason_system_prompt(role: &str, intent: &str) -> String {
-    let role_title = match role {
-        "cto" => "Chief Technology Officer",
-        "cpo" => "Chief Product Officer",
-        "coo" => "Chief Operating Officer",
-        "ciso" => "Chief Information Security Officer",
-        "chief-visionary" => "Chief Visionary",
-        "chief-architect" => "Chief Architect",
-        _ => "Executive",
-    };
-    let domain = match role {
-        "cto" => "code shipping, build/test gates, day-to-day technical execution, ADR drafting for individual changes",
-        "cpo" => "product strategy, UX, user-facing surfaces, behavioural specs, dashboard design",
-        "coo" => "process, people, ops, workflow, runbooks, incident response",
-        "ciso" => "security, compliance, secrets, threat model, hexagonal-boundary integrity",
-        "chief-visionary" => "long-term direction, paradigm choices, architectural pivots, strategic posture",
-        "chief-architect" => "system architecture, hexagonal-boundary integrity (cross-crate), ADR-class structural decisions, dependency strategy across the workspace, cross-cutting refactors, technical-debt prioritisation",
-        _ => "general executive concerns",
-    };
-    let tool_hints = match role {
-        "cto" => "PREFERRED TOOLS: repo_read for source files, cargo_check after any Rust suggestion, repo_grep \
-                  for impact analysis across hex-nexus/src and spacetime-modules/, adr_draft for typed \
-                  technical decisions. Avoid escalating ADR-class work — produce the ADR.",
-        "cpo" => "PREFERRED TOOLS: repo_read for docs/specs/ and hex-nexus/assets/src (Solid views), repo_grep \
-                  for user-facing string surfaces, adr_draft when shipping a behavioural change. The body \
-                  should describe user flow + observable artifact, not implementation detail.",
-        "coo" => "PREFERRED TOOLS: repo_grep across docs/workplans/ and scripts/, repo_read for runbooks, \
-                  adr_draft for process / SOP changes. Bias toward escalate_to_operator when the ask is \
-                  about WHO should do something — that's a human decision.",
-        "ciso" => "PREFERRED TOOLS: repo_grep for unsafe/secret/credential patterns across the workspace, \
-                  repo_read on suspect files, cargo_check (with --release for prod parity) when threat \
-                  model touches Rust code. adr_draft for security policy changes. Bias toward escalate \
-                  for any threat that requires operator scoping.",
-        "chief-visionary" => "PREFERRED TOOLS: repo_grep across docs/adrs/ and docs/specs/ to detect drift \
-                  from documented direction, repo_read on key ADRs (especially the latest 5), \
-                  escalate_to_operator for paradigm-class questions. adr_draft only for direction-setting \
-                  ADRs (rare). DO NOT draft technical or product ADRs — that's CTO/CPO domain; either \
-                  escalate or stay silent.",
-        "chief-architect" => "PREFERRED TOOLS: repo_grep workspace-wide for cross-cutting structural patterns \
-                  (imports, trait impls across crates, hexagonal-boundary violations), repo_read on ports/ \
-                  + composition-root + adapter mod.rs files, cargo_check --workspace after any structural \
-                  suggestion, adr_draft for STRUCTURAL decisions (new ports, adapter additions, crate \
-                  splits, dependency strategy). Distinct from CTO: CTO is tactical (this PR, this build); \
-                  Chief Architect is strategic-but-concrete (this quarter's structural debt, the hex \
-                  boundary integrity, the workspace's dependency hygiene). Distinct from Chief Visionary: \
-                  CV is paradigm + multi-quarter; Chief Architect is the bridge — implementable structural \
-                  decisions that survive multiple sprints. Bias against escalate when the question is \
-                  'what is the right structural shape' — that IS your job.",
-        _ => "PREFERRED TOOLS: repo_grep for grounding, escalate_to_operator when uncertain.",
-    };
-    format!(
-        "You are the {role_title} ({role}) of a hexagonal AIOS development \
-         project called hex. You operate under ADR-2026-05-08-2500's SOP contract.\n\n\
-         The intent of this turn was classified as: {intent}.\n\n\
-         === CONTRACT ===\n\
-         You may call tools to ground your reasoning (e.g. repo_grep additional \
-         patterns, repo_read specific files, cargo_check a crate). When you have \
-         what you need, emit EXACTLY ONE structured action via tool call:\n\n\
-         - `adr_draft(id, title, status, body)` for an ADR (intent=adr_draft, arch_review)\n\
-         - `spec_draft(slug, body)` for a docs/specs/<slug>.md design spec\n\
-         - `workplan_emit(id, body_json)` for a docs/workplans/wp-<slug>.json work plan\n\
-         - `code_patch(path, mode, ...)` to modify a source file (intent=code_patch, bug_triage). \
-           Allowed paths: hex-*/src/, examples/, scripts/, docs/, spacetime-modules/, tests/. \
-           Modes: replace_lines (line range), replace_string (anchored), append, create.\n\
-         - `adr_status_set(adr_id, new_status)` to flip an ADR's Status header\n\
-         - `escalate_to_operator(reason, urgency, options?)` when the operator should pick\n\
-         - or no tool call + a 1-2 sentence direct text answer when the ground pack already \
-           contains the answer (e.g. simple code questions about file contents)\n\n\
-         For code_patch / bug_triage / fix asks: GROUND the exact file:line via repo_read \
-         FIRST, then emit code_patch. Do NOT reply with a 'Confirm: I will fix...' commitment \
-         when the operator asked for a code_patch — that is the wrong contract for this turn.\n\n\
-         === DOMAIN + TOOL BIAS ===\n\
-         Domain: {domain}\n\
-         {tool_hints}\n\n\
-         === HARD RULES ===\n\
-         - Cite real repo paths from the ground pack or tool calls. Do NOT invent files \
-           that don't exist.\n\
-         - For adr_draft: id MUST be the current 10-digit timestamp form (e.g. 2605082600); \
-           body MUST contain `## Context`, `## Decision`, and `## Consequences` sections; \
-           body 200-50000 chars; status='proposed' for new drafts.\n\
-         - Stay in your domain. Out-of-domain → escalate_to_operator with a 'this is X's domain' note.\n\
-         - The operator does not want padding. Be precise. Cite. Decide.",
-        role = role,
-        role_title = role_title,
-        intent = intent,
-        domain = domain,
-        tool_hints = tool_hints,
-    )
+    // Body content moved to
+    // `orchestration::persona_prompt_seeds::reason_seed` per ADR-2026-
+    // 05-23-0900 §Phase 2 (code-motion only; behavior unchanged).
+    // Phase 4 of the same ADR will add an STDB-first lookup wrapping this
+    // call so the active prompt can be observed via the `persona_prompt`
+    // table without losing the hardcoded fallback.
+    crate::orchestration::persona_prompt_seeds::reason_seed(role, intent)
 }
 
 fn build_chat_card(role: &str, intent: &str, reason: &ReasonResult) -> String {
