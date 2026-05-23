@@ -1,0 +1,150 @@
+{
+  "adr": "ADR-050",
+  "created_at": "2026-05-23T18:14:32.490541903+00:00",
+  "created_by": "hex-coder",
+  "feature": "Enforce mandatory lifecycle pipeline through Claude Code hooks.",
+  "id": "wp-hook-enforced-agent-lifecycle-pipeline",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain/Ports Work",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/lifecycle/enforcement.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Define lifecycle enforcement in domain models.",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary Adapters",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/session/state.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement session state file extension for lifecycle context.",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/heartbeat/protocol.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Implement heartbeat protocol in HexFlo memory.",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P2",
+      "name": "Primary Adapters",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-cli/src/commands/hook/session_start.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Extend `session_start` to load workplan context from HexFlo memory.",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-cli/src/commands/hook/session_end.rs"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Extend `session_end` to flush progress and update swarm task.",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-cli/src/commands/hook/route.rs"
+          ],
+          "id": "P2.3",
+          "layer": "primary",
+          "name": "Add heartbeat call to `route` (UserPromptSubmit handler).",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-cli/src/commands/hook/pre_edit.rs"
+          ],
+          "id": "P2.4",
+          "layer": "primary",
+          "name": "Add workplan boundary validation to `pre_edit`.",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-cli/src/commands/hook/post_edit.rs"
+          ],
+          "id": "P2.5",
+          "layer": "primary",
+          "name": "Add progress tracking to `post_edit`.",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-cli/src/commands/hook/pre_bash.rs"
+          ],
+          "id": "P2.6",
+          "layer": "primary",
+          "name": "Add destructive command detection to `pre_bash`.",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P3",
+      "name": "Use Cases",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-cli/src/usecases/lifecycle_enforcement.rs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Integrate lifecycle enforcement into user workflows.",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P4",
+      "name": "Integration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "tests/integration/lifecycle_pipeline.rs"
+          ],
+          "id": "P4.1",
+          "layer": "integration",
+          "name": "Test lifecycle pipeline end-to-end.",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}
