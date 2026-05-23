@@ -1,0 +1,89 @@
+{
+  "adr": "ADR-054",
+  "created_at": "2026-05-23T21:04:24.548551380+00:00",
+  "created_by": "hex-coder",
+  "feature": "Implement ADR compliance enforcement in hex analyze and pre-commit hook",
+  "id": "wp-adr-compliance-enforcement",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Define ADR Compliance Rules in `hex analyze`",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/analyze/compliance.rs"
+          ],
+          "id": "P0.1",
+          "layer": "primary",
+          "name": "Add new analysis pass for ADR compliance",
+          "status": "pending"
+        },
+        {
+          "files": [
+            ".hex/ADR-rules.toml"
+          ],
+          "id": "P0.2",
+          "layer": "configuration",
+          "name": "Define initial rule set in ADR-rules.toml",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P1",
+      "name": "Enforce ADR Frontmatter Tags and Pre-Commit Hook",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "docs/adrs/template.md"
+          ],
+          "id": "P1.1",
+          "layer": "infrastructure",
+          "name": "Update ADR template to include `enforced_by` frontmatter field",
+          "status": "pending"
+        },
+        {
+          "files": [
+            ".git/hooks/pre-commit"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Implement pre-commit hook for ADR compliance",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P2",
+      "name": "Agent Context Injection and SpacetimeDB Table Migration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/agents/prompt_generator.rs"
+          ],
+          "id": "P2.1",
+          "layer": "secondary",
+          "name": "Inject ADR summaries into agent prompts for code generation",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-core/src/spacetimedb/adr_violations.rs"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Migrate to dedicated SpacetimeDB table for ADR violations",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}
