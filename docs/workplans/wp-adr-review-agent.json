@@ -1,8 +1,8 @@
 {
   "adr": "ADR-041",
-  "created_at": "2026-05-23T20:43:23.319792754+00:00",
+  "created_at": "2026-05-23T20:46:02.407347468+00:00",
   "created_by": "hex-coder",
-  "feature": "Create an autonomous agent to review architectural decisions for consistency and conflicts.",
+  "feature": "Autonomous agent to review ADRs for architectural consistency",
   "id": "wp-adr-review-agent",
   "phases": [
     {
@@ -12,22 +12,20 @@
       "tasks": [
         {
           "files": [
-            "hex-nexus/src/domain/adr_review.rs"
+            "hex-core/src/domain/adr_review.rs"
           ],
           "id": "P0.1",
           "layer": "domain",
-          "name": "Define the ADR review domain type",
+          "name": "Define the ADR review domain model",
           "status": "pending"
         },
         {
           "files": [
-            "hex-nexus/src/ports/IFileSystemPort.rs",
-            "hex-nexus/src/ports/IInferencePort.rs",
-            "hex-nexus/src/ports/IAdrReviewPort.rs"
+            "hex-nexus/src/ports/adr_review_port.rs"
           ],
           "id": "P0.2",
           "layer": "ports",
-          "name": "Define the port interfaces for file system, inference, and ADR review",
+          "name": "Define the IAdrReviewPort interface",
           "status": "pending"
         }
       ],
@@ -35,59 +33,59 @@
     },
     {
       "id": "P1",
-      "name": "Usecase implementation",
-      "status": "pending",
-      "tasks": [
-        {
-          "files": [
-            "hex-nexus/src/usecases/adr_reviewer.rs"
-          ],
-          "id": "P1.1",
-          "layer": "usecases",
-          "name": "Implement the ADR review use case logic",
-          "status": "pending"
-        }
-      ],
-      "tier": 3
-    },
-    {
-      "id": "P2",
-      "name": "Adapter implementation",
+      "name": "Secondary adapter implementation",
       "status": "pending",
       "tasks": [
         {
           "files": [
             "hex-nexus/src/adapters/adr_review_adapter.rs"
           ],
-          "id": "P2.1",
+          "id": "P1.1",
           "layer": "secondary",
-          "name": "Implement the file system adapter",
-          "status": "pending"
-        },
-        {
-          "files": [
-            "hex-nexus/src/adapters/inference_adapter.rs"
-          ],
-          "id": "P2.2",
-          "layer": "secondary",
-          "name": "Implement the inference adapter",
+          "name": "Implement the file system adapter for ADR review",
           "status": "pending"
         }
       ],
       "tier": 1
     },
     {
-      "id": "P3",
-      "name": "CLI command integration",
+      "id": "P2",
+      "name": "Use case implementation",
       "status": "pending",
       "tasks": [
         {
           "files": [
-            "hex-cli/src/commands/adr.rs"
+            "hex-nexus/src/usecases/adr_reviewer.rs"
+          ],
+          "id": "P2.1",
+          "layer": "usecases",
+          "name": "Implement the core ADR review logic",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/usecases/adr_reviewer.rs"
+          ],
+          "id": "P2.2",
+          "layer": "usecases",
+          "name": "Integrate LLM-powered semantic analysis",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P3",
+      "name": "CLI command extension",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-cli/src/commands/adr_review.rs"
           ],
           "id": "P3.1",
           "layer": "primary",
-          "name": "Extend the CLI to include ADR review commands",
+          "name": "Extend the hex adr review CLI command",
           "status": "pending"
         }
       ],
@@ -95,42 +93,25 @@
     },
     {
       "id": "P4",
-      "name": "Agent definition",
+      "name": "Agent definition and integration",
       "status": "pending",
       "tasks": [
         {
           "files": [
-            "agents/adr_reviewer.yml"
+            "agents/ADR-reviewer.yml"
           ],
           "id": "P4.1",
-          "layer": "primary",
-          "name": "Define the ADR review agent configuration",
-          "status": "pending"
-        }
-      ],
-      "tier": 2
-    },
-    {
-      "id": "P5",
-      "name": "Integration and testing",
-      "status": "pending",
-      "tasks": [
-        {
-          "files": [
-            "hex-nexus/src/integration/adr_review_integrator.rs"
-          ],
-          "id": "P5.1",
-          "layer": "integration",
-          "name": "Integrate the ADR review agent with existing infrastructure",
+          "layer": "infrastructure",
+          "name": "Define the ADR review agent in YAML",
           "status": "pending"
         },
         {
           "files": [
-            "tests/adr_review_tests.rs"
+            "hex-nexus/src/orchestration/drafter.rs"
           ],
-          "id": "P5.2",
-          "layer": "primary",
-          "name": "Write tests for the ADR review functionality",
+          "id": "P4.2",
+          "layer": "integration",
+          "name": "Integrate the agent with the pipeline",
           "status": "pending"
         }
       ],
