@@ -7,7 +7,7 @@
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.0+-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"></a>
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.21+-00add8?style=flat-square&logo=go&logoColor=white" alt="Go"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
-  <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-228-bc8cff?style=flat-square" alt="ADRs"></a>
+  <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-239-bc8cff?style=flat-square" alt="ADRs"></a>
   <a href="#status"><img src="https://img.shields.io/badge/Release-Alpha-bc8cff?style=flat-square" alt="Alpha"></a>
 </p>
 
@@ -29,7 +29,9 @@ Three claims define hex:
 
 3. **The system adapts itself within a bounded autonomy envelope.** A control loop ticks every 30s observing the running system, plans changes through adversarial competition, judges them against a structured rubric, and applies them via shadow-promotion. Tier-A changes auto-merge; Tier-C halts at the operator. The loop's targets include hex's own ADRs, workplans, port telemetry, and architectural design (ADR-2026-04-26-1311, ADR-2026-05-19-0721, ADR-2026-04-27-1200).
 
-Work is tracked as **workplan JSON** (phases, tasks, adapter boundaries, gates). Architecture decisions are tracked as **ADRs** (228 in tree). State lives in **SpacetimeDB** as an append-only event log. Every coupling has a name, every mutation has a record.
+4. **The prompts that drive the loop are themselves a target of the loop.** Persona system prompts (CTO, CPO, CISO, …) live in STDB, are rewritten autonomously when their RL failure signal trips, and go through provider-divergent adversarial review (Anthropic red, Ollama blue, Anthropic judge) before a single byte can land. The reducer at the storage boundary re-checks the verdict chain and fails closed; auto-rollback reverts within ~60s of any regression (ADR-2026-05-23-0900).
+
+Work is tracked as **workplan JSON** (phases, tasks, adapter boundaries, gates). Architecture decisions are tracked as **ADRs** (239 in tree). State lives in **SpacetimeDB** as an append-only event log. Every coupling has a name, every mutation has a record.
 
 ---
 
@@ -65,6 +67,24 @@ The improver doesn't only watch application code. It watches **itself**:
 - **Architectural detectors** find god-domain-types, kitchen-sink ports, orphan adapters, dead layers, composition drift — design-quality findings, not just compile errors.
 
 The composition root (ADR-2026-04-26-1303 + cookbook ADR-2026-04-26-2100) is itself a runtime artifact that the loop can rewrite — adapter swaps go through the same shadow-promotion pipeline application code does.
+
+### Recursive self-improvement: the loop rewrites the prompts that drive it (ADR-2026-05-23-0900)
+
+The persona system prompts that drive the SOP factory — CTO, CPO, CISO, COO, Chief Visionary, Engineering Lead, Product Lead, SRE Lead — are themselves under autonomous improvement. They live in the `persona_prompt` STDB table; a `hive_improver` task in nexus picks a target every tick (priority: roles with `persona_health.recent_failures > threshold`, then operator-applied, then stale, then cooperative-neighborhood boost), runs a full GROUND → DISPATCH → DEBATE → JUDGE → APPLY chain, and writes through `persona_prompt_apply_gated` — a reducer that fails closed on six conditions.
+
+```
+Bypass any one of these six and the rewrite cannot persist:
+  1. verdict chain     red ∧ blue ∧ judge ALL approve (LLM-judged at debate time)
+  2. provider lock     red on Anthropic, blue on Ollama (configured-target classes)
+  3. provider divergence  red.provider != blue.provider (reducer rejects on collision)
+  4. body size cap     classify_body and reason_body ≤ 8192 bytes
+  5. role allowlist    role must already exist in persona_pool
+  6. auto-rollback     observer reverts the apply if persona_health regresses within ~60s
+```
+
+The audit trail (`persona_prompt_history` append-only ledger; `persona_prompt_proposal` records the verdict chain that authorised each gated write) is complete enough that `hex persona-prompt history <role>` shows every byte the system has ever stored for that persona — what changed, who/what wrote it, which verdict chain approved it.
+
+Verified end-to-end by `scripts/proofs/prove-gated-apply.sh`: 16 assertions covering every gate condition + acceptance + ledger integrity (run against a live STDB; PASS/FAIL per gate).
 
 ---
 
@@ -219,6 +239,14 @@ hex sched improver discover --once   # preview what the loop would propose
 # substrate
 hex substrate status          # active adapters behind each port
 hex substrate swaps           # shadow-promotion ledger
+
+# persona prompts (recursive self-improvement)
+hex persona-prompt list                       # current row per role
+hex persona-prompt show <role>                # full body + version + seeded_by
+hex persona-prompt history <role>             # append-only version log
+hex persona-prompt improve <role>             # operator-triggered hive-improve chain
+hex persona-prompt rollback <role> [--to N]   # forward-only revert to prior version
+hex persona-prompt apply <role> <body.md>     # operator sudo-write (non-gated)
 ```
 
 Natural-language dispatch (`hex hey "rebuild and validate"`) routes through the same classifier.
@@ -432,7 +460,7 @@ Two operating modes:
 
 ## Status
 
-Alpha — but a different kind of alpha than most. Every mechanical claim above has a reproducer in [EVIDENCE.md](docs/EVIDENCE.md): exact command, prerequisites, expected output. The substrate (ADR-2026-04-26-1500), six-layer governance (ADR-2026-04-26-1311), evidence gate (ADR-2026-05-19-0720, **Accepted — live in `workplan_executor.rs::check_evidence_gate` and `hex plan reconcile --strict`**), workplan state model (ADR-061), self-improvement loop (ADR-2026-05-19-0721, **Proposed — Monitor + Analyze phases live; Plan + Execute + Knowledge tracked in `wp-sched-improver-propose-judge-act`**), and architectural-health detectors (ADR-2026-04-27-1200, **detector code in `hex-analyzer` lands as Hypothesis sources via `wp-architectural-health-detectors`**) are all named. The chain that closes the operator-asks-nothing loop is the active development frontier — `hex sched scores` reads empty today because the K phase has no rows yet. ADR drift, false-done propagation, and detector blind spots are themselves visible in the system as findings the improver will surface — not hidden.
+Alpha — but a different kind of alpha than most. Every mechanical claim above has a reproducer in [EVIDENCE.md](docs/EVIDENCE.md): exact command, prerequisites, expected output. The substrate (ADR-2026-04-26-1500), six-layer governance (ADR-2026-04-26-1311), evidence gate (ADR-2026-05-19-0720, **Accepted — live in `workplan_executor.rs::check_evidence_gate` and `hex plan reconcile --strict`**), workplan state model (ADR-061), self-improvement loop (ADR-2026-05-19-0721, **Proposed — Monitor + Analyze phases live; Plan + Execute + Knowledge tracked in `wp-sched-improver-propose-judge-act`**), architectural-health detectors (ADR-2026-04-27-1200, **detector code in `hex-analyzer` lands as Hypothesis sources via `wp-architectural-health-detectors`**), and the persona-prompt recursive loop (ADR-2026-05-23-0900, **Accepted — autonomous master-supervisor + cooperative hive + provider-divergent adversarial review + reducer-level apply gate + auto-rollback observer all shipped; 16/16 gate-proof assertions PASS**) are all named. The chain that closes the operator-asks-nothing loop is the active development frontier — `hex sched scores` reads empty today because the K phase has no rows yet. ADR drift, false-done propagation, and detector blind spots are themselves visible in the system as findings the improver will surface — not hidden.
 
 **Language support**: The `BuildAdapter` (ADR-018) detects project language from manifest files (`Cargo.toml`, `package.json`, `go.mod`) and dispatches to the appropriate toolchain. Rust workplan execution is production-ready (see `examples/task-board/`); TypeScript and Go support exists in the build adapter but workplan integration is in progress (currently hardcoded to `cargo check` in `workplan_executor.rs` — test case in `examples/food-delivery-ts/`, integration tracked in roadmap).
 
@@ -452,7 +480,9 @@ Formal specs live in `docs/algebra/` (TLA+, TLC-model-checked). Benchmarks in [I
 | [Developer Experience](docs/DEVELOPER-EXPERIENCE.md) | Pulse / Brief / Console / Override layers |
 | [Formal Verification](docs/FORMAL-VERIFICATION.md) | TLA+ models and TLC workflow |
 | [Self-improvement](docs/SELF-IMPROVEMENT.md) | Improver loop, detectors, judge rubric, autonomy envelope |
-| [ADRs](docs/adrs/) | 228 decision records — the `why` behind each mechanism |
+| [Persona-prompts (ADR-2026-05-23-0900)](docs/adrs/ADR-2026-05-23-0900-persona-prompts-stdb-mirror.md) | STDB-backed persona prompts, gated apply, hive-improver, auto-rollback (with the v0 rejection at -0815 alongside) |
+| [Gate proof harness](scripts/proofs/prove-gated-apply.sh) | 16-assertion reproducible proof of the reducer-level gate |
+| [ADRs](docs/adrs/) | 239 decision records — the `why` behind each mechanism |
 | [TypeScript Test](docs/TEST-TYPESCRIPT-SUPPORT.md) | Food delivery example, BuildAdapter validation, integration roadmap |
 
 ---
@@ -479,6 +509,6 @@ Builds on hexagonal architecture ([Alistair Cockburn, 2005](https://alistair.coc
 
 [MIT](LICENSE)
 
-<!-- Last manual edit: 2026-05-19 — ADR count 189→228, replaced 3 invented ADR refs with ADR-2026-05-19-0720 (Evidence Gate), ADR-2026-05-19-0721 (Self-Improvement Loop), and ADR-061 (Workplan Lifecycle); renamed `hex substrate composition` → `hex substrate status`; refreshed §Status to name the workplans implementing the in-flight phases. -->
+<!-- Last manual edit: 2026-05-23 — ADR count 228→239; added 4th claim about persona prompts as a first-class self-improvable target; new §Recursive self-improvement subsection naming the 6-guard chain; persona-prompt CLI block in §Core commands; rows in §Documentation for ADR-2026-05-23-0900 + the gate-proof harness; §Status now names the persona-prompt loop as Accepted + shipped. Prior edit: 2026-05-19. -->
 
 
