@@ -2,7 +2,9 @@
 
 ## Title: HEX Cost Operations Runbook
 
-**Status:** Proposed
+**Status:** Accepted
+
+> Status flipped 2026-05-23 (operator). Workplan derivation will land via `workplan_auto_emitter` on next tick.
 
 ## Date: 2026-05-09
 

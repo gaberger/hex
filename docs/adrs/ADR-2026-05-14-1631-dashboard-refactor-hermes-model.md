@@ -1,6 +1,8 @@
 # ADR-2026-05-14-1631: Dashboard refactor — Hermes Agent as the model
 
-**Status:** Proposed
+**Status:** Accepted
+
+> Status flipped 2026-05-23 (operator). Workplan derivation will land via `workplan_auto_emitter` on next tick.
 **Date:** 2026-05-14
 **Drivers:** The hex dashboard today ships ~20 distinct views (`Resources`, `MergeGate`, `Commitments`, `MissionControl`, `Brain`, `BrainDecisions`, `Missions`, `OpsSla`, `OrgChart`, `OrgComms`, `PersonaHealth`, `ProjectDetail`, `ProjectHierarchy`, `ActivityPanel`, `AgentFleet`, `ControlPlane`, `ADRBrowser`, `ConfigPage`, `FileTreeView`, ...). The operator tab-hops between them and there's no canonical "everything pending my attention right now" surface. `MissionControl.tsx` (commit `f4001ce5`, 2026-05-09) was the first attempt at a unified landing but stayed additive — it didn't *replace* the deep-dive views, and several capabilities shipped this session (`hex agent run`, `hex ops`, autonomous commit step, 23 autonomous commits/day) aren't surfaced anywhere. Hermes Agent solved a structurally identical problem with a single AIAgent class + one terminal/web/dashboard landing + a `/agents` activity-tree overlay. This ADR commits hex's dashboard to the same operator-attention discipline.
 

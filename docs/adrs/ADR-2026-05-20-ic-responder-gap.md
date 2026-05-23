@@ -1,6 +1,8 @@
 # ADR-2026-05-20-ic-responder-gap
 
-**Status:** Proposed
+**Status:** Accepted
+
+> Status flipped 2026-05-23 (operator). Workplan derivation will land via `workplan_auto_emitter` on next tick.
 **Date:** 2026-05-20
 - **Authors**: cto (drafted via SOP), gary (implemented + revised post-ship)
 

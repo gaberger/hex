@@ -1,6 +1,8 @@
 # ADR-2026-05-09-1100: Multi-host substrate composition
 
-**Status:** Proposed
+**Status:** Accepted
+
+> Status flipped 2026-05-23 (operator). Workplan derivation will land via `workplan_auto_emitter` on next tick.
 **Date:** 2026-05-09
 **Drivers:** ADR-2026-04-26-1500 (self-modifying substrate) defines G2 — "Multi-host scaleout. The substrate must be able to run as a fleet, with placement as a property of the substrate, not a property of the user." The C2 contract (`RuntimeComposition`) currently lives in per-process nexus memory. A fleet of hex hosts cannot coordinate adapter swaps, telemetry-based promotion, or rollback decisions without shared composition state. This ADR realizes G2 by moving composition into SpacetimeDB and defining the placement algorithm.
 

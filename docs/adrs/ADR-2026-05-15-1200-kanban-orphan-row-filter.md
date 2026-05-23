@@ -1,6 +1,8 @@
 # ADR-2026-05-15-1200 — kanban-orphan-row-filter
 
-**Status:** Proposed
+**Status:** Accepted
+
+> Status flipped 2026-05-23 (operator). Workplan derivation will land via `workplan_auto_emitter` on next tick.
 **Date:** 2026-05-18
 - **Authors**: cto (autonomous, via `adr_draft` typed tool)
 
