@@ -1,8 +1,8 @@
 {
   "adr": "ADR-046",
-  "created_at": "2026-05-23T20:54:42.695887946+00:00",
+  "created_at": "2026-05-23T20:56:13.325128634+00:00",
   "created_by": "hex-coder",
-  "feature": "Establish SpacetimeDB as the sole authority for state mutations in the dashboard",
+  "feature": "Define SpacetimeDB as the single authority for state mutations in the dashboard",
   "id": "wp-spacetimedb-single-authority",
   "phases": [
     {
@@ -12,20 +12,20 @@
       "tasks": [
         {
           "files": [
-            "hex-core/src/domain/spacetimedb_reducer.rs"
+            "hex-core/src/domain/spacetimedb.rs"
           ],
           "id": "P0.1",
           "layer": "domain",
-          "name": "Define SpacetimeDB reducer interfaces",
+          "name": "Define the SpacetimeDB domain type",
           "status": "pending"
         },
         {
           "files": [
-            "hex-core/src/ports/websocket_port.rs"
+            "hex-core/src/ports/spacetimedb_port.rs"
           ],
           "id": "P0.2",
           "layer": "ports",
-          "name": "Define WebSocket port interface",
+          "name": "Define the SpacetimeDB port interface",
           "status": "pending"
         }
       ],
@@ -38,23 +38,11 @@
       "tasks": [
         {
           "files": [
-            "hex-nexus/src/adapters/spacetimedb_websocket_adapter.rs"
+            "hex-nexus/src/adapters/spacetimedb_adapter.rs"
           ],
           "id": "P1.1",
           "layer": "secondary",
-          "name": "Implement WebSocket adapter for SpacetimeDB",
-          "status": "pending"
-        },
-        {
-          "files": [
-            "hex-nexus/src/routes/project/init_route.rs",
-            "hex-nexus/src/routes/project/delete_route.rs",
-            "hex-nexus/src/routes/analyze_route.rs",
-            "hex-nexus/src/routes/git_route.rs"
-          ],
-          "id": "P1.2",
-          "layer": "secondary",
-          "name": "Restrict REST endpoints to filesystem operations",
+          "name": "Implement the SpacetimeDB secondary adapter",
           "status": "pending"
         }
       ],
@@ -62,26 +50,16 @@
     },
     {
       "id": "P2",
-      "name": "Primary application logic update",
+      "name": "Primary usecase implementation",
       "status": "pending",
       "tasks": [
         {
           "files": [
-            "hex-dashboard/src/components/controlplane.rs"
+            "hex-core/src/usecases/spacetimedb_mutation.rs"
           ],
           "id": "P2.1",
           "layer": "primary",
-          "name": "Update dashboard to use SpacetimeDB reducers for state mutations",
-          "status": "pending"
-        },
-        {
-          "files": [
-            "hex-dashboard/src/components/project_list.rs",
-            "hex-nexus/src/orchestration/drafter.rs"
-          ],
-          "id": "P2.2",
-          "layer": "primary",
-          "name": "Ensure no background re-sync from REST to SpacetimeDB",
+          "name": "Implement state mutation via SpacetimeDB reducers",
           "status": "pending"
         }
       ],
@@ -89,25 +67,16 @@
     },
     {
       "id": "P3",
-      "name": "Integration testing",
+      "name": "Integration with REST endpoints",
       "status": "pending",
       "tasks": [
         {
           "files": [
-            "tests/integration/spacetimedb_reducer_tests.rs"
+            "hex-nexus/src/orchestration/drafter.rs"
           ],
           "id": "P3.1",
           "layer": "integration",
-          "name": "Write integration tests for state mutations via WebSocket",
-          "status": "pending"
-        },
-        {
-          "files": [
-            "tests/integration/rest_filesystem_tests.rs"
-          ],
-          "id": "P3.2",
-          "layer": "integration",
-          "name": "Test REST endpoints for filesystem operations only",
+          "name": "Modify hex-nexus/src/orchestration/drafter.rs to enforce REST rules",
           "status": "pending"
         }
       ],
