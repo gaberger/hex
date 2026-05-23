@@ -1,39 +1,48 @@
 {
   "adr": "ADR-049",
-  "created_at": "2026-05-23T20:57:34.726816334+00:00",
+  "created_at": "2026-05-23T20:59:09.725253757+00:00",
   "created_by": "hex-coder",
-  "feature": "Make hex-setup/mcp/hex-claude-settings.json the single source of truth for embedded settings",
+  "feature": "Single source of truth for embedded settings",
   "id": "wp-embedded-settings-template-single-source-of-truth",
   "phases": [
     {
       "id": "P0",
-      "name": "Embed template at compile time",
+      "name": "Domain + ports scaffolding",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-core/src/domain/settings.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Define the domain type for settings",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-core/src/ports/settings_port.rs"
+          ],
+          "id": "P0.2",
+          "layer": "ports",
+          "name": "Define the port interface for settings",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Primary adapter implementation",
       "status": "pending",
       "tasks": [
         {
           "files": [
             "hex-cli/src/commands/init.rs"
           ],
-          "id": "P0.1",
-          "layer": "primary",
-          "name": "Replace inline JSON with include_str!() from hex-setup template in init.rs",
-          "status": "pending"
-        }
-      ],
-      "tier": 2
-    },
-    {
-      "id": "P1",
-      "name": "Implement session agent lifecycle (ADR-048)",
-      "status": "pending",
-      "tasks": [
-        {
-          "files": [
-            "hex-cli/src/commands/hook.rs"
-          ],
           "id": "P1.1",
-          "layer": "usecases",
-          "name": "Implement register_session_agent() and deregister_session_agent() in hook.rs",
+          "layer": "primary",
+          "name": "Embed the template at compile time in hex-cli",
           "status": "pending"
         },
         {
@@ -41,12 +50,38 @@
             "hex-cli/src/commands/hook.rs"
           ],
           "id": "P1.2",
-          "layer": "usecases",
-          "name": "Enhance session_start with SpacetimeDB status reporting in hook.rs",
+          "layer": "primary",
+          "name": "Modify hook.rs to implement session agent lifecycle",
           "status": "pending"
         }
       ],
-      "tier": 3
+      "tier": 2
+    },
+    {
+      "id": "P2",
+      "name": "Integration testing and validation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/tests/settings_test.rs"
+          ],
+          "id": "P2.1",
+          "layer": "integration",
+          "name": "Update integration tests for new settings handling",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/tests/session_lifecycle_test.rs"
+          ],
+          "id": "P2.2",
+          "layer": "integration",
+          "name": "Validate session lifecycle and SpacetimeDB awareness",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
     }
   ],
   "priority": "normal",
