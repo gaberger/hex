@@ -414,11 +414,12 @@ async fn run_inner(
             .unwrap_or(0)
     };
     trace.push(format!(
-        "GROUND → {} repo_grep matches, memory: {} lessons / {} gaps / {} intent / {} own-actions / {} own-nopact / {} own-failures",
+        "GROUND → {} repo_grep matches, memory: {} lessons / {} gaps / {} intent / {} projects / {} own-actions / {} own-nopact / {} own-failures",
         grep_n,
         mem_n(&ground_pack, "lessons"),
         mem_n(&ground_pack, "gaps"),
         mem_n(&ground_pack, "intent_match"),
+        mem_n(&ground_pack, "projects"),
         mem_n(&ground_pack, "own_actions"),
         mem_n(&ground_pack, "own_nopact"),
         mem_n(&ground_pack, "own_failures"),
@@ -547,7 +548,7 @@ async fn ground_for_intent(
     let action_prefix = format!("action:{}:", role);
     let nopact_prefix = format!("nopact:{}:", role);
     let failure_prefix = format!("failure:{}:", role);
-    let (mem_lessons, mem_gaps, mem_intent, mem_own_actions, mem_own_nopact, mem_own_failures) = tokio::join!(
+    let (mem_lessons, mem_gaps, mem_intent, mem_projects, mem_own_actions, mem_own_nopact, mem_own_failures) = tokio::join!(
         registry.execute(
             "memory_search",
             json!({ "query": "lesson:", "max_results": 6 }),
@@ -559,6 +560,15 @@ async fn ground_for_intent(
         registry.execute(
             "memory_search",
             json!({ "query": memory_pattern.clone(), "max_results": 6 }),
+        ),
+        // Pull project: entries — these are in-flight project context AND
+        // daily status reports (project:status-YYYY-MM-DD). Discovered
+        // 2026-05-23 that omitting this prefix meant status reports were
+        // stored but never reached REASON. 4 results because there are
+        // typically just a handful of active projects + recent status reports.
+        registry.execute(
+            "memory_search",
+            json!({ "query": "project:", "max_results": 4 }),
         ),
         registry.execute(
             "memory_search",
@@ -578,6 +588,7 @@ async fn ground_for_intent(
         "gaps":          if mem_gaps.ok         { mem_gaps.output         } else { json!({"error": mem_gaps.error}) },
         "intent_match":  if mem_intent.ok       { mem_intent.output       } else { json!({"error": mem_intent.error}) },
         "intent_query":  memory_pattern,
+        "projects":      if mem_projects.ok     { mem_projects.output     } else { json!({"error": mem_projects.error}) },
         "own_actions":   if mem_own_actions.ok  { mem_own_actions.output  } else { json!({"error": mem_own_actions.error}) },
         "own_nopact":    if mem_own_nopact.ok   { mem_own_nopact.output   } else { json!({"error": mem_own_nopact.error}) },
         "own_failures":  if mem_own_failures.ok { mem_own_failures.output } else { json!({"error": mem_own_failures.error}) },
