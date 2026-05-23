@@ -1,0 +1,72 @@
+{
+  "adr": "ADR-048",
+  "created_at": "2026-05-23T19:26:12.283213368+00:00",
+  "created_by": "hex-coder",
+  "feature": "Automatic agent registration for Claude Code sessions",
+  "id": "wp-claude-code-session-agent-registration",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Extend Connect Endpoint",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/routes/orchestration.rs"
+          ],
+          "id": "P1.1",
+          "layer": "primary",
+          "name": "Modify connect_agent to accept metadata fields",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P2",
+      "name": "New Disconnect Endpoint",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/routes/orchestration.rs",
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Add disconnect_agent handler and register route",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P3",
+      "name": "Session Lifecycle Hook",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            ".claude/helpers/agent-register.cjs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Create agent-register.cjs hook helper",
+          "status": "pending"
+        },
+        {
+          "files": [
+            ".claude/settings.json"
+          ],
+          "id": "P3.2",
+          "layer": "infrastructure",
+          "name": "Wire agent-register.cjs into SessionStart and SessionEnd hooks",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}
