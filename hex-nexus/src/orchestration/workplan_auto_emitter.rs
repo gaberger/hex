@@ -226,14 +226,14 @@ async fn derive_one(
     );
     let user_msg = format!("ADR file: docs/adrs/{}\n\n{}", adr_name, trimmed);
 
-    // Use the OpenRouter / Anthropic path same as sop_executor — but simpler:
-    // single tool call, no multi-round-trip loop. We emulate by sending the
-    // whole tool registry but expecting workplan_emit only.
-    let api_key = std::env::var("ANTHROPIC_API_KEY").ok().or_else(|| std::env::var("OPENROUTER_API_KEY").ok());
-    let api_key = match api_key {
-        Some(k) => k,
-        None => return Err("no ANTHROPIC_API_KEY or OPENROUTER_API_KEY".to_string()),
-    };
+    // Route through nexus `/api/inference/complete` — it already has the
+    // tools fast-path (provider chain: local Ollama → OpenAI-compat →
+    // OpenRouter, sorted by `priority_for_tools`, with credit-exhaustion
+    // handling baked in). This used to go direct to OpenRouter with a
+    // hardcoded model slug — that wedged for hours every time the slug
+    // went stale or the OpenRouter Anthropic credit ran out. The proxy
+    // fixes both: stale slug auto-routes, credit exhaustion auto-falls-
+    // through to the next provider.
 
     // Pull just the workplan_emit schema for a focused single-tool call.
     let wp_emit = registry.get("workplan_emit").ok_or("workplan_emit tool missing from registry")?;
@@ -246,7 +246,13 @@ async fn derive_one(
         }
     }]);
 
-    let model = std::env::var("HEX_AUTOEMITTER_MODEL").unwrap_or_else(|_| "anthropic/claude-sonnet-4.5".to_string());
+    // Default to the nexus-resolved model name (the inference layer maps
+    // this to whatever Anthropic provider is healthy + has credits). The
+    // OpenRouter direct-call path used `anthropic/claude-sonnet-4.5`
+    // which started returning null content circa 2026-05 — the nexus
+    // resolver routes `claude-sonnet-4-6` to a working endpoint.
+    let model = std::env::var("HEX_AUTOEMITTER_MODEL")
+        .unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
     let req_body = json!({
         "model": model,
         "messages": [
@@ -255,34 +261,55 @@ async fn derive_one(
         ],
         "tools": openai_tools,
         "tool_choice": { "type": "function", "function": { "name": "workplan_emit" } },
-        // Operator override: HEX_AUTO_EMITTER_MAX_TOKENS. Default 1024 because
-        // OpenRouter free-tier credit windows routinely cap below 2048 (live
-        // logs showed "can only afford 1221" — wedged the auto-emitter in a
-        // tight retry loop). 1024 fits within typical short-credit windows
-        // and is enough for a single workplan_emit tool-call payload.
         "max_tokens": std::env::var("HEX_AUTO_EMITTER_MAX_TOKENS")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(1024),
     });
     let resp = http
-        .post("https://openrouter.ai/api/v1/chat/completions")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("HTTP-Referer", "https://hex-aios.local")
-        .header("X-Title", "hex workplan-auto-emitter")
+        .post(inference_url)
         .json(&req_body)
         .send()
         .await
-        .map_err(|e| format!("openrouter: {}", e))?;
+        .map_err(|e| format!("inference loopback: {}", e))?;
     let status = resp.status();
-    let v: Value = resp.json().await.map_err(|e| format!("openrouter json: {}", e))?;
+    let v: Value = resp.json().await.map_err(|e| format!("inference json: {}", e))?;
     if !status.is_success() {
-        return Err(format!("openrouter HTTP {}: {}", status, v));
+        return Err(format!("inference HTTP {}: {}", status, v));
     }
 
+    // The nexus tools fast-path returns either
+    //   { content, tool_calls: [{id, type: "function", function: {name, arguments}}, ...] }
+    // OR (when the underlying provider returned the OpenAI shape unchanged)
+    //   { choices: [{message: {content, tool_calls: [...]}}] }
+    // Try the fast-path first, fall through to the OpenAI shape.
     let tc = v
-        .pointer("/choices/0/message/tool_calls/0")
-        .ok_or("no tool_calls in response")?;
+        .pointer("/tool_calls/0")
+        .or_else(|| v.pointer("/choices/0/message/tool_calls/0"));
+    let tc = match tc {
+        Some(t) => t,
+        None => {
+            // Include the response shape in the error so the operator can
+            // diagnose without re-running. Cap to 400 chars so logs stay
+            // readable.
+            let finish = v
+                .pointer("/finish_reason")
+                .or_else(|| v.pointer("/choices/0/finish_reason"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("?");
+            let content = v
+                .pointer("/content")
+                .or_else(|| v.pointer("/choices/0/message/content"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            let err_field = v.pointer("/error").map(|e| e.to_string()).unwrap_or_default();
+            let snippet: String = content.chars().take(200).collect();
+            return Err(format!(
+                "no tool_calls in response (finish={}, err={}, content[:200]={:?})",
+                finish, err_field, snippet
+            ));
+        }
+    };
     let args_str = tc
         .pointer("/function/arguments")
         .and_then(|x| x.as_str())
@@ -294,11 +321,11 @@ async fn derive_one(
     if !result.ok {
         return Err(format!("workplan_emit tool failed: {}", result.error.unwrap_or_default()));
     }
-    let _ = inference_url; // silence unused — we went direct to OpenRouter for tighter control
     tracing::info!(
         adr_id = %adr_id,
         adr = %adr_name,
         wp_path = ?result.output.get("target_path"),
+        model = %model,
         "workplan_auto_emitter: derived workplan from ADR"
     );
     Ok(())
