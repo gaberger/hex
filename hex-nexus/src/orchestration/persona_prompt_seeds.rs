@@ -183,6 +183,105 @@ pub const SEEDED_ROLES: &[&str] = &[
     "sre-lead",
 ];
 
+// ---------------------------------------------------------------------------
+// STDB read-path cache (ADR-2026-05-23-0900 §Phase 4 — the deferred read path,
+// landed in the Path A pilot). The cache lets org_responder and sop_executor
+// keep their synchronous signatures while routing the active prompt body
+// through STDB. Populated by a background refresher on the supervisor tick;
+// missing roles fall back to the in-process seed function below.
+// ---------------------------------------------------------------------------
+
+use std::collections::HashMap;
+use std::sync::{OnceLock, RwLock};
+
+/// One cached row, mirroring the fields of `persona_prompt` we care about
+/// at read time. The classify_body/reason_body fields are pre-fetched from
+/// STDB on every tick; the read path returns these directly (no per-call
+/// STDB round trip).
+#[derive(Clone, Debug, Default)]
+pub struct ActivePersonaPrompt {
+    pub role: String,
+    pub classify_body: String,
+    pub reason_body: String,
+}
+
+static ACTIVE_PROMPTS: OnceLock<RwLock<HashMap<String, ActivePersonaPrompt>>> = OnceLock::new();
+
+fn cache() -> &'static RwLock<HashMap<String, ActivePersonaPrompt>> {
+    ACTIVE_PROMPTS.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Replace the in-process cache with rows freshly pulled from STDB. Called
+/// by the supervisor's tick (every 5s). On STDB unavailable, the cache
+/// retains its prior contents — the next read falls through to seeds only
+/// when a role has never been cached.
+pub fn refresh_active_prompts(rows: Vec<ActivePersonaPrompt>) {
+    if rows.is_empty() {
+        // Don't blow away the cache on a transient empty read — the seed
+        // fallback is the actual safety net for "no active prompt".
+        return;
+    }
+    if let Ok(mut w) = cache().write() {
+        w.clear();
+        for r in rows {
+            w.insert(r.role.clone(), r);
+        }
+    }
+}
+
+/// Returns the CLASSIFY body. Prefers the STDB-cached active row; falls
+/// back to the in-process seed if the cache has no entry OR the cached
+/// classify_body is empty. The seed call is byte-equivalent to the
+/// pre-2026-05-23 hardcoded body — so an empty cache means current behavior.
+pub fn active_classify_or_seed(role: &str, role_title: &str) -> String {
+    if let Ok(r) = cache().read() {
+        if let Some(p) = r.get(role) {
+            if !p.classify_body.is_empty() {
+                return p.classify_body.clone();
+            }
+        }
+    }
+    classify_seed(role, role_title)
+}
+
+/// Returns the REASON body. Prefers the STDB-cached active row; falls
+/// back to the in-process seed if absent or empty. NOTE: the cached
+/// reason_body is the body as-seeded (intent="code_question" placeholder).
+/// Per-intent variants would need a richer schema; for v1 of the apply
+/// loop the cached body is treated as-is and the seed handles intent
+/// substitution for fall-through.
+pub fn active_reason_or_seed(role: &str, intent: &str) -> String {
+    if let Ok(r) = cache().read() {
+        if let Some(p) = r.get(role) {
+            if !p.reason_body.is_empty() {
+                return p.reason_body.clone();
+            }
+        }
+    }
+    reason_seed(role, intent)
+}
+
+/// Test-only: stuff the cache so the read path returns a known value
+/// without needing STDB. Used by `persona_prompt_seeds::tests`.
+#[cfg(test)]
+pub fn test_only_set_cache(role: &str, classify_body: &str, reason_body: &str) {
+    if let Ok(mut w) = cache().write() {
+        w.insert(role.to_string(), ActivePersonaPrompt {
+            role: role.to_string(),
+            classify_body: classify_body.to_string(),
+            reason_body: reason_body.to_string(),
+        });
+    }
+}
+
+/// Test-only: drain the cache so subsequent reads fall through to seeds.
+#[cfg(test)]
+pub fn test_only_clear_cache() {
+    if let Ok(mut w) = cache().write() {
+        w.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

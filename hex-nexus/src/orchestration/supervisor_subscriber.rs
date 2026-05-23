@@ -87,7 +87,82 @@ impl SupervisorSubscriber {
             if let Err(e) = self.tick().await {
                 warn!("supervisor subscriber tick error: {}", e);
             }
+            // Per ADR-2026-05-23-0900 §Phase 4 — refresh the in-process
+            // persona_prompt cache so applied STDB rows are visible to
+            // org_responder/sop_executor within one supervisor-tick period.
+            // Non-fatal on transport / parse error: the cache keeps its
+            // prior contents and the seed fallback covers fresh roles.
+            if let Err(e) = self.refresh_persona_prompt_cache().await {
+                debug!("persona_prompt cache refresh skipped: {}", e);
+            }
         }
+    }
+
+    /// Pull every row from `persona_prompt` via STDB SQL and update the
+    /// in-process cache used by `persona_prompt_seeds::active_*_or_seed`.
+    /// Best-effort — failures leave the cache as-is.
+    async fn refresh_persona_prompt_cache(&self) -> Result<(), String> {
+        use crate::orchestration::persona_prompt_seeds::{
+            refresh_active_prompts, ActivePersonaPrompt,
+        };
+        let stdb_host = std::env::var("HEX_STDB_HOST")
+            .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+        let hex_db = std::env::var("HEX_STDB_HEXFLO_DB")
+            .unwrap_or_else(|_| "hex".to_string());
+        let url = format!("{}/v1/database/{}/sql", stdb_host, hex_db);
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+            .map_err(|e| format!("http client: {}", e))?;
+        let res = http
+            .post(&url)
+            .header("Content-Type", "text/plain")
+            .body("SELECT role, classify_body, reason_body FROM persona_prompt")
+            .send()
+            .await
+            .map_err(|e| format!("sql: {}", e))?;
+        if !res.status().is_success() {
+            return Err(format!("sql status {}", res.status()));
+        }
+        // STDB SQL returns rows as JSON. Shape varies by client; the v1
+        // response is an array with one object per result-set, each having
+        // a `rows` array of column-tuple arrays.
+        let body: serde_json::Value = res
+            .json()
+            .await
+            .map_err(|e| format!("json parse: {}", e))?;
+        let mut out = Vec::new();
+        // Support both shapes: top-level array of result-sets (newer
+        // STDB) and a bare `{rows: [...]}` (legacy). We don't gate on
+        // shape; either way we just walk all `rows` arrays we find.
+        let collect_from = |rows: &serde_json::Value, out: &mut Vec<ActivePersonaPrompt>| {
+            if let Some(arr) = rows.as_array() {
+                for row in arr {
+                    let cols = match row.as_array() {
+                        Some(c) => c,
+                        None => continue,
+                    };
+                    if cols.len() < 3 { continue; }
+                    let role = cols[0].as_str().unwrap_or("").to_string();
+                    let classify_body = cols[1].as_str().unwrap_or("").to_string();
+                    let reason_body = cols[2].as_str().unwrap_or("").to_string();
+                    if !role.is_empty() {
+                        out.push(ActivePersonaPrompt { role, classify_body, reason_body });
+                    }
+                }
+            }
+        };
+        if let Some(arr) = body.as_array() {
+            for rs in arr {
+                if let Some(rows) = rs.get("rows") {
+                    collect_from(rows, &mut out);
+                }
+            }
+        } else if let Some(rows) = body.get("rows") {
+            collect_from(rows, &mut out);
+        }
+        refresh_active_prompts(out);
+        Ok(())
     }
 
     /// Walk every persona YAML embedded via rust-embed and create a

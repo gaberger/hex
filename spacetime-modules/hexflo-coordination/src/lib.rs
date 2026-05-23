@@ -5204,6 +5204,73 @@ pub fn seed_persona_prompt(
     Ok(())
 }
 
+/// Apply a new active prompt for a persona. Distinct from `seed_persona_prompt`
+/// in three ways:
+///
+/// 1. Always overwrites (not idempotent on byte-equality) so the operator
+///    can re-apply the same body to bump `seeded_at` — useful when the body
+///    is identical but the operator wants to log the apply event.
+/// 2. The `seeded_by` field records `"applied:" + ctx.sender.to_string()` so
+///    the audit trail in v0 / future ADRs can distinguish seed events from
+///    apply events without a separate `applied_by` column.
+/// 3. The role MUST already exist in `persona_prompt` — applies cannot
+///    create a row from scratch. This forces operators to seed first
+///    (cold-start does this) before applying a rewrite.
+///
+/// **Operator-triggered Path-A pilot only.** No automated apply gate; no
+/// adversarial verdict check inside the reducer. The operator (or a tool
+/// that runs adversarial-red + adversarial-blue + validation-judge before
+/// calling this) is the master supervisor in v1.
+///
+/// Future apply-gate ADR will add a `persona_prompt_proposal` row that this
+/// reducer validates against — but that requires the platform `provider_lock`
+/// enforcement which doesn't exist yet (`hex agent worker` dispatcher gap).
+#[reducer]
+pub fn persona_prompt_apply(
+    ctx: &ReducerContext,
+    role: String,
+    classify_body: String,
+    reason_body: String,
+    model_preferred: String,
+    model_upgrade_to: String,
+) -> Result<(), String> {
+    if role.is_empty() {
+        return Err("role is required".into());
+    }
+    if classify_body.len() > PERSONA_PROMPT_BODY_MAX {
+        return Err(format!(
+            "classify_body size {} exceeds {} byte cap",
+            classify_body.len(),
+            PERSONA_PROMPT_BODY_MAX
+        ));
+    }
+    if reason_body.len() > PERSONA_PROMPT_BODY_MAX {
+        return Err(format!(
+            "reason_body size {} exceeds {} byte cap",
+            reason_body.len(),
+            PERSONA_PROMPT_BODY_MAX
+        ));
+    }
+    if ctx.db.persona_prompt().role().find(&role).is_none() {
+        return Err(format!(
+            "persona_prompt_apply: role '{}' not yet seeded — call seed_persona_prompt first",
+            role
+        ));
+    }
+    let applied_by = format!("applied:{}", ctx.sender);
+    let new_row = PersonaPrompt {
+        role: role.clone(),
+        classify_body,
+        reason_body,
+        model_preferred,
+        model_upgrade_to,
+        seeded_at: ctx.timestamp,
+        seeded_by: applied_by,
+    };
+    ctx.db.persona_prompt().role().update(new_row);
+    Ok(())
+}
+
 // ============================================================
 // User-defined SOUL personas (ADR-2026-05-13-1849, wp-user-defined-soul-personas P1)
 // ============================================================

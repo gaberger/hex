@@ -316,14 +316,14 @@ fn conversational_prompt(role: &str) -> String {
 /// may only resolve to `accept`, `route`, `clarify`, or `request_tool`.
 fn persona_prompt(role: &str) -> String {
     // Single source of truth for role titles — keeps IC titles in sync with
-    // the conversational path. Body content moved to
-    // `orchestration::persona_prompt_seeds::classify_seed` per ADR-2026-
-    // 05-23-0900 §Phase 2 (code-motion only; behavior unchanged).
-    // Phase 4 of the same ADR will add an STDB-first lookup wrapping this
-    // call so the active prompt can be observed via `persona_prompt` table
-    // without losing the hardcoded fallback path.
+    // the conversational path. Phase 2 of ADR-2026-05-23-0900 moved the body
+    // content into `persona_prompt_seeds`. Phase 4 (Path-A pilot, 2026-05-23)
+    // wraps that delegation with an STDB-cached read; the cache is populated
+    // by the supervisor tick and falls back to the seed when empty. Net
+    // effect: applying a new prompt via `persona_prompt_apply` becomes live
+    // on the next supervisor tick (≤5s).
     let role_title = role_title(role);
-    crate::orchestration::persona_prompt_seeds::classify_seed(role, role_title)
+    crate::orchestration::persona_prompt_seeds::active_classify_or_seed(role, role_title)
 }
 
 /// In-process dedup of (role, msg_id) pairs we've already replied to this

@@ -1167,13 +1167,14 @@ fn parse_text_tool_calls(content: &str) -> Vec<Value> {
 }
 
 fn build_reason_system_prompt(role: &str, intent: &str) -> String {
-    // Body content moved to
-    // `orchestration::persona_prompt_seeds::reason_seed` per ADR-2026-
-    // 05-23-0900 §Phase 2 (code-motion only; behavior unchanged).
-    // Phase 4 of the same ADR will add an STDB-first lookup wrapping this
-    // call so the active prompt can be observed via the `persona_prompt`
-    // table without losing the hardcoded fallback.
-    crate::orchestration::persona_prompt_seeds::reason_seed(role, intent)
+    // Phase 2 of ADR-2026-05-23-0900 moved the body content into
+    // `persona_prompt_seeds::reason_seed`. Phase 4 (Path-A pilot,
+    // 2026-05-23) wraps it with an STDB-cached read; the cache is populated
+    // by the supervisor tick. When the cache has a non-empty `reason_body`
+    // for this role, the cached body wins; otherwise the seed function
+    // returns the byte-current default. Per-intent variants are not
+    // schema-supported in v1 — the cached body is treated as-is.
+    crate::orchestration::persona_prompt_seeds::active_reason_or_seed(role, intent)
 }
 
 fn build_chat_card(role: &str, intent: &str, reason: &ReasonResult) -> String {
