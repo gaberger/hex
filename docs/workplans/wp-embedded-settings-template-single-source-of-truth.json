@@ -1,0 +1,54 @@
+{
+  "adr": "ADR-049",
+  "created_at": "2026-05-23T20:57:34.726816334+00:00",
+  "created_by": "hex-coder",
+  "feature": "Make hex-setup/mcp/hex-claude-settings.json the single source of truth for embedded settings",
+  "id": "wp-embedded-settings-template-single-source-of-truth",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Embed template at compile time",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-cli/src/commands/init.rs"
+          ],
+          "id": "P0.1",
+          "layer": "primary",
+          "name": "Replace inline JSON with include_str!() from hex-setup template in init.rs",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P1",
+      "name": "Implement session agent lifecycle (ADR-048)",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-cli/src/commands/hook.rs"
+          ],
+          "id": "P1.1",
+          "layer": "usecases",
+          "name": "Implement register_session_agent() and deregister_session_agent() in hook.rs",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-cli/src/commands/hook.rs"
+          ],
+          "id": "P1.2",
+          "layer": "usecases",
+          "name": "Enhance session_start with SpacetimeDB status reporting in hook.rs",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}
