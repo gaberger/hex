@@ -1,0 +1,178 @@
+{
+  "adr": "ADR-063",
+  "created_at": "2026-05-23T22:12:33.655324768+00:00",
+  "created_by": "hex-coder",
+  "feature": "Deprecate SQLite and migrate HexFlo to SpacetimeDB for real-time subscriptions, cross-node replication, and single state backend.",
+  "id": "wp-sqlite-to-spacetimedb-migration",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Create hexflo-coordination SpacetimeDB Module",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/tables.rs"
+          ],
+          "id": "P0.1",
+          "layer": "ports",
+          "name": "Define tables in hexflo-coordination module",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/reducers.rs"
+          ],
+          "id": "P0.2",
+          "layer": "primary",
+          "name": "Implement reducers for the new tables",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P1",
+      "name": "Refactor Coordination Layer to Use IStatePort",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/ports.rs"
+          ],
+          "id": "P1.1",
+          "layer": "ports",
+          "name": "Extend IStatePort with swarm/task/memory methods",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/spacetime_state.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Implement new IStatePort methods in SpacetimeStateAdapter",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/sqlite_state.rs"
+          ],
+          "id": "P1.3",
+          "layer": "secondary",
+          "name": "Implement new IStatePort methods in SqliteStateAdapter (fallback)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/coordination/mod.rs"
+          ],
+          "id": "P1.4",
+          "layer": "primary",
+          "name": "Replace SwarmDb calls with IStatePort in coordination/mod.rs",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/coordination/memory.rs"
+          ],
+          "id": "P1.5",
+          "layer": "primary",
+          "name": "Replace SwarmDb calls with IStatePort in coordination/memory.rs",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/coordination/cleanup.rs"
+          ],
+          "id": "P1.6",
+          "layer": "primary",
+          "name": "Replace SwarmDb calls with IStatePort in coordination/cleanup.rs",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P2",
+      "name": "Wire SpacetimeDB Adapter and Subscribe to Tables",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/spacetime_bindings/hexflo_coordination/client.rs"
+          ],
+          "id": "P2.1",
+          "layer": "secondary",
+          "name": "Call SpacetimeDB reducers via generated client bindings",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/spacetime_state.rs"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Subscribe to swarm/task/agent tables for real-time updates",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/coordination/mod.rs"
+          ],
+          "id": "P2.3",
+          "layer": "secondary",
+          "name": "Implement event-driven status propagation using on_insert/on_update callbacks",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P3",
+      "name": "Deprecate SwarmDb and Handle Migration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/persistence.rs"
+          ],
+          "id": "P3.1",
+          "layer": "primary",
+          "name": "Remove persistence.rs (SwarmDb)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/migrations/01_create_swarm_tables.sql"
+          ],
+          "id": "P3.2",
+          "layer": "secondary",
+          "name": "Remove SQLite schema migrations for swarm tables",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/sqlite_state.rs"
+          ],
+          "id": "P3.3",
+          "layer": "secondary",
+          "name": "Ensure SQLite fallback remains for offline use",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/config.rs"
+          ],
+          "id": "P3.4",
+          "layer": "primary",
+          "name": "Make SpacetimeDB the default and primary backend",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}
