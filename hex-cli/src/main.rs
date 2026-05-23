@@ -343,6 +343,12 @@ enum Commands {
     },
     /// Interactive AI chat session (TUI by default, --no-tui for plain stdout)
     Chat(ChatArgs),
+    /// Inspect + apply persona system prompts (STDB-backed, ADR-2026-05-23-0900)
+    #[command(name = "persona-prompt")]
+    PersonaPrompt {
+        #[command(subcommand)]
+        action: commands::persona_prompt::PersonaPromptAction,
+    },
     /// Claude Code hook handler (called by .claude/settings.json hooks)
     Hook {
         #[command(subcommand)]
@@ -664,6 +670,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Project { action } => commands::project::run(action).await,
         Commands::Plan { action } => commands::plan::run(action).await,
         Commands::Chat(args) => commands::chat::run(args).await,
+        Commands::PersonaPrompt { action } => commands::persona_prompt::run(action).await,
         Commands::Hook { event } => commands::hook::run(event).await,
         Commands::Mcp => commands::mcp::run_mcp_server().await,
         Commands::Skill { action } => commands::skill::run(action).await,
