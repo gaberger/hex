@@ -2550,6 +2550,26 @@ async fn execute_worker_task(
                 )
             })?;
 
+            // provider_lock enforcement (gap closed 2026-05-23). Adversarial
+            // review of ADR-2026-05-23-0815 surfaced that the YAML's
+            // `model.provider_lock` field was decoration-only — the dispatcher
+            // would happily run adversarial-red AND adversarial-blue on the
+            // same provider, defeating the divergence contract on which the
+            // apply-gate of the self-improvement loop depends. Fail fast on
+            // mismatch so the operator (and any future hive-improver) sees
+            // the gap as a dispatcher error, not as a same-provider review
+            // pair quietly running undetected.
+            if let Err(reason) = p.model.validate_provider_lock() {
+                anyhow::bail!(
+                    "agent worker '{}' refused to start: {}\n  \
+                     fix: either change model.preferred in \
+                     hex-cli/assets/agents/hex/hex/{}.yml to a model whose \
+                     provider satisfies model.provider_lock, OR loosen the \
+                     provider_lock (not recommended for adversarial roles).",
+                    role, reason, role
+                );
+            }
+
             // Build system prompt from persona constraints + description.
             let mut system_lines: Vec<String> = Vec::new();
             if !p.description.is_empty() {

@@ -755,6 +755,7 @@ mod tests {
             upgrade_to: Some("opus".into()),
             upgrade_condition: None,
             reasoning: None,
+            provider_lock: None,
         };
         let selector = ModelSelector::from_env();
         let selected = selector.select_from_yaml(&config, None, 1, 3, None);
@@ -772,6 +773,7 @@ mod tests {
             upgrade_to: Some("opus".into()),
             upgrade_condition: None,
             reasoning: None,
+            provider_lock: None,
         };
         let selector = ModelSelector::from_env();
         // iteration=3, upgrade_after=3 → triggers upgrade
@@ -790,6 +792,7 @@ mod tests {
             upgrade_to: Some("opus".into()),
             upgrade_condition: None,
             reasoning: None,
+            provider_lock: None,
         };
         let selector = ModelSelector::from_env();
         let selected = selector.select_from_yaml(&config, Some("my-custom-model"), 5, 3, None);
