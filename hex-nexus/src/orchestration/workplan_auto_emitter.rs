@@ -282,39 +282,43 @@ async fn derive_one(
     //   { content, tool_calls: [{id, type: "function", function: {name, arguments}}, ...] }
     // OR (when the underlying provider returned the OpenAI shape unchanged)
     //   { choices: [{message: {content, tool_calls: [...]}}] }
-    // Try the fast-path first, fall through to the OpenAI shape.
-    let tc = v
+    // Try the fast-path first, fall through to the OpenAI shape, fall
+    // through one more time to "tool call emitted as content JSON" (local
+    // Ollama tool-capable models do this — e.g. qwen2.5-coder:14b returns
+    //   content = "{\"name\":\"workplan_emit\",\"arguments\":{...}}"
+    // without lifting it into a structured tool_calls field).
+    let args: Value = if let Some(tc) = v
         .pointer("/tool_calls/0")
-        .or_else(|| v.pointer("/choices/0/message/tool_calls/0"));
-    let tc = match tc {
-        Some(t) => t,
-        None => {
-            // Include the response shape in the error so the operator can
-            // diagnose without re-running. Cap to 400 chars so logs stay
-            // readable.
-            let finish = v
-                .pointer("/finish_reason")
-                .or_else(|| v.pointer("/choices/0/finish_reason"))
-                .and_then(|x| x.as_str())
-                .unwrap_or("?");
-            let content = v
-                .pointer("/content")
-                .or_else(|| v.pointer("/choices/0/message/content"))
-                .and_then(|x| x.as_str())
-                .unwrap_or("");
-            let err_field = v.pointer("/error").map(|e| e.to_string()).unwrap_or_default();
-            let snippet: String = content.chars().take(200).collect();
-            return Err(format!(
-                "no tool_calls in response (finish={}, err={}, content[:200]={:?})",
-                finish, err_field, snippet
-            ));
-        }
+        .or_else(|| v.pointer("/choices/0/message/tool_calls/0"))
+    {
+        let args_str = tc
+            .pointer("/function/arguments")
+            .and_then(|x| x.as_str())
+            .ok_or("no function.arguments")?;
+        serde_json::from_str(args_str).map_err(|e| format!("args parse: {}", e))?
+    } else if let Some(parsed) = extract_tool_call_from_content(&v) {
+        parsed
+    } else {
+        // Include the response shape in the error so the operator can
+        // diagnose without re-running. Cap to 400 chars so logs stay
+        // readable.
+        let finish = v
+            .pointer("/finish_reason")
+            .or_else(|| v.pointer("/choices/0/finish_reason"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("?");
+        let content = v
+            .pointer("/content")
+            .or_else(|| v.pointer("/choices/0/message/content"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
+        let err_field = v.pointer("/error").map(|e| e.to_string()).unwrap_or_default();
+        let snippet: String = content.chars().take(200).collect();
+        return Err(format!(
+            "no tool_calls in response (finish={}, err={}, content[:200]={:?})",
+            finish, err_field, snippet
+        ));
     };
-    let args_str = tc
-        .pointer("/function/arguments")
-        .and_then(|x| x.as_str())
-        .ok_or("no function.arguments")?;
-    let args: Value = serde_json::from_str(args_str).map_err(|e| format!("args parse: {}", e))?;
 
     // Execute via registry (writes proposed_action under tool:workplan_emit).
     let result = registry.execute("workplan_emit", args).await;
@@ -329,4 +333,133 @@ async fn derive_one(
         "workplan_auto_emitter: derived workplan from ADR"
     );
     Ok(())
+}
+
+/// Some Ollama tool-capable models (qwen2.5-coder, qwen3, etc.) reliably
+/// emit a tool call but in `content` as a JSON string rather than lifting
+/// it into a structured `tool_calls[]` field. Recognise the common shape
+///   {"name":"workplan_emit","arguments":{...}}
+/// and return the arguments object. Returns None if no parseable inline
+/// tool call is found — caller then surfaces the proper "no tool_calls"
+/// error with diagnostic context.
+fn extract_tool_call_from_content(v: &Value) -> Option<Value> {
+    let content = v
+        .pointer("/content")
+        .or_else(|| v.pointer("/choices/0/message/content"))
+        .and_then(|x| x.as_str())?;
+
+    // Strip common markdown fence prefixes the model might wrap around the JSON.
+    let trimmed = content.trim();
+    let trimmed = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .unwrap_or(trimmed)
+        .trim_end_matches("```")
+        .trim();
+
+    let parsed: Value = serde_json::from_str(trimmed).ok()?;
+
+    // Shape A: { "name": "workplan_emit", "arguments": { ... } }
+    if let (Some(name), Some(args)) = (parsed.get("name"), parsed.get("arguments")) {
+        if name.as_str() == Some("workplan_emit") {
+            return Some(args.clone());
+        }
+    }
+
+    // Shape B: { "tool_calls": [{"name":..., "arguments":...}, ...] }
+    if let Some(calls) = parsed.get("tool_calls").and_then(|v| v.as_array()) {
+        for call in calls {
+            let name = call
+                .pointer("/name")
+                .or_else(|| call.pointer("/function/name"))
+                .and_then(|x| x.as_str());
+            if name == Some("workplan_emit") {
+                if let Some(args) = call
+                    .pointer("/arguments")
+                    .or_else(|| call.pointer("/function/arguments"))
+                {
+                    if let Some(args_str) = args.as_str() {
+                        return serde_json::from_str::<Value>(args_str).ok();
+                    }
+                    return Some(args.clone());
+                }
+            }
+        }
+    }
+
+    // Shape C: the model emitted the workplan_emit args directly — i.e. the
+    // whole content IS the workplan JSON. Heuristic: it has the required
+    // top-level fields the tool schema demands.
+    if parsed.get("feature").is_some() && parsed.get("phases").is_some() {
+        return Some(parsed);
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn extract_inline_name_arguments_shape() {
+        let v = json!({
+            "content": r#"{"name":"workplan_emit","arguments":{"slug":"x","feature":"f","phases":[]}}"#
+        });
+        let args = extract_tool_call_from_content(&v).unwrap();
+        assert_eq!(args.get("slug").and_then(|x| x.as_str()), Some("x"));
+    }
+
+    #[test]
+    fn extract_inline_tool_calls_array_shape() {
+        let v = json!({
+            "content": r#"{"tool_calls":[{"name":"workplan_emit","arguments":{"slug":"y","feature":"f","phases":[]}}]}"#
+        });
+        let args = extract_tool_call_from_content(&v).unwrap();
+        assert_eq!(args.get("slug").and_then(|x| x.as_str()), Some("y"));
+    }
+
+    #[test]
+    fn extract_inline_with_markdown_fence() {
+        let v = json!({
+            "content": "```json\n{\"name\":\"workplan_emit\",\"arguments\":{\"slug\":\"z\",\"feature\":\"f\",\"phases\":[]}}\n```"
+        });
+        let args = extract_tool_call_from_content(&v).unwrap();
+        assert_eq!(args.get("slug").and_then(|x| x.as_str()), Some("z"));
+    }
+
+    #[test]
+    fn extract_openai_choices_message_content_shape() {
+        let v = json!({
+            "choices": [{"message": {"content": r#"{"name":"workplan_emit","arguments":{"slug":"q","feature":"f","phases":[]}}"#}}]
+        });
+        let args = extract_tool_call_from_content(&v).unwrap();
+        assert_eq!(args.get("slug").and_then(|x| x.as_str()), Some("q"));
+    }
+
+    #[test]
+    fn extract_bare_args_shape_when_top_level_workplan_fields_present() {
+        // Model skipped the {name,arguments} wrapper and just emitted the
+        // workplan_emit arguments directly. Accept when feature+phases present.
+        let v = json!({
+            "content": r#"{"slug":"bare","feature":"direct","phases":[]}"#
+        });
+        let args = extract_tool_call_from_content(&v).unwrap();
+        assert_eq!(args.get("slug").and_then(|x| x.as_str()), Some("bare"));
+    }
+
+    #[test]
+    fn extract_returns_none_for_non_workplan_content() {
+        let v = json!({"content": "Sorry, I cannot help with that."});
+        assert!(extract_tool_call_from_content(&v).is_none());
+    }
+
+    #[test]
+    fn extract_returns_none_for_wrong_tool_name() {
+        let v = json!({
+            "content": r#"{"name":"something_else","arguments":{"x":1}}"#
+        });
+        assert!(extract_tool_call_from_content(&v).is_none());
+    }
 }
