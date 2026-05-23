@@ -5133,6 +5133,119 @@ pub struct PersonaPrompt {
 
 const PERSONA_PROMPT_BODY_MAX: usize = 8192;
 
+// ============================================================
+// persona_prompt_history — append-only audit + rollback substrate
+// for Path B item 3 (ADR-2026-05-23-0900 follow-up).
+//
+// Every successful write to `persona_prompt` (via seed_persona_prompt
+// OR persona_prompt_apply) appends a row here BEFORE mutating the
+// active row. Rows are never deleted — the table is the durable
+// audit trail and the source of truth for `persona_prompt_rollback`.
+//
+// Schema rationale:
+//   - composite primary key (role, version): natural ordering per role,
+//     stable identity across rollbacks (rolling back to v2 then re-
+//     applying creates v4 with the v2 body, not a new v2)
+//   - `superseded_at: Option<Timestamp>`: NULL while this version is
+//     the active one; set when a newer version is applied
+//   - `superseded_by_version: Option<u64>`: which version replaced
+//     this one — Some(N) for retired rows, None for the active row
+//   - `event_kind: String`: "seed" | "apply" | "rollback" — tells
+//     the operator (and future RL learn-phase) what kind of write
+//     produced this row
+// ============================================================
+
+#[table(name = persona_prompt_history, public)]
+#[derive(Clone, Debug)]
+pub struct PersonaPromptHistory {
+    /// Composite-id-ish primary key: `{role}::{version:010}`. Numeric
+    /// zero-pad lets STDB SQL ORDER BY id give natural version order
+    /// without needing a SQL `ORDER BY version`.
+    #[primary_key]
+    pub id: String,
+    pub role: String,
+    pub version: u64,
+    pub classify_body: String,
+    pub reason_body: String,
+    pub model_preferred: String,
+    pub model_upgrade_to: String,
+    pub applied_at: Timestamp,
+    pub applied_by: String,
+    /// "seed" (cold-start), "apply" (operator/improver apply), or
+    /// "rollback" (operator/observer revert to a prior version).
+    pub event_kind: String,
+    /// NULL while this version is the currently-active row in
+    /// `persona_prompt`. Set to the apply timestamp of the version
+    /// that replaced this one when superseded.
+    pub superseded_at: Option<Timestamp>,
+    /// The version that replaced this one. None while active.
+    pub superseded_by_version: Option<u64>,
+}
+
+/// Insert a history row + (for non-seed events) supersede the prior
+/// active row. Called by `seed_persona_prompt`, `persona_prompt_apply`,
+/// and `persona_prompt_rollback` — all three write paths funnel
+/// through here so the audit trail is uniform.
+fn record_persona_prompt_history(
+    ctx: &ReducerContext,
+    role: &str,
+    new_version: u64,
+    classify_body: &str,
+    reason_body: &str,
+    model_preferred: &str,
+    model_upgrade_to: &str,
+    applied_by: &str,
+    event_kind: &str,
+) {
+    // Supersede the prior active row for this role: walk history,
+    // find the row with the highest version where superseded_at is
+    // None, and stamp it.
+    let mut latest_active: Option<(String, u64)> = None;
+    for h in ctx.db.persona_prompt_history().iter() {
+        if h.role != role || h.superseded_at.is_some() {
+            continue;
+        }
+        if latest_active.as_ref().is_none_or(|(_, v)| h.version > *v) {
+            latest_active = Some((h.id.clone(), h.version));
+        }
+    }
+    if let Some((prev_id, _prev_v)) = latest_active {
+        if let Some(mut prev) = ctx.db.persona_prompt_history().id().find(&prev_id) {
+            prev.superseded_at = Some(ctx.timestamp);
+            prev.superseded_by_version = Some(new_version);
+            ctx.db.persona_prompt_history().id().update(prev);
+        }
+    }
+    let id = format!("{}::{:010}", role, new_version);
+    ctx.db.persona_prompt_history().insert(PersonaPromptHistory {
+        id,
+        role: role.to_string(),
+        version: new_version,
+        classify_body: classify_body.to_string(),
+        reason_body: reason_body.to_string(),
+        model_preferred: model_preferred.to_string(),
+        model_upgrade_to: model_upgrade_to.to_string(),
+        applied_at: ctx.timestamp,
+        applied_by: applied_by.to_string(),
+        event_kind: event_kind.to_string(),
+        superseded_at: None,
+        superseded_by_version: None,
+    });
+}
+
+/// Compute the next version number for a role. The next version is
+/// `max(history.version) + 1`, or 1 if no history exists. Walks the
+/// table linearly — fine at the ≤8-roles × ≤many-versions scale.
+fn next_persona_prompt_version(ctx: &ReducerContext, role: &str) -> u64 {
+    let mut max_v: u64 = 0;
+    for h in ctx.db.persona_prompt_history().iter() {
+        if h.role == role && h.version > max_v {
+            max_v = h.version;
+        }
+    }
+    max_v + 1
+}
+
 /// Idempotent seed for one persona role. Called by nexus cold-start for
 /// each role in `persona_prompt_seeds::SEEDED_ROLES`. If the row exists
 /// and the body fields are byte-identical, no-op. If bodies differ, the
@@ -5181,26 +5294,56 @@ pub fn seed_persona_prompt(
     let seeded_by = ctx.sender.to_string();
     let new_row = PersonaPrompt {
         role: role.clone(),
-        classify_body,
-        reason_body,
-        model_preferred,
-        model_upgrade_to,
+        classify_body: classify_body.clone(),
+        reason_body: reason_body.clone(),
+        model_preferred: model_preferred.clone(),
+        model_upgrade_to: model_upgrade_to.clone(),
         seeded_at: ctx.timestamp,
-        seeded_by,
+        seeded_by: seeded_by.clone(),
     };
     if let Some(existing) = ctx.db.persona_prompt().role().find(&role) {
+        // Preserve operator-driven state (apply / rollback) across nexus
+        // restarts. Without this guard the supervisor's cold-start seed
+        // would silently overwrite any applied prompt back to the seed
+        // body on every restart — defeating the whole runtime-mutable
+        // contract. Detected by the seeded_by prefix: cold-start writes
+        // are bare principal hex; apply uses "applied:..."; rollback
+        // uses "rollback:...". A subsequent operator-driven apply
+        // (via `hex persona-prompt apply`) is the documented way to
+        // refresh seed content.
+        if existing.seeded_by.starts_with("applied:")
+            || existing.seeded_by.starts_with("rollback:")
+        {
+            return Ok(());
+        }
         if existing.classify_body == new_row.classify_body
             && existing.reason_body == new_row.reason_body
             && existing.model_preferred == new_row.model_preferred
             && existing.model_upgrade_to == new_row.model_upgrade_to
         {
-            // Byte-equal — no-op. seeded_at preserved.
+            // Byte-equal — no-op. seeded_at preserved. No history row
+            // (idempotent re-seed shouldn't bloat the audit trail).
             return Ok(());
         }
         ctx.db.persona_prompt().role().update(new_row);
     } else {
         ctx.db.persona_prompt().insert(new_row);
     }
+    // History append AFTER the active-row write succeeds. event_kind
+    // depends on whether this is the first row for the role.
+    let version = next_persona_prompt_version(ctx, &role);
+    let event_kind = if version == 1 { "seed" } else { "seed-update" };
+    record_persona_prompt_history(
+        ctx,
+        &role,
+        version,
+        &classify_body,
+        &reason_body,
+        &model_preferred,
+        &model_upgrade_to,
+        &seeded_by,
+        event_kind,
+    );
     Ok(())
 }
 
@@ -5260,14 +5403,118 @@ pub fn persona_prompt_apply(
     let applied_by = format!("applied:{}", ctx.sender);
     let new_row = PersonaPrompt {
         role: role.clone(),
-        classify_body,
-        reason_body,
-        model_preferred,
-        model_upgrade_to,
+        classify_body: classify_body.clone(),
+        reason_body: reason_body.clone(),
+        model_preferred: model_preferred.clone(),
+        model_upgrade_to: model_upgrade_to.clone(),
         seeded_at: ctx.timestamp,
-        seeded_by: applied_by,
+        seeded_by: applied_by.clone(),
     };
     ctx.db.persona_prompt().role().update(new_row);
+    // History append. Every apply writes a fresh history row, even when
+    // the body bytes match the prior — apply explicitly bumps seeded_at
+    // as an audit signal (per the reducer's contract).
+    let version = next_persona_prompt_version(ctx, &role);
+    record_persona_prompt_history(
+        ctx,
+        &role,
+        version,
+        &classify_body,
+        &reason_body,
+        &model_preferred,
+        &model_upgrade_to,
+        &applied_by,
+        "apply",
+    );
+    Ok(())
+}
+
+/// Revert `persona_prompt` for a role to a prior `persona_prompt_history`
+/// version. The row written to `persona_prompt` is the history row's
+/// body content; a NEW history row is appended with `event_kind="rollback"`
+/// and version = max + 1 (rollbacks are forward-only in version space —
+/// rolling back to v2 and re-applying creates v4, never re-uses v2).
+///
+/// `to_version` of 0 means "the most recent superseded version" — handy
+/// for one-shot undo when the operator just regrets the last apply.
+#[reducer]
+pub fn persona_prompt_rollback(
+    ctx: &ReducerContext,
+    role: String,
+    to_version: u64,
+) -> Result<(), String> {
+    if role.is_empty() {
+        return Err("role is required".into());
+    }
+
+    // Resolve the target version.
+    let target_version = if to_version == 0 {
+        // Pick the latest superseded row for this role.
+        let mut best: Option<u64> = None;
+        for h in ctx.db.persona_prompt_history().iter() {
+            if h.role != role || h.superseded_at.is_none() {
+                continue;
+            }
+            if best.is_none_or(|v| h.version > v) {
+                best = Some(h.version);
+            }
+        }
+        match best {
+            Some(v) => v,
+            None => return Err(format!(
+                "persona_prompt_rollback: no prior versions to revert to for role '{}'",
+                role
+            )),
+        }
+    } else {
+        to_version
+    };
+
+    let target_id = format!("{}::{:010}", role, target_version);
+    let target = ctx
+        .db
+        .persona_prompt_history()
+        .id()
+        .find(&target_id)
+        .ok_or_else(|| {
+            format!(
+                "persona_prompt_rollback: no history row for role '{}' version {}",
+                role, target_version
+            )
+        })?;
+
+    // Active row must exist (rollback ≠ create).
+    if ctx.db.persona_prompt().role().find(&role).is_none() {
+        return Err(format!(
+            "persona_prompt_rollback: role '{}' is not currently active in persona_prompt",
+            role
+        ));
+    }
+
+    let rolled_by = format!("rollback:{}", ctx.sender);
+    let new_row = PersonaPrompt {
+        role: role.clone(),
+        classify_body: target.classify_body.clone(),
+        reason_body: target.reason_body.clone(),
+        model_preferred: target.model_preferred.clone(),
+        model_upgrade_to: target.model_upgrade_to.clone(),
+        seeded_at: ctx.timestamp,
+        seeded_by: rolled_by.clone(),
+    };
+    ctx.db.persona_prompt().role().update(new_row);
+
+    let new_version = next_persona_prompt_version(ctx, &role);
+    record_persona_prompt_history(
+        ctx,
+        &role,
+        new_version,
+        &target.classify_body,
+        &target.reason_body,
+        &target.model_preferred,
+        &target.model_upgrade_to,
+        &rolled_by,
+        "rollback",
+    );
     Ok(())
 }
 

@@ -65,6 +65,28 @@ pub enum PersonaPromptAction {
         #[arg(long)]
         reason_file: Option<String>,
     },
+
+    /// Show append-only version history for a role.
+    History {
+        /// Role name.
+        role: String,
+        /// Maximum rows to print (newest first). Default: 20.
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+    },
+
+    /// Revert a role's active prompt to a prior history version.
+    /// Forward-only: rollback creates a NEW history row (version = max+1)
+    /// with the prior body's content. Use `hex persona-prompt history`
+    /// to find the version number you want to revert to. Omit `--to`
+    /// to revert to the most-recent superseded version (one-shot undo).
+    Rollback {
+        /// Role name.
+        role: String,
+        /// Version to revert to. Default 0 = most recent superseded.
+        #[arg(long, default_value_t = 0)]
+        to: u64,
+    },
 }
 
 pub async fn run(action: PersonaPromptAction) -> Result<()> {
@@ -89,6 +111,8 @@ pub async fn run(action: PersonaPromptAction) -> Result<()> {
             )
             .await
         }
+        PersonaPromptAction::History { role, limit } => history(&role, limit).await,
+        PersonaPromptAction::Rollback { role, to } => rollback(&role, to).await,
     }
 }
 
@@ -361,6 +385,181 @@ async fn apply(
     println!();
     println!("  Cache refresh fires on next supervisor tick (≤5s).");
     println!("  Inspect via: hex persona-prompt show {}", role);
+    Ok(())
+}
+
+async fn history(role: &str, limit: u32) -> Result<()> {
+    let safe = role.replace('\'', "''");
+    let rows = sql(&format!(
+        "SELECT role, version, event_kind, applied_at, applied_by, \
+                superseded_at, superseded_by_version \
+         FROM persona_prompt_history WHERE role = '{}'",
+        safe
+    ))
+    .await?;
+    if rows.is_empty() {
+        println!("⬡ no history for role '{}'.", role);
+        return Ok(());
+    }
+    // Newest first.
+    let mut rows = rows;
+    rows.sort_by(|a, b| {
+        let av = a.get(1).and_then(|v| v.as_u64()).unwrap_or(0);
+        let bv = b.get(1).and_then(|v| v.as_u64()).unwrap_or(0);
+        bv.cmp(&av)
+    });
+    println!(
+        "{:>3}  {:11}  {:36}  {:14}  {}",
+        "v", "event", "applied_at", "active?", "applied_by"
+    );
+    println!(
+        "{:>3}  {:11}  {:36}  {:14}  {}",
+        "---", "-----------", "------------------------------------", "--------------", "----------"
+    );
+    for r in rows.into_iter().take(limit as usize) {
+        let v = r.get(1).and_then(|x| x.as_u64()).unwrap_or(0);
+        let evt = r.get(2).and_then(|x| x.as_str()).unwrap_or("?");
+        let at = format_timestamp_micros(r.get(3));
+        // STDB serializes Option<T> as a `[variant_tag, payload]` 2-tuple:
+        //   - [0, [value]]  → Some(value)
+        //   - [1, []]       → None
+        // The history row's `superseded_at` is None on the currently-active
+        // version, Some(timestamp) on retired versions. Tag the active one
+        // explicitly so the operator can see at a glance which row drives
+        // the live persona_prompt cache.
+        let active = r
+            .get(5)
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+            .and_then(|t| t.as_u64())
+            .map(|tag| tag == 1)
+            .unwrap_or(true);
+        let active_str = if active {
+            "ACTIVE".to_string()
+        } else {
+            // Option<u64> serializes as `[0, N]` — primitive payload sits
+            // directly at index 1, NOT wrapped in another array. (Compare
+            // Option<Timestamp> which is `[0, [N]]` because Timestamp is
+            // a Product type.) The mismatch is real — STDB's BSATN treats
+            // primitives and product types differently in this position.
+            let by_v = r
+                .get(6)
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.get(1))
+                .and_then(|n| n.as_u64())
+                .unwrap_or(0);
+            format!("superseded→v{}", by_v)
+        };
+        let by = r.get(4).and_then(|x| x.as_str()).unwrap_or("?");
+        let by_short = if by.starts_with("applied:") {
+            format!("applied:{}…", by.chars().skip(8).take(12).collect::<String>())
+        } else if by.starts_with("rollback:") {
+            format!("rollback:{}…", by.chars().skip(9).take(12).collect::<String>())
+        } else {
+            format!("{}…", by.chars().take(20).collect::<String>())
+        };
+        println!("{:>3}  {:11}  {:36}  {:14}  {}", v, evt, at, active_str, by_short);
+    }
+    Ok(())
+}
+
+/// Best-effort parse of an STDB Timestamp cell into RFC-3339. STDB SQL
+/// surfaces Timestamps in several encodings depending on column type:
+///   - Required `Timestamp` columns: tagged array `[micros_i64]` OR string
+///   - `Option<Timestamp>` columns: `[variant_tag, [...]]`, where tag=0
+///     means Some(timestamp) with payload `[micros_i64]`, tag=1 = None
+///   - Pretty-printed via Debug as `Timestamp { __...__: N }`
+/// This helper handles all three by walking the value defensively.
+fn format_timestamp_micros(cell: Option<&Value>) -> String {
+    let v = match cell {
+        Some(v) => v,
+        None => return "?".to_string(),
+    };
+
+    // Direct array shape: [micros] (required field) or [tag, payload] (Option).
+    if let Some(arr) = v.as_array() {
+        // Required Timestamp column: STDB returns [micros_i64] as the cell.
+        if arr.len() == 1 {
+            if let Some(n) = arr.first().and_then(|x| x.as_i64()) {
+                return micros_to_rfc3339(n);
+            }
+        }
+        // Option<Timestamp>: [tag, payload]. tag=0 is Some, tag=1 is None.
+        if arr.len() == 2 {
+            let tag = arr.first().and_then(|x| x.as_u64()).unwrap_or(1);
+            if tag == 1 {
+                return "—".to_string();
+            }
+            if let Some(payload) = arr.get(1).and_then(|x| x.as_array()) {
+                if let Some(n) = payload.first().and_then(|x| x.as_i64()) {
+                    return micros_to_rfc3339(n);
+                }
+            }
+        }
+    }
+
+    let s = match v.as_str() {
+        Some(s) => s.to_string(),
+        None => v.to_string(),
+    };
+    // Already ISO-8601?
+    if s.contains('T') && s.contains(':') {
+        return s.chars().take(36).collect();
+    }
+    // Debug-formatted Timestamp.
+    let key = "__timestamp_micros_since_unix_epoch__";
+    if let Some(i) = s.find(key) {
+        let digits: String = s[i + key.len()..]
+            .chars()
+            .skip_while(|c| !c.is_ascii_digit() && *c != '-')
+            .take_while(|c| c.is_ascii_digit() || *c == '-')
+            .collect();
+        if let Ok(n) = digits.parse::<i64>() {
+            return micros_to_rfc3339(n);
+        }
+    }
+    "?".to_string()
+}
+
+fn micros_to_rfc3339(micros: i64) -> String {
+    let secs = micros / 1_000_000;
+    let nsec = ((micros % 1_000_000) * 1_000) as u32;
+    chrono::DateTime::<chrono::Utc>::from_timestamp(secs, nsec)
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_else(|| "?".to_string())
+}
+
+async fn rollback(role: &str, to: u64) -> Result<()> {
+    let url = format!(
+        "{}/v1/database/{}/call/persona_prompt_rollback",
+        stdb_host(),
+        hex_db()
+    );
+    let payload = json!([role, to]);
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+    let res = http
+        .post(&url)
+        .json(&payload)
+        .send()
+        .await
+        .with_context(|| format!("POST {}", url))?;
+    if !res.status().is_success() {
+        return Err(anyhow!(
+            "persona_prompt_rollback rejected — HTTP {}: {}",
+            res.status(),
+            res.text().await.unwrap_or_default()
+        ));
+    }
+    if to == 0 {
+        println!("⬡ persona_prompt_rollback OK — reverted '{}' to most recent prior version", role);
+    } else {
+        println!("⬡ persona_prompt_rollback OK — reverted '{}' to v{}", role, to);
+    }
+    println!("  Cache refresh fires on next supervisor tick (≤5s).");
+    println!("  Inspect via: hex persona-prompt show {}", role);
+    println!("              hex persona-prompt history {}", role);
     Ok(())
 }
 
