@@ -21,6 +21,7 @@ pub mod code_patch;
 pub mod cost_meter;
 pub mod dep_audit;
 pub mod escalate_to_operator;
+pub mod memory_search;
 pub mod repo_grep;
 pub mod repo_read;
 pub mod secret_scan;
@@ -146,6 +147,7 @@ impl Default for ToolRegistry {
         reg.register(Arc::new(workspace_boundary_check::WorkspaceBoundaryCheck));
         reg.register(Arc::new(escalate_to_operator::EscalateToOperator));
         reg.register(Arc::new(typescript_check::TypescriptCheck));
+        reg.register(Arc::new(memory_search::MemorySearch));
         reg
     }
 }
@@ -165,6 +167,7 @@ mod tests {
         assert!(names.contains(&"adr_draft"), "adr_draft missing");
         assert!(names.contains(&"spec_draft"), "spec_draft missing");
         assert!(names.contains(&"escalate_to_operator"), "escalate_to_operator missing");
+        assert!(names.contains(&"memory_search"), "memory_search missing");
     }
 
     #[test]

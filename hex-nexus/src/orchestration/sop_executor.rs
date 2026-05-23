@@ -301,13 +301,24 @@ async fn run_inner(
     // PHASE 2 GROUND — parallel tool calls relevant to the intent.
     let registry = Arc::new(ToolRegistry::default());
     let ground_pack = ground_for_intent(&registry, intent, operator_message).await;
-    trace.push(format!(
-        "GROUND → {} repo_grep matches",
-        ground_pack
-            .get("repo_grep")
+    let grep_n = ground_pack
+        .get("repo_grep")
+        .and_then(|v| v.get("total_matches"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let mem_n = |pack: &Value, key: &str| -> u64 {
+        pack.get("memory")
+            .and_then(|m| m.get(key))
             .and_then(|v| v.get("total_matches"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0)
+    };
+    trace.push(format!(
+        "GROUND → {} repo_grep matches, memory: {} lessons / {} gaps / {} intent",
+        grep_n,
+        mem_n(&ground_pack, "lessons"),
+        mem_n(&ground_pack, "gaps"),
+        mem_n(&ground_pack, "intent_match"),
     ));
 
     // PHASE 3 REASON — Anthropic call with tools attached.
@@ -414,10 +425,41 @@ async fn ground_for_intent(
         json!({ "pattern": pattern, "max_matches": std::env::var("HEX_GROUND_MATCH_CAP").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(8) })
     };
     let grep_result = registry.execute("repo_grep", grep_input).await;
+
+    // Memory pull — closes the structural gap where personas had no
+    // read access to hex memory (lessons / gaps / projects). Fires
+    // three queries in parallel: lesson:, gap:, and the intent-derived
+    // pattern (so a workplan_emit ask pulls workplan-related memory).
+    // Cap each at 6 results so the prompt budget stays tight. If the
+    // search endpoint isn't reachable, GROUND returns an empty memory
+    // pack — REASON still runs.
+    let memory_pattern = derive_grep_pattern(operator_message);
+    let (mem_lessons, mem_gaps, mem_intent) = tokio::join!(
+        registry.execute(
+            "memory_search",
+            json!({ "query": "lesson:", "max_results": 6 }),
+        ),
+        registry.execute(
+            "memory_search",
+            json!({ "query": "gap:", "max_results": 6 }),
+        ),
+        registry.execute(
+            "memory_search",
+            json!({ "query": memory_pattern.clone(), "max_results": 6 }),
+        ),
+    );
+    let memory_pack = json!({
+        "lessons":      if mem_lessons.ok { mem_lessons.output } else { json!({"error": mem_lessons.error}) },
+        "gaps":         if mem_gaps.ok    { mem_gaps.output    } else { json!({"error": mem_gaps.error}) },
+        "intent_match": if mem_intent.ok  { mem_intent.output  } else { json!({"error": mem_intent.error}) },
+        "intent_query": memory_pattern,
+    });
+
     json!({
         "intent": intent,
         "prefetched_paths": prefetched,
         "repo_grep": grep_result.output,
+        "memory": memory_pack,
     })
 }
 
