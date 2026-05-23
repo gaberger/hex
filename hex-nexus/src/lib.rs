@@ -420,6 +420,17 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 );
             }
 
+            // Auto-rollback observer (ADR-2026-05-23-0900 Path B item 7).
+            // Watches persona_health for failure spikes on operator-applied
+            // persona_prompt rows and fires persona_prompt_rollback when
+            // recent_failures >= threshold past the grace period. Disabled
+            // with HEX_AUTO_ROLLBACK=0; configurable via the other HEX_AUTO_
+            // ROLLBACK_* env vars enumerated in the module doc.
+            crate::orchestration::persona_prompt_observer::spawn(
+                stdb_host_for_integrator.clone(),
+                hex_db_for_integrator.clone(),
+            );
+
             // Cost watchdog: polls cost_meter every N mins, escalates if burn exceeds threshold.
             // Disabled with HEX_DISABLE_COST_WATCHDOG=1.
             if std::env::var("HEX_DISABLE_COST_WATCHDOG").is_err() {
