@@ -1,18 +1,18 @@
 {
   "adr": "ADR-066",
-  "created_at": "2026-05-23T22:17:24.181514059+00:00",
+  "created_at": "2026-05-23T22:19:30.394478920+00:00",
   "created_by": "hex-coder",
-  "feature": "Consolidate and enhance the hex-nexus dashboard for better visibility and navigation.",
+  "feature": "Consolidate and enhance dashboard visibility for hex development",
   "id": "wp-dashboard-visibility-overhaul",
   "phases": [
     {
       "id": "P0",
-      "name": "Fix Basic UI Issues and Initial Navigation",
+      "name": "Initial Fixes and Consolidation",
       "status": "pending",
       "tasks": [
         {
           "files": [
-            "hex-nexus/src/views/health_ring.rs"
+            "hex-nexus/src/views/dashboard/health_ring.rs"
           ],
           "id": "P0.1",
           "layer": "primary",
@@ -21,7 +21,7 @@
         },
         {
           "files": [
-            "hex-nexus/src/views/graph_colors.rs"
+            "hex-nexus/src/views/dashboard/graph_colors.rs"
           ],
           "id": "P0.2",
           "layer": "primary",
@@ -30,7 +30,7 @@
         },
         {
           "files": [
-            "hex-nexus/src/views/agent_fleet.rs"
+            "hex-nexus/src/views/dashboard/agent_fleet.rs"
           ],
           "id": "P0.3",
           "layer": "primary",
@@ -39,8 +39,8 @@
         },
         {
           "files": [
-            "hex-nexus/src/routes/mod.rs",
-            "hex-nexus/public/index.html"
+            "hex-nexus/public/index.html",
+            "hex-nexus/src/routes/mod.rs"
           ],
           "id": "P0.4",
           "layer": "infrastructure",
@@ -48,16 +48,16 @@
           "status": "pending"
         }
       ],
-      "tier": 1
+      "tier": 2
     },
     {
       "id": "P1",
-      "name": "Add Inbox Notification Panel and Task Drill-Down",
+      "name": "Enhance Dashboard Functionality",
       "status": "pending",
       "tasks": [
         {
           "files": [
-            "hex-nexus/src/views/inbox_notification.rs"
+            "hex-nexus/src/views/dashboard/inbox_notifications.rs"
           ],
           "id": "P1.1",
           "layer": "primary",
@@ -66,7 +66,7 @@
         },
         {
           "files": [
-            "hex-nexus/src/views/swarm_monitor.rs"
+            "hex-nexus/src/views/dashboard/swarm_monitor.rs"
           ],
           "id": "P1.2",
           "layer": "primary",
@@ -75,7 +75,7 @@
         },
         {
           "files": [
-            "hex-nexus/src/views/workplan_view.rs"
+            "hex-nexus/src/views/dashboard/workplan_view.rs"
           ],
           "id": "P1.3",
           "layer": "primary",
@@ -84,8 +84,7 @@
         },
         {
           "files": [
-            "hex-nexus/src/views/dashboard.html",
-            "hex-nexus/src/chat.js"
+            "hex-nexus/src/views/dashboard/chat_pane.rs"
           ],
           "id": "P1.4",
           "layer": "primary",
@@ -93,16 +92,16 @@
           "status": "pending"
         }
       ],
-      "tier": 2
+      "tier": 3
     },
     {
       "id": "P2",
-      "name": "Enhance Swarm Task Visualization and URL Routing",
+      "name": "Advanced Dashboard Features",
       "status": "pending",
       "tasks": [
         {
           "files": [
-            "hex-nexus/src/views/swarm_task_dag.rs"
+            "hex-nexus/src/views/dashboard/swarm_task_dag.rs"
           ],
           "id": "P2.1",
           "layer": "primary",
@@ -111,7 +110,7 @@
         },
         {
           "files": [
-            "hex-nexus/src/views/health_trend.rs"
+            "hex-nexus/src/views/dashboard/health_trend.rs"
           ],
           "id": "P2.2",
           "layer": "primary",
@@ -128,7 +127,7 @@
           "status": "pending"
         }
       ],
-      "tier": 3
+      "tier": 4
     }
   ],
   "priority": "normal",
