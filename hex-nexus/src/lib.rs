@@ -431,6 +431,21 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 hex_db_for_integrator.clone(),
             );
 
+            // Autonomous hive-improver (ADR-2026-05-23-0900 Path B item 5
+            // final form). Ticks every HEX_HIVE_IMPROVE_INTERVAL_SECS
+            // (default 3600), picks the worst persona by recent_failures
+            // (or stalest applied row), runs GROUND→DISPATCH→DEBATE→JUDGE
+            // →APPLY autonomously. Cooperative-hive neighborhood boost
+            // (item 6) included — adjacent peers prioritized on the next
+            // tick after a successful apply. Disabled via
+            // HEX_DISABLE_HIVE_IMPROVE=1. Composed with the rollback
+            // observer above: if the improver applies a bad rewrite,
+            // the rollback observer reverts it within ~60s.
+            crate::orchestration::hive_improver::spawn(
+                stdb_host_for_integrator.clone(),
+                hex_db_for_integrator.clone(),
+            );
+
             // Cost watchdog: polls cost_meter every N mins, escalates if burn exceeds threshold.
             // Disabled with HEX_DISABLE_COST_WATCHDOG=1.
             if std::env::var("HEX_DISABLE_COST_WATCHDOG").is_err() {
