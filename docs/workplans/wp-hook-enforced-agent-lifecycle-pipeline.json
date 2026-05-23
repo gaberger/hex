@@ -1,6 +1,6 @@
 {
   "adr": "ADR-050",
-  "created_at": "2026-05-23T18:14:32.490541903+00:00",
+  "created_at": "2026-05-23T18:15:26.520512799+00:00",
   "created_by": "hex-coder",
   "feature": "Enforce mandatory lifecycle pipeline through Claude Code hooks.",
   "id": "wp-hook-enforced-agent-lifecycle-pipeline",
@@ -12,11 +12,20 @@
       "tasks": [
         {
           "files": [
-            "hex-nexus/src/lifecycle/enforcement.rs"
+            "hex-nexus/src/domain/lifecycle_hooks.rs"
           ],
           "id": "P0.1",
           "layer": "domain",
-          "name": "Define lifecycle enforcement in domain models.",
+          "name": "Define lifecycle enforcement hooks in domain.",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-cli/src/session_state.rs"
+          ],
+          "id": "P0.2",
+          "layer": "domain",
+          "name": "Extend session state file schema with lifecycle fields.",
           "status": "pending"
         }
       ],
@@ -29,20 +38,20 @@
       "tasks": [
         {
           "files": [
-            "hex-nexus/src/session/state.rs"
+            "hex-cli/src/hooks/session_start.rs"
           ],
           "id": "P1.1",
           "layer": "secondary",
-          "name": "Implement session state file extension for lifecycle context.",
+          "name": "Implement SessionStart hook to load workplan context.",
           "status": "pending"
         },
         {
           "files": [
-            "hex-nexus/src/heartbeat/protocol.rs"
+            "hex-cli/src/hooks/session_end.rs"
           ],
           "id": "P1.2",
           "layer": "secondary",
-          "name": "Implement heartbeat protocol in HexFlo memory.",
+          "name": "Implement SessionEnd hook to flush progress and update swarm task.",
           "status": "pending"
         }
       ],
@@ -55,56 +64,38 @@
       "tasks": [
         {
           "files": [
-            "hex-cli/src/commands/hook/session_start.rs"
+            "hex-cli/src/hooks/user_prompt_submit.rs"
           ],
           "id": "P2.1",
           "layer": "primary",
-          "name": "Extend `session_start` to load workplan context from HexFlo memory.",
+          "name": "Implement UserPromptSubmit hook to send heartbeat.",
           "status": "pending"
         },
         {
           "files": [
-            "hex-cli/src/commands/hook/session_end.rs"
+            "hex-cli/src/hooks/pre_edit.rs"
           ],
           "id": "P2.2",
           "layer": "primary",
-          "name": "Extend `session_end` to flush progress and update swarm task.",
+          "name": "Implement PreToolUse (Write/Edit) hook for workplan boundary validation.",
           "status": "pending"
         },
         {
           "files": [
-            "hex-cli/src/commands/hook/route.rs"
+            "hex-cli/src/hooks/post_edit.rs"
           ],
           "id": "P2.3",
           "layer": "primary",
-          "name": "Add heartbeat call to `route` (UserPromptSubmit handler).",
+          "name": "Implement PostToolUse (Write/Edit) hook for progress tracking.",
           "status": "pending"
         },
         {
           "files": [
-            "hex-cli/src/commands/hook/pre_edit.rs"
+            "hex-cli/src/hooks/pre_bash.rs"
           ],
           "id": "P2.4",
           "layer": "primary",
-          "name": "Add workplan boundary validation to `pre_edit`.",
-          "status": "pending"
-        },
-        {
-          "files": [
-            "hex-cli/src/commands/hook/post_edit.rs"
-          ],
-          "id": "P2.5",
-          "layer": "primary",
-          "name": "Add progress tracking to `post_edit`.",
-          "status": "pending"
-        },
-        {
-          "files": [
-            "hex-cli/src/commands/hook/pre_bash.rs"
-          ],
-          "id": "P2.6",
-          "layer": "primary",
-          "name": "Add destructive command detection to `pre_bash`.",
+          "name": "Implement PreToolUse (Bash) hook for destructive command detection.",
           "status": "pending"
         }
       ],
@@ -112,16 +103,16 @@
     },
     {
       "id": "P3",
-      "name": "Use Cases",
+      "name": "Usecases",
       "status": "pending",
       "tasks": [
         {
           "files": [
-            "hex-cli/src/usecases/lifecycle_enforcement.rs"
+            "hex-nexus/src/usecases/lifecycle_enforcement.rs"
           ],
           "id": "P3.1",
           "layer": "usecases",
-          "name": "Integrate lifecycle enforcement into user workflows.",
+          "name": "Define usecases for lifecycle enforcement hooks.",
           "status": "pending"
         }
       ],
@@ -134,11 +125,20 @@
       "tasks": [
         {
           "files": [
-            "tests/integration/lifecycle_pipeline.rs"
+            "hex-nexus/src/orchestration/drafter.rs"
           ],
           "id": "P4.1",
           "layer": "integration",
-          "name": "Test lifecycle pipeline end-to-end.",
+          "name": "Integrate lifecycle hooks with HexFlo memory.",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "tests/integration/lifecycle_enforcement_test.rs"
+          ],
+          "id": "P4.2",
+          "layer": "integration",
+          "name": "Test lifecycle enforcement in different modes (advisory/mandatory).",
           "status": "pending"
         }
       ],
