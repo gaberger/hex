@@ -494,6 +494,13 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 hex_db_for_integrator.clone(),
             );
 
+            // gap: memory → persona dispatch (closes the operator-as-dispatcher
+            // anti-pattern surfaced 2026-05-23 — see gap_dispatcher.rs preamble)
+            crate::orchestration::gap_dispatcher::spawn(
+                stdb_host_for_integrator.clone(),
+                hex_db_for_integrator.clone(),
+            );
+
             // Auto-seed merge-team default policy + persona pools.
             // STDB schema-change semantics on republish wipe row data,
             // so we re-init on every nexus startup. Reducers are idempotent —
