@@ -29,22 +29,28 @@ fail() { c_red "  ✗ $*"; }
 
 # ── Args ──────────────────────────────────────────────────────────────
 CHECK_ONLY=false
+WITH_OLLAMA=false
+SKIP_CHECKSUM=false
 VERSION=latest
 for arg in "$@"; do
   case "$arg" in
-    --check) CHECK_ONLY=true ;;
+    --check)          CHECK_ONLY=true ;;
+    --with-ollama)    WITH_OLLAMA=true ;;
+    --skip-checksum)  SKIP_CHECKSUM=true ;;
     --help|-h)
       cat <<'EOF'
 hex installer
 
 Usage:
-  install.sh [version]      install latest (or pinned) release
-  install.sh --check        verify existing install — no download
-  install.sh --help         this message
+  install.sh [version]         install latest (or pinned) release
+  install.sh --check           verify existing install — no download
+  install.sh --with-ollama     also install Ollama (for local inference)
+  install.sh --skip-checksum   skip SHA256 verification (NOT recommended)
+  install.sh --help            this message
 
 Env:
-  INSTALL_PREFIX=/usr/local      override install dir (default: ~/.local on linux, /usr/local on macos)
-  HEX_INSTALL_SKIP_STDB=1        skip SpacetimeDB install (assume present)
+  INSTALL_PREFIX=/usr/local       override install dir (default: ~/.local on linux, /usr/local on macos)
+  HEX_INSTALL_SKIP_STDB=1         skip SpacetimeDB install (assume present)
 EOF
       exit 0 ;;
     *) VERSION="$arg" ;;
@@ -180,10 +186,20 @@ echo
 if [ "$CHECK_ONLY" = true ]; then
   c_bold "Verifying existing install"
   failed=0
-  for bin in hex hex-nexus hex-agent; do
+  # Required binaries — missing = real failure
+  for bin in hex hex-nexus; do
     verify_binary_exists "$bin" || failed=$((failed+1))
     verify_binary_runs "$bin" --version >/dev/null 2>&1 || { fail "$bin won't run"; failed=$((failed+1)); }
     verify_on_path "$bin" || failed=$((failed+1))
+  done
+  # Optional binaries — missing = warn only (legacy tarballs)
+  for bin in hex-agent; do
+    if [ -x "$BIN_DIR/$bin" ]; then
+      verify_binary_runs "$bin" --version >/dev/null 2>&1 && ok "$bin runs" || { fail "$bin won't run"; failed=$((failed+1)); }
+      verify_on_path "$bin" >/dev/null 2>&1 && ok "$bin on PATH" || true
+    else
+      warn "$bin not installed (optional — present in releases after 2026-05-23)"
+    fi
   done
   echo
   c_bold "SpacetimeDB"
@@ -226,21 +242,77 @@ if ! curl -fSL "$URL" -o "$TMPDIR/hex.tar.gz" 2>/dev/null; then
 fi
 ok "downloaded hex v$VERSION"
 
+# Checksum verification — fetch the release's SHA256SUMS.txt and verify
+# our tarball's hash matches. Catches MITM, corrupted download, and the
+# rare case where GitHub serves a stale CDN copy. Skip with --skip-checksum
+# only for offline / GitHub-down debugging.
+if [ "$SKIP_CHECKSUM" = true ]; then
+  warn "skipping SHA256 verification (--skip-checksum)"
+else
+  SUMS_URL="https://github.com/gaberger/hex/releases/download/v${VERSION}/SHA256SUMS.txt"
+  if ! curl -fSL "$SUMS_URL" -o "$TMPDIR/SHA256SUMS.txt" 2>/dev/null; then
+    warn "SHA256SUMS.txt missing from release v$VERSION — skipping verification"
+    warn "  → file releases prior to checksum-rollout don't have this; safe but less verified"
+  else
+    # SHA256SUMS.txt lines look like: "<sha256>  hex-<ver>-<target>.tar.gz"
+    # Find our tarball's entry, extract the expected hash.
+    tarball_name="hex-${VERSION}-${TARGET}.tar.gz"
+    expected=$(grep "  $tarball_name\$" "$TMPDIR/SHA256SUMS.txt" | awk '{print $1}')
+    if [ -z "$expected" ]; then
+      fail "no SHA256 entry for $tarball_name in SHA256SUMS.txt"
+      exit 1
+    fi
+    if command -v sha256sum >/dev/null 2>&1; then
+      actual=$(sha256sum "$TMPDIR/hex.tar.gz" | awk '{print $1}')
+    elif command -v shasum >/dev/null 2>&1; then
+      actual=$(shasum -a 256 "$TMPDIR/hex.tar.gz" | awk '{print $1}')
+    else
+      warn "neither sha256sum nor shasum found — cannot verify checksum"
+      actual=""
+    fi
+    if [ -n "$actual" ]; then
+      if [ "$actual" = "$expected" ]; then
+        ok "SHA256 verified ($expected)"
+      else
+        fail "SHA256 MISMATCH — refusing to install"
+        echo "  expected: $expected"
+        echo "  actual:   $actual"
+        echo "  → this could indicate corrupted download or supply-chain tampering"
+        exit 1
+      fi
+    fi
+  fi
+fi
+
 if ! tar xz -C "$TMPDIR" -f "$TMPDIR/hex.tar.gz"; then
   fail "tarball extraction failed"
   exit 1
 fi
 ok "extracted"
 
-# Inventory the tarball — fail clearly if expected binaries are missing
-expected_binaries=(hex hex-nexus hex-agent)
-for bin in "${expected_binaries[@]}"; do
+# Inventory the tarball. hex + hex-nexus are required; hex-agent has
+# been in transition — release workflow patched 2026-05-23 to bundle
+# it, but tarballs published before that date don't have it. Treat as
+# warn-not-fail so legacy releases still install, while flagging the
+# gap so the user knows to upgrade to a fresher release.
+required_binaries=(hex hex-nexus)
+optional_binaries=(hex-agent)
+for bin in "${required_binaries[@]}"; do
   if [ ! -f "$TMPDIR/$bin" ]; then
-    fail "tarball missing $bin — release v$VERSION may be incomplete"
+    fail "tarball missing required binary $bin — release v$VERSION is broken"
     exit 1
   fi
 done
-ok "tarball contains hex + hex-nexus + hex-agent"
+ok "tarball contains required binaries: ${required_binaries[*]}"
+have_hex_agent=true
+for bin in "${optional_binaries[@]}"; do
+  if [ ! -f "$TMPDIR/$bin" ]; then
+    warn "tarball missing optional $bin — release v$VERSION pre-dates the hex-agent rollout"
+    warn "  → install proceeds without it; upgrade to the next release to get $bin"
+    have_hex_agent=false
+  fi
+done
+[ "$have_hex_agent" = true ] && ok "tarball contains hex-agent"
 
 # Stop running hex processes before replacing binaries
 if pgrep -x "hex-nexus" >/dev/null 2>&1 || pgrep -x "hex-agent" >/dev/null 2>&1; then
@@ -262,7 +334,11 @@ mv_cmd() {
 }
 
 c_bold "Installing binaries to $BIN_DIR"
-for bin in "${expected_binaries[@]}"; do
+# Install required, then optional-if-present
+for bin in "${required_binaries[@]}" "${optional_binaries[@]}"; do
+  if [ ! -f "$TMPDIR/$bin" ]; then
+    continue  # optional binary missing from this tarball — already warned
+  fi
   if [ -f "$BIN_DIR/$bin" ]; then
     mv_cmd "$BIN_DIR/$bin" "$BIN_DIR/$bin.prev" 2>/dev/null || true
   fi
@@ -335,18 +411,67 @@ else
 fi
 echo
 
+# ── Ollama (opt-in via --with-ollama) ────────────────────────────────
+# hex's local-first inference path uses Ollama. Without it, the system
+# falls back to paid frontier models (Anthropic / OpenRouter) — fine
+# for casual use, expensive for the always-on loops (workplan_auto_emitter,
+# hive_improver, gap_dispatcher). Recommended for daily-driver use.
+if [ "$WITH_OLLAMA" = true ]; then
+  c_bold "Ollama"
+  if command -v ollama >/dev/null 2>&1; then
+    ok "ollama already installed: $(ollama --version 2>&1 | head -1)"
+  else
+    if [ "$OS" = "darwin" ]; then
+      if command -v brew >/dev/null 2>&1; then
+        warn "installing ollama via brew (interactive)"
+        brew install ollama || { fail "brew install ollama failed"; exit 1; }
+      else
+        fail "macos ollama install requires brew — install brew first OR download from https://ollama.com/download"
+        exit 1
+      fi
+    else
+      warn "installing ollama via official installer (curl https://ollama.com/install.sh)"
+      curl -fsSL https://ollama.com/install.sh | sh || { fail "ollama installer failed"; exit 1; }
+    fi
+    ok "ollama installed"
+  fi
+  # Don't auto-pull models — that's many GB and the user may want to
+  # pick which ones. Just print the recommended set for dev mode.
+  echo "  ℹ recommended models for local-first dev:"
+  echo "      ollama pull qwen2.5-coder:14b   # T2 codegen (8 GB)"
+  echo "      ollama pull nemotron-mini       # cheap summariser (2 GB)"
+  echo "      ollama pull devstral-small-2:24b  # T2.5 reasoning (14 GB; optional)"
+  echo
+fi
+
 # ── Post-install verification ────────────────────────────────────────
 c_bold "Post-install verification"
 verify_ok=true
-for bin in hex hex-nexus hex-agent; do
+# Required
+for bin in "${required_binaries[@]}"; do
   verify_binary_runs "$bin" --version || verify_ok=false
   verify_on_path "$bin" || verify_ok=false
+done
+# Optional — only verify if it was installed (legacy tarballs may not include it)
+for bin in "${optional_binaries[@]}"; do
+  if [ -x "$BIN_DIR/$bin" ]; then
+    verify_binary_runs "$bin" --version || verify_ok=false
+    verify_on_path "$bin" || verify_ok=false
+  fi
 done
 
 if [ "${HEX_INSTALL_SKIP_STDB:-}" != "1" ]; then
   verify_binary_exists spacetimedb-standalone || verify_ok=false
   verify_binary_exists spacetime || verify_ok=false
   verify_jwt_keys || verify_ok=false
+fi
+
+# Ollama is opt-in; report status informationally either way.
+if command -v ollama >/dev/null 2>&1; then
+  ok "ollama detected ($(command -v ollama)) — local-first inference enabled"
+else
+  warn "ollama NOT installed — install with: $0 --with-ollama  (local-first inference)"
+  warn "  → without ollama, hex falls back to paid frontier models (ANTHROPIC_API_KEY / OPENROUTER_API_KEY)"
 fi
 echo
 
