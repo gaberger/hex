@@ -259,13 +259,25 @@ async fn precompile_check(path: &str, content: &str) -> Result<(), String> {
 
     let out_path = work_dir.join("draft.rmeta");
 
+    // Use `--test` so #[test] functions are reachable + borrow-checked.
+    // Without --test, rustc treats #[test] fns as dead code in --crate-type
+    // rlib mode and silently skips the body — observed 2026-05-27 when a
+    // standalone_gate.rs draft with `Ok(addrs) => addrs.any(...)` (a real
+    // borrow error) passed the gate but failed `cargo test` immediately.
+    // --test implies --crate-type bin so we drop the rlib override.
+    //
+    // CARGO_MANIFEST_DIR is set by cargo at compile-time; raw rustc has no
+    // such env, so file content like `env!("CARGO_MANIFEST_DIR")` will fail
+    // here. Stub it to a placeholder so the gate doesn't false-fail
+    // legitimate test files that need the macro for path resolution.
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(30),
         tokio::process::Command::new("rustc")
             .env("PATH", &path_env)
+            .env("CARGO_MANIFEST_DIR", "/precompile-gate-placeholder")
             .arg("--edition").arg("2021")
+            .arg("--test")
             .arg("--emit").arg("metadata")
-            .arg("--crate-type").arg("rlib")
             .arg("--error-format").arg("short")
             .arg("-o").arg(&out_path)
             .arg(&tmp_path)
