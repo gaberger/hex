@@ -410,8 +410,18 @@ async fn review_one(
                 || path.starts_with("hex-analyzer/src/")
                 || path.starts_with("hex-desktop/src/")
                 || (path.starts_with("spacetime-modules/") && path.contains("/src/"));
+            // `agent_loop:<role>` (wp-sop-agent-loop, 2026-05-27): the
+            // autonomous bridge's precompile gate already verified the
+            // draft compiles. Hard-deny would block dogfood-extension
+            // dispatches. Note: this only relaxes the hard-deny; the
+            // auto-approve fast path below keys on `tool:` (without the
+            // `agent_loop:` prefix), so agent_loop content STILL goes
+            // through the LLM judge — required, because it's local-AI
+            // generated and could be wrong despite compiling (observed
+            // 2026-05-27 on a TOML-as-.rs auto-approve before this fix).
             let permitted_source_writer = action.proposed_by == "tool:code_patch"
-                || action.proposed_by == "operator-passthrough";
+                || action.proposed_by == "operator-passthrough"
+                || action.proposed_by.starts_with("agent_loop:");
             if touches_source && !permitted_source_writer {
                 return decide(
                     http,

@@ -941,17 +941,19 @@ async fn draft_one(
         "path": c.success_artifact,
         "content": content,
     });
-    // When the agent-loop bridge produced this content, it already passed
-    // a pre-twin rustc/gofmt/tsc gate. Tag proposed_by="tool:code_patch"
-    // so the twin's typed-tool exception accepts source-file edits — same
-    // pattern hex-nexus/src/tools/code_patch.rs already uses for ad-hoc
-    // operator-direct edits. Without this tag, source-file edits from
-    // the autonomous loop hard-deny at the twin and the loop wedges.
+    // When the agent-loop bridge produced this content, tag proposed_by
+    // with the `agent_loop:` prefix so the twin's source-file hard-deny
+    // accepts it (the precompile gate already verified compile), but the
+    // twin's auto-approve fast path (which keys on `tool:` prefix) does
+    // NOT trigger — agent_loop content is local-AI-generated and still
+    // needs LLM-judge semantic review. Earlier iteration of this fix
+    // used "tool:code_patch" and inadvertently triggered the auto-approve
+    // path, landing a TOML-as-.rs file unreviewed (reverted in 6a01f0f9).
     let agent_loop_on = std::env::var("HEX_AGENT_LOOP_ENABLED")
         .ok()
         .as_deref() == Some("1");
     let proposed_by = if agent_loop_on && is_source_file_path(&c.success_artifact) {
-        "tool:code_patch".to_string()
+        format!("agent_loop:{}", c.role)
     } else {
         c.role.clone()
     };
