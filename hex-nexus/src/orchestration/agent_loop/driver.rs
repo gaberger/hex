@@ -45,6 +45,15 @@ pub struct AgentRunInput<'a> {
     pub max_output_tokens: u64,
     pub inference: Arc<dyn IInferencePort>,
     pub model: String,
+    /// Steps from a prior trajectory to resume from (wp-sop-agent-loop
+    /// P4.1 / P5). When non-empty, these are seeded into the new
+    /// trajectory's `steps` (preserving step_idx continuity) and
+    /// included in the persona's user-turn context. Used by the
+    /// drafter's compile-gate retry: the pre-twin `cargo check` failure
+    /// is appended as a synthetic `cargo_check` observation, and the
+    /// loop re-fires with the diagnostics visible to the persona.
+    /// Empty = fresh run.
+    pub prior_steps: Vec<crate::orchestration::agent_loop::trajectory::AgentStep>,
 }
 
 pub async fn run(input: AgentRunInput<'_>) -> Trajectory {
@@ -62,7 +71,17 @@ pub async fn run(input: AgentRunInput<'_>) -> Trajectory {
     let system_prompt = build_system_prompt(input.role, input.task_brief, &tool_descriptions);
     let mut parse_failures: u32 = 0;
 
-    for step_idx in 0..input.max_steps {
+    // Resume continuation: seed prior steps + roll forward token counts
+    // so the budget tracking remains consistent across retries.
+    let start_idx = input.prior_steps.len() as u32;
+    for s in &input.prior_steps {
+        trajectory.total_input_tokens += s.input_tokens;
+        trajectory.total_output_tokens += s.output_tokens;
+        trajectory.total_latency_ms += s.latency_ms;
+    }
+    trajectory.steps = input.prior_steps;
+
+    for step_idx in start_idx..(start_idx + input.max_steps) {
         let user_text = build_user_turn(&trajectory.steps);
         let started = Instant::now();
         let req = InferenceRequest {
@@ -482,6 +501,7 @@ mod tests {
             max_output_tokens: 100_000,
             inference: mock,
             model: "mock".into(),
+            prior_steps: Vec::new(),
         }
     }
 
@@ -573,6 +593,77 @@ mod tests {
         assert_eq!(t.steps.len(), 2);
         assert!(t.steps[0].observation.starts_with("error:"));
         assert!(t.steps[0].observation.contains("policy denied"));
+    }
+
+    #[tokio::test]
+    async fn driver_seeds_prior_steps_and_continues_step_idx() {
+        use crate::orchestration::agent_loop::trajectory::AgentStep;
+        let mock = Arc::new(MockInferencePort::with_response(echo_action(
+            "code_patch_propose",
+            serde_json::json!({"path":"hex-cli/tests/foo.rs","mode":"create","content":"fn x(){}"})
+        )));
+        let tool = Box::new(ScriptedTool::new(
+            "code_patch_propose",
+            vec![Ok(Observation::terminal(TerminalAction {
+                tool: "code_patch_propose".into(),
+                path: "hex-cli/tests/foo.rs".into(),
+                mode: "create".into(),
+                content: "fn x(){}".into(),
+            }))]
+        )) as Box<dyn IAgentTool>;
+        let prior = vec![
+            AgentStep {
+                step_idx: 0,
+                thought: "prior repo_read".into(),
+                tool: "repo_read".into(),
+                args_json: r#"{"path":"hex-cli/tests/other.rs"}"#.into(),
+                observation: "fn already() {}".into(),
+                bytes: 16,
+                truncated: false,
+                output_tokens: 10,
+                input_tokens: 500,
+                latency_ms: 800,
+            },
+            AgentStep {
+                step_idx: 1,
+                thought: "(synthetic) compile failure".into(),
+                tool: "cargo_check".into(),
+                args_json: "{}".into(),
+                observation: "error: expected ;".into(),
+                bytes: 17,
+                truncated: false,
+                output_tokens: 0,
+                input_tokens: 0,
+                latency_ms: 0,
+            },
+        ];
+        let input = AgentRunInput {
+            role: "hex-coder",
+            task_brief: "brief",
+            tools: vec![tool],
+            max_steps: 4,
+            max_output_tokens: 100_000,
+            inference: mock,
+            model: "mock".into(),
+            prior_steps: prior,
+        };
+        let t = run(input).await;
+        assert_eq!(t.terminated_reason, TerminatedReason::TerminalAction);
+        // 2 prior + 1 new step from this run
+        assert_eq!(t.steps.len(), 3);
+        assert_eq!(t.steps[0].tool, "repo_read");
+        assert_eq!(t.steps[1].tool, "cargo_check");
+        assert_eq!(t.steps[2].tool, "code_patch_propose");
+        // step_idx continues from 2 (after the prior 0,1)
+        assert_eq!(t.steps[2].step_idx, 2);
+        // Prior token counts are rolled forward into trajectory totals
+        // (>= the prior values; the new step adds its own mock counts).
+        assert!(t.total_input_tokens >= 500,
+            "prior input_tokens (500) should be included in total, got {}",
+            t.total_input_tokens);
+        assert!(t.total_output_tokens >= 10,
+            "prior output_tokens (10) should be included in total, got {}",
+            t.total_output_tokens);
     }
 
     #[tokio::test]

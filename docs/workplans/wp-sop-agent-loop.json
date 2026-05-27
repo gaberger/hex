@@ -190,9 +190,9 @@
           "name": "Pre-twin compile gate",
           "agent": "hex-coder",
           "layer": "usecases",
-          "files": ["hex-nexus/src/orchestration/action_executor.rs"],
+          "files": ["hex-nexus/src/orchestration/drafter_trajectory.rs", "hex-nexus/src/orchestration/agent_loop/driver.rs"],
           "deps": ["P3.2"],
-          "status": "todo",
+          "status": "done",
           "description": "Before promoting a pending proposed_action to twin review, write its content to a temp tree (target/agent-loop-scratch/<id>/<path>), run cargo check on the affected crate, capture pass/fail + first 30 lines of diagnostics. On fail: mark the proposed_action with compile_status='fail' + diagnostics, do NOT send to twin, instead post a synthetic observation back into the trajectory (re-fires the agent loop with the error in context). On pass: send to twin as today.",
           "done_condition": "Integration test: a draft that fails to compile gets compile_status=fail + diagnostics + a new agent_step with the error appended; twin is not invoked."
         },
@@ -203,7 +203,8 @@
           "layer": "domain",
           "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
           "deps": ["P4.1"],
-          "status": "todo",
+          "status": "deferred",
+          "notes": "Deferred — P4.1 gate is in-nexus only (logs visible via nexus.log; failures abstain). Adding STDB column requires WASM republish + dashboard surface; punt to a follow-up workplan that bundles full observability for both compile_status AND P6 agent_trajectory rows."
           "description": "Add `compile_status: String` (one of '', 'pass', 'fail', 'skipped') + `compile_diagnostics: String` to the proposed_action table. Default empty. Migration: leave existing rows blank. Update WASM, rebuild, republish via the existing spacetime_launcher path.",
           "done_condition": "curl SQL probe shows the columns exist on agent-comms STDB after nexus restart."
         }
