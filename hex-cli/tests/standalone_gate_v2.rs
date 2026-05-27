@@ -6,13 +6,12 @@ use std::time::Duration;
 use std::process::Command;
 
 fn reachable(url: &str) -> bool {
-    let url = if let Some(pos) = url.find("//") { &url[pos + 2..] } else { return false; };
-    for addr in url.to_socket_addrs().unwrap() {
-        if TcpStream::connect_timeout(&addr, Duration::from_secs(2)).is_ok() {
-            return true;
-        }
+    let host_port = if let Some(pos) = url.find("//") { &url[pos + 2..] } else { return false; };
+    let host_port = if let Some(pos) = host_port.find('/') { &host_port[..pos] } else { host_port };
+    match host_port.to_socket_addrs() {
+        Ok(mut addrs) => addrs.any(|addr| TcpStream::connect_timeout(&addr, Duration::from_secs(2)).is_ok()),
+        Err(_) => false,
     }
-    false
 }
 
 #[test]
@@ -21,7 +20,7 @@ fn standalone_gate_smoke() {
     let ollama_host = env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
 
     if !reachable(&hex_nexus_url) || !reachable(&ollama_host) {
-        eprintln!("Skipping test: one or both endpoints are unreachable.");
+        eprintln!("Skipping test because either HEX_NEXUS_URL or OLLAMA_HOST is not reachable");
         return;
     }
 
@@ -33,17 +32,18 @@ fn standalone_gate_smoke() {
         .env("HEX_NEXUS_URL", &hex_nexus_url)
         .env("OLLAMA_HOST", &ollama_host)
         .output()
-        .expect("Failed to execute command");
+        .expect("run.sh failed");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let results_line = stdout.lines().find(|line| line.contains("Results:"));
-
-    if let Some(line) = results_line {
+    if let Some(line) = stdout.lines().find(|line| line.contains("Results:")) {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if let Ok(n) = parts[1].parse::<u32>() {
-            assert!(n >= 2, "Expected at least 2 results but got {}", n);
+        if let Ok(n) = parts[1].split('/').next().unwrap_or_default().parse::<u32>() {
+            assert!(n >= 2);
+            assert!(output.status.success());
+        } else {
+            panic!("Failed to parse number of passed tests from output");
         }
+    } else {
+        panic!("Did not find 'Results:' line in output");
     }
-
-    assert!(output.status.success(), "Command did not execute successfully");
 }
