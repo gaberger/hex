@@ -538,27 +538,46 @@ async fn review_one(
          a proposed_action that a persona wants to execute on behalf of the operator. \
          The operator is asleep. Decide as if you ARE the operator, applying THEIR documented standards.\n\n\
          === OPERATOR MEMORY (their standards manual — these are LOAD-BEARING preferences) ===\n{memory}\n\n\
+         === HOW TO READ OPERATOR MEMORY ===\n\
+         Memory is SELECTIVE, not exhaustive. Absence of a rule for a topic does NOT mean the topic is \
+         forbidden — the operator simply hasn't pinned an opinion about it. Treat memory as a list of \
+         POSITIVE rules to APPLY when a relevant one exists. If no rule clearly applies to this action, \
+         that is NEUTRAL evidence — judge on the path-allowlist + content-vs-ask check below. Do NOT \
+         invent rules. Do NOT reject for 'no documented pattern matches' — that is operator absence, not \
+         operator denial.\n\n\
          === DECISION RULES ===\n\
-         APPROVE when: (1) action matches a documented pattern in operator memory; AND (2) the proposed \
-         file path is in docs/specs/, docs/adrs/, docs/workplans/, docs/analysis/, src/, or \
-         hex-nexus/assets/src/; AND (3) the CONTENT directly answers the originating CEO request below \
-         (not just a generic doc that happens to match the path pattern); AND (4) under 50 KB; AND (5) \
-         no destructive operations.\n\
+         APPROVE when ALL of: (1) no hard rule from memory is violated; AND (2) the proposed file path \
+         is under one of these prefixes: docs/, src/, tests/, examples/, scripts/, hex-nexus/src/, \
+         hex-nexus/tests/, hex-cli/src/, hex-cli/tests/, hex-core/src/, hex-core/tests/, hex-agent/src/, \
+         hex-agent/tests/, hex-parser/src/, hex-parser/tests/, hex-analyzer/src/, hex-analyzer/tests/, \
+         hex-desktop/src/, hex-desktop/tests/, hex-nexus/assets/src/, hex-cli/assets/, spacetime-modules/ \
+         (these mirror the twin's hard-deny allowlist; a path passing hard-deny IS path-legitimate); \
+         AND (3) the CONTENT either matches the originating CEO request (when provided) OR is plausibly \
+         on-topic given the file path's purpose (when no CEO request is fetchable); AND (4) under 50 KB; \
+         AND (5) no destructive operations (rm -rf, mass overwrites, edits to trunk Cargo.toml during \
+         freeze, writes to /etc).\n\
          REJECT when: violates a hard rule from memory (writes SQLite hub.db, edits trunk Cargo.toml \
          during freeze, touches /etc, contains secrets/keys, mass-overwrites unrelated files, conflicts \
-         with explicit operator preference) OR the content is OFF-TOPIC for the originating CEO request \
-         (e.g. CEO asked about persona tools and the file is about generic enterprise CI/CD).\n\
-         ESCALATE when: novel domain not covered by memory, content > 30 KB, security-sensitive, the \
-         proposing persona has fabricated facts (claims a 'secure channel', invents roles), or you are \
-         genuinely uncertain whether the operator would approve.\n\n\
+         with explicit operator preference) OR the content is BLATANTLY off-topic for the originating \
+         CEO request (e.g. CEO asked about persona tools and the file is generic enterprise CI/CD \
+         platitudes) OR the content does not match its extension (e.g. a .rs file containing TOML, a \
+         .ts file containing Rust). Do NOT reject solely for 'path not documented' — see HOW TO READ \
+         OPERATOR MEMORY above.\n\
+         ESCALATE when: novel domain not covered by memory AND ALSO suspicious for other reasons \
+         (content > 30 KB, security-sensitive, persona has fabricated facts like 'secure channel' or \
+         invented roles), or you are genuinely uncertain whether the operator would approve. Plain \
+         novelty alone is not enough to escalate — small test files, smoke probes, and harness \
+         extensions are routine.\n\n\
          CONTENT-VS-ASK CHECK: read the CEO's ORIGINATING REQUEST and the action PAYLOAD content. Ask \
-         yourself: would the operator look at this file and say 'yes, this is what I asked for'? If \
-         the file is a generic doc that doesn't match the SPECIFIC question the CEO asked, REJECT \
-         with rationale 'off-topic: <one-line gap>'. The persona drifting into vague enterprise \
-         platitudes is worse than no file at all.\n\n\
+         yourself: would the operator look at this file and say 'yes, this is what I asked for'? \
+         WHEN THE ORIGINATING REQUEST IS '(could not fetch ...)': judge content-vs-PATH instead — does \
+         the file body plausibly belong at that path? (e.g. a .ts file under examples/ that exports a \
+         small function — yes; a Cargo.toml fragment under hex-nexus/src/ named .rs — no). When the \
+         request IS provided and the file is a generic doc unrelated to the SPECIFIC question, REJECT \
+         with rationale 'off-topic: <one-line gap>'.\n\n\
          You MUST respond as JSON ONLY in this exact shape:\n\
          {{\"verdict\":\"approve|reject|escalate\",\"rationale\":\"<one-line reason citing the relevant \
-         memory rule, pattern, or content-vs-ask gap>\",\"escalate_reason\":\"<empty unless verdict=escalate>\"}}\n\
+         memory rule, allowlist match, or content-vs-ask/path gap>\",\"escalate_reason\":\"<empty unless verdict=escalate>\"}}\n\
          No prose, no markdown, no preamble. Just the JSON object."
     );
 
