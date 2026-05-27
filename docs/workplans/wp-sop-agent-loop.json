@@ -160,9 +160,9 @@
           "name": "drafter_trajectory bridge",
           "agent": "hex-coder",
           "layer": "usecases",
-          "files": ["hex-nexus/src/orchestration/drafter_trajectory.rs"],
+          "files": ["hex-nexus/src/orchestration/drafter_trajectory.rs", "hex-nexus/src/orchestration/agent_loop/inference_shim.rs"],
           "deps": ["P2.2"],
-          "status": "todo",
+          "status": "done",
           "description": "pub async fn draft_via_loop(commitment, http, inference_url, model) -> Result<DraftOutcome>. Builds the task_brief from commitment.action + commitment.success_artifact, instantiates the 4 tools from P1, calls agent_loop::run(max_steps=8), extracts trajectory.final_action.content, returns DraftOutcome::ProposedAction with the content for drafter::draft_one to wrap into a proposed_action_open call.",
           "done_condition": "Test: given a commitment + mocked inference returning [tool_call(repo_read), tool_call(code_patch_propose)], returns DraftOutcome with non-empty content."
         },
@@ -173,7 +173,7 @@
           "layer": "usecases",
           "files": ["hex-nexus/src/orchestration/drafter.rs"],
           "deps": ["P3.1"],
-          "status": "todo",
+          "status": "done",
           "description": "Replace the existing inline LLM call in draft_one() with a call to drafter_trajectory::draft_via_loop. Feature-flag via HEX_AGENT_LOOP_ENABLED=1 (default off until P7 acceptance passes) so the old path is the fallback during rollout. Keep all existing drafter.rs surface (REJECT_BUDGET, abandon path, idempotency check).",
           "done_condition": "When HEX_AGENT_LOOP_ENABLED=1, drafter logs 'drafter: using agent_loop bridge' before each commitment. Existing drafter tests still pass."
         }

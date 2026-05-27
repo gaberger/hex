@@ -23,6 +23,7 @@
 //! - P7: acceptance test against today's P7.2 brief.
 
 pub mod driver;
+pub mod inference_shim;
 pub mod policy;
 pub mod tool;
 pub mod tools;

@@ -23,7 +23,7 @@ use hex_core::ports::inference::{
     IInferencePort, InferenceRequest, Priority,
 };
 
-use crate::orchestration::agent_loop::tool::{IAgentTool, ToolError};
+use crate::orchestration::agent_loop::tool::IAgentTool;
 use crate::orchestration::agent_loop::trajectory::{AgentStep, TerminatedReason, Trajectory};
 
 /// How many consecutive parse failures we tolerate before giving up.

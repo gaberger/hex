@@ -775,35 +775,76 @@ async fn draft_one(
     // long-form artifacts through a stronger model when the operator opts in
     // via HEX_DRAFTER_MODEL_LONGFORM. Generic override is still HEX_DRAFTER_MODEL.
     let drafter_model = pick_drafter_model(&c.success_artifact);
-    let body = serde_json::json!({
-        "model": drafter_model,
-        "messages": [{
-            "role": "user",
-            "content": format!(
-                "Write the contents of `{}` per your earlier commitment, answering the CEO request above.",
-                c.success_artifact
-            ),
-        }],
-        "system": system,
-        "max_tokens": DRAFT_MAX_TOKENS,
-    });
-    let resp = http
-        .post(inference_url)
-        .json(&body)
-        .send()
+
+    // Agent-loop branch (wp-sop-agent-loop P3.2). When the env flag is set,
+    // route content production through the ReAct loop so the persona can
+    // repo_read / repo_grep / cargo_check before submitting. Existing
+    // one-shot path is the fallback during rollout.
+    let agent_loop_on = std::env::var("HEX_AGENT_LOOP_ENABLED")
+        .ok()
+        .as_deref() == Some("1");
+
+    let mut content = if agent_loop_on {
+        tracing::info!(
+            commitment_id = c.id,
+            role = %c.role,
+            path = %c.success_artifact,
+            model = %drafter_model,
+            "drafter: using agent_loop bridge"
+        );
+        match crate::orchestration::drafter_trajectory::draft_via_loop(
+            &c.role,
+            &c.success_artifact,
+            &c.action,
+            &ceo_ask,
+            inference_url,
+            &drafter_model,
+            repo_root,
+        )
         .await
-        .map_err(|e| format!("inference http: {}", e))?;
-    let status = resp.status();
-    let json: serde_json::Value =
-        resp.json().await.map_err(|e| format!("inference json: {}", e))?;
-    if !status.is_success() {
-        return Err(format!("inference HTTP {}: {}", status, json));
-    }
-    let mut content = json
-        .get("content")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+        {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(
+                    commitment_id = c.id,
+                    role = %c.role,
+                    error = %e,
+                    "drafter: agent_loop bridge failed; abstaining (next poll retries)"
+                );
+                return Ok(DraftOutcome::PersonaAbstained);
+            }
+        }
+    } else {
+        let body = serde_json::json!({
+            "model": drafter_model,
+            "messages": [{
+                "role": "user",
+                "content": format!(
+                    "Write the contents of `{}` per your earlier commitment, answering the CEO request above.",
+                    c.success_artifact
+                ),
+            }],
+            "system": system,
+            "max_tokens": DRAFT_MAX_TOKENS,
+        });
+        let resp = http
+            .post(inference_url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("inference http: {}", e))?;
+        let status = resp.status();
+        let json: serde_json::Value =
+            resp.json().await.map_err(|e| format!("inference json: {}", e))?;
+        if !status.is_success() {
+            return Err(format!("inference HTTP {}: {}", status, json));
+        }
+        json
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
     if content.trim().is_empty() {
         // Treat as abstain so the circuit-breaker can promote to stub
         // after N attempts. Previously this errored, looping the commitment
