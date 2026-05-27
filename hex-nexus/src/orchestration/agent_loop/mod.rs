@@ -24,6 +24,7 @@
 
 pub mod driver;
 pub mod inference_shim;
+pub mod observability;
 pub mod policy;
 pub mod tool;
 pub mod tools;

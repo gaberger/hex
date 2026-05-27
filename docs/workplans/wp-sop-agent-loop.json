@@ -240,9 +240,10 @@
           "name": "STDB tables: agent_trajectory + agent_step",
           "agent": "hex-coder",
           "layer": "domain",
-          "files": ["spacetime-modules/hexflo-coordination/src/agent_trajectory.rs"],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
           "deps": ["P2.1"],
-          "status": "todo",
+          "status": "done",
+          "evidence": "Both tables + 3 reducers (agent_trajectory_open, agent_step_record, agent_trajectory_close) appended to lib.rs. WASM built + synced via scripts/build-wasm.sh. Schema verified live: SELECT * FROM agent_trajectory returns the 11-column schema."
           "description": "agent_trajectory: id (auto), role, task_brief, terminated_reason, total_tokens, total_cost_usd, total_latency_ms, created_at. agent_step: trajectory_id (fk), step_idx, thought, tool, args_json, observation, tokens, latency_ms, created_at. Reducers agent_trajectory_open / agent_step_record / agent_trajectory_close.",
           "done_condition": "SQL probe on STDB returns the new tables after publish."
         },
@@ -251,9 +252,10 @@
           "name": "Driver writes trajectory + steps to STDB",
           "agent": "hex-coder",
           "layer": "usecases",
-          "files": ["hex-nexus/src/orchestration/agent_loop/driver.rs"],
+          "files": ["hex-nexus/src/orchestration/agent_loop/driver.rs", "hex-nexus/src/orchestration/agent_loop/observability.rs"],
           "deps": ["P6.1"],
-          "status": "todo",
+          "status": "done",
+          "evidence": "observability.rs ships open_trajectory/record_step/close_trajectory wrappers. driver.rs calls all three on the happy path + all 6 termination paths (parse_exhausted, unknown_tool, terminal_action, token_budget, max_steps, inference_failed). First live run captured trajectory id=1 (role=hex-coder, terminated_reason=terminal_action, in=2349 out=170 latency=2676ms, final_path=hex-cli/tests/agent_loop_smoke5.rs) + step id=1 (thought='Check if the target file already exists and gather context.', tool=repo_read, observation='error: not found: ...'). Best-effort: STDB outage does not block dispatch. 58 unit tests including 4 new observability tests."
           "description": "Each driver.run() call opens a trajectory row at start, records each step as it executes, closes the trajectory at termination. Best-effort: STDB outage MUST NOT block dispatch (same pattern as classifier_response_open).",
           "done_condition": "Running the agent loop once leaves N+1 rows in STDB (N steps + 1 trajectory)."
         },
@@ -264,7 +266,8 @@
           "layer": "primary",
           "files": ["hex-nexus/assets/src/views/AgentTrajectories.tsx", "hex-nexus/assets/src/router.tsx"],
           "deps": ["P6.2"],
-          "status": "todo",
+          "status": "deferred",
+          "notes": "Deferred to a follow-up dashboard workplan. Data is in STDB and queryable via SQL today (curl POST /v1/database/hex/sql 'SELECT * FROM agent_trajectory'). Pairs naturally with the deferred P4.2 compile_status surface — both belong in one observability-presentation workplan."
           "description": "List view of recent trajectories with: role, terminated_reason, total_tokens, total_cost_usd, total_latency_ms, expand-to-see steps. Steps render thought + tool + args + observation. Dashboard accessible at #/agent-trajectories.",
           "done_condition": "View renders on hard-refresh of http://127.0.0.1:5555/#/agent-trajectories and shows at least one row when an agent loop has run."
         }

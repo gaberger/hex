@@ -7297,3 +7297,181 @@ pub fn claim_persona_turn(
     });
     Ok(())
 }
+
+// ============================================================
+//  Agent-loop observability (wp-sop-agent-loop P6)
+// ============================================================
+//
+// One row in `agent_trajectory` per ReAct loop driver::run() call. One
+// row in `agent_step` per agent step inside that trajectory. Together
+// they're the audit trail the operator uses to see what the autonomous
+// SOP path actually did: which tools the persona called, what arguments,
+// what observations came back, and where the trajectory terminated.
+
+/// One ReAct driver run.
+#[table(name = agent_trajectory, public)]
+#[derive(Clone, Debug)]
+pub struct AgentTrajectory {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    /// Persona role that ran the loop (e.g. "hex-coder").
+    pub role: String,
+    /// First ~1k chars of the task brief the driver was given. Truncated
+    /// at insert time by the caller — the table doesn't enforce a cap.
+    pub task_brief: String,
+    /// Serialised TerminatedReason. One of: "terminal_action", "max_steps",
+    /// "token_budget", "parse_exhausted", "unknown_tool:<name>",
+    /// "inference_failed:<error>".
+    pub terminated_reason: String,
+    /// Path the terminal action targeted (empty if non-terminal).
+    pub final_action_path: String,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    /// Cumulative cost in USD across all steps (0 for local-AI runs).
+    pub total_cost_usd: f64,
+    pub total_latency_ms: u64,
+    /// ISO-8601 timestamp of when the trajectory was opened. Set by the
+    /// caller; nexus formats ctx.timestamp the same way it does in
+    /// agent-comms (STDB doesn't auto-populate String columns).
+    pub opened_at: String,
+    /// ISO-8601 timestamp of when the trajectory was closed. Empty until
+    /// agent_trajectory_close fires.
+    pub closed_at: String,
+}
+
+/// One step within a trajectory. step_idx is monotonic per trajectory.
+#[table(name = agent_step, public)]
+#[derive(Clone, Debug)]
+pub struct AgentStep {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub trajectory_id: u64,
+    pub step_idx: u32,
+    /// Persona's free-text reasoning for this step (the "thought" field
+    /// of the ReAct contract). Capped at ~2k chars by the caller.
+    pub thought: String,
+    /// Tool name invoked. For parse-failure steps the empty string;
+    /// for synthetic compile/twin-feedback steps "cargo_check" /
+    /// "twin_review" respectively.
+    pub tool: String,
+    /// JSON-serialised args the persona emitted. Empty object if none.
+    pub args_json: String,
+    /// What the tool returned. Capped at ~4k chars by the caller; the
+    /// `truncated` flag indicates whether the original was longer.
+    pub observation: String,
+    pub bytes: u64,
+    pub truncated: bool,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub latency_ms: u64,
+    pub created_at: String,
+}
+
+/// Open a new trajectory row. Returns the auto-incremented id via the
+/// `agent_trajectory_opened` event the caller subscribes to (no direct
+/// return value from reducers in STDB — read it back via SQL).
+#[reducer]
+pub fn agent_trajectory_open(
+    ctx: &ReducerContext,
+    role: String,
+    task_brief: String,
+    opened_at: String,
+) -> Result<(), String> {
+    if role.is_empty() {
+        return Err("role is required".to_string());
+    }
+    let truncated_brief: String = task_brief.chars().take(1024).collect();
+    ctx.db.agent_trajectory().insert(AgentTrajectory {
+        id: 0,
+        role,
+        task_brief: truncated_brief,
+        terminated_reason: String::new(),
+        final_action_path: String::new(),
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_cost_usd: 0.0,
+        total_latency_ms: 0,
+        opened_at,
+        closed_at: String::new(),
+    });
+    Ok(())
+}
+
+/// Record one step. Caller is responsible for passing the trajectory_id
+/// returned from agent_trajectory_open (looked up via SQL post-open). The
+/// step inserts unconditionally; concurrent recorders simply produce
+/// independent rows ordered by id.
+#[reducer]
+pub fn agent_step_record(
+    ctx: &ReducerContext,
+    trajectory_id: u64,
+    step_idx: u32,
+    thought: String,
+    tool: String,
+    args_json: String,
+    observation: String,
+    bytes: u64,
+    truncated: bool,
+    input_tokens: u64,
+    output_tokens: u64,
+    latency_ms: u64,
+    created_at: String,
+) -> Result<(), String> {
+    if trajectory_id == 0 {
+        return Err("trajectory_id is required".to_string());
+    }
+    let thought = thought.chars().take(2048).collect();
+    let observation = observation.chars().take(4096).collect();
+    let args_json = args_json.chars().take(2048).collect();
+    ctx.db.agent_step().insert(AgentStep {
+        id: 0,
+        trajectory_id,
+        step_idx,
+        thought,
+        tool,
+        args_json,
+        observation,
+        bytes,
+        truncated,
+        input_tokens,
+        output_tokens,
+        latency_ms,
+        created_at,
+    });
+    Ok(())
+}
+
+/// Close a trajectory, populating its terminal fields + totals. Idempotent:
+/// re-closing an already-closed trajectory overwrites the existing close.
+#[reducer]
+pub fn agent_trajectory_close(
+    ctx: &ReducerContext,
+    trajectory_id: u64,
+    terminated_reason: String,
+    final_action_path: String,
+    total_input_tokens: u64,
+    total_output_tokens: u64,
+    total_cost_usd: f64,
+    total_latency_ms: u64,
+    closed_at: String,
+) -> Result<(), String> {
+    if trajectory_id == 0 {
+        return Err("trajectory_id is required".to_string());
+    }
+    let Some(existing) = ctx.db.agent_trajectory().id().find(trajectory_id) else {
+        return Err(format!("trajectory {} not found", trajectory_id));
+    };
+    ctx.db.agent_trajectory().id().update(AgentTrajectory {
+        terminated_reason,
+        final_action_path,
+        total_input_tokens,
+        total_output_tokens,
+        total_cost_usd,
+        total_latency_ms,
+        closed_at,
+        ..existing
+    });
+    Ok(())
+}

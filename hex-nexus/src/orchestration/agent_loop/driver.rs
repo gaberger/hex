@@ -59,6 +59,20 @@ pub struct AgentRunInput<'a> {
 pub async fn run(input: AgentRunInput<'_>) -> Trajectory {
     let mut trajectory = Trajectory::new(input.role, input.task_brief);
 
+    // wp-sop-agent-loop P6.2: open an agent_trajectory STDB row so the
+    // operator dashboard can see what's running in real time. Best-effort:
+    // returns None on any STDB error and the rest of the function silently
+    // skips step/close recording. The agent loop itself MUST NOT block on
+    // observability.
+    let trajectory_id = crate::orchestration::agent_loop::observability::open_trajectory(
+        input.role,
+        input.task_brief,
+    )
+    .await;
+    if let Some(t) = trajectory_id {
+        trajectory.id = t.to_string();
+    }
+
     // Index tools by name for O(1) dispatch + a stable description list
     // for the system prompt.
     let tool_by_name: HashMap<String, &dyn IAgentTool> = input
@@ -106,6 +120,7 @@ pub async fn run(input: AgentRunInput<'_>) -> Trajectory {
                 trajectory.terminated_reason = TerminatedReason::InferenceFailed {
                     error: format!("{}", e).chars().take(200).collect(),
                 };
+                crate::orchestration::agent_loop::observability::close_trajectory(trajectory_id, &trajectory).await;
                 return trajectory;
             }
         };
@@ -137,8 +152,12 @@ pub async fn run(input: AgentRunInput<'_>) -> Trajectory {
                     input_tokens: response.input_tokens,
                     latency_ms,
                 });
+                if let Some(s) = trajectory.steps.last() {
+                    crate::orchestration::agent_loop::observability::record_step(trajectory_id, s).await;
+                }
                 if parse_failures >= PARSE_RETRY_BUDGET {
                     trajectory.terminated_reason = TerminatedReason::ParseExhausted;
+                    crate::orchestration::agent_loop::observability::close_trajectory(trajectory_id, &trajectory).await;
                     return trajectory;
                 }
                 continue;
@@ -165,6 +184,10 @@ pub async fn run(input: AgentRunInput<'_>) -> Trajectory {
                 trajectory.terminated_reason = TerminatedReason::UnknownTool {
                     name: parsed.tool.clone(),
                 };
+                if let Some(s) = trajectory.steps.last() {
+                    crate::orchestration::agent_loop::observability::record_step(trajectory_id, s).await;
+                }
+                crate::orchestration::agent_loop::observability::close_trajectory(trajectory_id, &trajectory).await;
                 return trajectory;
             }
         };
@@ -193,20 +216,26 @@ pub async fn run(input: AgentRunInput<'_>) -> Trajectory {
             input_tokens: response.input_tokens,
             latency_ms,
         });
+        if let Some(s) = trajectory.steps.last() {
+            crate::orchestration::agent_loop::observability::record_step(trajectory_id, s).await;
+        }
 
         if let Some(action) = terminal_action {
             trajectory.final_action = Some(action);
             trajectory.terminated_reason = TerminatedReason::TerminalAction;
+            crate::orchestration::agent_loop::observability::close_trajectory(trajectory_id, &trajectory).await;
             return trajectory;
         }
 
         if trajectory.total_output_tokens >= input.max_output_tokens {
             trajectory.terminated_reason = TerminatedReason::TokenBudget;
+            crate::orchestration::agent_loop::observability::close_trajectory(trajectory_id, &trajectory).await;
             return trajectory;
         }
     }
 
     trajectory.terminated_reason = TerminatedReason::MaxSteps;
+    crate::orchestration::agent_loop::observability::close_trajectory(trajectory_id, &trajectory).await;
     trajectory
 }
 
