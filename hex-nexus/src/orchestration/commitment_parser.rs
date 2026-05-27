@@ -287,7 +287,12 @@ pub fn scan_for_path(s: &str) -> Option<String> {
         ("workplans/", "docs/workplans/"),
         ("analysis/", "docs/analysis/"),
     ];
-    const EXTS: &[&str] = &[".md", ".rs", ".ts", ".tsx", ".js", ".jsx", ".json", ".toml", ".yml", ".yaml", ".sh", ".py"];
+    const EXTS: &[&str] = &[
+        ".md", ".rs", ".ts", ".tsx", ".js", ".jsx", ".json", ".toml", ".yml", ".yaml", ".sh", ".py",
+        ".go", ".mod", ".sum",  // Go: .go for source, .mod/.sum for module files
+        ".html", ".css",         // web targets the dashboard view will need
+        ".graphql", ".proto",    // schemas
+    ];
 
     for raw_tok in s.split(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == '(' || c == ')' || c == '`') {
         let tok = raw_tok.trim_matches(|c: char| c == '.' || c == ',' || c == ';' || c == ':' || c == '`' || c == '"' || c == '\'');
