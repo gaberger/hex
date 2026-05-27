@@ -22,11 +22,13 @@
 //! - P6: STDB observability (agent_trajectory + agent_step tables).
 //! - P7: acceptance test against today's P7.2 brief.
 
+pub mod driver;
 pub mod policy;
 pub mod tool;
 pub mod tools;
+pub mod trajectory;
 
-// `trajectory.rs` lands in P2.1; `driver.rs` in P2.2.
-
+pub use driver::{run, AgentRunInput};
 pub use tool::{IAgentTool, Observation, TerminalAction, ToolError};
 pub use tools::{CargoCheckTool, CodePatchProposeTool, RepoGrepTool, RepoReadTool};
+pub use trajectory::{AgentStep, TerminatedReason, Trajectory};

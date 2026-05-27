@@ -121,7 +121,7 @@
           "layer": "domain",
           "files": ["hex-nexus/src/orchestration/agent_loop/trajectory.rs"],
           "deps": ["P1.1"],
-          "status": "todo",
+          "status": "done",
           "description": "Trajectory{id, role, steps: Vec<AgentStep>, final_action: Option<TerminalAction>, total_tokens, total_cost_usd, total_latency_ms, terminated_reason: TerminatedReason}. AgentStep{step_idx, thought, tool, args_json, observation, tokens, latency_ms}. Serde+Clone+Debug.",
           "done_condition": "Types compile and serialize round-trip via serde_json."
         },
@@ -132,7 +132,7 @@
           "layer": "usecases",
           "files": ["hex-nexus/src/orchestration/agent_loop/driver.rs"],
           "deps": ["P2.1", "P1.5"],
-          "status": "todo",
+          "status": "done",
           "description": "pub async fn run(role, task_brief, tools: Vec<Box<dyn IAgentTool>>, max_steps, inference: Arc<dyn IInferencePort>, model) -> Result<Trajectory>. Each step: build prompt from (system + task_brief + accumulated observations + tool descriptions), call inference, parse {thought, action: {tool, args}} JSON, dispatch tool by name, record step, append observation. Loop until terminal tool or max_steps. Max token budget = 32k cumulative.",
           "done_condition": "Test with MockInferencePort returning fixed sequence: produces a 3-step trajectory ending in code_patch_propose. Parser tolerates leading ```json fence + trailing prose."
         },
@@ -141,9 +141,9 @@
           "name": "Driver tests — termination conditions",
           "agent": "hex-tester",
           "layer": "tests",
-          "files": ["hex-nexus/src/orchestration/agent_loop/driver_tests.rs"],
+          "files": ["hex-nexus/src/orchestration/agent_loop/driver.rs (#[cfg(test)] mod)"],
           "deps": ["P2.2"],
-          "status": "todo",
+          "status": "done",
           "description": "Cover: (a) clean termination on code_patch_propose, (b) max_steps exhausted → TerminatedReason::MaxSteps, (c) token budget exhausted → TerminatedReason::TokenBudget, (d) malformed JSON 3x → TerminatedReason::ParseExhausted, (e) tool returns ToolError::PolicyDenied → step recorded, loop continues, (f) tool times out → step recorded with error, loop continues.",
           "done_condition": "cargo test -p hex-nexus driver_tests passes with 6 assertions green."
         }
