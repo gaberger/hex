@@ -800,6 +800,7 @@ async fn draft_one(
             inference_url,
             &drafter_model,
             repo_root,
+            c.id,
         )
         .await
         {

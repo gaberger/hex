@@ -221,9 +221,9 @@
           "name": "Feed twin rejection back into the trajectory",
           "agent": "hex-coder",
           "layer": "usecases",
-          "files": ["hex-nexus/src/orchestration/drafter.rs", "hex-nexus/src/orchestration/agent_loop/driver.rs"],
+          "files": ["hex-nexus/src/orchestration/drafter_trajectory.rs", "hex-nexus/src/orchestration/drafter.rs"],
           "deps": ["P3.2"],
-          "status": "todo",
+          "status": "done",
           "description": "When twin emits a rejection on a proposed_action that was produced by the agent loop, drafter looks up the trajectory_id, appends a synthetic AgentStep with the rejection rationale as the observation, and re-fires agent_loop::run(resume=true) with the appended context. Existing REJECT_BUDGET still bounds total attempts (3) but each attempt now has more context.",
           "done_condition": "Integration test: twin rejects draft → next trajectory step shows the rejection rationale in its system context."
         }
