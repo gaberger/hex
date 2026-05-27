@@ -224,12 +224,29 @@ async fn precompile_check(path: &str, content: &str) -> Result<(), String> {
     if !path.ends_with(".rs") {
         return Ok(());
     }
+    let basename = path.rsplit('/').next().unwrap_or("draft.rs");
+
+    // Module-tree leaf files declare other modules with `pub mod X;`.
+    // Standalone `rustc --test` can't find those sibling files because
+    // we check in /tmp away from the workspace. The gate rejects on
+    // E0583 ("file not found for module") for every submodule the leaf
+    // references — irrelevant to the actual patch. Skip the gate for
+    // these files; the workspace cargo check the executor runs post-write
+    // is the real verification. Observed 2026-05-27 on the autonomous
+    // wire-in of twin_deterministic into orchestration/mod.rs (Finding 7).
+    if matches!(basename, "mod.rs" | "lib.rs" | "main.rs") {
+        tracing::info!(
+            path = %path,
+            "precompile_check: skipping module-tree leaf (cargo-context required)"
+        );
+        return Ok(());
+    }
+
     // Collision-free name: PID + process-local atomic counter. The prior
     // microsecond-only suffix collided under parallel tokio tests because
     // two threads grabbed the same μs slice. tempfile would be ideal but
     // is a dev-dep here; keeping precompile_check usable from non-test
     // code is more valuable than a few lines saved.
-    let basename = path.rsplit('/').next().unwrap_or("draft.rs");
     let pid = std::process::id();
     let counter = PRECOMPILE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let work_dir = std::env::temp_dir().join(format!("hex-agent-loop-pc-{}-{}", pid, counter));
