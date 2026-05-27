@@ -277,6 +277,37 @@ Fix path:
   that `go run` executes cleanly with the expected output
   `smoke: 5 * 6 = 30`.
 
+### Finding 6: precompile gate typechecks tests but doesn't run them
+
+Autonomous dispatch of `twin_deterministic.rs` (commit `a0dbf360`, 2058 B,
+the foundation module for the deterministic-first twin refactor)
+**landed successfully + compiles + 2 of 3 tests pass**. Persona produced
+a clean module: ALLOWED_PREFIXES constant, two pub fns,
+`std::path::Path::extension()`-based dispatch.
+
+But: the third test body has a logic bug — asserts
+`!extension_matches_content("Cargo.toml", "[package]")` when the
+function returns `true` for unknown extensions (`.toml` not in the
+match arms; falls to `_ => true`). Running `rustc --test` (full test
+binary, not just typecheck) panics on the assertion.
+
+Our pre-twin compile gate uses `rustc --test --emit=metadata` which
+typechecks test signatures but doesn't EXECUTE them. So a logic-bug
+test body passes the gate as long as it compiles. A real `cargo test`
+would catch it; our gate doesn't.
+
+Follow-up needs: extend the gate to optionally run the produced
+test (in a sandboxed temp dir, capped at 30s) when the path is in
+`tests/` or contains `#[test]`. Marginal cost for a meaningful
+correctness bump. Records as a gate-completeness finding for the
+deterministic-twin workplan.
+
+Note: the module is also currently **orphan** — not wired into
+`hex-nexus/src/orchestration/mod.rs`. Wiring needs a follow-up
+dispatch with mode=replace_string targeting that one-line addition.
+`cargo check -p hex-nexus` passes only because orphans aren't
+compiled.
+
 ### Cumulative model assignment after Day 1
 
 | Role | Model | Why |
