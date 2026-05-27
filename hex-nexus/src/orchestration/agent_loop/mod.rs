@@ -29,4 +29,4 @@ pub mod tools;
 // `trajectory.rs` lands in P2.1; `driver.rs` in P2.2.
 
 pub use tool::{IAgentTool, Observation, TerminalAction, ToolError};
-pub use tools::RepoReadTool;
+pub use tools::{CargoCheckTool, CodePatchProposeTool, RepoGrepTool, RepoReadTool};

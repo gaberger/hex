@@ -7,6 +7,12 @@
 //! - `cargo_check` (P1.4) — compilation probe (lands in P1.4)
 //! - `code_patch_propose` (P1.5) — TERMINAL action (lands in P1.5)
 
+pub mod cargo_check;
+pub mod code_patch_propose;
+pub mod repo_grep;
 pub mod repo_read;
 
+pub use cargo_check::CargoCheckTool;
+pub use code_patch_propose::CodePatchProposeTool;
+pub use repo_grep::RepoGrepTool;
 pub use repo_read::RepoReadTool;

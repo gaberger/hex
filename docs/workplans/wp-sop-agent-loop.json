@@ -80,7 +80,7 @@
           "layer": "adapters",
           "files": ["hex-nexus/src/orchestration/agent_loop/tools/repo_grep.rs"],
           "deps": ["P1.1"],
-          "status": "todo",
+          "status": "done",
           "description": "Implements IAgentTool. args: {pattern, path_glob?}. Wraps `rg --json` (ripgrep) — if rg not on PATH, falls back to `grep -RnI`. Returns at most 50 matches as `path:line: text` lines. 5s timeout.",
           "done_condition": "Unit test: grep for 'pub fn' in hex-core/src/ returns >0 matches."
         },
@@ -91,7 +91,7 @@
           "layer": "adapters",
           "files": ["hex-nexus/src/orchestration/agent_loop/tools/cargo_check.rs"],
           "deps": ["P1.1"],
-          "status": "todo",
+          "status": "done",
           "description": "Implements IAgentTool. args: {crate: String}. Runs `cargo check -p <crate>` with $HOME/.cargo/bin on PATH (same fix as run.sh today). 60s timeout. Returns success/failure + first 30 lines of diagnostics. Uses tokio::process. Workspace-root resolution via HEX_REPO_ROOT or current_dir.",
           "done_condition": "Unit test: invoking with crate=hex-core returns success when workspace compiles cleanly."
         },
@@ -102,7 +102,7 @@
           "layer": "adapters",
           "files": ["hex-nexus/src/orchestration/agent_loop/tools/code_patch_propose.rs"],
           "deps": ["P1.1"],
-          "status": "todo",
+          "status": "done",
           "description": "Implements IAgentTool. args: {path, mode, content}. Does NOT directly write — just packages a `TerminalAction` that the driver returns as Trajectory.final_action. The drafter then converts it to a proposed_action_open call. Validates path against the policy::allowed_repo_path helper from P1.2.",
           "done_condition": "Unit test: returns Observation with action=TerminalAction populated."
         }
