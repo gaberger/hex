@@ -510,9 +510,25 @@ async fn git_commit_executed_file(
     // another pathspec (`error: pathspec '-m' did not match any file(s)`).
     // Observed 2026-05-14 on the first smoke run after the operator-
     // passthrough bypass made the loop reach this step.
+    //
+    // Pass user.name / user.email via `-c` so the autonomous commit lands
+    // even on hosts where the operator hasn't set git's global identity
+    // (e.g. fresh dev box, container, CI runner). HEX_AUTONOMOUS_GIT_*
+    // env vars override the defaults. Observed 2026-05-27 on the first
+    // agent-loop dogfood run: action_executor wrote the file fine but
+    // the commit step failed with `Author identity unknown` because the
+    // box only has repo-local identity, not global.
+    let author_name = std::env::var("HEX_AUTONOMOUS_GIT_NAME")
+        .unwrap_or_else(|_| "hex-autonomous".to_string());
+    let author_email = std::env::var("HEX_AUTONOMOUS_GIT_EMAIL")
+        .unwrap_or_else(|_| "hex-autonomous@local".to_string());
     let commit = tokio::process::Command::new("git")
         .current_dir(repo_root)
-        .args(["commit", "--only", "-m", &message, "--", rel_path])
+        .args([
+            "-c", &format!("user.name={}", author_name),
+            "-c", &format!("user.email={}", author_email),
+            "commit", "--only", "-m", &message, "--", rel_path,
+        ])
         .output()
         .await
         .map_err(|e| format!("git commit: {}", e))?;
