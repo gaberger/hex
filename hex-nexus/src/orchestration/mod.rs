@@ -1,6 +1,7 @@
 pub mod adr_conformance;
 pub mod adversarial_swarm;
 pub mod agent;
+pub mod agent_loop;
 pub mod agent_manager;
 pub mod classifier_types;
 pub mod classifier_parser;
