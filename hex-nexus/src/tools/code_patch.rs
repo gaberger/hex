@@ -97,6 +97,8 @@ impl Tool for CodePatch {
         let allowed_prefixes = [
             "hex-nexus/src/", "hex-cli/src/", "hex-core/src/", "hex-agent/src/",
             "hex-parser/src/", "hex-analyzer/src/", "hex-desktop/src/",
+            "hex-nexus/tests/", "hex-cli/tests/", "hex-core/tests/", "hex-agent/tests/",
+            "hex-parser/tests/", "hex-analyzer/tests/", "hex-desktop/tests/",
             "hex-cli/assets/", "hex-nexus/assets/",
             "examples/", "scripts/", "docs/", "spacetime-modules/", "tests/",
         ];

@@ -303,7 +303,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         let chat_db = std::env::var("HEX_CHAT_STDB_DATABASE")
             .unwrap_or_else(|_| hex_core::stdb_database_for_module("chat-relay").to_string());
         let agent_comm_db = std::env::var("HEX_AGENT_COMM_STDB_DATABASE")
-            .unwrap_or_else(|_| "c200a65681232ad58e2bc33eefb64d8ff72804348c58f2ca074733b53b266ed4".to_string());
+            .unwrap_or_else(|_| hex_core::stdb_database_for_module("agent-comms").to_string());
 
         let inference_client =
             adapters::spacetime_inference::SpacetimeInferenceClient::new(

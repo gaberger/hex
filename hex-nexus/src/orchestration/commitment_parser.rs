@@ -272,7 +272,7 @@ fn split_success_clause(body: &str) -> (&str, String) {
 /// wrote a fake hash in the `success:` clause but mentioned the file in
 /// the action text — and to fix common truncations like writing
 /// `specs/foo.md` instead of `docs/specs/foo.md`.
-fn scan_for_path(s: &str) -> Option<String> {
+pub fn scan_for_path(s: &str) -> Option<String> {
     // Canonical roots the twin allows.
     const ROOTS: &[&str] = &[
         "docs/", "src/", "tests/", "examples/", "scripts/",

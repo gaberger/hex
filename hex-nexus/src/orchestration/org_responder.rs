@@ -994,10 +994,103 @@ pub async fn route_decision(
             .to_string();
             post_inbox_notify("operator", 2, "request_tool", &payload).await;
         }
+        ClassifierDecision::Accept => {
+            // Fan out each tool_plan step into its own commitment row so the
+            // existing drafter → twin → executor chain can pick up per-file
+            // work. Without this, the classifier captures the structured plan
+            // but the legacy commitment_parser only records the rolled-up
+            // "I will execute the tool plan" string with empty path, and the
+            // drafter abstains for lack of a target. Each step's `intent`
+            // text is scanned for a real repo path; steps without one are
+            // skipped (the drafter cannot draft into a path it cannot name).
+            if let Some(plan) = resp.tool_plan.as_ref() {
+                for step in plan {
+                    let path = match crate::orchestration::commitment_parser::scan_for_path(&step.intent) {
+                        Some(p) => p,
+                        None => continue,
+                    };
+                    open_typed_tool_commitment(
+                        role,
+                        &step.tool,
+                        &step.intent,
+                        &path,
+                        thread_id.unwrap_or_default(),
+                        msg_id,
+                    )
+                    .await;
+                }
+            }
+        }
         _ => {}
     }
 
     reply_text_for_decision(role, msg_id, resp)
+}
+
+/// Open ONE commitment row per accepted tool_plan step that names a real
+/// repo path. The drafter polls open commitments and turns each one into a
+/// `proposed_action(file_write)`; the twin auto-approves operator-passthrough
+/// content and the executor applies the patch. Closes the
+/// classifier → drafter handoff that was previously dropped because the
+/// legacy commitment_parser only captured the rolled-up confirm line.
+async fn open_typed_tool_commitment(
+    role: &str,
+    tool: &str,
+    intent: &str,
+    path: &str,
+    thread_id: &str,
+    msg_id: u64,
+) {
+    let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+    let hex_db = std::env::var("HEX_STDB_DATABASE")
+        .unwrap_or_else(|_| hex_core::stdb_database_for_module("hexflo-coordination").to_string());
+    let url = format!("{}/v1/database/{}/call/commitment_open", stdb_host, hex_db);
+    let body = serde_json::json!([
+        role,
+        format!("[tool_plan] {}: {}", tool, intent),
+        format!("{}: {}", tool, intent),
+        0i64,
+        path,
+        "verifiable_path",
+        thread_id,
+        msg_id,
+    ]);
+    let http = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::debug!(error = %e, "open_typed_tool_commitment: http build failed");
+            return;
+        }
+    };
+    match http.post(&url).json(&body).send().await {
+        Ok(r) if r.status().is_success() => {
+            tracing::info!(
+                role = %role,
+                tool = %tool,
+                path = %path,
+                msg_id,
+                "tool_plan commitment opened (will be drafted into proposed_action)"
+            );
+        }
+        Ok(r) => tracing::warn!(
+            status = %r.status(),
+            role = %role,
+            tool = %tool,
+            path = %path,
+            "tool_plan commitment_open non-2xx"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            role = %role,
+            tool = %tool,
+            path = %path,
+            "tool_plan commitment_open transport error"
+        ),
+    }
 }
 
 /// Spawn the detached commitment-parser + journal-thought tasks the

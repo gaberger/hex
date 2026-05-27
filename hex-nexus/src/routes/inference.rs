@@ -764,7 +764,18 @@ pub async fn inference_complete(
                         if let Some(p) = ollama {
                             // Default to the T2 codegen tier model; operators can
                             // override per project via .hex/project.json → inference.tier_models.
-                            let local_model = "qwen2.5-coder:32b".to_string();
+                            // Read the project override first so we don't ask for a
+                            // model larger than the local GPU can hold (e.g. 32B Q4
+                            // needs ~19GB VRAM; a 16GB card can't serve it usefully).
+                            let local_model = std::fs::read_to_string(".hex/project.json")
+                                .ok()
+                                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                                .and_then(|v| v.get("inference")
+                                    .and_then(|i| i.get("tier_models"))
+                                    .and_then(|t| t.get("t2"))
+                                    .and_then(|m| m.as_str())
+                                    .map(|s| s.to_string()))
+                                .unwrap_or_else(|| "qwen2.5-coder:32b".to_string());
                             tracing::info!(
                                 provider = %p.provider_id,
                                 model = %local_model,
