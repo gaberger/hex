@@ -6,12 +6,15 @@ agent-loop became a real thing. Written same-day to preserve detail.
 
 ## TL;DR
 
-- **6 autonomous commits authored by `hex-autonomous`** through the full
+- **7 autonomous commits authored by `hex-autonomous`** through the full
   agent-loop chain — board ask → classifier → typed commitment → drafter
   bridge → agent_loop trajectory → precompile gate → twin → executor →
-  git commit. 5 Rust + 1 TypeScript. All Rust commits compile + tests
-  pass. The TypeScript was the final-experiment data point that proved
-  the twin-model-choice axis.
+  git commit. **5 Rust + 1 TypeScript + 1 Go.** All produced by local AI
+  (qwen2.5-coder:14b drafter + devstral-small-2:24b twin/classifier).
+  All compile + the Go file runs (`go run` exits 0 with the expected
+  literal output).
+- **Multi-language proof complete across Rust, TypeScript, Go.** Zero
+  frontier-model calls in the entire chain.
 - **All of wp-sop-agent-loop P1-P6 landed.** P4.2 (STDB compile_status
   column) and P6.3 (Solid view) deferred to a follow-up dashboard
   workplan. P7 acceptance proved live.
@@ -66,7 +69,9 @@ cfc57ad7 fix(nexus): agent_loop source edits use agent_loop:<role> tag, NOT tool
 96a6ae37 [autonomous] feat(hex-nexus): auto — action#21 → precompile_lang.rs    ← REVERTED 787bfd68 (old logic)
 787bfd68 Revert "feat(hex-nexus): auto — action#21 → precompile_lang.rs"
 38909701 fix(nexus): twin LLM judge — stop inventing path-pattern policy
-91b9c70c [autonomous] chore(misc): auto — action#27 → agent_loop_ts_smoke_devstral.ts  ← multi-lang proof (Devstral twin)
+91b9c70c [autonomous] chore(misc): auto — action#27 → agent_loop_ts_smoke_devstral.ts  ← TypeScript proof (Devstral twin)
+bfca1c7b fix(nexus): scan_for_path recognizes .go (and friends)
+9284619e [autonomous] chore(misc): auto — action#28 → main.go                         ← Go proof (full Devstral chain)
 ```
 
 **Counts**: ~25 commits, 5 net-positive autonomous, 3 reverts. The reverts
@@ -249,10 +254,44 @@ need operator-passthrough or T3 escalation") and move on.
 - ~3000 lines of net new Rust in hex-nexus/src
 - 2 proof writeups + this findings doc
 
+### Finding 5: classifier compresses path out of tool_plan intent
+
+After Devstral fixed twin brittleness, Go probe surfaced a DIFFERENT
+same-model-family limitation: qwen2.5-coder:14b acting as
+**classifier** (the StrictJsonClassifierAdapter producing the
+structured tool_plan from the persona's natural-language reply)
+*dropped the file path from the intent text*. Inbound message
+explicitly said "the path must appear in your tool_plan intent" —
+classifier emitted `intent="Create the Go program"` without the
+path. Fan-out scan_for_path had nothing to extract; commitment
+opened with empty artifact; drafter abstained.
+
+Fix path:
+- **Tier-2: HEX_RESPONDER_COMMIT_MODEL=devstral-small-2:24b** so the
+  classifier role also uses Devstral. With the swap, classifier
+  preserved `"file_create: examples/agent_loop_go_smoke/main.go"` in
+  the bullet.
+- **Parser bug: .go missing from scan_for_path EXTS allowlist.**
+  Two-line fix (commit bfca1c7b). Re-running the probe under the
+  parser fix immediately produced commit 9284619e: 77-byte Go file
+  that `go run` executes cleanly with the expected output
+  `smoke: 5 * 6 = 30`.
+
+### Cumulative model assignment after Day 1
+
+| Role | Model | Why |
+|---|---|---|
+| Drafter | qwen2.5-coder:14b | Fast, fits GPU, good at code-gen ≤ ~80 lines |
+| Twin (LLM judge) | devstral-small-2:24b | Follows nuanced policy prompts; qwen2.5-coder:14b invented policy |
+| Classifier (commit) | devstral-small-2:24b | Preserves intent fidelity; qwen2.5-coder:14b compressed paths out |
+| Chat replies | qwen2.5-coder:14b | Conversational, no structured contract |
+
+All set via `HEX_RESPONDER_COMMIT_MODEL`, `HEX_TWIN_MODEL`,
+`HEX_DRAFTER_MODEL` env vars. **Zero frontier in any role.**
+
 ## What's NOT shipped
 
-- Multi-language Go autonomous proof (TypeScript landed under Devstral
-  twin; Go dispatch pending — same chain should work)
+- ~Multi-language Go autonomous proof~ — landed (9284619e)
 - Solid `/agent-trajectories` view (data is in STDB, presentation
   deferred)
 - STDB `compile_status` column for proposed_action (deferred)
