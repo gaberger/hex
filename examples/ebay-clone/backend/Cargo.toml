@@ -51,3 +51,6 @@ docs/specs/ebay-spec-006
 docs/specs/ebay-spec-010
 docs/specs/ebay-spec-019
 docs/specs/ebay-spec-023
+
+# Additional dependencies for STDB client wrapper
+spacetimedb-sdk = "0.1" # Added for ReducerCallPort functionality
