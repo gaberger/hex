@@ -53,5 +53,4 @@ mod tests {
     }
 }
 
-// ADR-2026-05-19-0721
 // docs/specs/ebay-spec-008
