@@ -21,3 +21,6 @@ pub mod listings;
 // Added for bidding, watchlist and my-account use cases as per the workplan - docs/workplans/feat-ebay-mvp.json
 pub mod bidding;
 pub mod account;
+
+// Added for image upload use case implementation - docs/specs/ebay-spec-010, ebay-spec-011
+pub mod images;
