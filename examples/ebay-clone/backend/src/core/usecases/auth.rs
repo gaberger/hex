@@ -1,69 +1,71 @@
-use super::ports::{PasswordHasherPort, ReducerCallPort, TokenIssuerPort, UserRepoPort};
-use crate::domain::models::{AuthResult, NewUser, User};
+use super::{ports::*, domain::*};
+use std::error::Error;
 
-pub struct AuthService<PWH: PasswordHasherPort, RCP: ReducerCallPort, TIP: TokenIssuerPort, URP: UserRepoPort> {
-    password_hasher: PWH,
-    reducer_call: RCP,
-    token_issuer: TIP,
-    user_repo: URP,
+// ADR-2026-05-19-0721: Password hashing and JWT issuance via ports
+pub struct AuthUseCase {
+    password_hasher: Box<dyn PasswordHasherPort>,
+    token_issuer: Box<dyn TokenIssuerPort>,
+    user_repo: Box<dyn UserRepoPort>,
+    reducer_call: Box<dyn ReducerCallPort>,
 }
 
-impl<PWH, RCP, TIP, URP> AuthService<PWH, RCP, TIP, URP>
-where
-    PWH: PasswordHasherPort,
-    RCP: ReducerCallPort,
-    TIP: TokenIssuerPort,
-    URP: UserRepoPort,
-{
-    pub fn new(password_hasher: PWH, reducer_call: RCP, token_issuer: TIP, user_repo: URP) -> Self {
-        AuthService {
-            password_hasher,
-            reducer_call,
-            token_issuer,
-            user_repo,
-        }
+impl AuthUseCase {
+    pub fn new(
+        password_hasher: Box<dyn PasswordHasherPort>,
+        token_issuer: Box<dyn TokenIssuerPort>,
+        user_repo: Box<dyn UserRepoPort>,
+        reducer_call: Box<dyn ReducerCallPort>,
+    ) -> Self {
+        AuthUseCase { password_hasher, token_issuer, user_repo, reducer_call }
     }
 
-    pub fn register_user(&self, username: String, password: String) -> Result<User, String> {
-        // Validate username and password
-        if username.is_empty() || password.len() < 8 {
-            return Err(String::from("Invalid username or password"));
-        }
+    pub fn register_user(&self, username: String, password: String) -> Result<User, Box<dyn Error>> {
+        validate_username(&username)?;
+        validate_password(&password)?;
 
-        let hashed_password = self.password_hasher.hash(password);
-        let new_user = NewUser {
-            username,
-            password: hashed_password,
-        };
+        let hashed_password = self.password_hasher.hash(password)?;
+        let user = User::new(username, hashed_password);
+        self.reducer_call.register_user(user.clone())?;
+        self.user_repo.save(user.clone())?;
 
-        // Register user via ReducerCallPort
-        self.reducer_call.register_user(new_user.clone())?;
-
-        // Fetch the created row from UserRepoPort
-        self.user_repo.get_by_username(&new_user.username)
+        Ok(user)
     }
 
-    pub fn login(&self, username: String, password: String) -> Result<AuthResult, String> {
-        let user = match self.user_repo.get_by_canonical_username(&username) {
-            Ok(user) => user,
-            Err(_) => return Err(String::from("User not found")),
-        };
-
-        // Verify password
-        if !self.password_hasher.verify(&password, &user.password) {
-            return Err(String::from("Incorrect password"));
+    pub fn login(&self, username: String, password: String) -> Result<AuthResult, Box<dyn Error>> {
+        if let Some(user) = self.user_repo.find_by_username(&username)? {
+            if self.password_hasher.verify(password, &user.hashed_password)? {
+                let token = self.token_issuer.issue_token(&user.username)?;
+                return Ok(AuthResult::new(token, user.username));
+            }
         }
 
-        // Issue JWT token
-        let token = self.token_issuer.issue_token(&username);
-        let expires_at = self.token_issuer.expiry_time();
-
-        Ok(AuthResult {
-            token,
-            username: user.username.clone(),
-            expires_at,
-        })
+        Err("Invalid username or password".into())
     }
 }
 
-// docs/workplans/feat-ebay-mvp.json
+fn validate_username(username: &str) -> Result<(), Box<dyn Error>> {
+    if username.len() < 3 || username.len() > 20 {
+        return Err("Username must be between 3 and 20 characters long".into());
+    }
+    Ok(())
+}
+
+fn validate_password(password: &str) -> Result<(), Box<dyn Error>> {
+    if password.len() < 6 {
+        return Err("Password must be at least 6 characters long".into());
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+pub struct AuthResult {
+    pub token: String,
+    pub username: String,
+    // expires_at field can be added when JWT expiry logic is implemented
+}
+
+impl AuthResult {
+    fn new(token: String, username: String) -> Self {
+        AuthResult { token, username }
+    }
+}
