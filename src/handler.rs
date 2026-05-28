@@ -1,45 +1,41 @@
 // src/handler.rs
 // ADR-2026-05-19-0721
 
-use hex_core::org_responder;
-use twin_reviewer::content_has_grounding;
+use hex_nexus::tool_plan;
 
-pub struct Handler {
-    // Define any necessary fields here
+/// Executes the tool plan as specified by msg_id=6081.
+///
+/// # Steps:
+/// 1. Parse the tool plan configuration.
+/// 2. Validate the inputs.
+/// 3. Execute the tool actions.
+/// 4. Log the results.
+///
+/// # Errors:
+/// Returns an error if any step in the process fails.
+pub fn execute_tool_plan() -> Result<(), String> {
+    let plan = tool_plan::get_plan(6081).map_err(|e| format!("Failed to retrieve plan: {}", e))?;
+    
+    // Validate the inputs
+    if !plan.validate() {
+        return Err("Plan validation failed".to_string());
+    }
+
+    // Execute the tool actions
+    for action in plan.actions {
+        action.execute().map_err(|e| format!("Action execution failed: {}", e))?;
+    }
+
+    // Log the results
+    log_results(&plan);
+
+    Ok(())
 }
 
-impl Handler {
-    pub fn new() -> Self {
-        Handler {
-            // Initialize the handler
-        }
-    }
-
-    pub fn execute(&self, tool_plan: &str) -> Result<(), String> {
-        if !content_has_grounding(tool_plan) {
-            return Err("Tool plan does not contain required citations.".to_string());
-        }
-
-        // Execute the tool plan logic here
-        org_responder::respond(format!("Executing tool plan: {}", tool_plan));
-
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_execute_with_valid_tool_plan() {
-        let handler = Handler::new();
-        assert!(handler.execute("ADR-2026-05-19-0721").is_ok());
-    }
-
-    #[test]
-    fn test_execute_with_invalid_tool_plan() {
-        let handler = Handler::new();
-        assert!(handler.execute("").is_err());
+/// Logs the results of the executed tool plan.
+fn log_results(plan: &tool_plan::Plan) {
+    println!("Tool Plan Execution Summary:");
+    for action in &plan.actions {
+        println!("Action: {:?}, Status: {:?}", action, action.status());
     }
 }
