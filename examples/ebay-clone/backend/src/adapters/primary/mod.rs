@@ -18,3 +18,5 @@ pub mod graphql;
 // - Error mapping module (DomainError -> StatusCode)
 // - JSON request/response DTOs
 // - JWT extractor middleware that verifies via TokenIssuerPort
+
+pub use http_axum::{AppState, router, auth_middleware}; // Added for feat-ebay-mvp step-12
