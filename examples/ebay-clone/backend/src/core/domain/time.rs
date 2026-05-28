@@ -2,41 +2,42 @@ use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
 use thiserror::Error;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Timestamp(i64);
 
 #[derive(Debug, Error)]
-pub enum TimeValidationError {
-    #[error("Timestamp must be in the past or present")]
+pub enum TimeError {
+    #[error("timestamp must be a valid Unix milliseconds since UTC epoch")]
     InvalidTimestamp,
 }
 
 impl TryFrom<i64> for Timestamp {
-    type Error = TimeValidationError;
+    type Error = TimeError;
 
     fn try_from(value: i64) -> Result<Self, Self::Error> {
-        if value <= chrono::Utc::now().timestamp_millis() {
+        // Assuming all positive values are valid Unix timestamps in milliseconds
+        if value >= 0 {
             Ok(Timestamp(value))
         } else {
-            Err(TimeValidationError::InvalidTimestamp)
+            Err(TimeError::InvalidTimestamp)
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct DurationMs(i64);
 
 impl TryFrom<i64> for DurationMs {
-    type Error = TimeValidationError;
+    type Error = TimeError;
 
     fn try_from(value: i64) -> Result<Self, Self::Error> {
+        // Assuming all non-negative values are valid durations in milliseconds
         if value >= 0 {
             Ok(DurationMs(value))
         } else {
-            Err(TimeValidationError::InvalidTimestamp)
+            Err(TimeError::InvalidTimestamp)
         }
     }
 }
 
-// ADR-2026-05-19-0721
-// docs/specs/ebay-spec-025
+// docs/specs/ebay-spec-025 specifies the validation rules for Timestamp and DurationMs
