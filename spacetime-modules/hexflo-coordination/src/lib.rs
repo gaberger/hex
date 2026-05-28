@@ -7475,3 +7475,84 @@ pub fn agent_trajectory_close(
     });
     Ok(())
 }
+
+// ============================================================
+// classifier_response — SOP pipeline P2.1 (ADR-2026-05-17-2030)
+//
+// One row per classifier LLM call from the org_responder CLASSIFY phase.
+// Producer: nexus `post_classifier_response_open` (hex-nexus/src/orchestration/
+// org_responder.rs). Consumers: routes/observability.rs `silent_drops`
+// counter; future autonomy_ratio dashboard metric.
+//
+// Shipped 2026-05-28 to close the P2.1 gap surfaced during the ebay-mvp
+// scaling test — the writer had been calling this reducer for ~11 days
+// while the WASM module half of the change never landed, producing a
+// silent 404 on every classify call.
+//
+// Schema rationale:
+//   - `id: u64 auto_inc` — observability.rs SELECTs `id`
+//   - `created_at: String` (RFC3339) — caller-supplied, matches the
+//     module-wide convention; observability.rs uses RFC3339 string compare
+//   - `tool_plan_json` / `tool_spec_json` — serde_json strings, not BSATN;
+//     classifier schema is permissive (Option<Vec<ToolPlanStep>>) and
+//     consumers parse client-side
+//   - Insert-only, no update. Fire-and-forget at the call site.
+// ============================================================
+
+#[table(name = classifier_response, public)]
+#[derive(Clone, Debug)]
+pub struct ClassifierResponse {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub msg_id: u64,
+    pub from_role: String,
+    pub to_role: String,
+    pub decision: String,
+    pub tool_plan_json: String,
+    pub reason: String,
+    pub target_persona: String,
+    pub question: String,
+    pub tool_spec_json: String,
+    pub reparse_attempts: u32,
+    pub final_outcome: String,
+    pub cost_usd: f32,
+    pub created_at: String,
+}
+
+#[reducer]
+#[allow(clippy::too_many_arguments)]
+pub fn classifier_response_open(
+    ctx: &ReducerContext,
+    msg_id: u64,
+    from_role: String,
+    to_role: String,
+    decision: String,
+    tool_plan_json: String,
+    reason: String,
+    target_persona: String,
+    question: String,
+    tool_spec_json: String,
+    reparse_attempts: u32,
+    final_outcome: String,
+    cost_usd: f32,
+    created_at: String,
+) -> Result<(), String> {
+    ctx.db.classifier_response().insert(ClassifierResponse {
+        id: 0, // auto_inc
+        msg_id,
+        from_role,
+        to_role,
+        decision,
+        tool_plan_json,
+        reason,
+        target_persona,
+        question,
+        tool_spec_json,
+        reparse_attempts,
+        final_outcome,
+        cost_usd,
+        created_at,
+    });
+    Ok(())
+}

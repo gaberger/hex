@@ -1706,6 +1706,7 @@ pub async fn post_classifier_response_open(
     cost_usd: f32,
 ) {
     let (client, url) = stdb_endpoint("classifier_response_open");
+    let created_at = chrono::Utc::now().to_rfc3339();
     let body = serde_json::json!([
         msg_id,
         from_role,
@@ -1719,6 +1720,7 @@ pub async fn post_classifier_response_open(
         reparse_attempts,
         final_outcome,
         cost_usd,
+        created_at,
     ]);
     match client.post(&url).json(&body).send().await {
         Ok(resp) if resp.status().is_success() => {
@@ -2169,7 +2171,7 @@ mod tests {
             // classifier_response_open body is positional:
             //   [msg_id, from, to, decision, tool_plan_json, reason,
             //    target_persona, question, tool_spec_json, reparse_attempts,
-            //    final_outcome, cost_usd]
+            //    final_outcome, cost_usd, created_at]
             // Match by substring so we're not coupled to JSON key ordering.
             let outcome_marker = format!(",\"{expected_outcome}\",");
             let attempts_marker = format!(",{expected_attempts},");
