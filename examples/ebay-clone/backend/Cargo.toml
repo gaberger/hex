@@ -1,54 +1,38 @@
-# examples/ebay-clone/backend/Cargo.toml — STUB (operator triage required)
+[package]
+name = "ebay-clone-backend"
+version = "0.1.0"
+edition = "2021"
 
-**Status:** stub — auto-generated after 2 drafter attempts  
-**Generated:** 2026-05-28T14:08:18.109627652+00:00  
-**Committed by:** `hex-coder`  
-**Original committed path:** `examples/ebay-clone/backend/Cargo.toml`  
-**Commitment:** code_patch: create examples/ebay-clone/backend/Cargo.toml
-
-## Why this is a stub
-
-The persona `hex-coder` committed to producing this artifact, but on 2 drafter attempts the drafter could not produce a usable draft. Causes include: persona returned `INSUFFICIENT_CONTEXT`, persona returned an empty draft, content was too short for the long-form artifact type (e.g. ADR / spec), or the artifact path contained unresolved template placeholders like `<auto-id>` that the persona forgot to substitute.
-
-## Originating ask
-
-```
-(no thread linkage — DM had no thread_id)
-```
-
-## What to do
-
-One of:
-
-1. **Fill it in by hand** — edit this file with the actual content you want for `examples/ebay-clone/backend/Cargo.toml`.
-2. **Delete this stub** — the commitment is already marked abandoned in STDB so nothing will retry.
-3. **Re-ask with more context** — DM `@hex-coder` with a more specific prompt (and an explicit concrete artifact path/ID if the prior failure was a placeholder) and let the responder + drafter pipeline try again. Consider pinning `HEX_DRAFTER_MODEL_LONGFORM` to a stronger model for ADR/spec asks.
-
----
-
-*Stub written directly by the drafter circuit-breaker. Bypassed twin review because stubs are an operator-triage signal, not a persona artifact. Commitment_id `4239` was abandoned with the abandon reason pointing here. See `hex-nexus/src/orchestration/drafter.rs`.*
+[[bin]]
+name = "main"
+path = "src/main.rs"
 
 [dependencies]
-async-trait = "0.1.56"
-argon2 = { version = "0.3", features = ["password-hash"] }
-jsonwebtoken = "8.2"
-tokio = { version = "1", features = ["full"] }
-spacetimedb-client = "0.1"
+# domain — pure data, no IO
 serde = { version = "1.0", features = ["derive"] }
-sha2 = "0.10" # Added for hashing
-mime_guess = "2.0" # Added for content type guessing
-tokio-fs = "0.3" # Added for filesystem operations
+serde_json = "1.0"
+thiserror = "1.0"
 
-[workspace]
-members = [
-    "src/core/ports",
-    "src/adapters/secondary/stdb_client", # Added for STDB client wrapper
-]
+# ports — async trait contracts
+async-trait = "0.1"
 
-# Dependencies for trait definitions and core domain
-docs/specs/ebay-spec-001
-docs/specs/ebay-spec-004
-docs/specs/ebay-spec-006
-docs/specs/ebay-spec-010
-docs/specs/ebay-spec-019
-docs/specs/ebay-spec-023
+# adapters — concrete implementations
+tokio = { version = "1", features = ["full"] }
+argon2 = "0.5"
+sha2 = "0.10"
+hex = "0.4"
+jsonwebtoken = "9"
+reqwest = { version = "0.12", features = ["json"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+rand = "0.8"
+
+# http primary adapter
+axum = "0.7"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
