@@ -10,3 +10,15 @@ pub mod storage;
 pub mod password_hasher_argon2;
 pub mod jwt_signer_hs256;
 pub mod stdb_client;
+
+use crate::ports::secondary::{PasswordHasherPort, TokenIssuerPort};
+use password_hasher_argon2::Argon2idPasswordHasher;
+use jwt_signer_hs256::HS256JwtSigner;
+
+pub fn create_password_hasher() -> Box<dyn PasswordHasherPort> {
+    Box::new(Argon2idPasswordHasher::new())
+}
+
+pub fn create_jwt_signer(secret: String) -> Box<dyn TokenIssuerPort> {
+    Box::new(HS256JwtSigner::new(secret))
+}
