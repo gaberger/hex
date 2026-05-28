@@ -11,3 +11,6 @@ pub mod user_registration;
 pub mod search_auctions;
 pub mod view_auction_details;
 pub mod payment_processing;
+
+// Added for auth use case implementation - docs/workplans/feat-ebay-mvp.json
+pub mod auth;
