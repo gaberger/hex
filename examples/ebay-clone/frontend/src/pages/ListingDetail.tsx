@@ -104,5 +104,4 @@ const ListingDetail: React.FC = () => {
 
 export default ListingDetail;
 
-// ADR-2026-05-19-0721
-// docs/specs/ebay-spec-020
+docs/specs/ebay-spec-020
