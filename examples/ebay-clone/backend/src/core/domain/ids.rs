@@ -2,7 +2,7 @@ use serde::{Serialize, Deserialize};
 use std::convert::TryFrom;
 use thiserror::Error;
 
-// docs/specs/ebay-spec-025
+// ADR-2026-05-19-0721
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct UserId(pub String);
