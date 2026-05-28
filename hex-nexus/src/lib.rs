@@ -501,6 +501,23 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 hex_db_for_integrator.clone(),
             );
 
+            // Top-down workplan driver — owns docs/workplans/feat-*.json and
+            // dispatches the next dep-satisfied incomplete step every tick
+            // until the whole workplan is complete or the conductor escalates
+            // a stall to engineering-lead. Surfaced 2026-05-28 during the
+            // ebay-mvp scaling test: gap_dispatcher fires on gap:* keys with
+            // a 30-min/6-hr cadence and pool_autopause kills idle pools, so
+            // a 32-step workplan got one tool plan and went silent.
+            {
+                let conductor_repo_root = std::env::var("HEX_REPO_ROOT")
+                    .ok()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| {
+                        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    });
+                crate::orchestration::workplan_conductor::spawn(conductor_repo_root);
+            }
+
             // Auto-seed merge-team default policy + persona pools.
             // STDB schema-change semantics on republish wipe row data,
             // so we re-init on every nexus startup. Reducers are idempotent —

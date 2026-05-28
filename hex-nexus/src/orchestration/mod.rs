@@ -10,6 +10,7 @@ pub mod persona_prompt_seeds;
 pub mod persona_prompt_observer;
 pub mod hive_improver;
 pub mod gap_dispatcher;
+pub mod workplan_conductor;
 pub mod supervisor_subscriber;
 pub mod integrator_subscriber;
 pub mod brain_dispatch_reconciler;
