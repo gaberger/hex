@@ -58,7 +58,13 @@ pub enum AuctionStatus {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Listing {
-    // Define fields according to specs
+    pub id: ids::ListingId,
+    pub title: title::ListingTitle,
+    pub description: String,
+    pub starting_price_cents: u32,
+    pub duration_ms: time::DurationMs,
+    pub seller_id: ids::UserId,
+    pub created_at: time::TimestampMs,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -73,7 +79,11 @@ pub struct Auction {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Bid {
-    // Define fields according to specs
+    pub id: ids::BidId,
+    pub auction_id: ids::AuctionId,
+    pub bidder_id: ids::UserId,
+    pub amount_cents: u32,
+    pub placed_at: time::TimestampMs,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -92,7 +102,9 @@ pub struct ImageRef {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WatchEntry {
-    // Define fields according to specs
+    pub user_id: ids::UserId,
+    pub auction_id: ids::AuctionId,
+    pub created_at: time::TimestampMs,
 }
 
 #[derive(Debug, Error)]
@@ -120,6 +132,4 @@ pub enum DomainError {
 
 docs/specs/ebay-spec-006  
 docs/specs/ebay-spec-012  
-docs/specs/ebay-spec-016  
-docs/specs/ebay-spec-017  
-docs/specs/ebay-spec-018
+docs
