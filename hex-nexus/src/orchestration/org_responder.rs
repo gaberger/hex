@@ -959,26 +959,57 @@ pub async fn route_decision(
     // Side-effects per decision (Route → forward; RequestTool → notify).
     match &resp.decision {
         ClassifierDecision::Route => {
-            let tp = resp.target_persona.as_deref().unwrap_or("");
-            if !tp.is_empty() {
-                let forward = format!(
-                    "[Routed from @{} on behalf of @{}]: \"{}\"",
-                    role,
-                    from,
-                    original_content.chars().take(400).collect::<String>(),
+            // Anti-bounce: if the inbound message is itself already a
+            // routed forward (`[Routed from @X on behalf of @Y]: ...`),
+            // refuse to route again. Surfaced 2026-05-28 after the
+            // peer-aware prompt patch: hex-tester → integrator →
+            // hex-tester → hex-reviewer cycles emerged because every
+            // persona's prompt encouraged them to route out-of-domain
+            // asks. Without this guard, a single conductor dispatch
+            // bounces 4-5 times around the fleet before stopping.
+            //
+            // Convert the route into a priority-1 operator inbox notify
+            // so the loop surfaces instead of silently swallowing the
+            // ask.
+            if original_content.contains("[Routed from @") {
+                tracing::warn!(
+                    role = %role,
+                    target = %resp.target_persona.as_deref().unwrap_or(""),
+                    msg_id,
+                    "org_responder: REFUSING to re-route an already-routed message — accept or escalate_to_operator instead"
                 );
-                if let Err(e) = comm
-                    .send_dm(
-                        role_string.to_string(),
-                        tp.to_string(),
-                        forward,
-                        thread_id_owned,
-                    )
-                    .await
-                {
-                    tracing::warn!(role = %role, peer = %tp, error = %e, "org_responder: route forward failed");
-                } else {
-                    tracing::info!(role = %role, peer = %tp, "org_responder: routed ask to peer");
+                let payload = serde_json::json!({
+                    "role": role,
+                    "msg_id": msg_id,
+                    "from": from,
+                    "attempted_route_target": resp.target_persona.as_deref().unwrap_or(""),
+                    "summary": "persona tried to re-route an already-routed message — would create a loop",
+                    "preview": original_content.chars().take(200).collect::<String>(),
+                })
+                .to_string();
+                post_inbox_notify("operator", 1, "route_bounce_blocked", &payload).await;
+            } else {
+                let tp = resp.target_persona.as_deref().unwrap_or("");
+                if !tp.is_empty() {
+                    let forward = format!(
+                        "[Routed from @{} on behalf of @{}]: \"{}\"",
+                        role,
+                        from,
+                        original_content.chars().take(400).collect::<String>(),
+                    );
+                    if let Err(e) = comm
+                        .send_dm(
+                            role_string.to_string(),
+                            tp.to_string(),
+                            forward,
+                            thread_id_owned,
+                        )
+                        .await
+                    {
+                        tracing::warn!(role = %role, peer = %tp, error = %e, "org_responder: route forward failed");
+                    } else {
+                        tracing::info!(role = %role, peer = %tp, "org_responder: routed ask to peer");
+                    }
                 }
             }
         }

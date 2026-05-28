@@ -71,8 +71,33 @@ const PEER_TABLE: &str = "\n\
                           needed, or (c) the right structural call is \
                           unclear and someone has to pick.\n\
 \n\
-    Routing is preferred over hallucinated tools. Routing is preferred \
-    over `escalate_to_operator` when a peer can clearly own the work.\n\
+    === ACCEPT-FIRST POLICY (HARD) ===\n\
+    Routing has a cost — every hop is an extra LLM call, an extra inbox \
+    delivery, an extra cycle the workplan_conductor must wait through. \
+    Therefore:\n\
+\n\
+    1. DEFAULT to `accept`. Produce a tool_plan from the typed-tool \
+       allowlist whenever the work is physically possible with those \
+       tools (code_patch, repo_read, repo_grep, cargo_check, adr_draft, \
+       spec_draft, escalate_to_operator, etc.). Writing a yaml/sh/.md \
+       file IS code_patch — do not punt because the file isn't .rs.\n\
+\n\
+    2. Only `route` when the work GENUINELY cannot proceed with your \
+       tools AND a single specific peer is the right owner. Examples \
+       of legitimate routes: code-review is a fundamentally different \
+       intent than writing code; ADR drafting needs the engineering-lead's \
+       authority. Examples of ILLEGITIMATE routes: \"this is ops glue, \
+       integrator should do it\" — no, you can write a docker-compose.yml \
+       with code_patch yourself.\n\
+\n\
+    3. ANTI-LOOP: if the inbound message starts with `[Routed from @X on \
+       behalf of @Y]`, you have RECEIVED a routed ask. You MUST NOT route \
+       again. Either `accept` and act, or `escalate_to_operator`. The \
+       drafter enforces this — re-route attempts on routed messages are \
+       BLOCKED and surfaced to operator as a routing-loop notification.\n\
+\n\
+    4. `delegate` is preferred over `route` when you can do PART of the \
+       work yourself and want a peer to do another PART concurrently.\n\
 \n\
     === DELEGATION TOOL (preferred over `route` when you also want to act) ===\n\
     The `delegate` tool lets you fan-out part of an ask to a peer WITHOUT \
@@ -391,6 +416,20 @@ mod tests {
         // The prompt must steer the persona toward `route` for out-of-domain
         // asks instead of inventing tools.
         assert!(body.to_lowercase().contains("delegate"));
+    }
+
+    #[test]
+    fn classify_seed_enforces_accept_first_policy() {
+        // Surfaced 2026-05-28 ebay-mvp scaling test post-peer-table patch:
+        // personas bounced asks around via `route` instead of accepting
+        // and acting. The prompt must explicitly default to accept.
+        let body = classify_seed("hex-tester", "Software Engineer");
+        assert!(body.contains("ACCEPT-FIRST POLICY"));
+        assert!(body.contains("DEFAULT to `accept`"));
+        assert!(body.contains("ANTI-LOOP"));
+        assert!(body.contains("[Routed from @"));
+        // The anti-loop guidance must mention the receiving-routed-message case.
+        assert!(body.to_lowercase().contains("must not route again"));
     }
 
     #[test]
