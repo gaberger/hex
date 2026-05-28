@@ -14,6 +14,6 @@ pub struct WatchEntry {
     pub added_at: SystemTime,
 }
 
-// docs/workplans/feat-ebay-mvp.json
+// docs/specs/ebay-spec-012
 // hex-core/src/core/domain/watch.rs
 // This file defines the domain model for managing watch entries in an eBay-like application.
