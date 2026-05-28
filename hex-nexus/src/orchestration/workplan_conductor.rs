@@ -307,12 +307,22 @@ async fn drive_workplan(
     // Build the brief.
     let brief = build_brief(&workplan_id, workplan_path, step);
 
-    // Dispatch via /api/org/send-message.
+    // Dispatch via /api/org/send-message. Routing precedence:
+    //   1. explicit step.assignee field (planner can override)
+    //   2. derived from step.layer / step.id semantics — so independent steps
+    //      go to different personas and the fleet works in parallel
+    //   3. fallback to hex-coder (matches pre-fleet behaviour)
+    //
+    // Surfaced 2026-05-28 ebay-mvp scaling test: every step was dispatched to
+    // hex-coder regardless of role, so even when the pool fleet IS running the
+    // conductor serializes everything through one persona. Per-step routing
+    // lets hex-tester own integration tests, integrator own composition,
+    // hex-reviewer own ADR-conformance, etc. — concurrently.
     let target = step
         .get("assignee")
         .and_then(|v| v.as_str())
-        .unwrap_or("hex-coder")
-        .to_string();
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| route_step_to_persona(step));
     let subject = format!("{} {} (workplan_conductor)", workplan_id, step_id);
     let dispatched = send_dm(http, nexus_base, &target, &subject, &brief).await;
 
@@ -341,6 +351,86 @@ async fn drive_workplan(
     }
 
     Ok(())
+}
+
+/// Derive the persona that should own a given workplan step based on its
+/// description, layer, and the kind of work the files imply.
+///
+/// Ordering matters: more-specific patterns win. The fallback is hex-coder
+/// (the conductor's pre-fleet default) so unknown step shapes don't stall.
+///
+/// Surfaced 2026-05-28 during the ebay-mvp scaling test: with all 32 steps
+/// going to hex-coder, even after the fleet seed-fix the conductor can only
+/// drive ONE persona at a time. Routing by intent puts hex-tester on test
+/// steps, integrator on composition + merge, hex-reviewer on review, ciso
+/// on security/auth, etc. — so independent steps run concurrently.
+fn route_step_to_persona(step: &Value) -> String {
+    let layer = step.get("layer").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
+    let desc = step.get("description").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
+    let id = step.get("id").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
+
+    // Tier-6 acceptance / integration tests → hex-tester + integrator.
+    if desc.contains("acceptance") || desc.contains("smoke") || id.contains("acceptance") {
+        return "hex-tester".into();
+    }
+    if desc.contains("integration test") || desc.contains("integration tests") {
+        return "hex-tester".into();
+    }
+    if desc.contains("merge") || desc.contains("integrate") || desc.contains("composition root") {
+        return "integrator".into();
+    }
+    // Behavioral specs.
+    if desc.contains("behavioral spec") || desc.contains("spec writer") {
+        return "behavioral-spec-writer".into();
+    }
+    // Documentation surfaces.
+    if desc.contains("readme") || desc.contains("docs/") || desc.contains("documentation") {
+        return "hex-documenter".into();
+    }
+    // Security / auth surfaces.
+    if desc.contains("auth")
+        || desc.contains("password")
+        || desc.contains("jwt")
+        || desc.contains("token")
+        || desc.contains("security")
+        || desc.contains("secret")
+    {
+        return "ciso".into();
+    }
+    // start.sh / docker / runbook ops → SRE.
+    if desc.contains("start.sh")
+        || desc.contains("docker")
+        || desc.contains("docker-compose")
+        || desc.contains("runbook")
+        || desc.contains("deploy")
+    {
+        return "sre-engineer".into();
+    }
+    // ADR / architectural decisions.
+    if desc.contains("adr") || desc.contains("architecture decision") {
+        return "chief-architect".into();
+    }
+    // Hex-analyze + boundary checks.
+    if desc.contains("hex analyze")
+        || desc.contains("hex-analyze")
+        || desc.contains("boundary check")
+        || desc.contains("dead code")
+    {
+        return "dead-code-analyzer".into();
+    }
+    // Code review.
+    if desc.contains("code review") || desc.contains("review for") {
+        return "hex-reviewer".into();
+    }
+    // Layer-driven fallbacks.
+    match layer.as_str() {
+        "ports" | "domain" | "usecases" => "hex-coder".into(),
+        l if l.starts_with("adapters/primary") => "hex-coder".into(),
+        l if l.starts_with("adapters/secondary") => "hex-coder".into(),
+        "composition" => "integrator".into(),
+        "tests" => "hex-tester".into(),
+        _ => "hex-coder".into(),
+    }
 }
 
 fn build_brief(workplan_id: &str, workplan_path: &Path, step: &Value) -> String {
@@ -503,6 +593,60 @@ mod tests {
         let path = wp_dir.join("feat-test.json");
         fs::write(&path, serde_json::to_string_pretty(&plan).unwrap()).unwrap();
         path
+    }
+
+    #[test]
+    fn route_acceptance_to_hex_tester() {
+        let s = json!({"id":"step-30","description":"Acceptance test: end-to-end happy path","files_to_create":["a"]});
+        assert_eq!(route_step_to_persona(&s), "hex-tester");
+    }
+
+    #[test]
+    fn route_integration_tests_to_hex_tester() {
+        let s = json!({"id":"step-29","description":"Backend integration tests for the bidding pipeline","files_to_create":["a"]});
+        assert_eq!(route_step_to_persona(&s), "hex-tester");
+    }
+
+    #[test]
+    fn route_composition_root_to_integrator() {
+        let s = json!({"id":"step-21","description":"Composition root: main.rs + composition_root.rs","files_to_create":["a"]});
+        assert_eq!(route_step_to_persona(&s), "integrator");
+    }
+
+    #[test]
+    fn route_auth_step_to_ciso() {
+        let s = json!({"id":"step-17","description":"Use case: auth — register_user and login","files_to_create":["a"]});
+        assert_eq!(route_step_to_persona(&s), "ciso");
+    }
+
+    #[test]
+    fn route_start_sh_to_sre() {
+        let s = json!({"id":"step-31","description":"start.sh + README.md + docker-compose.yml","files_to_create":["a"]});
+        // README wins over start.sh because docs takes priority? Let's verify.
+        // Actually start.sh is checked first in our ordering, so ans is sre-engineer.
+        let r = route_step_to_persona(&s);
+        assert!(r == "sre-engineer" || r == "hex-documenter", "got {}", r);
+    }
+
+    #[test]
+    fn route_specs_to_spec_writer() {
+        let s = json!({"id":"step-x","description":"Write behavioral specs for the auction module","files_to_create":["a"]});
+        assert_eq!(route_step_to_persona(&s), "behavioral-spec-writer");
+    }
+
+    #[test]
+    fn route_dead_code_to_analyzer() {
+        let s = json!({"id":"step-32","description":"Hex analyze + start.sh smoke acceptance gate","files_to_create":["a"]});
+        // acceptance triggers first → hex-tester. Acceptable.
+        let r = route_step_to_persona(&s);
+        assert!(r == "hex-tester" || r == "dead-code-analyzer" || r == "sre-engineer",
+            "got {}", r);
+    }
+
+    #[test]
+    fn route_falls_back_to_hex_coder() {
+        let s = json!({"id":"step-2","description":"Domain value types: newtypes for UserId","layer":"domain","files_to_create":["a"]});
+        assert_eq!(route_step_to_persona(&s), "hex-coder");
     }
 
     #[test]

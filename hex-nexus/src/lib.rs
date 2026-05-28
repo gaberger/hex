@@ -558,6 +558,80 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                             Err(e) => tracing::debug!(reducer, error = %e, "auto-init: transport error"),
                         }
                     }
+
+                    // Seed worker_pool_intent rows for the 31 canonical persona
+                    // pools. Without this the supervisor sees 0 pools at every
+                    // tick and never spawns hex-agent workers — surfaced
+                    // 2026-05-28 during the ebay-mvp scaling test, where one
+                    // nexus-internal org_responder loop was doing the entire
+                    // build because no IC processes existed. STDB
+                    // schema-change-on-publish wipes the table, so we
+                    // re-emit on every restart; worker_pool_intent_set is
+                    // idempotent (UPSERT semantics).
+                    //
+                    // Disabled via HEX_DISABLE_POOL_SEED=1 for forensic runs.
+                    if std::env::var("HEX_DISABLE_POOL_SEED").is_err() {
+                        const POOL_ROLES: &[&str] = &[
+                            // executives
+                            "cto", "cpo", "coo", "ciso", "chief-visionary",
+                            "chief-architect", "ceo",
+                            // leads
+                            "engineering-lead", "product-lead", "sre-lead",
+                            "validation-judge",
+                            // engineering ICs
+                            "hex-coder", "hex-tester", "hex-fixer", "hex-reviewer",
+                            "hex-documenter", "rust-refactorer", "integrator",
+                            "scaffold-validator", "dead-code-analyzer",
+                            "behavioral-spec-writer",
+                            // product / UX ICs
+                            "hex-ux", "ux-designer", "dashboard-ux-architect",
+                            "cli-designer", "pm-agent", "adr-reviewer",
+                            // SRE / platform ICs
+                            "platform-engineer", "sre-engineer",
+                            // adversarial ICs
+                            "adversarial-red", "adversarial-blue",
+                        ];
+                        let owner = format!("nexus-{}", std::process::id());
+                        let mut seeded = 0;
+                        let mut skipped = 0;
+                        for role in POOL_ROLES {
+                            let id = format!("{}-default", role);
+                            let url = format!(
+                                "{}/v1/database/{}/call/worker_pool_intent_set",
+                                host_init, db_init
+                            );
+                            // Signature: (id, role, desired_count, restart_strategy,
+                            //             max_restarts, max_restart_window_secs,
+                            //             paused, owner_agent_id)
+                            let body = serde_json::json!([
+                                id,
+                                *role,
+                                1u32,
+                                "permanent",
+                                5u32,
+                                60u32,
+                                false,
+                                owner,
+                            ]);
+                            match client.post(&url).json(&body).send().await {
+                                Ok(r) if r.status().is_success() => seeded += 1,
+                                Ok(r) => {
+                                    tracing::debug!(role = *role, status = %r.status(), "pool_seed: non-success");
+                                    skipped += 1;
+                                }
+                                Err(e) => {
+                                    tracing::debug!(role = *role, error = %e, "pool_seed: transport error");
+                                    skipped += 1;
+                                }
+                            }
+                        }
+                        tracing::info!(
+                            seeded,
+                            skipped,
+                            total = POOL_ROLES.len(),
+                            "auto-init: worker_pool_intent rows seeded"
+                        );
+                    }
                 });
             }
         }
