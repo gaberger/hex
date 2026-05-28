@@ -10,12 +10,14 @@ const Countdown: React.FC<CountdownProps> = ({ endTime, status }) => {
   const [timeLeft, setTimeLeft] = useState<number>(calculateTimeLeft(endTime));
 
   useEffect(() => {
-    const timerId = setInterval(() => {
-      setTimeLeft(calculateTimeLeft(endTime));
-    }, 1000);
+    if (status === 'Active' && timeLeft > 0) {
+      const timerId = setInterval(() => {
+        setTimeLeft(calculateTimeLeft(endTime));
+      }, 1000);
 
-    return () => clearInterval(timerId);
-  }, [endTime]);
+      return () => clearInterval(timerId);
+    }
+  }, [endTime, status, timeLeft]);
 
   function calculateTimeLeft(end: Date): number {
     const difference = end.getTime() - new Date().getTime();
