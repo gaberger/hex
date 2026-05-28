@@ -39,6 +39,7 @@ serde = { version = "1.0", features = ["derive"] }
 [workspace]
 members = [
     "src/core/ports",
+    "src/adapters/secondary/stdb_client", # Added for STDB client wrapper
 ]
 
 # Dependencies for trait definitions and core domain
