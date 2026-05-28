@@ -19,7 +19,11 @@ impl BiddingUseCase {
             .map_err(|reducer_error| match reducer_error {
                 // Map specific reducer errors to domain errors
                 // Example mappings according to ebay-spec-012
-                _ => DomainError::InvalidBid,
+                ReducerError::InvalidBidAmount => DomainError::InvalidBid,
+                ReducerError::AuctionClosed => DomainError::AuctionEnded,
+                ReducerError::BidTooLow => DomainError::BidBelowMinimum,
+                ReducerError::UserNotEligible => DomainError::UserIneligible,
+                _ => DomainError::Unexpected,
             })
     }
 
