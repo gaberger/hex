@@ -8,7 +8,7 @@ use tower_http::auth::RequireAuthorizationLayer;
 use tracing::info;
 
 use crate::{
-    adapters::primary::http_axum::{auth_middleware::JwtAuthMiddleware, state::AppState, handlers_bidding, handlers_me, handlers_listings, handlers_images},
+    adapters::primary::http_axum::{auth_middleware::JwtAuthMiddleware, state::AppState, handlers_bidding, handlers_me, handlers_listings, handlers_images, handlers_auth},
     ports::{self},
 };
 
@@ -26,6 +26,8 @@ pub fn create_router(ports: Arc<Ports>) -> Router {
         .route("/api/v1/me/won", get(handlers_me::get_won_items))
         .route("/api/v1/me/listings", get(handlers_me::get_my_listings))
         .route("/api/v1/images", post(handlers_images::upload_image))
+        .route("/api/v1/auth/register", post(handlers_auth::register_user))
+        .route("/api/v1/auth/login", post(handlers_auth::login_user))
         .layer(JwtAuthMiddleware::from(app_state.clone()))
 }
 
