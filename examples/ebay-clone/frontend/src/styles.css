@@ -13,3 +13,24 @@ body {
   max-width: 1200px;
   margin: 0 auto;
 }
+
+/* Additional styles for the eBay clone frontend */
+.app-container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header, .footer {
+  background-color: #3490dc;
+  color: white;
+  padding: 1rem;
+  width: 100%;
+}
+
+.main-content {
+  padding: 2rem;
+  width: 100%;
+}
