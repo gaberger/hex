@@ -15,7 +15,11 @@ const MyWon = () => {
 
     getWonAuctions(token)
       .then((auctions) => {
-        setWonAuctions(auctions);
+        const filteredAuctions = auctions.filter(
+          (auction) =>
+            auction.winner_identity === localStorage.getItem('userId') && auction.status === 'Closed'
+        );
+        setWonAuctions(filteredAuctions);
       })
       .catch((error) => {
         console.error('Error fetching won auctions:', error);
