@@ -21,6 +21,8 @@ impl TryFrom<u64> for Money {
     type Error = MoneyError;
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
+        // Since u64 is unsigned, it inherently cannot represent a negative value.
+        // The original error condition is thus logically impossible with u64.
         Ok(Money(value))
     }
 }
