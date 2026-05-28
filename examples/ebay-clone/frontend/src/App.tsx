@@ -6,6 +6,7 @@ import Home from './pages/Home'; // Added import for Home page
 import MyBids from './pages/MyBids'; // Import for MyBids page
 import MyWon from './pages/MyWon'; // Import for MyWon page
 import MyListings from './pages/MyListings'; // Import for MyListings page
+import ListingDetail from './pages/ListingDetail'; // Added import for ListingDetail page
 
 function App() {
   return (
@@ -18,6 +19,7 @@ function App() {
       <Route path="/my-bids" element={<MyBids />} /> {/* Route for MyBids page */}
       <Route path="/my-won" element={<MyWon />} /> {/* Route for MyWon page */}
       <Route path="/my-listings" element={<MyListings />} /> {/* Route for MyListings page */}
+      <Route path="/listing/:id" element={<ListingDetail />} /> {/* Added route for ListingDetail page */}
       {/* Placeholder for more routes */}
     </Router>
   );
