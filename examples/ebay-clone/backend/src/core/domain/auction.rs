@@ -16,7 +16,7 @@ impl AuctionStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Auction {
     pub current_highest_cents: u32,
     pub current_highest_bidder: Option<UserIdentity>,
@@ -74,5 +74,4 @@ impl Auction {
     }
 }
 
-// Adhering to the spec and workplan_executor guidelines
-// docs/workplans/feat-ebay-mvp.json
+// docs/specs/ebay-spec-012
