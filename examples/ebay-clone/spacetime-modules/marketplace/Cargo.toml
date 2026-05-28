@@ -1,0 +1,15 @@
+[package]
+name = "marketplace"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+spacetime = { git = "https://github.com/hex-core/spacetime-modules", branch = "main" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+
+[lib]
+crate-type = ["cdylib"]
+
+# docs/specs/ebay-spec-006, ebay-spec-012, ebay-spec-016, ebay-spec-018, ebay-spec-020
