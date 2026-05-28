@@ -1,0 +1,1 @@
+register_user(ctx, username: String, _password_unused: String), create_listing(ctx, title, description, starting_price_cents: u64, duration_ms: i64, image_sha256s: Vec<String>); all 7 spec failure modes return distinct error strings; no panics — every error path returns Err
