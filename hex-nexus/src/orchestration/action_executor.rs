@@ -152,10 +152,20 @@ async fn execute_file_write(
         .get("path")
         .and_then(|v| v.as_str())
         .ok_or("missing path")?;
-    let content = payload
+    let content_raw = payload
         .get("content")
         .and_then(|v| v.as_str())
         .ok_or("missing content")?;
+
+    // Strip markdown code fences before writing. The persona grammar in
+    // orchestration/grammars.rs forces tool-plan output to be wrapped in
+    // ```lang\n...\n``` and trailing prose can leak past the closing fence
+    // (LLM commentary). classifier_parser.rs already strips fences for JSON
+    // inputs; this is the symmetric strip for file_write content. Without it
+    // every code_patch produces a file whose line 1 is the opening fence and
+    // fails compilation immediately.
+    let content_owned = strip_code_fences(content_raw);
+    let content: &str = &content_owned;
 
     // Resolve + canonicalise to confirm the path stays under repo root.
     let target = repo_root.join(rel_path);
@@ -653,6 +663,39 @@ async fn mark_failed(
     Ok(())
 }
 
+/// Strip an optional opening ```` ```lang ```` (or ```` ``` ````) fence and
+/// the matching trailing ```` ``` ```` from `raw`. Anything past the closing
+/// fence is discarded (LLM commentary leaks past grammar-forced outputs).
+///
+/// The persona grammar in `orchestration/grammars.rs` forces tool-plan
+/// payloads to be wrapped in fences. `classifier_parser.rs` strips them on
+/// the JSON-input side; this is the symmetric strip for file-write content.
+/// Without it every committed file starts with a literal ```` ```rust ````
+/// line and fails compilation on line 1.
+fn strip_code_fences(raw: &str) -> String {
+    let s = raw.trim_start_matches(|c: char| c == '\n' || c == '\r');
+    let trimmed = s.trim_start();
+    let after_open = if let Some(rest) = trimmed.strip_prefix("```") {
+        // Skip the optional language hint up to end-of-line.
+        match rest.find('\n') {
+            Some(nl) => &rest[nl + 1..],
+            None => return raw.to_string(),
+        }
+    } else {
+        return raw.to_string();
+    };
+    // Find the matching closing fence at start-of-line. Discard everything
+    // after it (trailing prose like "as per the CEO's request").
+    if let Some(close_idx) = after_open.find("\n```") {
+        return after_open[..close_idx].to_string();
+    }
+    if after_open.ends_with("```") {
+        return after_open[..after_open.len() - 3].to_string();
+    }
+    // No closing fence — leave content as-is rather than corrupting bytes.
+    raw.to_string()
+}
+
 /// ADR-2026-05-11-0700 R1 helper — derive workspace crate name from a repo-
 /// relative path so we can scope cargo_check to one crate.
 fn infer_rust_crate(rel_path: &str) -> Option<&'static str> {
@@ -837,6 +880,59 @@ fn mutate_adr_status(
         out.push('\n');
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod fence_strip_tests {
+    use super::strip_code_fences;
+
+    #[test]
+    fn passthrough_plain_content() {
+        let raw = "fn main() {}\n";
+        assert_eq!(strip_code_fences(raw), raw);
+    }
+
+    #[test]
+    fn strips_rust_fence() {
+        let raw = "```rust\nfn main() {}\n```";
+        assert_eq!(strip_code_fences(raw), "fn main() {}");
+    }
+
+    #[test]
+    fn strips_toml_fence() {
+        let raw = "```toml\n[package]\nname = \"x\"\n```";
+        assert_eq!(strip_code_fences(raw), "[package]\nname = \"x\"");
+    }
+
+    #[test]
+    fn strips_bare_fence_no_lang() {
+        let raw = "```\nhello\n```";
+        assert_eq!(strip_code_fences(raw), "hello");
+    }
+
+    #[test]
+    fn discards_trailing_prose() {
+        let raw = "```rust\npub mod x;\n```\n\nThis update preserves every line as per the CEO's request.";
+        assert_eq!(strip_code_fences(raw), "pub mod x;");
+    }
+
+    #[test]
+    fn leaves_unfenced_content_alone() {
+        let raw = "[package]\nname = \"ebay-clone-backend\"\n";
+        assert_eq!(strip_code_fences(raw), raw);
+    }
+
+    #[test]
+    fn fence_without_close_leaves_as_is() {
+        let raw = "```rust\nincomplete";
+        assert_eq!(strip_code_fences(raw), raw);
+    }
+
+    #[test]
+    fn fence_after_leading_blank_lines() {
+        let raw = "\n\n```rust\nfn main() {}\n```";
+        assert_eq!(strip_code_fences(raw), "fn main() {}");
+    }
 }
 
 #[cfg(test)]
