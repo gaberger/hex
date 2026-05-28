@@ -62,6 +62,5 @@ pub enum DomainError {
 
 // END ADDED CONTENT
 
-docs/specs/ebay-spec-003
-docs/specs/ebay-spec-007
-docs/specs/ebay-spec-008
+docs/specs/ebay-spec-023
+docs/specs/ebay-spec-024
