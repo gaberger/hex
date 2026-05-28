@@ -17,3 +17,7 @@ pub mod auth;
 
 // Added for listings use case implementation - docs/specs/ebay-spec-006, ebay-spec-007, ebay-spec-008, ebay-spec-009, ebay-spec-019
 pub mod listings;
+
+// Added for bidding, watchlist and my-account use cases as per the workplan - docs/workplans/feat-ebay-mvp.json
+pub mod bidding;
+pub mod account;
