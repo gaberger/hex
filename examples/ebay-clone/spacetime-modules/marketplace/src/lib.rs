@@ -14,3 +14,7 @@ use docs/specs/ebay-spec-012; // Ensure spec references are cited
 // Implementation details for place_bid, close_auction, and watch_listing
 // will be in their respective modules.
 // ADR-2026-05-19-0721: Modular design for auction functionalities
+
+pub use reducers_bidding::place_bid;
+pub use reducers_auction::{close_auction, CloseAuctionSchedule};
+pub use reducers_watch::watch_listing;
