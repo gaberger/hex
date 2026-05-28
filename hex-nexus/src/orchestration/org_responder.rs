@@ -1003,8 +1003,38 @@ pub async fn route_decision(
             // drafter abstains for lack of a target. Each step's `intent`
             // text is scanned for a real repo path; steps without one are
             // skipped (the drafter cannot draft into a path it cannot name).
+            //
+            // Hallucination guard (2026-05-28 ebay-mvp scaling test): if the
+            // persona invents a `tool` name that isn't in the runtime
+            // registry, log loudly and route to operator. Without this,
+            // stall escalations to engineering-lead returned eloquent
+            // "investigate_hex_coder_pool_state" plans that produced zero
+            // actual work because the drafter silently dropped the unknown
+            // verb.
             if let Some(plan) = resp.tool_plan.as_ref() {
                 for step in plan {
+                    if !crate::tools::is_known_tool(&step.tool) {
+                        tracing::warn!(
+                            role = %role,
+                            tool = %step.tool,
+                            intent = %step.intent,
+                            msg_id,
+                            "org_responder: persona hallucinated unknown tool — dropping commitment (compose from real tools or pick escalate_to_operator)"
+                        );
+                        // Best-effort notify operator so hallucinations are
+                        // visible in the inbox instead of silently dropped.
+                        let payload = serde_json::json!({
+                            "role": role,
+                            "msg_id": msg_id,
+                            "hallucinated_tool": step.tool,
+                            "intent": step.intent,
+                            "summary": "persona invented a tool not in the runtime registry",
+                            "valid_tools": crate::tools::KNOWN_TOOL_NAMES,
+                        })
+                        .to_string();
+                        post_inbox_notify("operator", 1, "persona_hallucinated_tool", &payload).await;
+                        continue;
+                    }
                     let path = match crate::orchestration::commitment_parser::scan_for_path(&step.intent) {
                         Some(p) => p,
                         None => continue,

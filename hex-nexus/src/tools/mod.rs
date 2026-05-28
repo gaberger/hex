@@ -74,6 +74,49 @@ pub trait Tool: Send + Sync {
     async fn execute(&self, input: Value) -> ToolResult;
 }
 
+/// Canonical list of typed tool names the SOP pipeline can dispatch.
+///
+/// Single source of truth for both `ToolRegistry::default()` (the runtime
+/// registry) and `persona_prompt_seeds::classify_seed` (the LLM prompt
+/// allowlist) and `org_responder::open_typed_tool_commitment` (the
+/// commitment validator). Keep these in lockstep — adding a tool means
+/// extending this array and registering it in `Default::default()`.
+///
+/// Surfaced 2026-05-28 during the ebay-mvp scaling test: engineering-lead
+/// kept replying with tool plans citing `investigate_hex_coder_pool_state`,
+/// `review_twin_escalations`, `code_inspection`, `workplan_validation`,
+/// `twin_escalation_check` — none of which exist. The LLM was hallucinating
+/// tool names from the natural-language conductor stall message. Without
+/// this central list, the persona prompt couldn't constrain the LLM and the
+/// drafter silently dropped every hallucinated commitment.
+pub const KNOWN_TOOL_NAMES: &[&str] = &[
+    "adr_draft",
+    "adr_status_set",
+    "cargo_check",
+    "code_patch",
+    "cost_meter",
+    "dep_audit",
+    "escalate_to_operator",
+    "memory_search",
+    "module_register",
+    "repo_grep",
+    "repo_read",
+    "secret_scan",
+    "spec_draft",
+    "tool_register",
+    "typescript_check",
+    "web_search",
+    "workplan_emit",
+    "workspace_boundary_check",
+];
+
+/// True iff `name` is in the known tool registry. Used by the org_responder
+/// validator to reject hallucinated tool names before they open commitments
+/// the drafter can never satisfy.
+pub fn is_known_tool(name: &str) -> bool {
+    KNOWN_TOOL_NAMES.contains(&name)
+}
+
 pub struct ToolRegistry {
     tools: HashMap<&'static str, Arc<dyn Tool>>,
 }
@@ -168,6 +211,44 @@ mod tests {
         assert!(names.contains(&"spec_draft"), "spec_draft missing");
         assert!(names.contains(&"escalate_to_operator"), "escalate_to_operator missing");
         assert!(names.contains(&"memory_search"), "memory_search missing");
+    }
+
+    #[test]
+    fn known_tool_names_match_runtime_registry() {
+        // KNOWN_TOOL_NAMES is the single source of truth for both the
+        // persona-prompt allowlist and the org_responder validator. If
+        // Default::default() registers a tool that's missing from
+        // KNOWN_TOOL_NAMES, hallucination-validation will reject legitimate
+        // commitments. If KNOWN_TOOL_NAMES contains a tool the runtime
+        // doesn't have, the LLM will plan calls the executor can't dispatch.
+        let r = ToolRegistry::default();
+        let runtime: std::collections::HashSet<&str> = r.names().into_iter().collect();
+        let known: std::collections::HashSet<&str> = KNOWN_TOOL_NAMES.iter().copied().collect();
+        let missing_from_known: Vec<_> = runtime.difference(&known).copied().collect();
+        let missing_from_runtime: Vec<_> = known.difference(&runtime).copied().collect();
+        assert!(
+            missing_from_known.is_empty(),
+            "runtime registers tools missing from KNOWN_TOOL_NAMES: {:?}",
+            missing_from_known
+        );
+        assert!(
+            missing_from_runtime.is_empty(),
+            "KNOWN_TOOL_NAMES lists tools the runtime does not register: {:?}",
+            missing_from_runtime
+        );
+    }
+
+    #[test]
+    fn is_known_tool_rejects_hallucinations() {
+        assert!(is_known_tool("cargo_check"));
+        assert!(is_known_tool("code_patch"));
+        assert!(is_known_tool("escalate_to_operator"));
+        assert!(!is_known_tool("investigate_hex_coder_pool_state"));
+        assert!(!is_known_tool("review_twin_escalations"));
+        assert!(!is_known_tool("code_inspection"));
+        assert!(!is_known_tool("workplan_validation"));
+        assert!(!is_known_tool("twin_escalation_check"));
+        assert!(!is_known_tool(""));
     }
 
     #[test]
