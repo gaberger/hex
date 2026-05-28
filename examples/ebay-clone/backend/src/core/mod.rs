@@ -3,7 +3,7 @@
 pub mod domain;
 pub mod ports;
 pub mod usecases;
-pub mod adapters {
-    pub mod primary;
-    pub mod secondary;
-}
+
+// adapters module is defined in the root of the backend crate, 
+// not inside core, per hex-core architectural standards.
+// See docs/specs/ebay-mvp.json spec ebay-spec-023 for module boundary details.
