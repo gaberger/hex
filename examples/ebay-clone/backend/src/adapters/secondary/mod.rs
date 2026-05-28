@@ -7,3 +7,5 @@
 
 pub mod database;
 pub mod storage;
+pub mod password_hasher_argon2;
+pub mod jwt_signer_hs256;
