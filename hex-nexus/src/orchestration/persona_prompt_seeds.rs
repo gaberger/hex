@@ -33,6 +33,47 @@
 /// `role_title` is the long-form display title (e.g. "Chief Technology
 /// Officer") — supplied by the caller because production wiring resolves
 /// it through the roster cache, not a hardcoded match.
+/// Lean-fleet peer table — the 5 personas the conductor + supervisor keep
+/// alive. Used inside the persona system prompt so each persona knows who
+/// to `route` to when an ask is outside its own domain. Pre-fleet-refactor
+/// the prompt enumerated 30+ specialist personas; this is the canonical
+/// 5 every persona can delegate to.
+///
+/// Surfaced 2026-05-28 during the ebay-mvp scaling test: engineering-lead
+/// received stall escalations and replied with `accept` + a hallucinated
+/// `investigate_hex_coder_pool_state` tool plan instead of `route` to
+/// hex-tester or integrator — because the prompt never told the lead who
+/// its peers were. Mechanism exists (the `route` decision is in the
+/// classifier contract); only the awareness was missing.
+const PEER_TABLE: &str = "\n\
+    === YOUR PEERS (the lean fleet you can delegate to via `route`) ===\n\
+    Each peer has a focused responsibility. If the inbound ask is OUTSIDE \
+    your domain, emit `{\"decision\":\"route\",\"target_persona\":\"<peer>\",\"reason\":\"...\",\"cost_usd\":0}` \
+    instead of inventing tools or stalling.\n\n\
+    - hex-coder         — writes/edits source files (Rust, TS, frontend, \
+                          STDB reducers, adapters, ports, domain types, \
+                          use cases). Bias here when the ask is \"write \
+                          code now\".\n\
+    - hex-tester        — writes integration tests, behavioural specs, \
+                          acceptance harnesses, smoke gates. Bias here for \
+                          anything that VERIFIES code rather than writes it.\n\
+    - hex-reviewer      — reviews diffs, checks ADR conformance, hunts \
+                          dead code + cross-cutting violations, runs \
+                          adversarial review. Bias here for \"check this \
+                          before we ship\".\n\
+    - integrator        — composition root wiring, worktree merges, \
+                          README + docs, start.sh + docker-compose, \
+                          dependency strategy at the assembly level.\n\
+    - engineering-lead  — operator-facing escalation surface, ADR \
+                          drafting for paradigm calls, cross-team \
+                          coordination. ROUTE TO LEAD when (a) the ask \
+                          spans multiple peers, (b) operator scope is \
+                          needed, or (c) the right structural call is \
+                          unclear and someone has to pick.\n\
+\n\
+    Routing is preferred over hallucinated tools. Routing is preferred \
+    over `escalate_to_operator` when a peer can clearly own the work.\n";
+
 pub fn classify_seed(role: &str, role_title: &str) -> String {
     let allowed_tools = crate::tools::KNOWN_TOOL_NAMES.join(", ");
     format!(
@@ -59,9 +100,12 @@ pub fn classify_seed(role: &str, role_title: &str) -> String {
            1. Compose the work from real tools (e.g. `repo_read` a file + `repo_grep` a pattern + \
               `code_patch` to apply the fix), or\n\
            2. Pick `escalate_to_operator` with a `reason` explaining what's needed, or\n\
-           3. Pick `request_tool` with a `tool_spec` proposing the new verb.\n\
+           3. Pick `request_tool` with a `tool_spec` proposing the new verb, or\n\
+           4. Pick `route` to delegate to the peer whose domain this falls under (see peer \
+              table below).\n\
          Hallucinated tool names are silently dropped by the drafter — your reply produces zero \
-         work. Stay inside the allowlist.\n\n\
+         work. Stay inside the allowlist.\n\
+         {peer_table}\n\
          === FROM=OPERATOR INVARIANT ===\n\
          When the user turn begins with `from=operator`, you MUST NOT pick `defer` or `reject`. \
          Operator-direct asks resolve to `accept`, `route`, `clarify`, or `request_tool` only. \
@@ -81,13 +125,15 @@ pub fn classify_seed(role: &str, role_title: &str) -> String {
          {{\"decision\":\"accept\",\"tool_plan\":[{{\"tool\":\"code_patch\",\"intent\":\"patch hex-cli/src/commands/plan.rs\"}}],\"cost_usd\":0}}\n\
          {{\"decision\":\"accept\",\"tool_plan\":[{{\"tool\":\"repo_read\",\"intent\":\"read hex-nexus/src/orchestration/drafter.rs for stall diagnosis\"}},{{\"tool\":\"code_patch\",\"intent\":\"apply the fix once diagnosed\"}}],\"cost_usd\":0}}\n\
          {{\"decision\":\"accept\",\"tool_plan\":[{{\"tool\":\"escalate_to_operator\",\"intent\":\"stall investigation needs operator scope\"}}],\"cost_usd\":0}}\n\
-         {{\"decision\":\"route\",\"target_persona\":\"ciso\",\"cost_usd\":0}}\n\
+         {{\"decision\":\"route\",\"target_persona\":\"hex-tester\",\"reason\":\"acceptance harness is hex-tester's domain\",\"cost_usd\":0}}\n\
+         {{\"decision\":\"route\",\"target_persona\":\"integrator\",\"reason\":\"composition root + start.sh are integrator's domain\",\"cost_usd\":0}}\n\
          {{\"decision\":\"clarify\",\"question\":\"Which workplan should I target — wp-sop-phase-1 or wp-sop-phase-2?\",\"cost_usd\":0}}\n\
          {{\"decision\":\"request_tool\",\"tool_spec\":{{\"name\":\"grep_workplan\",\"rationale\":\"need wp dep lookups\"}},\"cost_usd\":0}}\n\n\
          Begin your reply with `{{` now.",
         role_title = role_title,
         role = role,
         allowed_tools = allowed_tools,
+        peer_table = PEER_TABLE,
     )
 }
 
@@ -309,6 +355,30 @@ mod tests {
         assert!(body.contains("Chief Technology Officer (cto)"));
         assert!(body.contains("STRICT OUTPUT CONTRACT"));
         assert!(body.len() > 1000);
+    }
+
+    #[test]
+    fn classify_seed_includes_peer_table_for_all_5_lean_personas() {
+        let body = classify_seed("engineering-lead", "Engineering Lead");
+        // All 5 lean fleet members must appear in the peer table so any
+        // persona can delegate to any other.
+        assert!(body.contains("hex-coder"));
+        assert!(body.contains("hex-tester"));
+        assert!(body.contains("hex-reviewer"));
+        assert!(body.contains("integrator"));
+        assert!(body.contains("engineering-lead"));
+        assert!(body.contains("YOUR PEERS"));
+        // The prompt must steer the persona toward `route` for out-of-domain
+        // asks instead of inventing tools.
+        assert!(body.to_lowercase().contains("delegate"));
+    }
+
+    #[test]
+    fn classify_seed_route_example_uses_real_lean_persona() {
+        let body = classify_seed("hex-coder", "Software Engineer");
+        // The worked example for `route` should target a real peer name.
+        assert!(body.contains("\"target_persona\":\"hex-tester\"")
+            || body.contains("\"target_persona\":\"integrator\""));
     }
 
     #[test]
