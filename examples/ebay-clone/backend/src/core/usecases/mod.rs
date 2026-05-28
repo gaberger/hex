@@ -6,3 +6,8 @@ pub mod auction_listing;
 pub mod bidding_process;
 pub mod user_authentication;
 pub mod user_registration;
+
+// New modules as per the workplan
+pub mod search_auctions;
+pub mod view_auction_details;
+pub mod payment_processing;
