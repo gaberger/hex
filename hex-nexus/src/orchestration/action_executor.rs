@@ -291,6 +291,42 @@ async fn execute_file_write(
             .await;
         }
     }
+    // TOML syntax gate — surfaced 2026-05-28 ebay-mvp scaling test:
+    // persona kept overwriting examples/ebay-clone/backend/Cargo.toml with
+    // stub-shaped markdown content. The existing cargo_check gate only
+    // covers .rs paths (and only for crates the workspace knows about), so
+    // every malformed Cargo.toml landed unverified and broke the build.
+    //
+    // Parse the just-written bytes with `toml::from_str`. If it fails,
+    // roll back to the pre-write backup so the project stays buildable.
+    // Cheap (microseconds) and deterministic; runs on every `.toml` write.
+    if gate_enabled && rel_path.ends_with(".toml") {
+        if let Err(e) = toml::from_str::<toml::Value>(content) {
+            if let Some(backup) = pre_write_backup.clone() {
+                let _ = std::fs::write(&target, backup);
+            } else {
+                let _ = std::fs::remove_file(&target);
+            }
+            tracing::warn!(
+                action_id = action.id,
+                path = %target.display(),
+                error = %e,
+                "action_executor: toml parse rejected patch — rolled back"
+            );
+            return mark_failed(
+                http,
+                stdb_host,
+                hex_db,
+                action.id,
+                &format!(
+                    "toml parse failed on {} after write — rolled back. Error: {}",
+                    rel_path,
+                    e.to_string().chars().take(800).collect::<String>()
+                ),
+            )
+            .await;
+        }
+    }
     if gate_enabled && rel_path.ends_with(".rs") {
         if let Some(crate_name) = infer_rust_crate(rel_path) {
             let check_tool = crate::tools::cargo_check::CargoCheck;
@@ -880,6 +916,56 @@ fn mutate_adr_status(
         out.push('\n');
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod toml_gate_tests {
+    #[test]
+    fn valid_cargo_toml_parses() {
+        let raw = r#"[package]
+name = "x"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = "1"
+"#;
+        assert!(toml::from_str::<toml::Value>(raw).is_ok());
+    }
+
+    #[test]
+    fn markdown_stub_cargo_toml_is_rejected() {
+        // The exact failure mode the gate is designed to catch — the
+        // ebay-mvp stub clobber. Line 1 looks like a comment but line 3
+        // (`**Status:** stub`) breaks TOML.
+        let raw = r#"# examples/ebay-clone/backend/Cargo.toml — STUB (operator triage required)
+
+**Status:** stub — auto-generated after 2 drafter attempts
+"#;
+        assert!(toml::from_str::<toml::Value>(raw).is_err());
+    }
+
+    #[test]
+    fn bare_path_lines_are_rejected() {
+        // Persona's second-stage corruption: real-ish [dependencies] block
+        // followed by bare lines like `docs/specs/ebay-spec-001`.
+        let raw = r#"[dependencies]
+serde = "1"
+docs/specs/ebay-spec-001
+"#;
+        assert!(toml::from_str::<toml::Value>(raw).is_err());
+    }
+
+    #[test]
+    fn fence_wrapped_toml_rejected() {
+        // Backstop in case fence-strip somehow fails to strip — the
+        // resulting content with backticks must not parse as TOML.
+        let raw = r#"```toml
+[package]
+name = "x"
+"#;
+        assert!(toml::from_str::<toml::Value>(raw).is_err());
+    }
 }
 
 #[cfg(test)]
