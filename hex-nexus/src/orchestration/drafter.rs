@@ -185,21 +185,26 @@ async fn write_stub_artifact(
     c: &OpenCommitment,
     repo_root: &PathBuf,
 ) -> Result<(), String> {
-    // Stubs are markdown operator-triage notes. Writing one at a source-file
-    // path clobbers real code with markdown and breaks the build. Refuse
-    // outright — the abandon path below still marks the commitment failed,
-    // so the persona loop doesn't spin. Observed 2026-05-17: a cto commitment
-    // targeting hex-nexus/src/orchestration/drafter.rs landed a stub directly
-    // over the source file after STUB_AFTER_FAILURES abstains.
-    if is_source_file_path(&c.success_artifact) {
+    // Stubs are markdown operator-triage notes. Writing one at any non-markdown
+    // path clobbers real content (source code, manifests, configs, JSON, etc.).
+    // The previous guard used is_source_file_path() which only matched a fixed
+    // list of hex-internal subtrees (hex-nexus/src/, hex-cli/src/, ...) and
+    // failed open for everything else — so commitments targeting
+    // examples/ebay-clone/backend/Cargo.toml and
+    // examples/ebay-clone/backend/src/core/domain/mod.rs received markdown
+    // stubs, breaking cargo check on every tick of the autonomous ebay-mvp
+    // build (observed 2026-05-28 during the workplan_conductor scaling test).
+    //
+    // Inverted to allowlist: only `.md` paths may receive a stub.
+    if !is_markdown_stub_target(&c.success_artifact) {
         tracing::warn!(
             commitment_id = c.id,
             role = %c.role,
             artifact = %c.success_artifact,
-            "drafter: refusing to write stub at source-file path — would clobber real code; abandoning commitment without stub"
+            "drafter: refusing to write stub at non-markdown path — would clobber real content; abandoning commitment without stub"
         );
         return Err(format!(
-            "stub refused: source-file path '{}' cannot receive a markdown stub",
+            "stub refused: non-markdown path '{}' cannot receive a markdown stub (only .md targets are stubbable)",
             c.success_artifact
         ));
     }
@@ -1213,6 +1218,20 @@ fn is_source_file_path(path: &str) -> bool {
         || (path.starts_with("spacetime-modules/") && path.contains("/src/"))
 }
 
+/// True iff the path is safe to receive an auto-generated markdown stub.
+/// Used as an allowlist to keep the drafter abandon-stub writer from
+/// clobbering real code, manifests, configs, or JSON workplans with
+/// markdown when the LLM fails STUB_AFTER_FAILURES attempts.
+///
+/// Only `.md` targets qualify. `docs/workplans/*.md` (if such a thing
+/// existed) is intentionally excluded — the workplan path guard runs
+/// independently.
+fn is_markdown_stub_target(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    let basename = lower.rsplit('/').next().unwrap_or(&lower);
+    basename.ends_with(".md") || basename.ends_with(".markdown")
+}
+
 /// Workplan-path detection. `docs/workplans/*.json` is a live execution
 /// surface — the supervisor reads and rewrites these files autonomously and
 /// the schema is strict. Free-form drafter LLM output never satisfies the
@@ -1295,6 +1314,52 @@ fn find_bracketed_redaction(path: &str) -> Option<String> {
         i = j + 1;
     }
     None
+}
+
+#[cfg(test)]
+mod stub_guard_tests {
+    use super::is_markdown_stub_target;
+
+    #[test]
+    fn allows_markdown_path() {
+        assert!(is_markdown_stub_target("docs/adrs/ADR-2026-05-28-foo.md"));
+        assert!(is_markdown_stub_target("docs/specs/bar.md"));
+        assert!(is_markdown_stub_target("README.md"));
+        assert!(is_markdown_stub_target("docs/notes.MARKDOWN"));
+    }
+
+    #[test]
+    fn refuses_cargo_toml_under_examples() {
+        assert!(!is_markdown_stub_target("examples/ebay-clone/backend/Cargo.toml"));
+    }
+
+    #[test]
+    fn refuses_rust_source_anywhere() {
+        assert!(!is_markdown_stub_target("examples/ebay-clone/backend/src/core/domain/mod.rs"));
+        assert!(!is_markdown_stub_target("hex-nexus/src/orchestration/drafter.rs"));
+        assert!(!is_markdown_stub_target("user-project/src/main.rs"));
+    }
+
+    #[test]
+    fn refuses_json_workplan_or_config() {
+        assert!(!is_markdown_stub_target("examples/ebay-clone/frontend/package.json"));
+        assert!(!is_markdown_stub_target("docs/workplans/feat-ebay-mvp.json"));
+        assert!(!is_markdown_stub_target("frontend/tsconfig.json"));
+    }
+
+    #[test]
+    fn refuses_dotfiles_and_configs() {
+        assert!(!is_markdown_stub_target("examples/ebay-clone/.gitignore"));
+        assert!(!is_markdown_stub_target("examples/ebay-clone/.env.example"));
+        assert!(!is_markdown_stub_target("Dockerfile"));
+    }
+
+    #[test]
+    fn ignores_query_string_extension_in_basename() {
+        // Even if the path contains 'foo.md' as a directory, the basename
+        // is what matters.
+        assert!(!is_markdown_stub_target("docs/foo.md/Cargo.toml"));
+    }
 }
 
 #[cfg(test)]
