@@ -33,7 +33,7 @@ const Home = () => {
             page: currentPage,
           },
         });
-        setListings(response.data.listings);
+        setListings(response.data.listings.filter(listing => listing.active));
       } catch (error) {
         console.error('Error fetching listings:', error);
       }
