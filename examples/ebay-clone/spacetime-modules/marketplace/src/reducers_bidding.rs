@@ -1,7 +1,23 @@
 use hex::prelude::*;
-use spacetime_state::{Auction, Bid, Watchlist};
+use spacetime_state::{Auction, Bid};
 use crate::errors::{Error, Result};
 
+/// Places a bid on an auction if conditions are met.
+///
+/// # Errors
+/// - `AuctionNotFound`: The specified auction does not exist.
+/// - `AuctionNotActive`: The auction is not active.
+/// - `BidOutsideRaceWindow`: The bid was placed outside the allowed time window.
+/// - `BidFromSeller`: The seller cannot place a bid on their own auction.
+/// - `BidTooLow`: The bid amount is not higher than the current highest bid.
+///
+/// # Specifications
+/// - [`docs/specs/ebay-spec-012`]
+/// - [`docs/specs/ebay-spec-013`]
+/// - [`docs/specs/ebay-spec-014`]
+/// - [`docs/specs/ebay-spec-015`]
+///
+/// ADR-2026-05-19-0721
 pub fn place_bid(ctx: &Context, auction_id: u64, amount_cents: u32) -> Result<()> {
     let mut auction = Auction::get(auction_id).ok_or(Error::AuctionNotFound)?;
 
@@ -38,6 +54,14 @@ pub fn place_bid(ctx: &Context, auction_id: u64, amount_cents: u32) -> Result<()
     Ok(())
 }
 
+/// Closes an auction if it is active.
+///
+/// # Specifications
+/// - [`docs/specs/ebay-spec-016`]
+/// - [`docs/specs/ebay-spec-017`]
+/// - [`docs/specs/ebay-spec-018`]
+///
+/// ADR-2026-05-19-0721
 pub fn close_auction(ctx: &Context, auction_id: u64) -> Result<()> {
     let mut auction = Auction::get(auction_id).ok_or(Error::AuctionNotFound)?;
 
@@ -55,24 +79,5 @@ pub fn close_auction(ctx: &Context, auction_id: u64) -> Result<()> {
     }
 
     auction.update()?;
-    Ok(())
-}
-
-// ADR-2026-05-19-0721
-pub fn watch_listing(ctx: &Context, listing_id: u64) -> Result<()> {
-    let mut watchlist = Watchlist::get(&ctx.sender).unwrap_or_else(|| Watchlist {
-        user_identity: ctx.sender.clone(),
-        listings: Vec::new(),
-    });
-
-    if !watchlist.listings.contains(&listing_id) {
-        watchlist.listings.push(listing_id);
-        watchlist.update()?;
-    } else {
-        // Remove the listing from the watchlist if it already exists
-        watchlist.listings.retain(|&id| id != listing_id);
-        watchlist.update()?;
-    }
-
     Ok(())
 }
