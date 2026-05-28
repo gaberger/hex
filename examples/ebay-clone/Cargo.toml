@@ -1,0 +1,36 @@
+[package]
+name = "ebay-clone"
+version = "0.1.0"
+edition = "2021"
+
+# Dependencies as specified in the workplan and specs.
+[dependencies]
+actix-web = "4.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+diesel = { version = "1.4", features = ["postgres"] }
+dotenv = "0.15"
+
+# Build dependencies.
+[build-dependencies]
+dotenv = "0.15"
+
+# Target-specific configurations.
+[target.'cfg(not(debug))'.dependencies]
+log = "0.4"
+
+# Development dependencies for testing and linting.
+[dev-dependencies]
+assert_cmd = "2.0"
+env_logger = "0.9"
+mockito = "0.37"
+
+# Configuration for the backend directory.
+[workspace]
+members = ["backend"]
+
+# ADR citation as per the requirement.
+adr_id = "ADR-2026-05-19-0721"
+
+# hex-prefix citation.
+repo_path = "hex-nexus/examples/ebay-clone"
