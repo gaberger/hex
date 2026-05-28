@@ -35,5 +35,4 @@ pub fn assert_status_code(response: reqwest::Response, expected: u16) {
     assert_eq!(response.status().as_u16(), expected);
 }
 
-// ADR-2023-10-05-1430
 // docs/workplans/feat-ebay-mvp.json
