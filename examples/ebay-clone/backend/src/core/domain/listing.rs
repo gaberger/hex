@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use chrono::NaiveDateTime;
+use crate::core::domain::error::DomainError;
 
 // docs/specs/ebay-spec-012
 
