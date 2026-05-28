@@ -3,6 +3,9 @@ import PostListing from './pages/PostListing';
 import Register from './pages/Register';
 import Login from './pages/Login';
 import Home from './pages/Home'; // Added import for Home page
+import MyBids from './pages/MyBids'; // Import for MyBids page
+import MyWon from './pages/MyWon'; // Import for MyWon page
+import MyListings from './pages/MyListings'; // Import for MyListings page
 
 function App() {
   return (
@@ -12,6 +15,9 @@ function App() {
       <Route path="/post-listing" element={<PostListing />} /> {/* Added route for post-listing page */}
       <Route path="/register" element={<Register />} />
       <Route path="/login" element={<Login />} />
+      <Route path="/my-bids" element={<MyBids />} /> {/* Route for MyBids page */}
+      <Route path="/my-won" element={<MyWon />} /> {/* Route for MyWon page */}
+      <Route path="/my-listings" element={<MyListings />} /> {/* Route for MyListings page */}
       {/* Placeholder for more routes */}
     </Router>
   );
