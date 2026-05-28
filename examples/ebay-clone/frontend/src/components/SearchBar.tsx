@@ -13,7 +13,9 @@ const SearchBar: React.FC<SearchBarProps> = ({ onSearch }) => {
 
   useEffect(() => {
     // Call the debounced search function whenever searchTerm changes
-    debouncedOnSearch(searchTerm);
+    if (searchTerm) {
+      debouncedOnSearch(searchTerm);
+    }
   }, [searchTerm, debouncedOnSearch]);
 
   return (
@@ -28,4 +30,4 @@ const SearchBar: React.FC<SearchBarProps> = ({ onSearch }) => {
 };
 
 export default SearchBar;
-// ADR-2026-05-19-0721
+// docs/specs/ebay-spec-019
