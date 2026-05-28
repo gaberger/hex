@@ -41,6 +41,7 @@ members = [
     "src/core/ports",
 ]
 
+# Dependencies for trait definitions and core domain
 docs/specs/ebay-spec-001
 docs/specs/ebay-spec-004
 docs/specs/ebay-spec-006
