@@ -12,6 +12,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "docs/specs/ebay-spec-020"
 }
-docs/specs/ebay-spec-020
