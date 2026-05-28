@@ -49,6 +49,52 @@ use serde::{Serialize, Deserialize};
 use std::convert::TryFrom;
 use thiserror::Error;
 
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AuctionStatus {
+    Active,
+    Closed,
+    Unsold,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Listing {
+    // Define fields according to specs
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Auction {
+    pub current_highest_cents: u32,
+    pub current_highest_bidder: Option<ids::UserId>,
+    pub end_time: time::TimestampMs,
+    pub status: AuctionStatus,
+    pub winner_identity: Option<ids::UserId>,
+    pub winning_amount_cents: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Bid {
+    // Define fields according to specs
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct User {
+    pub id: ids::UserId,
+    pub canonical_username: username::Username,
+    pub created_at: time::TimestampMs,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ImageRef {
+    pub sha256: String,
+    pub content_type: String,
+    pub byte_size: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WatchEntry {
+    // Define fields according to specs
+}
+
 #[derive(Debug, Error)]
 pub enum DomainError {
     UsernameTaken,
