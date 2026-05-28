@@ -1,10 +1,12 @@
 import { Route, Router } from 'solid-app-router';
+import PostListing from './pages/PostListing';
 
 function App() {
   return (
     <Router>
       <Route path="/" element={<div>Home Page</div>} />
       <Route path="/listings" element={<div>Listings Page</div>} />
+      <Route path="/post-listing" element={<PostListing />} /> {/* Added route for post-listing page */}
       {/* Placeholder for more routes */}
     </Router>
   );
