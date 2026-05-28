@@ -4,3 +4,5 @@
 pub mod http;
 pub mod cli;
 pub mod graphql;
+
+// Additional primary adapters can be added here as needed
