@@ -15,7 +15,7 @@ pub trait UserRepoPort: Send + Sync {
     /// Creates a new user in the repository.
     ///
     /// # Arguments
-    /// * `user` - A reference to a [User] object representing the user to be created.
+    /// * `user` - A reference to a [CreateUserInput] object representing the user to be created.
     ///
     /// # Returns
     /// * A Result containing either the ID of the newly created user or an error.
