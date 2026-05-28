@@ -81,3 +81,22 @@ pub fn close_auction(ctx: &Context, auction_id: u64) -> Result<()> {
     auction.update()?;
     Ok(())
 }
+
+/// Toggles watching a listing for a user.
+///
+/// # Specifications
+/// - [`docs/specs/ebay-spec-019`]
+///
+/// ADR-2026-05-19-0721
+pub fn watch_listing(ctx: &Context, auction_id: u64) -> Result<()> {
+    let mut listing = Auction::get(auction_id).ok_or(Error::AuctionNotFound)?;
+
+    if listing.watchers.contains(&ctx.sender) {
+        listing.watchers.retain(|watcher| watcher != &ctx.sender);
+    } else {
+        listing.watchers.push(ctx.sender.clone());
+    }
+
+    listing.update()?;
+    Ok(())
+}
