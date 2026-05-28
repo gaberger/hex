@@ -8,7 +8,7 @@ use tower_http::auth::RequireAuthorizationLayer;
 use tracing::info;
 
 use crate::{
-    adapters::primary::http_axum::{auth_middleware::JwtAuthMiddleware, state::AppState, handlers_bidding, handlers_me},
+    adapters::primary::http_axum::{auth_middleware::JwtAuthMiddleware, state::AppState, handlers_bidding, handlers_me, handlers_listings},
     ports::{self},
 };
 
@@ -18,6 +18,8 @@ pub fn create_router(ports: Arc<Ports>) -> Router {
 
     Router::new()
         .route("/", get(root))
+        .route("/api/v1/listings", post(handlers_listings::create_listing).get(handlers_listings::search_listings))
+        .route("/api/v1/listings/:id", get(handlers_listings::get_listing_by_id))
         .route("/api/v1/listings/:id/bid", post(handlers_bidding::place_bid))
         .route("/api/v1/listings/:id/watch", post(handlers_bidding::toggle_watchlist))
         .route("/api/v1/me/bids", get(handlers_me::get_my_bids))
