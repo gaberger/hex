@@ -1,4 +1,3 @@
-code_patch: create examples/ebay-clone/backend/src/core/usecases/mod.rs
 // Placeholder for use cases module
 
 // ADR-2023-10-01-1435: Initial structuring of core use cases
