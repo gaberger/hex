@@ -37,6 +37,13 @@ pub mod money;
 pub mod username;
 pub mod title;
 pub mod time;
+pub mod listing;
+pub mod auction;
+pub mod bid;
+pub mod user;
+pub mod image;
+pub mod watch;
+pub mod error;
 
 use serde::{Serialize, Deserialize};
 use std::convert::TryFrom;
@@ -44,9 +51,14 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum DomainError {
+    UsernameTaken,
     InvalidUsername,
-    InvalidListingTitle,
-    InvalidMoneyAmount,
+    InvalidTitleLength,
+    InvalidStartingPrice,
+    InvalidDuration,
+    BidTooLow,
+    AuctionEnded,
+    SelfBidForbidden,
 }
 
 // UserId and related types moved to ids.rs
@@ -60,7 +72,8 @@ pub enum DomainError {
 
 // Timestamp and DurationMs types in time.rs
 
-// END ADDED CONTENT
-
-docs/specs/ebay-spec-023
-docs/specs/ebay-spec-024
+docs/specs/ebay-spec-006
+docs/specs/ebay-spec-012
+docs/specs/ebay-spec-016
+docs/specs/ebay-spec-017
+docs/specs/ebay-spec-018
