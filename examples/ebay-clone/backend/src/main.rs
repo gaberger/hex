@@ -10,7 +10,8 @@
 // - docs/specs/ebay-mvp.json (specs ebay-spec-023, ebay-spec-024)
 // - hex-cli/ for project scaffolding conventions
 
-use ebay_clone_backend::app;
+mod core;
+mod adapters;
 
 #[tokio::main]
 async fn main() {
@@ -23,14 +24,4 @@ async fn main() {
 
     // In this skeleton phase, we verify the module structure compiles.
     // Subsequent steps will implement the actual application logic here.
-    
-    match app::run().await {
-        Ok(_) => {
-            tracing::info!("Application finished successfully.");
-        }
-        Err(e) => {
-            tracing::error!("Application failed: {}", e);
-            std::process::exit(1);
-        }
-    }
 }
