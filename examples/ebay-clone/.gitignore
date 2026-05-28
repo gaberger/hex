@@ -27,3 +27,8 @@ Thumbs.db
 
 # Spec symlinks/copies
 docs/specs/ebay-mvp.json
+
+# Additional ignores for backend crate
+backend/target/
+backend/Cargo.lock
+backend/**/*.bk
