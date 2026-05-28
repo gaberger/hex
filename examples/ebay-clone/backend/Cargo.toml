@@ -34,5 +34,8 @@ tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# crypto adapters for auth
+zeroize = "1.5" # ADR-2026-05-19-0721
+
 [dev-dependencies]
 tokio-test = "0.4"
