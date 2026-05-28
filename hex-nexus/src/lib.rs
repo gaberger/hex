@@ -571,25 +571,37 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                     //
                     // Disabled via HEX_DISABLE_POOL_SEED=1 for forensic runs.
                     if std::env::var("HEX_DISABLE_POOL_SEED").is_err() {
+                        // Lean fleet (2026-05-28 refactor) — 5 core personas
+                        // instead of 31. Each absorbs the responsibilities of
+                        // related specialists; org_responder + persona_prompt
+                        // still drive the per-role prompts/models, but the
+                        // process pool shrinks from 31 → 5.
+                        //
+                        // Mapping:
+                        //   hex-coder        ← hex-coder, hex-fixer, rust-refactorer
+                        //   hex-tester       ← hex-tester, behavioral-spec-writer,
+                        //                       validation-judge, scaffold-validator
+                        //   hex-reviewer     ← hex-reviewer, ADR-reviewer,
+                        //                       adversarial-red/blue, dead-code-analyzer
+                        //   integrator       ← integrator, hex-documenter,
+                        //                       sre-engineer, sre-lead, platform-engineer
+                        //   engineering-lead ← all execs + leads (CTO/CPO/COO/CISO/
+                        //                       chief-visionary/chief-architect/ceo/
+                        //                       product-lead, etc.)
+                        //
+                        // Surfaced 2026-05-28 ebay-mvp scaling test: 26 of 31
+                        // personas processed zero work over a 6-hour run; the
+                        // long tail consumed process slots, autopause cycles,
+                        // and orphan_reaper attention for nothing. Specialist
+                        // persona prompts are preserved as templates; the
+                        // conductor routes onto the 5 lean roles via
+                        // workplan_conductor::route_step_to_persona.
                         const POOL_ROLES: &[&str] = &[
-                            // executives
-                            "cto", "cpo", "coo", "ciso", "chief-visionary",
-                            "chief-architect", "ceo",
-                            // leads
-                            "engineering-lead", "product-lead", "sre-lead",
-                            "validation-judge",
-                            // engineering ICs
-                            "hex-coder", "hex-tester", "hex-fixer", "hex-reviewer",
-                            "hex-documenter", "rust-refactorer", "integrator",
-                            "scaffold-validator", "dead-code-analyzer",
-                            "behavioral-spec-writer",
-                            // product / UX ICs
-                            "hex-ux", "ux-designer", "dashboard-ux-architect",
-                            "cli-designer", "pm-agent", "adr-reviewer",
-                            // SRE / platform ICs
-                            "platform-engineer", "sre-engineer",
-                            // adversarial ICs
-                            "adversarial-red", "adversarial-blue",
+                            "hex-coder",
+                            "hex-tester",
+                            "hex-reviewer",
+                            "integrator",
+                            "engineering-lead",
                         ];
                         let owner = format!("nexus-{}", std::process::id());
                         let mut seeded = 0;

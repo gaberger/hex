@@ -353,84 +353,83 @@ async fn drive_workplan(
     Ok(())
 }
 
-/// Derive the persona that should own a given workplan step based on its
-/// description, layer, and the kind of work the files imply.
+/// Route a workplan step to one of the 5 lean-fleet personas.
+///
+/// Lean fleet (2026-05-28 refactor):
+///   hex-coder         — source files, ports, domain, use cases, adapters,
+///                       reducer code, anything that is "write code now"
+///   hex-tester        — tests, behavioral specs, validation, smoke gates,
+///                       acceptance tests
+///   hex-reviewer      — code review, ADR conformance, dead-code analysis,
+///                       boundary checks, adversarial review
+///   integrator        — composition root, merge worktrees, docs, runbooks,
+///                       start.sh / docker / ops glue
+///   engineering-lead  — operator-facing dispatch, stall escalations,
+///                       cross-team coordination, ADR drafting
 ///
 /// Ordering matters: more-specific patterns win. The fallback is hex-coder
-/// (the conductor's pre-fleet default) so unknown step shapes don't stall.
+/// so unknown step shapes don't stall.
 ///
-/// Surfaced 2026-05-28 during the ebay-mvp scaling test: with all 32 steps
-/// going to hex-coder, even after the fleet seed-fix the conductor can only
-/// drive ONE persona at a time. Routing by intent puts hex-tester on test
-/// steps, integrator on composition + merge, hex-reviewer on review, ciso
-/// on security/auth, etc. — so independent steps run concurrently.
+/// Replaces the previous 30-branch router that targeted 9+ specialist
+/// personas. The lean version routes onto roles whose pools the supervisor
+/// actually keeps alive; everything else is dispatched as if it were code.
 fn route_step_to_persona(step: &Value) -> String {
     let layer = step.get("layer").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
     let desc = step.get("description").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
     let id = step.get("id").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
 
-    // Tier-6 acceptance / integration tests → hex-tester + integrator.
-    if desc.contains("acceptance") || desc.contains("smoke") || id.contains("acceptance") {
+    // === TESTER ===
+    // Acceptance + integration + behavioral specs.
+    if desc.contains("acceptance test") || desc.contains("acceptance ")
+        || desc.contains("smoke test") || desc.contains("smoke ")
+        || desc.contains("integration test")
+        || desc.contains("behavioral spec") || desc.contains("write specs")
+        || id.contains("acceptance") || id.contains("smoke")
+        || layer == "tests"
+    {
         return "hex-tester".into();
     }
-    if desc.contains("integration test") || desc.contains("integration tests") {
-        return "hex-tester".into();
-    }
-    if desc.contains("merge") || desc.contains("integrate") || desc.contains("composition root") {
-        return "integrator".into();
-    }
-    // Behavioral specs.
-    if desc.contains("behavioral spec") || desc.contains("spec writer") {
-        return "behavioral-spec-writer".into();
-    }
-    // Documentation surfaces.
-    if desc.contains("readme") || desc.contains("docs/") || desc.contains("documentation") {
-        return "hex-documenter".into();
-    }
-    // Security / auth surfaces.
-    if desc.contains("auth")
-        || desc.contains("password")
-        || desc.contains("jwt")
-        || desc.contains("token")
-        || desc.contains("security")
-        || desc.contains("secret")
-    {
-        return "ciso".into();
-    }
-    // start.sh / docker / runbook ops → SRE.
-    if desc.contains("start.sh")
-        || desc.contains("docker")
-        || desc.contains("docker-compose")
-        || desc.contains("runbook")
-        || desc.contains("deploy")
-    {
-        return "sre-engineer".into();
-    }
-    // ADR / architectural decisions.
-    if desc.contains("adr") || desc.contains("architecture decision") {
-        return "chief-architect".into();
-    }
-    // Hex-analyze + boundary checks.
-    if desc.contains("hex analyze")
+
+    // === REVIEWER ===
+    // Explicit review work, ADR conformance, dead-code, boundary checks.
+    if desc.contains("code review") || desc.contains("review for")
+        || desc.contains("adr conformance") || desc.contains("adr-conformance")
+        || desc.contains("dead code") || desc.contains("dead-code")
+        || desc.contains("boundary check") || desc.contains("hex analyze")
         || desc.contains("hex-analyze")
-        || desc.contains("boundary check")
-        || desc.contains("dead code")
+        || desc.contains("adversarial")
     {
-        return "dead-code-analyzer".into();
-    }
-    // Code review.
-    if desc.contains("code review") || desc.contains("review for") {
         return "hex-reviewer".into();
     }
-    // Layer-driven fallbacks.
-    match layer.as_str() {
-        "ports" | "domain" | "usecases" => "hex-coder".into(),
-        l if l.starts_with("adapters/primary") => "hex-coder".into(),
-        l if l.starts_with("adapters/secondary") => "hex-coder".into(),
-        "composition" => "integrator".into(),
-        "tests" => "hex-tester".into(),
-        _ => "hex-coder".into(),
+
+    // === INTEGRATOR ===
+    // Composition root, merge, docs, ops glue.
+    if desc.contains("composition root") || desc.contains("composition_root")
+        || desc.contains("merge worktree") || desc.contains("merge feature")
+        || desc.contains("readme") || desc.contains("docs/") || desc.contains("documentation")
+        || desc.contains("start.sh") || desc.contains("docker-compose")
+        || desc.contains("docker compose") || desc.contains("dockerfile")
+        || desc.contains("runbook") || desc.contains("deploy")
+        || layer == "composition" || layer == "integration"
+        || id.contains("compose")
+    {
+        return "integrator".into();
     }
+
+    // === LEAD ===
+    // ADR drafting + operator-facing decisions. Not raised by typical
+    // workplan steps; surfaces when escalations need attention.
+    if desc.contains("adr draft") || desc.contains("draft an adr")
+        || desc.contains("architecture decision")
+        || desc.contains("operator action") || desc.contains("operator decision")
+    {
+        return "engineering-lead".into();
+    }
+
+    // === CODER (default for everything that writes/edits source) ===
+    // domain types, ports, use cases, adapters (primary + secondary),
+    // STDB reducer code, frontend pages — all code.
+    "hex-coder".into()
 }
 
 fn build_brief(workplan_id: &str, workplan_path: &Path, step: &Value) -> String {
@@ -596,14 +595,20 @@ mod tests {
     }
 
     #[test]
-    fn route_acceptance_to_hex_tester() {
+    fn route_acceptance_to_tester() {
         let s = json!({"id":"step-30","description":"Acceptance test: end-to-end happy path","files_to_create":["a"]});
         assert_eq!(route_step_to_persona(&s), "hex-tester");
     }
 
     #[test]
-    fn route_integration_tests_to_hex_tester() {
+    fn route_integration_tests_to_tester() {
         let s = json!({"id":"step-29","description":"Backend integration tests for the bidding pipeline","files_to_create":["a"]});
+        assert_eq!(route_step_to_persona(&s), "hex-tester");
+    }
+
+    #[test]
+    fn route_behavioral_specs_to_tester() {
+        let s = json!({"id":"step-x","description":"Write behavioral specs for the auction module","files_to_create":["a"]});
         assert_eq!(route_step_to_persona(&s), "hex-tester");
     }
 
@@ -614,39 +619,57 @@ mod tests {
     }
 
     #[test]
-    fn route_auth_step_to_ciso() {
-        let s = json!({"id":"step-17","description":"Use case: auth — register_user and login","files_to_create":["a"]});
-        assert_eq!(route_step_to_persona(&s), "ciso");
-    }
-
-    #[test]
-    fn route_start_sh_to_sre() {
+    fn route_start_sh_to_integrator() {
         let s = json!({"id":"step-31","description":"start.sh + README.md + docker-compose.yml","files_to_create":["a"]});
-        // README wins over start.sh because docs takes priority? Let's verify.
-        // Actually start.sh is checked first in our ordering, so ans is sre-engineer.
-        let r = route_step_to_persona(&s);
-        assert!(r == "sre-engineer" || r == "hex-documenter", "got {}", r);
+        assert_eq!(route_step_to_persona(&s), "integrator");
     }
 
     #[test]
-    fn route_specs_to_spec_writer() {
-        let s = json!({"id":"step-x","description":"Write behavioral specs for the auction module","files_to_create":["a"]});
-        assert_eq!(route_step_to_persona(&s), "behavioral-spec-writer");
+    fn route_readme_to_integrator() {
+        let s = json!({"id":"step-x","description":"Write README.md and quickstart","files_to_create":["a"]});
+        assert_eq!(route_step_to_persona(&s), "integrator");
     }
 
     #[test]
-    fn route_dead_code_to_analyzer() {
-        let s = json!({"id":"step-32","description":"Hex analyze + start.sh smoke acceptance gate","files_to_create":["a"]});
-        // acceptance triggers first → hex-tester. Acceptable.
-        let r = route_step_to_persona(&s);
-        assert!(r == "hex-tester" || r == "dead-code-analyzer" || r == "sre-engineer",
-            "got {}", r);
+    fn route_dead_code_to_reviewer() {
+        let s = json!({"id":"step-x","description":"Hex analyze pass for dead code in the workspace","files_to_create":["a"]});
+        assert_eq!(route_step_to_persona(&s), "hex-reviewer");
     }
 
     #[test]
-    fn route_falls_back_to_hex_coder() {
+    fn route_code_review_to_reviewer() {
+        let s = json!({"id":"step-x","description":"Code review for the new auction aggregate","files_to_create":["a"]});
+        assert_eq!(route_step_to_persona(&s), "hex-reviewer");
+    }
+
+    #[test]
+    fn route_auth_step_NOT_to_security() {
+        // Old router miss: "auth" in a domain step's description routed to
+        // ciso. In the lean fleet, the lead-keywords are narrower and this
+        // falls back to hex-coder (which is the right place for use case
+        // code to live).
+        let s = json!({"id":"step-17","description":"Use case: auth — register_user and login","files_to_create":["a"]});
+        assert_eq!(route_step_to_persona(&s), "hex-coder");
+    }
+
+    #[test]
+    fn route_register_user_NOT_to_security() {
+        // Specifically the bug we caught in production: step-6 marketplace
+        // reducer with "register_user" in the description routed to ciso.
+        let s = json!({"id":"step-6","description":"Marketplace reducers (part 1): register_user and create_listing","files_to_create":["a"]});
+        assert_eq!(route_step_to_persona(&s), "hex-coder");
+    }
+
+    #[test]
+    fn route_domain_types_to_coder() {
         let s = json!({"id":"step-2","description":"Domain value types: newtypes for UserId","layer":"domain","files_to_create":["a"]});
         assert_eq!(route_step_to_persona(&s), "hex-coder");
+    }
+
+    #[test]
+    fn route_adr_drafting_to_lead() {
+        let s = json!({"id":"step-x","description":"Draft an ADR for the new auth flow","files_to_create":["a"]});
+        assert_eq!(route_step_to_persona(&s), "engineering-lead");
     }
 
     #[test]
