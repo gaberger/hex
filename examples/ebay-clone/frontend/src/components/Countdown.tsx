@@ -3,9 +3,10 @@ import React, { useEffect, useState } from 'react';
 // ADR-2026-05-19-0721: Countdown component for auction end time
 interface CountdownProps {
   endTime: Date;
+  status: string; // Added to handle auction status
 }
 
-const Countdown: React.FC<CountdownProps> = ({ endTime }) => {
+const Countdown: React.FC<CountdownProps> = ({ endTime, status }) => {
   const [timeLeft, setTimeLeft] = useState<number>(calculateTimeLeft(endTime));
 
   useEffect(() => {
@@ -29,7 +30,7 @@ const Countdown: React.FC<CountdownProps> = ({ endTime }) => {
 
   return (
     <div>
-      {timeLeft > 0 ? (
+      {status === 'Active' && timeLeft > 0 ? (
         <span>Time remaining: {formatTime(timeLeft)}</span>
       ) : (
         <span>Auction ended</span>
