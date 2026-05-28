@@ -64,5 +64,5 @@ export function initializeStdb() {
     connect();
 }
 
-// ADR-2026-05-19-0721
 // hex analyze
+// docs/workplans/feat-ebay-mvp.json
