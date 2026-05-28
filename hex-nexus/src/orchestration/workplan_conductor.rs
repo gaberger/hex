@@ -304,8 +304,15 @@ async fn drive_workplan(
     let step_id = step.get("id").and_then(|v| v.as_str()).unwrap_or("???").to_string();
     let cooldown_key = format!("{}::{}", workplan_id, step_id);
 
-    // Build the brief.
-    let brief = build_brief(&workplan_id, workplan_path, step);
+    // Build the brief. Pass repo_root so the brief lists ONLY files
+    // that are still missing — surfaces the self-poisoning recursion
+    // fix: when a step is half-done (e.g. 4/5 integration tests) the
+    // persona was reading the full files_to_create list, seeing 4 of
+    // them already on disk, and "completing" the step by re-writing
+    // one of the existing files instead of creating the missing one.
+    // Showing only the missing artifacts forces the persona's tool
+    // plan to target real gaps.
+    let brief = build_brief(&workplan_id, workplan_path, step, repo_root);
 
     // Dispatch via /api/org/send-message. Routing precedence:
     //   1. explicit step.assignee field (planner can override)
@@ -432,15 +439,29 @@ fn route_step_to_persona(step: &Value) -> String {
     "hex-coder".into()
 }
 
-fn build_brief(workplan_id: &str, workplan_path: &Path, step: &Value) -> String {
+fn build_brief(workplan_id: &str, workplan_path: &Path, step: &Value, repo_root: &Path) -> String {
     let step_id = step.get("id").and_then(|v| v.as_str()).unwrap_or("???");
     let description = step.get("description").and_then(|v| v.as_str()).unwrap_or("");
     let done_condition = step.get("done_condition").and_then(|v| v.as_str()).unwrap_or("");
-    let files: Vec<&str> = step
+    let files_all: Vec<&str> = step
         .get("files_to_create")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
+    // Split into MISSING and ALREADY-PRESENT so the brief drives the
+    // persona toward the actual gap instead of the populated dir.
+    let mut files: Vec<&str> = Vec::new();
+    let mut present_files: Vec<&str> = Vec::new();
+    for f in &files_all {
+        let exists_nonempty = std::fs::metadata(repo_root.join(f))
+            .map(|m| m.is_file() && m.len() > 0)
+            .unwrap_or(false);
+        if exists_nonempty {
+            present_files.push(*f);
+        } else {
+            files.push(*f);
+        }
+    }
     let edits: Vec<&str> = step
         .get("files_to_edit")
         .and_then(|v| v.as_array())
@@ -470,8 +491,21 @@ fn build_brief(workplan_id: &str, workplan_path: &Path, step: &Value) -> String 
         ));
     }
     out.push_str("Emit your reply as code_patch tool calls, one per file, fully-qualified paths from workspace root (e.g. examples/ebay-clone/backend/src/...). Do not wrap content in markdown fences. Do not include trailing prose after content.\n\n");
+    if !present_files.is_empty() {
+        out.push_str(&format!(
+            "ALREADY COMPLETE for this step — DO NOT rewrite these {} files:\n",
+            present_files.len()
+        ));
+        for f in &present_files {
+            out.push_str(&format!("- ✓ {} (already on disk, non-empty)\n", f));
+        }
+        out.push('\n');
+    }
     if !files.is_empty() {
-        out.push_str("Files to create:\n");
+        out.push_str(&format!(
+            "ONLY THESE {} FILE(S) ARE STILL MISSING — emit a code_patch for each:\n",
+            files.len()
+        ));
         for f in &files {
             out.push_str(&format!("- code_patch: create {}\n", f));
         }
@@ -681,7 +715,8 @@ mod tests {
             "spec_ids": ["s-1", "s-2"],
             "done_condition": "cargo check passes"
         });
-        let brief = build_brief("feat-x", Path::new("docs/workplans/feat-x.json"), &step);
+        let tmp = TempDir::new().unwrap();
+        let brief = build_brief("feat-x", Path::new("docs/workplans/feat-x.json"), &step, tmp.path());
         assert!(brief.contains("feat-x"));
         assert!(brief.contains("step-2"));
         assert!(brief.contains("domain value types"));
@@ -690,6 +725,75 @@ mod tests {
         assert!(brief.contains("s-1, s-2"));
         assert!(brief.contains("Do not wrap content in markdown fences"));
         assert!(brief.contains("cargo check passes"));
+    }
+
+    #[test]
+    fn build_brief_hides_already_present_files() {
+        // Self-poisoning recursion fix: when files_to_create are mostly
+        // on-disk already, the brief should NOT prompt the persona to
+        // create them again — only mention the missing ones.
+        let step = json!({
+            "id": "step-29",
+            "description": "Backend integration tests",
+            "files_to_create": [
+                "tests/integration_auth.rs",
+                "tests/integration_bidding.rs",
+                "tests/integration_listings.rs",
+                "tests/integration_images.rs",
+                "tests/common/mod.rs",
+            ],
+        });
+        let tmp = TempDir::new().unwrap();
+        // Pre-populate 4 of the 5 files.
+        for name in &[
+            "tests/integration_auth.rs",
+            "tests/integration_bidding.rs",
+            "tests/integration_images.rs",
+            "tests/common/mod.rs",
+        ] {
+            let p = tmp.path().join(name);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, "// real content\n").unwrap();
+        }
+        let brief = build_brief(
+            "feat-x",
+            Path::new("docs/workplans/feat-x.json"),
+            &step,
+            tmp.path(),
+        );
+
+        // The brief must call out the ONE missing file as the gap.
+        assert!(brief.contains("code_patch: create tests/integration_listings.rs"));
+        assert!(brief.contains("ONLY THESE 1 FILE(S) ARE STILL MISSING"));
+
+        // The brief MUST NOT prompt the persona to create the existing 4.
+        assert!(!brief.contains("code_patch: create tests/integration_auth.rs"));
+        assert!(!brief.contains("code_patch: create tests/integration_bidding.rs"));
+        assert!(!brief.contains("code_patch: create tests/integration_images.rs"));
+        assert!(!brief.contains("code_patch: create tests/common/mod.rs"));
+
+        // It should still LIST the present ones as completed (so the
+        // persona has full context without being asked to rewrite them).
+        assert!(brief.contains("ALREADY COMPLETE for this step"));
+        assert!(brief.contains("tests/integration_auth.rs"));
+    }
+
+    #[test]
+    fn build_brief_with_no_files_present_lists_all_as_missing() {
+        let step = json!({
+            "id": "step-1",
+            "description": "scaffold",
+            "files_to_create": ["a.rs", "b.rs", "c.rs"],
+        });
+        let tmp = TempDir::new().unwrap();
+        let brief = build_brief(
+            "feat-y",
+            Path::new("docs/workplans/feat-y.json"),
+            &step,
+            tmp.path(),
+        );
+        assert!(brief.contains("ONLY THESE 3 FILE(S)"));
+        assert!(!brief.contains("ALREADY COMPLETE"));
     }
 
     #[test]
