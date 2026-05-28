@@ -2,6 +2,8 @@ use serde::{Serialize, Deserialize};
 use std::convert::TryFrom;
 use thiserror::Error;
 
+// docs/specs/ebay-spec-025
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct UserId(pub String);
 
@@ -25,29 +27,59 @@ pub enum UserIdValidationError {
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ListingId(pub u64);
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
-pub struct BidId(pub u64);
-
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
-pub struct AuctionId(pub u64);
-
-// Spec references: docs/specs/ebay-spec-003, docs/specs/ebay-spec-025
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
-pub struct Money(pub u64); // Cents
-
-impl TryFrom<u64> for Money {
-    type Error = MoneyValidationError;
+impl TryFrom<u64> for ListingId {
+    type Error = ListingIdValidationError;
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
         if value == 0 {
-            return Err(MoneyValidationError::ZeroValue);
+            return Err(ListingIdValidationError::ZeroValue);
         }
-        Ok(Money(value))
+        Ok(ListingId(value))
     }
 }
 
 #[derive(Debug, Error)]
-pub enum MoneyValidationError {
-    #[error("Money cannot be zero")]
+pub enum ListingIdValidationError {
+    #[error("ListingId cannot be zero")]
+    ZeroValue,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
+pub struct BidId(pub u64);
+
+impl TryFrom<u64> for BidId {
+    type Error = BidIdValidationError;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        if value == 0 {
+            return Err(BidIdValidationError::ZeroValue);
+        }
+        Ok(BidId(value))
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum BidIdValidationError {
+    #[error("BidId cannot be zero")]
+    ZeroValue,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
+pub struct AuctionId(pub u64);
+
+impl TryFrom<u64> for AuctionId {
+    type Error = AuctionIdValidationError;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        if value == 0 {
+            return Err(AuctionIdValidationError::ZeroValue);
+        }
+        Ok(AuctionId(value))
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum AuctionIdValidationError {
+    #[error("AuctionId cannot be zero")]
     ZeroValue,
 }
