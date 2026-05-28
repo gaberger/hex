@@ -38,6 +38,18 @@ impl BiddingUseCase {
         self.auction_repo.find_by_winner(winner_identity)
             .map_err(|_| DomainError::RepoAccessFailed)
     }
+
+    /// Toggles a listing in the user's watchlist.
+    pub fn toggle_watch(&self, listing_id: &str, bidder_identity: &str) -> Result<(), DomainError> {
+        self.reducer_port.watch_listing(listing_id, bidder_identity)
+            .map_err(|_| DomainError::Unexpected)
+    }
+
+    /// Lists all listings created by the given seller.
+    pub fn list_my_listings(&self, seller_identity: &str) -> Result<Vec<Listing>, DomainError> {
+        self.auction_repo.find_by_seller(seller_identity)
+            .map_err(|_| DomainError::RepoAccessFailed)
+    }
 }
 
 // ADR-2026-05-19-0721
