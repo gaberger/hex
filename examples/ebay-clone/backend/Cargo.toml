@@ -18,3 +18,20 @@ hex-nexus/backend/core/ports = { path = "../core/ports" }
 hex-nexus/backend/core/usecases = { path = "../core/usecases" }
 hex-nexus/backend/adapters/primary = { path = "../adapters/primary" }
 hex-nexus/backend/adapters/secondary = { path = "../adapters/secondary" }
+
+# Additional dependencies for eBay clone backend
+dotenvy = "0.15"
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.6", features = ["runtime-tokio-native-tls", "postgres"] }
+jsonwebtoken = "8.4"
+
+# References to specs and workplans
+docs/specs/ebay-mvp.json = { path = "../../../docs/workplans/feat-ebay-mvp.json" }
+adr/ADR-2026-05-19-0721.md = { path = "../../../docs/adrs/adr-architecture-overview.md" }
+
+# Git submodule for specs
+[lib]
+path = "src/lib.rs"
+
+[[workspace]]
+members = ["core/domain", "core/ports", "core/usecases", "adapters/primary", "adapters/secondary"]
