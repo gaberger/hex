@@ -1,9 +1,9 @@
 # examples/ebay-clone/backend/src/core/domain/mod.rs — STUB (operator triage required)
 
-**Status:** stub — auto-generated after 2 drafter attempts
-**Generated:** 2026-05-28T13:53:36.335091038+00:00
-**Committed by:** `hex-coder`
-**Original committed path:** `examples/ebay-clone/backend/src/core/domain/mod.rs`
+**Status:** stub — auto-generated after 2 drafter attempts  
+**Generated:** 2026-05-28T13:53:36.335091038+00:00  
+**Committed by:** `hex-coder`  
+**Original committed path:** `examples/ebay-clone/backend/src/core/domain/mod.rs`  
 **Commitment:** code_patch: create examples/ebay-clone/backend/src/core/domain/mod.rs
 
 ## Why this is a stub
@@ -72,8 +72,8 @@ pub enum DomainError {
 
 // Timestamp and DurationMs types in time.rs
 
-docs/specs/ebay-spec-006
-docs/specs/ebay-spec-012
-docs/specs/ebay-spec-016
-docs/specs/ebay-spec-017
+docs/specs/ebay-spec-006  
+docs/specs/ebay-spec-012  
+docs/specs/ebay-spec-016  
+docs/specs/ebay-spec-017  
 docs/specs/ebay-spec-018
