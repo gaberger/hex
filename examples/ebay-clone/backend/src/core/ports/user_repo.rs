@@ -19,7 +19,7 @@ pub trait UserRepoPort: Send + Sync {
     ///
     /// # Returns
     /// * A Result containing either the ID of the newly created user or an error.
-    async fn create_user(&self, user: &User) -> Result<UserId>;
+    async fn create_user(&self, user: &CreateUserInput) -> Result<UserId>;
 
     /// Retrieves a user by their unique identifier.
     ///
@@ -59,4 +59,4 @@ pub struct CreateUserInput {
     // Add other necessary fields here
 }
 
-// ADR-2026-05-19-0721
+// docs/specs/ebay-spec-001
