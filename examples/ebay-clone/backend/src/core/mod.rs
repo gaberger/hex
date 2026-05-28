@@ -3,3 +3,7 @@
 pub mod domain;
 pub mod ports;
 pub mod usecases;
+pub mod adapters {
+    pub mod primary;
+    pub mod secondary;
+}
