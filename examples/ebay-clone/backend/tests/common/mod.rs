@@ -10,6 +10,7 @@ pub struct TestSetup {
 impl Drop for TestSetup {
     fn drop(&mut self) {
         // Teardown logic here if needed
+        spacetimedb::test::tear_down();
     }
 }
 
