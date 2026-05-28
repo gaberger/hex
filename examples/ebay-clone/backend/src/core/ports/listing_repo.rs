@@ -49,5 +49,5 @@ pub enum ListingRepoError {
 }
 
 // ADR-2026-05-19-0721
-// hex-nexus/docs/specs/ebay-spec-004.md
 // hex-parser/src/core/domain/listing.rs
+// docs/specs/ebay-spec-004.md
