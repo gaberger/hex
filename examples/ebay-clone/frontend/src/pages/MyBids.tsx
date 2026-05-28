@@ -40,5 +40,4 @@ const MyBids = () => {
 
 export default MyBids;
 
-// ADR-2026-05-19-0721
 // docs/workplans/feat-ebay-mvp.json
