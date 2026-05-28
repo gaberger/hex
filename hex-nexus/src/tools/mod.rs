@@ -19,6 +19,7 @@ pub mod adr_status_set;
 pub mod cargo_check;
 pub mod code_patch;
 pub mod cost_meter;
+pub mod delegate;
 pub mod dep_audit;
 pub mod escalate_to_operator;
 pub mod memory_search;
@@ -95,6 +96,7 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "cargo_check",
     "code_patch",
     "cost_meter",
+    "delegate",
     "dep_audit",
     "escalate_to_operator",
     "memory_search",
@@ -191,6 +193,7 @@ impl Default for ToolRegistry {
         reg.register(Arc::new(escalate_to_operator::EscalateToOperator));
         reg.register(Arc::new(typescript_check::TypescriptCheck));
         reg.register(Arc::new(memory_search::MemorySearch));
+        reg.register(Arc::new(delegate::Delegate));
         reg
     }
 }

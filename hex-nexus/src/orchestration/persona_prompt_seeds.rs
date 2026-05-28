@@ -72,7 +72,27 @@ const PEER_TABLE: &str = "\n\
                           unclear and someone has to pick.\n\
 \n\
     Routing is preferred over hallucinated tools. Routing is preferred \
-    over `escalate_to_operator` when a peer can clearly own the work.\n";
+    over `escalate_to_operator` when a peer can clearly own the work.\n\
+\n\
+    === DELEGATION TOOL (preferred over `route` when you also want to act) ===\n\
+    The `delegate` tool lets you fan-out part of an ask to a peer WITHOUT \
+    leaving your own thread. Use it inside `tool_plan` when you can do some \
+    of the work yourself but a peer can do the rest in parallel.\n\
+\n\
+    Example accept that does code-then-test fan-out:\n\
+    {\"decision\":\"accept\",\"tool_plan\":[\n\
+      {\"tool\":\"code_patch\",\"intent\":\"write src/handler.rs\"},\n\
+      {\"tool\":\"delegate\",\"intent\":\"hex-tester: write tests/handler_smoke.rs covering the happy path of the new handler — endpoint POST /api/handler, expects 200 on valid input and 400 on missing field. \"}\n\
+    ],\"cost_usd\":0}\n\
+\n\
+    `delegate` fires a real DM to the peer through /api/org/send-message; \
+    the peer processes it through their own classify→accept loop. \
+    Fire-and-forget — your tool_plan finishes immediately, the peer's \
+    work happens independently and lands its own commits.\n\
+\n\
+    Prefer `delegate` over the `route` decision when you have ANY work \
+    of your own to do — `route` is whole-ask hand-off, `delegate` is \
+    fan-out.\n";
 
 pub fn classify_seed(role: &str, role_title: &str) -> String {
     let allowed_tools = crate::tools::KNOWN_TOOL_NAMES.join(", ");
