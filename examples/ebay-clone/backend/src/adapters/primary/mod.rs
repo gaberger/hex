@@ -10,3 +10,11 @@ pub mod cli;
 pub mod graphql;
 
 // Additional primary adapters can be added here as needed
+
+// docs/workplans/feat-ebay-mvp.json
+// Per spec conventions, the `http_axum` module will contain:
+// - Router builder
+// - Shared AppState struct (holds Arc<dyn Port> for each port the handlers need)
+// - Error mapping module (DomainError -> StatusCode)
+// - JSON request/response DTOs
+// - JWT extractor middleware that verifies via TokenIssuerPort
