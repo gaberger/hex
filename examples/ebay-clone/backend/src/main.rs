@@ -12,6 +12,10 @@
 
 mod core;
 mod adapters;
+use composition_root::create_app_state;
+use std::sync::Arc;
+use axum::{Router, routing::get};
+use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() {
@@ -22,6 +26,18 @@ async fn main() {
 
     tracing::info!("Ebay Clone Backend is starting up!");
 
-    // In this skeleton phase, we verify the module structure compiles.
-    // Subsequent steps will implement the actual application logic here.
+    let app_state = create_app_state();
+    let app = Router::new()
+        .route("/api/v1/health", get(|| async { "OK" }))
+        // Add other routes here from primary adapter step-12
+        .with_state(app_state);
+
+    let addr = std::env::var("BACKEND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
+    let listener = TcpListener::bind(&addr).await.unwrap();
+    tracing::info!("Listening on {}", addr);
+    axum::Server::from_tcp(listener)
+        .unwrap()
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
 }
