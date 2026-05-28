@@ -1,4 +1,3 @@
-use spacetimedb_sdk::client::Client;
 use crate::adapters::secondary::stdb_client::{connection, queries, reducers};
 use crate::domain::ports::{
     AuctionRepoPort, BidRepoPort, ListingRepoPort, UserRepoPort, WatchRepoPort,
@@ -6,7 +5,7 @@ use crate::domain::ports::{
 };
 
 pub struct StdbClient {
-    client: Client,
+    client: spacetimedb_sdk::client::Client,
 }
 
 impl StdbClient {
@@ -18,7 +17,6 @@ impl StdbClient {
 
 #[async_trait::async_trait]
 impl UserRepoPort for StdbClient {
-    // Implement read-only queries related to users
     async fn get_user_by_id(&self, user_id: &str) -> Result<User, String> {
         queries::get_user_by_id(&self.client, user_id).await.map_err(|e| e.to_string())
     }
@@ -26,7 +24,6 @@ impl UserRepoPort for StdbClient {
 
 #[async_trait::async_trait]
 impl ListingRepoPort for StdbClient {
-    // Implement read-only queries related to listings
     async fn get_listing_by_id(&self, listing_id: &str) -> Result<Listing, String> {
         queries::get_listing_by_id(&self.client, listing_id).await.map_err(|e| e.to_string())
     }
@@ -34,7 +31,6 @@ impl ListingRepoPort for StdbClient {
 
 #[async_trait::async_trait]
 impl AuctionRepoPort for StdbClient {
-    // Implement read-only queries related to auctions
     async fn get_auction_by_id(&self, auction_id: &str) -> Result<Auction, String> {
         queries::get_auction_by_id(&self.client, auction_id).await.map_err(|e| e.to_string())
     }
@@ -42,7 +38,6 @@ impl AuctionRepoPort for StdbClient {
 
 #[async_trait::async_trait]
 impl BidRepoPort for StdbClient {
-    // Implement read-only queries related to bids
     async fn get_bid_by_id(&self, bid_id: &str) -> Result<Bid, String> {
         queries::get_bid_by_id(&self.client, bid_id).await.map_err(|e| e.to_string())
     }
@@ -50,7 +45,6 @@ impl BidRepoPort for StdbClient {
 
 #[async_trait::async_trait]
 impl WatchRepoPort for StdbClient {
-    // Implement read-only queries related to watches
     async fn get_watch_by_id(&self, watch_id: &str) -> Result<Watch, String> {
         queries::get_watch_by_id(&self.client, watch_id).await.map_err(|e| e.to_string())
     }
@@ -58,7 +52,6 @@ impl WatchRepoPort for StdbClient {
 
 #[async_trait::async_trait]
 impl ReducerCallPort for StdbClient {
-    // Implement calls to reducers
     async fn register_user(&self, user_data: UserData) -> Result<(), String> {
         reducers::register_user(&self.client, user_data).await.map_err(|e| e.to_string())
     }
