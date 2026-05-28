@@ -292,14 +292,48 @@ pub fn scan_for_path(s: &str) -> Option<String> {
         ".go", ".mod", ".sum",  // Go: .go for source, .mod/.sum for module files
         ".html", ".css",         // web targets the dashboard view will need
         ".graphql", ".proto",    // schemas
+        ".lock", ".cfg", ".ini", ".env", ".example", ".local",  // configs + env files
+        ".svg", ".png", ".ico",  // static assets the frontend wants
+        ".dockerfile",           // dockerfiles emitted with .dockerfile suffix
+    ];
+    // Known dotfile basenames (no extension or unconventional ones).
+    // Surfaced 2026-05-28 ebay-mvp scaling test: workplans listed
+    // `.gitignore` / `.gitkeep` / `.env.example` but scan_for_path
+    // rejected them silently, so the conductor looped step-1 forever.
+    const DOTFILE_BASENAMES: &[&str] = &[
+        ".gitignore", ".gitkeep", ".gitattributes", ".gitmodules",
+        ".dockerignore", ".editorconfig", ".npmrc", ".nvmrc", ".prettierrc",
+        ".eslintrc", ".rustfmt.toml", ".env",
+    ];
+    // Known no-extension build-system file basenames.
+    const BARE_BASENAMES: &[&str] = &[
+        "dockerfile", "makefile", "license", "readme", "copying", "notice",
+        "procfile", "rakefile",
     ];
 
+    let matches_dotfile = |path_lower: &str| -> bool {
+        let basename = path_lower.rsplit('/').next().unwrap_or(path_lower);
+        DOTFILE_BASENAMES.iter().any(|d| basename == *d)
+            || BARE_BASENAMES.iter().any(|d| basename == *d)
+    };
+
     for raw_tok in s.split(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == '(' || c == ')' || c == '`') {
-        let tok = raw_tok.trim_matches(|c: char| c == '.' || c == ',' || c == ';' || c == ':' || c == '`' || c == '"' || c == '\'');
+        let tok = raw_tok.trim_matches(|c: char| c == ',' || c == ';' || c == ':' || c == '`' || c == '"' || c == '\'');
+        // Strip trailing/leading periods only when they aren't part of a
+        // legitimate dotfile basename — `.gitignore` and `.env.example`
+        // must survive the trim.
+        let tok = if matches_dotfile(&tok.to_ascii_lowercase())
+            || tok.rsplit('/').next().map(|b| b.starts_with('.')).unwrap_or(false)
+        {
+            tok
+        } else {
+            tok.trim_matches('.')
+        };
         if tok.is_empty() { continue; }
         let lower = tok.to_ascii_lowercase();
         let has_ext = EXTS.iter().any(|e| lower.ends_with(e));
-        if !has_ext { continue; }
+        let is_dotfile = matches_dotfile(&lower);
+        if !has_ext && !is_dotfile { continue; }
         if ROOTS.iter().any(|r| lower.starts_with(r)) {
             return Some(tok.to_string());
         }
@@ -340,6 +374,42 @@ fn classify_artifact(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scan_for_path_finds_gitignore_under_examples() {
+        let s = "code_patch: create examples/ebay-clone/.gitignore";
+        assert_eq!(scan_for_path(s).as_deref(), Some("examples/ebay-clone/.gitignore"));
+    }
+
+    #[test]
+    fn scan_for_path_finds_gitkeep_under_docs_specs() {
+        let s = "code_patch: create examples/ebay-clone/docs/specs/.gitkeep";
+        assert_eq!(scan_for_path(s).as_deref(), Some("examples/ebay-clone/docs/specs/.gitkeep"));
+    }
+
+    #[test]
+    fn scan_for_path_finds_env_example() {
+        let s = "code_patch: create examples/ebay-clone/.env.example";
+        assert_eq!(scan_for_path(s).as_deref(), Some("examples/ebay-clone/.env.example"));
+    }
+
+    #[test]
+    fn scan_for_path_finds_dockerfile_no_extension() {
+        let s = "code_patch: create examples/ebay-clone/Dockerfile";
+        assert_eq!(scan_for_path(s).as_deref(), Some("examples/ebay-clone/Dockerfile"));
+    }
+
+    #[test]
+    fn scan_for_path_still_recognises_rust_files() {
+        let s = "code_patch: create examples/ebay-clone/backend/src/lib.rs";
+        assert_eq!(scan_for_path(s).as_deref(), Some("examples/ebay-clone/backend/src/lib.rs"));
+    }
+
+    #[test]
+    fn scan_for_path_rejects_random_dotfile_outside_roots() {
+        // .npmrc with no allowed root prefix should still be rejected.
+        assert_eq!(scan_for_path("write .npmrc somewhere").as_deref(), None);
+    }
 
     #[test]
     fn parse_confirm_with_eod() {
