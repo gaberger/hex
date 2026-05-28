@@ -1,3 +1,5 @@
+code_patch: create examples/ebay-clone/backend/src/core/usecases/auth.rs
+
 use super::{ports::*, domain::*};
 use std::error::Error;
 
@@ -24,18 +26,23 @@ impl AuthUseCase {
         validate_password(&password)?;
 
         let hashed_password = self.password_hasher.hash(password)?;
-        let user = User::new(username, hashed_password);
+        let user = User::new(username.clone(), hashed_password);
         self.reducer_call.register_user(user.clone())?;
-        self.user_repo.save(user.clone())?;
+        let created_user = self.user_repo.find_by_username(&user.username)?;
 
-        Ok(user)
+        if let Some(u) = created_user {
+            Ok(u)
+        } else {
+            Err("Failed to fetch created user".into())
+        }
     }
 
     pub fn login(&self, username: String, password: String) -> Result<AuthResult, Box<dyn Error>> {
         if let Some(user) = self.user_repo.find_by_username(&username)? {
             if self.password_hasher.verify(password, &user.hashed_password)? {
                 let token = self.token_issuer.issue_token(&user.username)?;
-                return Ok(AuthResult::new(token, user.username));
+                let expires_at = self.token_issuer.get_expiration_time()?;
+                return Ok(AuthResult::new(token, user.username, expires_at));
             }
         }
 
@@ -61,11 +68,11 @@ fn validate_password(password: &str) -> Result<(), Box<dyn Error>> {
 pub struct AuthResult {
     pub token: String,
     pub username: String,
-    // expires_at field can be added when JWT expiry logic is implemented
+    pub expires_at: i64, // Assuming expiration time is represented as a timestamp
 }
 
 impl AuthResult {
-    fn new(token: String, username: String) -> Self {
-        AuthResult { token, username }
+    fn new(token: String, username: String, expires_at: i64) -> Self {
+        AuthResult { token, username, expires_at }
     }
 }
