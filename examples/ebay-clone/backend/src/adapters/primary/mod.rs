@@ -5,7 +5,7 @@
 // This allows `cargo check -p ebay-clone-backend` to succeed while subsequent steps
 // fill in the specific HTTP/CLI/GraphQL implementations referenced in docs/specs/ebay-mvp.json.
 
-pub mod http;
+pub mod http_axum; // Added for feat-ebay-mvp step-12
 pub mod cli;
 pub mod graphql;
 
