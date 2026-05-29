@@ -1,33 +1,34 @@
-use reqwest::Client;
-use serde_json::json;
+use actix_web::{test, App, web};
+use hex_core::api::handler; // Assuming handler is defined in this module
 
-#[tokio::test]
+#[actix_web::test]
 async fn test_handler_happy_path() {
-    // ADR-2026-05-19-0721
-    let client = Client::new();
-    let url = "http://localhost:8000/api/handler";
+    let app = test::init_service(
+        App::new().route("/api/handler", web::post().to(handler)),
+    )
+    .await;
 
-    // Test with valid input
-    let payload = json!({
-        "field": "value"
-    });
+    let req = test::TestRequest::post()
+        .uri("/api/handler")
+        .set_json(serde_json::json!({"field": "value"}))
+        .to_request();
 
-    let response = client.post(url)
-        .json(&payload)
-        .send()
-        .await
-        .expect("Request failed");
+    let resp = test::call_service(&app, req).await;
+    assert!(resp.status().is_success());
+}
 
-    assert_eq!(response.status(), 200);
+#[actix_web::test]
+async fn test_handler_missing_field() {
+    let app = test::init_service(
+        App::new().route("/api/handler", web::post().to(handler)),
+    )
+    .await;
 
-    // Test with missing field
-    let invalid_payload = json!({});
+    let req = test::TestRequest::post()
+        .uri("/api/handler")
+        .set_json(serde_json::json!({}))
+        .to_request();
 
-    let error_response = client.post(url)
-        .json(&invalid_payload)
-        .send()
-        .await
-        .expect("Request failed");
-
-    assert_eq!(error_response.status(), 400);
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 400);
 }
