@@ -899,6 +899,53 @@ async fn process_role(
 /// Exposed for the P6.1 end-to-end pipeline integration test
 /// (`hex-nexus/tests/classifier_pipeline.rs`) which exercises the full
 /// dispatch path across all 6 decisions × 2 from-roles.
+/// Extract the FIRST path from a workplan_conductor brief's MISSING file
+/// section. Returns None if the brief doesn't have a MISSING section
+/// (either every file is already present, or this isn't a conductor brief).
+///
+/// The conductor's brief format (from workplan_conductor::build_brief):
+///
+/// ```text
+/// ONLY THESE N FILE(S) ARE STILL MISSING — emit a code_patch for each:
+/// - code_patch: create examples/ebay-clone/docker-compose.yml
+/// - code_patch: create examples/ebay-clone/scripts/smoke.sh
+/// ```
+///
+/// followed by a blank line then "Files to edit:" or "Each file must…".
+///
+/// Looks for the literal `ONLY THESE` marker (case-insensitive prefix
+/// check), then walks lines while they start with `- code_patch:` and
+/// returns the first path. Bare-bones — sufficient for the brief format
+/// the conductor actually emits, robust against minor whitespace drift.
+fn extract_first_missing_from_brief(brief: &str) -> Option<String> {
+    let mut in_missing = false;
+    for line in brief.lines() {
+        let trim = line.trim();
+        if !in_missing {
+            if trim.to_ascii_uppercase().starts_with("ONLY THESE") && trim.contains("MISSING") {
+                in_missing = true;
+            }
+            continue;
+        }
+        // Inside the MISSING section. The first `- code_patch: create <path>`
+        // (or `edit <path>`) line gives us the path.
+        if let Some(rest) = trim.strip_prefix("- code_patch:") {
+            let cleaned = rest.trim()
+                .trim_start_matches("create ")
+                .trim_start_matches("edit ")
+                .trim();
+            if !cleaned.is_empty() {
+                return Some(cleaned.to_string());
+            }
+        }
+        // Empty line terminates the section.
+        if trim.is_empty() {
+            return None;
+        }
+    }
+    None
+}
+
 pub fn decision_str(d: &ClassifierDecision) -> &'static str {
     match d {
         ClassifierDecision::Accept => "accept",
@@ -1126,6 +1173,53 @@ pub async fn route_decision(
                     ];
                     let path_required = PATH_REQUIRED_TOOLS.contains(&step.tool.as_str());
                     let path = if path_required {
+                        // Conductor-brief-aware path selection. When the
+                        // originating message is a workplan_conductor brief,
+                        // the brief enumerates the EXACT files the step needs.
+                        // The persona's tool_plan often emits an invented path
+                        // (`tests/handler_smoke.rs` at workspace root, etc.)
+                        // because small models aren't grounded enough to copy
+                        // a long fully-qualified path verbatim. Force the path
+                        // to one of the brief's named files so the system
+                        // executes against the workplan, not the LLM's
+                        // hallucination.
+                        //
+                        // Surfaced 2026-05-28 ebay-mvp scaling test: 52bf3bb0
+                        // committed `tests/handler_smoke.rs` at workspace root
+                        // — a CLAUDE.md root-folder-rule violation. The
+                        // persona was nominally responding to step-29's brief
+                        // for examples/ebay-clone/backend/tests/integration_listings.rs
+                        // but invented a different path. Brief-derivation
+                        // closes this class of off-target writes.
+                        if from == "nexus-workplan-conductor" && step.tool == "code_patch" {
+                            if let Some(brief_path) = extract_first_missing_from_brief(original_content) {
+                                tracing::info!(
+                                    role = %role,
+                                    tool = %step.tool,
+                                    msg_id,
+                                    persona_path = %step.intent.chars().take(80).collect::<String>(),
+                                    brief_path = %brief_path,
+                                    "org_responder: conductor brief overriding persona-emitted path with brief's MISSING file"
+                                );
+                                brief_path
+                            } else {
+                                // Brief has no MISSING files (rare — would mean
+                                // conductor dispatched a fully-complete step).
+                                // Fall through to the persona path with a warn.
+                                match crate::orchestration::commitment_parser::scan_for_path(&step.intent)
+                                    .or_else(|| crate::orchestration::commitment_parser::scan_for_path(original_content))
+                                {
+                                    Some(p) => p,
+                                    None => {
+                                        tracing::warn!(
+                                            role = %role, tool = %step.tool, msg_id,
+                                            "org_responder: conductor brief lists no MISSING files and persona emitted no scannable path — dropping"
+                                        );
+                                        continue;
+                                    }
+                                }
+                            }
+                        } else {
                         match crate::orchestration::commitment_parser::scan_for_path(&step.intent)
                             .or_else(|| crate::orchestration::commitment_parser::scan_for_path(original_content))
                         {
@@ -1140,6 +1234,7 @@ pub async fn route_decision(
                                 );
                                 continue;
                             }
+                        }
                         }
                     } else {
                         // Non-path tools: use the role+tool as a synthetic
