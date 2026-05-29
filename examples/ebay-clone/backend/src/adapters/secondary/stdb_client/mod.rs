@@ -1,7 +1,5 @@
 use crate::adapters::secondary::stdb_client::{connection, queries, reducers};
-use crate::core::domain_types::{
-    Auction, Bid, Listing, User, WatchEntry,
-};
+use crate::core::domain::{Auction, Bid, Listing, User, WatchEntry};
 
 pub struct StdbClient {
     client: spacetimedb_sdk::client::Client,
@@ -67,6 +65,3 @@ impl ReducerCallPort for StdbClient {
         reducers::watch_listing(&self.client, input).await.map_err(|e| e.to_string())
     }
 }
-
-// Grounding citation
-// docs/specs/adr-2026-05-19-0721.md
