@@ -59,6 +59,8 @@ The catastrophic find (#15) is the one worth framing for posterity: for ~4 hours
 
 ## 4. The codegen ceiling — empirical findings
 
+> **CORRECTION (2026-05-29, post-test-ladder):** The "16-error model ceiling" framing in this section was wrong. A subsequent cold-start `cargo check` produced **18 errors**, not 16. A floor that drifts between runs is not a ceiling — it's regression from inconsistent state. The real root cause is §5.8 (parallel-worktree merge drift), not model reasoning. The error inventory below still describes the *kind* of error that gets stuck; just don't read "16" as a bound. Test ladder also surfaced three additional deficiencies: §5.8 (merge drift), §5.9 (STDB workspace entanglement), §5.10 (scaffolded-artifact validation gap). §7 verdict is downgraded accordingly.
+
 After all 16 bug fixes landed, the autonomous loop drove cargo errors from a 73-error baseline (post-overnight-completion) down to a stable **16-error floor** on the ebay-clone backend. The loop then plateaued: 20 consecutive iterations of asking the persona to fix specific compile errors (with workspace exports injected, replace-mode prompt, and the literal `error[E0432]: …` lines from cargo) failed to reduce the count further.
 
 The 16 remaining errors are:
@@ -131,18 +133,53 @@ These errors share a pattern: the persona at qwen2.5-coder:14b Q4_K_M reliably g
 - If the written file is NOT in cargo metadata, flag it as a shadow-write and warn the operator
 - This costs ~50ms per tick and would have caught the prefix bug on tick 1
 
+### 5.8. Parallel-worktree merge drift (NEW — actual root cause of §4)
+**Symptom:** Cold-restart `cargo check` produces 16 then 18 then 17 errors. The "ceiling" isn't a ceiling — it's regression from inconsistent state surviving across merges. Specifically: a port file rewritten in worktree A declares `async fn get_listing_by_id(&self, id: &ListingId) -> Result<Listing, ListingRepoError>` while the adapter impl in worktree B was written against an older signature shape, and both got merged into trunk without a post-merge cargo-check gate. Auto_repair then thrashes — it fixes the adapter to match the port, but a subsequent dispatch fixes the port to match the old adapter, oscillating around the same fault line.
+**Hypothesis:** `feature-workflow.sh merge` runs `git merge --no-ff` per worktree in dependency order but never runs `cargo check` between merges. The first merge that introduces drift survives because the second merge "validates" by merging cleanly at the git level; the type-mismatch only surfaces at the end-of-tree cargo check, by which point the drift has been amplified across multiple files.
+**Fix plan (1-2 hours):**
+- `feature-workflow.sh merge` runs `cargo check --workspace` BETWEEN each `--no-ff` merge
+- If error count increases vs pre-merge baseline, `git reset --hard HEAD~1` and report which adapter introduced the regression
+- Surface to operator with: "merge of `feat/{name}/{adapter}` introduced N new errors; rolled back; persona needs to rebase against current port signatures"
+- This is the highest ROI single fix because it eliminates the drift class entirely, not just one of its symptoms
+
+### 5.9. STDB module workspace entanglement (NEW)
+**Symptom:** `spacetime build` in `spacetime-modules/marketplace/` fails with a workspace conflict + bogus dependency that the persona never declared. Root: the autonomously-generated `Cargo.toml` for the marketplace module is being treated as a member of hex's root workspace, inheriting unrelated dependency resolutions.
+**Hypothesis:** scaffold step never wrote a `[workspace]` block in the new module's Cargo.toml AND never added the module path to the root workspace's `exclude = [...]` list. WASM modules MUST be standalone for `spacetime build` to work.
+**Fix plan (1-2 hours):**
+- `hex init` scaffolding (and any `code_patch` that creates a Cargo.toml under `spacetime-modules/`) writes `[workspace]` as the first block
+- Root `Cargo.toml` gets `exclude = ["spacetime-modules/*", "examples/*/backend"]` so generated projects don't inherit workspace defaults
+- Verify with `cargo metadata --no-deps` returning a single-package result for the module
+- Add to `hex doctor`: walk `spacetime-modules/*/Cargo.toml` and `examples/*/backend/Cargo.toml`, assert each declares `[workspace]`
+
+### 5.10. Scaffolded artifacts not validated as executable (NEW)
+**Symptom:** Workplan declared 109/109 files complete, including `start.sh`, `docker-compose.yml`, `README.md`. But `start.sh` has placeholder paths (`path/to/binary` style), wrong port, and references `bun` without checking it's installed. The workplan's "done condition" was file-presence, not file-validity.
+**Hypothesis:** `done_condition: "compile + lint + test pass"` in the workplan schema is only checked for Rust source. Shell scripts, compose files, READMEs were file-existence-checked and rubber-stamped.
+**Fix plan (2-3 hours):**
+- Per-file `validators` field in workplan schema: `start.sh` → `bash -n` (syntax) + `shellcheck`; `docker-compose.yml` → `docker compose config -q`; `package.json` → `bun pm pkg get name` or `node -e "require('./package.json')"`
+- Workplan validator agent runs these as part of validation gate, not just `cargo check`
+- Files without a matching validator default to "must contain non-placeholder text" — grep for `path/to`, `TODO:`, `<your-`, `FIXME` and reject
+
 ## 6. Net delivery
 
 **Platform fixes shipped this test:** 9 (commits `cc538b93` → `74842200`)
 **New hex CLI surface:** `hex auto-repair status` / `restart`
 **New hex-nexus orchestration module:** `auto_repair.rs` (~400 LOC + tests)
-**Bugs documented but unfixed:** 7 (§5 above)
+**Bugs documented but unfixed:** 10 (§5 above — 3 added after test ladder)
 **Tested under realistic load:** every dispatch path, every plateau detector, every iteration cap
 
-## 7. Verdict
+## 7. Verdict (REVISED 2026-05-29 post-test-ladder)
 
-Smoke test passed. The autonomous AI harness is real and works end-to-end on real projects — not a tech demo, not a happy-path example. It surfaced 16 distinct bug classes under load, every one of which would have been invisible in a synthetic test.
+**The artifact does not work.** Running the test ladder (cargo check, spacetime build, frontend build, start.sh) on the autonomously-built ebay-clone produced failures at every rung. 18 cargo errors in the backend, workspace conflict in the STDB module, placeholder paths in start.sh. The workplan's "32/32 steps · 109/109 files complete" claim was true at the file-presence level and false at every level of actual functionality.
 
-The single most valuable finding: **the harness must verify its own ground truth**. Every level of the system reported "success" while writing to a shadow path that nothing imported. The next round of hardening (§5) is mostly about adding ground-truth checks at each layer (model actually used, path actually in project, file actually compiled).
+**The harness partially works.** It validated 7 mechanisms end-to-end (workplan conductor, commit chain, auto_repair dispatch, plateau detection, iteration cap, path resolution post-fix, operator CLI). It also surfaced 16 distinct bug classes (§3) all of which were fixed in-test, plus 10 deficiencies (§5) still open. The harness is a real autonomous system, not a tech demo — but the smoke test exposed that its "complete" signal is structurally divorced from "works."
 
-The 16 remaining cargo errors on the ebay-clone aren't a hex failure — they're hex correctly reporting the model's reasoning ceiling on this codebase. Closing them requires either §5.1 (working model upgrade) or §5.3 (trait-signature grounding) or operator handwriting. Hex is doing its job.
+**The single biggest lesson is unchanged:** the harness must verify its own ground truth. Every layer reported success while ground truth was failing — wrong path, wrong types after merge, wrong workspace membership, placeholder scripts. The next round of hardening (§5) is almost entirely about adding ground-truth gates at each layer.
+
+**Prioritized fix order:**
+1. **§5.8 post-merge cargo-check gate** — single highest ROI; eliminates the drift class that produces the false-floor. Without this, every other code-quality fix is fighting symptoms.
+2. **§5.1 model upgrade path** — unblocks empirical testing of whether stronger models close the residual errors once drift is removed.
+3. **§5.10 scaffolded-artifact validators** — closes the "file exists ≠ file works" gap that produced placeholder start.sh.
+4. **§5.9 STDB workspace entanglement** — small, mechanical, removes the spacetime build failure entirely.
+5. **§5.7 shadow-project regression check** — would have caught the prefix bug on tick 1 of the original test.
+6. **§5.4 inbox TTL** — eliminates residual noise during platform transitions.
+7. **§5.5, §5.6, §5.3, §5.2** — quality-of-life and refinement; ship after the above unblocks compile.
