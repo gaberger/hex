@@ -55,6 +55,47 @@ fn state() -> &'static Mutex<RepairState> {
     S.get_or_init(|| Mutex::new(RepairState::default()))
 }
 
+/// Snapshot of the auto_repair loop state for the status endpoint.
+/// Public so the HTTP handler in routes/ can return it as JSON.
+#[derive(serde::Serialize)]
+pub struct RepairStateSnapshot {
+    pub iterations: u32,
+    pub last_error_count: Option<u32>,
+    pub no_progress_count: u32,
+    pub paused: bool,
+    pub max_iterations: Option<u32>,
+    pub file_cooldowns_count: usize,
+}
+
+pub fn snapshot() -> RepairStateSnapshot {
+    let s = state().lock().unwrap();
+    let max_it = std::env::var("HEX_AUTO_REPAIR_MAX_ITERATIONS_OVERRIDE")
+        .ok()
+        .and_then(|v| v.parse().ok());
+    let paused = s.no_progress_count >= 3
+        || s.iterations >= max_it.unwrap_or(u32::MAX);
+    RepairStateSnapshot {
+        iterations: s.iterations,
+        last_error_count: s.last_error_count,
+        no_progress_count: s.no_progress_count,
+        paused,
+        max_iterations: max_it,
+        file_cooldowns_count: s.file_cooldowns.len(),
+    }
+}
+
+/// Reset the loop state so the next tick fires fresh. Used by the
+/// `hex auto-repair restart` CLI to re-engage a paused loop without a
+/// full nexus restart.
+pub fn reset() {
+    let mut s = state().lock().unwrap();
+    s.iterations = 0;
+    s.last_error_count = None;
+    s.no_progress_count = 0;
+    s.file_cooldowns.clear();
+    tracing::info!("auto_repair: state reset via operator API");
+}
+
 fn parse_env_u64(key: &str, default: u64) -> u64 {
     std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
 }
@@ -232,6 +273,52 @@ async fn run_tick(
             .collect()
     };
 
+    // Phase A: harvest unresolved-import errors and fire create-module asks
+    // for each missing module. This closes the biggest plateau cause —
+    // "can't fix file Y because module X is missing; can't fix module X
+    // because we only re-ask the broken file". Surfaced 2026-05-29 PM.
+    //
+    // Collect missing modules across ALL error lines (not just top-K files),
+    // dedupe, respect file_cooldowns, fire one create-ask per missing path.
+    let missing_modules = extract_missing_modules(&errors_per_file, &cfg.project_path);
+    for missing_path in missing_modules {
+        let cooldown_key = format!("create:{}", missing_path);
+        let in_cooldown = {
+            let s = state().lock().unwrap();
+            s.file_cooldowns.get(&cooldown_key)
+                .map(|t| now.duration_since(*t) < cooldown)
+                .unwrap_or(false)
+        };
+        if in_cooldown {
+            continue;
+        }
+        let content = format!(
+            "Create the missing Rust module file {missing_path}. Other files in this crate \
+             import from this module path but the file does not exist on disk — that's why \
+             cargo check is failing.\n\n\
+             Write a minimal but functional module that exports the symbols its callers expect. \
+             Use ONLY the actual workspace exports listed in the AVAILABLE WORKSPACE EXPORTS \
+             block. Do NOT invent types. Do NOT import from modules that aren't in the export list.\n\n\
+             The file should compile by itself: a `pub fn`, `pub struct`, `pub trait`, or `pub use` \
+             that satisfies the importer. If the importer needs a router handler, write a handler. \
+             If it needs a port-trait impl, write the impl. Match the existing crate's hex \
+             architecture conventions (domain → ports → adapters)."
+        );
+        match send_dm(http, nexus_base, "hex-coder", "auto_repair_create_module", &content).await {
+            Ok(()) => {
+                tracing::info!(
+                    missing_path = %missing_path,
+                    "auto_repair: dispatched create-module ask"
+                );
+                let mut s = state().lock().unwrap();
+                s.file_cooldowns.insert(cooldown_key, now);
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, missing_path = %missing_path, "auto_repair: create-module dispatch failed");
+            }
+        }
+    }
+
     for (rel_path, err_count) in to_fire {
         // Inject the actual compile errors so the persona knows what to fix
         // instead of regenerating semantically-equivalent broken content.
@@ -273,6 +360,93 @@ async fn run_tick(
     }
 
     Ok(())
+}
+
+/// Scan compile-error lines for `error[E0432]: unresolved import` and
+/// `could not find \`X\` in \`Y\`` patterns. Returns a deduped set of
+/// missing-module paths (relative to crate root) that don't yet exist
+/// on disk.
+///
+/// Only emits paths that:
+///   1. Aren't currently a file under src/
+///   2. Aren't a directory either (so we don't try to create something
+///      that's actually a sub-module via mod.rs)
+///   3. Are inside this crate (start with `crate::` in the original
+///      error message)
+///
+/// Surfaced 2026-05-29 PM: of the 41-error plateau, ~17 errors were
+/// single E0432 lines listing 9+ missing modules each. Rewriting the
+/// importing file can't fix them — the actual fix is to CREATE the
+/// missing modules.
+fn extract_missing_modules(
+    errors_per_file: &HashMap<String, Vec<String>>,
+    project_path: &Path,
+) -> Vec<String> {
+    use std::collections::HashSet;
+    let src_dir = project_path.join("src");
+    // Match `crate::A::B::C` inside backticks. Pull all such paths from
+    // any error line; the same line can list 9+ paths.
+    let re = regex::Regex::new(r"`crate::([a-zA-Z0-9_:]+)`").unwrap();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for lines in errors_per_file.values() {
+        for line in lines {
+            // Only mine import-style errors. E0432 = unresolved import.
+            if !line.contains("E0432") && !line.contains("unresolved import") {
+                continue;
+            }
+            for cap in re.captures_iter(line) {
+                let mod_path = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+                if mod_path.is_empty() {
+                    continue;
+                }
+                // The path includes the importing leaf when the error
+                // form is `crate::foo::bar::baz` where `baz` is the
+                // imported symbol — we want the MODULE that contains
+                // `baz`, not `baz` itself. Heuristic: if the last
+                // segment is lowercase and contains no `_`, OR if the
+                // overall path corresponds to a module that already
+                // exists, skip. We'll let the file-check filter sort it.
+                let rel_file = format!("src/{}.rs", mod_path.replace("::", "/"));
+                let abs_file = project_path.join(&rel_file);
+                let abs_dir_mod = project_path.join(format!(
+                    "src/{}/mod.rs", mod_path.replace("::", "/")
+                ));
+                let exists = abs_file.is_file() || abs_dir_mod.is_file();
+                if exists {
+                    continue;
+                }
+                // Also skip if a directory exists (would mean it's a
+                // sub-module that needs mod.rs, not a leaf file).
+                let abs_dir = project_path.join(format!(
+                    "src/{}", mod_path.replace("::", "/")
+                ));
+                if abs_dir.is_dir() && !abs_dir_mod.is_file() {
+                    // Directory present but no mod.rs — that's actually
+                    // a thing to create. Use rel_file (the .rs sibling)
+                    // OR the mod.rs version. Prefer mod.rs.
+                    let candidate = format!("src/{}/mod.rs", mod_path.replace("::", "/"));
+                    if seen.insert(candidate.clone()) {
+                        out.push(candidate);
+                    }
+                    continue;
+                }
+                // Sanity: the parent dir must exist (don't try to
+                // create deep into nowhere). e.g. for `crate::foo::bar`
+                // we need src/foo/ to exist.
+                if let Some(parent) = abs_file.parent() {
+                    if parent.is_dir() || parent == src_dir.as_path() {
+                        if seen.insert(rel_file.clone()) {
+                            out.push(rel_file);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Cap at 10 to keep prompt budget bounded — fire the rest next tick.
+    out.truncate(10);
+    out
 }
 
 /// Run `cargo check` in the configured project and return:

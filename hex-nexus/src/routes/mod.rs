@@ -148,6 +148,25 @@ async fn get_version() -> Json<serde_json::Value> {
     }))
 }
 
+/// GET /api/auto-repair/status — return the auto_repair loop's current state.
+/// Surfaced 2026-05-29 PM so the operator can see what the loop is doing
+/// without grepping nexus.log.
+async fn auto_repair_status() -> Json<serde_json::Value> {
+    let snap = crate::orchestration::auto_repair::snapshot();
+    Json(serde_json::to_value(snap).unwrap_or_else(|_| json!({"error": "serialize_failed"})))
+}
+
+/// POST /api/auto-repair/restart — reset the auto_repair loop state so
+/// it re-engages without a full nexus restart. The next tick fires
+/// fresh: iterations=0, no_progress=0, cooldowns cleared. Useful after
+/// the loop self-pauses on a plateau and the operator has shipped a
+/// targeted fix (e.g. created missing modules, downgraded a problem
+/// dep) and wants to re-run.
+async fn auto_repair_restart() -> Json<serde_json::Value> {
+    crate::orchestration::auto_repair::reset();
+    Json(json!({"ok": true, "status": "loop state reset; next tick fires fresh"}))
+}
+
 /// GET /api/health — lightweight health check for hooks and CLI.
 /// Returns nexus status and SpacetimeDB connectivity.
 async fn get_health(
@@ -539,6 +558,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/assets/{*path}", get(serve_static))
         .route("/api/version", get(get_version))
         .route("/api/health", get(get_health))
+        .route("/api/auto-repair/status", get(auto_repair_status))
+        .route("/api/auto-repair/restart", post(auto_repair_restart))
         // Project management
         .route("/api/projects", get(projects::list_projects))
         .route("/api/projects/register", post(projects::register)
