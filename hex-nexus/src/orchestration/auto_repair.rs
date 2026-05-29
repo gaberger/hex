@@ -273,6 +273,47 @@ async fn run_tick(
             .collect()
     };
 
+    // Compute the workspace-relative prefix for project paths. Cargo
+    // check emits paths like `src/foo.rs` relative to cwd (the project
+    // root), but the executor resolves all file_write paths against
+    // the hex WORKSPACE root. Without this prefix, the persona's
+    // code_patch lands at `<workspace>/src/foo.rs` instead of
+    // `<workspace>/examples/ebay-clone/backend/src/foo.rs`.
+    //
+    // Catastrophic bug surfaced 2026-05-29 PM: 9 phantom files were
+    // written to the hex workspace root for hours. None of them fixed
+    // the actual ebay-clone — the loop appeared to work but was
+    // operating on a non-existent shadow project.
+    let project_rel_prefix: String = {
+        let repo_root = std::env::current_dir()
+            .ok()
+            .or_else(|| {
+                // Best-effort fallback: walk up from project_path until we
+                // find a workspace Cargo.toml.
+                let mut cur = cfg.project_path.clone();
+                while let Some(parent) = cur.parent() {
+                    if parent.join("Cargo.toml").is_file() &&
+                       parent.join(".git").exists() {
+                        return Some(parent.to_path_buf());
+                    }
+                    cur = parent.to_path_buf();
+                }
+                None
+            })
+            .unwrap_or_else(|| std::path::PathBuf::from("/home/gary/development/hex"));
+        cfg.project_path
+            .strip_prefix(&repo_root)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default()
+    };
+    let prefix_path = |rel: &str| -> String {
+        if project_rel_prefix.is_empty() {
+            rel.to_string()
+        } else {
+            format!("{}/{}", project_rel_prefix.trim_end_matches('/'), rel)
+        }
+    };
+
     // Phase A: harvest unresolved-import errors and fire create-module asks
     // for each missing module. This closes the biggest plateau cause —
     // "can't fix file Y because module X is missing; can't fix module X
@@ -282,6 +323,7 @@ async fn run_tick(
     // dedupe, respect file_cooldowns, fire one create-ask per missing path.
     let missing_modules = extract_missing_modules(&errors_per_file, &cfg.project_path);
     for missing_path in missing_modules {
+        let missing_path = prefix_path(&missing_path);
         let cooldown_key = format!("create:{}", missing_path);
         let in_cooldown = {
             let s = state().lock().unwrap();
@@ -329,6 +371,9 @@ async fn run_tick(
             .get(&rel_path)
             .map(|lines| lines.iter().take(20).cloned().collect::<Vec<_>>().join("\n"))
             .unwrap_or_default();
+        // Prefix the path so the persona writes to the project, not the
+        // hex workspace root. See `project_rel_prefix` block above.
+        let rel_path = prefix_path(&rel_path);
         let content = format!(
             "Rewrite {rel_path} to fix the {err_count} compile errors listed below. The current \
              file is BROKEN. Use only the actual workspace exports listed in the AVAILABLE \
