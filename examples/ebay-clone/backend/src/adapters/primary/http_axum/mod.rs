@@ -4,12 +4,12 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use tower_http::auth::RequireAuthorizationLayer;
 use tracing::info;
+use axum::middleware::from_fn;
 
 use crate::{
     adapters::primary::http_axum::{
-        auth_middleware::JwtAuthMiddleware,
+        auth_middleware::auth_middleware,
         state::AppState,
         dto::{UserRequest, UserResponse, ItemRequest, ItemResponse, BidRequest, BidResponse},
         handlers_auth::auth_routes,
@@ -36,7 +36,7 @@ pub fn create_router(ports: Arc<Ports>) -> Router {
         .route("/api/v1/me/listings", get(get_my_listings))
         .nest("/api/v1/images", images_routes())
         .nest("/api/v1/auth", auth_routes())
-        .layer(JwtAuthMiddleware::from(app_state.clone()))
+        .layer(from_fn(auth_middleware))
 }
 
 async fn root() -> &'static str {
