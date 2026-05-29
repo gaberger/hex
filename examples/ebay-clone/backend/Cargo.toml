@@ -39,6 +39,8 @@ zeroize = "1.5" # ADR-2026-05-19-0721
 
 [dev-dependencies]
 tokio-test = "0.4"
+spacetimedb = "0.1"
+test-harness = "0.1"
 # The persona-authored integration / acceptance tests reference APIs that
 # don't actually exist on crates.io (fantoccini 0.23, playwright, an
 # in-memory spacetimedb 0.1, test-harness 0.1). Those tests are #[ignore]'d
