@@ -367,9 +367,27 @@ async fn run_tick(
         // This was the gap that made the loop plateau in the first pass:
         // the persona kept rewriting the file with the same errors because
         // it had no signal on what was wrong. Surfaced 2026-05-29 morning.
+        // Rewrite the bare `src/foo.rs:10:5: error` prefix to the
+        // workspace-relative path so the persona can't grab a phantom
+        // bare path out of the error block and write to the wrong place.
+        // Surfaced 2026-05-29: 56 phantom files appeared at hex
+        // workspace root because the persona was using paths from the
+        // error block instead of the explicit "Rewrite <prefixed>" mention.
         let errors_block = errors_per_file
             .get(&rel_path)
-            .map(|lines| lines.iter().take(20).cloned().collect::<Vec<_>>().join("\n"))
+            .map(|lines| {
+                lines.iter()
+                    .take(20)
+                    .map(|l| {
+                        if l.starts_with("src/") {
+                            format!("{}/{}", project_rel_prefix.trim_end_matches('/'), l)
+                        } else {
+                            l.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
             .unwrap_or_default();
         // Prefix the path so the persona writes to the project, not the
         // hex workspace root. See `project_rel_prefix` block above.
