@@ -19,9 +19,8 @@ use crate::{
             get_listing_by_id, listings_routes,
         },
         handlers_me::{get_my_bids, get_my_won_items, get_my_listings},
-        state::AppState,
     },
-    adapters::secondary::stdb_client::connection::connect,
+    adapters::secondary::stdb_client::connect,
 };
 
 // ADR-2026-05-19-0721
