@@ -10,7 +10,6 @@ use axum::middleware::from_fn;
 use crate::{
     adapters::primary::http_axum::{
         auth_middleware::auth_middleware,
-        state::AppState,
         dto::{UserRequest, UserResponse, ItemRequest, ItemResponse, BidRequest, BidResponse},
         handlers_auth::auth_routes,
         handlers_bidding::{place_bid, toggle_watch},
@@ -20,8 +19,9 @@ use crate::{
             get_listing_by_id, listings_routes,
         },
         handlers_me::{get_my_bids, get_my_won_items, get_my_listings},
+        state::AppState,
     },
-    adapters::secondary::stdb_client::connect,
+    adapters::secondary::stdb_client::connection::connect,
 };
 
 // ADR-2026-05-19-0721
