@@ -1,7 +1,8 @@
+Line 3 is redundant (`DurationMs` is already in scope via `crate::core::domain::*` on line 1) and broken; line 4 needs the `crate::` prefix. Here is the fixed file:
+
 use crate::core::domain::*;
 use async_trait::async_trait;
-use core::time::DurationMs; // ADR-2026-05-19-0721
-use adapters::primary::http_axum::handlers_listings::SearchListingsParams;
+use crate::adapters::primary::http_axum::handlers_listings::SearchListingsParams;
 
 /// ListingRepoPort defines read-only operations on listings.
 ///
