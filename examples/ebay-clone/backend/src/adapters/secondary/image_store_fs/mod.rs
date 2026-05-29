@@ -49,7 +49,7 @@ impl ImageStorePort for FilesystemImageStore {
             return Err(ImageStoreError::UnsupportedContentType);
         }
 
-        let sha256 = hasher::hash(&image_data);
+        let sha256 = hasher::compute_sha256(&image_data);
         let file_path = self.file_path(&sha256);
 
         let mut file = File::create(&file_path).await.map_err(|_| ImageStoreError::Io)?;
@@ -61,10 +61,10 @@ impl ImageStorePort for FilesystemImageStore {
     async fn get_image(&self, image_ref: &ImageRef) -> Result<Vec<u8>, ImageStoreError> {
         let file_path = self.file_path(&image_ref.sha256);
         if !file_path.exists() {
-            return Err(ImageStoreError::ImageNotFound);
+            return Err(ImageStoreError::NotFound);
         }
 
-        let content = fs::read(&file_path).map_err(|_| ImageStoreError::Io)?;
-        Ok(content)
+        let data = fs::read(&file_path).map_err(|_| ImageStoreError::Io)?;
+        Ok(data)
     }
 }
