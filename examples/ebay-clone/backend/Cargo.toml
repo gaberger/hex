@@ -39,3 +39,4 @@ zeroize = "1.5" # ADR-2026-05-19-0721
 
 [dev-dependencies]
 tokio-test = "0.4"
+spacetimedb = { version = "0.1", features = ["in-memory"] }
