@@ -1,7 +1,6 @@
 use crate::adapters::secondary::stdb_client::{connection, queries, reducers};
-use crate::domain::ports::{
-    AuctionRepoPort, BidRepoPort, ListingRepoPort, UserRepoPort, WatchRepoPort,
-    ReducerCallPort,
+use crate::core::domain_types::{
+    Auction, Bid, Listing, User, WatchEntry,
 };
 
 pub struct StdbClient {
@@ -45,32 +44,29 @@ impl BidRepoPort for StdbClient {
 
 #[async_trait::async_trait]
 impl WatchRepoPort for StdbClient {
-    async fn get_watch_by_id(&self, watch_id: &str) -> Result<Watch, String> {
+    async fn get_watch_by_id(&self, watch_id: &str) -> Result<WatchEntry, String> {
         queries::get_watch_by_id(&self.client, watch_id).await.map_err(|e| e.to_string())
     }
 }
 
 #[async_trait::async_trait]
 impl ReducerCallPort for StdbClient {
-    async fn register_user(&self, user_data: UserData) -> Result<(), String> {
-        reducers::register_user(&self.client, user_data).await.map_err(|e| e.to_string())
+    async fn register_user(&self, input: RegisterUserInput) -> Result<(), String> {
+        reducers::register_user(&self.client, input).await.map_err(|e| e.to_string())
     }
 
-    async fn create_listing(&self, listing_data: ListingData) -> Result<(), String> {
-        reducers::create_listing(&self.client, listing_data).await.map_err(|e| e.to_string())
+    async fn create_listing(&self, input: CreateListingInput) -> Result<(), String> {
+        reducers::create_listing(&self.client, input).await.map_err(|e| e.to_string())
     }
 
-    async fn place_bid(&self, bid_data: BidData) -> Result<(), String> {
-        reducers::place_bid(&self.client, bid_data).await.map_err(|e| e.to_string())
+    async fn place_bid(&self, input: PlaceBidInput) -> Result<(), String> {
+        reducers::place_bid(&self.client, input).await.map_err(|e| e.to_string())
     }
 
-    async fn watch_listing(&self, watch_data: WatchData) -> Result<(), String> {
-        reducers::watch_listing(&self.client, watch_data).await.map_err(|e| e.to_string())
+    async fn watch_listing(&self, input: WatchListingInput) -> Result<(), String> {
+        reducers::watch_listing(&self.client, input).await.map_err(|e| e.to_string())
     }
 }
 
-// Ensure that all public types/functions are reachable from the port-trait impls
-pub use self::{connection::connect, queries::{get_user_by_id, get_listing_by_id, get_auction_by_id, get_bid_by_id, get_watch_by_id}, reducers::{register_user, create_listing, place_bid, watch_listing}};
-
-// Grounding citation per CEO request and rules
-// Spec references in docs/specs/ (look in the workplan's specs field for the file path): ebay-spec-001, ebay-spec-006, ebay-spec-012, ebay-spec-019, ebay-spec-020
+// Grounding citation
+// docs/specs/adr-2026-05-19-0721.md
