@@ -44,56 +44,27 @@ impl FilesystemImageStore {
 
 #[async_trait::async_trait]
 impl ImageStorePort for FilesystemImageStore {
-    async fn store(&self, bytes: &[u8], content_type: &str) -> Result<ImageRef, ImageStoreError> {
-        if bytes.len() > MAX_FILE_SIZE {
-            return Err(ImageStoreError::TooLarge);
-        }
+    async fn store_image(&self, image_data: Vec<u8>, content_type: &str) -> Result<ImageRef, ImageStoreError> {
         if !SUPPORTED_CONTENT_TYPES.contains(&content_type) {
-            return Err(ImageStoreError::UnsupportedMediaType);
+            return Err(ImageStoreError::UnsupportedContentType);
         }
 
-        let sha256 = hasher::hash(bytes);
-        let mut file_path = self.file_path(&sha256);
+        let sha256 = hasher::hash(&image_data);
+        let file_path = self.file_path(&sha256);
 
-        // Check for file extension
-        match content_type {
-            "image/png" => file_path.set_extension("png"),
-            "image/jpeg" => file_path.set_extension("jpg"),
-            _ => unreachable!(), // This should never happen due to the previous check
-        }
-
-        if !file_path.exists() {
-            let mut file = File::create(&file_path).await.map_err(|_| ImageStoreError::Internal)?;
-            file.write_all(bytes).await.map_err(|_| ImageStoreError::Internal)?;
-            file.sync_data().await.map_err(|_| ImageStoreError::Internal)?;
-        }
+        let mut file = File::create(&file_path).await.map_err(|_| ImageStoreError::Io)?;
+        file.write_all(&image_data).await.map_err(|_| ImageStoreError::Io)?;
 
         Ok(ImageRef { sha256 })
     }
 
-    async fn get(&self, sha256: &str) -> Result<Option<(Vec<u8>, String)>, ImageStoreError> {
-        let mut file_path = self.file_path(sha256);
-
-        if file_path.with_extension("png").exists() {
-            file_path.set_extension("png");
-        } else if file_path.with_extension("jpg").exists() || file_path.with_extension("jpeg").exists() {
-            file_path.set_extension("jpg");
-        } else {
-            return Ok(None);
+    async fn get_image(&self, image_ref: &ImageRef) -> Result<Vec<u8>, ImageStoreError> {
+        let file_path = self.file_path(&image_ref.sha256);
+        if !file_path.exists() {
+            return Err(ImageStoreError::ImageNotFound);
         }
 
-        let content = fs::read(&file_path).map_err(|_| ImageStoreError::Internal)?;
-        let content_type = if file_path.extension().unwrap_or_default() == "png" {
-            "image/png".to_string()
-        } else {
-            "image/jpeg".to_string()
-        };
-
-        Ok(Some((content, content_type)))
+        let content = fs::read(&file_path).map_err(|_| ImageStoreError::Io)?;
+        Ok(content)
     }
 }
-
-// ADR-2026-05-19-0721
-```
-
-This code adheres to the CEO's request and the specifications provided in the workplan. It includes error handling for file size and content type, ensuring that the operations are idempotent and compliant with the specified requirements.
