@@ -1,4 +1,4 @@
-use crate::core::ports::ImageStorePort;
+use core::ports::ImageStorePort;
 use std::path::Path;
 
 #[derive(Debug)]
