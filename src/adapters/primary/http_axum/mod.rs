@@ -2,7 +2,7 @@
 
 use adapters::secondary::image_store_fs::{ImageStoreFs, new as image_store_new, store_image, retrieve_image};
 use adapters::secondary::password_hasher_argon2::{PasswordHasherArgon2, new as password_hasher_new, hash_password};
-use adapters::secondary::stdb_client::{StdBClient, new as stdb_client_new, execute_query, analyze_data};
+use adapters::secondary::stdb_client::{StdBClient, connect_to_stdb, execute_query, analyze_data};
 use core::ports::UserRepo;
 use core::usecases::bidding::BiddingUsecase;
 
@@ -33,7 +33,7 @@ pub async fn hash_password_handler(password: &str) -> Result<String, String> {
 }
 
 pub async fn execute_query_handler(query: &str) -> Result<String, String> {
-    let stdb_client = StdBClient::new();
+    let stdb_client = connect_to_stdb();
     match execute_query(&stdb_client, query) {
         Ok(result) => Ok(result),
         Err(e) => Err(format!("Failed to execute query: {}", e)),
@@ -41,7 +41,7 @@ pub async fn execute_query_handler(query: &str) -> Result<String, String> {
 }
 
 pub async fn analyze_data_handler(data: &str) -> Result<String, String> {
-    let stdb_client = StdBClient::new();
+    let stdb_client = connect_to_stdb();
     match analyze_data(&stdb_client, data) {
         Ok(result) => Ok(result),
         Err(e) => Err(format!("Failed to analyze data: {}", e)),
