@@ -21,7 +21,7 @@ use crate::{
         },
         handlers_me::{get_my_bids, get_my_won_items, get_my_listings},
     },
-    adapters::secondary::stdb_client::{StdbClient, connect},
+    adapters::secondary::stdb_client::connect,
 };
 
 // ADR-2026-05-19-0721
