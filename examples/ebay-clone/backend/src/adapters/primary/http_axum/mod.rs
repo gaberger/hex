@@ -21,7 +21,7 @@ use crate::{
         handlers_me::{get_my_bids, get_my_won_items, get_my_listings},
         state::AppState,
     },
-    adapters::secondary::stdb_client::connect,
+    adapters::secondary::stdb_client::connection::connect,
     core::ports::user_repo::UserRepoPort,
 };
 
