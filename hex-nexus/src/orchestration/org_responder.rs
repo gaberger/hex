@@ -1109,34 +1109,43 @@ pub async fn route_decision(
                         post_inbox_notify("operator", 1, "persona_hallucinated_tool", &payload).await;
                         continue;
                     }
-                    // Try scan_for_path on the intent first. If that fails,
-                    // also scan the inbound message body — the conductor's
-                    // brief enumerates the exact file paths, and small models
-                    // routinely emit `code_patch: create docker-compose.yml`
-                    // (bare basename, no root prefix) trusting the brief to
-                    // supply the parent. Falling back to scanning `content`
-                    // recovers that case instead of silently dropping the step.
+                    // Tool-aware path requirement. The original "all tools need
+                    // a verifiable_path" gate was wrong for non-path tools:
+                    // delegate routes to a persona, escalate_to_operator opens
+                    // an inbox notification, cargo_check/memory_search/repo_*
+                    // run a read-only query. None of them produce a file; the
+                    // commitment row should still open so the audit trail
+                    // captures the request.
                     //
-                    // Surfaced 2026-05-28 ebay-mvp scaling test: persona reply
-                    // for step-31 said `code_patch: create docker-compose.yml`,
-                    // scan_for_path on the intent rejected the bare basename,
-                    // step was dropped silently, artifact field stayed empty,
-                    // commitment recorded with `artifact=` and no code_patch
-                    // ever fired. Hours of conductor cycles wasted.
-                    let path = match crate::orchestration::commitment_parser::scan_for_path(&step.intent)
-                        .or_else(|| crate::orchestration::commitment_parser::scan_for_path(original_content))
-                    {
-                        Some(p) => p,
-                        None => {
-                            tracing::warn!(
-                                role = %role,
-                                tool = %step.tool,
-                                intent_preview = %step.intent.chars().take(140).collect::<String>(),
-                                msg_id,
-                                "org_responder: tool_plan step dropped — scan_for_path found no recognizable file path in step.intent OR inbound content; this is the silent-drop class that makes commitments record with artifact=empty (relax scan_for_path or improve the persona prompt to emit fully-qualified paths)"
-                            );
-                            continue;
+                    // Surfaced 2026-05-28 ebay-mvp scaling test: after fix A
+                    // surfaced the silent-drop log, 361 drops in 96 minutes
+                    // showed the same warning class was killing legitimate
+                    // delegate + cargo_check + memory_search calls.
+                    const PATH_REQUIRED_TOOLS: &[&str] = &[
+                        "code_patch", "adr_draft", "spec_draft", "workplan_emit",
+                    ];
+                    let path_required = PATH_REQUIRED_TOOLS.contains(&step.tool.as_str());
+                    let path = if path_required {
+                        match crate::orchestration::commitment_parser::scan_for_path(&step.intent)
+                            .or_else(|| crate::orchestration::commitment_parser::scan_for_path(original_content))
+                        {
+                            Some(p) => p,
+                            None => {
+                                tracing::warn!(
+                                    role = %role,
+                                    tool = %step.tool,
+                                    intent_preview = %step.intent.chars().take(140).collect::<String>(),
+                                    msg_id,
+                                    "org_responder: path-required tool_plan step dropped — scan_for_path found no recognizable file path in step.intent OR inbound content (improve the persona prompt to emit fully-qualified paths)"
+                                );
+                                continue;
+                            }
                         }
+                    } else {
+                        // Non-path tools: use the role+tool as a synthetic
+                        // artifact handle so the commitment row still opens
+                        // and the drafter/executor chain can route it.
+                        format!("[non-path tool] {}/{}", role, step.tool)
                     };
                     open_typed_tool_commitment(
                         role,

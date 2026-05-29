@@ -599,10 +599,21 @@ async fn review_one(
         payload = payload_preview,
     );
 
-    // Pin a small fast model so we don't pile onto the 32B path the default
-    // router picks. Twin verdicts are short structured output — qwen3:4b is
-    // plenty. Override with HEX_TWIN_MODEL.
-    let twin_model = std::env::var("HEX_TWIN_MODEL").unwrap_or_else(|_| "qwen3:4b".to_string());
+    // Pin a fast model so we don't pile onto the 32B path the default router
+    // picks. Twin verdicts are short structured output. qwen2.5-coder:14b
+    // matches org_responder's pinned model — keeps the GPU on one model so
+    // the twin's tick doesn't force ollama to swap 14b → 4b → 14b every cycle,
+    // and (more importantly) the larger model produces valid strict JSON on
+    // the first attempt instead of burning through the 5-attempt parse budget
+    // before escalating. Override with HEX_TWIN_MODEL.
+    //
+    // Surfaced 2026-05-28 ebay-mvp scaling test: 9 twin parse-failure
+    // escalations in 96 minutes, each consuming 5 attempts × ~2s = 10s of
+    // wasted inference before fail-open to operator. qwen3:4b can't reliably
+    // emit `{"verdict": "approve|escalate|deny", "rationale": "..."}` strict
+    // JSON — it adds prose, omits braces, or drops the verdict field.
+    let twin_model = std::env::var("HEX_TWIN_MODEL")
+        .unwrap_or_else(|_| "qwen2.5-coder:14b".to_string());
     let body = serde_json::json!({
         "model": twin_model,
         "messages": [{ "role": "user", "content": user_msg }],
