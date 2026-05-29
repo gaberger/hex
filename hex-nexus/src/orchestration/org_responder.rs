@@ -917,6 +917,70 @@ async fn process_role(
 /// check), then walks lines while they start with `- code_patch:` and
 /// returns the first path. Bare-bones — sufficient for the brief format
 /// the conductor actually emits, robust against minor whitespace drift.
+/// Extract the full list of paths from the brief's MISSING (create) section.
+/// Same parsing rules as [`extract_first_missing_from_brief`] but returns
+/// every path rather than just the first one. Used to allowlist persona-
+/// emitted create paths that legitimately match the workplan.
+fn extract_create_allowlist_from_brief(brief: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_missing = false;
+    for line in brief.lines() {
+        let trim = line.trim();
+        if !in_missing {
+            if trim.to_ascii_uppercase().starts_with("ONLY THESE") && trim.contains("MISSING") {
+                in_missing = true;
+            }
+            continue;
+        }
+        if let Some(rest) = trim.strip_prefix("- code_patch:") {
+            let cleaned = rest.trim()
+                .trim_start_matches("create ")
+                .trim_start_matches("edit ")
+                .trim();
+            if !cleaned.is_empty() {
+                out.push(cleaned.to_string());
+            }
+            continue;
+        }
+        // Empty line terminates the section.
+        if trim.is_empty() {
+            break;
+        }
+    }
+    out
+}
+
+/// Extract the full list of paths from the brief's "Files to edit:" section.
+/// Walks lines after the "Files to edit:" marker, returning every path on
+/// `- code_patch: edit <path>` lines until the blank-line section terminator.
+fn extract_edit_allowlist_from_brief(brief: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_edit = false;
+    for line in brief.lines() {
+        let trim = line.trim();
+        if !in_edit {
+            if trim.eq_ignore_ascii_case("Files to edit:") {
+                in_edit = true;
+            }
+            continue;
+        }
+        if let Some(rest) = trim.strip_prefix("- code_patch:") {
+            let cleaned = rest.trim()
+                .trim_start_matches("edit ")
+                .trim_start_matches("create ")
+                .trim();
+            if !cleaned.is_empty() {
+                out.push(cleaned.to_string());
+            }
+            continue;
+        }
+        if trim.is_empty() {
+            break;
+        }
+    }
+    out
+}
+
 fn extract_first_missing_from_brief(brief: &str) -> Option<String> {
     let mut in_missing = false;
     for line in brief.lines() {
@@ -1192,31 +1256,97 @@ pub async fn route_decision(
                         // but invented a different path. Brief-derivation
                         // closes this class of off-target writes.
                         if from == "nexus-workplan-conductor" && step.tool == "code_patch" {
-                            if let Some(brief_path) = extract_first_missing_from_brief(original_content) {
-                                tracing::info!(
-                                    role = %role,
-                                    tool = %step.tool,
-                                    msg_id,
-                                    persona_path = %step.intent.chars().take(80).collect::<String>(),
-                                    brief_path = %brief_path,
-                                    "org_responder: conductor brief overriding persona-emitted path with brief's MISSING file"
-                                );
-                                brief_path
-                            } else {
-                                // Brief has no MISSING files (rare — would mean
-                                // conductor dispatched a fully-complete step).
-                                // Fall through to the persona path with a warn.
-                                match crate::orchestration::commitment_parser::scan_for_path(&step.intent)
-                                    .or_else(|| crate::orchestration::commitment_parser::scan_for_path(original_content))
-                                {
-                                    Some(p) => p,
-                                    None => {
+                            // Create vs. edit semantics. The persona's intent
+                            // text usually starts with "create <path>" or
+                            // "edit <path>". For edits, the persona's path
+                            // is legitimate if it's in the brief's
+                            // "Files to edit:" allowlist — those files
+                            // already exist and need targeted modification,
+                            // not creation. Only substitute for the create
+                            // path when the persona's path isn't in either
+                            // allowlist.
+                            //
+                            // Surfaced 2026-05-28 ebay-mvp scaling test: the
+                            // first targeting fix unconditionally substituted
+                            // any code_patch path with the first MISSING
+                            // create-target. That redirected legitimate
+                            // edits (e.g. examples/ebay-clone/backend/Cargo.toml,
+                            // which IS in step-29's files_to_edit) to the
+                            // create-target. Distinguish create vs. edit.
+                            let intent_lower = step.intent.to_ascii_lowercase();
+                            let is_edit = intent_lower.contains("edit ")
+                                || intent_lower.contains("modify ")
+                                || intent_lower.contains("update ")
+                                || intent_lower.contains("patch ");
+                            let persona_path = crate::orchestration::commitment_parser::scan_for_path(&step.intent);
+                            let edit_allowlist = extract_edit_allowlist_from_brief(original_content);
+                            let create_allowlist = extract_create_allowlist_from_brief(original_content);
+
+                            // Edit branch: allow persona path iff in edit allowlist.
+                            if is_edit {
+                                if let Some(ref pp) = persona_path {
+                                    if edit_allowlist.iter().any(|allowed| allowed == pp) {
+                                        tracing::info!(
+                                            role = %role, tool = %step.tool, msg_id, path = %pp,
+                                            "org_responder: conductor brief edit-path allowed (persona path is in Files to edit:)"
+                                        );
+                                        pp.clone()
+                                    } else {
                                         tracing::warn!(
                                             role = %role, tool = %step.tool, msg_id,
-                                            "org_responder: conductor brief lists no MISSING files and persona emitted no scannable path — dropping"
+                                            persona_path = %pp,
+                                            edit_allowlist_size = edit_allowlist.len(),
+                                            "org_responder: conductor brief — persona emitted edit path not in Files to edit: allowlist; dropping (refusing to substitute, since substituting an edit with a create-target would clobber)"
                                         );
                                         continue;
                                     }
+                                } else {
+                                    tracing::warn!(
+                                        role = %role, tool = %step.tool, msg_id,
+                                        "org_responder: conductor brief — persona emitted an edit step with no scannable path; dropping"
+                                    );
+                                    continue;
+                                }
+                            }
+                            // Create branch: if persona path is in create allowlist, accept;
+                            // otherwise substitute with first MISSING create-target.
+                            else {
+                                if let Some(ref pp) = persona_path {
+                                    if create_allowlist.iter().any(|allowed| allowed == pp) {
+                                        tracing::info!(
+                                            role = %role, tool = %step.tool, msg_id, path = %pp,
+                                            "org_responder: conductor brief create-path accepted as-is (in MISSING list)"
+                                        );
+                                        pp.clone()
+                                    } else if let Some(brief_path) = extract_first_missing_from_brief(original_content) {
+                                        tracing::info!(
+                                            role = %role,
+                                            tool = %step.tool,
+                                            msg_id,
+                                            persona_path = %pp,
+                                            brief_path = %brief_path,
+                                            "org_responder: conductor brief overriding persona-emitted create path with brief's first MISSING file"
+                                        );
+                                        brief_path
+                                    } else {
+                                        tracing::warn!(
+                                            role = %role, tool = %step.tool, msg_id, persona_path = %pp,
+                                            "org_responder: conductor brief has no MISSING and persona path not in create allowlist; dropping"
+                                        );
+                                        continue;
+                                    }
+                                } else if let Some(brief_path) = extract_first_missing_from_brief(original_content) {
+                                    tracing::info!(
+                                        role = %role, tool = %step.tool, msg_id, brief_path = %brief_path,
+                                        "org_responder: persona emitted no scannable path; using brief's first MISSING file"
+                                    );
+                                    brief_path
+                                } else {
+                                    tracing::warn!(
+                                        role = %role, tool = %step.tool, msg_id,
+                                        "org_responder: persona emitted no path and conductor brief has no MISSING files; dropping"
+                                    );
+                                    continue;
                                 }
                             }
                         } else {
