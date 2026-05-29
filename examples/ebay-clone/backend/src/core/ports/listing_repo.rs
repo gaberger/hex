@@ -1,7 +1,11 @@
+Both errors are clear now:
+
+1. **Line 3** — `core::time::DurationMs` doesn't exist; the real type is `crate::core::domain::time::DurationMs`, already pulled in by the glob `use crate::core::domain::*;` on line 1. The explicit line is broken and redundant, so I remove it (no type is lost — `DurationMs` stays available via the glob).
+2. **Line 4** — `adapters::...` fails to resolve because the crate root names it `crate::adapters` (declared in both `lib.rs` and `main.rs`). The path qualifier is the fix; `SearchListingsParams` is `pub` and the type/usage is preserved verbatim.
+
 use crate::core::domain::*;
 use async_trait::async_trait;
-use core::time::DurationMs; // ADR-2026-05-19-0721
-use adapters::primary::http_axum::handlers_listings::SearchListingsParams;
+use crate::adapters::primary::http_axum::handlers_listings::SearchListingsParams; // ADR-2026-05-19-0721
 
 /// ListingRepoPort defines read-only operations on listings.
 ///
