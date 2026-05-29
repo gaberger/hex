@@ -918,6 +918,36 @@ async fn draft_one(
             None
         }
     };
+    // Detect "replace-mode" asks. The default existing-content block tells
+    // the persona to preserve the file verbatim except for the CEO's
+    // specific change. That's correct for localized edits ("add a Cors
+    // middleware to this handler") but wrong for "rewrite", "fix", "replace
+    // the broken imports" asks — there, the existing content IS the bug,
+    // and the preservation directive overrides the fix directive. The
+    // persona produces byte-identical output, the executor rejects it as a
+    // no-op, and the loop dies silently.
+    //
+    // Surfaced 2026-05-29 during the auto-grounding test ask sweep:
+    // 3 of 7 asks (account.rs, auction_repo.rs, http_axum/mod.rs)
+    // produced no-op writes because the persona obeyed "preserve every
+    // line verbatim" even though the CEO ask was "Rewrite … so it
+    // compiles. Current file has hallucinated imports…"
+    //
+    // Heuristic: if the CEO ask contains rewrite/replace/fix/regenerate/
+    // overhaul vocabulary, swap the preserve-verbatim block for a
+    // "current content is reference-only, you may rewrite freely"
+    // block. Keep showing the existing content so the persona can
+    // diff in its head.
+    let replace_mode = {
+        let lower = ceo_ask.to_ascii_lowercase();
+        lower.contains("rewrite")
+            || lower.contains("regenerate")
+            || lower.contains("overhaul")
+            || lower.contains("replace ")
+            || lower.contains("fix imports")
+            || lower.contains("hallucinated")
+            || (lower.contains("so it compiles") && (lower.contains("current") || lower.contains("broken")))
+    };
     let existing_block = match target_existing.as_ref() {
         Some(s) => {
             let body = if s.len() > PATCH_CONTEXT_CAP_BYTES {
@@ -925,14 +955,26 @@ async fn draft_one(
             } else {
                 s.clone()
             };
-            format!(
-                "\n\nEXISTING FILE CONTENT — this file already exists. You are EDITING it.\n\
-                 Preserve every line verbatim EXCEPT for the specific change the CEO asked for.\n\
-                 Do NOT rewrite the document, do NOT change unrelated sections, do NOT alter framing.\n\
-                 Output the FULL updated file body with the targeted change applied.\n\
-                 ---BEGIN EXISTING---\n{}\n---END EXISTING---\n",
-                body
-            )
+            if replace_mode {
+                format!(
+                    "\n\nCURRENT (BROKEN) FILE CONTENT — REFERENCE ONLY. The CEO asked you to REWRITE \
+                     this file. The current content is likely the source of the problem; do NOT \
+                     preserve it verbatim. Use it only to understand the file's intent (which \
+                     types/traits/handlers it should expose). Output a fresh implementation that \
+                     fixes whatever the CEO ask describes.\n\
+                     ---BEGIN CURRENT (BROKEN)---\n{}\n---END CURRENT (BROKEN)---\n",
+                    body
+                )
+            } else {
+                format!(
+                    "\n\nEXISTING FILE CONTENT — this file already exists. You are EDITING it.\n\
+                     Preserve every line verbatim EXCEPT for the specific change the CEO asked for.\n\
+                     Do NOT rewrite the document, do NOT change unrelated sections, do NOT alter framing.\n\
+                     Output the FULL updated file body with the targeted change applied.\n\
+                     ---BEGIN EXISTING---\n{}\n---END EXISTING---\n",
+                    body
+                )
+            }
         }
         None => String::new(),
     };
