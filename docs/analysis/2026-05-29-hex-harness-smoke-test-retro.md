@@ -151,6 +151,26 @@ These errors share a pattern: the persona at qwen2.5-coder:14b Q4_K_M reliably g
 - Verify with `cargo metadata --no-deps` returning a single-package result for the module
 - Add to `hex doctor`: walk `spacetime-modules/*/Cargo.toml` and `examples/*/backend/Cargo.toml`, assert each declares `[workspace]`
 
+### 5.11. Auto_repair temporal drift on shared signatures (NEW — actual root cause of ebay's stuck 18 errors)
+**Symptom:** Recharacterizing §4 again. ebay-clone wasn't driven through the worktree workflow — it ran on a single trunk through `workplan_conductor` + `auto_repair`. §5.8 (parallel-worktree merge drift) addresses a real bug class but a *different* one. Ebay's specific failure: auto_repair dispatches a fix for `core/ports/listing_repo.rs`, persona rewrites the trait with signature shape A; next iteration dispatches `adapters/secondary/stdb_client/listings.rs`, persona rewrites it against signature shape B; iteration N+2 dispatches the port again to fix the adapter mismatch, persona oscillates back to A. Same fault line, sequential rewrites, single trunk, oscillation.
+**Hypothesis:** auto_repair has no signature graph — it doesn't know that fixing the adapter requires the port to stay stable. It treats each dispatched file as independent. The persona has no view of the port's "frozen signature for this iteration" so it keeps re-inventing.
+**Fix plan (4-6 hours):**
+- Build a signature graph: parse `pub trait X { … }` declarations, map each trait to its impl files via `impl X for Y`
+- When auto_repair picks the top-K error files, freeze the port signature in the dispatch ask: include the literal port file content as "DO NOT CHANGE — this is the contract" context
+- If the error IS in the port file itself, only dispatch the port (don't dispatch any adapter that impls it that iteration)
+- After the port-only dispatch succeeds, re-dispatch dependent adapters with the new frozen contract
+- This is the "ports → adapters" dependency tier executed serially, by signature graph, at the auto_repair level
+
+### 5.12. No tier-escalation ladder (T2 → T2.5 → T3 Claude) on plateau (NEW)
+**Symptom:** auto_repair plateau handler currently pauses + surfaces to operator inbox. It does not first try escalating to a stronger model — the very thing the tier system was designed for. CLAUDE.md describes T1/T2/T2.5/T3 routing but T3 (Claude frontier) is unreachable from auto_repair: (a) the `ClaudeCodeInferenceAdapter` (which spawns `claude -p --dangerously-skip-permissions`) is built and tested but never injected into composition; (b) `TierModelConfig` has a T3 slot but defaults to `None`; (c) `send_dm` carries no tier hint, so escalation can't be signaled even if the adapter were wired.
+**Fix plan (3-4 hours):**
+- Inject `ClaudeCodeInferenceAdapter` into composition root as the T3 `IInferencePort`
+- Default `tier_models.t3` to `"claude-sonnet-4-6"` when claude CLI is available on PATH (detect at nexus startup)
+- Add `tier_hint` field to the dispatch ask payload; persona's SOP REASON-phase reads it and routes its inference call to the matching tier
+- In auto_repair plateau detection: instead of pause-after-3-no-progress, escalate to T3 for the next K attempts on the same file (configurable, default K=2)
+- If T3 also fails to make progress: THEN pause + surface to operator (the §5.6 endpoint)
+- Per-file plateau counter resets on any global error-count reduction (auto_repair already tracks this at the loop level — extend to per-file)
+
 ### 5.10. Scaffolded artifacts not validated as executable (NEW)
 **Symptom:** Workplan declared 109/109 files complete, including `start.sh`, `docker-compose.yml`, `README.md`. But `start.sh` has placeholder paths (`path/to/binary` style), wrong port, and references `bun` without checking it's installed. The workplan's "done condition" was file-presence, not file-validity.
 **Hypothesis:** `done_condition: "compile + lint + test pass"` in the workplan schema is only checked for Rust source. Shell scripts, compose files, READMEs were file-existence-checked and rubber-stamped.
@@ -164,7 +184,7 @@ These errors share a pattern: the persona at qwen2.5-coder:14b Q4_K_M reliably g
 **Platform fixes shipped this test:** 9 (commits `cc538b93` → `74842200`)
 **New hex CLI surface:** `hex auto-repair status` / `restart`
 **New hex-nexus orchestration module:** `auto_repair.rs` (~400 LOC + tests)
-**Bugs documented but unfixed:** 10 (§5 above — 3 added after test ladder)
+**Bugs documented but unfixed:** 11 (§5 above — 5 added after test ladder; §5.8 shipped in `d56afec6`)
 **Tested under realistic load:** every dispatch path, every plateau detector, every iteration cap
 
 ## 7. Verdict (REVISED 2026-05-29 post-test-ladder)
@@ -175,11 +195,12 @@ These errors share a pattern: the persona at qwen2.5-coder:14b Q4_K_M reliably g
 
 **The single biggest lesson is unchanged:** the harness must verify its own ground truth. Every layer reported success while ground truth was failing — wrong path, wrong types after merge, wrong workspace membership, placeholder scripts. The next round of hardening (§5) is almost entirely about adding ground-truth gates at each layer.
 
-**Prioritized fix order:**
-1. **§5.8 post-merge cargo-check gate** — single highest ROI; eliminates the drift class that produces the false-floor. Without this, every other code-quality fix is fighting symptoms.
-2. **§5.1 model upgrade path** — unblocks empirical testing of whether stronger models close the residual errors once drift is removed.
-3. **§5.10 scaffolded-artifact validators** — closes the "file exists ≠ file works" gap that produced placeholder start.sh.
-4. **§5.9 STDB workspace entanglement** — small, mechanical, removes the spacetime build failure entirely.
-5. **§5.7 shadow-project regression check** — would have caught the prefix bug on tick 1 of the original test.
-6. **§5.4 inbox TTL** — eliminates residual noise during platform transitions.
-7. **§5.5, §5.6, §5.3, §5.2** — quality-of-life and refinement; ship after the above unblocks compile.
+**Prioritized fix order (REVISED 2026-05-29 after T3-integration map):**
+1. **§5.12 tier-escalation ladder** — highest ROI now. ebay-clone proved local models plateau at ~16-18 errors with variance. The harness has a `ClaudeCodeInferenceAdapter` (spawns `claude -p`) sitting fully built but never wired into composition. Wiring it + per-file auto_repair escalation lets the system close its own ceiling without operator intervention. ~3-4h.
+2. **§5.11 auto_repair temporal drift** — actual root cause of ebay's stuck errors. Even with T3 available, oscillation on shared signatures wastes T3 calls. Needs signature-graph + freeze-port-in-ask. ~4-6h.
+3. **§5.8 post-merge cargo-check gate** — SHIPPED in `d56afec6`. Helps the worktree workflow specifically (which ebay didn't use, but a future feature dev cycle will).
+4. **§5.10 scaffolded-artifact validators** — closes "file exists ≠ file works"; produces placeholder start.sh. ~2-3h.
+5. **§5.9 STDB workspace entanglement** — small, mechanical, removes the spacetime build failure entirely. ~1-2h.
+6. **§5.1 model upgrade path** — partially subsumed by §5.12 (T3 wiring overhauls the inference path). Audit remaining T1/T2 swap path after §5.12 lands.
+7. **§5.7 shadow-project regression check** — would have caught the prefix bug on tick 1.
+8. **§5.4 inbox TTL, §5.5 root-folder rule, §5.6 learning state (now subsumed by §5.12 escalation), §5.3 trait-signature grounding (subsumed by §5.11 signature graph), §5.2 per-tool routing** — quality-of-life and refinement.
