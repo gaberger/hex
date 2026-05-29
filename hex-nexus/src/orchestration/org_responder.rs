@@ -484,6 +484,29 @@ async fn process_role(
     // first inference slot every tick.
     messages.sort_by(|a, b| b.id.cmp(&a.id));
 
+    // Stale-DM cap. When the persona inboxes are deep (route-bouncing,
+    // cross-persona chatter, conductor backlog), every tick burns the
+    // 25-msg budget on old chatter while the conductor's fresh briefs sit
+    // at the tail. Cap reply-eligibility by inbound age so anything older
+    // than HEX_DM_MAX_AGE_SECS (default 30 min) gets marked read without
+    // an inference call. The conductor itself only cares about the LATEST
+    // brief per step anyway — replying to a 2-hour-old brief produces
+    // a stale tool plan against a workplan state that's since moved on.
+    //
+    // Override via HEX_DM_MAX_AGE_SECS=N. Set to 0 to disable.
+    //
+    // Surfaced 2026-05-28 ebay-mvp scaling test: at 25 inferences/min the
+    // newest-first sort still wasn't enough — stale chatter regrew faster
+    // than personas drained it.
+    let max_age_secs: i64 = std::env::var("HEX_DM_MAX_AGE_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1800);
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
     for msg in &messages {
         if msg.to_agent.as_deref() != Some(role) {
             continue;
@@ -495,6 +518,26 @@ async fn process_role(
             Some(id) => id,
             None => continue,
         };
+
+        // Stale-DM mark-read: parse RFC3339 timestamp, compute age, drop if
+        // older than max_age_secs. Best-effort parse — malformed timestamp
+        // falls through and gets answered normally (don't silently swallow
+        // messages because of a string-parse hiccup).
+        if max_age_secs > 0 {
+            if let Ok(t) = chrono::DateTime::parse_from_rfc3339(&msg.timestamp) {
+                let age_secs = now_secs - t.timestamp();
+                if age_secs > max_age_secs {
+                    tracing::info!(
+                        role = %role, msg_id, age_secs, max_age_secs,
+                        "org_responder: stale-DM cap — marking read without reply"
+                    );
+                    if let Err(e) = comm.mark_read(role_string.clone(), msg_id).await {
+                        tracing::debug!(role = %role, error = %e, "mark_read after stale-cap failed");
+                    }
+                    continue;
+                }
+            }
+        }
 
         // Circuit-breaker: if this message has failed MAX_FAILURES_BEFORE_DROP
         // times, mark it read and stop attempting. Prevents a single bad
@@ -1066,9 +1109,34 @@ pub async fn route_decision(
                         post_inbox_notify("operator", 1, "persona_hallucinated_tool", &payload).await;
                         continue;
                     }
-                    let path = match crate::orchestration::commitment_parser::scan_for_path(&step.intent) {
+                    // Try scan_for_path on the intent first. If that fails,
+                    // also scan the inbound message body — the conductor's
+                    // brief enumerates the exact file paths, and small models
+                    // routinely emit `code_patch: create docker-compose.yml`
+                    // (bare basename, no root prefix) trusting the brief to
+                    // supply the parent. Falling back to scanning `content`
+                    // recovers that case instead of silently dropping the step.
+                    //
+                    // Surfaced 2026-05-28 ebay-mvp scaling test: persona reply
+                    // for step-31 said `code_patch: create docker-compose.yml`,
+                    // scan_for_path on the intent rejected the bare basename,
+                    // step was dropped silently, artifact field stayed empty,
+                    // commitment recorded with `artifact=` and no code_patch
+                    // ever fired. Hours of conductor cycles wasted.
+                    let path = match crate::orchestration::commitment_parser::scan_for_path(&step.intent)
+                        .or_else(|| crate::orchestration::commitment_parser::scan_for_path(original_content))
+                    {
                         Some(p) => p,
-                        None => continue,
+                        None => {
+                            tracing::warn!(
+                                role = %role,
+                                tool = %step.tool,
+                                intent_preview = %step.intent.chars().take(140).collect::<String>(),
+                                msg_id,
+                                "org_responder: tool_plan step dropped — scan_for_path found no recognizable file path in step.intent OR inbound content; this is the silent-drop class that makes commitments record with artifact=empty (relax scan_for_path or improve the persona prompt to emit fully-qualified paths)"
+                            );
+                            continue;
+                        }
                     };
                     open_typed_tool_commitment(
                         role,

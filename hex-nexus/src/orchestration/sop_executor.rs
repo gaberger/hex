@@ -704,8 +704,31 @@ async fn reason_via_anthropic(
     registry: Arc<ToolRegistry>,
     api_key: String,
 ) -> Result<ReasonResult, String> {
-    let model = std::env::var("HEX_SOP_REASON_MODEL")
-        .unwrap_or_else(|_| "claude-sonnet-4-5".to_string());
+    // REASON model selection. When the operator has no cloud-frontier key
+    // configured, defaulting to claude-sonnet-4-5 forces the inference fallback
+    // chain to walk every OpenRouter free-tier candidate (each with a 2s
+    // inter-attempt sleep), then collapse to local Ollama qwen2.5-coder:32b.
+    // That 32b call competes with org_responder's qwen2.5-coder:14b for the GPU,
+    // which thrashes the model load/unload loop ~25×/minute.
+    //
+    // Detect the "standalone, no cloud key" case and use the same local model
+    // org_responder uses, so the GPU stays warm on a single model and the
+    // openrouter pre-attempt is skipped entirely (the endpoint selector will
+    // route the local model name directly to the registered Ollama provider).
+    //
+    // Surfaced 2026-05-28 ebay-mvp scaling test: GPU was loading 14b → 32b
+    // ↔ 14b every ~2s. Switching the REASON default to 14b in standalone
+    // mode collapsed the swap.
+    let model = std::env::var("HEX_SOP_REASON_MODEL").unwrap_or_else(|_| {
+        let has_anthropic = std::env::var("ANTHROPIC_API_KEY")
+            .map(|v| !v.is_empty() && v.starts_with("sk-ant-"))
+            .unwrap_or(false);
+        if has_anthropic {
+            "claude-sonnet-4-5".to_string()
+        } else {
+            "qwen2.5-coder:14b".to_string()
+        }
+    });
 
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
