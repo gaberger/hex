@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 # Smoke acceptance gate for ebay-mvp (workplan step-32).
 #
@@ -97,4 +96,7 @@ for port in 8080 5173 9200; do
         fi
     fi
 done
-green "
+green "✓ gate 2 passed: start.sh smoke clean, no stale port bindings"
+
+green "✓ smoke acceptance gate PASSED"
+exit 0
