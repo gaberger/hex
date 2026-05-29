@@ -40,3 +40,7 @@ zeroize = "1.5" # ADR-2026-05-19-0721
 [dev-dependencies]
 tokio-test = "0.4"
 spacetimedb = { version = "0.1", features = ["in-memory"] }
+
+# New dependencies for acceptance test
+fantoccini = "0.23"
+assert_cmd = "1.0"
