@@ -30,7 +30,7 @@ pub trait ListingRepoPort: Send + Sync {
 pub struct CreateListingInput {
     pub title: String,
     pub description: Option<String>,
-    pub starting_bid: Amount,
+    pub starting_bid: Money,
     pub start_time: UnixMillis,
     pub end_time: UnixMillis,
     // Add other fields as necessary based on ebay-spec-004 and other relevant specifications.
