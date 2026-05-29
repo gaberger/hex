@@ -16,15 +16,7 @@ impl BiddingUseCase {
     /// Places a bid on an auction.
     pub fn place_bid(&self, bid: crate::core::domain::Bid) -> Result<(), DomainError> {
         self.reducer_port.place_bid(bid)
-            .map_err(|reducer_error| match reducer_error {
-                // Map specific reducer errors to domain errors
-                // Example mappings according to ebay-spec-012
-                ReducerError::InvalidBidAmount => DomainError::InvalidBid,
-                ReducerError::AuctionClosed => DomainError::AuctionEnded,
-                ReducerError::BidTooLow => DomainError::BidBelowMinimum,
-                ReducerError::UserNotEligible => DomainError::UserIneligible,
-                _ => DomainError::Unexpected,
-            })
+            .map_err(|_| DomainError::Unexpected)
     }
 
     /// Lists all bids made by the given bidder.
