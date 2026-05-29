@@ -20,8 +20,9 @@ use crate::{
         },
         handlers_me::{get_my_bids, get_my_won_items, get_my_listings},
     },
-    adapters::secondary::stdb_client::connect,
+    adapters::secondary::stdb_client::establish_connection,
     core::ports::user_repo::UserRepoPort,
+    adapters::primary::http_axum::state::AppState,
 };
 
 // ADR-2026-05-19-0721
@@ -49,7 +50,7 @@ pub struct Ports {
 }
 
 impl AppState {
-    pub fn new(ports: Ports) -> Self {
-        AppState { user_port: ports.user_port }
+    pub fn new(user_port: Arc<dyn UserRepoPort + Send + Sync>) -> Self {
+        AppState { user_port }
     }
 }
