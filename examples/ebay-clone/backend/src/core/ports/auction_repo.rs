@@ -1,4 +1,5 @@
 use crate::core::domain::*;
+use crate::core::domain::ids::AuctionId;
 use async_trait::async_trait;
 
 #[async_trait]
