@@ -1,5 +1,5 @@
 use super::ports::{BidRepoPort, AuctionRepoPort, ReducerCallPort};
-use crate::core::entities::{Bid, Listing, DomainError};
+use crate::core::domain::{Listing, DomainError};
 
 /// Use case for handling bidding actions.
 pub struct BiddingUseCase {
@@ -14,7 +14,7 @@ impl BiddingUseCase {
     }
 
     /// Places a bid on an auction.
-    pub fn place_bid(&self, bid: Bid) -> Result<(), DomainError> {
+    pub fn place_bid(&self, bid: crate::core::domain::Bid) -> Result<(), DomainError> {
         self.reducer_port.place_bid(bid)
             .map_err(|reducer_error| match reducer_error {
                 // Map specific reducer errors to domain errors
@@ -28,7 +28,7 @@ impl BiddingUseCase {
     }
 
     /// Lists all bids made by the given bidder.
-    pub fn list_my_bids(&self, bidder_identity: &str) -> Result<Vec<Bid>, DomainError> {
+    pub fn list_my_bids(&self, bidder_identity: &str) -> Result<Vec<crate::core::domain::Bid>, DomainError> {
         self.bid_repo.find_by_bidder(bidder_identity)
             .map_err(|_| DomainError::RepoAccessFailed)
     }
