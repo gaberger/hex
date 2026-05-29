@@ -3,24 +3,32 @@
 use core::ports::AuctionRepo;
 use core::ports::ListingRepo;
 use core::usecases::bidding::BiddingUsecase;
+use async_trait::async_trait;
 
-pub struct ReducerCall {
-    auction_repo: AuctionRepoImpl,
-    listing_repo: ListingRepoImpl,
+#[async_trait]
+pub trait ReducerCall {
+    async fn new(auction_repo: AuctionRepo, listing_repo: ListingRepo) -> Self;
+    async fn handle_bids(&self);
+}
+
+pub struct ReducerCallImpl {
+    auction_repo: AuctionRepo,
+    listing_repo: ListingRepo,
     bidding_usecase: BiddingUsecase,
 }
 
-impl ReducerCall {
-    pub fn new(auction_repo: AuctionRepoImpl, listing_repo: ListingRepoImpl) -> Self {
+#[async_trait]
+impl ReducerCall for ReducerCallImpl {
+    async fn new(auction_repo: AuctionRepo, listing_repo: ListingRepo) -> Self {
         let bidding_usecase = BiddingUsecase::new(&auction_repo);
-        ReducerCall {
+        ReducerCallImpl {
             auction_repo,
             listing_repo,
             bidding_usecase,
         }
     }
 
-    pub fn handle_bids(&self) {
-        self.bidding_usecase.fetch_bids();
+    async fn handle_bids(&self) {
+        self.bidding_usecase.fetch_bids().await;
     }
 }
