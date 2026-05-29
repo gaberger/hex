@@ -8,5 +8,6 @@
 pub mod stdb_client;
 pub mod image_store_fs;
 pub mod password_hasher_argon2;
-pub mod clock_system;
-pub mod token_issuer_jwt;
+
+pub use adapters::secondary::clock_system::{SystemClock, ClockPort};
+pub use adapters::secondary::token_issuer_jwt::{JwtSignerHs256, TokenIssuerPort};
