@@ -515,7 +515,8 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                     .unwrap_or_else(|| {
                         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
                     });
-                crate::orchestration::workplan_conductor::spawn(conductor_repo_root);
+                crate::orchestration::workplan_conductor::spawn(conductor_repo_root.clone());
+                crate::orchestration::auto_repair::spawn(conductor_repo_root);
             }
 
             // Auto-seed merge-team default policy + persona pools.
