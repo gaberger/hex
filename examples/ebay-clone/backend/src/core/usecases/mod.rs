@@ -1,26 +1,16 @@
-// Placeholder for use cases module
-
 // ADR-2023-10-01-1435: Initial structuring of core use cases
-pub mod auction_creation;
-pub mod auction_listing;
-pub mod bidding_process;
-pub mod user_authentication;
-pub mod user_registration;
 
-// New modules as per the workplan
-pub mod search_auctions;
-pub mod view_auction_details;
-pub mod payment_processing;
-
-// Added for auth use case implementation - docs/workplans/feat-ebay-mvp.json
 pub mod auth;
+pub use auth::*;
 
-// Added for listings use case implementation - docs/specs/ebay-spec-006, ebay-spec-007, ebay-spec-008, ebay-spec-009, ebay-spec-019
 pub mod listings;
+pub use listings::*;
 
-// Added for bidding, watchlist and my-account use cases as per the workplan - docs/workplans/feat-ebay-mvp.json
 pub mod bidding;
-pub mod account;
+pub use bidding::*;
 
-// Added for image upload use case implementation - docs/specs/ebay-spec-010, ebay-spec-011
+pub mod account;
+pub use account::*;
+
 pub mod images;
+pub use images::*;
