@@ -1,10 +1,11 @@
 // hex-core/src/core/ports/listing_repo.rs
 
 use adapters::secondary::stdb_client::StdBClient;
-use core::usecases::bidding::BiddingUsecase;
+use core::usecases::bidding::{BiddingUsecase, ListingCriteria};
+use std::time::Duration;
 
 pub trait ListingRepo {
-    fn fetch_listings(&self) -> Vec<Listing>;
+    fn fetch_listings(&self, criteria: ListingCriteria) -> Vec<Listing>;
 }
 
 pub struct ListingRepoImpl {
@@ -18,9 +19,9 @@ impl ListingRepoImpl {
 }
 
 impl ListingRepo for ListingRepoImpl {
-    fn fetch_listings(&self) -> Vec<Listing> {
-        let query = "SELECT * FROM listings";
-        let data = self.client.execute_query(query).unwrap();
+    fn fetch_listings(&self, criteria: ListingCriteria) -> Vec<Listing> {
+        let query = "SELECT * FROM listings WHERE price > ?";
+        let data = self.client.execute_query(query, &[&criteria.min_price]).unwrap();
         data.into_iter().map(|row| Listing::from(row)).collect()
     }
 }
