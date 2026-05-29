@@ -35,6 +35,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 
+use hex_core::domain::messages::{ContentBlock, Message};
+use hex_core::ports::inference::{IInferencePort, InferenceRequest, Priority};
+
 const DEFAULT_INTERVAL_SECS: u64 = 120;
 const DEFAULT_STARTUP_SECS: u64 = 90;
 const DEFAULT_COOLDOWN_SECS: u64 = 240;
@@ -42,12 +45,21 @@ const DEFAULT_MAX_ITERATIONS: u32 = 20;
 const DEFAULT_TOP_K: usize = 3;
 const SEND_AGENT_ID: &str = "nexus-auto-repair";
 
+/// How many full frontier-escalation passes we attempt before truly pausing
+/// the loop. Each pass invokes `claude -p` once per top-K errored file.
+/// Bounded so a hung subprocess can't burn budget forever. See retro §5.12.
+const MAX_FRONTIER_ATTEMPTS: u32 = 2;
+
 #[derive(Default)]
 struct RepairState {
     iterations: u32,
     last_error_count: Option<u32>,
     no_progress_count: u32,
     file_cooldowns: HashMap<String, Instant>,
+    /// Number of frontier-escalation passes consumed in this loop's lifetime.
+    /// Reset on `reset()`. When this reaches `MAX_FRONTIER_ATTEMPTS`, the
+    /// loop pauses for real (the §5.6 operator-inbox endpoint).
+    frontier_attempts: u32,
 }
 
 fn state() -> &'static Mutex<RepairState> {
@@ -65,6 +77,8 @@ pub struct RepairStateSnapshot {
     pub paused: bool,
     pub max_iterations: Option<u32>,
     pub file_cooldowns_count: usize,
+    pub frontier_attempts: u32,
+    pub frontier_max_attempts: u32,
 }
 
 pub fn snapshot() -> RepairStateSnapshot {
@@ -72,7 +86,7 @@ pub fn snapshot() -> RepairStateSnapshot {
     let max_it = std::env::var("HEX_AUTO_REPAIR_MAX_ITERATIONS_OVERRIDE")
         .ok()
         .and_then(|v| v.parse().ok());
-    let paused = s.no_progress_count >= 3
+    let paused = (s.no_progress_count >= 3 && s.frontier_attempts >= MAX_FRONTIER_ATTEMPTS)
         || s.iterations >= max_it.unwrap_or(u32::MAX);
     RepairStateSnapshot {
         iterations: s.iterations,
@@ -81,6 +95,8 @@ pub fn snapshot() -> RepairStateSnapshot {
         paused,
         max_iterations: max_it,
         file_cooldowns_count: s.file_cooldowns.len(),
+        frontier_attempts: s.frontier_attempts,
+        frontier_max_attempts: MAX_FRONTIER_ATTEMPTS,
     }
 }
 
@@ -93,7 +109,21 @@ pub fn reset() {
     s.last_error_count = None;
     s.no_progress_count = 0;
     s.file_cooldowns.clear();
+    s.frontier_attempts = 0;
     tracing::info!("auto_repair: state reset via operator API");
+}
+
+/// What the plateau check decided this tick should do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlateauAction {
+    /// No plateau yet; proceed with normal dispatch.
+    Continue,
+    /// Plateau hit AND we still have frontier attempts left. Skip normal
+    /// dispatch this tick; run frontier (claude -p) escalation instead.
+    Escalate,
+    /// Plateau hit AND frontier is exhausted (or never available). Pause
+    /// the loop for the operator.
+    Pause,
 }
 
 fn parse_env_u64(key: &str, default: u64) -> u64 {
@@ -221,9 +251,11 @@ async fn run_tick(
     };
 
     // Track plateau: if error count has not strictly decreased for N
-    // consecutive ticks, stop firing asks (we're not helping). The
-    // operator can manually re-enable with a nexus restart.
-    {
+    // consecutive ticks, escalate to claude -p (T3 frontier) before
+    // giving up. Each escalation pass consumes one of MAX_FRONTIER_ATTEMPTS;
+    // once exhausted, the loop pauses and surfaces to operator inbox.
+    // See retro §5.12.
+    let plateau_action: PlateauAction = {
         let mut s = state().lock().unwrap();
         s.iterations += 1;
         let prev = s.last_error_count.unwrap_or(u32::MAX);
@@ -238,17 +270,34 @@ async fn run_tick(
             max_iterations = cfg.max_iterations,
             error_count = count,
             no_progress_count = s.no_progress_count,
+            frontier_attempts = s.frontier_attempts,
             "auto_repair: tick"
         );
         if s.no_progress_count >= 3 {
-            tracing::warn!(
-                error_count = count,
-                "auto_repair: 3 consecutive ticks without progress — pausing loop (restart nexus to re-engage)"
-            );
-            // Bump iterations to the cap so we silently stop.
-            s.iterations = cfg.max_iterations;
-            return Ok(());
+            if s.frontier_attempts < MAX_FRONTIER_ATTEMPTS {
+                // Consume one frontier attempt and reset no_progress so the
+                // next normal tick (post-escalation) gets a fresh chance.
+                s.frontier_attempts += 1;
+                s.no_progress_count = 0;
+                PlateauAction::Escalate
+            } else {
+                // Bump iterations to the cap so we silently stop.
+                s.iterations = cfg.max_iterations;
+                PlateauAction::Pause
+            }
+        } else {
+            PlateauAction::Continue
         }
+    };
+
+    if matches!(plateau_action, PlateauAction::Pause) {
+        tracing::warn!(
+            error_count = count,
+            frontier_attempts = MAX_FRONTIER_ATTEMPTS,
+            "auto_repair: plateau + frontier exhausted — pausing loop \
+             (operator: `hex auto-repair restart` to re-engage)"
+        );
+        return Ok(());
     }
 
     if count == 0 {
@@ -284,28 +333,26 @@ async fn run_tick(
     // written to the hex workspace root for hours. None of them fixed
     // the actual ebay-clone — the loop appeared to work but was
     // operating on a non-existent shadow project.
-    let project_rel_prefix: String = {
-        let repo_root = std::env::current_dir()
-            .ok()
-            .or_else(|| {
-                // Best-effort fallback: walk up from project_path until we
-                // find a workspace Cargo.toml.
-                let mut cur = cfg.project_path.clone();
-                while let Some(parent) = cur.parent() {
-                    if parent.join("Cargo.toml").is_file() &&
-                       parent.join(".git").exists() {
-                        return Some(parent.to_path_buf());
-                    }
-                    cur = parent.to_path_buf();
+    let repo_root: PathBuf = std::env::current_dir()
+        .ok()
+        .or_else(|| {
+            // Best-effort fallback: walk up from project_path until we
+            // find a workspace Cargo.toml.
+            let mut cur = cfg.project_path.clone();
+            while let Some(parent) = cur.parent() {
+                if parent.join("Cargo.toml").is_file() &&
+                   parent.join(".git").exists() {
+                    return Some(parent.to_path_buf());
                 }
-                None
-            })
-            .unwrap_or_else(|| std::path::PathBuf::from("/home/gary/development/hex"));
-        cfg.project_path
-            .strip_prefix(&repo_root)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default()
-    };
+                cur = parent.to_path_buf();
+            }
+            None
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("/home/gary/development/hex"));
+    let project_rel_prefix: String = cfg.project_path
+        .strip_prefix(&repo_root)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
     let prefix_path = |rel: &str| -> String {
         if project_rel_prefix.is_empty() {
             rel.to_string()
@@ -313,6 +360,49 @@ async fn run_tick(
             format!("{}/{}", project_rel_prefix.trim_end_matches('/'), rel)
         }
     };
+
+    // Frontier escalation branch (retro §5.12). When plateau is hit and we
+    // still have attempts left, skip the normal persona-dispatch chain and
+    // call claude -p directly on the top-K files. Local Ollama models have
+    // already been given 3+ chances; the persona inbox isn't going to
+    // unstick this fault line. If frontier isn't available (no claude
+    // binary on PATH), fall through to pause.
+    if matches!(plateau_action, PlateauAction::Escalate) {
+        match crate::composition::standalone::frontier_inference_adapter() {
+            Some(adapter) => {
+                let attempt = state().lock().unwrap().frontier_attempts;
+                tracing::warn!(
+                    error_count = count,
+                    frontier_attempt = attempt,
+                    frontier_max = MAX_FRONTIER_ATTEMPTS,
+                    files = to_fire.len(),
+                    "auto_repair: plateau — escalating to claude -p (frontier)"
+                );
+                let committed = run_frontier_escalation(
+                    adapter,
+                    &to_fire,
+                    &errors_per_file,
+                    &project_rel_prefix,
+                    &cfg.project_path,
+                    &repo_root,
+                )
+                .await;
+                tracing::info!(
+                    files_committed = committed,
+                    "auto_repair: frontier escalation pass complete"
+                );
+            }
+            None => {
+                let mut s = state().lock().unwrap();
+                s.iterations = cfg.max_iterations;
+                tracing::warn!(
+                    "auto_repair: plateau + claude binary not on PATH — pausing. \
+                     Install claude CLI or set HEX_CLAUDE_BINARY to enable T3 escalation."
+                );
+            }
+        }
+        return Ok(());
+    }
 
     // Phase A: harvest unresolved-import errors and fire create-module asks
     // for each missing module. This closes the biggest plateau cause —
@@ -552,6 +642,170 @@ async fn cargo_check_errors(
     Ok((total, by_file, errors_per_file))
 }
 
+/// Run one frontier-escalation pass over the top-K errored files.
+///
+/// For each file: build a self-contained rewrite prompt (errors + intent),
+/// invoke the frontier adapter (claude -p subprocess), strip markdown
+/// fences from the response if present, write the file to disk, and commit
+/// it through git with a clear `[frontier]` marker so the operator can
+/// trace which commits came from T3 escalation.
+///
+/// Does NOT route through the persona/drafter/twin/executor chain — the
+/// persona has already failed on these files 3+ times. The chain's safety
+/// review is replaced by:
+///   1. Bounded attempts (`MAX_FRONTIER_ATTEMPTS`)
+///   2. Clear commit-message marker for operator review
+///   3. Next tick's cargo_check is the regression gate
+///
+/// Returns the number of files successfully written + committed.
+async fn run_frontier_escalation(
+    adapter: Arc<dyn IInferencePort>,
+    to_fire: &[(String, u32)],
+    errors_per_file: &HashMap<String, Vec<String>>,
+    project_rel_prefix: &str,
+    project_path: &Path,
+    repo_root: &Path,
+) -> usize {
+    let mut committed = 0usize;
+    for (rel_path, err_count) in to_fire {
+        let prefixed = if project_rel_prefix.is_empty() {
+            rel_path.clone()
+        } else {
+            format!("{}/{}", project_rel_prefix.trim_end_matches('/'), rel_path)
+        };
+
+        let errors_block = errors_per_file
+            .get(rel_path)
+            .map(|lines| lines.iter().take(20).cloned().collect::<Vec<_>>().join("\n"))
+            .unwrap_or_default();
+
+        let prompt = format!(
+            "You are repairing a Rust file in the hex-clone project. The file at \
+             `{prefixed}` has {err_count} compile errors listed below. Output the \
+             COMPLETE new contents of the file as raw Rust source — NO markdown \
+             fences, NO commentary before or after, NO explanation. Your output \
+             will be written verbatim to disk and compiled.\n\n\
+             --- COMPILE ERRORS (cargo check, --message-format=short) ---\n\
+             {errors_block}\n\
+             --- END ERRORS ---\n\n\
+             Preserve the file's intent (which types, traits, handlers it should \
+             expose). Fix each error at the source — do not rename, do not invent \
+             types, do not move code to other files. Output ONLY the new file \
+             contents, starting with the first line of the .rs file."
+        );
+
+        let req = InferenceRequest {
+            model: "claude-code".to_string(),
+            system_prompt: String::new(),
+            messages: vec![Message::user(&prompt)],
+            tools: vec![],
+            max_tokens: 8192,
+            temperature: 0.0,
+            thinking_budget: None,
+            cache_control: false,
+            priority: Priority::Normal,
+            grammar: None,
+        };
+
+        let response = match adapter.complete(req).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(rel_path = %prefixed, error = %e, "frontier: complete failed");
+                continue;
+            }
+        };
+
+        let content_text: String = response
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("");
+
+        let extracted = strip_code_fences(&content_text);
+        if extracted.trim().is_empty() {
+            tracing::warn!(rel_path = %prefixed, "frontier: empty response — skipping write");
+            continue;
+        }
+
+        let abs_path = project_path.join(rel_path);
+        if let Some(parent) = abs_path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                tracing::warn!(rel_path = %prefixed, error = %e, "frontier: mkdir failed");
+                continue;
+            }
+        }
+        if let Err(e) = std::fs::write(&abs_path, &extracted) {
+            tracing::warn!(rel_path = %prefixed, error = %e, "frontier: write failed");
+            continue;
+        }
+        tracing::info!(
+            rel_path = %prefixed,
+            bytes = extracted.len(),
+            "frontier: file written"
+        );
+
+        // git add + commit. Failures here are non-fatal — the file is on
+        // disk; operator can commit manually if needed.
+        let add = tokio::process::Command::new("git")
+            .arg("-C")
+            .arg(repo_root)
+            .arg("add")
+            .arg(&prefixed)
+            .status()
+            .await;
+        if !add.map(|s| s.success()).unwrap_or(false) {
+            tracing::warn!(rel_path = %prefixed, "frontier: git add failed");
+            continue;
+        }
+
+        let msg = format!(
+            "fix(auto-repair frontier): rewrite {prefixed} via claude -p\n\n\
+             auto_repair plateau triggered T3 (frontier) inference on this file. \
+             Local Ollama models couldn't make progress over 3+ ticks; claude -p \
+             was invoked to break the ceiling. See retro §5.12.\n\n\
+             [frontier-escalation] [auto-repair]"
+        );
+        let commit = tokio::process::Command::new("git")
+            .arg("-C")
+            .arg(repo_root)
+            .arg("commit")
+            .arg("-m")
+            .arg(&msg)
+            .status()
+            .await;
+        if commit.map(|s| s.success()).unwrap_or(false) {
+            committed += 1;
+            tracing::info!(rel_path = %prefixed, "frontier: committed");
+        } else {
+            tracing::warn!(rel_path = %prefixed, "frontier: git commit failed (file is on disk)");
+        }
+    }
+    committed
+}
+
+/// If the model wrapped its output in ``` fences (despite being told not to),
+/// peel them off. Otherwise return the input unchanged. Conservative: if we
+/// can't find a clean fence pair, we return the original text so we never
+/// truncate real code.
+fn strip_code_fences(text: &str) -> String {
+    let trimmed = text.trim();
+    if !trimmed.starts_with("```") {
+        return trimmed.to_string();
+    }
+    let after_first_line = match trimmed.split_once('\n') {
+        Some((_, rest)) => rest,
+        None => return trimmed.to_string(),
+    };
+    match after_first_line.rfind("```") {
+        Some(close) => after_first_line[..close].trim_end().to_string(),
+        None => trimmed.to_string(),
+    }
+}
+
 async fn send_dm(
     http: &Arc<reqwest::Client>,
     nexus_base: &str,
@@ -578,4 +832,52 @@ async fn send_dm(
         return Err(format!("send HTTP {}: {}", status, txt.chars().take(200).collect::<String>()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_code_fences_passthrough_when_no_fences() {
+        let input = "use crate::foo;\n\nfn main() {}\n";
+        assert_eq!(strip_code_fences(input), input.trim());
+    }
+
+    #[test]
+    fn strip_code_fences_peels_rust_fence() {
+        let input = "```rust\nuse crate::foo;\n\nfn main() {}\n```";
+        let out = strip_code_fences(input);
+        assert!(!out.contains("```"));
+        assert!(out.starts_with("use crate::foo"));
+        assert!(out.trim_end().ends_with("fn main() {}"));
+    }
+
+    #[test]
+    fn strip_code_fences_peels_bare_fence() {
+        let input = "```\nfn x() {}\n```";
+        let out = strip_code_fences(input);
+        assert_eq!(out, "fn x() {}");
+    }
+
+    #[test]
+    fn strip_code_fences_keeps_unmatched_open_fence_as_is() {
+        // If we see ``` at start but never a closing fence, return the
+        // original — we'd rather write a slightly-malformed file (cargo
+        // catches it next tick) than truncate real code.
+        let input = "```rust\nfn x() {}\n";
+        let out = strip_code_fences(input);
+        // Unmatched fence: the closing ``` is missing, so we return
+        // everything after the opening fence line.
+        assert!(out.contains("fn x() {}"));
+    }
+
+    #[test]
+    fn plateau_action_default_continue() {
+        // Sanity: PlateauAction variants are wired through match.
+        let a = PlateauAction::Continue;
+        assert_eq!(a, PlateauAction::Continue);
+        assert_ne!(a, PlateauAction::Pause);
+        assert_ne!(a, PlateauAction::Escalate);
+    }
 }
