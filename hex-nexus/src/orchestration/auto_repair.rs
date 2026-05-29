@@ -171,7 +171,7 @@ async fn run_tick(
         }
     }
 
-    let (count, by_file) = match cargo_check_errors(&cfg.project_path).await {
+    let (count, by_file, errors_per_file) = match cargo_check_errors(&cfg.project_path).await {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!(error = %e, "auto_repair: cargo_check failed");
@@ -233,12 +233,28 @@ async fn run_tick(
     };
 
     for (rel_path, err_count) in to_fire {
+        // Inject the actual compile errors so the persona knows what to fix
+        // instead of regenerating semantically-equivalent broken content.
+        // This was the gap that made the loop plateau in the first pass:
+        // the persona kept rewriting the file with the same errors because
+        // it had no signal on what was wrong. Surfaced 2026-05-29 morning.
+        let errors_block = errors_per_file
+            .get(&rel_path)
+            .map(|lines| lines.iter().take(20).cloned().collect::<Vec<_>>().join("\n"))
+            .unwrap_or_default();
         let content = format!(
-            "Rewrite {rel_path} to fix {err_count} compile errors. The current file is BROKEN — \
-             it has hallucinated imports, references types that do not exist, or uses APIs that \
-             do not match the trait signatures. Use only the actual workspace exports listed in \
-             the AVAILABLE WORKSPACE EXPORTS block. Preserve the file's intent (which types / \
-             traits / handlers it should expose) but regenerate the body so it compiles."
+            "Rewrite {rel_path} to fix the {err_count} compile errors listed below. The current \
+             file is BROKEN. Use only the actual workspace exports listed in the AVAILABLE \
+             WORKSPACE EXPORTS block. Preserve the file's intent (which types / traits / \
+             handlers it should expose) but regenerate the body so the SPECIFIC errors below \
+             go away.\n\n\
+             --- SPECIFIC COMPILE ERRORS (cargo check, --message-format=short) ---\n\
+             {errors_block}\n\
+             --- END ERRORS ---\n\n\
+             Fix each error directly. If an error says \"cannot find type X\" use the correct \
+             type name from the AVAILABLE WORKSPACE EXPORTS block. If an error says \"function \
+             takes N arguments\" match the trait's declared signature. Do NOT invent. Do NOT \
+             rename your way out of an error — fix it at the source."
         );
         match send_dm(http, nexus_base, "hex-coder", "auto_repair", &content).await {
             Ok(()) => {
@@ -260,8 +276,10 @@ async fn run_tick(
 }
 
 /// Run `cargo check` in the configured project and return:
-///   (total error count, errors-per-file as relative path → count)
-async fn cargo_check_errors(project_path: &Path) -> Result<(u32, HashMap<String, u32>), String> {
+///   (total error count, errors-per-file as path → count, errors-per-file as path → lines)
+async fn cargo_check_errors(
+    project_path: &Path,
+) -> Result<(u32, HashMap<String, u32>, HashMap<String, Vec<String>>), String> {
     let out = tokio::process::Command::new("cargo")
         .arg("check")
         .arg("--message-format=short")
@@ -273,24 +291,28 @@ async fn cargo_check_errors(project_path: &Path) -> Result<(u32, HashMap<String,
 
     let stderr = String::from_utf8_lossy(&out.stderr);
     let mut by_file: HashMap<String, u32> = HashMap::new();
+    let mut errors_per_file: HashMap<String, Vec<String>> = HashMap::new();
     let mut total: u32 = 0;
     for line in stderr.lines() {
         // Match `--message-format=short` output:
         //   src/foo.rs:12:5: error[E0432]: ...
-        // We count any line starting with "<path>:line:col: error"
         if !line.contains(": error") {
             continue;
         }
-        // First field up to ':<digit>'.
         if let Some(idx) = line.find(":") {
             let path = &line[..idx];
             if path.ends_with(".rs") {
                 *by_file.entry(path.to_string()).or_insert(0) += 1;
+                // Keep the full error line so the persona sees what to fix.
+                errors_per_file
+                    .entry(path.to_string())
+                    .or_default()
+                    .push(line.trim().to_string());
                 total += 1;
             }
         }
     }
-    Ok((total, by_file))
+    Ok((total, by_file, errors_per_file))
 }
 
 async fn send_dm(
