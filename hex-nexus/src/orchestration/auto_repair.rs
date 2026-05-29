@@ -126,6 +126,88 @@ enum PlateauAction {
     Pause,
 }
 
+/// Hexagonal-architecture role for a source file, inferred from its path.
+/// Used by §5.11 signature-graph dispatch policy: ports get rewritten first
+/// (they declare the contract), adapters get rewritten with the port content
+/// as frozen DO-NOT-CHANGE context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileKind {
+    /// File declares the contract (traits, types) other code depends on.
+    /// Path matches `*/ports/*` or `*/core/*`.
+    Port,
+    /// File implements a port. Path matches `*/adapters/*`.
+    Adapter,
+    /// Use case / orchestration / other. Treated like Adapter for dispatch
+    /// (the contract a use case consumes is still upstream).
+    Other,
+}
+
+/// Classify a file by its repo-relative path. Path-based heuristic, not a
+/// full trait-graph parse. Works for the hex convention (`src/core/ports/`,
+/// `src/adapters/{primary,secondary}/`).
+fn classify_file_kind(rel_path: &str) -> FileKind {
+    let p = rel_path.to_lowercase();
+    if p.contains("/ports/") || p.starts_with("ports/")
+        || p.ends_with("/ports.rs") || p == "ports.rs"
+    {
+        FileKind::Port
+    } else if p.contains("/adapters/") || p.starts_with("adapters/") {
+        FileKind::Adapter
+    } else if p.contains("/core/") && !p.contains("/adapters/") {
+        // core/domain or core/usecases — usually declare types the
+        // adapters depend on. Treat as Port for dispatch (fix first).
+        FileKind::Port
+    } else {
+        FileKind::Other
+    }
+}
+
+/// Read the verbatim contents of every `.rs` file under `<project>/src/core/ports/`
+/// (and `<project>/src/ports/` as fallback) into a single string suitable
+/// for injection into a code-patch prompt.
+///
+/// Cap at ~8 KB so the prompt budget stays bounded — if the port set is
+/// larger than that, truncate with a clear marker. The whole point is
+/// "freeze the contract" so the model can't reinvent it; if the contract
+/// is too large to fit, we still send the first 8 KB which is far better
+/// than nothing.
+fn read_port_context(project_path: &Path) -> String {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    let ports_dirs = [
+        project_path.join("src/core/ports"),
+        project_path.join("src/ports"),
+    ];
+    for dir in &ports_dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.extension().and_then(|s| s.to_str()) == Some("rs") {
+                    candidates.push(p);
+                }
+            }
+        }
+    }
+    candidates.sort();
+    let mut out = String::new();
+    const MAX_BYTES: usize = 8 * 1024;
+    for p in candidates {
+        if out.len() >= MAX_BYTES {
+            out.push_str("\n// ... (port context truncated at 8 KB)\n");
+            break;
+        }
+        let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+        match std::fs::read_to_string(&p) {
+            Ok(content) => {
+                out.push_str(&format!("\n// ===== {name} =====\n"));
+                out.push_str(&content);
+                out.push('\n');
+            }
+            Err(_) => continue,
+        }
+    }
+    out
+}
+
 fn parse_env_u64(key: &str, default: u64) -> u64 {
     std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
 }
@@ -310,7 +392,7 @@ async fn run_tick(
     sorted.sort_by(|a, b| b.1.cmp(&a.1));
 
     let now = Instant::now();
-    let to_fire: Vec<(String, u32)> = {
+    let to_fire_unfiltered: Vec<(String, u32)> = {
         let s = state().lock().unwrap();
         sorted.into_iter()
             .filter(|(path, _)| {
@@ -318,8 +400,34 @@ async fn run_tick(
                     .map(|t| now.duration_since(*t) >= cooldown)
                     .unwrap_or(true)
             })
-            .take(cfg.top_k)
+            .take(cfg.top_k * 2)  // Take more so we have room to skip adapters when ports exist
             .collect()
+    };
+
+    // §5.11 signature-graph dispatch policy: if any errored file is a
+    // port (declares traits), restrict this tick to ports only. Adapters
+    // depend on port signatures; rewriting them in parallel produces
+    // signature drift (proved empirically 2026-05-29 — §5.12's first
+    // live test took 18→43 errors because ports + adapters were rewritten
+    // independently). Once ports are clean, adapters get dispatched WITH
+    // verbatim port content as DO-NOT-CHANGE context.
+    let any_port_errored = to_fire_unfiltered
+        .iter()
+        .any(|(p, _)| classify_file_kind(p) == FileKind::Port);
+    let (to_fire, port_first_mode): (Vec<(String, u32)>, bool) = if any_port_errored {
+        let only_ports: Vec<(String, u32)> = to_fire_unfiltered
+            .into_iter()
+            .filter(|(p, _)| classify_file_kind(p) == FileKind::Port)
+            .take(cfg.top_k)
+            .collect();
+        tracing::info!(
+            ports_to_fix = only_ports.len(),
+            "auto_repair: ports have errors — dispatching ports first (§5.11)"
+        );
+        (only_ports, true)
+    } else {
+        let adapters: Vec<(String, u32)> = to_fire_unfiltered.into_iter().take(cfg.top_k).collect();
+        (adapters, false)
     };
 
     // Compute the workspace-relative prefix for project paths. Cargo
@@ -361,6 +469,17 @@ async fn run_tick(
         }
     };
 
+    // §5.11: when dispatching adapters (ports are already clean OR not
+    // present in this tick), inject verbatim port file contents so the
+    // model sees the contract it must implement against. For port-first
+    // mode (this tick rewrites ports), no port_context — we're rewriting
+    // the contract itself.
+    let port_context: String = if port_first_mode {
+        String::new()
+    } else {
+        read_port_context(&cfg.project_path)
+    };
+
     // Frontier escalation branch (retro §5.12). When plateau is hit and we
     // still have attempts left, skip the normal persona-dispatch chain and
     // call claude -p directly on the top-K files. Local Ollama models have
@@ -376,6 +495,8 @@ async fn run_tick(
                     frontier_attempt = attempt,
                     frontier_max = MAX_FRONTIER_ATTEMPTS,
                     files = to_fire.len(),
+                    port_first = port_first_mode,
+                    port_context_bytes = port_context.len(),
                     "auto_repair: plateau — escalating to claude -p (frontier)"
                 );
                 let committed = run_frontier_escalation(
@@ -385,6 +506,7 @@ async fn run_tick(
                     &project_rel_prefix,
                     &cfg.project_path,
                     &repo_root,
+                    &port_context,
                 )
                 .await;
                 tracing::info!(
@@ -482,6 +604,23 @@ async fn run_tick(
         // Prefix the path so the persona writes to the project, not the
         // hex workspace root. See `project_rel_prefix` block above.
         let rel_path = prefix_path(&rel_path);
+        // §5.11: include verbatim port file contents as DO-NOT-CHANGE
+        // context when dispatching adapter rewrites. Skipped in
+        // port_first_mode (port_context is empty there).
+        let port_freeze_block = if port_context.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n--- PORT CONTRACTS (DO NOT CHANGE THESE SIGNATURES) ---\n\
+                 {port_context}\n\
+                 --- END PORT CONTRACTS ---\n\n\
+                 The trait declarations above are the contract. Your adapter MUST match \
+                 the EXACT trait method signatures (arg names, arg types, return types, \
+                 async-ness). Do NOT add, remove, or rename methods. If the port file you \
+                 see above looks wrong, fix the ADAPTER to match it — the port is frozen \
+                 for this pass.\n"
+            )
+        };
         let content = format!(
             "Rewrite {rel_path} to fix the {err_count} compile errors listed below. The current \
              file is BROKEN. Use only the actual workspace exports listed in the AVAILABLE \
@@ -490,7 +629,8 @@ async fn run_tick(
              go away.\n\n\
              --- SPECIFIC COMPILE ERRORS (cargo check, --message-format=short) ---\n\
              {errors_block}\n\
-             --- END ERRORS ---\n\n\
+             --- END ERRORS ---\n\
+             {port_freeze_block}\n\
              Fix each error directly. If an error says \"cannot find type X\" use the correct \
              type name from the AVAILABLE WORKSPACE EXPORTS block. If an error says \"function \
              takes N arguments\" match the trait's declared signature. Do NOT invent. Do NOT \
@@ -665,6 +805,7 @@ async fn run_frontier_escalation(
     project_rel_prefix: &str,
     project_path: &Path,
     repo_root: &Path,
+    port_context: &str,
 ) -> usize {
     let mut committed = 0usize;
     for (rel_path, err_count) in to_fire {
@@ -679,6 +820,24 @@ async fn run_frontier_escalation(
             .map(|lines| lines.iter().take(20).cloned().collect::<Vec<_>>().join("\n"))
             .unwrap_or_default();
 
+        // §5.11: when rewriting an adapter, freeze the port contract.
+        // When port_context is empty (this is a port-first pass), skip
+        // the freeze block.
+        let port_freeze_block = if port_context.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n--- PORT CONTRACTS (DO NOT CHANGE THESE SIGNATURES) ---\n\
+                 {port_context}\n\
+                 --- END PORT CONTRACTS ---\n\n\
+                 The trait declarations above are the frozen contract for this pass. \
+                 Match arg names, types, return types, async-ness EXACTLY. Do NOT \
+                 add, remove, or rename trait methods. If a method on the trait is \
+                 not in your file, add it; if your file has methods not on the trait, \
+                 remove them.\n"
+            )
+        };
+
         let prompt = format!(
             "You are repairing a Rust file in the hex-clone project. The file at \
              `{prefixed}` has {err_count} compile errors listed below. Output the \
@@ -687,7 +846,8 @@ async fn run_frontier_escalation(
              will be written verbatim to disk and compiled.\n\n\
              --- COMPILE ERRORS (cargo check, --message-format=short) ---\n\
              {errors_block}\n\
-             --- END ERRORS ---\n\n\
+             --- END ERRORS ---\n\
+             {port_freeze_block}\n\
              Preserve the file's intent (which types, traits, handlers it should \
              expose). Fix each error at the source — do not rename, do not invent \
              types, do not move code to other files. Output ONLY the new file \
@@ -879,5 +1039,71 @@ mod tests {
         assert_eq!(a, PlateauAction::Continue);
         assert_ne!(a, PlateauAction::Pause);
         assert_ne!(a, PlateauAction::Escalate);
+    }
+
+    #[test]
+    fn classify_file_kind_ports_directory() {
+        assert_eq!(
+            classify_file_kind("examples/ebay-clone/backend/src/core/ports/listing_repo.rs"),
+            FileKind::Port
+        );
+        assert_eq!(
+            classify_file_kind("src/ports/mod.rs"),
+            FileKind::Port
+        );
+        assert_eq!(
+            classify_file_kind("ports/auth.rs"),
+            FileKind::Port
+        );
+    }
+
+    #[test]
+    fn classify_file_kind_adapter_directory() {
+        assert_eq!(
+            classify_file_kind("examples/ebay-clone/backend/src/adapters/secondary/mod.rs"),
+            FileKind::Adapter
+        );
+        assert_eq!(
+            classify_file_kind("src/adapters/primary/http_axum/mod.rs"),
+            FileKind::Adapter
+        );
+    }
+
+    #[test]
+    fn classify_file_kind_core_domain_treated_as_port() {
+        // core/domain types are upstream contracts adapters depend on —
+        // dispatch them in port-first mode for the same reason ports get
+        // priority.
+        assert_eq!(
+            classify_file_kind("examples/ebay-clone/backend/src/core/domain/user.rs"),
+            FileKind::Port
+        );
+        assert_eq!(
+            classify_file_kind("src/core/usecases/auth.rs"),
+            FileKind::Port
+        );
+    }
+
+    #[test]
+    fn classify_file_kind_other_for_unrecognised_paths() {
+        assert_eq!(
+            classify_file_kind("src/main.rs"),
+            FileKind::Other
+        );
+        assert_eq!(
+            classify_file_kind("composition_root.rs"),
+            FileKind::Other
+        );
+    }
+
+    #[test]
+    fn classify_file_kind_adapters_takes_precedence_over_core() {
+        // A file under both /adapters/ and conceptually-core paths is an
+        // adapter (the persona-implements-a-port case). Both heuristics
+        // could match — adapters check first.
+        assert_eq!(
+            classify_file_kind("src/adapters/secondary/core_state.rs"),
+            FileKind::Adapter
+        );
     }
 }
