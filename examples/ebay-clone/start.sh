@@ -1,5 +1,3 @@
-code_patch: create examples/ebay-clone/start.sh
-
 #!/bin/bash
 
 # ADR-2026-05-19-0721
@@ -41,6 +39,24 @@ cleanup() {
 
 # Trap SIGINT
 trap cleanup SIGINT
+
+if [ "$1" = "--smoke" ]; then
+    # Wait for all children to terminate within 60s
+    if ! timeout -k 5 60 wait; then
+        echo "Timed out waiting for services to start"
+        cleanup
+        exit 1
+    fi
+
+    # Check for any remaining child processes
+    if pgrep -P $$ &> /dev/null; then
+        echo "Child processes are still running after health checks"
+        cleanup
+        exit 1
+    fi
+
+    exit 0
+fi
 
 # Wait for all children to terminate
 wait
