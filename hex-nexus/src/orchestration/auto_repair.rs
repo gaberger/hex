@@ -162,6 +162,31 @@ fn classify_file_kind(rel_path: &str) -> FileKind {
     }
 }
 
+/// Read the verbatim contents of a single source file at
+/// `<project>/<rel_path>`, capped at ~8 KB. Used by §5.13 to anchor the
+/// model on existing identifiers + imports + structural choices instead
+/// of asking it to invent them from scratch. Returns empty string if
+/// the file can't be read (caller falls back to no-anchor prompt).
+fn read_current_file_block(project_path: &Path, rel_path: &str) -> String {
+    let p = project_path.join(rel_path);
+    let content = match std::fs::read_to_string(&p) {
+        Ok(c) => c,
+        Err(_) => return String::new(),
+    };
+    const MAX_BYTES: usize = 8 * 1024;
+    if content.len() > MAX_BYTES {
+        // Keep the first 8 KB. Truncating mid-token is fine — the model
+        // sees a clear marker and the prompt explicitly says "preserve
+        // everything not directly causing an error", which includes the
+        // truncated tail by omission.
+        let mut truncated = content[..MAX_BYTES].to_string();
+        truncated.push_str("\n// ... (current file truncated at 8 KB; preserve untruncated portion as-is)\n");
+        truncated
+    } else {
+        content
+    }
+}
+
 /// Read the verbatim contents of every `.rs` file under `<project>/src/core/ports/`
 /// (and `<project>/src/ports/` as fallback) into a single string suitable
 /// for injection into a code-patch prompt.
@@ -601,6 +626,10 @@ async fn run_tick(
                     .join("\n")
             })
             .unwrap_or_default();
+        // §5.13: read current file content so the model is editing, not
+        // synthesizing. The bare unprefixed rel_path here is the project-
+        // relative path; project_path is the project root.
+        let current_file_block = read_current_file_block(&cfg.project_path, &rel_path);
         // Prefix the path so the persona writes to the project, not the
         // hex workspace root. See `project_rel_prefix` block above.
         let rel_path = prefix_path(&rel_path);
@@ -621,20 +650,34 @@ async fn run_tick(
                  for this pass.\n"
             )
         };
+        // §5.13: current-file block goes ABOVE the errors so the model
+        // reads anchor first, error focus second.
+        let current_file_section = if current_file_block.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n--- CURRENT FILE CONTENT ({rel_path}) — preserve this as much as possible ---\n\
+                 {current_file_block}\n\
+                 --- END CURRENT FILE ---\n"
+            )
+        };
         let content = format!(
-            "Rewrite {rel_path} to fix the {err_count} compile errors listed below. The current \
-             file is BROKEN. Use only the actual workspace exports listed in the AVAILABLE \
-             WORKSPACE EXPORTS block. Preserve the file's intent (which types / traits / \
-             handlers it should expose) but regenerate the body so the SPECIFIC errors below \
-             go away.\n\n\
+            "Edit {rel_path} to fix the {err_count} compile errors listed below. \
+             Output the COMPLETE file with only the minimum changes needed to make the listed \
+             errors go away. Preserve EVERY identifier, import, type reference, struct field, \
+             trait method, and structural choice from the current file that is not directly \
+             causing one of the listed errors. Do NOT rename. Do NOT invent new type names. \
+             Do NOT add or remove unrelated declarations. If a name looks wrong but is not in \
+             the error list, leave it.\n\
+             {current_file_section}\n\
              --- SPECIFIC COMPILE ERRORS (cargo check, --message-format=short) ---\n\
              {errors_block}\n\
              --- END ERRORS ---\n\
              {port_freeze_block}\n\
-             Fix each error directly. If an error says \"cannot find type X\" use the correct \
-             type name from the AVAILABLE WORKSPACE EXPORTS block. If an error says \"function \
-             takes N arguments\" match the trait's declared signature. Do NOT invent. Do NOT \
-             rename your way out of an error — fix it at the source."
+             For each error: identify the single token / line at fault, change only that, \
+             leave the rest of the file alone. If an error says \"cannot find type X\" check \
+             the workspace exports for the right path; do not invent a new type. If an error \
+             says \"function takes N arguments\" match the trait's declared signature."
         );
         match send_dm(http, nexus_base, "hex-coder", "auto_repair", &content).await {
             Ok(()) => {
@@ -838,20 +881,42 @@ async fn run_frontier_escalation(
             )
         };
 
+        // §5.13: anchor on existing file content instead of asking the
+        // model to synthesize from scratch. Empirically — from two prior
+        // live tests on this same project — full-rewrite prompts produce
+        // type-reference drift even when the model is claude. With the
+        // current file in front of it, the model edits.
+        let current_file_block = read_current_file_block(project_path, rel_path);
+        let current_file_section = if current_file_block.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n--- CURRENT FILE CONTENT ({prefixed}) — preserve this as much as possible ---\n\
+                 {current_file_block}\n\
+                 --- END CURRENT FILE ---\n"
+            )
+        };
+
         let prompt = format!(
             "You are repairing a Rust file in the hex-clone project. The file at \
              `{prefixed}` has {err_count} compile errors listed below. Output the \
-             COMPLETE new contents of the file as raw Rust source — NO markdown \
-             fences, NO commentary before or after, NO explanation. Your output \
-             will be written verbatim to disk and compiled.\n\n\
+             COMPLETE file content with ONLY the minimum changes needed to make the \
+             listed errors go away. Preserve EVERY identifier, import, type reference, \
+             struct field, trait method, and structural choice from the current file \
+             that is not directly causing one of the listed errors. Output raw Rust \
+             source — NO markdown fences, NO commentary, NO explanation. Your output \
+             will be written verbatim to disk and compiled.\n\
+             {current_file_section}\n\
              --- COMPILE ERRORS (cargo check, --message-format=short) ---\n\
              {errors_block}\n\
              --- END ERRORS ---\n\
              {port_freeze_block}\n\
-             Preserve the file's intent (which types, traits, handlers it should \
-             expose). Fix each error at the source — do not rename, do not invent \
-             types, do not move code to other files. Output ONLY the new file \
-             contents, starting with the first line of the .rs file."
+             For each error: identify the single token, line, or block at fault, change \
+             only that, leave the rest of the file alone. Do NOT rename your way out \
+             of an error. Do NOT invent new type names that aren't in the current file \
+             or the port contracts. Do NOT add a `pub use SomeNew::Thing` that wasn't \
+             already there. Output ONLY the new file contents, starting with the first \
+             line of the .rs file."
         );
 
         let req = InferenceRequest {
@@ -1105,5 +1170,41 @@ mod tests {
             classify_file_kind("src/adapters/secondary/core_state.rs"),
             FileKind::Adapter
         );
+    }
+
+    #[test]
+    fn read_current_file_block_returns_empty_for_missing_file() {
+        let tmp = std::env::temp_dir().join("hex_test_auto_repair_missing");
+        let result = read_current_file_block(&tmp, "does_not_exist.rs");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn read_current_file_block_returns_full_content_under_limit() {
+        let tmp = std::env::temp_dir().join("hex_test_auto_repair_under");
+        let _ = std::fs::create_dir_all(&tmp);
+        let target = tmp.join("under.rs");
+        std::fs::write(&target, "fn x() {}\n").unwrap();
+        let result = read_current_file_block(&tmp, "under.rs");
+        assert_eq!(result, "fn x() {}\n");
+        let _ = std::fs::remove_file(&target);
+    }
+
+    #[test]
+    fn read_current_file_block_truncates_with_marker_above_limit() {
+        let tmp = std::env::temp_dir().join("hex_test_auto_repair_over");
+        let _ = std::fs::create_dir_all(&tmp);
+        let target = tmp.join("over.rs");
+        // 10 KB of content — over the 8 KB cap.
+        let blob: String = std::iter::repeat('a').take(10 * 1024).collect();
+        std::fs::write(&target, &blob).unwrap();
+        let result = read_current_file_block(&tmp, "over.rs");
+        assert!(result.len() < 11 * 1024, "should be near the cap, got {} bytes", result.len());
+        assert!(
+            result.contains("current file truncated at 8 KB"),
+            "expected truncation marker, got tail: {:?}",
+            result.chars().rev().take(80).collect::<String>().chars().rev().collect::<String>()
+        );
+        let _ = std::fs::remove_file(&target);
     }
 }

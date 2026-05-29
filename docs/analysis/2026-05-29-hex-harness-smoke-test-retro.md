@@ -171,6 +171,17 @@ These errors share a pattern: the persona at qwen2.5-coder:14b Q4_K_M reliably g
 - If T3 also fails to make progress: THEN pause + surface to operator (the §5.6 endpoint)
 - Per-file plateau counter resets on any global error-count reduction (auto_repair already tracks this at the loop level — extend to per-file)
 
+### 5.13. Full-rewrite prompts cause type-reference drift (NEW — surfaced 2026-05-29 PM)
+**Symptom:** §5.12 first live test took ebay-clone 18 → 43 errors. §5.11 + §5.12 second live test took it 18 → 39 (better but still net-negative). In both tests claude wrote 2-3KB of plausible Rust that referenced identifiers that don't exist anywhere in the codebase: invented type names from `core/domain/`, hallucinated sibling-file references (`ListingRepoPort.rs` as separate file), used async/sync patterns inconsistent with the rest of the project.
+**Hypothesis:** the prompt template for both Phase B persona dispatch and frontier escalation says **"Output the COMPLETE new contents of the file as raw Rust source"**. That's a from-scratch synthesis instruction. The model has no anchor to existing identifiers, so it invents. §5.11 froze port→adapter direction, but the port rewrite itself broke port→domain references because nothing constrained what the new port content could reference.
+**Fix plan (1-2 hours):**
+- Read the CURRENT file content from disk in the dispatch loop (cap at ~8KB; truncate larger files with explicit marker)
+- Inject it into the prompt as a `CURRENT FILE CONTENT (preserve as much as possible)` block BEFORE the errors block
+- Change the imperative from "output the complete new contents" to "output the complete file with the listed errors fixed, preserving every identifier, import, type reference, and structural choice that is not directly causing one of the listed errors"
+- Apply to BOTH Phase B persona prompt AND `run_frontier_escalation` prompt
+- The output format stays the same (full file content); only the imperative + the anchor change
+- This is a small change with large leverage: same model, same plateau condition, but the model is now editing instead of synthesizing
+
 ### 5.10. Scaffolded artifacts not validated as executable (NEW)
 **Symptom:** Workplan declared 109/109 files complete, including `start.sh`, `docker-compose.yml`, `README.md`. But `start.sh` has placeholder paths (`path/to/binary` style), wrong port, and references `bun` without checking it's installed. The workplan's "done condition" was file-presence, not file-validity.
 **Hypothesis:** `done_condition: "compile + lint + test pass"` in the workplan schema is only checked for Rust source. Shell scripts, compose files, READMEs were file-existence-checked and rubber-stamped.
@@ -195,12 +206,14 @@ These errors share a pattern: the persona at qwen2.5-coder:14b Q4_K_M reliably g
 
 **The single biggest lesson is unchanged:** the harness must verify its own ground truth. Every layer reported success while ground truth was failing — wrong path, wrong types after merge, wrong workspace membership, placeholder scripts. The next round of hardening (§5) is almost entirely about adding ground-truth gates at each layer.
 
-**Prioritized fix order (REVISED 2026-05-29 after T3-integration map):**
-1. **§5.12 tier-escalation ladder** — highest ROI now. ebay-clone proved local models plateau at ~16-18 errors with variance. The harness has a `ClaudeCodeInferenceAdapter` (spawns `claude -p`) sitting fully built but never wired into composition. Wiring it + per-file auto_repair escalation lets the system close its own ceiling without operator intervention. ~3-4h.
-2. **§5.11 auto_repair temporal drift** — actual root cause of ebay's stuck errors. Even with T3 available, oscillation on shared signatures wastes T3 calls. Needs signature-graph + freeze-port-in-ask. ~4-6h.
-3. **§5.8 post-merge cargo-check gate** — SHIPPED in `d56afec6`. Helps the worktree workflow specifically (which ebay didn't use, but a future feature dev cycle will).
-4. **§5.10 scaffolded-artifact validators** — closes "file exists ≠ file works"; produces placeholder start.sh. ~2-3h.
-5. **§5.9 STDB workspace entanglement** — small, mechanical, removes the spacetime build failure entirely. ~1-2h.
-6. **§5.1 model upgrade path** — partially subsumed by §5.12 (T3 wiring overhauls the inference path). Audit remaining T1/T2 swap path after §5.12 lands.
-7. **§5.7 shadow-project regression check** — would have caught the prefix bug on tick 1.
-8. **§5.4 inbox TTL, §5.5 root-folder rule, §5.6 learning state (now subsumed by §5.12 escalation), §5.3 trait-signature grounding (subsumed by §5.11 signature graph), §5.2 per-tool routing** — quality-of-life and refinement.
+**Prioritized fix order (REVISED 2026-05-29 PM after two live tests):**
+1. **§5.13 targeted-edit prompts** — top of list. Both prior tests failed at the same place: full-rewrite prompts cause type-reference drift. Smallest change with largest leverage. Without it, §5.11+§5.12 net-negative on this project. ~1-2h.
+2. **§5.12 tier-escalation ladder** — SHIPPED `1cd1fc86`. Mechanism validated end-to-end; strategy waits on §5.13.
+3. **§5.11 signature-graph dispatch policy** — SHIPPED `4a7db779`. Mechanism validated; reduces drift class but doesn't close it without §5.13.
+4. **§5.8 post-merge cargo-check gate** — SHIPPED `d56afec6`. Worktree-workflow specific.
+5. **§5.7 shadow-project regression check** — would have caught the prefix bug on tick 1. Independent of §5.13. ~2-3h.
+6. **§5.10 scaffolded-artifact validators** — closes "file exists ≠ file works". Only relevant once code compiles. ~2-3h.
+7. **§5.9 STDB module workspace entanglement** — blocks `spacetime build`. Cheap. ~1-2h.
+8. **§5.6 per-file learning state** — would detect "listing_repo.rs dispatched 6× this session, never improved" and escalate to operator. ~2-3h.
+9. **§5.1 model upgrade path** — partially subsumed by §5.12. Audit T1/T2 swap path after §5.13 lands.
+10. **§5.4 inbox TTL, §5.5 root-folder rule, §5.3 trait-signature grounding (subsumed by §5.11), §5.2 per-tool routing** — quality-of-life and refinement.
