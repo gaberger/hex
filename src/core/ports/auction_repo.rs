@@ -2,6 +2,8 @@
 
 use core::ports::listing_repo::{ListingRepo, ListingRepoImpl, Listing};
 use core::usecases::bidding::{BiddingUsecase, fetch_bids};
+use hex_core::types::AuctionId; // Correct type from the available workspace exports
+use async_trait::async_trait; // Required attribute for async trait implementation
 
 pub trait AuctionRepo {
     fn new() -> Self;
