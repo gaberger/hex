@@ -146,6 +146,36 @@ async fn run_one(
                     );
                     if let Err(e) = write_stub_artifact(http, stdb_host, hex_db, &c, repo_root).await {
                         tracing::warn!(commitment_id = c.id, error = %e, "drafter: stub write failed");
+                        // Terminal stub-write failures: non-markdown and
+                        // workplan paths. The drafter cannot draft (source
+                        // file path, etc.) AND the stub writer refuses
+                        // (would clobber). The commitment WILL NEVER
+                        // PROGRESS — abandon it so the queue advances.
+                        //
+                        // Surfaced 2026-05-28 ebay-mvp scaling test: zombie
+                        // commitment 8744 (hex-cli/src/commands/plan.rs)
+                        // looped at 30s × 11+ failures, starving the
+                        // examples/ebay-clone/* commitments behind it. The
+                        // workplan-relevant code_patches sat at status=open
+                        // for hours because the drafter was stuck in this
+                        // exact hot loop.
+                        let terminal = e.contains("stub refused: non-markdown path")
+                            || e.contains("stub refused: workplan path");
+                        if terminal {
+                            tracing::warn!(
+                                commitment_id = c.id, role = %c.role, fails = count,
+                                "drafter: terminal stub-write failure — abandoning commitment to unblock queue"
+                            );
+                            let abandon_url = format!("{}/v1/database/{}/call/commitment_abandon", stdb_host, hex_db);
+                            let abandon_body = serde_json::json!([
+                                c.id,
+                                format!("drafter: source-file/workplan target + non-markdown stub refused; persona must invoke the SOP code_patch or workplan_emit tool with structured args (current persona output is tool_plan stub only)"),
+                            ]);
+                            if let Err(e2) = http.post(&abandon_url).json(&abandon_body).send().await {
+                                tracing::warn!(commitment_id = c.id, error = %e2, "drafter: abandon-after-terminal-stub http failed");
+                            }
+                            failures.lock().await.remove(&c.id);
+                        }
                     } else {
                         failures.lock().await.remove(&c.id);
                     }
