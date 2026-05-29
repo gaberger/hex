@@ -1,7 +1,8 @@
 // ADR-2026-05-19-0721
 
 use adapters::secondary::stdb_client::{StdBClient, new as stdb_client_new, execute_query, analyze_data};
-use core::ports::reducer_call::{ReducerError};
+use core::ports::reducer_call::ReducerCall;
+use core::ports::reducer_call::Error as ReducerError;
 
 pub struct BiddingUsecase {
     client: StdBClient,
