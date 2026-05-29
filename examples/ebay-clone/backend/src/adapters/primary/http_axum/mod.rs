@@ -9,7 +9,7 @@ use axum::middleware::from_fn;
 
 use crate::{
     adapters::primary::http_axum::{
-        auth_middleware::auth_middleware,
+        auth_middleware,
         dto::{UserRequest, UserResponse, ItemRequest, ItemResponse, BidRequest, BidResponse},
         handlers_auth::auth_routes,
         handlers_bidding::{place_bid, toggle_watch},
