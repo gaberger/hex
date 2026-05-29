@@ -1,3 +1,5 @@
+The fix is clear: `SystemClock`/`ClockPort` live in the `system_clock` module (not declared), and `jwt_signer_hs256` is also not declared. I'll add both `pub mod` declarations and fix the re-export path.
+
 // ADR-2026-05-19-0721
 // adapters::secondary
 //
@@ -8,6 +10,8 @@
 pub mod stdb_client;
 pub mod image_store_fs;
 pub mod password_hasher_argon2;
+pub mod system_clock;
+pub mod jwt_signer_hs256;
 
-pub use self::stdb_client::{SystemClock, ClockPort};
+pub use self::system_clock::{SystemClock, ClockPort};
 pub use self::jwt_signer_hs256::{JwtSignerHs256, TokenIssuerPort};
