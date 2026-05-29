@@ -3,6 +3,8 @@
 use adapters::secondary::image_store_fs::{ImageStoreFs, new as image_store_new, store_image, retrieve_image};
 use adapters::secondary::password_hasher_argon2::{PasswordHasherArgon2, new as password_hasher_new, hash_password};
 use adapters::secondary::stdb_client::{StdBClient, new as stdb_client_new, execute_query, analyze_data};
+use core::ports::UserRepo;
+use core::usecases::bidding::BiddingUsecase;
 
 // ADR-2026-05-19-0721: Implement HTTP handlers using Axum
 
@@ -48,7 +50,7 @@ pub async fn analyze_data_handler(data: &str) -> Result<String, String> {
 
 pub async fn fetch_bids_handler(auction_id: &str) -> Result<Vec<String>, String> {
     let bidding_usecase = BiddingUsecase::new();
-    match fetch_bids(&bidding_usecase, auction_id) {
+    match bidding_usecase.fetch_bids(auction_id).await {
         Ok(bids) => Ok(bids),
         Err(e) => Err(format!("Failed to fetch bids: {}", e)),
     }
