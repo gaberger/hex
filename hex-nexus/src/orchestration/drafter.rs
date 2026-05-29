@@ -1181,20 +1181,43 @@ async fn draft_one(
     // rewrote the doc instead of patching — abstain so the circuit-breaker
     // re-asks (and the off-disk artifact does not get clobbered with
     // hallucinated content as it did on 2026-05-17 with action 45090).
+    //
+    // EXCEPTION (2026-05-29): when the CEO ask is rewrite-mode (rewrite /
+    // regenerate / fix / overhaul / hallucinated / etc.), full-file rewrite
+    // is the desired outcome — the existing content IS the bug. The gate's
+    // preservation rule would block the fix. Skip the gate in replace_mode;
+    // the AVAILABLE WORKSPACE EXPORTS block + the CURRENT (BROKEN) FILE
+    // CONTENT framing in the prompt already constrain the persona to
+    // legitimate exports rather than free hallucination. Surfaced 2026-05-29
+    // when ports/mod.rs + usecases/mod.rs got stuck at preserved_ratio=0.15
+    // despite producing exactly the requested module-sheet rewrite.
     if let Some(existing) = target_existing.as_ref() {
         let preserved_ratio = significant_line_overlap_ratio(existing, &content);
         if preserved_ratio < PATCH_MIN_PRESERVATION_RATIO {
-            tracing::warn!(
-                commitment_id = c.id,
-                role = %c.role,
-                path = %c.success_artifact,
-                preserved_ratio = preserved_ratio,
-                threshold = PATCH_MIN_PRESERVATION_RATIO,
-                existing_bytes = existing.len(),
-                new_bytes = content.len(),
-                "drafter: patch-fidelity gate — preserved <40% of existing lines; abstaining (likely full-file rewrite)"
-            );
-            return Ok(DraftOutcome::PersonaAbstained);
+            if replace_mode {
+                tracing::info!(
+                    commitment_id = c.id,
+                    role = %c.role,
+                    path = %c.success_artifact,
+                    preserved_ratio = preserved_ratio,
+                    threshold = PATCH_MIN_PRESERVATION_RATIO,
+                    existing_bytes = existing.len(),
+                    new_bytes = content.len(),
+                    "drafter: patch-fidelity gate bypassed — CEO ask is rewrite-mode (full rewrite is the goal)"
+                );
+            } else {
+                tracing::warn!(
+                    commitment_id = c.id,
+                    role = %c.role,
+                    path = %c.success_artifact,
+                    preserved_ratio = preserved_ratio,
+                    threshold = PATCH_MIN_PRESERVATION_RATIO,
+                    existing_bytes = existing.len(),
+                    new_bytes = content.len(),
+                    "drafter: patch-fidelity gate — preserved <40% of existing lines; abstaining (likely full-file rewrite)"
+                );
+                return Ok(DraftOutcome::PersonaAbstained);
+            }
         }
     }
 
