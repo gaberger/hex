@@ -1,4 +1,5 @@
 use crate::core::domain::*;
+use async_trait::async_trait;
 
 #[async_trait]
 pub trait AuctionRepoPort: Send + Sync {
