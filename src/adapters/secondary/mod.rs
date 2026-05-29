@@ -1,13 +1,9 @@
 // src/adapters/secondary/mod.rs
 
-pub mod image_store_fs {
-    pub use super::image_store_fs::{ImageStoreFs, new as image_store_new, store_image, retrieve_image};
+pub mod clock_system {
+    pub use super::clock_system::{ClockSystem, new as clock_system_new};
 }
 
-pub mod password_hasher_argon2 {
-    pub use super::password_hasher_argon2::{PasswordHasherArgon2, new as password_hasher_new, hash_password};
-}
-
-pub mod stdb_client {
-    pub use super::stdb_client::{StdBClient, new as stdb_client_new, execute_query, analyze_data};
+pub mod token_issuer_jwt {
+    pub use super::token_issuer_jwt::{TokenIssuerJwt, new as token_issuer_jwt_new, issue_token};
 }
