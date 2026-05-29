@@ -1,5 +1,6 @@
 use crate::core::domain::*;
 use async_trait::async_trait;
+use core::time::DurationMs; // ADR-2026-05-19-0721
 
 /// ListingRepoPort defines read-only operations on listings.
 ///
@@ -22,7 +23,7 @@ pub trait ListingRepoPort: Send + Sync {
     ///
     /// # Returns
     /// A Result containing a Vec of Listings that match the criteria.
-    async fn get_listings_by_criteria(&self, criteria: &ListingCriteria) -> Result<Vec<Listing>, ListingRepoError>;
+    async fn get_listings_by_criteria(&self, criteria: &SearchListingsParams) -> Result<Vec<Listing>, ListingRepoError>;
 }
 
 /// DTO for creating a new listing. This is used as input to the create_listing reducer.
@@ -31,8 +32,8 @@ pub struct CreateListingInput {
     pub title: String,
     pub description: Option<String>,
     pub starting_bid: Money,
-    pub start_time: UnixMillis,
-    pub end_time: UnixMillis,
+    pub start_time: Timestamp,
+    pub end_time: Timestamp,
     // Add other fields as necessary based on ebay-spec-004 and other relevant specifications.
 }
 
@@ -47,7 +48,3 @@ pub enum ListingRepoError {
 
     // Add more variants as necessary based on the specifications.
 }
-
-// ADR-2026-05-19-0721
-// hex-parser/src/core/domain/listing.rs
-// docs/specs/ebay-spec-004.md
