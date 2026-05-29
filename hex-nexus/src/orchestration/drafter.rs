@@ -6,7 +6,7 @@
 //! the digital twin can then review.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -40,6 +40,11 @@ const REJECT_BUDGET: u32 = 5;
 /// before truncating. Keeps the prompt under the model's context budget
 /// even when editing a 100 KB doc.
 const PATCH_CONTEXT_CAP_BYTES: usize = 16 * 1024;
+/// Maximum bytes of the auto-grounded "available imports" block to inject
+/// into the prompt for Rust source files. Caps the cost of scanning a huge
+/// workspace while keeping the most relevant exports visible. Operator
+/// override via HEX_DRAFTER_GROUNDING_CAP.
+const GROUNDING_CAP_BYTES: usize = 8 * 1024;
 /// Minimum fraction of the existing file's significant lines that must
 /// survive in the new draft for it to count as a real patch (vs. a
 /// hallucinated rewrite). 0.40 catches full-file replacements while still
@@ -635,6 +640,145 @@ async fn fetch_pending_action_commitment_ids(
     Ok(out)
 }
 
+/// Walk up from `target_relative` to find the nearest `Cargo.toml`. Returns
+/// the absolute path to the crate root (the directory containing Cargo.toml).
+/// Used to scope the auto-grounding scan: we only enumerate exports from the
+/// same crate as the target file. Cross-crate imports go through the
+/// existing `use` statements the persona knows about.
+fn find_crate_root(target_relative: &str, repo_root: &Path) -> Option<PathBuf> {
+    let mut cur = repo_root.join(target_relative);
+    cur.pop(); // start at parent dir
+    loop {
+        if cur.join("Cargo.toml").is_file() {
+            return Some(cur);
+        }
+        if !cur.pop() {
+            return None;
+        }
+        // Stop at repo root to avoid escaping the workspace.
+        if !cur.starts_with(repo_root) {
+            return None;
+        }
+    }
+}
+
+/// Scan a Rust crate's `src/` tree for `pub` declarations the drafter can
+/// use to ground the LLM's import statements. Regex-based; no tree-sitter
+/// dep added. Returns a markdown block ready to drop into the prompt.
+///
+/// Recognised declarations: `pub struct`, `pub enum`, `pub trait`,
+/// `pub type`, `pub fn`, `pub const`, `pub static`, `pub use ... as`,
+/// `pub mod`.
+///
+/// Grouped by file (rel path under `src/`) so the LLM sees which module
+/// to import each name from. Caps at `GROUNDING_CAP_BYTES` to bound prompt
+/// budget — once the cap is hit, additional files get a `[truncated]`
+/// marker and the loop bails.
+///
+/// Surfaced 2026-05-29 after the ebay-mvp scaling test's persona produced
+/// 73 cargo errors from hallucinated imports (`crate::core::entities`,
+/// `crate::core::domain_types`, types `Title` / `PriceCents` / `Duration`
+/// that don't exist). The fix is to tell the persona what DOES exist in
+/// the workspace, in the prompt, every time.
+fn scan_crate_exports_block(crate_root: &Path) -> Option<String> {
+    let src_dir = crate_root.join("src");
+    if !src_dir.is_dir() {
+        return None;
+    }
+
+    // Patterns. Anchored to line start (post-whitespace strip) so we don't
+    // pick up `pub struct X` references inside doc-comments or strings.
+    // The capture group is the declared name; trait/struct/enum get their
+    // generic params stripped.
+    let patterns: &[(&str, regex::Regex)] = &[
+        ("struct", regex::Regex::new(r"^\s*pub\s+struct\s+([A-Z][A-Za-z0-9_]*)").unwrap()),
+        ("enum",   regex::Regex::new(r"^\s*pub\s+enum\s+([A-Z][A-Za-z0-9_]*)").unwrap()),
+        ("trait",  regex::Regex::new(r"^\s*pub\s+trait\s+([A-Z][A-Za-z0-9_]*)").unwrap()),
+        ("type",   regex::Regex::new(r"^\s*pub\s+type\s+([A-Z][A-Za-z0-9_]*)").unwrap()),
+        ("fn",     regex::Regex::new(r"^\s*pub\s+(?:async\s+)?fn\s+([a-z_][A-Za-z0-9_]*)").unwrap()),
+        ("const",  regex::Regex::new(r"^\s*pub\s+const\s+([A-Z_][A-Z0-9_]*)").unwrap()),
+        ("use",    regex::Regex::new(r"^\s*pub\s+use\s+[^;]*::\{?([A-Z][A-Za-z0-9_, ]*)\}?\s*;").unwrap()),
+        ("mod",    regex::Regex::new(r"^\s*pub\s+mod\s+([a-z_][a-z0-9_]*)").unwrap()),
+    ];
+
+    let cap = std::env::var("HEX_DRAFTER_GROUNDING_CAP")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(GROUNDING_CAP_BYTES);
+
+    let mut out = String::from(
+        "\n\n# AVAILABLE WORKSPACE EXPORTS — use these import paths, do NOT invent module names\n\
+         \n\
+         The following Rust items ARE EXPORTED from this crate's `src/`. If you need a type \
+         or function not listed here, it does not exist; do not import it.\n\
+         \n\
+         Format: `path/under/src/file.rs` → `kind Name`\n\n",
+    );
+
+    // Walk src/ depth-first, sorted for determinism.
+    fn walk(dir: &Path, files: &mut Vec<PathBuf>) {
+        if let Ok(rd) = std::fs::read_dir(dir) {
+            let mut entries: Vec<_> = rd.flatten().collect();
+            entries.sort_by_key(|e| e.path());
+            for entry in entries {
+                let p = entry.path();
+                if p.is_dir() {
+                    walk(&p, files);
+                } else if p.extension().and_then(|s| s.to_str()) == Some("rs") {
+                    files.push(p);
+                }
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(&src_dir, &mut files);
+
+    let mut truncated = false;
+    for f in &files {
+        if out.len() > cap {
+            truncated = true;
+            break;
+        }
+        let rel = f.strip_prefix(&src_dir).unwrap_or(f).to_string_lossy().to_string();
+        let content = match std::fs::read_to_string(f) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let mut file_lines: Vec<String> = Vec::new();
+        for line in content.lines() {
+            for (kind, re) in patterns {
+                if let Some(caps) = re.captures(line) {
+                    if let Some(name_match) = caps.get(1) {
+                        // For `pub use X::{A, B}` the capture is `A, B`; split.
+                        for name in name_match.as_str().split(',') {
+                            let n = name.trim();
+                            if !n.is_empty() {
+                                file_lines.push(format!("  • {kind} {n}"));
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        if !file_lines.is_empty() {
+            out.push_str(&format!("`{}`:\n{}\n\n", rel, file_lines.join("\n")));
+        }
+    }
+
+    if truncated {
+        out.push_str("[truncated — more exports exist; you have the most common ones above]\n");
+    }
+    out.push_str(
+        "\nIMPORTS THAT WILL CAUSE COMPILE ERRORS:\n\
+         - Importing any module path or type name NOT listed above.\n\
+         - Inventing convenience names (e.g. PriceCents when the export is Money) \
+           because they sound right.\n",
+    );
+
+    Some(out)
+}
+
 async fn draft_one(
     http: &reqwest::Client,
     stdb_host: &str,
@@ -793,10 +937,28 @@ async fn draft_one(
         None => String::new(),
     };
 
+    // Auto-grounding: for Rust files, scan the target's crate and inject
+    // the actual `pub` exports. Without this, persona-authored Rust
+    // hallucinates module paths (`crate::core::entities`, `crate::core::
+    // domain_types`) and convenience type names (`PriceCents` instead of
+    // `Money`) — produced 73 cargo errors in the 2026-05-28 ebay-mvp
+    // scaling test.
+    //
+    // Only fires for `.rs` paths. Other extensions (`.md`, `.toml`,
+    // `.yml`, etc.) don't have a meaningful import-graph concept; the
+    // existing grounding-citations rule covers them.
+    let grounding_block = if c.success_artifact.ends_with(".rs") {
+        find_crate_root(&c.success_artifact, repo_root)
+            .and_then(|root| scan_crate_exports_block(&root))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
     let system = format!(
         "You are the {role} persona. The CEO asked you for a specific artifact and you committed to producing it.\n\
          Your committed action: {action}\n\
-         Required success artifact: {artifact}{ceo_ask}{existing}\n\n\
+         Required success artifact: {artifact}{ceo_ask}{existing}{grounding}\n\n\
          Produce the ACTUAL FULL CONTENTS of `{artifact}` NOW.\n\n\
          HARD RULE — GROUNDING CITATIONS (twin_reviewer::content_has_grounding will reject \
          your output otherwise; this is not a stylistic preference, the gate is regex-checked):\n\
@@ -828,6 +990,7 @@ async fn draft_one(
         artifact = c.success_artifact,
         ceo_ask = ceo_ask_block,
         existing = existing_block,
+        grounding = grounding_block,
     );
 
     // Pin nemotron-mini by default. Reason same as the responder commit-mode
