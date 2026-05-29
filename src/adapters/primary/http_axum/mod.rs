@@ -3,10 +3,6 @@
 use adapters::secondary::image_store_fs::{ImageStoreFs, new as image_store_new, store_image, retrieve_image};
 use adapters::secondary::password_hasher_argon2::{PasswordHasherArgon2, new as password_hasher_new, hash_password};
 use adapters::secondary::stdb_client::{StdBClient, new as stdb_client_new, execute_query, analyze_data};
-use core::ports::auction_repo::AuctionRepo;
-use core::ports::listing_repo::{ListingRepo, ListingRepoImpl, Listing};
-use core::ports::reducer_call::{ReducerCall, new as reducer_call_new, handle_bids};
-use core::usecases::bidding::{BiddingUsecase, new as bidding_usecase_new, fetch_bids};
 
 // ADR-2026-05-19-0721: Implement HTTP handlers using Axum
 
