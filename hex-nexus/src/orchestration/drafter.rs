@@ -504,6 +504,27 @@ async fn fetch_open_path_commitments(
         if status != "open" {
             continue;
         }
+        // Skip the [non-path tool] synthetic artifact. These commitments are
+        // opened by org_responder when a persona's tool_plan step uses a
+        // non-path tool (delegate, escalate_to_operator, cargo_check,
+        // memory_search, repo_grep, repo_read, web_search) — they exist
+        // PURELY as audit rows so the operator can see the request was made.
+        // The drafter has nothing to draft (no file output expected) and the
+        // twin correctly rejects them as off-allowlist when it sees the
+        // synthetic path. Skipping at the poll layer stops the wasted
+        // draft → twin → reject churn that was burning ~5×2.5KB / commitment
+        // and starving real workplan commitments behind them.
+        //
+        // Surfaced 2026-05-28 ebay-mvp scaling test wakeup checkpoint: of
+        // ~10 commitments processed per minute by the drafter, 8+ were
+        // synthetic-artifact churn on engineering-lead/repo_read,
+        // hex-tester/delegate, hex-coder/repo_read etc. The well-targeted
+        // workplan code_patches (step-29 integration_listings.rs, step-32
+        // smoke.sh) never got a slot.
+        let artifact_str = cols.get(3).and_then(|x| x.as_str()).unwrap_or("");
+        if artifact_str.starts_with("[non-path tool]") {
+            continue;
+        }
         // ADR-2026-05-12-1505 — accept the new adr_status_flip kind as well as
         // legacy verifiable_path. Path-safety check only applies to file-write
         // kinds; status-flip payloads use ADR-<id>:<status> format that the
