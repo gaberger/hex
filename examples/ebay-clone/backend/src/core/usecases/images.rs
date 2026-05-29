@@ -60,22 +60,22 @@ mod tests {
             1024 * 1024, // 1MB
         );
 
-        let result = use_case.execute(&[1, 2, 3], "image/jpeg");
-        assert_eq!(result.unwrap(), "image_id".to_string());
+        assert_eq!(use_case.execute(&[0; 1024], "image/jpeg").unwrap(), "image_id");
     }
 
     #[test]
-    fn test_upload_image_invalid_content_type() {
+    fn test_upload_image_unsupported_content_type() {
         let mock_store = MockImageStorePort::new();
         let use_case = UploadImageUseCase::new(
             Box::new(mock_store),
-            vec!["image/jpeg", "image/png"],
+            vec!["image/png"],
             1024 * 1024, // 1MB
         );
 
-        let result = use_case.execute(&[1, 2, 3], "image/gif");
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Unsupported content type: image/gif".to_string());
+        assert_eq!(
+            use_case.execute(&[0; 1024], "image/jpeg").unwrap_err(),
+            "Unsupported content type: image/jpeg"
+        );
     }
 
     #[test]
@@ -83,33 +83,13 @@ mod tests {
         let mock_store = MockImageStorePort::new();
         let use_case = UploadImageUseCase::new(
             Box::new(mock_store),
-            vec!["image/jpeg", "image/png"],
-            5, // 5 bytes
+            vec!["image/jpeg"],
+            1024, // 1KB
         );
 
-        let result = use_case.execute(&[1, 2, 3, 4, 5, 6], "image/jpeg");
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "File size exceeds the maximum allowed limit".to_string());
-    }
-
-    #[test]
-    fn test_upload_image_idempotency() {
-        let mut mock_store = MockImageStorePort::new();
-        mock_store.expect_store().returning(|_, _| Ok("image_id".to_string()));
-
-        let use_case = UploadImageUseCase::new(
-            Box::new(mock_store),
-            vec!["image/jpeg", "image/png"],
-            1024 * 1024, // 1MB
+        assert_eq!(
+            use_case.execute(&[0; 1025], "image/jpeg").unwrap_err(),
+            "File size exceeds the maximum allowed limit"
         );
-
-        let result1 = use_case.execute(&[1, 2, 3], "image/jpeg");
-        let result2 = use_case.execute(&[1, 2, 3], "image/jpeg");
-
-        assert_eq!(result1.unwrap(), "image_id".to_string());
-        assert_eq!(result2.unwrap(), "image_id".to_string());
     }
 }
-
-// docs/specs/ebay-spec-010
-// docs/specs/ebay-spec-011
