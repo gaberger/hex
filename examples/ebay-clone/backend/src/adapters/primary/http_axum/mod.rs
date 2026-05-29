@@ -19,10 +19,10 @@ use crate::{
             get_listing_by_id, listings_routes,
         },
         handlers_me::{get_my_bids, get_my_won_items, get_my_listings},
+        state::AppState,
     },
-    adapters::secondary::stdb_client::connect,
+    adapters::secondary::stdb_client::establish_connection,
     core::ports::user_repo::UserRepoPort,
-    adapters::primary::http_axum::state::AppState,
 };
 
 // ADR-2026-05-19-0721
