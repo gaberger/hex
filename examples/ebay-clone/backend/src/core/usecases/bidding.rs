@@ -45,5 +45,3 @@ impl BiddingUseCase {
 }
 
 // ADR-2026-05-19-0721
-// hex analyze
-// docs/specs/ebay-spec-012
