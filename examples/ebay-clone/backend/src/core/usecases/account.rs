@@ -1,4 +1,4 @@
-use crate::core::domain::{DomainError, BidderIdentity, WinnerIdentity};
+use crate::core::domain::{DomainError, UserId};
 use crate::core::ports::{
     ReducerCallPort,
     BidRepoPort,
@@ -23,27 +23,27 @@ impl AccountUseCase {
         Self { reducer, bid_repo, auction_repo, listing_repo }
     }
 
-    pub fn place_bid(&self, bidder_identity: BidderIdentity, amount: u64) -> Result<(), DomainError> {
+    pub fn place_bid(&self, bidder_identity: UserId, amount: u64) -> Result<(), DomainError> {
         self.reducer.place_bid(bidder_identity, amount)
             .map_err(|err| map_reducer_error_to_domain(err))
     }
 
-    pub fn toggle_watch(&self, bidder_identity: BidderIdentity, listing_id: u64) -> Result<(), DomainError> {
+    pub fn toggle_watch(&self, bidder_identity: UserId, listing_id: u64) -> Result<(), DomainError> {
         self.reducer.watch_listing(bidder_identity, listing_id)
             .map_err(|err| map_reducer_error_to_domain(err))
     }
 
-    pub fn list_my_bids(&self, bidder_identity: BidderIdentity) -> Result<Vec<Bid>, DomainError> {
+    pub fn list_my_bids(&self, bidder_identity: UserId) -> Result<Vec<Bid>, DomainError> {
         self.bid_repo.list_by_bidder(bidder_identity)
             .map_err(|_| DomainError::RepositoryAccessFailed)
     }
 
-    pub fn list_my_won(&self, winner_identity: WinnerIdentity) -> Result<Vec<Auction>, DomainError> {
+    pub fn list_my_won(&self, winner_identity: UserId) -> Result<Vec<Auction>, DomainError> {
         self.auction_repo.list_closed_by_winner(winner_identity)
             .map_err(|_| DomainError::RepositoryAccessFailed)
     }
 
-    pub fn list_my_listings(&self, seller_identity: SellerIdentity) -> Result<Vec<Listing>, DomainError> {
+    pub fn list_my_listings(&self, seller_identity: UserId) -> Result<Vec<Listing>, DomainError> {
         self.listing_repo.list_by_seller(seller_identity)
             .map_err(|_| DomainError::RepositoryAccessFailed)
     }
@@ -61,7 +61,6 @@ fn map_reducer_error_to_domain(err: ReducerError) -> DomainError {
 type Bid = ();
 type Auction = ();
 type Listing = ();
-type SellerIdentity = ();
 enum ReducerError { BidTooLow, AuctionClosed, Unexpected }
 
 // docs/specs/ebay-spec-012, ebay-spec-013, ebay-spec-014, ebay-spec-015, ebay-spec-018, ebay-spec-021
