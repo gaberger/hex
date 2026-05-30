@@ -26,14 +26,24 @@ pub trait ListingRepoPort: Send + Sync {
     async fn get_listings_by_criteria(&self, criteria: &SearchListingsParams) -> Result<Vec<Listing>, ListingRepoError>;
 }
 
-/// Search parameters for listing search
-pub struct SearchListingsParams {
-    // Define your search parameters here
+/// DTO for creating a new listing. This is used as input to the create_listing reducer.
+#[derive(Debug, Clone)]
+pub struct CreateListingInput {
+    pub title: String,
+    pub description: Option<String>,
+    pub starting_bid: Money,
+    pub start_time: Timestamp,
+    pub end_time: Timestamp,
+    // pub duration_ms: DurationMs, // Uncomment if needed
 }
 
-/// Errors specific to the Listing repository
+/// Errors that can occur when interacting with the Listing repository.
 #[derive(Debug)]
 pub enum ListingRepoError {
+    /// An error occurred while trying to fetch a listing.
+    FetchError(String),
+    /// The requested listing was not found.
     NotFound,
-    // Other error types can be added here
+    /// Other domain-specific errors.
+    DomainError(DomainError),
 }
