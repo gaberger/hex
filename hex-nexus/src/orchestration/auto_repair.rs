@@ -312,9 +312,15 @@ fn discover_cluster(
 /// and explicitly states the hex inside-out contract: inner layers are
 /// frozen by default; if you change them, update outer files in the SAME
 /// response.
+///
+/// §5.14+ (run 5 retrospective): each file gets its OWN errors inlined
+/// immediately after the content, so claude doesn't have to cross-reference
+/// a flat errors block against N file paths. Errors that don't map to any
+/// cluster file appear at the end under "OTHER ERRORS".
 fn build_multi_file_prompt(
     cluster: &[(String, String, FileLayer)],
-    errors_block: &str,
+    errors_per_file: &HashMap<String, Vec<String>>,
+    project_path: &Path,
     project_rel_prefix: &str,
 ) -> String {
     let mut prompt = String::new();
@@ -340,11 +346,26 @@ fn build_multi_file_prompt(
          with `examples/` or whatever your project_rel_prefix is).\n\n",
     );
 
-    prompt.push_str("--- CURRENT CLUSTER (inside-out order) ---\n");
+    // Pin crate versions: include Cargo.toml so claude knows exact
+    // dep versions (argon2, axum, sqlx, etc.). Without this, claude
+    // hallucinates API patterns from its training data that don't match
+    // the actual version pinned in the project.
+    let cargo_toml_path = project_path.join("Cargo.toml");
+    if let Ok(cargo_content) = std::fs::read_to_string(&cargo_toml_path) {
+        prompt.push_str("--- CARGO.TOML (crate versions pinned for this project) ---\n");
+        prompt.push_str(&cargo_content);
+        if !cargo_content.ends_with('\n') {
+            prompt.push('\n');
+        }
+        prompt.push_str("--- END CARGO.TOML ---\n\n");
+    }
+
+    prompt.push_str("--- CURRENT CLUSTER (inside-out order, with per-file errors) ---\n");
     // Defensive sort — be robust to callers that pass an unsorted cluster.
     let mut sorted_cluster: Vec<&(String, String, FileLayer)> = cluster.iter().collect();
     sorted_cluster.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0)));
     let mut last_layer: Option<FileLayer> = None;
+    let mut covered_paths: HashSet<String> = HashSet::new();
     for (rel, content, layer) in sorted_cluster {
         if last_layer != Some(*layer) {
             prompt.push_str(&format!("\n// ===== LAYER: {} =====\n", layer.label()));
@@ -361,12 +382,57 @@ fn build_multi_file_prompt(
             prompt.push('\n');
         }
         prompt.push_str("<<<END FILE>>>\n");
+        // Inline this file's specific errors right after its content.
+        // `errors_per_file` keys are the bare rel_path (matches `rel`).
+        if let Some(lines) = errors_per_file.get(rel) {
+            if !lines.is_empty() {
+                prompt.push_str(&format!("ERRORS IN {prefixed}:\n"));
+                for line in lines.iter().take(15) {
+                    // Rewrite any leading `src/...` cargo-bare prefix to the
+                    // prefixed form to keep the error lines self-consistent
+                    // with the file path label above.
+                    let pretty = if line.starts_with("src/") && !project_rel_prefix.is_empty() {
+                        format!("{}/{}", project_rel_prefix.trim_end_matches('/'), line)
+                    } else {
+                        line.clone()
+                    };
+                    prompt.push_str(&format!("  {pretty}\n"));
+                }
+                covered_paths.insert(rel.clone());
+            }
+        }
     }
     prompt.push_str("\n--- END CLUSTER ---\n\n");
 
-    prompt.push_str("--- COMPILE ERRORS ACROSS THE CLUSTER ---\n");
-    prompt.push_str(errors_block);
-    prompt.push_str("\n--- END ERRORS ---\n\n");
+    // Any errors in files NOT in the cluster (rare but possible if
+    // the cluster cap dropped a file). Surface them so claude knows
+    // they exist even though it can't see the file content.
+    let mut leftover: Vec<(String, &Vec<String>)> = errors_per_file
+        .iter()
+        .filter(|(p, _)| !covered_paths.contains(*p))
+        .map(|(p, l)| (p.clone(), l))
+        .collect();
+    leftover.sort_by(|a, b| a.0.cmp(&b.0));
+    if !leftover.is_empty() {
+        prompt.push_str("--- OTHER ERRORS (in files NOT shown above — content cap exceeded) ---\n");
+        for (p, lines) in leftover.iter().take(20) {
+            let prefixed = if project_rel_prefix.is_empty() {
+                p.clone()
+            } else {
+                format!("{}/{}", project_rel_prefix.trim_end_matches('/'), p)
+            };
+            prompt.push_str(&format!("\nERRORS IN {prefixed}:\n"));
+            for line in lines.iter().take(5) {
+                let pretty = if line.starts_with("src/") && !project_rel_prefix.is_empty() {
+                    format!("{}/{}", project_rel_prefix.trim_end_matches('/'), line)
+                } else {
+                    line.clone()
+                };
+                prompt.push_str(&format!("  {pretty}\n"));
+            }
+        }
+        prompt.push_str("--- END OTHER ERRORS ---\n\n");
+    }
 
     prompt.push_str(
         "Now output the rewritten files. Hex architecture rules:\n\
@@ -824,35 +890,19 @@ async fn run_tick(
                     let errored_paths: Vec<String> =
                         to_fire.iter().map(|(p, _)| p.clone()).collect();
                     let cluster = discover_cluster(&cfg.project_path, &errored_paths);
-                    // Build errors block from the same per-file map the
-                    // single-file path uses, but covering ALL errored files
-                    // (not just to_fire), so claude sees the full scope.
-                    let prefix_trim = project_rel_prefix.trim_end_matches('/').to_string();
-                    let cluster_errors_block: String = errors_per_file
-                        .iter()
-                        .flat_map(|(_f, lines)| {
-                            let prefix = prefix_trim.clone();
-                            lines.iter().take(10).map(move |l| {
-                                if l.starts_with("src/") {
-                                    format!("{}/{}", prefix, l)
-                                } else {
-                                    l.clone()
-                                }
-                            })
-                        })
-                        .take(60)
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                    // §5.14+: pass errors_per_file directly so the prompt
+                    // can inline each file's errors next to its content
+                    // (per-file tagging instead of flat dump).
                     tracing::info!(
                         cluster_size = cluster.len(),
                         cluster_bytes = cluster.iter().map(|(_, c, _)| c.len()).sum::<usize>(),
-                        errors_block_bytes = cluster_errors_block.len(),
+                        errored_files = errors_per_file.len(),
                         "auto_repair: §5.14 multi-file frontier — assembled cluster"
                     );
                     let multi = run_multi_file_frontier(
                         adapter.clone(),
                         &cluster,
-                        &cluster_errors_block,
+                        &errors_per_file,
                         &project_rel_prefix,
                         &cfg.project_path,
                         &repo_root,
@@ -1216,7 +1266,7 @@ async fn cargo_check_errors(
 async fn run_multi_file_frontier(
     adapter: Arc<dyn IInferencePort>,
     cluster: &[(String, String, FileLayer)],
-    errors_block: &str,
+    errors_per_file: &HashMap<String, Vec<String>>,
     project_rel_prefix: &str,
     project_path: &Path,
     repo_root: &Path,
@@ -1247,7 +1297,7 @@ async fn run_multi_file_frontier(
         MultiFrontierGuard { paths: claimed }
     };
 
-    let prompt = build_multi_file_prompt(cluster, errors_block, project_rel_prefix);
+    let prompt = build_multi_file_prompt(cluster, errors_per_file, project_path, project_rel_prefix);
     tracing::info!(
         cluster_files = cluster.len(),
         prompt_bytes = prompt.len(),
@@ -1865,7 +1915,10 @@ mod tests {
             ("src/core/domain/d.rs".to_string(), "// domain\n".to_string(), FileLayer::Domain),
             ("src/core/ports/p.rs".to_string(), "// port\n".to_string(), FileLayer::Ports),
         ];
-        let prompt = build_multi_file_prompt(&cluster, "error[E0432]: ...", "examples/eb/backend");
+        let errors_per_file: HashMap<String, Vec<String>> = HashMap::new();
+        let tmp = std::env::temp_dir().join("hex_test_build_prompt");
+        let _ = std::fs::create_dir_all(&tmp);
+        let prompt = build_multi_file_prompt(&cluster, &errors_per_file, &tmp, "examples/eb/backend");
         // Domain should appear BEFORE ports which should appear BEFORE adapters.
         let d = prompt.find("// domain").unwrap();
         let p = prompt.find("// port").unwrap();
@@ -1876,6 +1929,28 @@ mod tests {
         // Layer headers are present.
         assert!(prompt.contains("LAYER: domain"));
         assert!(prompt.contains("LAYER: ports"));
+    }
+
+    #[test]
+    fn build_multi_file_prompt_inlines_per_file_errors() {
+        let cluster = vec![
+            ("src/core/ports/x.rs".to_string(), "pub trait X {}\n".to_string(), FileLayer::Ports),
+        ];
+        let mut errors_per_file: HashMap<String, Vec<String>> = HashMap::new();
+        errors_per_file.insert(
+            "src/core/ports/x.rs".to_string(),
+            vec!["src/core/ports/x.rs:1:5: error[E0432]: foo".to_string()],
+        );
+        let tmp = std::env::temp_dir().join("hex_test_build_prompt_inline");
+        let _ = std::fs::create_dir_all(&tmp);
+        let prompt = build_multi_file_prompt(&cluster, &errors_per_file, &tmp, "examples/eb/backend");
+        // The "ERRORS IN <file>:" tag should appear AFTER the file content.
+        let end_file = prompt.find("<<<END FILE>>>").unwrap();
+        let errors_tag = prompt.find("ERRORS IN").unwrap();
+        assert!(errors_tag > end_file, "errors tag should follow END FILE");
+        assert!(prompt.contains("error[E0432]"));
+        // Path in error line is prefixed.
+        assert!(prompt.contains("examples/eb/backend/src/core/ports/x.rs"));
     }
 
     #[test]
