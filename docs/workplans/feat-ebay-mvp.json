@@ -706,15 +706,8 @@
       "adapter": null,
       "port": null,
       "files_to_create": [
-        "examples/ebay-clone/frontend/package.json",
-        "examples/ebay-clone/frontend/vite.config.ts",
-        "examples/ebay-clone/frontend/tsconfig.json",
-        "examples/ebay-clone/frontend/tailwind.config.js",
-        "examples/ebay-clone/frontend/postcss.config.js",
-        "examples/ebay-clone/frontend/index.html",
         "examples/ebay-clone/frontend/src/index.tsx",
-        "examples/ebay-clone/frontend/src/App.tsx",
-        "examples/ebay-clone/frontend/src/styles.css"
+        "examples/ebay-clone/frontend/src/pages/Login.tsx"
       ],
       "files_to_edit": [],
       "dependencies": [
@@ -739,10 +732,8 @@
       "adapter": null,
       "port": null,
       "files_to_create": [
-        "examples/ebay-clone/frontend/src/api/http.ts",
-        "examples/ebay-clone/frontend/src/api/stdb.ts",
-        "examples/ebay-clone/frontend/src/api/types.ts",
-        "examples/ebay-clone/frontend/src/api/money.ts"
+        "examples/ebay-clone/frontend/src/App.tsx",
+        "examples/ebay-clone/frontend/src/pages/PostListing.tsx"
       ],
       "files_to_edit": [],
       "dependencies": [
@@ -767,9 +758,8 @@
       "adapter": null,
       "port": null,
       "files_to_create": [
-        "examples/ebay-clone/frontend/src/pages/Register.tsx",
-        "examples/ebay-clone/frontend/src/pages/Login.tsx",
-        "examples/ebay-clone/frontend/src/state/auth.ts"
+        "examples/ebay-clone/frontend/src/styles.css",
+        "examples/ebay-clone/frontend/src/pages/MyBids.tsx"
       ],
       "files_to_edit": [
         "examples/ebay-clone/frontend/src/App.tsx"
@@ -796,9 +786,8 @@
       "adapter": null,
       "port": null,
       "files_to_create": [
-        "examples/ebay-clone/frontend/src/pages/Home.tsx",
-        "examples/ebay-clone/frontend/src/components/ListingCard.tsx",
-        "examples/ebay-clone/frontend/src/components/SearchBar.tsx"
+        "examples/ebay-clone/frontend/src/api/http.ts",
+        "examples/ebay-clone/frontend/src/pages/MyWon.tsx"
       ],
       "files_to_edit": [
         "examples/ebay-clone/frontend/src/App.tsx"
@@ -824,10 +813,8 @@
       "adapter": null,
       "port": null,
       "files_to_create": [
-        "examples/ebay-clone/frontend/src/pages/ListingDetail.tsx",
-        "examples/ebay-clone/frontend/src/components/Countdown.tsx",
-        "examples/ebay-clone/frontend/src/components/BidFeed.tsx",
-        "examples/ebay-clone/frontend/src/components/PlaceBidForm.tsx"
+        "examples/ebay-clone/frontend/src/api/auth.ts",
+        "examples/ebay-clone/frontend/src/pages/MyListings.tsx"
       ],
       "files_to_edit": [
         "examples/ebay-clone/frontend/src/App.tsx"
@@ -856,10 +843,7 @@
       "adapter": null,
       "port": null,
       "files_to_create": [
-        "examples/ebay-clone/frontend/src/pages/PostListing.tsx",
-        "examples/ebay-clone/frontend/src/components/ImageUploader.tsx",
-        "examples/ebay-clone/frontend/src/components/PriceInput.tsx",
-        "examples/ebay-clone/frontend/src/components/DurationPicker.tsx"
+        "examples/ebay-clone/frontend/src/pages/Home.tsx"
       ],
       "files_to_edit": [
         "examples/ebay-clone/frontend/src/App.tsx"
@@ -890,9 +874,7 @@
       "adapter": null,
       "port": null,
       "files_to_create": [
-        "examples/ebay-clone/frontend/src/pages/MyBids.tsx",
-        "examples/ebay-clone/frontend/src/pages/MyWon.tsx",
-        "examples/ebay-clone/frontend/src/pages/MyListings.tsx"
+        "examples/ebay-clone/frontend/src/pages/Register.tsx"
       ],
       "files_to_edit": [
         "examples/ebay-clone/frontend/src/App.tsx"
