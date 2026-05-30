@@ -1,49 +1,73 @@
-use super::{ReducerCallPort, ListingRepoPort};
-use crate::core::domain::{Listing, Auction};
-use crate::core::domain::title::ListingTitle;
-use crate::core::domain::money::Money;
-use crate::core::domain::time::DurationMs;
+use crate::core::ports::listing_repo::SearchListingsParams;
+use crate::core::ports::reducer_call::CreateListingInput;
+use crate::core::ports::{ListingRepoPort, ReducerCallPort};
+use crate::core::domain::{DomainError, Listing, UserId};
 
+/// Use case for creating and querying listings.
+///
+/// Rewritten to conform to the port contracts: `ReducerCallPort::create_listing`
+/// takes the owned `reducer_call::CreateListingInput` and returns
+/// `Result<Listing, DomainError>`; `ListingRepoPort` is read-only and keyed on
+/// `ListingId` / `SearchListingsParams`. The domain `Listing` has no `auction`
+/// field, so the previous `listing.auction.*` access has been removed.
 pub struct ListingsUsecase {
     reducer_port: Box<dyn ReducerCallPort>,
     repo_port: Box<dyn ListingRepoPort>,
 }
 
 impl ListingsUsecase {
-    pub fn new(reducer_port: Box<dyn ReducerCallPort>, repo_port: Box<dyn ListingRepoPort>) -> Self {
-        ListingsUsecase { reducer_port, repo_port }
+    pub fn new(
+        reducer_port: Box<dyn ReducerCallPort>,
+        repo_port: Box<dyn ListingRepoPort>,
+    ) -> Self {
+        ListingsUsecase {
+            reducer_port,
+            repo_port,
+        }
     }
 
-    pub fn create_listing(&self, title: String, price_cents: u32, duration: u64, image_sha256s: Vec<String>) -> Result<Listing, String> {
-        let title = ListingTitle::new(title).map_err(|_| "Invalid title")?;
-        let price = Money::cents(price_cents).map_err(|_| "Invalid price")?;
-        let duration = DurationMs::new(duration).map_err(|_| "Invalid duration")?;
-
-        self.reducer_port.create_listing(&title, &price, &duration, image_sha256s)
-            .and_then(|listing_id| self.repo_port.get_listing(listing_id))
-            .map_err(|e| format!("Failed to create listing: {}", e))
+    pub async fn create_listing(
+        &self,
+        user_id: UserId,
+        title: String,
+        description: String,
+        starting_price_cents: u64,
+        end_time: u64,
+    ) -> Result<Listing, DomainError> {
+        let input = CreateListingInput {
+            title,
+            description,
+            starting_price: starting_price_cents,
+            end_time,
+            user_id,
+        };
+        self.reducer_port.create_listing(input).await
     }
 
-    pub fn search_listings(&self, q: String, active: bool, max_price_cents: Option<u32>, page: usize, per_page: usize) -> Result<Vec<Listing>, String> {
-        let listings = self.repo_port.search_listings(q.to_lowercase(), active, max_price_cents.map(Money::cents))
-            .map_err(|e| format!("Failed to search listings: {}", e))?;
-
-        // Sort by end_time ASC
-        let mut sorted_listings = listings.into_iter().filter(|listing| listing.auction.is_active()).collect::<Vec<Listing>>();
-        sorted_listings.sort_by_key(|listing| listing.auction.end_time());
-
-        // Paginate
-        let start = page * per_page;
-        let end = start + per_page;
-        Ok(sorted_listings[start..end.min(sorted_listings.len())].to_vec())
+    pub async fn search_listings(
+        &self,
+        query: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Vec<Listing>, String> {
+        let params = SearchListingsParams {
+            query: query.map(|q| q.to_lowercase()),
+            limit,
+            offset,
+        };
+        self.repo_port
+            .get_listings_by_criteria(&params)
+            .await
+            .map_err(|e| format!("Failed to search listings: {}", e))
     }
 
-    pub fn get_listing(&self, listing_id: String) -> Result<(Listing, Auction), String> {
-        self.repo_port.get_listing(listing_id)
-            .and_then(|listing| {
-                let auction = listing.auction.clone();
-                Ok((listing, auction))
-            })
+    pub async fn get_listing(
+        &self,
+        listing_id: crate::core::domain::ListingId,
+    ) -> Result<Listing, String> {
+        self.repo_port
+            .get_listing_by_id(&listing_id)
+            .await
             .map_err(|e| format!("Failed to get listing: {}", e))
     }
 }
