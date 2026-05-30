@@ -1,5 +1,6 @@
 use crate::core::domain::*;
 use async_trait::async_trait;
+use std::fmt;
 
 /// ListingRepoPort defines read-only operations on listings.
 ///
@@ -35,6 +36,21 @@ pub struct CreateListingInput {
     pub end_time: Timestamp,
 }
 
+/// DTO describing the query criteria for `get_listings_by_criteria`.
+///
+/// The use-case layer (`usecases::listings::search_listings`) builds this from
+/// the optional query string + pagination params, so the field set must stay in
+/// sync with that caller.
+#[derive(Debug, Clone, Default)]
+pub struct SearchListingsParams {
+    /// Free-text query, already normalized (lowercased) by the use case.
+    pub query: Option<String>,
+    /// Maximum number of results to return.
+    pub limit: Option<u32>,
+    /// Number of leading results to skip (pagination offset).
+    pub offset: Option<u32>,
+}
+
 /// Errors that can occur when interacting with the Listing repository.
 #[derive(Debug)]
 pub enum ListingRepoError {
@@ -43,3 +59,14 @@ pub enum ListingRepoError {
     /// The requested listing was not found.
     NotFound,
 }
+
+impl fmt::Display for ListingRepoError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ListingRepoError::FetchError => write!(f, "failed to fetch listing"),
+            ListingRepoError::NotFound => write!(f, "listing not found"),
+        }
+    }
+}
+
+impl std::error::Error for ListingRepoError {}

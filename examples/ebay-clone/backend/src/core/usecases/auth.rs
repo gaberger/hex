@@ -1,13 +1,22 @@
-code_patch: create examples/ebay-clone/backend/src/core/usecases/auth.rs
+use crate::core::domain::{DomainError, User};
+use crate::core::ports::{
+    PasswordHasherPort, ReducerCallPort, RegisterUserInput, TokenIssuerPort,
+};
 
-use super::{ports::*, domain::*};
-use std::error::Error;
-
-// ADR-2026-05-19-0721: Password hashing and JWT issuance via ports
+// ADR-2026-05-19-0721: Password hashing and JWT issuance via ports.
+//
+// Rewritten to conform to the port contracts in `core::ports`:
+//   * `PasswordHasherPort::hash_password(String) -> Result<String, DomainError>` (async)
+//   * `ReducerCallPort::register_user(RegisterUserInput) -> Result<User, DomainError>` (async)
+//   * `TokenIssuerPort::{issue(&User), verify(&str)} -> Result<_, DomainError>` (async)
+//
+// The previous body called methods that do not exist on these ports
+// (`hash`, `find_by_username`, `issue_token`, `User::new`, ...) and leaked a
+// stray `code_patch:` directive as source. Those are removed; the use case now
+// drives only real port methods.
 pub struct AuthUseCase {
     password_hasher: Box<dyn PasswordHasherPort>,
     token_issuer: Box<dyn TokenIssuerPort>,
-    user_repo: Box<dyn UserRepoPort>,
     reducer_call: Box<dyn ReducerCallPort>,
 }
 
@@ -15,64 +24,67 @@ impl AuthUseCase {
     pub fn new(
         password_hasher: Box<dyn PasswordHasherPort>,
         token_issuer: Box<dyn TokenIssuerPort>,
-        user_repo: Box<dyn UserRepoPort>,
         reducer_call: Box<dyn ReducerCallPort>,
     ) -> Self {
-        AuthUseCase { password_hasher, token_issuer, user_repo, reducer_call }
+        AuthUseCase {
+            password_hasher,
+            token_issuer,
+            reducer_call,
+        }
     }
 
-    pub fn register_user(&self, username: String, password: String) -> Result<User, Box<dyn Error>> {
+    /// Registers a new user: hashes the password via the hasher port, then
+    /// persists through the register-user reducer, returning the created `User`.
+    pub async fn register_user(
+        &self,
+        username: String,
+        email: String,
+        password: String,
+    ) -> Result<User, DomainError> {
         validate_username(&username)?;
         validate_password(&password)?;
 
-        let hashed_password = self.password_hasher.hash(password)?;
-        let user = User::new(username.clone(), hashed_password);
-        self.reducer_call.register_user(user.clone())?;
-        let created_user = self.user_repo.find_by_username(&user.username)?;
-
-        if let Some(u) = created_user {
-            Ok(u)
-        } else {
-            Err("Failed to fetch created user".into())
-        }
+        let password_hash = self.password_hasher.hash_password(password).await?;
+        let input = RegisterUserInput {
+            username,
+            email,
+            password: password_hash,
+        };
+        self.reducer_call.register_user(input).await
     }
 
-    pub fn login(&self, username: String, password: String) -> Result<AuthResult, Box<dyn Error>> {
-        if let Some(user) = self.user_repo.find_by_username(&username)? {
-            if self.password_hasher.verify(password, &user.hashed_password)? {
-                let token = self.token_issuer.issue_token(&user.username)?;
-                let expires_at = self.token_issuer.get_expiration_time()?;
-                return Ok(AuthResult::new(token, user.username, expires_at));
-            }
-        }
+    /// Issues an authentication token for an already-resolved user.
+    pub async fn issue_token(&self, user: &User) -> Result<String, DomainError> {
+        self.token_issuer.issue(user).await
+    }
 
-        Err("Invalid username or password".into())
+    /// Verifies a token and returns the associated user.
+    pub async fn verify_token(&self, token: &str) -> Result<User, DomainError> {
+        self.token_issuer.verify(token).await
+    }
+
+    /// Verifies a plaintext password against a stored hash via the hasher port.
+    pub async fn verify_password(
+        &self,
+        password: String,
+        hash: String,
+    ) -> Result<bool, DomainError> {
+        self.password_hasher.verify_password(password, hash).await
     }
 }
 
-fn validate_username(username: &str) -> Result<(), Box<dyn Error>> {
+fn validate_username(username: &str) -> Result<(), DomainError> {
     if username.len() < 3 || username.len() > 20 {
-        return Err("Username must be between 3 and 20 characters long".into());
+        return Err(DomainError::InvalidUsername(username.to_string()));
     }
     Ok(())
 }
 
-fn validate_password(password: &str) -> Result<(), Box<dyn Error>> {
+fn validate_password(password: &str) -> Result<(), DomainError> {
     if password.len() < 6 {
-        return Err("Password must be at least 6 characters long".into());
+        return Err(DomainError::Internal(
+            "password must be at least 6 characters long".to_string(),
+        ));
     }
     Ok(())
-}
-
-#[derive(Debug)]
-pub struct AuthResult {
-    pub token: String,
-    pub username: String,
-    pub expires_at: i64, // Assuming expiration time is represented as a timestamp
-}
-
-impl AuthResult {
-    fn new(token: String, username: String, expires_at: i64) -> Self {
-        AuthResult { token, username, expires_at }
-    }
 }
