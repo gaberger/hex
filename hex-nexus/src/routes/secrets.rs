@@ -425,6 +425,17 @@ pub async fn list_inference(
                     "models": p.models_json,
                     "status": if p.healthy == 1 { "healthy" } else { "unknown" },
                     "requiresAuth": !p.api_key_ref.is_empty(),
+                    // Expose the vault key REFERENCE (e.g. "TENSTORRENT") so the
+                    // inference cache can persist it and config_sync can restore
+                    // it on restart — otherwise vault-keyed cloud providers lose
+                    // their key on every restart (requiresAuth flips to false →
+                    // 401). Only emit references, never raw `sk-` secrets, which
+                    // must not be written to the cache file or the HTTP response.
+                    "apiKeyRef": if p.api_key_ref.is_empty() || p.api_key_ref.starts_with("sk-") {
+                        serde_json::Value::Null
+                    } else {
+                        json!(p.api_key_ref)
+                    },
                     "healthCheckedAt": p.last_health_check,
                     "avgLatencyMs": p.avg_latency_ms,
                     "rateLimitRpm": p.rate_limit_rpm,

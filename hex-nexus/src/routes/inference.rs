@@ -790,12 +790,16 @@ pub async fn inference_complete(
                             .into_iter()
                             .find(|p| p.provider_type == "ollama" && !p.base_url.is_empty());
                         if let Some(p) = ollama {
-                            // Default to the T2 codegen tier model; operators can
-                            // override per project via .hex/project.json → inference.tier_models.
-                            // Read the project override first so we don't ask for a
-                            // model larger than the local GPU can hold (e.g. 32B Q4
-                            // needs ~19GB VRAM; a 16GB card can't serve it usefully).
-                            let local_model = std::fs::read_to_string(".hex/project.json")
+                            // Pick a model the LOCAL Ollama can actually serve.
+                            // Priority: (1) the originally-requested model if it's
+                            // local-shaped (no vendor "/" slug — e.g. "nemotron-mini",
+                            // "qwen2.5-coder:14b"); (2) the configured T2 tier model,
+                            // but ONLY if it's local — since T2 may now be a cloud-only
+                            // id like "Qwen/Qwen3-32B" that Ollama 404s on; (3) a known
+                            // local default. Reading T2 also keeps us from asking for a
+                            // model larger than the local GPU can hold.
+                            let is_local_name = |m: &str| !m.contains('/');
+                            let t2_local = std::fs::read_to_string(".hex/project.json")
                                 .ok()
                                 .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
                                 .and_then(|v| v.get("inference")
@@ -803,6 +807,10 @@ pub async fn inference_complete(
                                     .and_then(|t| t.get("t2"))
                                     .and_then(|m| m.as_str())
                                     .map(|s| s.to_string()))
+                                .filter(|m| is_local_name(m));
+                            let local_model = body.model.clone()
+                                .filter(|m| is_local_name(m))
+                                .or(t2_local)
                                 .unwrap_or_else(|| "qwen2.5-coder:32b".to_string());
                             tracing::info!(
                                 provider = %p.provider_id,
