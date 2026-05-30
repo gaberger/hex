@@ -19,6 +19,7 @@ use axum::{
     Json, Router,
 };
 use chrono::Utc;
+use tower_http::cors::{Any, CorsLayer};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -40,12 +41,20 @@ pub struct AppState {
 
 /// Builds the router with every marketplace route mounted on `state`.
 pub fn build_router(state: AppState) -> Router {
+    // Permissive CORS so the Solid frontend (a different origin, e.g.
+    // localhost:5173) can call this API from the browser. Fine for an example;
+    // a real deployment would pin `allow_origin` to the known frontend origin.
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
     Router::new()
         .route("/api/v1/health", get(|| async { "OK" }))
         .route("/api/v1/auth/register", post(register))
         .route("/api/v1/listings", post(create_listing).get(list_listings))
         .route("/api/v1/listings/:id/bids", post(place_bid))
         .route("/api/v1/me/won", get(my_won))
+        .layer(cors)
         .with_state(state)
 }
 
