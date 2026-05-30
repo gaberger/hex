@@ -663,6 +663,13 @@ async fn run_tick(
         // synthesizing. The bare unprefixed rel_path here is the project-
         // relative path; project_path is the project root.
         let current_file_block = read_current_file_block(&cfg.project_path, &rel_path);
+        // §5.15: keep the unprefixed key so it matches the cargo-check
+        // filter side. Bug surfaced in run 3 — the shadowing below
+        // pushed the PREFIXED path into file_cooldowns/dispatched_to_persona,
+        // but the filter at to_fire_unfiltered checks the bare path
+        // from cargo check, so neither map ever matched anything.
+        // Cooldowns + §5.15 gate were no-ops the entire prior session.
+        let dedupe_key = rel_path.clone();
         // Prefix the path so the persona writes to the project, not the
         // hex workspace root. See `project_rel_prefix` block above.
         let rel_path = prefix_path(&rel_path);
@@ -720,13 +727,11 @@ async fn run_tick(
                     "auto_repair: dispatched code_patch ask"
                 );
                 let mut s = state().lock().unwrap();
-                s.file_cooldowns.insert(rel_path.clone(), now);
-                // §5.15: mark this file as in-flight to persona. Persona
-                // response latency often exceeds the cooldown TTL, so we
-                // track it separately on a longer (5-min) window. Both
-                // persona re-dispatch and frontier escalation will skip
-                // files in this map until the TTL elapses or reset() runs.
-                s.dispatched_to_persona.insert(rel_path, now);
+                // §5.15 fix: insert UNPREFIXED key so it matches the
+                // filter at to_fire_unfiltered. The PREFIXED rel_path
+                // is for display + dispatch content only.
+                s.file_cooldowns.insert(dedupe_key.clone(), now);
+                s.dispatched_to_persona.insert(dedupe_key, now);
             }
             Err(e) => {
                 tracing::warn!(error = %e, rel_path = %rel_path, "auto_repair: dispatch failed");
