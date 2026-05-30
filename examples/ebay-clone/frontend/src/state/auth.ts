@@ -1,63 +1,35 @@
 import { createSignal } from 'solid-js';
-import { navigate } from '@solidjs/router';
-
-// ADR-2026-05-19-0721: Stores JWT in memory + sessionStorage
-
-const [token, setToken] = createSignal<string | null>(sessionStorage.getItem('jwt-token') || null);
 
 export const useAuth = () => {
-  const login = async (email: string, password: string) => {
+  const [token, setToken] = createSignal<string | null>(sessionStorage.getItem('auth_token') || null);
+
+  const login = ( (username: string, password: string) => {
     try {
-      // Mock API call
-      const response = await fetch('/api/login', {
+      const res = await fetch('/api/login', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        setToken(data.token);
-        sessionStorage.setItem('jwt-token', data.token);
-        navigate('/');
-      } else {
-        throw new Error('Invalid credentials');
-      }
-    } catch (error) {
-      console.error('Login failed:', error);
-      return false;
-    }
+      if (!res.ok) throw new Error('Login failed');
 
-    return true;
-  };
-
-  const register = async (email: string, password: string) => {
-    try {
-      // Mock API call
-      await fetch('/api/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
-
+      const { token } = await res.json();
+      setToken(token);
+      sessionStorage.setItem('auth_token', token);
       return true;
-    } catch (error) {
-      console.error('Registration failed:', error);
+    } catch (err) {
       return false;
     }
   };
 
   const logout = () => {
     setToken(null);
-    sessionStorage.removeItem('jwt-token');
-    navigate('/');
+    sessionStorage.removeItem('auth_token');
   };
 
-  return { token, login, register, logout };
+  return {
+    token,
+    login,
+    logout
+  };
 };
-
-export default useAuth;
