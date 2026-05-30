@@ -1,42 +1,32 @@
-import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { createResource, For, Show } from 'solid-js';
+import { http } from '../api/http';
+import { API_BASE } from '../api/auth';
 
-const MyListings: React.FC = () => {
-  const [listings, setListings] = useState<any[]>([]);
-  const navigate = useNavigate();
+type Listing = { listing_id: number; title: string; starting_price_cents: number };
 
-  useEffect(() => {
-    const token = localStorage.getItem('jwtToken');
-    if (!token) {
-      navigate('/login');
-      return;
-    }
+// The demo backend does not yet filter listings by owner, so this shows all
+// listings. (A `/api/v1/me/listings` endpoint is the natural next addition.)
+async function fetchListings(): Promise<Listing[]> {
+  const r = await http<{ listings: Listing[] }>('GET', `${API_BASE}/api/v1/listings`);
+  return r.listings ?? [];
+}
 
-    axios.get('/api/v1/me/listings', {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-    .then(response => {
-      setListings(response.data);
-    })
-    .catch(error => {
-      console.error('Error fetching listings:', error);
-    });
-  }, [navigate]);
-
+export default function MyListings() {
+  const [listings] = createResource(fetchListings);
   return (
-    <div>
-      <h1>My Listings</h1>
-      <ul>
-        {listings.map(listing => (
-          <li key={listing.id}>
-            {listing.title} - {listing.soldTo ? `Sold to: ${listing.soldTo}` : 'Available'}
-          </li>
-        ))}
-      </ul>
+    <div class="p-6 max-w-2xl mx-auto">
+      <h1 class="text-2xl font-bold mb-1">Listings</h1>
+      <p class="text-xs text-gray-500 mb-4">(owner filter not yet implemented in the API)</p>
+      <Show when={!listings.loading} fallback={<p>Loading…</p>}>
+        <For each={listings()} fallback={<p class="text-gray-500">No listings.</p>}>
+          {(l) => (
+            <div class="border rounded p-3 mb-2">
+              <div class="font-semibold">{l.title}</div>
+              <div class="text-sm text-gray-600">#{l.listing_id}</div>
+            </div>
+          )}
+        </For>
+      </Show>
     </div>
   );
-};
-
-export default MyListings;
-docs/specs/ebay-spec-021
+}

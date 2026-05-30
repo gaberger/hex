@@ -1,43 +1,40 @@
-import React, { useEffect, useState } from 'react';
-import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
+import { createSignal, Show } from 'solid-js';
+import { http } from '../api/http';
+import { API_BASE, getToken } from '../api/auth';
 
-const MyBids = () => {
-  const [bids, setBids] = useState([]);
-  const navigate = useNavigate();
-  const token = localStorage.getItem('jwtToken');
+// Places a bid on a listing by id — POST /api/v1/listings/:id/bids.
+export default function MyBids() {
+  const [listingId, setListingId] = createSignal('');
+  const [amount, setAmount] = createSignal('15.00');
+  const [msg, setMsg] = createSignal('');
+  const [error, setError] = createSignal('');
 
-  useEffect(() => {
-    if (!token) {
-      navigate('/login');
-      return;
+  async function submit(e: Event) {
+    e.preventDefault();
+    setMsg(''); setError('');
+    if (!getToken()) { setError('Please register or login first.'); return; }
+    try {
+      await http('POST', `${API_BASE}/api/v1/listings/${parseInt(listingId(), 10)}/bids`, {
+        amount_cents: Math.round(parseFloat(amount()) * 100),
+      });
+      setMsg(`Bid placed on listing #${listingId()}.`);
+    } catch (err: any) {
+      setError(String(err?.message ?? err));
     }
-
-    axios.get('/api/v1/me/bids', { headers: { Authorization: `Bearer ${token}` } })
-      .then(response => setBids(response.data))
-      .catch(error => console.error('Error fetching bids:', error));
-  }, [navigate, token]);
-
-  if (!token) return null;
+  }
 
   return (
-    <div>
-      <h1>My Bids</h1>
-      {bids.length === 0 ? (
-        <p>No bids found.</p>
-      ) : (
-        <ul>
-          {bids.map(bid => (
-            <li key={bid.id}>
-              <strong>{bid.auction_title}</strong> - Bid Amount: {bid.amount}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <form onSubmit={submit} class="p-6 max-w-sm mx-auto space-y-3">
+      <h1 class="text-2xl font-bold">Place a bid</h1>
+      <input class="border p-2 w-full rounded" placeholder="listing id"
+        value={listingId()} onInput={(e) => setListingId(e.currentTarget.value)} />
+      <label class="block text-sm">Amount ($)
+        <input class="border p-2 w-full rounded" type="number" step="0.01"
+          value={amount()} onInput={(e) => setAmount(e.currentTarget.value)} />
+      </label>
+      <button class="bg-blue-600 text-white px-4 py-2 rounded" type="submit">Bid</button>
+      <Show when={msg()}><p class="text-green-700">{msg()}</p></Show>
+      <Show when={error()}><p class="text-red-600">{error()}</p></Show>
+    </form>
   );
-};
-
-export default MyBids;
-
-// docs/workplans/feat-ebay-mvp.json
+}

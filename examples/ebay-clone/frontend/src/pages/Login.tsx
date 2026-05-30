@@ -1,72 +1,28 @@
 import { createSignal } from 'solid-js';
-import { useNavigate } from '@reach/router';
-import { useAuth } from '../state/auth';
+import { useNavigate } from '@solidjs/router';
+import { setToken } from '../api/auth';
 
-const Login = () => {
-  const [email, setEmail] = createSignal('');
-  const [password, setPassword] = createSignal('');
-  const [error, setError] = createSignal('');
+// The in-memory backend's bearer token == username (UsernameTokenIssuer), so
+// "login" stores the username as the token. A password field is shown for
+// parity but the demo backend does not verify it (no User.password_hash in the
+// domain model — see project notes).
+export default function Login() {
+  const [username, setUsername] = createSignal('');
   const navigate = useNavigate();
-  const [, { setToken }] = useAuth();
 
-  const handleSubmit = async (event: Event) => {
-    event.preventDefault();
-    setError('');
-
-    try {
-      // Simulate an API call to login
-      const response = await fetch('/api/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email: email(), password: password() }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Invalid email or password');
-      }
-
-      const data = await response.json();
-      setToken(data.jwt);
-      sessionStorage.setItem('jwt', data.jwt);
-
-      navigate('/');
-    } catch (error) {
-      setError((error as Error).message);
-    }
-  };
+  function submit(e: Event) {
+    e.preventDefault();
+    if (!username()) return;
+    setToken(username());
+    navigate('/');
+  }
 
   return (
-    <div>
-      <h2>Login</h2>
-      <form onSubmit={handleSubmit}>
-        <div>
-          <label for="email">Email:</label>
-          <input
-            id="email"
-            type="email"
-            value={email()}
-            onInput={(e) => setEmail(e.currentTarget.value)}
-            required
-          />
-        </div>
-        <div>
-          <label for="password">Password:</label>
-          <input
-            id="password"
-            type="password"
-            value={password()}
-            onInput={(e) => setPassword(e.currentTarget.value)}
-            required
-          />
-        </div>
-        {error() && <p style={{ color: 'red' }}>{error()}</p>}
-        <button type="submit">Login</button>
-      </form>
-    </div>
+    <form onSubmit={submit} class="p-6 max-w-sm mx-auto space-y-3">
+      <h1 class="text-2xl font-bold">Login</h1>
+      <input class="border p-2 w-full rounded" placeholder="username"
+        value={username()} onInput={(e) => setUsername(e.currentTarget.value)} />
+      <button class="bg-blue-600 text-white px-4 py-2 rounded" type="submit">Continue</button>
+    </form>
   );
-};
-
-export default Login;
-docs/specs/ebay-spec-004
+}

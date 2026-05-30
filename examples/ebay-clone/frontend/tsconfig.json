@@ -5,13 +5,15 @@
     "moduleResolution": "Node",
     "strict": true,
     "jsx": "preserve",
+    "jsxImportSource": "solid-js",
     "sourceMap": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
-    "lib": ["ESNext", "DOM"],
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
     "skipLibCheck": true,
+    "noEmit": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src"],
-  "docs/specs/ebay-spec-020"
+  "include": ["src"]
 }

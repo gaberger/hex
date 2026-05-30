@@ -1,8 +1,8 @@
 import { render } from 'solid-js/web';
 import App from './App';
+import './styles.css';
 
-render(() => <App />, document.getElementById('root'));
+const root = document.getElementById('root');
+if (!root) throw new Error('#root element not found');
 
-// ADR-2026-05-19-0721
-// docs/specs/ebay-spec-020
-// docs/workplans/feat-ebay-mvp.json
+render(() => <App />, root);

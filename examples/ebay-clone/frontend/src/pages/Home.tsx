@@ -1,93 +1,41 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import queryString from 'query-string';
-import axios from 'axios';
-import ListingCard from '../components/ListingCard';
-import SearchBar from '../components/SearchBar';
+import { createResource, For, Show } from 'solid-js';
+import { A } from '@solidjs/router';
+import { http } from '../api/http';
+import { API_BASE } from '../api/auth';
 
-const Home = () => {
-  const [listings, setListings] = useState([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [maxPrice, setMaxPrice] = useState(1000);
-  const [sortByEndTime, setSortByEndTime] = useState(true);
-  const [currentPage, setCurrentPage] = useState(1);
-  const navigate = useNavigate();
-  const location = useLocation();
+type Listing = { listing_id: number; title: string; starting_price_cents: number };
 
-  useEffect(() => {
-    const params = queryString.parse(location.search);
-    setSearchTerm(params.q || '');
-    setMaxPrice(Number(params.maxPrice) || 1000);
-    setSortByEndTime(params.sort === 'end_time');
-    setCurrentPage(Number(params.page) || 1);
-  }, [location]);
+async function fetchListings(): Promise<Listing[]> {
+  const r = await http<{ listings: Listing[] }>('GET', `${API_BASE}/api/v1/listings`);
+  return r.listings ?? [];
+}
 
-  useEffect(() => {
-    const fetchListings = async () => {
-      try {
-        const response = await axios.get('/api/v1/listings', {
-          params: {
-            q: searchTerm,
-            maxPrice: maxPrice,
-            sortByEndTime: sortByEndTime ? 'asc' : undefined,
-            page: currentPage,
-          },
-        });
-        setListings(response.data.listings.filter(listing => listing.active));
-      } catch (error) {
-        console.error('Error fetching listings:', error);
-      }
-    };
-
-    fetchListings();
-  }, [searchTerm, maxPrice, sortByEndTime, currentPage]);
-
-  useEffect(() => {
-    const queryParams = queryString.stringify({
-      q: searchTerm,
-      maxPrice: maxPrice,
-      sort: sortByEndTime ? 'end_time' : undefined,
-      page: currentPage,
-    });
-    navigate(`?${queryParams}`);
-  }, [searchTerm, maxPrice, sortByEndTime, currentPage]);
-
+export default function Home() {
+  const [listings] = createResource(fetchListings);
   return (
-    <div>
-      <h1>Active Auctions</h1>
-      <SearchBar
-        searchTerm={searchTerm}
-        setSearchTerm={setSearchTerm}
-        debounceTimeout={250}
-      />
-      <input
-        type="range"
-        min="0"
-        max="1000"
-        value={maxPrice}
-        onChange={(e) => setMaxPrice(Number(e.target.value))}
-      />
-      <label>Max Price: ${maxPrice}</label>
-      <button onClick={() => setSortByEndTime(!sortByEndTime)}>
-        Sort by {sortByEndTime ? 'End Time' : 'Default'}
-      </button>
-      <div className="listing-container">
-        {listings.map((listing) => (
-          <ListingCard key={listing.id} listing={listing} />
-        ))}
-      </div>
-      <div className="pagination">
-        <button onClick={() => setCurrentPage(currentPage - 1)} disabled={currentPage === 1}>
-          Previous
-        </button>
-        <span>Page {currentPage}</span>
-        <button onClick={() => setCurrentPage(currentPage + 1)}>
-          Next
-        </button>
-      </div>
+    <div class="p-6 max-w-2xl mx-auto">
+      <h1 class="text-2xl font-bold mb-4">Listings</h1>
+      <nav class="mb-6 space-x-4 text-blue-600">
+        <A href="/post-listing">+ Post a listing</A>
+        <A href="/register">Register</A>
+        <A href="/my-bids">Place a bid</A>
+        <A href="/my-won">My won items</A>
+      </nav>
+      <Show when={!listings.loading} fallback={<p>Loading…</p>}>
+        <For each={listings()} fallback={<p class="text-gray-500">No listings yet.</p>}>
+          {(l) => (
+            <div class="border rounded p-3 mb-2">
+              <div class="font-semibold">{l.title}</div>
+              <div class="text-sm text-gray-600">
+                #{l.listing_id} — starting ${(l.starting_price_cents / 100).toFixed(2)}
+              </div>
+            </div>
+          )}
+        </For>
+      </Show>
+      <Show when={listings.error}>
+        <p class="text-red-600">Failed to load listings (is the backend running on {API_BASE}?)</p>
+      </Show>
     </div>
   );
-};
-
-export default Home;
-docs/workplans/feat-ebay-mvp.json
+}

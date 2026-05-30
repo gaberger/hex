@@ -1,16 +1,11 @@
 import { defineConfig } from 'vite'
 import solidPlugin from 'vite-plugin-solid'
-import tailwindcss from 'tailwindcss'
 
+// Tailwind + autoprefixer are configured via postcss.config.js, so no inline
+// css.postcss block is needed here (the previous one pointed at a repo-root
+// relative tailwind path that doesn't resolve from this dir).
 export default defineConfig({
   plugins: [solidPlugin()],
-  css: {
-    postcss: {
-      plugins: [
-        tailwindcss('./examples/ebay-clone/frontend/tailwind.config.js'),
-      ],
-    },
-  },
   server: {
     port: 5173,
   },

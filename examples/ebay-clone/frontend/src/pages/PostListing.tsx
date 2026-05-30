@@ -1,95 +1,53 @@
-import React, { useState } from 'react';
-import ImageUploader from '../components/ImageUploader';
-import PriceInput from '../components/PriceInput';
-import DurationPicker from '../components/DurationPicker';
+import { createSignal, Show } from 'solid-js';
+import { useNavigate } from '@solidjs/router';
+import { http } from '../api/http';
+import { API_BASE, getToken } from '../api/auth';
 
-const PostListing = () => {
-    const [title, setTitle] = useState('');
-    const [description, setDescription] = useState('');
-    const [startingPrice, setStartingPrice] = useState(0);
-    const [duration, setDuration] = useState('60s');
-    const [imageHashes, setImageHashes] = useState<string[]>([]);
-    const [errors, setErrors] = useState<{[key: string]: string}>({});
+export default function PostListing() {
+  const [title, setTitle] = createSignal('');
+  const [description, setDescription] = createSignal('');
+  const [price, setPrice] = createSignal('10.00');
+  const [durationSecs, setDurationSecs] = createSignal('3600');
+  const [error, setError] = createSignal('');
+  const navigate = useNavigate();
 
-    const validateForm = () => {
-        let valid = true;
-        const newErrors: {[key: string]: string} = {};
-        
-        if (!title) {
-            newErrors.title = 'Title is required';
-            valid = false;
-        }
-        if (!description) {
-            newErrors.description = 'Description is required';
-            valid = false;
-        }
-        if (startingPrice <= 0) {
-            newErrors.startingPrice = 'Starting price must be greater than zero';
-            valid = false;
-        }
-        if (imageHashes.length === 0 || imageHashes.length > 8) {
-            newErrors.images = `You must upload between 1 and 8 images, currently you have ${imageHashes.length}`;
-            valid = false;
-        }
+  async function submit(e: Event) {
+    e.preventDefault();
+    setError('');
+    if (!getToken()) {
+      setError('Please register or login first.');
+      return;
+    }
+    try {
+      await http('POST', `${API_BASE}/api/v1/listings`, {
+        title: title(),
+        description: description(),
+        starting_price_cents: Math.round(parseFloat(price()) * 100),
+        duration_secs: parseInt(durationSecs(), 10),
+      });
+      navigate('/');
+    } catch (err: any) {
+      setError(String(err?.message ?? err));
+    }
+  }
 
-        setErrors(newErrors);
-        return valid;
-    };
-
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!validateForm()) return;
-
-        try {
-            const listingResponse = await fetch('/api/v1/listings', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    title,
-                    description,
-                    startingPrice,
-                    duration,
-                    imageHashes
-                })
-            });
-
-            if (!listingResponse.ok) {
-                throw new Error('Failed to create listing');
-            }
-
-            alert('Listing created successfully!');
-        } catch (error) {
-            console.error(error);
-            alert('An error occurred while creating your listing. Please try again.');
-        }
-    };
-
-    return (
-        <div>
-            <h1>Post a New Listing</h1>
-            <form onSubmit={handleSubmit}>
-                <label>
-                    Title:
-                    <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} />
-                    {errors.title && <span>{errors.title}</span>}
-                </label>
-                <br />
-                <label>
-                    Description:
-                    <textarea value={description} onChange={(e) => setDescription(e.target.value)} />
-                    {errors.description && <span>{errors.description}</span>}
-                </label>
-                <br />
-                <PriceInput price={startingPrice} setPrice={setStartingPrice} errors={errors.startingPrice} />
-                <DurationPicker duration={duration} setDuration={setDuration} />
-                <ImageUploader setImageHashes={setImageHashes} imageCount={imageHashes.length} errors={errors.images} />
-                <button type="submit">Submit</button>
-            </form>
-        </div>
-    );
-};
-
-export default PostListing;
-docs/specs/ebay-spec-006
+  return (
+    <form onSubmit={submit} class="p-6 max-w-sm mx-auto space-y-3">
+      <h1 class="text-2xl font-bold">Post a listing</h1>
+      <input class="border p-2 w-full rounded" placeholder="title"
+        value={title()} onInput={(e) => setTitle(e.currentTarget.value)} />
+      <input class="border p-2 w-full rounded" placeholder="description"
+        value={description()} onInput={(e) => setDescription(e.currentTarget.value)} />
+      <label class="block text-sm">Starting price ($)
+        <input class="border p-2 w-full rounded" type="number" step="0.01"
+          value={price()} onInput={(e) => setPrice(e.currentTarget.value)} />
+      </label>
+      <label class="block text-sm">Auction duration (seconds)
+        <input class="border p-2 w-full rounded" type="number"
+          value={durationSecs()} onInput={(e) => setDurationSecs(e.currentTarget.value)} />
+      </label>
+      <button class="bg-blue-600 text-white px-4 py-2 rounded" type="submit">Post</button>
+      <Show when={error()}><p class="text-red-600">{error()}</p></Show>
+    </form>
+  );
+}

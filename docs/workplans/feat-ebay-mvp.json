@@ -726,7 +726,10 @@
         "ebay-spec-022"
       ],
       "estimated_loc": 200,
-      "done_condition": "`bun install && bun run build` (or `npm`) succeeds; Vite dev server starts on :5173; Tailwind classes apply (sanity check)"
+      "done_condition": "`bun install && bun run build` (or `npm`) succeeds; Vite dev server starts on :5173; Tailwind classes apply (sanity check)",
+      "evidence": [
+        "cd examples/ebay-clone/frontend && npm run build"
+      ]
     },
     {
       "id": "step-23",
@@ -751,7 +754,10 @@
         "ebay-spec-025"
       ],
       "estimated_loc": 260,
-      "done_condition": "money.ts has formatUSD(cents: bigint|number) -> string; never imports a float type; types include Listing, Auction, Bid, User; STDB client reconnects on close with exponential backoff capped at 30s"
+      "done_condition": "money.ts has formatUSD(cents: bigint|number) -> string; never imports a float type; types include Listing, Auction, Bid, User; STDB client reconnects on close with exponential backoff capped at 30s",
+      "evidence": [
+        "cd examples/ebay-clone/frontend && npm run build"
+      ]
     },
     {
       "id": "step-24",
@@ -777,7 +783,10 @@
         "ebay-spec-004"
       ],
       "estimated_loc": 240,
-      "done_condition": "register and login pages submit, store JWT, redirect to / on success; invalid login shows an inline error message; no token logged to console"
+      "done_condition": "register and login pages submit, store JWT, redirect to / on success; invalid login shows an inline error message; no token logged to console",
+      "evidence": [
+        "cd examples/ebay-clone/frontend && npm run build"
+      ]
     },
     {
       "id": "step-25",
@@ -802,7 +811,10 @@
         "ebay-spec-019"
       ],
       "estimated_loc": 240,
-      "done_condition": "search box debounce 250ms; URL state syncs with query params; closed listings never appear when active=true"
+      "done_condition": "search box debounce 250ms; URL state syncs with query params; closed listings never appear when active=true",
+      "evidence": [
+        "cd examples/ebay-clone/frontend && npm run build"
+      ]
     },
     {
       "id": "step-26",
@@ -831,7 +843,10 @@
         "ebay-spec-021"
       ],
       "estimated_loc": 320,
-      "done_condition": "place-bid form disables when auction.status != Active or countdown hits 0; bid history prepends in <1s after STDB push; bid amount validation client-side mirrors reducer (>current_highest); error toast on 409/410/403"
+      "done_condition": "place-bid form disables when auction.status != Active or countdown hits 0; bid history prepends in <1s after STDB push; bid amount validation client-side mirrors reducer (>current_highest); error toast on 409/410/403",
+      "evidence": [
+        "cd examples/ebay-clone/frontend && npm run build"
+      ]
     },
     {
       "id": "step-27",
@@ -862,7 +877,10 @@
         "ebay-spec-011"
       ],
       "estimated_loc": 300,
-      "done_condition": "client-side validation matches reducer rules; image upload progress shown per file; cap at 8 images enforced before submit"
+      "done_condition": "client-side validation matches reducer rules; image upload progress shown per file; cap at 8 images enforced before submit",
+      "evidence": [
+        "cd examples/ebay-clone/frontend && npm run build"
+      ]
     },
     {
       "id": "step-28",
@@ -888,7 +906,10 @@
         "ebay-spec-021"
       ],
       "estimated_loc": 220,
-      "done_condition": "all three pages require JWT (redirect to /login if missing); MyWon shows only auctions where winner_identity == current user and status == Closed"
+      "done_condition": "all three pages require JWT (redirect to /login if missing); MyWon shows only auctions where winner_identity == current user and status == Closed",
+      "evidence": [
+        "cd examples/ebay-clone/frontend && npm run build"
+      ]
     },
     {
       "id": "step-29",
