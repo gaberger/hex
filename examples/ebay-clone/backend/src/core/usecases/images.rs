@@ -1,7 +1,6 @@
-use core::ports::ImageStorePort;
-use std::path::Path;
+use crate::core::domain::DomainError;
+use crate::core::ports::ImageStorePort;
 
-#[derive(Debug)]
 pub struct UploadImageUseCase {
     image_store: Box<dyn ImageStorePort>,
     content_type_whitelist: Vec<&'static str>,
@@ -21,16 +20,24 @@ impl UploadImageUseCase {
         }
     }
 
-    pub fn execute(&self, bytes: &[u8], content_type: &str) -> Result<String, String> {
+    /// Validates the upload against the content-type whitelist and size cap,
+    /// then delegates to the `ImageStorePort`. Conforms to the port contract:
+    /// `store_image(Vec<u8>) -> Result<String, DomainError>` (async).
+    pub async fn execute(&self, bytes: &[u8], content_type: &str) -> Result<String, DomainError> {
         if !self.content_type_whitelist.contains(&content_type) {
-            return Err(format!("Unsupported content type: {}", content_type));
+            return Err(DomainError::Internal(format!(
+                "Unsupported content type: {}",
+                content_type
+            )));
         }
 
         if bytes.len() > self.max_byte_size {
-            return Err("File size exceeds the maximum allowed limit".to_string());
+            return Err(DomainError::Internal(
+                "File size exceeds the maximum allowed limit".to_string(),
+            ));
         }
 
-        let image_id = self.image_store.store(bytes, content_type)?;
+        let image_id = self.image_store.store_image(bytes.to_vec()).await?;
         Ok(image_id)
     }
 }
@@ -38,58 +45,54 @@ impl UploadImageUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockall::mock;
-    use std::io;
+    use async_trait::async_trait;
 
-    mock! {
-        ImageStorePort {}
+    struct StubImageStore;
 
-        impl ImageStorePort for ImageStorePort {
-            fn store(&self, bytes: &[u8], content_type: &str) -> Result<String, String>;
+    #[async_trait]
+    impl ImageStorePort for StubImageStore {
+        async fn store_image(&self, _image_data: Vec<u8>) -> Result<String, DomainError> {
+            Ok("image_id".to_string())
+        }
+
+        async fn get_image(&self, _hash: &str) -> Result<Vec<u8>, DomainError> {
+            Ok(Vec::new())
         }
     }
 
-    #[test]
-    fn test_upload_image_success() {
-        let mut mock_store = MockImageStorePort::new();
-        mock_store.expect_store().returning(|_, _| Ok("image_id".to_string()));
-
+    #[tokio::test]
+    async fn test_upload_image_success() {
         let use_case = UploadImageUseCase::new(
-            Box::new(mock_store),
+            Box::new(StubImageStore),
             vec!["image/jpeg", "image/png"],
             1024 * 1024, // 1MB
         );
 
-        assert_eq!(use_case.execute(&[0; 1024], "image/jpeg").unwrap(), "image_id");
+        assert_eq!(
+            use_case.execute(&[0; 1024], "image/jpeg").await.unwrap(),
+            "image_id"
+        );
     }
 
-    #[test]
-    fn test_upload_image_unsupported_content_type() {
-        let mock_store = MockImageStorePort::new();
+    #[tokio::test]
+    async fn test_upload_image_unsupported_content_type() {
         let use_case = UploadImageUseCase::new(
-            Box::new(mock_store),
+            Box::new(StubImageStore),
             vec!["image/png"],
             1024 * 1024, // 1MB
         );
 
-        assert_eq!(
-            use_case.execute(&[0; 1024], "image/jpeg").unwrap_err(),
-            "Unsupported content type: image/jpeg"
-        );
+        assert!(use_case.execute(&[0; 1024], "image/jpeg").await.is_err());
     }
 
-    #[test]
-    fn test_upload_image_exceeds_max_size() {
-        let mock_store = MockImageStorePort::new();
+    #[tokio::test]
+    async fn test_upload_image_exceeds_max_size() {
         let use_case = UploadImageUseCase::new(
-            Box::new(mock_store),
+            Box::new(StubImageStore),
             vec!["image/jpeg"],
             1024, // 1KB
         );
 
-        assert_eq!(
-            use_case.execute(&[0; 1025], "image/jpeg").unwrap_err(),
-            "File size exceeds the maximum allowed limit"
-        );
+        assert!(use_case.execute(&[0; 1025], "image/jpeg").await.is_err());
     }
 }
