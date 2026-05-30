@@ -12,8 +12,8 @@
 
 mod core;
 mod adapters;
+mod composition_root;
 use composition_root::create_app_state;
-use std::sync::Arc;
 use axum::{Router, routing::get};
 use tokio::net::TcpListener;
 
@@ -35,9 +35,9 @@ async fn main() {
     let addr = std::env::var("BACKEND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
     let listener = TcpListener::bind(&addr).await.unwrap();
     tracing::info!("Listening on {}", addr);
-    axum::Server::from_tcp(listener)
-        .unwrap()
-        .serve(app.into_make_service())
+    // axum 0.7 replaced `axum::Server` with the free `axum::serve` function,
+    // which takes the bound `TcpListener` directly.
+    axum::serve(listener, app.into_make_service())
         .await
         .unwrap();
 }
