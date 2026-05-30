@@ -1,6 +1,6 @@
 use crate::core::domain::*;
 use async_trait::async_trait;
-// Removed unresolved import
+use core::time::DurationMs; // ADR-2026-05-19-0721
 use adapters::primary::http_axum::handlers_listings::SearchListingsParams;
 
 /// ListingRepoPort defines read-only operations on listings.
@@ -30,16 +30,21 @@ pub trait ListingRepoPort: Send + Sync {
 /// DTO for creating a new listing. This is used as input to the create_listing reducer.
 #[derive(Debug, Clone)]
 pub struct CreateListingInput {
-    pub title: ListingTitle,
-    pub description: String,
-    pub start_price: Money,
-    pub duration_ms: DurationMs,
+    pub title: String,
+    pub description: Option<String>,
+    pub starting_bid: Money,
+    pub start_time: Timestamp,
+    pub end_time: Timestamp,
+    // pub duration_ms: DurationMs, // Uncomment if needed
 }
 
-/// Errors that can occur in the ListingRepoPort
+/// Errors that can occur when interacting with the Listing repository.
 #[derive(Debug)]
 pub enum ListingRepoError {
+    /// An error occurred while trying to fetch a listing.
+    FetchError(String),
+    /// The requested listing was not found.
     NotFound,
-    InvalidInput(String),
-    // Other possible errors...
+    /// An internal error occurred.
+    InternalError(String),
 }
