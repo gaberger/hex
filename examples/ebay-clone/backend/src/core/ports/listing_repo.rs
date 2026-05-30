@@ -27,20 +27,40 @@ pub trait ListingRepoPort: Send + Sync {
     async fn get_listings_by_criteria(&self, criteria: &SearchListingsParams) -> Result<Vec<Listing>, ListingRepoError>;
 }
 
-/// DTO for creating a new listing.
-#[derive(Debug)]
+/// DTO for creating a new listing. This is used as input to the create_listing reducer.
+#[derive(Debug, Clone)]
 pub struct CreateListingInput {
-    pub title: ListingTitle,
-    pub description: String,
-    pub starting_price: Money,
+    pub title: String,
+    pub description: Option<String>,
+    pub start_price: Money,
     pub duration: DurationMs,
 }
 
-/// Errors that can occur when interacting with the listing repository.
-#[derive(Debug, thiserror::Error)]
+/// Errors that can occur when interacting with the ListingRepo.
+#[derive(Debug)]
 pub enum ListingRepoError {
-    #[error("Database error: {0}")]
-    DbError(String),
-    #[error("Invalid input: {0}")]
-    InvalidInput(String),
+    /// The listing ID provided is invalid.
+    InvalidListingId(ListingIdValidationError),
+    /// The user ID provided is invalid.
+    InvalidUserId(UserIdValidationError),
+    /// Other domain-specific errors.
+    DomainError(DomainError),
+}
+
+impl From<ListingIdValidationError> for ListingRepoError {
+    fn from(err: ListingIdValidationError) -> Self {
+        ListingRepoError::InvalidListingId(err)
+    }
+}
+
+impl From<UserIdValidationError> for ListingRepoError {
+    fn from(err: UserIdValidationError) -> Self {
+        ListingRepoError::InvalidUserId(err)
+    }
+}
+
+impl From<DomainError> for ListingRepoError {
+    fn from(err: DomainError) -> Self {
+        ListingRepoError::DomainError(err)
+    }
 }
