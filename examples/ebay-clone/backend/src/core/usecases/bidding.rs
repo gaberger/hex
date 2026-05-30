@@ -1,7 +1,7 @@
 use crate::core::ports::auction_repo::{AuctionRepoPort};
 use crate::core::ports::bid_repo::BidRepoPort;
 use crate::core::ports::reducer_call::{ReducerCallPort, PlaceBidInput, WatchListingInput};
-use crate::core::domain::{Bid, DomainError, ListingId, UserId, WatchEntry};
+use crate::core::domain::{Bid, DomainError, ListingId, UserId, WatchEntry, Auction};
 
 /// Use case for handling bidding actions.
 ///
@@ -31,21 +31,20 @@ impl BiddingUseCase {
     }
 
     pub fn list_my_bids(&self, user_id: UserId) -> Result<Vec<Bid>, DomainError> {
-        self.bid_repo.list_bids_by_user(user_id)
+        self.bid_repo.get_bids_by_user(user_id)
     }
 
     pub fn list_bids_for_listing(&self, listing_id: ListingId) -> Result<Vec<Bid>, DomainError> {
-        self.bid_repo.list_bids_for_listing(listing_id)
+        self.bid_repo.get_bids_by_listing(listing_id)
     }
 
     pub fn list_active_auctions(&self) -> Result<Vec<Auction>, DomainError> {
-        let auctions = self.auction_repo.fetch_auctions()?;
-        Ok(auctions.into_iter().filter(|a| a.is_active()).collect())
+        self.auction_repo.get_active_auctions()
     }
 
-    pub fn toggle_watch(&self, input: WatchListingInput) -> Result<(), DomainError> {
-        self.reducer_port.watch_listing(input)
+    pub fn toggle_watch(&self, user_id: UserId, listing_id: ListingId) -> Result<(), DomainError> {
+        self.reducer_port.toggle_watch(WatchListingInput { user_id, listing_id })
     }
 }
 
-// ADR-2026-05-19-0721
+ADR-2026-05-19-0721
