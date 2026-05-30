@@ -9,6 +9,11 @@ pub mod stdb_client;
 pub mod image_store_fs;
 pub mod password_hasher_argon2;
 
+// In-memory marketplace adapter — stands in for the SpacetimeDB `marketplace`
+// module, satisfying the same port contracts so the backend runs and is
+// acceptance-tested without a live STDB. Wired by the composition root.
+pub mod in_memory;
+
 // Only re-export adapters that actually exist in this cluster. `ClockPort` /
 // `TokenIssuerPort` are PORTS — they live in `core::ports`, not here — and the
 // `jwt_signer_hs256` module is not part of this repair cluster, so the previous

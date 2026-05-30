@@ -1,100 +1,172 @@
-```rust
-// examples/ebay-clone/backend/tests/acceptance_happy_path.rs
+//! In-process acceptance test for the eBay-clone backend happy path.
+//!
+//! Drives the REAL axum router (`composition_root::compose_app`) end-to-end over
+//! HTTP via `tower::ServiceExt::oneshot`: register two users, post a listing,
+//! place a winning bid, let the auction close, and assert the winner — plus the
+//! key negative paths (seller self-bid, bid after close). No browser, no socket,
+//! no SpacetimeDB; the in-memory marketplace adapter stands in for STDB, so this
+//! exercises the hex-built domain + ports + use cases + adapters as a working
+//! system.
+//!
+//! This replaces the original persona-authored `fantoccini` browser test, which
+//! was not valid Rust (a stray ```` ```rust ```` fence on line 1), depended on
+//! crates absent from the manifest, and required a full live stack to run.
+//!
+//! Run: `cargo test --test acceptance_happy_path`
 
-use fantoccini::{ClientBuilder, Locator};
 use std::time::Duration;
 
+use axum::body::{to_bytes, Body};
+use axum::http::{Request, StatusCode};
+use axum::Router;
+use ebay_clone_backend::composition_root::compose_app;
+use serde_json::{json, Value};
+use tower::ServiceExt; // brings `oneshot` into scope
+
+async fn send(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    token: Option<&str>,
+    body: Value,
+) -> (StatusCode, Value) {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/json");
+    if let Some(t) = token {
+        builder = builder.header("authorization", format!("Bearer {t}"));
+    }
+    let req = builder.body(Body::from(body.to_string())).unwrap();
+
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+    };
+    (status, val)
+}
+
 #[tokio::test]
-async fn happy_path() {
-    // Initialize the browser client
-    let mut c = ClientBuilder::native()
-        .connect("http://localhost:4444")
-        .await
-        .expect("Failed to connect to WebDriver");
+async fn happy_path_register_post_bid_close_win() {
+    let app = compose_app();
 
-    // Register user A
-    c.goto("http://localhost:8000/register").await.expect("Failed to navigate to register page");
-    c.find(Locator::Css(".username")).await.expect("Failed to find username field")
-        .click()
-        .await.expect("Failed to click username field")
-        .send_keys("userA")
-        .await.expect("Failed to send keys to username field");
+    // 1. Register userA (seller) and userB (bidder).
+    let (s, a) = send(
+        &app,
+        "POST",
+        "/api/v1/auth/register",
+        None,
+        json!({ "username": "userA", "email": "a@example.com", "password": "password123" }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "register userA failed: {a}");
+    let token_a = a["token"].as_str().expect("token A").to_string();
 
-    c.find(Locator::Css(".password")).await.expect("Failed to find password field")
-        .click()
-        .await.expect("Failed to click password field")
-        .send_keys("password123")
-        .await.expect("Failed to send keys to password field");
+    let (s, b) = send(
+        &app,
+        "POST",
+        "/api/v1/auth/register",
+        None,
+        json!({ "username": "userB", "email": "b@example.com", "password": "password123" }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "register userB failed: {b}");
+    let token_b = b["token"].as_str().expect("token B").to_string();
 
-    c.find(Locator::Css(".register-button")).await.expect("Failed to find register button")
-        .click()
-        .await.expect("Failed to click register button");
+    // 2. userA posts a listing with a 1-second auction.
+    let (s, listing) = send(
+        &app,
+        "POST",
+        "/api/v1/listings",
+        Some(&token_a),
+        json!({
+            "title": "Vintage Camera",
+            "description": "mint condition",
+            "starting_price_cents": 1000,
+            "duration_secs": 1
+        }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "create listing failed: {listing}");
+    let listing_id = listing["listing_id"].as_u64().expect("listing_id");
+    assert!(listing_id > 0, "listing_id should be assigned");
 
-    // Register user B
-    c.goto("http://localhost:8000/register").await.expect("Failed to navigate to register page");
-    c.find(Locator::Css(".username")).await.expect("Failed to find username field")
-        .click()
-        .await.expect("Failed to click username field")
-        .send_keys("userB")
-        .await.expect("Failed to send keys to username field");
+    // Creating a listing requires auth.
+    let (s, _) = send(
+        &app,
+        "POST",
+        "/api/v1/listings",
+        None,
+        json!({ "title": "x", "starting_price_cents": 1, "duration_secs": 1 }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "unauthenticated listing must 401");
 
-    c.find(Locator::Css(".password")).await.expect("Failed to find password field")
-        .click()
-        .await.expect("Failed to click password field")
-        .send_keys("password123")
-        .await.expect("Failed to send keys to password field");
+    // 3. userB places a winning bid above the starting price.
+    let (s, bid) = send(
+        &app,
+        "POST",
+        &format!("/api/v1/listings/{listing_id}/bids"),
+        Some(&token_b),
+        json!({ "amount_cents": 1500 }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "place bid failed: {bid}");
 
-    c.find(Locator::Css(".register-button")).await.expect("Failed to find register button")
-        .click()
-        .await.expect("Failed to click register button");
+    // Negative: the seller cannot bid on their own auction.
+    let (s, _) = send(
+        &app,
+        "POST",
+        &format!("/api/v1/listings/{listing_id}/bids"),
+        Some(&token_a),
+        json!({ "amount_cents": 2000 }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT, "seller self-bid must be rejected");
 
-    // User A posts a listing
-    c.goto("http://localhost:8000/post_listing").await.expect("Failed to navigate to post listing page");
-    c.find(Locator::Css(".title")).await.expect("Failed to find title field")
-        .click()
-        .await.expect("Failed to click title field")
-        .send_keys("Example Item")
-        .await.expect("Failed to send keys to title field");
+    // Negative: a bid at or below the current high bid is rejected.
+    let (s, _) = send(
+        &app,
+        "POST",
+        &format!("/api/v1/listings/{listing_id}/bids"),
+        Some(&token_b),
+        json!({ "amount_cents": 1500 }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT, "non-increasing bid must be rejected");
 
-    c.find(Locator::Css(".description")).await.expect("Failed to find description field")
-        .click()
-        .await.expect("Failed to click description field")
-        .send_keys("A great item for sale!")
-        .await.expect("Failed to send keys to description field");
+    // 4. Let the auction close.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
 
-    c.find(Locator::Css(".price")).await.expect("Failed to find price field")
-        .click()
-        .await.expect("Failed to click price field")
-        .send_keys("10.00")
-        .await.expect("Failed to send keys to price field");
+    // Negative: bids after close are rejected.
+    let (s, _) = send(
+        &app,
+        "POST",
+        &format!("/api/v1/listings/{listing_id}/bids"),
+        Some(&token_b),
+        json!({ "amount_cents": 5000 }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT, "bid after close must be rejected");
 
-    c.find(Locator::Css(".post-button")).await.expect("Failed to find post button")
-        .click()
-        .await.expect("Failed to click post button");
+    // 5. userB sees the won item; userA (seller) wins nothing.
+    let (s, won_b) = send(&app, "GET", "/api/v1/me/won", Some(&token_b), Value::Null).await;
+    assert_eq!(s, StatusCode::OK, "my-won failed: {won_b}");
+    let items = won_b["won"].as_array().expect("won array");
+    assert_eq!(items.len(), 1, "userB should have one won item: {won_b}");
+    assert_eq!(items[0]["winner"].as_str().unwrap(), "userB");
+    assert_eq!(items[0]["listing_id"].as_u64().unwrap(), listing_id);
+    assert_eq!(items[0]["amount_cents"].as_u64().unwrap(), 1500);
 
-    // User B places a bid
-    c.goto("http://localhost:8000/listings").await.expect("Failed to navigate to listings page");
-    let listing = c.find(Locator::Css(".listing")).await.expect("Failed to find listing element");
-    listing.click().await.expect("Failed to click on listing");
-
-    c.find(Locator::Css(".bid-input")).await.expect("Failed to find bid input field")
-        .click()
-        .await.expect("Failed to click bid input field")
-        .send_keys("15.00")
-        .await.expect("Failed to send keys to bid input field");
-
-    c.find(Locator::Css(".place-bid-button")).await.expect("Failed to find place bid button")
-        .click()
-        .await.expect("Failed to click place bid button");
-
-    // Wait for auction close
-    tokio::time::sleep(Duration::from_secs(5)).await;
-
-    // Assert winner=B in MyWon
-    c.goto("http://localhost:8000/my_won").await.expect("Failed to navigate to my won page");
-    let winner = c.find(Locator::Css(".winner")).await.expect("Failed to find winner element");
-    assert_eq!(winner.text().await.expect("Failed to get winner text"), "userB", "Winner should be userB");
-
-    // Assert sold-to-B in MyListings
-    c.goto("http://localhost:8000/my_listings").await.expect("Failed to navigate to my listings page");
-    let sold_to = c.find(Locator::Css(".sold-to")).await.expect("Failed to find sold
+    let (s, won_a) = send(&app, "GET", "/api/v1/me/won", Some(&token_a), Value::Null).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(
+        won_a["won"].as_array().unwrap().len(),
+        0,
+        "seller should win nothing"
+    );
+}

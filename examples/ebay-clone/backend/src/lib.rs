@@ -1,5 +1,6 @@
 pub mod core;
 pub mod adapters;
+pub mod composition_root;
 
 // ADR-2026-05-19-0721: Initial module skeleton for eBay clone backend.
 // This crate serves as the binary + lib container for the eBay MVP backend.

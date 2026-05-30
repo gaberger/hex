@@ -38,11 +38,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zeroize = "1.5" # ADR-2026-05-19-0721
 
 [dev-dependencies]
-tokio-test = "0.4"
-spacetimedb = "0.1"
-test-harness = "0.1"
-# The persona-authored integration / acceptance tests reference APIs that
-# don't actually exist on crates.io (fantoccini 0.23, playwright, an
-# in-memory spacetimedb 0.1, test-harness 0.1). Those tests are #[ignore]'d
-# and their bodies stubbed to maintain a green `cargo check` while we
-# iterate on real test infra. See examples/ebay-clone/backend/tests/*.rs.
+# `tower`'s `util` feature provides `ServiceExt::oneshot`, used by the
+# acceptance test to drive the real router in-process (no socket/browser/STDB).
+tower = { version = "0.5", features = ["util"] }
+
+# NOTE: the earlier persona-authored integration tests referenced crates that
+# don't provide the APIs they used (`fantoccini`, an in-memory `spacetimedb`,
+# `test-harness`) and a `libdbus-sys` build dep that fails to compile here.
+# Those dev-deps were removed; the real, runnable proof is
+# `tests/acceptance_happy_path.rs` (run: `cargo test --test acceptance_happy_path`).
+# The remaining `tests/integration_*.rs` + `tests/common/mod.rs` are still the
+# hallucinated stubs and are NOT built by that target.

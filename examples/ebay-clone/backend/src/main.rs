@@ -1,43 +1,27 @@
-// SPDX-License-Identifier: MIT
-// ADR-2026-05-20-0800: eBay MVP Backend Skeleton
-// This file serves as the entry point for the ebay-clone-backend crate.
-// It implements the initial module structure required for step-1 of the workplan
-// located at docs/workplans/feat-ebay-mvp.json.
-//
-// The backend architecture is inspired by the hex-nexus/ports-adapters pattern
-// to ensure separation of concerns between domain logic and infrastructure.
-// References:
-// - docs/specs/ebay-mvp.json (specs ebay-spec-023, ebay-spec-024)
-// - hex-cli/ for project scaffolding conventions
+//! eBay-clone backend binary.
+//!
+//! Thin entry point: builds the fully-wired router from the composition root
+//! (see `composition_root::compose_app`) and serves it. All wiring lives in the
+//! library crate so it can be exercised directly by the acceptance test.
 
-mod core;
-mod adapters;
-mod composition_root;
-use composition_root::create_app_state;
-use axum::{Router, routing::get};
+use ebay_clone_backend::composition_root::compose_app;
 use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() {
-    // Initialize tracing for observability, consistent with hex-core/ standards
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    tracing::info!("Ebay Clone Backend is starting up!");
-
-    let app_state = create_app_state();
-    let app = Router::new()
-        .route("/api/v1/health", get(|| async { "OK" }))
-        // Add other routes here from primary adapter step-12
-        .with_state(app_state);
+    let app = compose_app();
 
     let addr = std::env::var("BACKEND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
-    let listener = TcpListener::bind(&addr).await.unwrap();
-    tracing::info!("Listening on {}", addr);
-    // axum 0.7 replaced `axum::Server` with the free `axum::serve` function,
-    // which takes the bound `TcpListener` directly.
+    let listener = TcpListener::bind(&addr)
+        .await
+        .expect("failed to bind BACKEND_ADDR");
+    tracing::info!("ebay-clone backend listening on {addr}");
+
     axum::serve(listener, app.into_make_service())
         .await
-        .unwrap();
+        .expect("server error");
 }
