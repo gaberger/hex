@@ -85,6 +85,24 @@ fn is_circuit_open(attempts: u64, max: u64) -> bool {
     max > 0 && attempts >= max
 }
 
+/// True when a majority of the workplan's `files_to_create` target `examples/`,
+/// i.e. it builds a target/example project rather than hex itself. hex's dev
+/// conductor refuses these to keep example work out of hex's control plane.
+fn workplan_targets_examples(steps: &[Value]) -> bool {
+    let (mut example_files, mut total_files) = (0usize, 0usize);
+    for step in steps {
+        if let Some(files) = step.get("files_to_create").and_then(|v| v.as_array()) {
+            for f in files.iter().filter_map(|v| v.as_str()) {
+                total_files += 1;
+                if f.starts_with("examples/") || f.contains("/examples/") {
+                    example_files += 1;
+                }
+            }
+        }
+    }
+    total_files > 0 && example_files * 2 > total_files
+}
+
 fn state() -> &'static Mutex<ConductorState> {
     static S: OnceLock<Mutex<ConductorState>> = OnceLock::new();
     S.get_or_init(|| Mutex::new(ConductorState::default()))
@@ -432,6 +450,20 @@ async fn drive_workplan(
 
     let max_dispatch =
         parse_env_u64("HEX_WORKPLAN_CONDUCTOR_MAX_DISPATCH", DEFAULT_MAX_DISPATCH_ATTEMPTS);
+
+    // De-conflation guard (2026-05-30): hex's dev conductor drives hex's OWN
+    // feature workplans only — never an example app's. A workplan whose steps
+    // target `examples/` belongs to a target project (hex is installed INTO it
+    // and drives it from there), so driving it from the hex repo would absorb
+    // example-app work into hex's own conductor / RL / git history. Refuse it.
+    if workplan_targets_examples(steps) {
+        tracing::debug!(
+            workplan = %workplan_id,
+            "workplan_conductor: skipping example-targeting workplan (de-conflation — \
+             examples are driven as their own target project, not by hex's dev conductor)"
+        );
+        return Ok(());
+    }
 
     // Compute per-step completion. A step is "done" iff every file in
     // files_to_create exists with non-zero size AND its `evidence` predicates
@@ -1006,6 +1038,24 @@ mod tests {
         let none = json!({ "id": "ev-none" });
         let (ok, _) = step_evidence_gate(&http, base, "feat-test", "ev-none", &none, &root).await;
         assert!(ok, "no evidence => legacy files-exist semantics preserved");
+    }
+
+    // De-conflation: hex's conductor refuses workplans that build an example.
+    #[test]
+    fn conductor_skips_example_targeting_workplans() {
+        let hex_wp = vec![
+            json!({"id":"s1","files_to_create":["hex-nexus/src/foo.rs","hex-core/src/bar.rs"]}),
+        ];
+        assert!(!workplan_targets_examples(&hex_wp), "hex's own workplan must be driven");
+
+        let example_wp = vec![
+            json!({"id":"s1","files_to_create":["examples/ebay-clone/backend/src/main.rs"]}),
+            json!({"id":"s2","files_to_create":["examples/ebay-clone/frontend/src/App.tsx"]}),
+        ];
+        assert!(workplan_targets_examples(&example_wp), "example workplan must be refused");
+
+        // Empty / no files → not an example workplan (don't accidentally skip).
+        assert!(!workplan_targets_examples(&[json!({"id":"s1"})]));
     }
 
     // Re-hallucination guard: the circuit opens once a step has burned its
