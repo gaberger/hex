@@ -1,4 +1,4 @@
-use crate::core::ports::auction_repo::{AuctionRepoPort, Auction};
+use crate::core::ports::auction_repo::{AuctionRepoPort};
 use crate::core::ports::bid_repo::BidRepoPort;
 use crate::core::ports::reducer_call::{ReducerCallPort, PlaceBidInput, WatchListingInput};
 use crate::core::domain::{Bid, DomainError, ListingId, UserId, WatchEntry};
@@ -19,32 +19,32 @@ impl BiddingUseCase {
         auction_repo: Box<dyn AuctionRepoPort>,
         reducer_port: Box<dyn ReducerCallPort>,
     ) -> Self {
-        BiddingUseCase { bid_repo, auction_repo, reducer_port }
+        BiddingUseCase {
+            bid_repo,
+            auction_repo,
+            reducer_port,
+        }
     }
 
-    /// Places a bid on an auction via the reducer port.
-    pub async fn place_bid(&self, input: PlaceBidInput) -> Result<Bid, DomainError> {
-        self.reducer_port.place_bid(input).await
+    pub fn place_bid(&self, input: PlaceBidInput) -> Result<(), DomainError> {
+        self.reducer_port.place_bid(input)
     }
 
-    /// Lists all bids made by the given bidder.
-    pub async fn list_my_bids(&self, user_id: UserId) -> Vec<Bid> {
-        self.bid_repo.get_bids_by_user_id(user_id).await
+    pub fn list_my_bids(&self, user_id: UserId) -> Result<Vec<Bid>, DomainError> {
+        self.bid_repo.list_bids_by_user(user_id)
     }
 
-    /// Lists all bids placed on a specific listing.
-    pub async fn list_bids_for_listing(&self, listing_id: ListingId) -> Vec<Bid> {
-        self.bid_repo.get_bids_by_listing_id(listing_id).await
+    pub fn list_bids_for_listing(&self, listing_id: ListingId) -> Result<Vec<Bid>, DomainError> {
+        self.bid_repo.list_bids_for_listing(listing_id)
     }
 
-    /// Lists all auctions currently active.
-    pub async fn list_active_auctions(&self) -> Result<Vec<Auction>, DomainError> {
-        self.auction_repo.list_active_auctions().await
+    pub fn list_active_auctions(&self) -> Result<Vec<Auction>, DomainError> {
+        let auctions = self.auction_repo.fetch_auctions()?;
+        Ok(auctions.into_iter().filter(|a| a.is_active()).collect())
     }
 
-    /// Toggles a listing in the user's watchlist via the reducer port.
-    pub async fn toggle_watch(&self, input: WatchListingInput) -> Result<WatchEntry, DomainError> {
-        self.reducer_port.watch_listing(input).await
+    pub fn toggle_watch(&self, input: WatchListingInput) -> Result<(), DomainError> {
+        self.reducer_port.watch_listing(input)
     }
 }
 
