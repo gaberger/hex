@@ -10,7 +10,8 @@
       "t2": "Qwen/Qwen3-32B",
       "t2.5": "deepseek-ai/DeepSeek-R1-0528"
     },
-    "timeout_secs": 600
+    "timeout_secs": 600,
+    "sop_via_router": true
   },
   "auto_repair": {
     "enabled": true,

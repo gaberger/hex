@@ -687,13 +687,210 @@ async fn reason_with_tools(
         }
     }
 
+    // Loose-coupling path (ADR-2605301224): when enabled, route reasoning
+    // through the nexus inference router, which resolves the model from
+    // tier_models against the live provider registry (honoring config, e.g.
+    // Tenstorrent) and handles tools + vault keys + fallback. This is how
+    // personas honor tier_models instead of the hardcoded provider chains
+    // below. Opt-in via HEX_SOP_REASON_VIA_ROUTER for safe rollout; falls
+    // through to the legacy chain on error.
+    // Gate: env var OR declarative `.hex/project.json` → inference.sop_via_router
+    // (config is preferred — survives restarts and supervisor respawns, and is
+    // the ADR-2605301224 declarative surface).
+    let via_router = std::env::var("HEX_SOP_REASON_VIA_ROUTER")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+        || std::fs::read_to_string(".hex/project.json")
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .and_then(|v| v.get("inference").and_then(|i| i.get("sop_via_router")).and_then(|b| b.as_bool()))
+            .unwrap_or(false);
+    if via_router {
+        match reason_via_router(role, operator_message, intent, ground_pack, registry.clone()).await {
+            Ok(r) => return Ok(r),
+            Err(e) => tracing::warn!(error = %e, "router reason path failed; falling back to legacy provider chain"),
+        }
+    }
+
     if let Some(key) = anthropic_key {
         return reason_via_anthropic(role, operator_message, intent, ground_pack, registry, key).await;
     }
     if let Some(key) = openrouter_key {
         return reason_via_openrouter(role, operator_message, intent, ground_pack, registry, key).await;
     }
-    Err("no ANTHROPIC_API_KEY or OPENROUTER_API_KEY available".to_string())
+    // Last resort even with no cloud key: the router can still serve local
+    // Ollama via tier_models, so try it unconditionally before giving up.
+    reason_via_router(role, operator_message, intent, ground_pack, registry).await
+        .map_err(|e| format!("no provider available (router fallback also failed: {e})"))
+}
+
+/// Resolve a tier model name from `.hex/project.json` → inference.tier_models.
+/// Honors ADR-2605301224: model selection is declarative config, not a literal.
+fn tier_model_for_intent(intent: &str) -> String {
+    // Complex/code reasoning → T2.5; everything else → T2. Mirrors the
+    // workplan-executor's classify_task_tier intent → tier mapping.
+    let key = if matches!(intent, "code_patch" | "bug_triage" | "arch_review" | "adr_draft" | "spec_draft") {
+        "t2.5"
+    } else {
+        "t2"
+    };
+    std::fs::read_to_string(".hex/project.json")
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| {
+            v.get("inference")
+                .and_then(|i| i.get("tier_models"))
+                .and_then(|t| t.get(key).or_else(|| t.get("t2")))
+                .and_then(|m| m.as_str())
+                .map(String::from)
+        })
+        .unwrap_or_else(|| "qwen2.5-coder:14b".to_string())
+}
+
+/// Reason through the nexus inference router (ADR-2605301224). Posts to the
+/// local `/api/inference/complete` with the tier-resolved model + tools; the
+/// router selects the provider (Tenstorrent/Ollama/…) by model name, resolves
+/// vault keys, and falls back. Same tool-call loop as `reason_via_openrouter`,
+/// but the response carries top-level `content` + `tool_calls`.
+async fn reason_via_router(
+    role: &str,
+    operator_message: &str,
+    intent: &str,
+    ground_pack: &Value,
+    registry: Arc<ToolRegistry>,
+) -> Result<ReasonResult, String> {
+    let model = tier_model_for_intent(intent);
+    let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
+    let url = format!("http://127.0.0.1:{}/api/inference/complete", port);
+
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(600))
+        .build()
+        .map_err(|e| format!("http build: {}", e))?;
+
+    let system = build_reason_system_prompt(role, intent);
+    let user_content = format!(
+        "Operator message:\n>>> {}\n\nGround pack (deterministic tool results):\n{}\n\n\
+         Per the SOP: emit exactly ONE structured action via tool call \
+         (adr_draft, spec_draft, workplan_emit, code_patch, adr_status_set, escalate_to_operator), \
+         or — if the operator's ask is genuinely answered by the ground pack alone with no \
+         artifact needed — reply with a brief 1-2 sentence direct answer and no tool call. \
+         For code-modifying asks (intent=code_patch, bug_triage, 'fix the X'): emit code_patch \
+         after grounding the exact file:line via repo_read.",
+        operator_message,
+        serde_json::to_string_pretty(ground_pack).unwrap_or_default()
+    );
+
+    let mut messages: Vec<Value> = vec![
+        json!({ "role": "system", "content": system }),
+        json!({ "role": "user", "content": user_content }),
+    ];
+
+    // /api/inference/complete expects Anthropic-format tools (it converts to the
+    // provider's shape internally via anthropic_tool_to_openai).
+    let tools_arr: Vec<Value> = registry.anthropic_schema().as_array().cloned().unwrap_or_default();
+
+    let mut emitted_kind: Option<String> = None;
+    let mut final_text = String::new();
+    let mut round_trips: u32 = 0;
+    let max_round_trips: u32 = std::env::var("HEX_SOP_MAX_ROUND_TRIPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(16);
+    let mut paths_written_this_conversation: HashSet<String> = HashSet::new();
+
+    loop {
+        if round_trips >= max_round_trips {
+            return Err(format!("tool round-trip cap ({}) hit without final reply", max_round_trips));
+        }
+
+        let req_body = json!({
+            "model": model,
+            "messages": messages,
+            "tools": tools_arr,
+            "max_tokens": std::env::var("HEX_SOP_MAX_TOKENS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(8192),
+        });
+
+        let resp = http
+            .post(&url)
+            .header("content-type", "application/json")
+            .json(&req_body)
+            .send()
+            .await
+            .map_err(|e| format!("router http: {}", e))?;
+        let status = resp.status();
+        let body: Value = resp.json().await.map_err(|e| format!("router json: {}", e))?;
+        if !status.is_success() {
+            return Err(format!("router HTTP {}: {}", status, body));
+        }
+
+        // /api/inference/complete returns top-level content + tool_calls.
+        let assistant_content = body.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let mut tool_calls = body.get("tool_calls").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        if tool_calls.is_empty() && !assistant_content.is_empty() {
+            tool_calls = parse_text_tool_calls(&assistant_content);
+        }
+
+        messages.push(json!({
+            "role": "assistant",
+            "content": if assistant_content.is_empty() { Value::Null } else { Value::String(assistant_content.clone()) },
+            "tool_calls": tool_calls.clone(),
+        }));
+        if !assistant_content.is_empty() {
+            final_text.push_str(&assistant_content);
+        }
+
+        if tool_calls.is_empty() {
+            return Ok(ReasonResult { emitted_kind, tool_round_trips: round_trips, final_text });
+        }
+
+        for tc in &tool_calls {
+            let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let func = tc.get("function").cloned().unwrap_or(Value::Null);
+            let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let args_str = func.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}");
+            let input: Value = serde_json::from_str(args_str).unwrap_or(Value::Null);
+
+            if emitted_kind.is_none() && matches!(name.as_str(), "adr_draft" | "workplan_emit" | "spec_draft" | "code_patch" | "adr_status_set" | "escalate_to_operator") {
+                emitted_kind = Some(name.clone());
+            }
+
+            if name == "code_patch" {
+                if let Some(path_str) = input.get("path").and_then(|v| v.as_str()) {
+                    if paths_written_this_conversation.contains(path_str) {
+                        let err_payload = json!({
+                            "ok": false, "output": {},
+                            "error": format!("race detected: path '{}' was already patched this round; re-read via repo_read and emit a replace_string patch next round", path_str),
+                            "elapsed_ms": 0, "truncated": false,
+                        });
+                        messages.push(json!({ "role": "tool", "tool_call_id": id, "content": serde_json::to_string(&err_payload).unwrap_or_default() }));
+                        continue;
+                    }
+                }
+            }
+
+            let patched_path: Option<String> = if name == "code_patch" {
+                input.get("path").and_then(|v| v.as_str()).map(String::from)
+            } else {
+                None
+            };
+
+            let result = registry.execute(&name, input).await;
+            if result.ok {
+                if let Some(p) = patched_path {
+                    paths_written_this_conversation.insert(p);
+                }
+            }
+
+            let result_payload = json!({
+                "ok": result.ok, "output": result.output, "error": result.error,
+                "elapsed_ms": result.elapsed_ms, "truncated": result.truncated,
+            });
+            messages.push(json!({ "role": "tool", "tool_call_id": id, "content": serde_json::to_string(&result_payload).unwrap_or_default() }));
+        }
+
+        round_trips += 1;
+    }
 }
 
 async fn reason_via_anthropic(
