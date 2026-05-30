@@ -92,13 +92,76 @@ fn step_files_signature(step: &Value, repo_root: &Path) -> String {
     parts.join("|")
 }
 
-/// Runs a step's `evidence` shell predicates (via the shared
-/// [`verify_evidence`] engine) and returns `(passed, reason)`. A step with no
-/// `evidence` declared passes vacuously (legacy files-exist semantics). Results
-/// are cached per step keyed on [`step_files_signature`], so predicates re-run
-/// only when the produced files change — a green step is one stat per tick.
-/// Predicate execution is moved off the async runtime via `spawn_blocking`
-/// because predicates (e.g. `cargo test`) can block for seconds.
+/// Walks up from `rel_file`'s directory (within `repo_root`) to find the
+/// nearest ancestor containing `marker`, returning that dir relative to
+/// `repo_root` (or "." for the root). Used to locate the owning crate/tsconfig
+/// for default evidence derivation.
+fn nearest_ancestor_with(repo_root: &Path, rel_file: &str, marker: &str) -> Option<String> {
+    let abs = repo_root.join(rel_file);
+    let mut dir = abs.parent()?.to_path_buf();
+    loop {
+        if dir.join(marker).is_file() {
+            let rel = dir.strip_prefix(repo_root).ok()?;
+            return Some(if rel.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                rel.to_string_lossy().into_owned()
+            });
+        }
+        if dir == *repo_root || !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// "Evidence by default": derive language-aware compile predicates for a step
+/// from the files it produces, when it declares no explicit `evidence`. Rust
+/// files → `cargo check` of the owning crate; TypeScript → `tsc --noEmit` of
+/// the owning tsconfig dir. Non-code files (docs/scripts/config) derive nothing
+/// and keep files-exist semantics. These are ADVISORY (see [`step_evidence_gate`]).
+fn derive_default_evidence(files: &[String], repo_root: &Path) -> Vec<String> {
+    use std::collections::BTreeSet;
+    let mut crates: BTreeSet<String> = BTreeSet::new();
+    let mut ts_dirs: BTreeSet<String> = BTreeSet::new();
+    for f in files {
+        if f.ends_with(".rs") {
+            if let Some(dir) = nearest_ancestor_with(repo_root, f, "Cargo.toml") {
+                crates.insert(dir);
+            }
+        } else if f.ends_with(".ts") || f.ends_with(".tsx") {
+            if let Some(dir) = nearest_ancestor_with(repo_root, f, "tsconfig.json") {
+                ts_dirs.insert(dir);
+            }
+        }
+    }
+    let mut preds = Vec::new();
+    for c in crates {
+        let cd = if c == "." { String::new() } else { format!("cd {c} && ") };
+        preds.push(format!("{cd}PATH=\"$HOME/.cargo/bin:$PATH\" cargo check -q"));
+    }
+    for d in ts_dirs {
+        let cd = if d == "." { String::new() } else { format!("cd {d} && ") };
+        preds.push(format!("{cd}(bunx tsc --noEmit || npx --yes tsc --noEmit)"));
+    }
+    preds
+}
+
+/// Decides whether a step is "done" by running its acceptance predicates and
+/// returns `(completes, reason)`. Predicate execution runs off the async
+/// runtime (`spawn_blocking`) and is cached per step on [`step_files_signature`]
+/// so it re-runs only when the produced files change.
+///
+/// Two authority levels:
+///   * **explicit** `evidence[]` — AUTHORITATIVE: a failure blocks completion
+///     (the step re-opens and is re-dispatched).
+///   * **derived** defaults (from [`derive_default_evidence`]) — ADVISORY: a
+///     failure is logged and penalised in RL but does NOT block completion,
+///     because auto-guessed predicates have environmental false-negatives (a
+///     wasm crate that can't `cargo check` on the host). Promote a derived
+///     predicate to explicit `evidence` to hard-gate it.
+///
+/// Either way the RL reward reflects the ACTUAL verdict, so every code-producing
+/// step feeds the learning signal by default — not just annotated ones.
 async fn step_evidence_gate(
     http: &Arc<reqwest::Client>,
     nexus_base: &str,
@@ -107,12 +170,29 @@ async fn step_evidence_gate(
     step: &Value,
     repo_root: &Path,
 ) -> (bool, Option<String>) {
-    let has_evidence = step
+    let explicit: Vec<String> = step
         .get("evidence")
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().any(|v| v.as_str().map(|s| !s.trim().is_empty()).unwrap_or(false)))
-        .unwrap_or(false);
-    if !has_evidence {
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| s.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let authoritative = !explicit.is_empty();
+    let predicates = if authoritative {
+        explicit
+    } else {
+        let files: Vec<String> = step
+            .get("files_to_create")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+        derive_default_evidence(&files, repo_root)
+    };
+    if predicates.is_empty() {
         return (true, None);
     }
 
@@ -120,16 +200,16 @@ async fn step_evidence_gate(
     let cache_key = format!("{workplan_id}::{step_id}");
     if let Some((cached_sig, passed)) = state().lock().unwrap().evidence_pass.get(&cache_key) {
         if *cached_sig == sig {
-            return (*passed, None);
+            return (if authoritative { *passed } else { true }, None);
         }
     }
 
-    let step_owned = step.clone();
+    let synthetic = json!({ "evidence": predicates });
     let root_owned = repo_root.to_path_buf();
-    let result = tokio::task::spawn_blocking(move || verify_evidence(&step_owned, &root_owned))
+    let result = tokio::task::spawn_blocking(move || verify_evidence(&synthetic, &root_owned))
         .await
         .unwrap_or_else(|e| Err(format!("evidence task panicked: {e}")));
-    let (passed, reason) = match result {
+    let (ran_ok, reason) = match result {
         Ok(()) => (true, None),
         Err(why) => (false, Some(why)),
     };
@@ -138,20 +218,42 @@ async fn step_evidence_gate(
         .lock()
         .unwrap()
         .evidence_pass
-        .insert(cache_key, (sig, passed));
+        .insert(cache_key, (sig, ran_ok));
 
-    // Couple the RL reward to the acceptance verdict (ADR-024 "reward = test
-    // pass rate"; ADR-2026-03-24-0045 P4). Fires once per actual verification
-    // (this fresh-compute path only — never on cache hits), so the rl-engine
-    // learns which tier/layer→persona routing produces gate-PASSING work,
-    // instead of the homeostasis-only signal that sat at mean reward -0.99.
+    // RL reward reflects the ACTUAL verdict (explicit or derived) — ADR-024
+    // "reward = test pass rate" / ADR-2026-03-24-0045 P4. Every code step feeds
+    // the learning signal by default, redirecting the q-table off the
+    // homeostasis loop that sat at mean reward -0.99.
     let state_key = evidence_state_key(step);
     let action = format!("persona:{}", route_step_to_persona(step));
-    let reward = if passed { 1.0 } else { -1.0 };
-    let next = if passed { "accepted" } else { "rejected" };
-    post_rl_reward(http, nexus_base, &state_key, &action, reward, next).await;
+    post_rl_reward(
+        http,
+        nexus_base,
+        &state_key,
+        &action,
+        if ran_ok { 1.0 } else { -1.0 },
+        if ran_ok { "accepted" } else { "rejected" },
+    )
+    .await;
 
-    (passed, reason)
+    if !ran_ok {
+        let why = reason.as_deref().unwrap_or("evidence predicate failed");
+        if authoritative {
+            tracing::warn!(
+                workplan = %workplan_id, step = %step_id, reason = %why,
+                "workplan_conductor: EVIDENCE GATE rejected completion (explicit, re-opening step)"
+            );
+        } else {
+            tracing::warn!(
+                workplan = %workplan_id, step = %step_id, reason = %why,
+                "workplan_conductor: derived evidence FAILED (advisory — not blocking; \
+                 add an explicit `evidence` predicate to hard-gate this step)"
+            );
+        }
+    }
+
+    // Derived evidence never blocks completion; explicit evidence is authoritative.
+    (if authoritative { ran_ok } else { true }, reason)
 }
 
 /// RL state key for an evidence verdict: the *kind* of work (tier + layer),
@@ -344,18 +446,13 @@ async fn drive_workplan(
             }
         }
         let files_present = any_listed && all_present;
+        // Files present is necessary; the evidence gate (explicit hard-gate or
+        // derived advisory) decides done + emits the RL verdict. It logs its own
+        // rejections, so we just take the boolean here.
         let step_done = if files_present {
-            let (passed, reason) =
-                step_evidence_gate(http, nexus_base, &workplan_id, &id, step, repo_root).await;
-            if !passed {
-                tracing::warn!(
-                    workplan = %workplan_id,
-                    step = %id,
-                    reason = %reason.as_deref().unwrap_or("evidence predicate failed"),
-                    "workplan_conductor: files present but EVIDENCE GATE rejected completion"
-                );
-            }
-            passed
+            step_evidence_gate(http, nexus_base, &workplan_id, &id, step, repo_root)
+                .await
+                .0
         } else {
             false
         };
@@ -819,6 +916,31 @@ mod tests {
         let none = json!({ "id": "ev-none" });
         let (ok, _) = step_evidence_gate(&http, base, "feat-test", "ev-none", &none, &root).await;
         assert!(ok, "no evidence => legacy files-exist semantics preserved");
+    }
+
+    // Evidence-by-default: a code-producing step with no explicit `evidence`
+    // derives a compile predicate for the owning crate; non-code derives none.
+    #[test]
+    fn derive_default_evidence_from_files() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join("crateA/src/core")).unwrap();
+        fs::write(root.join("crateA/Cargo.toml"), "[package]\nname=\"a\"\n").unwrap();
+
+        // Two .rs files in the same crate collapse to one cargo-check predicate.
+        let preds = derive_default_evidence(
+            &["crateA/src/lib.rs".into(), "crateA/src/core/x.rs".into()],
+            root,
+        );
+        assert_eq!(preds.len(), 1, "one crate => one predicate: {preds:?}");
+        assert!(preds[0].contains("cd crateA"), "{preds:?}");
+        assert!(preds[0].contains("cargo check"), "{preds:?}");
+
+        // Docs/scripts derive nothing (keep files-exist semantics).
+        assert!(derive_default_evidence(&["README.md".into(), "scripts/x.sh".into()], root).is_empty());
+
+        // A .rs file with no ancestor Cargo.toml derives nothing.
+        assert!(derive_default_evidence(&["nowhere/y.rs".into()], root).is_empty());
     }
 
     // The reward keying generalizes across steps of the same shape (tier+layer)
