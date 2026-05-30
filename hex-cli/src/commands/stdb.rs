@@ -80,6 +80,25 @@ pub enum StdbAction {
         #[arg(long, default_value = "hex")]
         db: String,
     },
+    /// Call a reducer on a SpacetimeDB module (no nexus required).
+    ///
+    /// Example: `hex stdb call marketplace register_user alice hash123`
+    /// Numbers/bools are auto-typed; everything else is sent as a JSON string.
+    /// Use `--json` to pass a raw JSON array instead (for strings that look
+    /// numeric, nested values, etc.):
+    /// `hex stdb call --json marketplace register_user '["007","hash"]'`
+    Call {
+        /// Database name
+        db: String,
+        /// Reducer name
+        reducer: String,
+        /// Reducer arguments, one per parameter (or a single JSON array with --json)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+        /// Interpret the args as one raw JSON array literal
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub async fn run(action: StdbAction) -> anyhow::Result<()> {
@@ -105,6 +124,7 @@ pub async fn run(action: StdbAction) -> anyhow::Result<()> {
         } => generate(&out, &host, &database).await,
         StdbAction::Query { sql, db, json, count } => query_stdb(&sql, &db, json, count).await,
         StdbAction::Tables { db } => tables_stdb(&db).await,
+        StdbAction::Call { db, reducer, args, json } => call_stdb(&db, &reducer, &args, json).await,
     }
 }
 
@@ -875,6 +895,102 @@ fn val_to_str(v: &serde_json::Value) -> String {
         serde_json::Value::Null => "NULL".to_string(),
         serde_json::Value::Bool(b) => b.to_string(),
         other => other.to_string(),
+    }
+}
+
+/// Coerce a CLI string into the JSON type a reducer parameter likely expects:
+/// integers/floats/bools become JSON scalars; everything else stays a string.
+/// (Use `--json` when a value that looks numeric must stay a string.)
+fn coerce_arg(s: &str) -> serde_json::Value {
+    if let Ok(i) = s.parse::<i64>() {
+        return serde_json::json!(i);
+    }
+    if let Ok(u) = s.parse::<u64>() {
+        return serde_json::json!(u);
+    }
+    if let Ok(f) = s.parse::<f64>() {
+        return serde_json::json!(f);
+    }
+    match s {
+        "true" => serde_json::json!(true),
+        "false" => serde_json::json!(false),
+        _ => serde_json::json!(s),
+    }
+}
+
+/// Call a reducer via the SpacetimeDB HTTP API (`POST /v1/database/<db>/call/
+/// <reducer>` with a JSON-array body) — the same transport `hex stdb query`
+/// uses, no nexus required. Closes the gap where modules could be published and
+/// queried through hex but never *invoked*.
+async fn call_stdb(db: &str, reducer: &str, args: &[String], json_mode: bool) -> anyhow::Result<()> {
+    let host = std::env::var("HEX_SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+    let url = format!("{}/v1/database/{}/call/{}", host, db, reducer);
+
+    let body: serde_json::Value = if json_mode {
+        let raw = args.join(" ");
+        let v: serde_json::Value = serde_json::from_str(&raw)
+            .map_err(|e| anyhow::anyhow!("--json expects a JSON array, got `{}`: {}", raw, e))?;
+        if !v.is_array() {
+            anyhow::bail!("--json value must be a JSON array, e.g. '[\"alice\", 1500]'");
+        }
+        v
+    } else {
+        serde_json::Value::Array(args.iter().map(|a| coerce_arg(a)).collect())
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()?;
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .body(serde_json::to_string(&body)?)
+        .send()
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!("Cannot reach SpacetimeDB at {} — is it running?\n  {}", host, e)
+        })?;
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        // A reducer returning Err(String) surfaces here — a real rejection
+        // (e.g. validation), not a transport failure. Bubble the message up.
+        anyhow::bail!(
+            "reducer `{}` rejected [{}]: {}",
+            reducer,
+            status.as_u16(),
+            text.trim()
+        );
+    }
+
+    let arg_str = body
+        .as_array()
+        .map(|a| a.iter().map(val_to_str).collect::<Vec<_>>().join(", "))
+        .unwrap_or_default();
+    println!("{} {}({}) → ok", "\u{2b21}".cyan(), reducer, arg_str);
+    if !text.trim().is_empty() {
+        println!("  {}", text.trim());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod call_tests {
+    use super::coerce_arg;
+    use serde_json::json;
+
+    #[test]
+    fn coerce_arg_types_values() {
+        assert_eq!(coerce_arg("1500"), json!(1500));
+        assert_eq!(coerce_arg("-3"), json!(-3));
+        assert_eq!(coerce_arg("true"), json!(true));
+        assert_eq!(coerce_arg("false"), json!(false));
+        assert_eq!(coerce_arg("alice"), json!("alice"));
+        assert_eq!(coerce_arg("Vintage Camera"), json!("Vintage Camera"));
+        // floats coerce too
+        assert_eq!(coerce_arg("1.5"), json!(1.5));
     }
 }
 
