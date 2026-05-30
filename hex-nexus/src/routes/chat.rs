@@ -884,12 +884,15 @@ pub(crate) async fn call_inference_endpoint_with_tools(
         // Different vendors use different OpenAI-compat root paths;
         // openai_compat_chat_url handles all of them.
         let url = openai_compat_chat_url(&ep.url);
+        // 16384 ceiling for reasoning models (see call_inference_endpoint).
+        let max_tokens: u32 = std::env::var("HEX_OPENAI_MAX_TOKENS")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(16384);
         (
             url,
             json!({
                 "model": model,
                 "messages": messages,
-                "max_tokens": 4096,
+                "max_tokens": max_tokens,
                 "tools": openai_tools,
             }),
         )
@@ -1026,10 +1029,19 @@ pub(crate) async fn call_inference_endpoint(
             _ => {
                 // OpenAI-compatible (vLLM, Google Gemini compat layer, etc).
                 let url = openai_compat_chat_url(&ep.url);
+                // 16384 ceiling (not 4096): reasoning models served via this
+                // path (Tenstorrent DeepSeek-R1, Qwen3-32B in thinking mode)
+                // spend thousands of tokens reasoning before emitting the
+                // answer; a 4096 cap truncated their output mid-string or left
+                // it empty. max_tokens is a ceiling — models still stop at
+                // natural completion — so a higher bound is safe. Override via
+                // HEX_OPENAI_MAX_TOKENS.
+                let max_tokens: u32 = std::env::var("HEX_OPENAI_MAX_TOKENS")
+                    .ok().and_then(|s| s.parse().ok()).unwrap_or(16384);
                 let body = json!({
                     "model": model,
                     "messages": messages,
-                    "max_tokens": 4096,
+                    "max_tokens": max_tokens,
                 });
                 (url, body)
             }
