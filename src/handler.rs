@@ -1,3 +1,4 @@
+ ---BEGIN EXISTING---
 // code_patch: write src/handler.rs
 #[derive(Debug)]
 struct Config { /* ... */ } // TODO add actual config struct fields here
