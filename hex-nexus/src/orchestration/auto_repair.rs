@@ -1298,10 +1298,14 @@ async fn run_multi_file_frontier(
         "frontier multi-file: parsed cluster response"
     );
 
-    // Stage all writes BEFORE committing any. If any write fails, the
-    // partial state is left on disk — the next tick's cargo_check will
-    // catch it, but log loudly so the operator notices.
+    // Stage all writes BEFORE committing any. Skip files whose proposed
+    // content matches the on-disk content — `git commit` would otherwise
+    // fail with "nothing to commit" and burn a frontier attempt for no
+    // benefit (observed live in Run 5 cycle 2 §5.14 #2: claude returned
+    // domain/mod.rs + ports/mod.rs identical to disk, commit failed,
+    // attempt wasted).
     let mut written: Vec<String> = Vec::new();
+    let mut skipped_noop: usize = 0;
     for (prefixed_path, content) in &edits {
         // Strip project_rel_prefix to get the bare rel_path that join() expects.
         let bare = if !project_rel_prefix.is_empty()
@@ -1317,6 +1321,19 @@ async fn run_multi_file_frontier(
             prefixed_path.clone()
         };
         let abs = project_path.join(&bare);
+        // No-op detection: if the file exists and its content matches the
+        // proposed content exactly (ignoring trailing newline), skip.
+        if let Ok(existing) = std::fs::read_to_string(&abs) {
+            if existing.trim_end_matches('\n') == content.trim_end_matches('\n') {
+                tracing::info!(
+                    path = %prefixed_path,
+                    bytes = content.len(),
+                    "frontier multi-file: skipped (proposed content matches disk)"
+                );
+                skipped_noop += 1;
+                continue;
+            }
+        }
         if let Some(parent) = abs.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
                 tracing::warn!(path = %prefixed_path, error = %e, "frontier multi-file: mkdir failed");
@@ -1335,6 +1352,11 @@ async fn run_multi_file_frontier(
         written.push(prefixed_path.clone());
     }
     if written.is_empty() {
+        tracing::warn!(
+            edits_received = edits.len(),
+            skipped_noop = skipped_noop,
+            "frontier multi-file: claude returned only no-op edits — frontier attempt wasted"
+        );
         return 0;
     }
 
@@ -1372,8 +1394,14 @@ async fn run_multi_file_frontier(
         .status()
         .await;
     if !commit.map(|s| s.success()).unwrap_or(false) {
-        tracing::warn!("frontier multi-file: git commit failed (files on disk)");
-        return written.len();
+        // Most common cause: `git add` succeeded but the staged content
+        // matches HEAD exactly — `git commit` exits non-zero ("nothing to
+        // commit"). The no-op check above SHOULD prevent this, but we
+        // also see it when claude returns content semantically equivalent
+        // to disk (e.g. only whitespace differs after our trim). Return
+        // 0 so the caller can fall back instead of reporting success.
+        tracing::warn!("frontier multi-file: git commit failed (likely no-op staged); returning 0");
+        return 0;
     }
     tracing::info!(files_committed = written.len(), "frontier multi-file: atomic commit landed");
     written.len()
