@@ -1,0 +1,65 @@
+{
+  "id": "wp-adr-governance-decision-cards",
+  "feature": "ADR governance: decision-cards + hybrid retrieval injected at SOP GROUND",
+  "description": "Make ADRs binding at decision time: structured decision-cards, hybrid retrieval (deterministic Applies-To backbone + semantic embeddings + supersession filter), injected into the SOP GROUND pack before any code_patch/adr_draft, plus a conflict gate and doctor-as-gate. Implements ADR-2605301228. P0 (the deterministic `hex adr governing` backbone) already shipped in commit c4a06f35.",
+  "adr": "ADR-2605301228",
+  "status": "in_progress",
+  "priority": "high",
+  "created_by": "human",
+  "created_at": "2026-05-30T12:42:00Z",
+  "notes": "Root cause this addresses: detectors run out-of-loop and aren't enforced as gates (same shape as the inference coupling). P0 done: hex adr governing + Applies-To/Superseded-By fields + date-only ID parser hardening (commits c4a06f35, 1041cc19).",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Deterministic Applies-To gate (DONE)",
+      "tier": 0,
+      "description": "hex adr governing <path> over Accepted, non-superseded ADRs; Applies-To + Superseded-By fields; supersession filter. Shipped c4a06f35.",
+      "tasks": [
+        { "id": "P0.1", "name": "hex adr governing command + Applies-To/supersession parsing", "layer": "ports", "strategy_hint": "codegen", "agent": "hex-coder", "deps": [], "status": "done", "files": ["hex-cli/src/commands/adr/mod.rs"] }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "Decision-card schema + backfill",
+      "tier": 0,
+      "description": "Formalize the decision-card fields (decision, constraints, applies_to, supersedes/superseded_by); extend hex adr schema + doctor to validate; backfill the hot-area Accepted ADRs.",
+      "gate": { "type": "build", "command": "cargo check -p hex-cli && hex adr doctor --strict", "blocking": true },
+      "tasks": [
+        { "id": "P1.1", "name": "Decision-card schema + doctor validation", "layer": "ports", "strategy_hint": "codegen", "agent": "hex-coder", "deps": ["P0.1"], "files": ["hex-cli/src/commands/adr/mod.rs", "hex-cli/src/commands/adr/doctor.rs"] },
+        { "id": "P1.2", "name": "Backfill Applies-To/constraints on hot-area Accepted ADRs", "layer": "domain", "strategy_hint": "transform", "agent": "hex-coder", "deps": ["P1.1"], "files": ["docs/adrs/"] }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Conflict gate at code_patch / adr_draft",
+      "tier": 1,
+      "description": "Before applying a code_patch (or emitting adr_draft) on a path, run the deterministic governing-ADR lookup; require compliance or an explicit supersedes link.",
+      "gate": { "type": "build", "command": "cargo check -p hex-nexus", "blocking": true },
+      "tasks": [
+        { "id": "P2.1", "name": "Wire governing-ADR conflict gate into code_patch/adr_draft tool path", "layer": "secondary", "strategy_hint": "codegen", "agent": "hex-coder", "deps": ["P1.1"], "files": ["hex-nexus/src/orchestration/sop_executor.rs"] }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Hybrid retrieval (semantic recall booster)",
+      "tier": 1,
+      "description": "Embed decision-cards via the inference port (embeddings model) -> AgentDB/STDB; replace the keyword-only hex adr search with hybrid (deterministic Applies-To + top-K semantic), filtered by supersession.",
+      "gate": { "type": "build", "command": "cargo check -p hex-nexus -p hex-cli", "blocking": true },
+      "tasks": [
+        { "id": "P3.1", "name": "Embed decision-cards into AgentDB/STDB; re-embed on create/status-change", "layer": "secondary", "strategy_hint": "inference", "agent": "hex-coder", "deps": ["P1.1"], "files": ["hex-nexus/src/adapters/", "hex-nexus/src/routes/"] },
+        { "id": "P3.2", "name": "Hybrid hex adr search (deterministic + semantic + supersession filter)", "layer": "secondary", "strategy_hint": "codegen", "agent": "hex-coder", "deps": ["P3.1"], "files": ["hex-cli/src/commands/adr/mod.rs"] }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "GROUND-phase injection + doctor-as-gate",
+      "tier": 3,
+      "description": "Inject 'Governing ADRs (binding): [cards]' into the SOP ground pack + auto_repair dispatch. Wire hex adr doctor --strict into hex ci / pre-commit / adr_draft; canonical ID generation on creation; Tier-A sched auto-heal.",
+      "gate": { "type": "test", "command": "hex adr doctor --strict && cargo test -p hex-nexus", "blocking": true },
+      "tasks": [
+        { "id": "P4.1", "name": "Inject governing ADRs into SOP GROUND pack + auto_repair dispatch", "layer": "secondary", "strategy_hint": "codegen", "agent": "hex-coder", "deps": ["P2.1"], "files": ["hex-nexus/src/orchestration/sop_executor.rs", "hex-nexus/src/orchestration/auto_repair.rs"] },
+        { "id": "P4.2", "name": "hex adr doctor --strict as CI/pre-commit/adr_draft gate; canonical ID gen; sched auto-heal", "layer": "secondary", "strategy_hint": "codegen", "agent": "hex-coder", "deps": ["P1.1"], "files": ["hex-cli/src/commands/adr/doctor.rs", "hex-cli/src/commands/ci.rs"] }
+      ]
+    }
+  ]
+}

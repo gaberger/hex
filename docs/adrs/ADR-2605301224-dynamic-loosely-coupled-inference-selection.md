@@ -1,9 +1,11 @@
 # ADR-2605301224: Dynamic, loosely-coupled inference model selection
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-30
 **Applies-To:** inference routing, model selection, tier_models, sop_executor.rs, drafter.rs, org_responder.rs, inference_strategy_builder.rs, IInferenceRouterPort
 **Superseded-By:** none
+**Workplan:** wp-dynamic-inference-loose-coupling
+**Scope note:** Accepting this decides the *architecture* (loose coupling, declarative resolution) — it does NOT decide the hot-path model policy (local Ollama vs Tenstorrent per ADR-2026-05-22-1710). That stays a config/policy value, decided separately and surfaced by `hex adr governing`.
 **Drivers:** Adding the Tenstorrent provider on 2026-05-30 required source edits in 5+ files and exposed that model/provider selection is hardcoded and tightly coupled at the consumption layer — new models cannot be added as configuration. New models are introduced continuously; the architecture must absorb them without code changes.
 **Supersedes:** none (reframes ADR-2026-05-22-1710 — see Consequences)
 

@@ -4,6 +4,7 @@
 **Date:** 2026-05-30
 **Applies-To:** ADR governance, docs/adrs, hex adr, decision retrieval, sop_executor.rs GROUND, conflict gate
 **Superseded-By:** none
+**Workplan:** wp-adr-governance-decision-cards (P0 done — `hex adr governing` shipped)
 **Drivers:** On 2026-05-30 a change nearly reversed an accepted ADR (2026-05-22-1710) silently, because the relevant decision was never surfaced. `hex adr search` is keyword-only and returned nothing for obvious terms ("inference routing tier model", "SOP reason openrouter"). `hex adr doctor` shows live decay (duplicate `ADR-2026` IDs, an unparseable status, a dangling dependency). As the ADR corpus grows, decisions must be retrievable and *injected* into agent context before action — not just authored and forgotten.
 **Supersedes:** none
 
