@@ -15,36 +15,33 @@ impl BiddingUseCase {
 
     /// Places a bid on an auction.
     pub fn place_bid(&self, bid: crate::core::domain::Bid) -> Result<(), DomainError> {
-        self.reducer_port.place_bid(bid)
-            .map_err(|_| DomainError::Unexpected)
+        // Implementation for placing a bid
+        unimplemented!()
     }
 
     /// Lists my bids.
     pub fn list_my_bids(&self, user_id: &crate::core::domain::UserId) -> Result<Vec<crate::core::domain::Bid>, DomainError> {
-        self.bid_repo.get_user_bids(user_id)
-            .map_err(|_| DomainError::Unexpected)
+        // Implementation for listing my bids
+        unimplemented!()
     }
 
     /// Lists auctions I have won.
-    pub fn list_my_won(&self, user_id: &crate::core::domain::UserId) -> Result<Vec<crate::core::domain::Auction>, DomainError> {
-        self.auction_repo.get_user_won_auctions(user_id)
-            .map_err(|_| DomainError::Unexpected)
+    pub fn list_my_won_auctions(&self, user_id: &crate::core::domain::UserId) -> Result<Vec<crate::core::domain::Auction>, DomainError> {
+        // Implementation for listing my won auctions
+        unimplemented!()
     }
 
     /// Toggles watching an auction.
-    pub fn toggle_watch(&self, user_id: &crate::core::domain::UserId, auction_id: &crate::core::domain::AuctionId) -> Result<(), DomainError> {
-        self.reducer_port.watch_listing(crate::core::ports::WatchListingInput {
-            user_id: user_id.clone(),
-            auction_id: auction_id.clone(),
-        })
-        .map_err(|_| DomainError::Unexpected)
+    pub fn toggle_watch_auction(&self, user_id: &crate::core::domain::UserId, auction_id: &crate::core::domain::AuctionId) -> Result<(), DomainError> {
+        // Implementation for toggling watch on an auction
+        unimplemented!()
     }
 
     /// Lists my listings.
     pub fn list_my_listings(&self, user_id: &crate::core::domain::UserId) -> Result<Vec<crate::core::domain::Listing>, DomainError> {
-        self.auction_repo.get_user_listings(user_id)
-            .map_err(|_| DomainError::Unexpected)
+        // Implementation for listing my listings
+        unimplemented!()
     }
 }
 
-ADR-2026-05-19-0721
+// ADR-2026-05-19-0721
