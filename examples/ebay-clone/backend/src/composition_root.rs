@@ -1,81 +1,48 @@
-use crate::adapters::{StdDbClient, FsImageStore, Argon2Hasher, JwtSigner, SystemClock};
+// Composition root for the eBay clone backend.
+//
+// This is the only file permitted to import from `crate::adapters::*`. As
+// concrete adapters land they are instantiated here, boxed behind their port
+// traits as declared in `crate::core::ports` (the real trait names are
+// `ImageStorePort`, `ClockPort`, `PasswordHasherPort`, `TokenIssuerPort`,
+// `UserRepoPort`, `ListingRepoPort`, `AuctionRepoPort`, `BidRepoPort`,
+// `WatchRepoPort`, `ReducerCallPort`), and stored on `AppState`.
+//
+// The previous version referenced adapter structs (`StdDbClient`,
+// `FsImageStore`, `Argon2Hasher`, `JwtSigner`, `SystemClock`) and port names
+// (`DbPort`, `HasherPort`, `SignerPort`) that exist in neither the adapters
+// module nor `core::ports`. Per hex rules the inner contracts are the source
+// of truth, so this outer file is rewritten to conform: it no longer invents
+// adapter/port names and wires only the framework-level state until adapters
+// are implemented.
+//
+// Refer to:
+// - docs/specs/ebay-spec-023
+// - docs/specs/ebay-spec-024
+// - ADR-2026-05-19-0721
+
+use axum::routing::get;
 use axum::Router;
-use std::sync::Arc;
 
-/// Composition root for the eBay clone backend.
+/// Application state shared across all axum handlers.
 ///
-/// This file is responsible for:
-/// - Reading environment variables.
-/// - Instantiating concrete adapters.
-/// - Boxing each adapter as `Arc<dyn Port>`.
-/// - Constructing `AppState`.
-/// - Building the axum `Router`.
-/// - Spawning the server on 0.0.0.0:8080.
+/// Holds the boxed port implementations once concrete adapters are wired in.
+/// Must be `Clone` because axum clones state per request.
+#[derive(Clone, Default)]
+pub struct AppState {}
+
+/// Constructs the shared [`AppState`].
 ///
-/// It is the only file in the backend that is permitted to import from `crate::adapters::*` modules.
-///
-/// Refer to:
-/// - docs/specs/ebay-spec-023
-/// - docs/specs/ebay-spec-024
-/// - ADR-2026-05-19-0721
+/// This is the single place that will instantiate concrete adapters and box
+/// them behind their port traits from `crate::core::ports`.
+pub fn create_app_state() -> AppState {
+    AppState::default()
+}
+
+/// Builds the axum [`Router`] together with its [`AppState`].
 pub fn compose_app() -> (Router, AppState) {
-    // Read environment variables.
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let jwt_secret = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set");
-    let image_root = std::env::var("IMAGE_ROOT").expect("IMAGE_ROOT must be set");
-    let backend_addr = std::env::var("BACKEND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
-
-    // Instantiate concrete adapters.
-    let db_client = StdDbClient::new(&database_url).expect("Failed to create database client");
-    let image_store = FsImageStore::new(image_root);
-    let hasher = Argon2Hasher;
-    let signer = JwtSigner::new(jwt_secret);
-    let clock = SystemClock;
-
-    // Box each adapter as `Arc<dyn Port>`.
-    let db_client: Arc<dyn DbPort> = Arc::new(db_client);
-    let image_store: Arc<dyn ImageStorePort> = Arc::new(image_store);
-    let hasher: Arc<dyn HasherPort> = Arc::new(hasher);
-    let signer: Arc<dyn SignerPort> = Arc::new(signer);
-    let clock: Arc<dyn ClockPort> = Arc::new(clock);
-
-    // Construct AppState.
-    let app_state = AppState {
-        db_client,
-        image_store,
-        hasher,
-        signer,
-        clock,
-    };
-
-    // Build the axum Router.
-    let router = build_router(&app_state);
-
+    let app_state = create_app_state();
+    let router = Router::new()
+        .route("/api/v1/health", get(|| async { "OK" }))
+        .with_state(app_state.clone());
     (router, app_state)
 }
-
-/// Constructs the axum Router using the provided `AppState`.
-fn build_router(app_state: &AppState) -> Router {
-    use crate::primary_adapter::api_v1::health::routes;
-
-    Router::new()
-        .merge(routes())
-        // Additional routes can be merged here.
-        .with_state(app_state.clone())
-}
-
-/// Application state that holds all the required services.
-pub struct AppState {
-    pub db_client: Arc<dyn DbPort>,
-    pub image_store: Arc<dyn ImageStorePort>,
-    pub hasher: Arc<dyn HasherPort>,
-    pub signer: Arc<dyn SignerPort>,
-    pub clock: Arc<dyn ClockPort>,
-}
-
-// Define trait aliases for clarity and to avoid repetition.
-pub type DbPort = crate::adapters::DbPort;
-pub type ImageStorePort = crate::adapters::ImageStorePort;
-pub type HasherPort = crate::adapters::HasherPort;
-pub type SignerPort = crate::adapters::SignerPort;
-pub type ClockPort = crate::adapters::ClockPort;
