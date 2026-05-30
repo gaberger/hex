@@ -184,6 +184,18 @@ pub enum InferenceAction {
         #[arg(long)]
         watch: bool,
     },
+    /// Show durable per-model usage from inference_log (real traffic, survives restarts)
+    Usage {
+        /// Only count completions newer than this duration (e.g. 1h, 7d, 30m)
+        #[arg(long)]
+        since: Option<String>,
+        /// Filter to models whose name contains this substring
+        #[arg(long)]
+        model: Option<String>,
+        /// Maximum rows to display
+        #[arg(long, default_value_t = 30)]
+        limit: u32,
+    },
     /// Benchmark a model: code-gen, reasoning, and identity prompts — quality + speed + tier recommendation (ADR-2026-04-13-1238)
     Bench {
         /// Provider ID, model name, or URL (e.g. "bazzite-ollama", "minimax-m2.7:cloud", "http://bazzite:11434")
@@ -274,6 +286,9 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
         InferenceAction::EscalationReport { json } => escalation_report(json).await,
         InferenceAction::QReport { tier, task_type, model, sort, limit, format, since, watch } => {
             q_report(tier, task_type, model, &sort, limit, &format, since, watch).await
+        }
+        InferenceAction::Usage { since, model, limit } => {
+            usage_report(since.as_deref(), model.as_deref(), limit).await
         }
         InferenceAction::Bench { target, model, quick, compare, save } => {
             bench_provider(&target, model.as_deref(), quick, compare.as_deref(), save).await
@@ -708,6 +723,56 @@ async fn discover_free_tier() -> anyhow::Result<()> {
 }
 
 /// Show inference cost attribution and provider statistics (ADR-2026-04-05-2125).
+/// `hex inference usage` — durable per-model usage from inference_log.
+async fn usage_report(since: Option<&str>, model: Option<&str>, limit: u32) -> anyhow::Result<()> {
+    let client = NexusClient::from_env();
+    println!("{}", "── Inference Usage (durable — from inference_log) ──".cyan());
+    println!();
+    if client.ensure_running().await.is_err() {
+        println!("{} hex-nexus not running — cannot fetch usage", "✗".red());
+        return Ok(());
+    }
+
+    let mut path = format!("/api/inference/usage?limit={}", limit);
+    if let Some(s) = since {
+        path.push_str(&format!("&since={}", s));
+    }
+    if let Some(m) = model {
+        path.push_str(&format!("&model={}", m.replace('/', "%2F")));
+    }
+
+    match client.get(&path).await {
+        Ok(data) => {
+            let rows = data.get("usage").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            if rows.is_empty() {
+                println!("  No matching completions in inference_log.");
+                return Ok(());
+            }
+            println!(
+                "  {:<28} {:<14} {:>8} {:>10} {:>10} {:>9} {:>9}",
+                "MODEL", "PROVIDER", "REQS", "IN_TOK", "OUT_TOK", "P50(ms)", "P99(ms)"
+            );
+            println!("  {}", "─".repeat(94));
+            for r in &rows {
+                let g = |k: &str| r.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+                let s = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("");
+                println!(
+                    "  {:<28} {:<14} {:>8} {:>10} {:>10} {:>9} {:>9}",
+                    s("model"), s("provider"), g("requests"),
+                    g("input_tokens"), g("output_tokens"), g("p50_ms"), g("p99_ms")
+                );
+            }
+            let total = data.get("total_completions").and_then(|v| v.as_u64()).unwrap_or(0);
+            println!();
+            println!("  {} completions counted (source: inference_log)", total);
+        }
+        Err(_) => {
+            println!("  Usage endpoint not available. Ensure hex-nexus is rebuilt.");
+        }
+    }
+    Ok(())
+}
+
 async fn inference_stats() -> anyhow::Result<()> {
     let client = NexusClient::from_env();
     println!("{}", "── Inference Cost Attribution (ADR-2026-04-05-2125) ──".cyan());

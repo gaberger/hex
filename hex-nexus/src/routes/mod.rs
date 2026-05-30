@@ -927,6 +927,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/inference/rate-state", get(inference::rate_state))
         .route("/api/inference/stats", get(inference::inference_stats_endpoint))
         .route("/api/inference/q-report", get(inference::q_report))
+        .route("/api/inference/usage", get(inference::usage_report))
         // SSE streaming chat endpoint (hex chat TUI — wp-cli-chat-tui)
         .route("/api/inference/chat/stream", post(inference::inference_stream))
         // OpenAI-compatible proxy (opencode first-class — feat-hex-opencode-first-class)

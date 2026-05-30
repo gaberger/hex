@@ -1831,6 +1831,167 @@ async fn stdb_query_rl(sql: &str) -> Result<Vec<serde_json::Value>, String> {
     Ok(crate::adapters::spacetime_state::SpacetimeStateAdapter::parse_stdb_response(body))
 }
 
+/// Run a SQL query against the core ("hex") SpacetimeDB database.
+async fn stdb_query_core(sql: &str) -> Result<Vec<serde_json::Value>, String> {
+    let host = std::env::var("SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| hex_core::SPACETIMEDB_DEFAULT_HOST.to_string());
+    let db = hex_core::STDB_DATABASE_CORE;
+    let url = format!("{}/v1/database/{}/sql", host, db);
+
+    let client = reqwest::Client::new();
+    let mut req = client.post(&url).body(sql.to_string());
+    if let Ok(token) = std::env::var("SPACETIMEDB_TOKEN") {
+        if !token.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+    }
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("STDB SQL failed: {}", body));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let body: serde_json::Value =
+        serde_json::from_str(trimmed).map_err(|e| e.to_string())?;
+    Ok(crate::adapters::spacetime_state::SpacetimeStateAdapter::parse_stdb_response(body))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UsageParams {
+    /// Only count completions newer than this duration (e.g. "1h", "7d").
+    pub since: Option<String>,
+    /// Filter to models whose name contains this substring.
+    pub model: Option<String>,
+    #[serde(default = "default_usage_limit")]
+    pub limit: u32,
+}
+
+fn default_usage_limit() -> u32 {
+    30
+}
+
+/// GET /api/inference/usage — durable per-model usage aggregated from the
+/// `inference_log` table (the real, persisted record of every completion).
+///
+/// Unlike `/api/inference/q-report` (RL Q-table — only populated when the
+/// reinforcement-learning loop is closed) and `/api/inference/stats`
+/// (in-memory, resets on restart), this reflects actual traffic that
+/// survives restarts. Aggregates requests, tokens, and p50/p99 latency
+/// per model, sorted by request count.
+pub async fn usage_report(
+    axum::extract::Query(params): axum::extract::Query<UsageParams>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let rows = match stdb_query_core("SELECT * FROM inference_log").await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "usage: failed to query inference_log");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e })));
+        }
+    };
+
+    let now = chrono::Utc::now();
+    let since_cutoff = params
+        .since
+        .as_deref()
+        .and_then(parse_duration_secs)
+        .map(|secs| now - chrono::Duration::seconds(secs));
+
+    struct Agg {
+        provider: String,
+        count: u64,
+        input: u64,
+        output: u64,
+        durations: Vec<u64>,
+        last_seen: String,
+    }
+    let mut map: std::collections::HashMap<String, Agg> = std::collections::HashMap::new();
+    let mut counted = 0u64;
+
+    for r in &rows {
+        let model = r.get("model").and_then(|v| v.as_str()).unwrap_or("");
+        if model.is_empty() {
+            continue;
+        }
+        if let Some(ref mf) = params.model {
+            if !model.contains(mf.as_str()) {
+                continue;
+            }
+        }
+        let created = r.get("created_at").and_then(|v| v.as_str()).unwrap_or("");
+        if let Some(cut) = since_cutoff {
+            match chrono::DateTime::parse_from_rfc3339(created) {
+                Ok(dt) if dt.with_timezone(&Utc) >= cut => {}
+                _ => continue,
+            }
+        }
+        counted += 1;
+        let provider = r.get("provider").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let input = r.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let output = r.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let dur = r.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+
+        let e = map.entry(model.to_string()).or_insert_with(|| Agg {
+            provider: provider.clone(),
+            count: 0,
+            input: 0,
+            output: 0,
+            durations: Vec::new(),
+            last_seen: String::new(),
+        });
+        e.count += 1;
+        e.input += input;
+        e.output += output;
+        if dur > 0 {
+            e.durations.push(dur);
+        }
+        if created > e.last_seen.as_str() {
+            e.last_seen = created.to_string();
+        }
+        if e.provider.is_empty() {
+            e.provider = provider;
+        }
+    }
+
+    let mut out: Vec<serde_json::Value> = map
+        .into_iter()
+        .map(|(model, mut a)| {
+            a.durations.sort_unstable();
+            let pct = |q: f64| -> u64 {
+                if a.durations.is_empty() {
+                    0
+                } else {
+                    let idx = (((a.durations.len() - 1) as f64) * q).round() as usize;
+                    a.durations[idx.min(a.durations.len() - 1)]
+                }
+            };
+            json!({
+                "model": model,
+                "provider": a.provider,
+                "requests": a.count,
+                "input_tokens": a.input,
+                "output_tokens": a.output,
+                "total_tokens": a.input + a.output,
+                "p50_ms": pct(0.5),
+                "p99_ms": pct(0.99),
+                "last_seen": a.last_seen,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        b["requests"].as_u64().unwrap_or(0).cmp(&a["requests"].as_u64().unwrap_or(0))
+    });
+    out.truncate(params.limit as usize);
+
+    (
+        StatusCode::OK,
+        Json(json!({ "usage": out, "total_completions": counted, "source": "inference_log" })),
+    )
+}
+
 /// GET /api/inference/q-report — Q-table report with filtering, sorting, and 7-day trend.
 pub async fn q_report(
     axum::extract::Query(params): axum::extract::Query<QReportParams>,
