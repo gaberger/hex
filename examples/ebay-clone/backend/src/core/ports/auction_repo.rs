@@ -1,13 +1,6 @@
 use crate::core::domain::*;
 use async_trait::async_trait;
 
-/// AuctionRepoPort defines read-only operations on auctions.
-///
-/// Returns the domain `Auction` type directly — the domain is the source of
-/// truth (hex rule). This port previously redefined its own `Auction`/`Bid`
-/// DTOs, which collided with the domain re-exports in any outer file that
-/// globbed both `core::domain::*` and `core::ports::*`. Removed so adapters
-/// conform inward to the domain types.
 #[async_trait]
 pub trait AuctionRepoPort: Send + Sync {
     /// Fetch an auction by its unique identifier.
@@ -22,4 +15,22 @@ pub trait AuctionRepoPort: Send + Sync {
         start_time: Timestamp,
         end_time: Timestamp,
     ) -> Result<Vec<Auction>, DomainError>;
+}
+
+// DTOs for AuctionRepoPort
+#[derive(Debug, Clone)]
+pub struct Auction {
+    pub id: AuctionId,
+    pub listing_id: ListingId,
+    pub current_bid: Option<Bid>,
+    pub start_time: Timestamp,
+    pub end_time: Timestamp,
+}
+
+#[derive(Debug, Clone)]
+pub struct Bid {
+    pub id: BidId,
+    pub bidder_id: UserId,
+    pub amount: Money,
+    pub timestamp: Timestamp,
 }

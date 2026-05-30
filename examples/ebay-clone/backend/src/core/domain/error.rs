@@ -34,13 +34,6 @@ pub enum DomainError {
     /// The user tried to bid on their own auction.
     #[error("Self-bidding is forbidden.")]
     SelfBidForbidden,
-
-    /// A storage / IO adapter failed. Carries the adapter-side detail string.
-    /// Added so secondary adapters that return `Result<_, DomainError>` (per
-    /// every repo/store port signature) have a faithful error channel instead
-    /// of mislabeling IO failures as a domain rule violation.
-    #[error("Storage error: {0}")]
-    StorageError(String),
 }
 
 // ADR-2026-05-19-0721

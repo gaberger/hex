@@ -5,9 +5,11 @@ use async_trait::async_trait;
 ///
 /// This trait is Send+Sync to allow concurrent access from multiple threads.
 ///
-/// All methods return `Result<T, DomainError>` to match every sibling port —
-/// the single-arg `Result<T>` form used previously assumed a `Result` alias
-/// that does not exist in the domain glob and failed to compile (E0107).
+/// # Examples
+///
+/// ```
+/// // Example usage of UserRepoPort would go here
+/// ```
 #[async_trait]
 pub trait UserRepoPort: Send + Sync {
     /// Creates a new user in the repository.
@@ -17,7 +19,7 @@ pub trait UserRepoPort: Send + Sync {
     ///
     /// # Returns
     /// * A Result containing either the ID of the newly created user or an error.
-    async fn create_user(&self, user: &CreateUserInput) -> Result<UserId, DomainError>;
+    async fn create_user(&self, user: &CreateUserInput) -> Result<UserId>;
 
     /// Retrieves a user by their unique identifier.
     ///
@@ -26,7 +28,7 @@ pub trait UserRepoPort: Send + Sync {
     ///
     /// # Returns
     /// * A Result containing either the [User] object if found, or an error.
-    async fn get_user_by_id(&self, user_id: UserId) -> Result<User, DomainError>;
+    async fn get_user_by_id(&self, user_id: UserId) -> Result<User>;
 
     /// Updates an existing user in the repository.
     ///
@@ -35,7 +37,7 @@ pub trait UserRepoPort: Send + Sync {
     ///
     /// # Returns
     /// * A Result indicating success or failure of the update operation.
-    async fn update_user(&self, user: &User) -> Result<(), DomainError>;
+    async fn update_user(&self, user: &User) -> Result<()>;
 
     /// Deletes a user from the repository by their unique identifier.
     ///
@@ -44,7 +46,7 @@ pub trait UserRepoPort: Send + Sync {
     ///
     /// # Returns
     /// * A Result indicating success or failure of the deletion operation.
-    async fn delete_user(&self, user_id: UserId) -> Result<(), DomainError>;
+    async fn delete_user(&self, user_id: UserId) -> Result<()>;
 }
 
 /// DTO for creating a new user.

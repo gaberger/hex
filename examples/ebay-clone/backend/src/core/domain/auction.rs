@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use chrono::DateTime;
 use crate::core::domain::error::DomainError;
-use crate::core::domain::ids::UserId;
+use crate::core::domain::user::UserIdentity;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuctionStatus {
@@ -19,10 +19,10 @@ impl AuctionStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Auction {
     pub current_highest_cents: u32,
-    pub current_highest_bidder: Option<UserId>,
+    pub current_highest_bidder: Option<UserIdentity>,
     pub end_time: DateTime<chrono::Utc>,
     pub status: AuctionStatus,
-    pub winner_identity: Option<UserId>,
+    pub winner_identity: Option<UserIdentity>,
     pub winning_amount_cents: Option<u32>,
 }
 
@@ -44,7 +44,7 @@ impl Auction {
         })
     }
 
-    pub fn place_bid(&mut self, bidder: UserId, bid_amount_cents: u32) -> Result<(), DomainError> {
+    pub fn place_bid(&mut self, bidder: UserIdentity, bid_amount_cents: u32) -> Result<(), DomainError> {
         if self.status != AuctionStatus::Active {
             return Err(DomainError::AuctionEnded);
         }
@@ -59,7 +59,7 @@ impl Auction {
 
     pub fn end_auction(&mut self) {
         if self.status == AuctionStatus::Active {
-            self.status = if self.current_highest_bidder.is_some() {
+            self.status = if let Some(winner) = &self.current_highest_bidder {
                 AuctionStatus::Closed
             } else {
                 AuctionStatus::Unsold

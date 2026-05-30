@@ -1,23 +1,11 @@
 use crate::core::domain::*;
 use async_trait::async_trait;
-
-/// Search/filter criteria for listing queries.
-///
-/// Defined in the port layer so adapters depend inward on the port, never the
-/// reverse — a port must not import from `adapters::*` (hex rule).
-#[derive(Debug, Clone, Default)]
-pub struct SearchListingsParams {
-    pub query: Option<String>,
-    pub min_price_cents: Option<u64>,
-    pub max_price_cents: Option<u64>,
-}
+use core::time::DurationMs; // ADR-2026-05-19-0721
+use adapters::primary::http_axum::handlers_listings::SearchListingsParams;
 
 /// ListingRepoPort defines read-only operations on listings.
 ///
-/// Listings are created and updated via reducers, so this port is strictly for
-/// querying. The create-side DTO lives in `reducer_call` (`CreateListingInput`)
-/// — it was previously duplicated here, producing an ambiguous glob re-export
-/// from `ports/mod.rs` (two `CreateListingInput`). Removed to resolve it.
+/// Listings are created and updated via reducers, so this port is strictly for querying.
 #[async_trait]
 pub trait ListingRepoPort: Send + Sync {
     /// Fetches a listing by its unique identifier.
@@ -37,6 +25,17 @@ pub trait ListingRepoPort: Send + Sync {
     /// # Returns
     /// A Result containing a Vec of Listings that match the criteria.
     async fn get_listings_by_criteria(&self, criteria: &SearchListingsParams) -> Result<Vec<Listing>, ListingRepoError>;
+}
+
+/// DTO for creating a new listing. This is used as input to the create_listing reducer.
+#[derive(Debug, Clone)]
+pub struct CreateListingInput {
+    pub title: String,
+    pub description: Option<String>,
+    pub starting_bid: Money,
+    pub start_time: Timestamp,
+    pub end_time: Timestamp,
+    // pub duration_ms: DurationMs, // Uncomment if needed
 }
 
 /// Errors that can occur when interacting with the Listing repository.

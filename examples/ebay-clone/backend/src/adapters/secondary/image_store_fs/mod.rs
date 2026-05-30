@@ -1,15 +1,17 @@
 use std::fs;
+use std::io::{self, Write};
 use std::path::PathBuf;
 
+use sha2::{Sha256, Digest};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-use crate::core::domain::DomainError;
-use crate::core::ports::ImageStorePort;
+use crate::domain::image_store::{ImageRef, ImageStoreError, ImageStorePort};
 
 mod hasher;
 
 const MAX_FILE_SIZE: usize = 5 * 1024 * 1024; // 5 MiB
+const SUPPORTED_CONTENT_TYPES: [&str; 2] = ["image/png", "image/jpeg"];
 
 pub struct FilesystemImageStore {
     root_dir: PathBuf,
@@ -40,37 +42,29 @@ impl FilesystemImageStore {
     }
 }
 
-// Conforms to `ImageStorePort` exactly: `store_image(Vec<u8>) -> Result<String,
-// DomainError>` and `get_image(&str) -> Result<Vec<u8>, DomainError>`. The port
-// is the contract; the previous impl invented a `content_type` arg, an
-// `ImageRef` return, and an `ImageStoreError` type that the port never declared.
 #[async_trait::async_trait]
 impl ImageStorePort for FilesystemImageStore {
-    async fn store_image(&self, image_data: Vec<u8>) -> Result<String, DomainError> {
-        if image_data.len() > MAX_FILE_SIZE {
-            return Err(DomainError::StorageError("image exceeds maximum allowed size".to_string()));
+    async fn store_image(&self, image_data: Vec<u8>, content_type: &str) -> Result<ImageRef, ImageStoreError> {
+        if !SUPPORTED_CONTENT_TYPES.contains(&content_type) {
+            return Err(ImageStoreError::UnsupportedContentType);
         }
 
         let sha256 = hasher::compute_sha256(&image_data);
         let file_path = self.file_path(&sha256);
 
-        let mut file = File::create(&file_path)
-            .await
-            .map_err(|e| DomainError::StorageError(e.to_string()))?;
-        file.write_all(&image_data)
-            .await
-            .map_err(|e| DomainError::StorageError(e.to_string()))?;
+        let mut file = File::create(&file_path).await.map_err(|_| ImageStoreError::Io)?;
+        file.write_all(&image_data).await.map_err(|_| ImageStoreError::Io)?;
 
-        Ok(sha256)
+        Ok(ImageRef { sha256 })
     }
 
-    async fn get_image(&self, hash: &str) -> Result<Vec<u8>, DomainError> {
-        let file_path = self.file_path(hash);
+    async fn get_image(&self, image_ref: &ImageRef) -> Result<Vec<u8>, ImageStoreError> {
+        let file_path = self.file_path(&image_ref.sha256);
         if !file_path.exists() {
-            return Err(DomainError::StorageError("image not found".to_string()));
+            return Err(ImageStoreError::NotFound);
         }
 
-        let data = fs::read(&file_path).map_err(|e| DomainError::StorageError(e.to_string()))?;
+        let data = fs::read(&file_path).map_err(|_| ImageStoreError::Io)?;
         Ok(data)
     }
 }
