@@ -60,7 +60,12 @@ Key constraint: **for governance, pure semantic RAG is insufficient.** Embedding
 2. **Ship the deterministic slice first** (cheapest, would have prevented today's drift): `applies_to` index + conflict gate at `code_patch`/`adr_draft`.
 3. Add the embedding layer: embed cards via the inference port → AgentDB/STDB; replace `adr search` keyword match with hybrid retrieval.
 4. Inject "Governing ADRs (binding)" into the SOP GROUND pack + auto_repair dispatch.
-5. Wire `hex adr doctor` into CI/authoring; fix the existing duplicate `ADR-2026` IDs and unparseable status it currently flags.
+5. **Turn the detector into a gate (prevents the 2026-05-30 decay class).** The decay found this session (3 date-only IDs collapsing to `ADR-2026`, prose in a Status field, a `Depends-on` to a never-written ADR) all crept in because `hex adr doctor` runs *out of loop* and the ID parser *enumerated formats with a swallow-everything fallback* instead of enforcing one. Fixes:
+   - Run `hex adr doctor --strict` in `hex ci`, pre-commit, and the `adr_draft` SOP validation phase — block on bad ID format / non-enum status / missing `Depends-on` target. (Machinery already exists: `--strict`, tier-aware `--fix`, sched-daemon sharing.)
+   - Enforce ONE canonical ID and **generate** the filename on creation (no hand-named files); reject non-canonical rather than coerce.
+   - No silent ID fallback — unknown format is flagged malformed, never coerced to `ADR-2026` (parser hardened 2026-05-30, commit pending).
+   - Validate at write time: Status ∈ vocabulary (prose → `**Note:**`), `Depends-on` targets exist or are marked `(planned)`.
+   - Wire doctor `--fix` (Tier-A) into the sched daemon for auto-heal.
 
 ## References
 

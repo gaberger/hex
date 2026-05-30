@@ -378,6 +378,17 @@ fn extract_adr_id(filename: &str) -> String {
         return format!("ADR-{}-{}-{}-{}", parts[0], parts[1], parts[2], parts[3]);
     }
 
+    // Date-only timestamp: YYYY-MM-DD (4-2-2, no HHMM) — e.g.
+    // ADR-2026-05-09-cost-ops-runbook. Checked after the date-time form so a
+    // full timestamp still wins; without this these collapse to "ADR-2026".
+    if parts.len() >= 3
+        && parts[0].len() == 4 && parts[0].chars().all(|c| c.is_ascii_digit())
+        && parts[1].len() == 2 && parts[1].chars().all(|c| c.is_ascii_digit())
+        && parts[2].len() == 2 && parts[2].chars().all(|c| c.is_ascii_digit())
+    {
+        return format!("ADR-{}-{}-{}", parts[0], parts[1], parts[2]);
+    }
+
     // Fall back to leading-digit run (covers ADR-059 + ADR-2026-03-22-1500 legacy).
     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     if !digits.is_empty() {

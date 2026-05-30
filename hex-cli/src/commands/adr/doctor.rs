@@ -182,7 +182,11 @@ fn adr_id_re() -> &'static Regex {
     // pattern first). Falls back to legacy sequential / 10-digit form.
     // Without this, `ADR-2026-03-22-1500` truncates to `ADR-2026` and the
     // doctor reports 154 duplicates.
-    RE.get_or_init(|| Regex::new(r"ADR-\d{4}-\d{2}-\d{2}-\d{4}|ADR-\d+").unwrap())
+    // Order matters (leftmost-first): full date-time (YYYY-MM-DD-HHMM), then
+    // date-only (YYYY-MM-DD, used by ADR-2026-05-09/-05-12/-05-20), then the
+    // legacy sequential / 10-digit fallback. Without the date-only form those
+    // three collapse to `ADR-2026` and read as duplicates.
+    RE.get_or_init(|| Regex::new(r"ADR-\d{4}-\d{2}-\d{2}-\d{4}|ADR-\d{4}-\d{2}-\d{2}|ADR-\d+").unwrap())
 }
 
 /// Strict canonical-format extraction. Mirrors the parent module's
