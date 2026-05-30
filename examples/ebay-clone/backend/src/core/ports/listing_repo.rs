@@ -25,32 +25,21 @@ pub trait ListingRepoPort: Send + Sync {
     async fn get_listings_by_criteria(&self, criteria: &SearchListingsParams) -> Result<Vec<Listing>, ListingRepoError>;
 }
 
-/// Search criteria for listing queries.
-///
-/// Owned by the port (not the HTTP adapter) so the contract does not depend
-/// on a primary adapter's request DTO — primary adapters map their inbound
-/// query parameters into this type before calling the port.
-#[derive(Debug, Clone, Default)]
-pub struct SearchListingsParams {
-    pub query: Option<String>,
-    pub limit: Option<u32>,
-    pub offset: Option<u32>,
-}
-
-/// DTO for creating a new listing.
-#[derive(Debug)]
+/// DTO for creating a new listing. This is used as input to the create_listing reducer.
+#[derive(Debug, Clone)]
 pub struct CreateListingInput {
-    pub title: ListingTitle,
-    pub description: String,
-    pub starting_price: Money,
-    pub duration: DurationMs,
+    pub title: String,
+    pub description: Option<String>,
+    pub starting_bid: Money,
+    pub start_time: Timestamp,
+    pub end_time: Timestamp,
 }
 
-/// Errors that can occur when interacting with the listing repository.
-#[derive(Debug, thiserror::Error)]
+/// Errors that can occur when interacting with the Listing repository.
+#[derive(Debug)]
 pub enum ListingRepoError {
-    #[error("Database error: {0}")]
-    DbError(String),
-    #[error("Invalid input: {0}")]
-    InvalidInput(String),
+    /// An error occurred while trying to fetch a listing.
+    FetchError,
+    /// The requested listing was not found.
+    NotFound,
 }
