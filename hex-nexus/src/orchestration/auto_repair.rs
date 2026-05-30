@@ -808,12 +808,17 @@ async fn run_tick(
                     "auto_repair: plateau — escalating to claude -p (frontier)"
                 );
 
-                // §5.14: prefer multi-file atomic rewrite when in
-                // port_first_mode (when the cluster is most likely
-                // tightly coupled). Falls back to single-file path on
-                // parse failure or when explicitly disabled.
+                // §5.14: always prefer multi-file atomic rewrite. The
+                // original port_first_mode gate was too restrictive —
+                // when only adapters are errored (port_first=false), the
+                // single-file path still cascaded badly (run 4 cycle 2:
+                // 11 → 38 errors after one adapter-only single-file pass).
+                // Multi-file is always at least as good as single-file for
+                // a cluster of related files, regardless of which layer
+                // owns the errors. Falls back to single-file path only
+                // on parse failure or when explicitly disabled.
                 let multi_file_disabled = std::env::var("HEX_DISABLE_MULTI_FILE_FRONTIER").is_ok();
-                let committed = if port_first_mode && !multi_file_disabled {
+                let committed = if !multi_file_disabled {
                     // Build the cluster: errored files (bare paths) + all
                     // ports + all domain files. Sorted inside-out by layer.
                     let errored_paths: Vec<String> =
