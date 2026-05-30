@@ -1,7 +1,5 @@
 use crate::core::domain::*;
 use async_trait::async_trait;
-// use core::time::DurationMs; // ADR-2026-05-19-0721
-use adapters::primary::http_axum::handlers_listings::SearchListingsParams;
 
 /// ListingRepoPort defines read-only operations on listings.
 ///
@@ -27,20 +25,34 @@ pub trait ListingRepoPort: Send + Sync {
     async fn get_listings_by_criteria(&self, criteria: &SearchListingsParams) -> Result<Vec<Listing>, ListingRepoError>;
 }
 
-/// Input for creating a new listing.
-#[derive(Debug)]
-pub struct CreateListingInput {
-    pub title: ListingTitle,
-    pub description: String,
-    pub start_price: Money,
-    pub duration: DurationMs,
-    // ADR-2026-05-19-0721
+/// Query parameters for searching listings. Defined at the port boundary so the
+/// trait does not depend on any primary adapter (hex rule 2: ports import domain only).
+#[derive(Debug, Clone, Default)]
+pub struct SearchListingsParams {
+    pub q: Option<String>,
+    pub active: Option<bool>,
+    pub max_price_cents: Option<u64>,
+    pub page: u32,
+    pub per_page: u32,
 }
 
-/// Errors that can occur when interacting with the listing repository.
+/// DTO for creating a new listing. This is used as input to the create_listing reducer.
+#[derive(Debug, Clone)]
+pub struct CreateListingInput {
+    pub title: String,
+    pub description: Option<String>,
+    pub starting_bid: Money,
+    pub start_time: Timestamp,
+    pub end_time: Timestamp,
+}
+
+/// Errors that can occur when interacting with the Listing repository.
 #[derive(Debug)]
 pub enum ListingRepoError {
+    /// An error occurred while trying to fetch a listing.
+    FetchError(String),
+    /// The requested listing was not found.
     NotFound,
-    InvalidInput(String),
-    DatabaseError(String),
+    /// An internal error occurred.
+    InternalError(String),
 }

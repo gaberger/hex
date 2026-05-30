@@ -1,8 +1,7 @@
-use super::{ReducerCallPort, ListingRepoPort};
-use crate::core::domain::{Listing, Auction};
-use crate::core::domain::title::ListingTitle;
-use crate::core::domain::money::Money;
-use crate::core::domain::time::DurationMs;
+use crate::core::ports::{ReducerCallPort, ListingRepoPort};
+use crate::core::ports::reducer_call::CreateListingInput;
+use crate::core::ports::listing_repo::SearchListingsParams;
+use crate::core::domain::{Listing, ListingId};
 
 pub struct ListingsUsecase {
     reducer_port: Box<dyn ReducerCallPort>,
@@ -14,37 +13,25 @@ impl ListingsUsecase {
         ListingsUsecase { reducer_port, repo_port }
     }
 
-    pub fn create_listing(&self, title: String, price_cents: u32, duration: u64, image_sha256s: Vec<String>) -> Result<Listing, String> {
-        let title = ListingTitle::new(title).map_err(|_| "Invalid title")?;
-        let price = Money::cents(price_cents).map_err(|_| "Invalid price")?;
-        let duration = DurationMs::new(duration).map_err(|_| "Invalid duration")?;
-
-        self.reducer_port.create_listing(&title, &price, &duration, image_sha256s)
-            .and_then(|listing_id| self.repo_port.get_listing(listing_id))
+    pub async fn create_listing(&self, input: CreateListingInput) -> Result<Listing, String> {
+        self.reducer_port
+            .create_listing(input)
+            .await
             .map_err(|e| format!("Failed to create listing: {}", e))
     }
 
-    pub fn search_listings(&self, q: String, active: bool, max_price_cents: Option<u32>, page: usize, per_page: usize) -> Result<Vec<Listing>, String> {
-        let listings = self.repo_port.search_listings(q.to_lowercase(), active, max_price_cents.map(Money::cents))
-            .map_err(|e| format!("Failed to search listings: {}", e))?;
-
-        // Sort by end_time ASC
-        let mut sorted_listings = listings.into_iter().filter(|listing| listing.auction.is_active()).collect::<Vec<Listing>>();
-        sorted_listings.sort_by_key(|listing| listing.auction.end_time());
-
-        // Paginate
-        let start = page * per_page;
-        let end = start + per_page;
-        Ok(sorted_listings[start..end.min(sorted_listings.len())].to_vec())
+    pub async fn search_listings(&self, criteria: SearchListingsParams) -> Result<Vec<Listing>, String> {
+        self.repo_port
+            .get_listings_by_criteria(&criteria)
+            .await
+            .map_err(|e| format!("Failed to search listings: {:?}", e))
     }
 
-    pub fn get_listing(&self, listing_id: String) -> Result<(Listing, Auction), String> {
-        self.repo_port.get_listing(listing_id)
-            .and_then(|listing| {
-                let auction = listing.auction.clone();
-                Ok((listing, auction))
-            })
-            .map_err(|e| format!("Failed to get listing: {}", e))
+    pub async fn get_listing(&self, listing_id: ListingId) -> Result<Listing, String> {
+        self.repo_port
+            .get_listing_by_id(&listing_id)
+            .await
+            .map_err(|e| format!("Failed to get listing: {:?}", e))
     }
 }
 
