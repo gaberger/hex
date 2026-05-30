@@ -44,6 +44,15 @@ pub enum AdrAction {
         /// ADR identifier (e.g. ADR-2026-03-24-0130 or partial match like 2603240130)
         adr_id: String,
     },
+    /// Show which Accepted ADRs govern a path/area via `Applies-To` (ADR-2605301228).
+    ///
+    /// Deterministic backbone of the conflict gate: before changing a file,
+    /// ask which binding decisions constrain it. Matches the query against each
+    /// Accepted, non-superseded ADR's `## Applies-To:` declarations.
+    Governing {
+        /// File path or area to check (e.g. "hex-nexus/src/orchestration/org_responder.rs" or "inference routing")
+        path: String,
+    },
     /// Self-consistency checker over docs/adrs/ (ADR-2026-04-27-0800).
     ///
     /// Detects unparseable status, duplicate IDs, dangling Depends-on links,
@@ -84,6 +93,7 @@ pub async fn run(action: AdrAction) -> anyhow::Result<()> {
         AdrAction::Review { adr_id, strict } => super::adr_review::run(adr_id, strict).await,
         AdrAction::Schema => schema().await,
         AdrAction::Specs { adr_id } => specs_for_adr(&adr_id).await,
+        AdrAction::Governing { path } => governing(&path).await,
         AdrAction::Doctor {
             fix,
             fix_and_merge,
@@ -767,6 +777,136 @@ async fn abandoned() -> anyhow::Result<()> {
         println!("  {} ADR(s) need attention", rows.len());
     }
 
+    Ok(())
+}
+
+// ── Governance: Applies-To / supersession (ADR-2605301228) ────────────────────
+
+/// Parse the `Applies-To` field — comma-separated areas/globs an ADR governs.
+/// Supports `## Applies-To: a, b` heading, `**Applies-To:** a, b` bold, and
+/// `applies-to: a, b` / `applies_to: [..]` frontmatter forms.
+fn parse_applies_to(content: &str) -> Vec<String> {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        let lower = trimmed.to_lowercase();
+        let val: Option<&str> = if let Some(r) = trimmed.strip_prefix("## Applies-To:") {
+            Some(r)
+        } else if lower.starts_with("**applies-to:**") {
+            Some(&trimmed["**Applies-To:**".len()..])
+        } else if lower.starts_with("applies-to:") {
+            Some(&trimmed["applies-to:".len()..])
+        } else if lower.starts_with("applies_to:") {
+            Some(&trimmed["applies_to:".len()..])
+        } else {
+            None
+        };
+        if let Some(v) = val {
+            return v
+                .split(',')
+                .map(|s| s.trim().trim_matches(|c| c == '"' || c == '[' || c == ']' || c == '`').trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+/// True if this ADR carries a non-empty `Superseded-By` backlink, so it must
+/// NOT be surfaced as a governing decision (the supersession filter — prevents
+/// stale decisions resurfacing). The status==superseded case is covered too.
+fn is_superseded(content: &str) -> bool {
+    if parse_adr_status(content) == "superseded" {
+        return true;
+    }
+    for line in content.lines() {
+        let lower = line.trim().to_lowercase();
+        if lower.starts_with("**superseded-by:**")
+            || lower.starts_with("superseded-by:")
+            || lower.starts_with("superseded_by:")
+        {
+            let v = line
+                .splitn(2, ':')
+                .nth(1)
+                .map(|s| s.trim().trim_matches(|c| c == '*' || c == '"').trim())
+                .unwrap_or("");
+            let vl = v.to_lowercase();
+            if !v.is_empty() && vl != "null" && vl != "none" && v != "\u{2014}" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Deterministic area match: an `Applies-To` token governs the query if either
+/// contains the other (case-insensitive), after stripping trailing glob stars.
+fn area_matches(applies: &str, query: &str) -> bool {
+    let a = applies
+        .trim()
+        .trim_end_matches("/**")
+        .trim_end_matches("**")
+        .trim_end_matches('*')
+        .trim_matches('/')
+        .to_lowercase();
+    let q = query.trim().to_lowercase();
+    if a.is_empty() || q.is_empty() {
+        return false;
+    }
+    q.contains(&a) || a.contains(&q)
+}
+
+/// `hex adr governing <path>` — list Accepted, non-superseded ADRs whose
+/// `Applies-To` matches the path/area. The deterministic backbone of the
+/// ADR conflict gate (ADR-2605301228).
+async fn governing(path: &str) -> anyhow::Result<()> {
+    let adr_dir = find_adr_dir().ok_or_else(|| anyhow::anyhow!("No docs/adrs/ directory found"))?;
+    let adrs = collect_adrs(&adr_dir).await?;
+
+    println!("{} ADRs governing '{}'", "\u{2b21}".cyan(), path.bold());
+    println!();
+
+    let mut hits: Vec<(String, String, Vec<String>)> = Vec::new();
+    let mut accepted_with_applies = 0usize;
+    for (p, content) in &adrs {
+        // Only Accepted decisions are binding; proposals and superseded are not.
+        if parse_adr_status(content) != "accepted" || is_superseded(content) {
+            continue;
+        }
+        let applies = parse_applies_to(content);
+        if !applies.is_empty() {
+            accepted_with_applies += 1;
+        }
+        let matched: Vec<String> = applies
+            .iter()
+            .filter(|a| area_matches(a, path))
+            .cloned()
+            .collect();
+        if !matched.is_empty() {
+            let fname = p.file_stem().and_then(|s| s.to_str()).unwrap_or("???");
+            hits.push((extract_adr_id(fname), extract_title(p, content), matched));
+        }
+    }
+
+    if hits.is_empty() {
+        println!("  {} No Accepted ADR's Applies-To matches this path.", "\u{2014}".dimmed());
+        if accepted_with_applies == 0 {
+            println!(
+                "  {} No Accepted ADR declares `## Applies-To:` yet — backfill needed (ADR-2605301228).",
+                "\u{2139}".dimmed()
+            );
+        }
+    } else {
+        for (id, title, areas) in &hits {
+            println!("  {} {} — {}", "\u{26a0}".yellow(), id.bold(), truncate(title, 58));
+            println!("      governs: {}", areas.join(", ").dimmed());
+        }
+        println!();
+        println!(
+            "  {} {} governing ADR(s) — review before changing this path.",
+            "\u{2b21}".cyan(),
+            hits.len()
+        );
+    }
     Ok(())
 }
 

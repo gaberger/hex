@@ -2,6 +2,8 @@
 
 Status: **Accepted**
 Date: 2026-05-22
+**Applies-To:** inference routing, codegen model selection, tier_models, hex-cli/assets/agents, org_responder.rs, sop_executor.rs, drafter.rs
+**Superseded-By:** none
 
 ## Context
 
