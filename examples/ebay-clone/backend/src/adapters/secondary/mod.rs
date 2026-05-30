@@ -9,5 +9,9 @@ pub mod stdb_client;
 pub mod image_store_fs;
 pub mod password_hasher_argon2;
 
-pub use self::stdb_client::{SystemClock, ClockPort};
-pub use self::jwt_signer_hs256::{JwtSignerHs256, TokenIssuerPort};
+// Only re-export adapters that actually exist in this cluster. `ClockPort` /
+// `TokenIssuerPort` are PORTS — they live in `core::ports`, not here — and the
+// `jwt_signer_hs256` module is not part of this repair cluster, so the previous
+// re-exports were unresolved (E0432). Consumers should reach ports via
+// `crate::core::ports::*`.
+pub use self::password_hasher_argon2::PasswordHasherArgon2;

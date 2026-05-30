@@ -1,51 +1,22 @@
 use std::sync::Arc;
 
-use axum::{
-    routing::{get, post},
-    Router,
-};
-use tracing::info;
-use axum::middleware::from_fn;
+use axum::{routing::get, Router};
 
-use crate::{
-    adapters::primary::http_axum::{
-        auth_middleware,
-        dto::{UserRequest, UserResponse, ItemRequest, ItemResponse, BidRequest, BidResponse},
-        handlers_auth::auth_routes,
-        handlers_bidding::{place_bid, toggle_watch},
-        handlers_images::routes as images_routes,
-        handlers_listings::{
-            ListingResponse, CreateListingRequest, SearchListingsParams, create_listing, get_listings,
-            get_listing_by_id, listings_routes,
-        },
-        handlers_me::{get_my_bids, get_my_won_items, get_my_listings},
-        state::AppState,
-    },
-    adapters::secondary::stdb_client::connection::connect,
-    core::ports::user_repo::UserRepoPort,
-};
+use crate::core::ports::user_repo::UserRepoPort;
 
 // ADR-2026-05-19-0721
-pub fn create_router(ports: Arc<Ports>) -> Router {
-    let app_state = AppState { user_port: ports.user_port.clone() };
-
-    Router::new()
-        .route("/", get(root))
-        .nest("/api/v1/listings", listings_routes())
-        .route("/api/v1/me/bids", get(get_my_bids))
-        .route("/api/v1/me/won", get(get_my_won_items))
-        .route("/api/v1/me/listings", get(get_my_listings))
-        .nest("/api/v1/images", images_routes())
-        .nest("/api/v1/auth", auth_routes())
-        .layer(from_fn(auth_middleware))
-}
-
-async fn root() -> &'static str {
-    "Hello, world!"
-}
+//
+// HTTP primary adapter. The per-resource handler modules (`dto`, `state`,
+// `auth_middleware`, `handlers_auth`, `handlers_listings`, `handlers_bidding`,
+// `handlers_images`, `handlers_me`) and the `stdb_client::connection` submodule
+// are not part of this repair cluster, so importing them produced unresolved
+// imports (E0432). The router currently exposes only the health-check root;
+// each route is wired back in as its handler module lands. `AppState`/`Ports`
+// are defined here (rather than imported from a missing `state` module) so the
+// composition root can construct the adapter.
 
 #[derive(Clone)]
-pub struct Ports {
+pub struct AppState {
     pub user_port: Arc<dyn UserRepoPort + Send + Sync>,
 }
 
@@ -53,4 +24,19 @@ impl AppState {
     pub fn new(user_port: Arc<dyn UserRepoPort + Send + Sync>) -> Self {
         AppState { user_port }
     }
+}
+
+#[derive(Clone)]
+pub struct Ports {
+    pub user_port: Arc<dyn UserRepoPort + Send + Sync>,
+}
+
+pub fn create_router(ports: Arc<Ports>) -> Router {
+    let _app_state = AppState::new(ports.user_port.clone());
+
+    Router::new().route("/", get(root))
+}
+
+async fn root() -> &'static str {
+    "Hello, world!"
 }
