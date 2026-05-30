@@ -948,16 +948,33 @@ pub async fn inference_complete(
             let log_model = model.clone();
             let log_cost = openrouter_cost.clone();
             let duration_ms = started.elapsed().as_millis() as u64;
+            let stdb_for_log = state.inference_stdb.clone();
             tokio::spawn(async move {
                 let session_id = std::env::var("CLAUDE_SESSION_ID")
                     .unwrap_or_else(|_| "nexus-bg".to_string());
-                let provider = if log_model.starts_with("anthropic/") || log_model.starts_with("claude") {
-                    "anthropic"
-                } else if log_model.starts_with("ollama/") || log_model.contains(":") {
-                    "ollama"
+                // Resolve the ACTUAL provider type by matching the served model
+                // against registered providers. The old name-only heuristic
+                // mislabeled cloud openai_compat models with vendor slugs (e.g.
+                // "Qwen/Qwen3-32B", "deepseek-ai/DeepSeek-R1-0528") as
+                // "openrouter" because they have no ':' and aren't "anthropic/".
+                let mut provider = if log_model.starts_with("anthropic/") || log_model.starts_with("claude") {
+                    "anthropic".to_string()
+                } else if log_model.starts_with("ollama/") || log_model.contains(':') {
+                    "ollama".to_string()
                 } else {
-                    "openrouter"
+                    "openrouter".to_string()
                 };
+                if let Some(stdb) = stdb_for_log {
+                    if let Ok(providers) = stdb.list_providers().await {
+                        if let Some(p) = providers.iter().find(|p| {
+                            serde_json::from_str::<Vec<String>>(&p.models_json)
+                                .map(|models| models.iter().any(|m| m == &log_model))
+                                .unwrap_or(false)
+                        }) {
+                            provider = p.provider_type.clone();
+                        }
+                    }
+                }
                 let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
                     .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
                 let url = format!("{}/v1/database/hex/call/inference_log_create", stdb_host);
