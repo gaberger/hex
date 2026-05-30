@@ -195,15 +195,20 @@ pub async fn inference_complete(
                 .collect();
             candidates.sort_by_key(super::chat::priority_for_tools);
 
-            // If the caller specified a model, prefer endpoints that
-            // serve it within their tier.
+            // If the caller specified a model, the provider that actually
+            // serves it wins — model match DOMINATES the local-first
+            // priority. Otherwise a tier request for a cloud model (e.g.
+            // T2 "Qwen/Qwen3-32B" on Tenstorrent) gets hijacked by whatever
+            // local Ollama model happens to be registered, since Ollama
+            // ranks above openai-compat in priority_for_tools. Priority only
+            // breaks ties within the matched / unmatched groups.
             if let Some(ref m) = requested_model {
                 candidates.sort_by(|a, b| {
                     let pa = super::chat::priority_for_tools(a);
                     let pb = super::chat::priority_for_tools(b);
                     let am = if a.model == *m { 0 } else { 1 };
                     let bm = if b.model == *m { 0 } else { 1 };
-                    (pa, am).cmp(&(pb, bm))
+                    (am, pa).cmp(&(bm, pb))
                 });
             }
 
@@ -253,12 +258,35 @@ pub async fn inference_complete(
             // Walk the candidate list. First success wins.
             let mut last_err = String::new();
             for ep in &candidates {
+                // Resolve a vault secret reference (e.g. "TENSTORRENT") to the
+                // real key before dispatch. The no-tools path does this at the
+                // L513 block; the tools fast-path must too, or openai-compat
+                // providers receive a bogus `Bearer <ref>` and 401. Env var
+                // first, then the SpacetimeDB vault (3s cap).
+                let mut ep = ep.clone();
+                if ep.requires_auth && !ep.secret_key.is_empty() && !ep.secret_key.starts_with("sk-") {
+                    let key_ref = ep.secret_key.clone();
+                    if let Ok(val) = std::env::var(&key_ref) {
+                        ep.secret_key = val;
+                    } else if let Some(ref stdb) = state.spacetime_secrets {
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(3),
+                            stdb.vault_get(&key_ref),
+                        ).await {
+                            Ok(Ok(Some(val))) => ep.secret_key = val,
+                            _ => {
+                                tracing::warn!(key = %key_ref, "tools fast-path: vault resolution failed; skipping candidate");
+                                continue;
+                            }
+                        }
+                    }
+                }
                 tracing::debug!(
                     provider = %ep.provider,
                     model = %ep.model,
                     "tools fast-path: trying candidate"
                 );
-                match super::chat::call_inference_endpoint_with_tools(ep, &messages, tools_schema).await {
+                match super::chat::call_inference_endpoint_with_tools(&ep, &messages, tools_schema).await {
                     Ok(((content, model_used, input_tokens, output_tokens, cost), tool_calls)) => {
                         tracing::info!(
                             provider = %ep.provider,
