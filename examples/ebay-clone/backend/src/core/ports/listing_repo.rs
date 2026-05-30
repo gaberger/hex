@@ -1,6 +1,6 @@
 use crate::core::domain::*;
 use async_trait::async_trait;
-use core::time::DurationMs; // ADR-2026-05-19-0721
+// use core::time::DurationMs; // ADR-2026-05-19-0721
 use adapters::primary::http_axum::handlers_listings::SearchListingsParams;
 
 /// ListingRepoPort defines read-only operations on listings.
@@ -27,24 +27,20 @@ pub trait ListingRepoPort: Send + Sync {
     async fn get_listings_by_criteria(&self, criteria: &SearchListingsParams) -> Result<Vec<Listing>, ListingRepoError>;
 }
 
-/// DTO for creating a new listing. This is used as input to the create_listing reducer.
-#[derive(Debug, Clone)]
+/// DTO for creating a new listing.
+#[derive(Debug)]
 pub struct CreateListingInput {
-    pub title: String,
-    pub description: Option<String>,
-    pub starting_bid: Money,
-    pub start_time: Timestamp,
-    pub end_time: Timestamp,
-    // pub duration_ms: DurationMs, // Uncomment if needed
+    pub title: ListingTitle,
+    pub description: String,
+    pub starting_price: Money,
+    pub duration: DurationMs,
 }
 
-/// Errors that can occur when interacting with the Listing repository.
-#[derive(Debug)]
+/// Errors that can occur when interacting with the listing repository.
+#[derive(Debug, thiserror::Error)]
 pub enum ListingRepoError {
-    /// An error occurred while trying to fetch a listing.
-    FetchError(String),
-    /// The requested listing was not found.
-    NotFound,
-    /// An internal error occurred.
-    InternalError(String),
+    #[error("Database error: {0}")]
+    DbError(String),
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 }
