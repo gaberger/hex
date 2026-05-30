@@ -1,35 +1,24 @@
 import { createSignal } from 'solid-js';
 
-export const useAuth = () => {
-  const [token, setToken] = createSignal<string | null>(sessionStorage.getItem('auth_token') || null);
+// Auth state management
+export const [authToken, setAuthToken] = createSignal<string | null>(null);
 
-  const login = ( (username: string, password: string) => {
-    try {
-      const res = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
-      });
+// Initialize from sessionStorage
+ load
+if => {
+  const token = sessionStorage.getItem('authToken');
+  if (token) {
+    setAuthToken(token);
+  }
+})();
 
-      if (!res.ok) throw new Error('Login failed');
+// Clear auth state
+export function clearAuth() {
+  setAuthToken(null);
+  sessionStorage.removeItem('authToken');
+}
 
-      const { token } = await res.json();
-      setToken(token);
-      sessionStorage.setItem('auth_token', token);
-      return true;
-    } catch (err) {
-      return false;
-    }
-  };
-
-  const logout = () => {
-    setToken(null);
-    sessionStorage.removeItem('auth_token');
-  };
-
-  return {
-    token,
-    login,
-    logout
-  };
-};
+// Check authentication status
+export function isAuthenticated(): {
+  return !!authToken();
+}
