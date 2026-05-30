@@ -387,7 +387,10 @@ fn is_valid_wp_id(s: &str) -> bool {
 /// Returns Ok(()) if all predicates pass (or no evidence is declared).
 /// Returns Err with a brief failure description on any failure.
 /// Each predicate has a 30s timeout to bound runtime.
-fn verify_evidence(task: &serde_json::Value, project_root: &std::path::Path) -> Result<(), String> {
+pub(crate) fn verify_evidence(
+    task: &serde_json::Value,
+    project_root: &std::path::Path,
+) -> Result<(), String> {
     let evidence = match task.get("evidence").and_then(|v| v.as_array()) {
         Some(arr) if !arr.is_empty() => arr,
         _ => return Ok(()), // no evidence declared = nothing to verify

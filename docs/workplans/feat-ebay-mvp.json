@@ -13,37 +13,76 @@
     {
       "tier": 0,
       "name": "domain+ports",
-      "steps": ["step-1", "step-2", "step-3", "step-4"]
+      "steps": [
+        "step-1",
+        "step-2",
+        "step-3",
+        "step-4"
+      ]
     },
     {
       "tier": 1,
       "name": "STDB module + secondary adapters",
-      "steps": ["step-5", "step-6", "step-7", "step-8", "step-9", "step-10", "step-11"]
+      "steps": [
+        "step-5",
+        "step-6",
+        "step-7",
+        "step-8",
+        "step-9",
+        "step-10",
+        "step-11"
+      ]
     },
     {
       "tier": 2,
       "name": "primary adapters",
-      "steps": ["step-12", "step-13", "step-14", "step-15", "step-16"]
+      "steps": [
+        "step-12",
+        "step-13",
+        "step-14",
+        "step-15",
+        "step-16"
+      ]
     },
     {
       "tier": 3,
       "name": "use cases",
-      "steps": ["step-17", "step-18", "step-19", "step-20"]
+      "steps": [
+        "step-17",
+        "step-18",
+        "step-19",
+        "step-20"
+      ]
     },
     {
       "tier": 4,
       "name": "composition root",
-      "steps": ["step-21"]
+      "steps": [
+        "step-21"
+      ]
     },
     {
       "tier": 5,
       "name": "frontend",
-      "steps": ["step-22", "step-23", "step-24", "step-25", "step-26", "step-27", "step-28"]
+      "steps": [
+        "step-22",
+        "step-23",
+        "step-24",
+        "step-25",
+        "step-26",
+        "step-27",
+        "step-28"
+      ]
     },
     {
       "tier": 6,
       "name": "integration + acceptance",
-      "steps": ["step-29", "step-30", "step-31", "step-32"]
+      "steps": [
+        "step-29",
+        "step-30",
+        "step-31",
+        "step-32"
+      ]
     }
   ],
   "steps": [
@@ -72,7 +111,10 @@
       "files_to_edit": [],
       "dependencies": [],
       "worktree_branch": "feat/ebay-mvp/scaffold",
-      "spec_ids": ["ebay-spec-023", "ebay-spec-024"],
+      "spec_ids": [
+        "ebay-spec-023",
+        "ebay-spec-024"
+      ],
       "estimated_loc": 160,
       "done_condition": "cargo check -p ebay-clone-backend succeeds with empty modules; .env.example documents DATABASE_URL, JWT_SECRET, STDB_URI; docs/specs/ebay-mvp.json is symlinked or copied under examples/ebay-clone/docs/specs/"
     },
@@ -93,16 +135,23 @@
       "files_to_edit": [
         "examples/ebay-clone/backend/src/core/domain/mod.rs"
       ],
-      "dependencies": ["step-1"],
+      "dependencies": [
+        "step-1"
+      ],
       "worktree_branch": "feat/ebay-mvp/domain",
-      "spec_ids": ["ebay-spec-003", "ebay-spec-007", "ebay-spec-008", "ebay-spec-025"],
+      "spec_ids": [
+        "ebay-spec-003",
+        "ebay-spec-007",
+        "ebay-spec-008",
+        "ebay-spec-025"
+      ],
       "estimated_loc": 320,
       "done_condition": "cargo check passes; unit tests cover Username/Title/Money validation including all rejection cases in specs 003, 007, 008; no f32/f64 anywhere; types are Serialize+Deserialize via serde"
     },
     {
       "id": "step-3",
       "tier": 0,
-      "description": "Domain aggregates and enums: AuctionStatus (Active|Closed|Unsold), Listing struct, Auction struct (current_highest_cents, current_highest_bidder, end_time, status, winner_identity, winning_amount_cents), Bid struct, User struct (id, canonical username, created_at — no password hash; that lives in a port DTO), ImageRef (sha256 + content_type + byte_size), WatchEntry struct. Domain errors as a single DomainError enum.",
+      "description": "Domain aggregates and enums: AuctionStatus (Active|Closed|Unsold), Listing struct, Auction struct (current_highest_cents, current_highest_bidder, end_time, status, winner_identity, winning_amount_cents), Bid struct, User struct (id, canonical username, created_at \u2014 no password hash; that lives in a port DTO), ImageRef (sha256 + content_type + byte_size), WatchEntry struct. Domain errors as a single DomainError enum.",
       "layer": "domain",
       "adapter": null,
       "port": null,
@@ -118,16 +167,24 @@
       "files_to_edit": [
         "examples/ebay-clone/backend/src/core/domain/mod.rs"
       ],
-      "dependencies": ["step-2"],
+      "dependencies": [
+        "step-2"
+      ],
       "worktree_branch": "feat/ebay-mvp/domain",
-      "spec_ids": ["ebay-spec-006", "ebay-spec-012", "ebay-spec-016", "ebay-spec-017", "ebay-spec-018"],
+      "spec_ids": [
+        "ebay-spec-006",
+        "ebay-spec-012",
+        "ebay-spec-016",
+        "ebay-spec-017",
+        "ebay-spec-018"
+      ],
       "estimated_loc": 300,
       "done_condition": "cargo check passes; AuctionStatus serializes round-trip; DomainError variants cover all reducer error codes (username_taken, invalid_username, invalid_title_length, invalid_starting_price, invalid_duration, bid_too_low, auction_ended, self_bid_forbidden); zero adapter imports"
     },
     {
       "id": "step-4",
       "tier": 0,
-      "description": "Port trait definitions — pure async traits, depend ONLY on core::domain. UserRepoPort (CRUD against the user table via STDB), ListingRepoPort (read-only queries — listings are written by reducers), AuctionRepoPort (read-only), BidRepoPort (read-only), WatchRepoPort (read-only), ReducerCallPort (call WASM reducers: register_user, create_listing, place_bid, watch_listing), ImageStorePort (store/get by sha256), PasswordHasherPort (hash + verify, argon2id), TokenIssuerPort (issue + verify JWT), ClockPort (now_unix_millis). All traits Send+Sync+async. Use async-trait. Define DTOs (CreateListingInput etc.) here so adapters don't leak domain types they shouldn't see.",
+      "description": "Port trait definitions \u2014 pure async traits, depend ONLY on core::domain. UserRepoPort (CRUD against the user table via STDB), ListingRepoPort (read-only queries \u2014 listings are written by reducers), AuctionRepoPort (read-only), BidRepoPort (read-only), WatchRepoPort (read-only), ReducerCallPort (call WASM reducers: register_user, create_listing, place_bid, watch_listing), ImageStorePort (store/get by sha256), PasswordHasherPort (hash + verify, argon2id), TokenIssuerPort (issue + verify JWT), ClockPort (now_unix_millis). All traits Send+Sync+async. Use async-trait. Define DTOs (CreateListingInput etc.) here so adapters don't leak domain types they shouldn't see.",
       "layer": "ports",
       "adapter": null,
       "port": "all",
@@ -147,16 +204,25 @@
         "examples/ebay-clone/backend/src/core/ports/mod.rs",
         "examples/ebay-clone/backend/Cargo.toml"
       ],
-      "dependencies": ["step-3"],
+      "dependencies": [
+        "step-3"
+      ],
       "worktree_branch": "feat/ebay-mvp/ports",
-      "spec_ids": ["ebay-spec-001", "ebay-spec-004", "ebay-spec-006", "ebay-spec-010", "ebay-spec-019", "ebay-spec-023"],
+      "spec_ids": [
+        "ebay-spec-001",
+        "ebay-spec-004",
+        "ebay-spec-006",
+        "ebay-spec-010",
+        "ebay-spec-019",
+        "ebay-spec-023"
+      ],
       "estimated_loc": 480,
-      "done_condition": "cargo check passes; every port file imports only `crate::core::domain::*` (lint-grep checked); no port file mentions axum/reqwest/spacetimedb/argon2/jsonwebtoken/tokio_fs — keep them abstract"
+      "done_condition": "cargo check passes; every port file imports only `crate::core::domain::*` (lint-grep checked); no port file mentions axum/reqwest/spacetimedb/argon2/jsonwebtoken/tokio_fs \u2014 keep them abstract"
     },
     {
       "id": "step-5",
       "tier": 1,
-      "description": "Marketplace SpacetimeDB WASM module — Cargo manifest, lib.rs entrypoint, and the tables: User (Identity primary, canonical username unique), Listing (id, seller_identity, title, description, starting_price_cents, image_sha256s, created_at), Auction (listing_id PK, end_time, current_highest_cents, current_highest_bidder Option<Identity>, status string, winner_identity Option<Identity>, winning_amount_cents u64, closed_at i64), Bid (id, auction_id, bidder_identity, amount_cents, placed_at), Watchlist (user_identity, listing_id, added_at — composite key), CloseAuctionSchedule (scheduled table for close_auction). All tables `public` so STDB WebSocket subscribers receive updates.",
+      "description": "Marketplace SpacetimeDB WASM module \u2014 Cargo manifest, lib.rs entrypoint, and the tables: User (Identity primary, canonical username unique), Listing (id, seller_identity, title, description, starting_price_cents, image_sha256s, created_at), Auction (listing_id PK, end_time, current_highest_cents, current_highest_bidder Option<Identity>, status string, winner_identity Option<Identity>, winning_amount_cents u64, closed_at i64), Bid (id, auction_id, bidder_identity, amount_cents, placed_at), Watchlist (user_identity, listing_id, added_at \u2014 composite key), CloseAuctionSchedule (scheduled table for close_auction). All tables `public` so STDB WebSocket subscribers receive updates.",
       "layer": "stdb-module",
       "adapter": "marketplace",
       "port": null,
@@ -166,16 +232,24 @@
         "examples/ebay-clone/spacetime-modules/marketplace/src/tables.rs"
       ],
       "files_to_edit": [],
-      "dependencies": ["step-1"],
+      "dependencies": [
+        "step-1"
+      ],
       "worktree_branch": "feat/ebay-mvp/stdb-module",
-      "spec_ids": ["ebay-spec-006", "ebay-spec-012", "ebay-spec-016", "ebay-spec-018", "ebay-spec-020"],
+      "spec_ids": [
+        "ebay-spec-006",
+        "ebay-spec-012",
+        "ebay-spec-016",
+        "ebay-spec-018",
+        "ebay-spec-020"
+      ],
       "estimated_loc": 280,
       "done_condition": "`spacetime build` succeeds against the crate (or `cargo build --target wasm32-unknown-unknown` if spacetime CLI absent); all six tables compile with public visibility; CloseAuctionSchedule has ScheduleAt + scheduled reducer hook stub"
     },
     {
       "id": "step-6",
       "tier": 1,
-      "description": "Marketplace reducers (part 1): register_user and create_listing. register_user validates Username rules, hashes nothing (backend handles password hashing — module stores only canonical username + the user's Identity), inserts a User row with created_at = ctx.timestamp; rejects duplicates with 'username_taken'; rejects invalid names with 'invalid_username'. create_listing validates title length, starting_price_cents range (1..=100_000_000), duration_ms range (60_000..=2_592_000_000); inserts Listing + Auction rows atomically; schedules close_auction at end_time via the CloseAuctionSchedule table.",
+      "description": "Marketplace reducers (part 1): register_user and create_listing. register_user validates Username rules, hashes nothing (backend handles password hashing \u2014 module stores only canonical username + the user's Identity), inserts a User row with created_at = ctx.timestamp; rejects duplicates with 'username_taken'; rejects invalid names with 'invalid_username'. create_listing validates title length, starting_price_cents range (1..=100_000_000), duration_ms range (60_000..=2_592_000_000); inserts Listing + Auction rows atomically; schedules close_auction at end_time via the CloseAuctionSchedule table.",
       "layer": "stdb-module",
       "adapter": "marketplace",
       "port": null,
@@ -187,11 +261,21 @@
       "files_to_edit": [
         "examples/ebay-clone/spacetime-modules/marketplace/src/lib.rs"
       ],
-      "dependencies": ["step-5"],
+      "dependencies": [
+        "step-5"
+      ],
       "worktree_branch": "feat/ebay-mvp/stdb-module",
-      "spec_ids": ["ebay-spec-001", "ebay-spec-002", "ebay-spec-003", "ebay-spec-006", "ebay-spec-007", "ebay-spec-008", "ebay-spec-009"],
+      "spec_ids": [
+        "ebay-spec-001",
+        "ebay-spec-002",
+        "ebay-spec-003",
+        "ebay-spec-006",
+        "ebay-spec-007",
+        "ebay-spec-008",
+        "ebay-spec-009"
+      ],
       "estimated_loc": 380,
-      "done_condition": "module compiles to WASM; reducer signatures match exactly: register_user(ctx, username: String, _password_unused: String), create_listing(ctx, title, description, starting_price_cents: u64, duration_ms: i64, image_sha256s: Vec<String>); all 7 spec failure modes return distinct error strings; no panics — every error path returns Err"
+      "done_condition": "module compiles to WASM; reducer signatures match exactly: register_user(ctx, username: String, _password_unused: String), create_listing(ctx, title, description, starting_price_cents: u64, duration_ms: i64, image_sha256s: Vec<String>); all 7 spec failure modes return distinct error strings; no panics \u2014 every error path returns Err"
     },
     {
       "id": "step-7",
@@ -208,9 +292,19 @@
       "files_to_edit": [
         "examples/ebay-clone/spacetime-modules/marketplace/src/lib.rs"
       ],
-      "dependencies": ["step-6"],
+      "dependencies": [
+        "step-6"
+      ],
       "worktree_branch": "feat/ebay-mvp/stdb-module",
-      "spec_ids": ["ebay-spec-012", "ebay-spec-013", "ebay-spec-014", "ebay-spec-015", "ebay-spec-016", "ebay-spec-017", "ebay-spec-018"],
+      "spec_ids": [
+        "ebay-spec-012",
+        "ebay-spec-013",
+        "ebay-spec-014",
+        "ebay-spec-015",
+        "ebay-spec-016",
+        "ebay-spec-017",
+        "ebay-spec-018"
+      ],
       "estimated_loc": 420,
       "done_condition": "module compiles to WASM; close_auction is registered as a scheduled reducer triggered by the CloseAuctionSchedule table; place_bid rejects all 4 failure modes (012/013/014/015) with distinct error strings; idempotent re-fire of close_auction on an already-closed auction is a no-op (no double-close)"
     },
@@ -231,9 +325,17 @@
         "examples/ebay-clone/backend/src/adapters/secondary/mod.rs",
         "examples/ebay-clone/backend/Cargo.toml"
       ],
-      "dependencies": ["step-4"],
+      "dependencies": [
+        "step-4"
+      ],
       "worktree_branch": "feat/ebay-mvp/adapter-stdb",
-      "spec_ids": ["ebay-spec-001", "ebay-spec-006", "ebay-spec-012", "ebay-spec-019", "ebay-spec-020"],
+      "spec_ids": [
+        "ebay-spec-001",
+        "ebay-spec-006",
+        "ebay-spec-012",
+        "ebay-spec-019",
+        "ebay-spec-020"
+      ],
       "estimated_loc": 600,
       "done_condition": "cargo check passes; every public type/function is reachable from the port-trait impls (no orphan code); module imports zero sibling adapters; spec 023 hex-analyze passes for this adapter directory"
     },
@@ -252,9 +354,14 @@
         "examples/ebay-clone/backend/src/adapters/secondary/mod.rs",
         "examples/ebay-clone/backend/Cargo.toml"
       ],
-      "dependencies": ["step-4"],
+      "dependencies": [
+        "step-4"
+      ],
       "worktree_branch": "feat/ebay-mvp/adapter-image",
-      "spec_ids": ["ebay-spec-010", "ebay-spec-011"],
+      "spec_ids": [
+        "ebay-spec-010",
+        "ebay-spec-011"
+      ],
       "estimated_loc": 220,
       "done_condition": "cargo check passes; unit test verifies idempotent store (same bytes -> same path, no rewrite); oversize returns ImageStoreError::TooLarge (mapped to 413 upstream); wrong MIME returns ImageStoreError::UnsupportedMediaType (mapped to 415); imports only ports + domain + tokio fs"
     },
@@ -273,9 +380,15 @@
         "examples/ebay-clone/backend/src/adapters/secondary/mod.rs",
         "examples/ebay-clone/backend/Cargo.toml"
       ],
-      "dependencies": ["step-4"],
+      "dependencies": [
+        "step-4"
+      ],
       "worktree_branch": "feat/ebay-mvp/adapter-auth",
-      "spec_ids": ["ebay-spec-004", "ebay-spec-005", "ebay-spec-024"],
+      "spec_ids": [
+        "ebay-spec-004",
+        "ebay-spec-005",
+        "ebay-spec-024"
+      ],
       "estimated_loc": 240,
       "done_condition": "cargo check passes; argon2 verify is constant-time; password buffer is zeroized after verify (via Zeroizing wrapper or explicit drop); JWT signing reads secret only from constructor argument (composition-root supplies env var); imports zero sibling adapters"
     },
@@ -292,16 +405,21 @@
       "files_to_edit": [
         "examples/ebay-clone/backend/src/adapters/secondary/mod.rs"
       ],
-      "dependencies": ["step-4"],
+      "dependencies": [
+        "step-4"
+      ],
       "worktree_branch": "feat/ebay-mvp/adapter-clock",
-      "spec_ids": ["ebay-spec-014", "ebay-spec-022"],
+      "spec_ids": [
+        "ebay-spec-014",
+        "ebay-spec-022"
+      ],
       "estimated_loc": 60,
       "done_condition": "cargo check passes; ClockPort impl returns i64 unix-millis UTC; no chrono required"
     },
     {
       "id": "step-12",
       "tier": 2,
-      "description": "Primary adapter: axum HTTP scaffolding — Router builder, shared AppState struct (holds Arc<dyn Port> for each port the handlers need), error mapping module (DomainError -> StatusCode), JSON request/response DTOs, JWT extractor middleware that verifies via TokenIssuerPort. No business logic yet; just the wiring that subsequent handler steps will populate.",
+      "description": "Primary adapter: axum HTTP scaffolding \u2014 Router builder, shared AppState struct (holds Arc<dyn Port> for each port the handlers need), error mapping module (DomainError -> StatusCode), JSON request/response DTOs, JWT extractor middleware that verifies via TokenIssuerPort. No business logic yet; just the wiring that subsequent handler steps will populate.",
       "layer": "adapters/primary",
       "adapter": "http_axum",
       "port": "(consumes use-case-shaped handlers in step-17..20)",
@@ -316,9 +434,15 @@
         "examples/ebay-clone/backend/src/adapters/primary/mod.rs",
         "examples/ebay-clone/backend/Cargo.toml"
       ],
-      "dependencies": ["step-4"],
+      "dependencies": [
+        "step-4"
+      ],
       "worktree_branch": "feat/ebay-mvp/adapter-http-core",
-      "spec_ids": ["ebay-spec-004", "ebay-spec-005", "ebay-spec-023"],
+      "spec_ids": [
+        "ebay-spec-004",
+        "ebay-spec-005",
+        "ebay-spec-023"
+      ],
       "estimated_loc": 280,
       "done_condition": "cargo check passes; AppState holds only `Arc<dyn Port>` fields (no concrete adapter types); auth_middleware rejects missing/invalid Authorization header with 401; imports only ports + domain"
     },
@@ -335,16 +459,23 @@
       "files_to_edit": [
         "examples/ebay-clone/backend/src/adapters/primary/http_axum/mod.rs"
       ],
-      "dependencies": ["step-12"],
+      "dependencies": [
+        "step-12"
+      ],
       "worktree_branch": "feat/ebay-mvp/adapter-http-auth",
-      "spec_ids": ["ebay-spec-001", "ebay-spec-002", "ebay-spec-004", "ebay-spec-005"],
+      "spec_ids": [
+        "ebay-spec-001",
+        "ebay-spec-002",
+        "ebay-spec-004",
+        "ebay-spec-005"
+      ],
       "estimated_loc": 180,
-      "done_condition": "cargo check passes; integration-test style test (in-crate) verifies that 200 OK is returned on valid login and 401 on bad password — using an in-memory fake of UserRepoPort + PasswordHasherPort"
+      "done_condition": "cargo check passes; integration-test style test (in-crate) verifies that 200 OK is returned on valid login and 401 on bad password \u2014 using an in-memory fake of UserRepoPort + PasswordHasherPort"
     },
     {
       "id": "step-14",
       "tier": 2,
-      "description": "Primary adapter: listings HTTP handlers. POST /api/v1/listings (auth required, calls create-listing use case which calls ReducerCallPort::create_listing), GET /api/v1/listings (search with q, active, max_price_cents, limit, offset — calls ListingRepoPort directly via a use case), GET /api/v1/listings/:id (single listing + its auction).",
+      "description": "Primary adapter: listings HTTP handlers. POST /api/v1/listings (auth required, calls create-listing use case which calls ReducerCallPort::create_listing), GET /api/v1/listings (search with q, active, max_price_cents, limit, offset \u2014 calls ListingRepoPort directly via a use case), GET /api/v1/listings/:id (single listing + its auction).",
       "layer": "adapters/primary",
       "adapter": "http_axum",
       "port": "(via use cases)",
@@ -354,9 +485,17 @@
       "files_to_edit": [
         "examples/ebay-clone/backend/src/adapters/primary/http_axum/mod.rs"
       ],
-      "dependencies": ["step-12"],
+      "dependencies": [
+        "step-12"
+      ],
       "worktree_branch": "feat/ebay-mvp/adapter-http-listings",
-      "spec_ids": ["ebay-spec-006", "ebay-spec-007", "ebay-spec-008", "ebay-spec-009", "ebay-spec-019"],
+      "spec_ids": [
+        "ebay-spec-006",
+        "ebay-spec-007",
+        "ebay-spec-008",
+        "ebay-spec-009",
+        "ebay-spec-019"
+      ],
       "estimated_loc": 220,
       "done_condition": "cargo check passes; search handler honors all 4 query params (q, active, max_price_cents, limit/offset); pagination defaults limit=20 max=100; sort by end_time ASC"
     },
@@ -374,9 +513,18 @@
       "files_to_edit": [
         "examples/ebay-clone/backend/src/adapters/primary/http_axum/mod.rs"
       ],
-      "dependencies": ["step-12"],
+      "dependencies": [
+        "step-12"
+      ],
       "worktree_branch": "feat/ebay-mvp/adapter-http-bidding",
-      "spec_ids": ["ebay-spec-012", "ebay-spec-013", "ebay-spec-014", "ebay-spec-015", "ebay-spec-018", "ebay-spec-021"],
+      "spec_ids": [
+        "ebay-spec-012",
+        "ebay-spec-013",
+        "ebay-spec-014",
+        "ebay-spec-015",
+        "ebay-spec-018",
+        "ebay-spec-021"
+      ],
       "estimated_loc": 260,
       "done_condition": "cargo check passes; bid endpoint maps reducer 'bid_too_low' -> 409 Conflict, 'auction_ended' -> 410 Gone, 'self_bid_forbidden' -> 403 Forbidden; /me/* endpoints all require JWT"
     },
@@ -393,16 +541,21 @@
       "files_to_edit": [
         "examples/ebay-clone/backend/src/adapters/primary/http_axum/mod.rs"
       ],
-      "dependencies": ["step-12"],
+      "dependencies": [
+        "step-12"
+      ],
       "worktree_branch": "feat/ebay-mvp/adapter-http-images",
-      "spec_ids": ["ebay-spec-010", "ebay-spec-011"],
+      "spec_ids": [
+        "ebay-spec-010",
+        "ebay-spec-011"
+      ],
       "estimated_loc": 180,
       "done_condition": "cargo check passes; multipart limit is enforced via axum DefaultBodyLimit + per-field size check, so 6 MiB upload is rejected without buffering entire body; idempotent on duplicate sha256"
     },
     {
       "id": "step-17",
       "tier": 3,
-      "description": "Use case: auth — register_user and login. register_user: validates Username + Password via domain rules, hashes password via PasswordHasherPort, calls ReducerCallPort::register_user, then UserRepoPort to fetch back the created row. login: looks up user by canonical username, verifies password via PasswordHasherPort, issues JWT via TokenIssuerPort, returns AuthResult { token, username, expires_at }.",
+      "description": "Use case: auth \u2014 register_user and login. register_user: validates Username + Password via domain rules, hashes password via PasswordHasherPort, calls ReducerCallPort::register_user, then UserRepoPort to fetch back the created row. login: looks up user by canonical username, verifies password via PasswordHasherPort, issues JWT via TokenIssuerPort, returns AuthResult { token, username, expires_at }.",
       "layer": "usecases",
       "adapter": null,
       "port": "UserRepoPort + PasswordHasherPort + TokenIssuerPort + ReducerCallPort + ClockPort",
@@ -412,16 +565,24 @@
       "files_to_edit": [
         "examples/ebay-clone/backend/src/core/usecases/mod.rs"
       ],
-      "dependencies": ["step-4"],
+      "dependencies": [
+        "step-4"
+      ],
       "worktree_branch": "feat/ebay-mvp/usecase-auth",
-      "spec_ids": ["ebay-spec-001", "ebay-spec-002", "ebay-spec-003", "ebay-spec-004", "ebay-spec-005"],
+      "spec_ids": [
+        "ebay-spec-001",
+        "ebay-spec-002",
+        "ebay-spec-003",
+        "ebay-spec-004",
+        "ebay-spec-005"
+      ],
       "estimated_loc": 220,
       "done_condition": "cargo check passes; unit tests with in-memory port fakes cover success + every error path; imports only domain + ports (zero adapter imports)"
     },
     {
       "id": "step-18",
       "tier": 3,
-      "description": "Use case: listings — create_listing, search_listings, get_listing. create_listing validates title/price/duration via domain types, calls ReducerCallPort::create_listing with image sha256s, then ListingRepoPort to read back. search_listings filters by q (case-insensitive substring on title), active flag, max_price_cents, sorts by end_time ASC, paginates. get_listing returns Listing + Auction.",
+      "description": "Use case: listings \u2014 create_listing, search_listings, get_listing. create_listing validates title/price/duration via domain types, calls ReducerCallPort::create_listing with image sha256s, then ListingRepoPort to read back. search_listings filters by q (case-insensitive substring on title), active flag, max_price_cents, sorts by end_time ASC, paginates. get_listing returns Listing + Auction.",
       "layer": "usecases",
       "adapter": null,
       "port": "ListingRepoPort + AuctionRepoPort + ReducerCallPort + ClockPort",
@@ -431,16 +592,24 @@
       "files_to_edit": [
         "examples/ebay-clone/backend/src/core/usecases/mod.rs"
       ],
-      "dependencies": ["step-4"],
+      "dependencies": [
+        "step-4"
+      ],
       "worktree_branch": "feat/ebay-mvp/usecase-listings",
-      "spec_ids": ["ebay-spec-006", "ebay-spec-007", "ebay-spec-008", "ebay-spec-009", "ebay-spec-019"],
+      "spec_ids": [
+        "ebay-spec-006",
+        "ebay-spec-007",
+        "ebay-spec-008",
+        "ebay-spec-009",
+        "ebay-spec-019"
+      ],
       "estimated_loc": 240,
       "done_condition": "cargo check passes; unit tests use in-memory fakes; search test verifies sort order + filter combinations + pagination boundaries"
     },
     {
       "id": "step-19",
       "tier": 3,
-      "description": "Use case: bidding + watchlist + my-account. place_bid (calls ReducerCallPort::place_bid; reducer enforces all bid rules — use case maps reducer errors to DomainError). toggle_watch (ReducerCallPort::watch_listing). list_my_bids (BidRepoPort filtered by bidder_identity). list_my_won (AuctionRepoPort filtered by winner_identity + status=Closed). list_my_listings (ListingRepoPort filtered by seller_identity).",
+      "description": "Use case: bidding + watchlist + my-account. place_bid (calls ReducerCallPort::place_bid; reducer enforces all bid rules \u2014 use case maps reducer errors to DomainError). toggle_watch (ReducerCallPort::watch_listing). list_my_bids (BidRepoPort filtered by bidder_identity). list_my_won (AuctionRepoPort filtered by winner_identity + status=Closed). list_my_listings (ListingRepoPort filtered by seller_identity).",
       "layer": "usecases",
       "adapter": null,
       "port": "BidRepoPort + AuctionRepoPort + ListingRepoPort + WatchRepoPort + ReducerCallPort",
@@ -451,9 +620,18 @@
       "files_to_edit": [
         "examples/ebay-clone/backend/src/core/usecases/mod.rs"
       ],
-      "dependencies": ["step-4"],
+      "dependencies": [
+        "step-4"
+      ],
       "worktree_branch": "feat/ebay-mvp/usecase-bidding",
-      "spec_ids": ["ebay-spec-012", "ebay-spec-013", "ebay-spec-014", "ebay-spec-015", "ebay-spec-018", "ebay-spec-021"],
+      "spec_ids": [
+        "ebay-spec-012",
+        "ebay-spec-013",
+        "ebay-spec-014",
+        "ebay-spec-015",
+        "ebay-spec-018",
+        "ebay-spec-021"
+      ],
       "estimated_loc": 260,
       "done_condition": "cargo check passes; unit tests verify all 4 bid-rejection mappings and the listing-marked-sold derivation"
     },
@@ -470,9 +648,14 @@
       "files_to_edit": [
         "examples/ebay-clone/backend/src/core/usecases/mod.rs"
       ],
-      "dependencies": ["step-4"],
+      "dependencies": [
+        "step-4"
+      ],
       "worktree_branch": "feat/ebay-mvp/usecase-images",
-      "spec_ids": ["ebay-spec-010", "ebay-spec-011"],
+      "spec_ids": [
+        "ebay-spec-010",
+        "ebay-spec-011"
+      ],
       "estimated_loc": 90,
       "done_condition": "cargo check passes; unit test confirms idempotency on repeated calls with same bytes"
     },
@@ -490,11 +673,30 @@
         "examples/ebay-clone/backend/src/main.rs",
         "examples/ebay-clone/backend/src/lib.rs"
       ],
-      "dependencies": ["step-8", "step-9", "step-10", "step-11", "step-13", "step-14", "step-15", "step-16", "step-17", "step-18", "step-19", "step-20"],
+      "dependencies": [
+        "step-8",
+        "step-9",
+        "step-10",
+        "step-11",
+        "step-13",
+        "step-14",
+        "step-15",
+        "step-16",
+        "step-17",
+        "step-18",
+        "step-19",
+        "step-20"
+      ],
       "worktree_branch": "feat/ebay-mvp/composition",
-      "spec_ids": ["ebay-spec-023", "ebay-spec-024"],
+      "spec_ids": [
+        "ebay-spec-023",
+        "ebay-spec-024"
+      ],
       "estimated_loc": 260,
-      "done_condition": "cargo build -p ebay-clone-backend succeeds; `hex analyze examples/ebay-clone/backend/` reports zero boundary violations; composition_root.rs is the only file matching `grep -r 'use crate::adapters' src/` excluding adapter mod.rs files; backend starts and serves /api/v1/health"
+      "done_condition": "cargo build -p ebay-clone-backend succeeds; `hex analyze examples/ebay-clone/backend/` reports zero boundary violations; composition_root.rs is the only file matching `grep -r 'use crate::adapters' src/` excluding adapter mod.rs files; backend starts and serves /api/v1/health",
+      "evidence": [
+        "cd examples/ebay-clone/backend && PATH=\"$HOME/.cargo/bin:$PATH\" cargo check -q"
+      ]
     },
     {
       "id": "step-22",
@@ -515,16 +717,21 @@
         "examples/ebay-clone/frontend/src/styles.css"
       ],
       "files_to_edit": [],
-      "dependencies": ["step-1"],
+      "dependencies": [
+        "step-1"
+      ],
       "worktree_branch": "feat/ebay-mvp/frontend-scaffold",
-      "spec_ids": ["ebay-spec-020", "ebay-spec-022"],
+      "spec_ids": [
+        "ebay-spec-020",
+        "ebay-spec-022"
+      ],
       "estimated_loc": 200,
       "done_condition": "`bun install && bun run build` (or `npm`) succeeds; Vite dev server starts on :5173; Tailwind classes apply (sanity check)"
     },
     {
       "id": "step-23",
       "tier": 5,
-      "description": "Frontend API client + STDB WebSocket client. src/api/http.ts wraps fetch with the JWT header. src/api/stdb.ts opens a WebSocket to the STDB host and subscribes to listings, auctions, bids, watchlist tables. All u64 cents are kept as bigint or number (with care) — never floats. Types mirror domain (TypeScript interfaces).",
+      "description": "Frontend API client + STDB WebSocket client. src/api/http.ts wraps fetch with the JWT header. src/api/stdb.ts opens a WebSocket to the STDB host and subscribes to listings, auctions, bids, watchlist tables. All u64 cents are kept as bigint or number (with care) \u2014 never floats. Types mirror domain (TypeScript interfaces).",
       "layer": "frontend",
       "adapter": null,
       "port": null,
@@ -535,9 +742,14 @@
         "examples/ebay-clone/frontend/src/api/money.ts"
       ],
       "files_to_edit": [],
-      "dependencies": ["step-22"],
+      "dependencies": [
+        "step-22"
+      ],
       "worktree_branch": "feat/ebay-mvp/frontend-api",
-      "spec_ids": ["ebay-spec-020", "ebay-spec-025"],
+      "spec_ids": [
+        "ebay-spec-020",
+        "ebay-spec-025"
+      ],
       "estimated_loc": 260,
       "done_condition": "money.ts has formatUSD(cents: bigint|number) -> string; never imports a float type; types include Listing, Auction, Bid, User; STDB client reconnects on close with exponential backoff capped at 30s"
     },
@@ -556,9 +768,14 @@
       "files_to_edit": [
         "examples/ebay-clone/frontend/src/App.tsx"
       ],
-      "dependencies": ["step-23"],
+      "dependencies": [
+        "step-23"
+      ],
       "worktree_branch": "feat/ebay-mvp/frontend-auth",
-      "spec_ids": ["ebay-spec-001", "ebay-spec-004"],
+      "spec_ids": [
+        "ebay-spec-001",
+        "ebay-spec-004"
+      ],
       "estimated_loc": 240,
       "done_condition": "register and login pages submit, store JWT, redirect to / on success; invalid login shows an inline error message; no token logged to console"
     },
@@ -577,9 +794,13 @@
       "files_to_edit": [
         "examples/ebay-clone/frontend/src/App.tsx"
       ],
-      "dependencies": ["step-23"],
+      "dependencies": [
+        "step-23"
+      ],
       "worktree_branch": "feat/ebay-mvp/frontend-home",
-      "spec_ids": ["ebay-spec-019"],
+      "spec_ids": [
+        "ebay-spec-019"
+      ],
       "estimated_loc": 240,
       "done_condition": "search box debounce 250ms; URL state syncs with query params; closed listings never appear when active=true"
     },
@@ -599,9 +820,16 @@
       "files_to_edit": [
         "examples/ebay-clone/frontend/src/App.tsx"
       ],
-      "dependencies": ["step-23"],
+      "dependencies": [
+        "step-23"
+      ],
       "worktree_branch": "feat/ebay-mvp/frontend-detail",
-      "spec_ids": ["ebay-spec-012", "ebay-spec-013", "ebay-spec-020", "ebay-spec-021"],
+      "spec_ids": [
+        "ebay-spec-012",
+        "ebay-spec-013",
+        "ebay-spec-020",
+        "ebay-spec-021"
+      ],
       "estimated_loc": 320,
       "done_condition": "place-bid form disables when auction.status != Active or countdown hits 0; bid history prepends in <1s after STDB push; bid amount validation client-side mirrors reducer (>current_highest); error toast on 409/410/403"
     },
@@ -621,16 +849,25 @@
       "files_to_edit": [
         "examples/ebay-clone/frontend/src/App.tsx"
       ],
-      "dependencies": ["step-23"],
+      "dependencies": [
+        "step-23"
+      ],
       "worktree_branch": "feat/ebay-mvp/frontend-post",
-      "spec_ids": ["ebay-spec-006", "ebay-spec-007", "ebay-spec-008", "ebay-spec-009", "ebay-spec-010", "ebay-spec-011"],
+      "spec_ids": [
+        "ebay-spec-006",
+        "ebay-spec-007",
+        "ebay-spec-008",
+        "ebay-spec-009",
+        "ebay-spec-010",
+        "ebay-spec-011"
+      ],
       "estimated_loc": 300,
       "done_condition": "client-side validation matches reducer rules; image upload progress shown per file; cap at 8 images enforced before submit"
     },
     {
       "id": "step-28",
       "tier": 5,
-      "description": "Frontend my-account pages: MyBids (GET /api/v1/me/bids), MyWon (GET /api/v1/me/won), MyListings (GET /api/v1/me/listings — shows sold-to badge per ebay-spec-021).",
+      "description": "Frontend my-account pages: MyBids (GET /api/v1/me/bids), MyWon (GET /api/v1/me/won), MyListings (GET /api/v1/me/listings \u2014 shows sold-to badge per ebay-spec-021).",
       "layer": "frontend",
       "adapter": null,
       "port": null,
@@ -642,9 +879,14 @@
       "files_to_edit": [
         "examples/ebay-clone/frontend/src/App.tsx"
       ],
-      "dependencies": ["step-23"],
+      "dependencies": [
+        "step-23"
+      ],
       "worktree_branch": "feat/ebay-mvp/frontend-me",
-      "spec_ids": ["ebay-spec-018", "ebay-spec-021"],
+      "spec_ids": [
+        "ebay-spec-018",
+        "ebay-spec-021"
+      ],
       "estimated_loc": 220,
       "done_condition": "all three pages require JWT (redirect to /login if missing); MyWon shows only auctions where winner_identity == current user and status == Closed"
     },
@@ -665,9 +907,20 @@
       "files_to_edit": [
         "examples/ebay-clone/backend/Cargo.toml"
       ],
-      "dependencies": ["step-21"],
+      "dependencies": [
+        "step-21"
+      ],
       "worktree_branch": "feat/ebay-mvp/integration-backend",
-      "spec_ids": ["ebay-spec-001", "ebay-spec-002", "ebay-spec-005", "ebay-spec-006", "ebay-spec-013", "ebay-spec-014", "ebay-spec-015", "ebay-spec-019"],
+      "spec_ids": [
+        "ebay-spec-001",
+        "ebay-spec-002",
+        "ebay-spec-005",
+        "ebay-spec-006",
+        "ebay-spec-013",
+        "ebay-spec-014",
+        "ebay-spec-015",
+        "ebay-spec-019"
+      ],
       "estimated_loc": 600,
       "done_condition": "`cargo test -p ebay-clone-backend --test 'integration_*'` is green; tests do not depend on a fixed port (ephemeral); test harness tears down STDB module on drop"
     },
@@ -684,11 +937,18 @@
       "files_to_edit": [
         "examples/ebay-clone/backend/Cargo.toml"
       ],
-      "dependencies": ["step-29"],
+      "dependencies": [
+        "step-29"
+      ],
       "worktree_branch": "feat/ebay-mvp/acceptance",
-      "spec_ids": ["ebay-spec-021"],
+      "spec_ids": [
+        "ebay-spec-021"
+      ],
       "estimated_loc": 280,
-      "done_condition": "acceptance test passes; runtime under 60s; clearly asserts ALL six conditions of ebay-spec-021 with distinct assertion messages"
+      "done_condition": "acceptance test passes; runtime under 60s; clearly asserts ALL six conditions of ebay-spec-021 with distinct assertion messages",
+      "evidence": [
+        "cd examples/ebay-clone/backend && PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --test acceptance_happy_path -q"
+      ]
     },
     {
       "id": "step-31",
@@ -703,16 +963,22 @@
         "examples/ebay-clone/docker-compose.yml"
       ],
       "files_to_edit": [],
-      "dependencies": ["step-21", "step-22"],
+      "dependencies": [
+        "step-21",
+        "step-22"
+      ],
       "worktree_branch": "feat/ebay-mvp/ops",
-      "spec_ids": ["ebay-spec-022", "ebay-spec-024"],
+      "spec_ids": [
+        "ebay-spec-022",
+        "ebay-spec-024"
+      ],
       "estimated_loc": 240,
       "done_condition": "start.sh is executable (chmod +x); SIGINT cleanup verified via spec-022 smoke (no orphan processes, no stale port bindings within 5s); README has a one-liner ./start.sh and a Troubleshooting section"
     },
     {
       "id": "step-32",
       "tier": 6,
-      "description": "Hex analyze + start.sh smoke acceptance gate. Runs `hex analyze examples/ebay-clone/backend` and asserts zero boundary violations; runs `./examples/ebay-clone/start.sh` in smoke mode (--smoke flag exits after health checks pass on all three services). This is the final acceptance gate — only this step blocks merge of feat/ebay-mvp/* to main.",
+      "description": "Hex analyze + start.sh smoke acceptance gate. Runs `hex analyze examples/ebay-clone/backend` and asserts zero boundary violations; runs `./examples/ebay-clone/start.sh` in smoke mode (--smoke flag exits after health checks pass on all three services). This is the final acceptance gate \u2014 only this step blocks merge of feat/ebay-mvp/* to main.",
       "layer": "gate",
       "adapter": null,
       "port": null,
@@ -722,16 +988,22 @@
       "files_to_edit": [
         "examples/ebay-clone/start.sh"
       ],
-      "dependencies": ["step-30", "step-31"],
+      "dependencies": [
+        "step-30",
+        "step-31"
+      ],
       "worktree_branch": "feat/ebay-mvp/gate",
-      "spec_ids": ["ebay-spec-022", "ebay-spec-023"],
+      "spec_ids": [
+        "ebay-spec-022",
+        "ebay-spec-023"
+      ],
       "estimated_loc": 120,
       "done_condition": "`hex analyze examples/ebay-clone/backend` exits 0; `./examples/ebay-clone/start.sh --smoke` exits 0 within 60s and leaves no child processes"
     }
   ],
   "concurrency": {
     "max_parallel_per_tier": 4,
-    "notes": "Tier-1 parallel set: step-5 (STDB module init), step-8 (stdb client), step-9 (image fs), step-10 (auth crypto), step-11 (clock). step-6 and step-7 are SERIALIZED behind step-5 (same crate, same lib.rs). Tier-2 steps 13/14/15/16 are parallel-safe (each handler file is disjoint) but each edits primary/http_axum/mod.rs — coordinate via a single integrator commit OR designate step-12 to leave router-registration stubs that handler steps fill in disjoint regions. Tier-3 use-case steps 17/18/19/20 are file-disjoint and fully parallel. Tier-5 frontend steps 24-28 each own disjoint page files; only App.tsx is shared (handle via small dedicated edits or a router-table file)."
+    "notes": "Tier-1 parallel set: step-5 (STDB module init), step-8 (stdb client), step-9 (image fs), step-10 (auth crypto), step-11 (clock). step-6 and step-7 are SERIALIZED behind step-5 (same crate, same lib.rs). Tier-2 steps 13/14/15/16 are parallel-safe (each handler file is disjoint) but each edits primary/http_axum/mod.rs \u2014 coordinate via a single integrator commit OR designate step-12 to leave router-registration stubs that handler steps fill in disjoint regions. Tier-3 use-case steps 17/18/19/20 are file-disjoint and fully parallel. Tier-5 frontend steps 24-28 each own disjoint page files; only App.tsx is shared (handle via small dedicated edits or a router-table file)."
   },
   "merge_order": [
     "feat/ebay-mvp/scaffold",
@@ -779,8 +1051,8 @@
     "gate": "cargo check --workspace + cargo test --workspace + ./examples/ebay-clone/start.sh --smoke + hex analyze examples/ebay-clone/backend (zero boundary violations)"
   },
   "open_questions_resolved": {
-    "auth_coupling": "Backend issues JWT (HS256) on /api/v1/auth/login. JWT claims include the user's STDB Identity hex. Frontend uses JWT for REST and presents the same Identity to STDB via spacetimedb-sdk client auth (STDB SDK derives Identity from a private key the backend issues at register-time; for MVP, the simplification is: backend signs reducer calls server-side so the frontend never needs a separate STDB credential — frontend talks to STDB read-only via WebSocket subscriptions; ALL mutations route through the backend). Documented in step-21 composition_root.rs.",
-    "image_storage": "Filesystem under examples/ebay-clone/backend/data/images/<sha256>.<ext> via ImageStorePort. S3-compatible alternative remains a port-level swap — no spec change needed (resolved: filesystem for MVP, port keeps the door open).",
+    "auth_coupling": "Backend issues JWT (HS256) on /api/v1/auth/login. JWT claims include the user's STDB Identity hex. Frontend uses JWT for REST and presents the same Identity to STDB via spacetimedb-sdk client auth (STDB SDK derives Identity from a private key the backend issues at register-time; for MVP, the simplification is: backend signs reducer calls server-side so the frontend never needs a separate STDB credential \u2014 frontend talks to STDB read-only via WebSocket subscriptions; ALL mutations route through the backend). Documented in step-21 composition_root.rs.",
+    "image_storage": "Filesystem under examples/ebay-clone/backend/data/images/<sha256>.<ext> via ImageStorePort. S3-compatible alternative remains a port-level swap \u2014 no spec change needed (resolved: filesystem for MVP, port keeps the door open).",
     "auction_cancellation": "OUT OF SCOPE for MVP. No cancel reducer. Confirmed.",
     "bid_retraction": "OUT OF SCOPE. eBay-style: bids are binding.",
     "pagination_defaults": "limit=20 default, max=100 (enforced in search-listings use case, step-18).",
@@ -795,7 +1067,7 @@
     },
     {
       "step": "step-21",
-      "risk": "Second-highest. Composition root depends on TWELVE other steps. If any port signature changes during the parallel build (steps 8-20), composition_root has to rebase across the wave. Mitigation: freeze port signatures at end of step-4 and treat them as a contract — adapter implementers may NOT extend port traits without an explicit handoff back to a planner edit of step-4."
+      "risk": "Second-highest. Composition root depends on TWELVE other steps. If any port signature changes during the parallel build (steps 8-20), composition_root has to rebase across the wave. Mitigation: freeze port signatures at end of step-4 and treat them as a contract \u2014 adapter implementers may NOT extend port traits without an explicit handoff back to a planner edit of step-4."
     },
     {
       "step": "step-30",

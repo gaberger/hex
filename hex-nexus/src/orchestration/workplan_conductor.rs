@@ -36,6 +36,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+use super::brain_dispatch_reconciler::verify_evidence;
+
 const DEFAULT_INTERVAL_SECS: u64 = 60;
 const DEFAULT_COOLDOWN_SECS: u64 = 300;
 const DEFAULT_STALL_TICKS: u64 = 10;
@@ -58,11 +60,84 @@ struct ConductorState {
     /// Per-workplan signature of last-known completion state (used to
     /// detect "made progress this tick").
     last_progress_sig: HashMap<String, String>,
+    /// Evidence-gate result cache, keyed `workplan_id::step_id` → (files
+    /// mtime-signature, passed). Predicates only re-run when the step's
+    /// produced files change, so a green step costs one stat/tick, not a
+    /// `cargo test` storm.
+    evidence_pass: HashMap<String, (String, bool)>,
 }
 
 fn state() -> &'static Mutex<ConductorState> {
     static S: OnceLock<Mutex<ConductorState>> = OnceLock::new();
     S.get_or_init(|| Mutex::new(ConductorState::default()))
+}
+
+/// Signature of a step's produced files (relpath:mtime), used to invalidate the
+/// evidence-gate cache only when the files actually change.
+fn step_files_signature(step: &Value, repo_root: &Path) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(files) = step.get("files_to_create").and_then(|v| v.as_array()) {
+        for f in files {
+            if let Some(rel) = f.as_str() {
+                let stamp = std::fs::metadata(repo_root.join(rel))
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                parts.push(format!("{rel}:{stamp}"));
+            }
+        }
+    }
+    parts.join("|")
+}
+
+/// Runs a step's `evidence` shell predicates (via the shared
+/// [`verify_evidence`] engine) and returns `(passed, reason)`. A step with no
+/// `evidence` declared passes vacuously (legacy files-exist semantics). Results
+/// are cached per step keyed on [`step_files_signature`], so predicates re-run
+/// only when the produced files change — a green step is one stat per tick.
+/// Predicate execution is moved off the async runtime via `spawn_blocking`
+/// because predicates (e.g. `cargo test`) can block for seconds.
+async fn step_evidence_gate(
+    workplan_id: &str,
+    step_id: &str,
+    step: &Value,
+    repo_root: &Path,
+) -> (bool, Option<String>) {
+    let has_evidence = step
+        .get("evidence")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().any(|v| v.as_str().map(|s| !s.trim().is_empty()).unwrap_or(false)))
+        .unwrap_or(false);
+    if !has_evidence {
+        return (true, None);
+    }
+
+    let sig = step_files_signature(step, repo_root);
+    let cache_key = format!("{workplan_id}::{step_id}");
+    if let Some((cached_sig, passed)) = state().lock().unwrap().evidence_pass.get(&cache_key) {
+        if *cached_sig == sig {
+            return (*passed, None);
+        }
+    }
+
+    let step_owned = step.clone();
+    let root_owned = repo_root.to_path_buf();
+    let result = tokio::task::spawn_blocking(move || verify_evidence(&step_owned, &root_owned))
+        .await
+        .unwrap_or_else(|e| Err(format!("evidence task panicked: {e}")));
+    let (passed, reason) = match result {
+        Ok(()) => (true, None),
+        Err(why) => (false, Some(why)),
+    };
+
+    state()
+        .lock()
+        .unwrap()
+        .evidence_pass
+        .insert(cache_key, (sig, passed));
+    (passed, reason)
 }
 
 pub fn spawn(repo_root: PathBuf) {
@@ -173,9 +248,14 @@ async fn drive_workplan(
         .ok_or("workplan missing steps[]")?;
 
     // Compute per-step completion. A step is "done" iff every file in
-    // files_to_create exists with non-zero size. Edits are not gated here
-    // (we'd need git-blame to detect them reliably); the cargo gate in
-    // action_executor catches semantic failures.
+    // files_to_create exists with non-zero size AND its `evidence` predicates
+    // (if any) pass. Files-exist alone is necessary but not sufficient: it
+    // marked a stub router + hallucinated tests "complete" on the 2026-05-28
+    // ebay-mvp run. The evidence gate (ADR-2026-05-17-2030 "measurable
+    // acceptance gate"; ADR-2026-04-11-1800 "reject vacuous completions")
+    // closes that loop — a step that produces files but whose acceptance
+    // predicate fails is NOT done and gets re-dispatched. Steps that declare
+    // no `evidence` keep the legacy files-exist semantics.
     let mut done: HashMap<String, bool> = HashMap::new();
     let mut step_index: HashMap<String, &Value> = HashMap::new();
     for step in steps {
@@ -200,7 +280,21 @@ async fn drive_workplan(
                 }
             }
         }
-        let step_done = any_listed && all_present;
+        let files_present = any_listed && all_present;
+        let step_done = if files_present {
+            let (passed, reason) = step_evidence_gate(&workplan_id, &id, step, repo_root).await;
+            if !passed {
+                tracing::warn!(
+                    workplan = %workplan_id,
+                    step = %id,
+                    reason = %reason.as_deref().unwrap_or("evidence predicate failed"),
+                    "workplan_conductor: files present but EVIDENCE GATE rejected completion"
+                );
+            }
+            passed
+        } else {
+            false
+        };
         done.insert(id.clone(), step_done);
         step_index.insert(id, step);
     }
@@ -632,6 +726,32 @@ mod tests {
     fn route_acceptance_to_tester() {
         let s = json!({"id":"step-30","description":"Acceptance test: end-to-end happy path","files_to_create":["a"]});
         assert_eq!(route_step_to_persona(&s), "hex-tester");
+    }
+
+    // The closed loop: files-present is necessary but not sufficient. A step's
+    // `evidence` predicate decides done, so the gate goes RED on a failing
+    // predicate and GREEN on a passing one — even with the same files present.
+    #[tokio::test]
+    async fn evidence_gate_red_on_fail_green_on_pass() {
+        let root = std::env::temp_dir();
+
+        // GREEN: a passing predicate.
+        let pass = json!({ "id": "ev-pass", "evidence": ["true"] });
+        let (ok, reason) = step_evidence_gate("feat-test", "ev-pass", &pass, &root).await;
+        assert!(ok, "passing predicate must be done");
+        assert!(reason.is_none());
+
+        // RED: a failing predicate — files could all exist and this is still
+        // NOT done. This is the case that would have caught the stub router.
+        let fail = json!({ "id": "ev-fail", "evidence": ["exit 1"] });
+        let (ok, reason) = step_evidence_gate("feat-test", "ev-fail", &fail, &root).await;
+        assert!(!ok, "failing predicate must NOT be done");
+        assert!(reason.is_some(), "failure surfaces a reason for the operator");
+
+        // Legacy: no evidence declared keeps files-exist semantics (vacuous pass).
+        let none = json!({ "id": "ev-none" });
+        let (ok, _) = step_evidence_gate("feat-test", "ev-none", &none, &root).await;
+        assert!(ok, "no evidence => legacy files-exist semantics preserved");
     }
 
     #[test]
