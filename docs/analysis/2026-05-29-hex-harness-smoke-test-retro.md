@@ -203,6 +203,28 @@ Each write overrode the previous. Errors went 18 → 19 → 50 in 4 ticks (faste
 - Snapshot endpoint exposes `dispatched_to_persona_count` and `frontier_inflight_count` for operator observability.
 - This won't make the loop converge on dense codebases (the §5.14 multi-file rewrite is the structural fix), but it eliminates persona+frontier collision which roughly doubled the contamination rate in Run 2.
 
+### 5.14. Single-file rewrites cascade — multi-file atomic rewrites needed (NEW — 2026-05-30 PM)
+**Symptom:** Three live tests on ebay-clone proved that even with all of §5.11+§5.12+§5.13+§5.15 active, the loop oscillates around the 18-error baseline but never converges. Each single-file rewrite cascades to its consumers:
+
+```
+Rewrite port P → P's signatures change → adapters A,B,C now break
+Rewrite adapter A → A's signatures change → use case U breaks
+Rewrite U → U's signatures change → tests break
+Loop is always 1-3 fixes ahead and 5-10 breakages behind
+```
+
+Run 3-fixed: 18→17→16→52→18 net zero. The §5.15 file-overlap gate prevented divergence (no doubling) but couldn't enable convergence — single-file edits can't propagate consistent signature changes across the dependency tree in one tick.
+**Hypothesis:** auto_repair dispatches one file at a time. Each dispatch's model only sees ONE file's source + the errors. It can fix that file but has no view of the consumers that will break. Any model — local qwen14b, claude-sonnet, claude-opus — produces the same cascade because the LOOP STRUCTURE forces one-file-at-a-time. This isn't a model capability issue; it's a structural one.
+**Insight from operator (2026-05-30):** hex architecture is inside-out by design (`domain → ports → usecases → adapters`). Multi-file rewrites should respect that ordering — inner layers are CONTRACTS, outer layers must conform. When inner changes, outer must update in the SAME response.
+**Fix plan (3-4 hours):**
+- Extend file classifier to return a layered enum: `FileLayer::{Domain, Ports, Usecases, AdaptersSecondary, AdaptersPrimary, Other}` with numeric ordinals matching inside-out depth.
+- New `discover_cluster(errored_files, project_path) -> Vec<(String, FileLayer)>`: takes top-K errored files and pulls in related files at adjacent layers. Cap at ~50 KB total content.
+- New `build_multi_file_prompt(cluster) -> String`: dumps all cluster files in inside-out order with `<<<FILE: path>>>` / `<<<END FILE>>>` delimiters. Explicitly states "inner = contract; outer must conform; if you change inner, update outer in same response."
+- New `parse_multi_file_response(text) -> HashMap<String, String>`: extracts the delimited per-file outputs. Validates non-empty, looks like Rust.
+- New `run_multi_file_frontier(...) -> usize`: invokes claude ONCE with the full cluster prompt, parses, writes all files atomically, single git commit `fix(frontier multi-file): rewrote cluster of N files via claude -p`.
+- Wire into `run_tick`: when `port_first_mode=true` AND escalating to frontier, use multi-file path. Single-file path stays as fallback when parse fails OR `HEX_DISABLE_MULTI_FILE_FRONTIER=1`.
+- This is the structural fix the convergence ceiling needs. Models that work for codegen (claude, qwen14b) should be able to converge once given the full dependency surface.
+
 ### 5.10. Scaffolded artifacts not validated as executable (NEW)
 **Symptom:** Workplan declared 109/109 files complete, including `start.sh`, `docker-compose.yml`, `README.md`. But `start.sh` has placeholder paths (`path/to/binary` style), wrong port, and references `bun` without checking it's installed. The workplan's "done condition" was file-presence, not file-validity.
 **Hypothesis:** `done_condition: "compile + lint + test pass"` in the workplan schema is only checked for Rust source. Shell scripts, compose files, READMEs were file-existence-checked and rubber-stamped.

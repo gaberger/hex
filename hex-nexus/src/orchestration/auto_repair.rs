@@ -184,6 +184,256 @@ fn classify_file_kind(rel_path: &str) -> FileKind {
     }
 }
 
+/// Hexagonal-architecture layer, with numeric ordinals matching inside-out
+/// dependency depth (lower = innermost / contract; higher = outermost /
+/// adapter). Used by §5.14 to order multi-file rewrites so the model sees
+/// contracts before consumers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+enum FileLayer {
+    Domain = 0,
+    Ports = 1,
+    Usecases = 2,
+    AdaptersSecondary = 3,
+    AdaptersPrimary = 4,
+    Other = 5,
+}
+
+impl FileLayer {
+    fn label(&self) -> &'static str {
+        match self {
+            FileLayer::Domain => "domain",
+            FileLayer::Ports => "ports",
+            FileLayer::Usecases => "usecases",
+            FileLayer::AdaptersSecondary => "adapters/secondary",
+            FileLayer::AdaptersPrimary => "adapters/primary",
+            FileLayer::Other => "other",
+        }
+    }
+}
+
+/// Layer classification — finer-grained than `FileKind`. §5.14 uses this
+/// to sort cluster files inside-out so the prompt presents contracts
+/// before their consumers.
+fn classify_file_layer(rel_path: &str) -> FileLayer {
+    let p = rel_path.to_lowercase();
+    if p.contains("/adapters/primary/") || p.starts_with("adapters/primary/") {
+        FileLayer::AdaptersPrimary
+    } else if p.contains("/adapters/secondary/") || p.starts_with("adapters/secondary/") {
+        FileLayer::AdaptersSecondary
+    } else if p.contains("/adapters/") || p.starts_with("adapters/") {
+        FileLayer::AdaptersSecondary // default to secondary if not specified
+    } else if p.contains("/core/usecases/") || p.starts_with("usecases/") {
+        FileLayer::Usecases
+    } else if p.contains("/core/ports/") || p.starts_with("ports/")
+        || p.ends_with("/ports.rs") || p == "ports.rs"
+    {
+        FileLayer::Ports
+    } else if p.contains("/core/domain/") || p.starts_with("domain/") {
+        FileLayer::Domain
+    } else if p.contains("/core/") {
+        FileLayer::Domain // unscoped core/ — treat as innermost
+    } else {
+        FileLayer::Other
+    }
+}
+
+/// §5.14: Discover a multi-file cluster for atomic rewrite. Starts from
+/// the errored files (with their layers) and pulls in same-layer + adjacent-
+/// layer files from the project that are likely to be tightly coupled.
+///
+/// Conservative cluster construction:
+///   1. Always include the errored files themselves
+///   2. Always include ALL port files (they're the contract)
+///   3. Always include ALL domain files (they're the type source)
+///   4. Include usecase + adapter files only if they're errored (to keep
+///      cluster small)
+///
+/// Returns `(rel_path, content, layer)` sorted inside-out by layer.
+/// Caps total content at ~50 KB; files beyond the cap are dropped.
+fn discover_cluster(
+    project_path: &Path,
+    errored_files: &[String],
+) -> Vec<(String, String, FileLayer)> {
+    use std::collections::BTreeSet;
+
+    const MAX_CLUSTER_BYTES: usize = 50 * 1024;
+    let mut included: BTreeSet<String> = BTreeSet::new();
+
+    // Always include all ports + domain files (the contract layer).
+    for layer_dir in &["src/core/ports", "src/core/domain", "src/ports", "src/domain"] {
+        let dir = project_path.join(layer_dir);
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.extension().and_then(|s| s.to_str()) != Some("rs") {
+                    continue;
+                }
+                if let Ok(rel) = p.strip_prefix(project_path) {
+                    included.insert(rel.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    // Include all errored files (regardless of layer).
+    for f in errored_files {
+        included.insert(f.clone());
+    }
+
+    // Read + classify + sort + cap.
+    let mut entries: Vec<(String, String, FileLayer)> = Vec::new();
+    let mut total_bytes = 0usize;
+    let mut sorted_paths: Vec<String> = included.into_iter().collect();
+    // Sort by layer first (inside-out), then alphabetically within layer.
+    sorted_paths.sort_by(|a, b| {
+        let la = classify_file_layer(a);
+        let lb = classify_file_layer(b);
+        la.cmp(&lb).then_with(|| a.cmp(b))
+    });
+    for rel in sorted_paths {
+        let abs = project_path.join(&rel);
+        let content = match std::fs::read_to_string(&abs) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if total_bytes + content.len() > MAX_CLUSTER_BYTES {
+            continue;
+        }
+        total_bytes += content.len();
+        let layer = classify_file_layer(&rel);
+        entries.push((rel, content, layer));
+    }
+    entries
+}
+
+/// §5.14: Build the multi-file rewrite prompt. Presents cluster files in
+/// inside-out order with `<<<FILE: ...>>>` / `<<<END FILE>>>` delimiters
+/// and explicitly states the hex inside-out contract: inner layers are
+/// frozen by default; if you change them, update outer files in the SAME
+/// response.
+fn build_multi_file_prompt(
+    cluster: &[(String, String, FileLayer)],
+    errors_block: &str,
+    project_rel_prefix: &str,
+) -> String {
+    let mut prompt = String::new();
+    prompt.push_str(
+        "You are repairing a Rust hex-architecture project. The files below \
+         form a dependency cluster: domain → ports → usecases → adapters. \
+         Inner layers are CONTRACTS; outer layers MUST conform. If you change \
+         an inner layer (a domain type or port signature), you MUST update \
+         every outer file in this cluster that references it, in the SAME \
+         response.\n\n\
+         OUTPUT FORMAT (strict — your output will be parsed mechanically):\n\
+         Output ONLY the files you want to change. Skip files you're not \
+         touching. Use this exact format with NO markdown fences, NO \
+         commentary before/after, NO explanation:\n\n\
+         <<<FILE: <path>>>\n\
+         <complete new file contents>\n\
+         <<<END FILE>>>\n\
+         <<<FILE: <path>>>\n\
+         <complete new file contents>\n\
+         <<<END FILE>>>\n\n\
+         Each `<<<FILE: ...>>>` must be on its own line. The path is the \
+         workspace-relative path shown in the cluster below (the one beginning \
+         with `examples/` or whatever your project_rel_prefix is).\n\n",
+    );
+
+    prompt.push_str("--- CURRENT CLUSTER (inside-out order) ---\n");
+    // Defensive sort — be robust to callers that pass an unsorted cluster.
+    let mut sorted_cluster: Vec<&(String, String, FileLayer)> = cluster.iter().collect();
+    sorted_cluster.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0)));
+    let mut last_layer: Option<FileLayer> = None;
+    for (rel, content, layer) in sorted_cluster {
+        if last_layer != Some(*layer) {
+            prompt.push_str(&format!("\n// ===== LAYER: {} =====\n", layer.label()));
+            last_layer = Some(*layer);
+        }
+        let prefixed = if project_rel_prefix.is_empty() {
+            rel.clone()
+        } else {
+            format!("{}/{}", project_rel_prefix.trim_end_matches('/'), rel)
+        };
+        prompt.push_str(&format!("\n<<<FILE: {prefixed}>>>\n"));
+        prompt.push_str(content);
+        if !content.ends_with('\n') {
+            prompt.push('\n');
+        }
+        prompt.push_str("<<<END FILE>>>\n");
+    }
+    prompt.push_str("\n--- END CLUSTER ---\n\n");
+
+    prompt.push_str("--- COMPILE ERRORS ACROSS THE CLUSTER ---\n");
+    prompt.push_str(errors_block);
+    prompt.push_str("\n--- END ERRORS ---\n\n");
+
+    prompt.push_str(
+        "Now output the rewritten files. Hex architecture rules:\n\
+         1. Domain types are the source of truth. If they're consistent with \
+            the project's intent, do not change them — make ports/adapters \
+            conform.\n\
+         2. Ports declare traits. Adapters MUST match the EXACT trait \
+            signatures (arg names, types, return types, async-ness). If a \
+            port method needs to change, update every adapter impl in the \
+            same response.\n\
+         3. Use cases consume ports. If you change a port signature, update \
+            every usecase that calls it in the same response.\n\
+         4. Adapters are at the outer edge. Their changes don't propagate \
+            inward — fix them by conforming to the port, never by changing \
+            the port to match a broken adapter.\n\
+         5. Do NOT invent type names that don't exist in the cluster above.\n\
+         6. Do NOT add `pub use ...::Thing` for symbols that aren't already \
+            exported by some file in the cluster.\n\
+         7. Output ONLY files you are changing. Files you're not editing are \
+            implicitly preserved.\n\n\
+         Output begins now (with `<<<FILE: ...>>>`, no preamble):"
+    );
+    prompt
+}
+
+/// §5.14: Parse the multi-file response. Splits on `<<<FILE: path>>>` /
+/// `<<<END FILE>>>` markers. Returns a map of `path -> content`. Silently
+/// skips malformed entries (empty content, missing END, etc.) — caller
+/// checks the returned map size to decide whether to fall back.
+fn parse_multi_file_response(text: &str) -> HashMap<String, String> {
+    let mut out: HashMap<String, String> = HashMap::new();
+    // Strip any leading commentary before the first <<<FILE:.
+    let start = match text.find("<<<FILE:") {
+        Some(i) => i,
+        None => return out,
+    };
+    let body = &text[start..];
+
+    // Iterate <<<FILE: path>>> ... <<<END FILE>>> blocks.
+    let mut rest = body;
+    while let Some(file_marker) = rest.find("<<<FILE:") {
+        rest = &rest[file_marker + "<<<FILE:".len()..];
+        // Path runs to the first ">>>" on the same line.
+        let close = match rest.find(">>>") {
+            Some(i) => i,
+            None => break,
+        };
+        let path = rest[..close].trim().to_string();
+        rest = &rest[close + ">>>".len()..];
+        // Skip a single leading newline.
+        if rest.starts_with('\n') {
+            rest = &rest[1..];
+        }
+        // Content runs until <<<END FILE>>>.
+        let end = match rest.find("<<<END FILE>>>") {
+            Some(i) => i,
+            None => break,
+        };
+        let content = rest[..end].trim_end_matches('\n').to_string();
+        rest = &rest[end + "<<<END FILE>>>".len()..];
+        if !path.is_empty() && !content.trim().is_empty() {
+            out.insert(path, content);
+        }
+    }
+    out
+}
+
 /// Read the verbatim contents of a single source file at
 /// `<project>/<rel_path>`, capped at ~8 KB. Used by §5.13 to anchor the
 /// model on existing identifiers + imports + structural choices instead
@@ -557,16 +807,81 @@ async fn run_tick(
                     port_context_bytes = port_context.len(),
                     "auto_repair: plateau — escalating to claude -p (frontier)"
                 );
-                let committed = run_frontier_escalation(
-                    adapter,
-                    &to_fire,
-                    &errors_per_file,
-                    &project_rel_prefix,
-                    &cfg.project_path,
-                    &repo_root,
-                    &port_context,
-                )
-                .await;
+
+                // §5.14: prefer multi-file atomic rewrite when in
+                // port_first_mode (when the cluster is most likely
+                // tightly coupled). Falls back to single-file path on
+                // parse failure or when explicitly disabled.
+                let multi_file_disabled = std::env::var("HEX_DISABLE_MULTI_FILE_FRONTIER").is_ok();
+                let committed = if port_first_mode && !multi_file_disabled {
+                    // Build the cluster: errored files (bare paths) + all
+                    // ports + all domain files. Sorted inside-out by layer.
+                    let errored_paths: Vec<String> =
+                        to_fire.iter().map(|(p, _)| p.clone()).collect();
+                    let cluster = discover_cluster(&cfg.project_path, &errored_paths);
+                    // Build errors block from the same per-file map the
+                    // single-file path uses, but covering ALL errored files
+                    // (not just to_fire), so claude sees the full scope.
+                    let prefix_trim = project_rel_prefix.trim_end_matches('/').to_string();
+                    let cluster_errors_block: String = errors_per_file
+                        .iter()
+                        .flat_map(|(_f, lines)| {
+                            let prefix = prefix_trim.clone();
+                            lines.iter().take(10).map(move |l| {
+                                if l.starts_with("src/") {
+                                    format!("{}/{}", prefix, l)
+                                } else {
+                                    l.clone()
+                                }
+                            })
+                        })
+                        .take(60)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    tracing::info!(
+                        cluster_size = cluster.len(),
+                        cluster_bytes = cluster.iter().map(|(_, c, _)| c.len()).sum::<usize>(),
+                        errors_block_bytes = cluster_errors_block.len(),
+                        "auto_repair: §5.14 multi-file frontier — assembled cluster"
+                    );
+                    let multi = run_multi_file_frontier(
+                        adapter.clone(),
+                        &cluster,
+                        &cluster_errors_block,
+                        &project_rel_prefix,
+                        &cfg.project_path,
+                        &repo_root,
+                    )
+                    .await;
+                    if multi > 0 {
+                        multi
+                    } else {
+                        tracing::warn!(
+                            "auto_repair: multi-file frontier returned 0 — falling back to single-file path"
+                        );
+                        run_frontier_escalation(
+                            adapter,
+                            &to_fire,
+                            &errors_per_file,
+                            &project_rel_prefix,
+                            &cfg.project_path,
+                            &repo_root,
+                            &port_context,
+                        )
+                        .await
+                    }
+                } else {
+                    run_frontier_escalation(
+                        adapter,
+                        &to_fire,
+                        &errors_per_file,
+                        &project_rel_prefix,
+                        &cfg.project_path,
+                        &repo_root,
+                        &port_context,
+                    )
+                    .await
+                };
                 tracing::info!(
                     files_committed = committed,
                     "auto_repair: frontier escalation pass complete"
@@ -885,6 +1200,180 @@ async fn cargo_check_errors(
 ///   3. Next tick's cargo_check is the regression gate
 ///
 /// Returns the number of files successfully written + committed.
+/// §5.14: Run a single multi-file atomic frontier escalation. ONE claude
+/// call that sees the whole cluster (domain + ports + usecases + adapters),
+/// returns rewrites for the files it wants to change, applied atomically
+/// in one git commit. Designed to break the single-file cascade problem
+/// proven empirically in runs 1-3.
+///
+/// Returns the number of files committed (0 on parse failure or any error).
+/// Caller can fall back to the single-file path if this returns 0.
+async fn run_multi_file_frontier(
+    adapter: Arc<dyn IInferencePort>,
+    cluster: &[(String, String, FileLayer)],
+    errors_block: &str,
+    project_rel_prefix: &str,
+    project_path: &Path,
+    repo_root: &Path,
+) -> usize {
+    // §5.15: claim ALL cluster files in frontier_inflight before any work.
+    // Single guard at function scope releases all on drop.
+    struct MultiFrontierGuard {
+        paths: Vec<String>,
+    }
+    impl Drop for MultiFrontierGuard {
+        fn drop(&mut self) {
+            if let Ok(mut s) = state().lock() {
+                for p in &self.paths {
+                    s.frontier_inflight.remove(p);
+                }
+            }
+        }
+    }
+    let _guard = {
+        let mut s = state().lock().unwrap();
+        let mut claimed = Vec::with_capacity(cluster.len());
+        for (rel, _, _) in cluster {
+            if !s.frontier_inflight.contains(rel) {
+                s.frontier_inflight.insert(rel.clone());
+                claimed.push(rel.clone());
+            }
+        }
+        MultiFrontierGuard { paths: claimed }
+    };
+
+    let prompt = build_multi_file_prompt(cluster, errors_block, project_rel_prefix);
+    tracing::info!(
+        cluster_files = cluster.len(),
+        prompt_bytes = prompt.len(),
+        "frontier multi-file: dispatching cluster to claude -p"
+    );
+
+    let req = InferenceRequest {
+        model: "claude-code".to_string(),
+        system_prompt: String::new(),
+        messages: vec![Message::user(&prompt)],
+        tools: vec![],
+        max_tokens: 32_768, // bigger response budget — cluster output is large
+        temperature: 0.0,
+        thinking_budget: None,
+        cache_control: false,
+        priority: Priority::Normal,
+        grammar: None,
+    };
+
+    let response = match adapter.complete(req).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "frontier multi-file: complete failed");
+            return 0;
+        }
+    };
+
+    let content_text: String = response
+        .content
+        .iter()
+        .filter_map(|b| match b {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("");
+
+    let edits = parse_multi_file_response(&content_text);
+    if edits.is_empty() {
+        tracing::warn!(
+            response_bytes = content_text.len(),
+            "frontier multi-file: parsed 0 file edits — claude likely didn't follow the format. Falling back."
+        );
+        return 0;
+    }
+    tracing::info!(
+        edits = edits.len(),
+        "frontier multi-file: parsed cluster response"
+    );
+
+    // Stage all writes BEFORE committing any. If any write fails, the
+    // partial state is left on disk — the next tick's cargo_check will
+    // catch it, but log loudly so the operator notices.
+    let mut written: Vec<String> = Vec::new();
+    for (prefixed_path, content) in &edits {
+        // Strip project_rel_prefix to get the bare rel_path that join() expects.
+        let bare = if !project_rel_prefix.is_empty()
+            && prefixed_path.starts_with(project_rel_prefix.trim_end_matches('/'))
+        {
+            let start = project_rel_prefix.trim_end_matches('/').len() + 1;
+            if start <= prefixed_path.len() {
+                prefixed_path[start..].to_string()
+            } else {
+                prefixed_path.clone()
+            }
+        } else {
+            prefixed_path.clone()
+        };
+        let abs = project_path.join(&bare);
+        if let Some(parent) = abs.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                tracing::warn!(path = %prefixed_path, error = %e, "frontier multi-file: mkdir failed");
+                continue;
+            }
+        }
+        if let Err(e) = std::fs::write(&abs, content) {
+            tracing::warn!(path = %prefixed_path, error = %e, "frontier multi-file: write failed");
+            continue;
+        }
+        tracing::info!(
+            path = %prefixed_path,
+            bytes = content.len(),
+            "frontier multi-file: wrote"
+        );
+        written.push(prefixed_path.clone());
+    }
+    if written.is_empty() {
+        return 0;
+    }
+
+    // Stage everything written, single commit.
+    let add = tokio::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .arg("add")
+        .args(&written)
+        .status()
+        .await;
+    if !add.map(|s| s.success()).unwrap_or(false) {
+        tracing::warn!("frontier multi-file: git add failed");
+        return 0;
+    }
+
+    let msg = format!(
+        "fix(auto-repair frontier multi-file): rewrote cluster of {} files via claude -p\n\n\
+         Multi-file atomic rewrite (§5.14). The cluster spanned the hex \
+         dependency tree (domain → ports → usecases → adapters); claude saw \
+         all files in inside-out order and emitted coordinated edits in one \
+         response. This avoids the single-file cascade pattern that made the \
+         loop oscillate around 18 errors in runs 1-3.\n\n\
+         Files in this commit:\n{}\n\n\
+         [frontier-escalation] [multi-file] [auto-repair]",
+        written.len(),
+        written.iter().map(|p| format!("  - {}", p)).collect::<Vec<_>>().join("\n")
+    );
+    let commit = tokio::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .arg("commit")
+        .arg("-m")
+        .arg(&msg)
+        .status()
+        .await;
+    if !commit.map(|s| s.success()).unwrap_or(false) {
+        tracing::warn!("frontier multi-file: git commit failed (files on disk)");
+        return written.len();
+    }
+    tracing::info!(files_committed = written.len(), "frontier multi-file: atomic commit landed");
+    written.len()
+}
+
 /// RAII guard that removes a file from `frontier_inflight` on drop.
 /// §5.15: ensures the lock is released on every exit path from a frontier
 /// loop iteration — including `continue`, `?`, panic — without manual
@@ -1263,6 +1752,97 @@ mod tests {
         let result = read_current_file_block(&tmp, "under.rs");
         assert_eq!(result, "fn x() {}\n");
         let _ = std::fs::remove_file(&target);
+    }
+
+    #[test]
+    fn file_layer_ordering_is_inside_out() {
+        assert!(FileLayer::Domain < FileLayer::Ports);
+        assert!(FileLayer::Ports < FileLayer::Usecases);
+        assert!(FileLayer::Usecases < FileLayer::AdaptersSecondary);
+        assert!(FileLayer::AdaptersSecondary < FileLayer::AdaptersPrimary);
+        assert!(FileLayer::AdaptersPrimary < FileLayer::Other);
+    }
+
+    #[test]
+    fn classify_file_layer_recognises_hex_paths() {
+        assert_eq!(
+            classify_file_layer("examples/eb/backend/src/core/domain/user.rs"),
+            FileLayer::Domain
+        );
+        assert_eq!(
+            classify_file_layer("src/core/ports/listing_repo.rs"),
+            FileLayer::Ports
+        );
+        assert_eq!(
+            classify_file_layer("examples/eb/backend/src/core/usecases/auth.rs"),
+            FileLayer::Usecases
+        );
+        assert_eq!(
+            classify_file_layer("src/adapters/secondary/stdb_client.rs"),
+            FileLayer::AdaptersSecondary
+        );
+        assert_eq!(
+            classify_file_layer("src/adapters/primary/http_axum.rs"),
+            FileLayer::AdaptersPrimary
+        );
+        assert_eq!(
+            classify_file_layer("README.md"),
+            FileLayer::Other
+        );
+    }
+
+    #[test]
+    fn parse_multi_file_response_extracts_single_file() {
+        let text = "<<<FILE: foo.rs>>>\nfn x() {}\n<<<END FILE>>>\n";
+        let out = parse_multi_file_response(text);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.get("foo.rs").map(|s| s.as_str()), Some("fn x() {}"));
+    }
+
+    #[test]
+    fn parse_multi_file_response_extracts_multiple_files() {
+        let text = "preamble before files (should be skipped)\n\
+                    <<<FILE: a.rs>>>\nuse b;\n<<<END FILE>>>\n\
+                    <<<FILE: b.rs>>>\nstruct B;\n<<<END FILE>>>\n";
+        let out = parse_multi_file_response(text);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out.get("a.rs").map(|s| s.as_str()), Some("use b;"));
+        assert_eq!(out.get("b.rs").map(|s| s.as_str()), Some("struct B;"));
+    }
+
+    #[test]
+    fn parse_multi_file_response_empty_input_returns_empty_map() {
+        assert!(parse_multi_file_response("").is_empty());
+        assert!(parse_multi_file_response("no file markers here").is_empty());
+    }
+
+    #[test]
+    fn parse_multi_file_response_skips_empty_content() {
+        // Empty content should not be returned (caller would write empty
+        // file otherwise).
+        let text = "<<<FILE: a.rs>>>\n\n<<<END FILE>>>\n";
+        let out = parse_multi_file_response(text);
+        assert!(out.is_empty(), "got: {:?}", out);
+    }
+
+    #[test]
+    fn build_multi_file_prompt_groups_by_layer() {
+        let cluster = vec![
+            ("src/adapters/secondary/x.rs".to_string(), "// adapter\n".to_string(), FileLayer::AdaptersSecondary),
+            ("src/core/domain/d.rs".to_string(), "// domain\n".to_string(), FileLayer::Domain),
+            ("src/core/ports/p.rs".to_string(), "// port\n".to_string(), FileLayer::Ports),
+        ];
+        let prompt = build_multi_file_prompt(&cluster, "error[E0432]: ...", "examples/eb/backend");
+        // Domain should appear BEFORE ports which should appear BEFORE adapters.
+        let d = prompt.find("// domain").unwrap();
+        let p = prompt.find("// port").unwrap();
+        let a = prompt.find("// adapter").unwrap();
+        assert!(d < p && p < a, "expected inside-out order: domain={d} ports={p} adapters={a}");
+        // Path prefix is applied.
+        assert!(prompt.contains("examples/eb/backend/src/core/domain/d.rs"));
+        // Layer headers are present.
+        assert!(prompt.contains("LAYER: domain"));
+        assert!(prompt.contains("LAYER: ports"));
     }
 
     #[test]
