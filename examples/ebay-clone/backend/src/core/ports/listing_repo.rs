@@ -1,7 +1,5 @@
 use crate::core::domain::*;
 use async_trait::async_trait;
-// use core::time::DurationMs; // ADR-2026-05-19-0721
-use adapters::primary::http_axum::handlers_listings::SearchListingsParams;
 
 /// ListingRepoPort defines read-only operations on listings.
 ///
@@ -27,40 +25,32 @@ pub trait ListingRepoPort: Send + Sync {
     async fn get_listings_by_criteria(&self, criteria: &SearchListingsParams) -> Result<Vec<Listing>, ListingRepoError>;
 }
 
-/// DTO for creating a new listing. This is used as input to the create_listing reducer.
-#[derive(Debug, Clone)]
+/// Search criteria for listing queries.
+///
+/// Owned by the port (not the HTTP adapter) so the contract does not depend
+/// on a primary adapter's request DTO — primary adapters map their inbound
+/// query parameters into this type before calling the port.
+#[derive(Debug, Clone, Default)]
+pub struct SearchListingsParams {
+    pub query: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+/// DTO for creating a new listing.
+#[derive(Debug)]
 pub struct CreateListingInput {
-    pub title: String,
-    pub description: Option<String>,
-    pub start_price: Money,
+    pub title: ListingTitle,
+    pub description: String,
+    pub starting_price: Money,
     pub duration: DurationMs,
 }
 
-/// Errors that can occur when interacting with the ListingRepo.
-#[derive(Debug)]
+/// Errors that can occur when interacting with the listing repository.
+#[derive(Debug, thiserror::Error)]
 pub enum ListingRepoError {
-    /// The listing ID provided is invalid.
-    InvalidListingId(ListingIdValidationError),
-    /// The user ID provided is invalid.
-    InvalidUserId(UserIdValidationError),
-    /// Other domain-specific errors.
-    DomainError(DomainError),
-}
-
-impl From<ListingIdValidationError> for ListingRepoError {
-    fn from(err: ListingIdValidationError) -> Self {
-        ListingRepoError::InvalidListingId(err)
-    }
-}
-
-impl From<UserIdValidationError> for ListingRepoError {
-    fn from(err: UserIdValidationError) -> Self {
-        ListingRepoError::InvalidUserId(err)
-    }
-}
-
-impl From<DomainError> for ListingRepoError {
-    fn from(err: DomainError) -> Self {
-        ListingRepoError::DomainError(err)
-    }
+    #[error("Database error: {0}")]
+    DbError(String),
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 }

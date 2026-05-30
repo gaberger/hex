@@ -1,13 +1,18 @@
-use crate::adapters::secondary::stdb_client::{connection};
-use crate::core::domain::{Auction, Bid, Listing, User, WatchEntry};
-
+/// Minimal SpacetimeDB client adapter.
+///
+/// The previous implementation referenced a `connection` submodule that does
+/// not exist in this crate, breaking the build. This conforming stub holds the
+/// connection string and exposes the same `new` constructor surface so callers
+/// continue to compile while real STDB connection wiring is implemented.
 pub struct StdbClient {
-    client: connection::StdbClient,
+    #[allow(dead_code)]
+    connection_string: String,
 }
 
 impl StdbClient {
     pub async fn new(connection_string: &str) -> Result<Self, String> {
-        let client = connection::connect(connection_string).await.map_err(|e| e.to_string())?;
-        Ok(StdbClient { client })
+        Ok(StdbClient {
+            connection_string: connection_string.to_string(),
+        })
     }
 }

@@ -34,6 +34,13 @@ pub enum DomainError {
     /// The user tried to bid on their own auction.
     #[error("Self-bidding is forbidden.")]
     SelfBidForbidden,
+
+    /// An infrastructure/adapter-level failure surfaced through a port that
+    /// declares `DomainError` as its error type (e.g. filesystem IO in the
+    /// image store). Ports contract on `DomainError`, so adapters map their
+    /// own IO errors into this variant rather than leaking adapter types.
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 // ADR-2026-05-19-0721
