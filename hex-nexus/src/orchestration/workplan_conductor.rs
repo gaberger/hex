@@ -42,6 +42,12 @@ const DEFAULT_INTERVAL_SECS: u64 = 60;
 const DEFAULT_COOLDOWN_SECS: u64 = 300;
 const DEFAULT_STALL_TICKS: u64 = 10;
 const DEFAULT_STARTUP_SECS: u64 = 45;
+/// Max times the conductor re-dispatches a single step before opening its
+/// circuit. Bounds the re-hallucination loop: when a persona keeps producing a
+/// step whose evidence never passes (or an operator deletes a hallucinated
+/// file the persona keeps rewriting), the conductor stops dispatching it and
+/// escalates instead of looping forever. 0 disables the breaker.
+const DEFAULT_MAX_DISPATCH_ATTEMPTS: u64 = 5;
 const SEND_AGENT_ID: &str = "nexus-workplan-conductor";
 
 fn parse_env_u64(name: &str, default: u64) -> u64 {
@@ -65,6 +71,18 @@ struct ConductorState {
     /// produced files change, so a green step costs one stat/tick, not a
     /// `cargo test` storm.
     evidence_pass: HashMap<String, (String, bool)>,
+    /// Per-step dispatch attempts, keyed `workplan_id::step_id`. Bounds the
+    /// re-hallucination loop — cleared when the step reaches evidence-verified
+    /// done (so a genuinely-fixed step resets).
+    dispatch_attempts: HashMap<String, u64>,
+    /// Steps whose circuit has opened and been escalated (escalate once).
+    circuit_escalated: std::collections::HashSet<String>,
+}
+
+/// Circuit is open once a step has been dispatched `max` times without reaching
+/// done. `max == 0` disables the breaker.
+fn is_circuit_open(attempts: u64, max: u64) -> bool {
+    max > 0 && attempts >= max
 }
 
 fn state() -> &'static Mutex<ConductorState> {
@@ -412,6 +430,9 @@ async fn drive_workplan(
         .and_then(|v| v.as_array())
         .ok_or("workplan missing steps[]")?;
 
+    let max_dispatch =
+        parse_env_u64("HEX_WORKPLAN_CONDUCTOR_MAX_DISPATCH", DEFAULT_MAX_DISPATCH_ATTEMPTS);
+
     // Compute per-step completion. A step is "done" iff every file in
     // files_to_create exists with non-zero size AND its `evidence` predicates
     // (if any) pass. Files-exist alone is necessary but not sufficient: it
@@ -456,6 +477,14 @@ async fn drive_workplan(
         } else {
             false
         };
+        if step_done {
+            // Step reached evidence-verified done → clear its circuit state so
+            // a future regression gets a fresh dispatch budget.
+            let key = format!("{}::{}", workplan_id, id);
+            let mut s = state().lock().unwrap();
+            s.dispatch_attempts.remove(&key);
+            s.circuit_escalated.remove(&key);
+        }
         done.insert(id.clone(), step_done);
         step_index.insert(id, step);
     }
@@ -528,8 +557,35 @@ async fn drive_workplan(
         if !deps_satisfied {
             continue;
         }
-        // Cooldown check.
         let cooldown_key = format!("{}::{}", workplan_id, id);
+        // Circuit breaker (re-hallucination guard): if this step has been
+        // dispatched max times without reaching evidence-verified done, stop
+        // dispatching it — escalate once and skip, so the persona can't keep
+        // rewriting the same broken artifact in a loop.
+        let attempts = state()
+            .lock()
+            .unwrap()
+            .dispatch_attempts
+            .get(&cooldown_key)
+            .copied()
+            .unwrap_or(0);
+        if is_circuit_open(attempts, max_dispatch) {
+            let first = {
+                let mut s = state().lock().unwrap();
+                s.circuit_escalated.insert(cooldown_key.clone())
+            };
+            if first {
+                tracing::warn!(
+                    workplan = %workplan_id, step = %id, attempts, max = max_dispatch,
+                    "workplan_conductor: dispatch circuit OPEN — step failed to reach \
+                     evidence-verified done after max attempts; NOT re-dispatching \
+                     (re-hallucination guard), escalating to operator"
+                );
+                escalate_circuit(http, nexus_base, &workplan_id, id, attempts).await;
+            }
+            continue;
+        }
+        // Cooldown check.
         let in_cooldown = {
             let s = state().lock().unwrap();
             s.dispatched
@@ -591,11 +647,15 @@ async fn drive_workplan(
     match dispatched {
         Ok(()) => {
             let mut s = state().lock().unwrap();
-            s.dispatched.insert(cooldown_key, now);
+            s.dispatched.insert(cooldown_key.clone(), now);
+            let attempts = s.dispatch_attempts.entry(cooldown_key).or_insert(0);
+            *attempts += 1;
             tracing::info!(
                 workplan = %workplan_id,
                 step = %step_id,
                 target = %target,
+                attempt = *attempts,
+                max = max_dispatch,
                 completed_count,
                 total,
                 "workplan_conductor: dispatched step"
@@ -832,6 +892,36 @@ async fn escalate_stall(
     );
 }
 
+/// Escalate a step whose dispatch circuit has opened — the persona kept
+/// producing an artifact that never reaches evidence-verified done. The
+/// conductor will not re-dispatch it; a human (or a revised workplan) must
+/// intervene.
+async fn escalate_circuit(
+    http: &Arc<reqwest::Client>,
+    nexus_base: &str,
+    workplan_id: &str,
+    step_id: &str,
+    attempts: u64,
+) {
+    let content = format!(
+        "Step `{}` of workplan `{}` was dispatched {} times without reaching \
+         evidence-verified done. The conductor has OPENED its dispatch circuit and \
+         will NOT re-dispatch it — this stops the persona re-hallucinating the same \
+         broken artifact in a loop. Operator action: inspect the step's files + \
+         `evidence` predicate, fix by hand or revise the workplan, then restart the \
+         conductor to reset the circuit.",
+        step_id, workplan_id, attempts
+    );
+    let _ = send_dm(
+        http,
+        nexus_base,
+        "engineering-lead",
+        &format!("CIRCUIT-OPEN: {} {}", workplan_id, step_id),
+        &content,
+    )
+    .await;
+}
+
 async fn memory_store(
     http: &Arc<reqwest::Client>,
     nexus_base: &str,
@@ -916,6 +1006,17 @@ mod tests {
         let none = json!({ "id": "ev-none" });
         let (ok, _) = step_evidence_gate(&http, base, "feat-test", "ev-none", &none, &root).await;
         assert!(ok, "no evidence => legacy files-exist semantics preserved");
+    }
+
+    // Re-hallucination guard: the circuit opens once a step has burned its
+    // dispatch budget, so the conductor stops re-dispatching (and escalates).
+    #[test]
+    fn dispatch_circuit_opens_at_max() {
+        assert!(!is_circuit_open(0, 5));
+        assert!(!is_circuit_open(4, 5), "under budget stays closed");
+        assert!(is_circuit_open(5, 5), "at budget opens");
+        assert!(is_circuit_open(99, 5), "over budget stays open");
+        assert!(!is_circuit_open(1000, 0), "max=0 disables the breaker");
     }
 
     // Evidence-by-default: a code-producing step with no explicit `evidence`
