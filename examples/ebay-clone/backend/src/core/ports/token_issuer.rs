@@ -33,5 +33,5 @@ pub struct TokenIssuerInput {
     // Add other necessary fields here as per the spec
 }
 
-/// Reference to docs/specs/ebay-spec-023 for detailed specifications of token issuance and verification.
-/// ADR-2026-05-19-0721 for any specific design decisions related to this port.
+// Reference to docs/specs/ebay-spec-023 for detailed specifications of token issuance and verification.
+// ADR-2026-05-19-0721 for any specific design decisions related to this port.

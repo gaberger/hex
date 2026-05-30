@@ -16,7 +16,7 @@ pub mod watch;
 // Without these every usecase + adapter file hit E0425 "cannot find type
 // X in this scope" — 80+ of the 139 compile errors collapse to import
 // resolution once these are re-exported at the module root.
-pub use ids::{UserId, ListingId, BidId};
+pub use ids::{UserId, ListingId, BidId, AuctionId};
 pub use money::Money;
 pub use username::Username;
 pub use title::ListingTitle;

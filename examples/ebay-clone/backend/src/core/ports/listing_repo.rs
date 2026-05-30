@@ -1,7 +1,16 @@
 use crate::core::domain::*;
 use async_trait::async_trait;
-use core::time::DurationMs; // ADR-2026-05-19-0721
-use adapters::primary::http_axum::handlers_listings::SearchListingsParams;
+
+/// Search/filter criteria for listing queries.
+///
+/// Defined in the port layer so adapters depend inward on the port, never the
+/// reverse — a port must not import from `adapters::*` (hex rule).
+#[derive(Debug, Clone, Default)]
+pub struct SearchListingsParams {
+    pub query: Option<String>,
+    pub min_price_cents: Option<u64>,
+    pub max_price_cents: Option<u64>,
+}
 
 /// ListingRepoPort defines read-only operations on listings.
 ///
@@ -35,7 +44,6 @@ pub struct CreateListingInput {
     pub starting_bid: Money,
     pub start_time: Timestamp,
     pub end_time: Timestamp,
-    // pub duration_ms: DurationMs, // Uncomment if needed
 }
 
 /// Errors that can occur when interacting with the Listing repository.
