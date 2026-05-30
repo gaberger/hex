@@ -6,7 +6,7 @@ use sha2::{Sha256, Digest};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-use crate::domain::image_store::{ImageRef, ImageStoreError, ImageStorePort};
+use crate::core::domain::image_store::{ImageRef, ImageStoreError, ImageStorePort};
 
 mod hasher;
 
