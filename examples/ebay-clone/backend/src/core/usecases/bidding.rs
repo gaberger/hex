@@ -20,27 +20,27 @@ impl BiddingUseCase {
     }
 
     /// Lists all bids made by the given bidder.
-    pub fn list_my_bids(&self, bidder_id: UserId) -> Result<Vec<Bid>, DomainError> {
-        self.bid_repo.get_bids_by_user(bidder_id)
+    pub fn list_my_bids(&self, bidder_identity: &str) -> Result<Vec<crate::core::domain::Bid>, DomainError> {
+        self.bid_repo.find_by_bidder(bidder_identity)
+            .map_err(|_| DomainError::RepoAccessFailed)
+    }
+
+    /// Lists all auctions won by the given user.
+    pub fn list_my_won(&self, winner_identity: &str) -> Result<Vec<Listing>, DomainError> {
+        self.auction_repo.find_by_winner(winner_identity)
+            .map_err(|_| DomainError::RepoAccessFailed)
+    }
+
+    /// Toggles a listing in the user's watchlist.
+    pub fn toggle_watch(&self, listing_id: &str, bidder_identity: &str) -> Result<(), DomainError> {
+        self.reducer_port.watch_listing(listing_id, bidder_identity)
             .map_err(|_| DomainError::Unexpected)
     }
 
-    /// Lists all auctions won by the given bidder.
-    pub fn list_my_won_auctions(&self, bidder_id: UserId) -> Result<Vec<Auction>, DomainError> {
-        self.auction_repo.get_won_auctions(bidder_id)
-            .map_err(|_| DomainError::Unexpected)
-    }
-
-    /// Toggles watching an auction for the given bidder.
-    pub fn toggle_watch_auction(&self, bidder_id: UserId, auction_id: AuctionId) -> Result<(), DomainError> {
-        self.reducer_port.watch_listing(WatchListingInput { user_id: bidder_id, listing_id: auction_id })
-            .map_err(|_| DomainError::Unexpected)
-    }
-
-    /// Lists all listings watched by the given bidder.
-    pub fn list_my_listings(&self, bidder_id: UserId) -> Result<Vec<Listing>, DomainError> {
-        self.auction_repo.get_watched_auctions(bidder_id)
-            .map_err(|_| DomainError::Unexpected)
+    /// Lists all listings created by the given seller.
+    pub fn list_my_listings(&self, seller_identity: &str) -> Result<Vec<Listing>, DomainError> {
+        self.auction_repo.find_by_seller(seller_identity)
+            .map_err(|_| DomainError::RepoAccessFailed)
     }
 }
 

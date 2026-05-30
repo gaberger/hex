@@ -1,4 +1,4 @@
-mod connection;
+use crate::adapters::secondary::stdb_client::{connection};
 use crate::core::domain::{Auction, Bid, Listing, User, WatchEntry};
 
 pub struct StdbClient {
