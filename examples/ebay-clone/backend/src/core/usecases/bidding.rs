@@ -1,4 +1,4 @@
-use crate::core::ports::{BidRepoPort, AuctionRepoPort, ReducerCallPort};
+use super::ports::{BidRepoPort, AuctionRepoPort, ReducerCallPort};
 use crate::core::domain::{Listing, DomainError};
 
 /// Use case for handling bidding actions.
@@ -15,32 +15,32 @@ impl BiddingUseCase {
 
     /// Places a bid on an auction.
     pub fn place_bid(&self, bid: crate::core::domain::Bid) -> Result<(), DomainError> {
-        // Implementation for placing a bid
-        unimplemented!()
+        self.reducer_port.place_bid(bid)
+            .map_err(|_| DomainError::Unexpected)
     }
 
-    /// Lists my bids.
-    pub fn list_my_bids(&self, user_id: &crate::core::domain::UserId) -> Result<Vec<crate::core::domain::Bid>, DomainError> {
-        // Implementation for listing my bids
-        unimplemented!()
+    /// Lists all bids made by the given bidder.
+    pub fn list_my_bids(&self, bidder_id: UserId) -> Result<Vec<Bid>, DomainError> {
+        self.bid_repo.get_bids_by_user(bidder_id)
+            .map_err(|_| DomainError::Unexpected)
     }
 
-    /// Lists auctions I have won.
-    pub fn list_my_won_auctions(&self, user_id: &crate::core::domain::UserId) -> Result<Vec<crate::core::domain::Auction>, DomainError> {
-        // Implementation for listing my won auctions
-        unimplemented!()
+    /// Lists all auctions won by the given bidder.
+    pub fn list_my_won_auctions(&self, bidder_id: UserId) -> Result<Vec<Auction>, DomainError> {
+        self.auction_repo.get_won_auctions(bidder_id)
+            .map_err(|_| DomainError::Unexpected)
     }
 
-    /// Toggles watching an auction.
-    pub fn toggle_watch_auction(&self, user_id: &crate::core::domain::UserId, auction_id: &crate::core::domain::AuctionId) -> Result<(), DomainError> {
-        // Implementation for toggling watch on an auction
-        unimplemented!()
+    /// Toggles watching an auction for the given bidder.
+    pub fn toggle_watch_auction(&self, bidder_id: UserId, auction_id: AuctionId) -> Result<(), DomainError> {
+        self.reducer_port.watch_listing(WatchListingInput { user_id: bidder_id, listing_id: auction_id })
+            .map_err(|_| DomainError::Unexpected)
     }
 
-    /// Lists my listings.
-    pub fn list_my_listings(&self, user_id: &crate::core::domain::UserId) -> Result<Vec<crate::core::domain::Listing>, DomainError> {
-        // Implementation for listing my listings
-        unimplemented!()
+    /// Lists all listings watched by the given bidder.
+    pub fn list_my_listings(&self, bidder_id: UserId) -> Result<Vec<Listing>, DomainError> {
+        self.auction_repo.get_watched_auctions(bidder_id)
+            .map_err(|_| DomainError::Unexpected)
     }
 }
 
