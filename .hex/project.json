@@ -7,8 +7,8 @@
   "inference": {
     "tier_models": {
       "t1": "qwen3:4b",
-      "t2": "qwen2.5-coder:14b",
-      "t2.5": "qwen3.6:35b-a3b"
+      "t2": "Qwen/Qwen3-32B",
+      "t2.5": "deepseek-ai/DeepSeek-R1-0528"
     },
     "timeout_secs": 600
   },

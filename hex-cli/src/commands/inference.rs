@@ -2338,10 +2338,31 @@ async fn bench_provider(
             }
     }
 
-    let Some(r) = resolved.filter(|r| !r.url.is_empty()) else {
+    let Some(mut r) = resolved.filter(|r| !r.url.is_empty()) else {
         println!("{} Could not resolve target '{}' — register it first with `hex inference add`", "✗".red(), target);
         return Ok(());
     };
+
+    // Cloud openai-compat providers (e.g. Tenstorrent, vLLM behind a key) store
+    // their API key as a vault reference that only nexus can resolve — and their
+    // base URL often omits `/v1`. Direct CLI calls from bench_chat would send an
+    // empty bearer and mis-detect the endpoint shape. Route these through the
+    // nexus proxy (`{nexus}/v1/chat/completions` with a `hex/<model>` id), which
+    // resolves the vault key and provider type for us. Local Ollama and
+    // OpenRouter-direct targets keep their direct path (measures true latency).
+    let is_cloud_compat = (r.ptype.contains("openai") || r.ptype == "vllm")
+        && !r.url.contains(":11434")
+        && !r.url.contains("openrouter.ai");
+    if is_cloud_compat {
+        if nexus.ensure_running().await.is_ok() {
+            r.url = format!("{}/v1", nexus.url().trim_end_matches('/'));
+            r.ptype = "openai-compat".to_string();
+            r.model = format!("hex/{}", r.model);
+        } else {
+            println!("{} nexus not reachable — cannot bench cloud provider '{}' (vault key needs nexus)", "✗".red(), r.id);
+            return Ok(());
+        }
+    }
 
     println!("{}", format!("── hex inference bench: {} via {} ──", r.model, r.id).cyan());
     println!();
