@@ -100,6 +100,8 @@ fn step_files_signature(step: &Value, repo_root: &Path) -> String {
 /// Predicate execution is moved off the async runtime via `spawn_blocking`
 /// because predicates (e.g. `cargo test`) can block for seconds.
 async fn step_evidence_gate(
+    http: &Arc<reqwest::Client>,
+    nexus_base: &str,
     workplan_id: &str,
     step_id: &str,
     step: &Value,
@@ -137,7 +139,68 @@ async fn step_evidence_gate(
         .unwrap()
         .evidence_pass
         .insert(cache_key, (sig, passed));
+
+    // Couple the RL reward to the acceptance verdict (ADR-024 "reward = test
+    // pass rate"; ADR-2026-03-24-0045 P4). Fires once per actual verification
+    // (this fresh-compute path only — never on cache hits), so the rl-engine
+    // learns which tier/layer→persona routing produces gate-PASSING work,
+    // instead of the homeostasis-only signal that sat at mean reward -0.99.
+    let state_key = evidence_state_key(step);
+    let action = format!("persona:{}", route_step_to_persona(step));
+    let reward = if passed { 1.0 } else { -1.0 };
+    let next = if passed { "accepted" } else { "rejected" };
+    post_rl_reward(http, nexus_base, &state_key, &action, reward, next).await;
+
     (passed, reason)
+}
+
+/// RL state key for an evidence verdict: the *kind* of work (tier + layer),
+/// so the q-table generalizes across steps of the same shape.
+fn evidence_state_key(step: &Value) -> String {
+    let tier = step.get("tier").and_then(|v| v.as_u64());
+    let layer = step.get("layer").and_then(|v| v.as_str()).unwrap_or("");
+    match (tier, layer.is_empty()) {
+        (Some(t), false) => format!("evidence:tier{t}:{layer}"),
+        (Some(t), true) => format!("evidence:tier{t}"),
+        (None, false) => format!("evidence:{layer}"),
+        (None, true) => "evidence:step".to_string(),
+    }
+}
+
+/// Fire-and-forget RL reward to the local nexus rl-engine. Skipped when
+/// `nexus_base` is empty (unit tests). Never blocks the conductor on failure.
+async fn post_rl_reward(
+    http: &Arc<reqwest::Client>,
+    nexus_base: &str,
+    state_key: &str,
+    action: &str,
+    reward: f64,
+    next_state_key: &str,
+) {
+    if nexus_base.is_empty() {
+        return;
+    }
+    let url = format!("{nexus_base}/api/rl/reward");
+    let body = json!({
+        "stateKey": state_key,
+        "action": action,
+        "reward": reward,
+        "nextStateKey": next_state_key,
+    });
+    match http.post(&url).json(&body).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            tracing::info!(
+                state_key, action, reward,
+                "workplan_conductor: RL reward recorded from evidence gate"
+            );
+        }
+        Ok(resp) => {
+            tracing::debug!(status = %resp.status(), "workplan_conductor: RL reward non-success");
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "workplan_conductor: RL reward post failed");
+        }
+    }
 }
 
 pub fn spawn(repo_root: PathBuf) {
@@ -282,7 +345,8 @@ async fn drive_workplan(
         }
         let files_present = any_listed && all_present;
         let step_done = if files_present {
-            let (passed, reason) = step_evidence_gate(&workplan_id, &id, step, repo_root).await;
+            let (passed, reason) =
+                step_evidence_gate(http, nexus_base, &workplan_id, &id, step, repo_root).await;
             if !passed {
                 tracing::warn!(
                     workplan = %workplan_id,
@@ -734,24 +798,39 @@ mod tests {
     #[tokio::test]
     async fn evidence_gate_red_on_fail_green_on_pass() {
         let root = std::env::temp_dir();
+        let http = Arc::new(reqwest::Client::new());
+        // Empty nexus_base => reward POST is skipped, keeping the test hermetic.
+        let base = "";
 
         // GREEN: a passing predicate.
         let pass = json!({ "id": "ev-pass", "evidence": ["true"] });
-        let (ok, reason) = step_evidence_gate("feat-test", "ev-pass", &pass, &root).await;
+        let (ok, reason) = step_evidence_gate(&http, base, "feat-test", "ev-pass", &pass, &root).await;
         assert!(ok, "passing predicate must be done");
         assert!(reason.is_none());
 
         // RED: a failing predicate — files could all exist and this is still
         // NOT done. This is the case that would have caught the stub router.
         let fail = json!({ "id": "ev-fail", "evidence": ["exit 1"] });
-        let (ok, reason) = step_evidence_gate("feat-test", "ev-fail", &fail, &root).await;
+        let (ok, reason) = step_evidence_gate(&http, base, "feat-test", "ev-fail", &fail, &root).await;
         assert!(!ok, "failing predicate must NOT be done");
         assert!(reason.is_some(), "failure surfaces a reason for the operator");
 
         // Legacy: no evidence declared keeps files-exist semantics (vacuous pass).
         let none = json!({ "id": "ev-none" });
-        let (ok, _) = step_evidence_gate("feat-test", "ev-none", &none, &root).await;
+        let (ok, _) = step_evidence_gate(&http, base, "feat-test", "ev-none", &none, &root).await;
         assert!(ok, "no evidence => legacy files-exist semantics preserved");
+    }
+
+    // The reward keying generalizes across steps of the same shape (tier+layer)
+    // so the q-table learns routing quality, not per-step noise.
+    #[test]
+    fn evidence_state_key_encodes_tier_and_layer() {
+        assert_eq!(
+            evidence_state_key(&json!({"tier":2,"layer":"secondary"})),
+            "evidence:tier2:secondary"
+        );
+        assert_eq!(evidence_state_key(&json!({"tier":6})), "evidence:tier6");
+        assert_eq!(evidence_state_key(&json!({})), "evidence:step");
     }
 
     #[test]
