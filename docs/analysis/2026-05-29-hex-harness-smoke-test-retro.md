@@ -182,6 +182,27 @@ These errors share a pattern: the persona at qwen2.5-coder:14b Q4_K_M reliably g
 - The output format stays the same (full file content); only the imperative + the anchor change
 - This is a small change with large leverage: same model, same plateau condition, but the model is now editing instead of synthesizing
 
+### 5.15. Auto_repair violates ADR-2026-04-15-1430 file-overlap gate (NEW — surfaced 2026-05-30 AM)
+**Symptom:** Run 2 (persona + frontier active simultaneously) showed 4 writes to `core/ports/listing_repo.rs` in ~2 minutes by *both* persona and frontier:
+
+```
+12:42:24 persona writes listing_repo.rs (1119 bytes) → commit 07c490e6
+12:42:34 plateau → frontier escalation starts on listing_repo.rs
+12:42:39 persona writes listing_repo.rs AGAIN (1823 bytes) → commit 029e72ea
+12:44:39 persona writes listing_repo.rs THIRD time (1245 bytes) → commit a1000a3c
+12:44:44 frontier commits its rewrite of listing_repo.rs → commit 62773503
+```
+
+Each write overrode the previous. Errors went 18 → 19 → 50 in 4 ticks (faster divergence than Run 1's claude-only case).
+**Hypothesis:** ADR-2026-04-15-1430 codifies "parallelize by file boundary, serialize by file overlap" — but only enforces it at the *workplan-scheduling* layer (sched daemon picks tasks whose files don't overlap with in-flight tasks). `auto_repair.rs` was written without consulting that ADR; it runs persona dispatch and frontier escalation as independent concurrent paths against the same top-K errored files. The existing `file_cooldowns` map (60s TTL) is shared by both paths but: (a) persona response latency often exceeds 60s, so the same file gets re-dispatched while persona is still processing the first ask; (b) frontier engages BECAUSE persona is failing on those files, so by design it targets the same files persona just got dispatched on.
+**Fix plan (2-3 hours):**
+- New `dispatched_to_persona: HashMap<String, Instant>` with 5-min TTL — set when Phase B `send_dm` succeeds; tracks files the persona was last told about. Cleared on `reset()`.
+- New `frontier_inflight: HashSet<String>` — set BEFORE claude call in `run_frontier_escalation`, cleared on commit (success or failure).
+- Persona dispatch filter excludes files in EITHER `dispatched_to_persona` (within 5-min TTL) OR `frontier_inflight`.
+- Frontier escalation's `to_fire` slice filters out the same.
+- Snapshot endpoint exposes `dispatched_to_persona_count` and `frontier_inflight_count` for operator observability.
+- This won't make the loop converge on dense codebases (the §5.14 multi-file rewrite is the structural fix), but it eliminates persona+frontier collision which roughly doubled the contamination rate in Run 2.
+
 ### 5.10. Scaffolded artifacts not validated as executable (NEW)
 **Symptom:** Workplan declared 109/109 files complete, including `start.sh`, `docker-compose.yml`, `README.md`. But `start.sh` has placeholder paths (`path/to/binary` style), wrong port, and references `bun` without checking it's installed. The workplan's "done condition" was file-presence, not file-validity.
 **Hypothesis:** `done_condition: "compile + lint + test pass"` in the workplan schema is only checked for Rust source. Shell scripts, compose files, READMEs were file-existence-checked and rubber-stamped.

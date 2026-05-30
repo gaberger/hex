@@ -28,7 +28,7 @@
 //!
 //! Disable globally with HEX_DISABLE_AUTO_REPAIR=1.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -50,6 +50,12 @@ const SEND_AGENT_ID: &str = "nexus-auto-repair";
 /// Bounded so a hung subprocess can't burn budget forever. See retro §5.12.
 const MAX_FRONTIER_ATTEMPTS: u32 = 2;
 
+/// How long a file is considered "in flight to persona" after the dispatch
+/// HTTP call returns. Longer than the typical persona response latency so
+/// that re-dispatch + frontier escalation both wait for the inbox to drain.
+/// See retro §5.15 + ADR-2026-04-15-1430.
+const PERSONA_INFLIGHT_TTL_SECS: u64 = 300;
+
 #[derive(Default)]
 struct RepairState {
     iterations: u32,
@@ -60,6 +66,16 @@ struct RepairState {
     /// Reset on `reset()`. When this reaches `MAX_FRONTIER_ATTEMPTS`, the
     /// loop pauses for real (the §5.6 operator-inbox endpoint).
     frontier_attempts: u32,
+    /// §5.15 file-overlap gate: files dispatched to persona within the
+    /// `PERSONA_INFLIGHT_TTL_SECS` window. Persona response latency often
+    /// exceeds the shorter `file_cooldowns` TTL, so we track persona
+    /// dispatches separately. Frontier + persona both filter against this.
+    dispatched_to_persona: HashMap<String, Instant>,
+    /// §5.15: files currently being processed by a frontier-escalation pass.
+    /// Set BEFORE the claude subprocess call; cleared on commit (success or
+    /// failure). Persona dispatch checks this to avoid stomping on a
+    /// frontier rewrite in progress.
+    frontier_inflight: HashSet<String>,
 }
 
 fn state() -> &'static Mutex<RepairState> {
@@ -79,6 +95,8 @@ pub struct RepairStateSnapshot {
     pub file_cooldowns_count: usize,
     pub frontier_attempts: u32,
     pub frontier_max_attempts: u32,
+    pub dispatched_to_persona_count: usize,
+    pub frontier_inflight_count: usize,
 }
 
 pub fn snapshot() -> RepairStateSnapshot {
@@ -97,6 +115,8 @@ pub fn snapshot() -> RepairStateSnapshot {
         file_cooldowns_count: s.file_cooldowns.len(),
         frontier_attempts: s.frontier_attempts,
         frontier_max_attempts: MAX_FRONTIER_ATTEMPTS,
+        dispatched_to_persona_count: s.dispatched_to_persona.len(),
+        frontier_inflight_count: s.frontier_inflight.len(),
     }
 }
 
@@ -110,6 +130,8 @@ pub fn reset() {
     s.no_progress_count = 0;
     s.file_cooldowns.clear();
     s.frontier_attempts = 0;
+    s.dispatched_to_persona.clear();
+    s.frontier_inflight.clear();
     tracing::info!("auto_repair: state reset via operator API");
 }
 
@@ -417,13 +439,24 @@ async fn run_tick(
     sorted.sort_by(|a, b| b.1.cmp(&a.1));
 
     let now = Instant::now();
+    let persona_inflight_ttl = Duration::from_secs(PERSONA_INFLIGHT_TTL_SECS);
     let to_fire_unfiltered: Vec<(String, u32)> = {
         let s = state().lock().unwrap();
         sorted.into_iter()
             .filter(|(path, _)| {
-                s.file_cooldowns.get(path)
+                // Existing cooldown check (persona re-dispatch suppression).
+                let cooled = s.file_cooldowns.get(path)
                     .map(|t| now.duration_since(*t) >= cooldown)
-                    .unwrap_or(true)
+                    .unwrap_or(true);
+                // §5.15 file-overlap gate: skip files persona has been told
+                // about within the inflight window AND files frontier is
+                // currently rewriting. Either case means another path is
+                // already working this file.
+                let persona_busy = s.dispatched_to_persona.get(path)
+                    .map(|t| now.duration_since(*t) < persona_inflight_ttl)
+                    .unwrap_or(false);
+                let frontier_busy = s.frontier_inflight.contains(path);
+                cooled && !persona_busy && !frontier_busy
             })
             .take(cfg.top_k * 2)  // Take more so we have room to skip adapters when ports exist
             .collect()
@@ -687,7 +720,13 @@ async fn run_tick(
                     "auto_repair: dispatched code_patch ask"
                 );
                 let mut s = state().lock().unwrap();
-                s.file_cooldowns.insert(rel_path, now);
+                s.file_cooldowns.insert(rel_path.clone(), now);
+                // §5.15: mark this file as in-flight to persona. Persona
+                // response latency often exceeds the cooldown TTL, so we
+                // track it separately on a longer (5-min) window. Both
+                // persona re-dispatch and frontier escalation will skip
+                // files in this map until the TTL elapses or reset() runs.
+                s.dispatched_to_persona.insert(rel_path, now);
             }
             Err(e) => {
                 tracing::warn!(error = %e, rel_path = %rel_path, "auto_repair: dispatch failed");
@@ -841,6 +880,22 @@ async fn cargo_check_errors(
 ///   3. Next tick's cargo_check is the regression gate
 ///
 /// Returns the number of files successfully written + committed.
+/// RAII guard that removes a file from `frontier_inflight` on drop.
+/// §5.15: ensures the lock is released on every exit path from a frontier
+/// loop iteration — including `continue`, `?`, panic — without manual
+/// cleanup at each branch.
+struct FrontierInflightGuard {
+    path: String,
+}
+
+impl Drop for FrontierInflightGuard {
+    fn drop(&mut self) {
+        if let Ok(mut s) = state().lock() {
+            s.frontier_inflight.remove(&self.path);
+        }
+    }
+}
+
 async fn run_frontier_escalation(
     adapter: Arc<dyn IInferencePort>,
     to_fire: &[(String, u32)],
@@ -852,6 +907,21 @@ async fn run_frontier_escalation(
 ) -> usize {
     let mut committed = 0usize;
     for (rel_path, err_count) in to_fire {
+        // §5.15: claim file-overlap lock BEFORE any work. If the persona
+        // is currently processing this file (e.g. an inbox message landed
+        // mid-tick), skip it. Guard releases lock on every exit path.
+        let _guard: FrontierInflightGuard = {
+            let mut s = state().lock().unwrap();
+            if s.frontier_inflight.contains(rel_path) {
+                tracing::info!(
+                    rel_path = %rel_path,
+                    "frontier: file already in flight — skipping"
+                );
+                continue;
+            }
+            s.frontier_inflight.insert(rel_path.clone());
+            FrontierInflightGuard { path: rel_path.clone() }
+        };
         let prefixed = if project_rel_prefix.is_empty() {
             rel_path.clone()
         } else {
@@ -1188,6 +1258,24 @@ mod tests {
         let result = read_current_file_block(&tmp, "under.rs");
         assert_eq!(result, "fn x() {}\n");
         let _ = std::fs::remove_file(&target);
+    }
+
+    #[test]
+    fn frontier_inflight_guard_clears_on_drop() {
+        let path = "test/path.rs".to_string();
+        {
+            let mut s = state().lock().unwrap();
+            s.frontier_inflight.insert(path.clone());
+            assert!(s.frontier_inflight.contains(&path));
+        }
+        {
+            let _guard = FrontierInflightGuard { path: path.clone() };
+            let s = state().lock().unwrap();
+            assert!(s.frontier_inflight.contains(&path));
+        }
+        // Guard dropped — entry removed.
+        let s = state().lock().unwrap();
+        assert!(!s.frontier_inflight.contains(&path));
     }
 
     #[test]
