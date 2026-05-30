@@ -1,6 +1,6 @@
 use crate::core::domain::*;
 use async_trait::async_trait;
-use core::time::DurationMs; // ADR-2026-05-19-0721
+// Removed unresolved import
 use adapters::primary::http_axum::handlers_listings::SearchListingsParams;
 
 /// ListingRepoPort defines read-only operations on listings.
@@ -30,22 +30,16 @@ pub trait ListingRepoPort: Send + Sync {
 /// DTO for creating a new listing. This is used as input to the create_listing reducer.
 #[derive(Debug, Clone)]
 pub struct CreateListingInput {
-    pub title: String,
-    pub description: Option<String>,
-    pub starting_bid: Money,
-    pub start_time: Timestamp,
-    pub end_time: Timestamp,
-    // Add other fields as necessary based on ebay-spec-004 and other relevant specifications.
+    pub title: ListingTitle,
+    pub description: String,
+    pub start_price: Money,
+    pub duration_ms: DurationMs,
 }
 
-/// Error type for ListingRepoPort operations.
-#[derive(Debug, thiserror::Error)]
+/// Errors that can occur in the ListingRepoPort
+#[derive(Debug)]
 pub enum ListingRepoError {
-    #[error("Listing not found")]
     NotFound,
-
-    #[error("Database error: {0}")]
-    DatabaseError(String),
-
-    // Add more variants as necessary based on the specifications.
+    InvalidInput(String),
+    // Other possible errors...
 }
