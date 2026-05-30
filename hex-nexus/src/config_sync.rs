@@ -273,26 +273,35 @@ pub async fn preload_inference_cache(stdb_host: &str) {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        // The cache is written from the /api/inference/endpoints JSON, which
+        // uses camelCase keys (qualityScore, quantizationLevel, …). Read those
+        // first, with snake_case as a fallback for older cache files — otherwise
+        // calibration/quant/limits all reset to defaults on every restart.
         let quantization = ep
-            .get("quantization_level")
+            .get("quantizationLevel")
+            .or_else(|| ep.get("quantization_level"))
             .or_else(|| ep.get("quantization"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
         let context_window = ep
-            .get("context_window")
+            .get("contextWindow")
+            .or_else(|| ep.get("context_window"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
         let rate_limit_rpm = ep
-            .get("rate_limit_rpm")
+            .get("rateLimitRpm")
+            .or_else(|| ep.get("rate_limit_rpm"))
             .and_then(|v| v.as_u64())
             .unwrap_or(60) as u32;
         let rate_limit_tpm = ep
-            .get("rate_limit_tpm")
+            .get("rateLimitTpm")
+            .or_else(|| ep.get("rate_limit_tpm"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         let quality_score = ep
-            .get("quality_score")
+            .get("qualityScore")
+            .or_else(|| ep.get("quality_score"))
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0) as f32;
 
