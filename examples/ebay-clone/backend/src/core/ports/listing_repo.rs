@@ -26,35 +26,14 @@ pub trait ListingRepoPort: Send + Sync {
     async fn get_listings_by_criteria(&self, criteria: &SearchListingsParams) -> Result<Vec<Listing>, ListingRepoError>;
 }
 
-/// Search parameters for listing repository queries.
-#[derive(Debug)]
+/// Search parameters for listing search
 pub struct SearchListingsParams {
-    pub title: Option<String>,
-    pub min_price: Option<Money>,
-    pub max_price: Option<Money>,
-    // Add other search criteria fields as needed
+    // Define your search parameters here
 }
 
-/// Input structure for creating a new listing.
+/// Errors specific to the Listing repository
 #[derive(Debug)]
-pub struct CreateListingInput {
-    pub title: ListingTitle,
-    pub description: String,
-    pub price: Money,
-    // Add other fields as needed
-}
-
-/// Errors that can occur in the listing repository.
-#[derive(Debug, thiserror::Error)]
 pub enum ListingRepoError {
-    #[error("Listing not found")]
     NotFound,
-
-    #[error("Invalid input data: {0}")]
-    InvalidInput(String),
-
-    #[error("Database error: {0}")]
-    DatabaseError(#[from] sqlx::Error),
+    // Other error types can be added here
 }
-
-// Implement other necessary methods and logic for the listing repository.
