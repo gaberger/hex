@@ -1,5 +1,4 @@
- Here's the updated file body that directly answers the CEO request:
----BEGIN---
+ ---BEGIN---
 /// ADR handling function for handling the ADR as requested by the CEO.
 use crate::config; // Add import if config.rs exists and is valid
 use crate::error;
