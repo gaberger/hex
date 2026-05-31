@@ -46,19 +46,24 @@ pub async fn build(
     gate: Option<String>,
     dir: String,
     max_iters: u32,
-    model: Option<String>,
+    models: Vec<String>,
     nexus: String,
 ) -> anyhow::Result<()> {
     let root = std::fs::canonicalize(&dir).unwrap_or_else(|_| PathBuf::from(&dir));
-    let model = model
-        .or_else(|| std::env::var("HEX_AGENT_MODEL").ok())
-        .unwrap_or_else(|| "qwen2.5-coder:32b".to_string());
+    // Ordered fallback list: try each model in turn, SKIP one that's failing
+    // (403/quota/down) and fall through to the next. `--model A --model B …`,
+    // or a single default.
+    let models: Vec<String> = if models.is_empty() {
+        vec![std::env::var("HEX_AGENT_MODEL").unwrap_or_else(|_| "qwen2.5-coder:32b".to_string())]
+    } else {
+        models
+    };
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(600))
         .build()?;
 
     println!("{} hex-agent build — native loop", "\u{2b21}".cyan());
-    println!("  model: {model}   max-iters: {max_iters}");
+    println!("  models: {}   max-iters: {max_iters}", models.join(" → "));
     println!("  dir:   {}", root.display());
     if let Some(g) = &gate {
         println!("  gate:  {g}");
@@ -75,7 +80,7 @@ pub async fn build(
     })];
 
     for i in 1..=max_iters {
-        let reply = infer(&http, &nexus, &model, &messages).await?;
+        let reply = infer(&http, &nexus, &models, &messages).await?;
         messages.push(json!({"role":"assistant","content": reply}));
 
         let observation = match parse_action(&reply) {
@@ -131,30 +136,57 @@ pub async fn build(
     anyhow::bail!("agent exhausted {max_iters} iterations without emitting done")
 }
 
+/// Try each model in order. A model gets a couple of quick backoff retries on a
+/// transient rate-limit/gateway error (429/5xx); on a hard rejection (403 /
+/// auth / quota) or once retries are spent, we SKIP it and fall through to the
+/// next model. Only when every model fails do we error out.
 async fn infer(
     http: &reqwest::Client,
     nexus: &str,
-    model: &str,
+    models: &[String],
     messages: &[Value],
 ) -> anyhow::Result<String> {
-    let body = json!({
-        "model": model,
-        "system": SYSTEM,
-        "messages": messages,
-        "max_tokens": 4096
-    });
-    let resp = http
-        .post(format!("{nexus}/api/inference/complete"))
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("inference request failed (is nexus up at {nexus}?): {e}"))?;
-    if !resp.status().is_success() {
-        let s = resp.status();
-        anyhow::bail!("inference returned {s}: {}", resp.text().await.unwrap_or_default());
+    let url = format!("{nexus}/api/inference/complete");
+    let mut last_err = String::from("no models configured");
+
+    for (mi, model) in models.iter().enumerate() {
+        let body = json!({ "model": model, "system": SYSTEM, "messages": messages, "max_tokens": 4096 });
+        for attempt in 1u32..=3 {
+            match http.post(&url).json(&body).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    let v: Value = resp.json().await?;
+                    return Ok(v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string());
+                }
+                Ok(resp) => {
+                    let s = resp.status();
+                    let txt = resp.text().await.unwrap_or_default();
+                    last_err = format!("{model}: {s} {}", txt.chars().take(120).collect::<String>());
+                    // 403/auth/quota → no point retrying THIS provider: skip it now.
+                    let hard = s.as_u16() == 403 || txt.contains("403") || txt.contains("Forbidden") || txt.contains("quota");
+                    let transient = matches!(s.as_u16(), 429 | 500 | 502 | 503 | 504);
+                    if !hard && transient && attempt < 3 {
+                        let wait = 2u64.saturating_pow(attempt);
+                        eprintln!("  {} {model} {s} — backoff {wait}s (retry {attempt}/2)", "\u{23f3}".yellow());
+                        tokio::time::sleep(Duration::from_secs(wait)).await;
+                        continue;
+                    }
+                    break; // give up on this model → skip to next
+                }
+                Err(e) => {
+                    last_err = format!("{model}: {e}");
+                    if attempt < 3 {
+                        tokio::time::sleep(Duration::from_secs(2u64.saturating_pow(attempt))).await;
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
+        if mi + 1 < models.len() {
+            eprintln!("  {} skipping {model} (failing) → next provider", "\u{2933}".yellow());
+        }
     }
-    let v: Value = resp.json().await?;
-    Ok(v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string())
+    anyhow::bail!("all providers failed; last error — {last_err}")
 }
 
 /// Parse an `@tool` directive from a reply. For `@write`, the file content is

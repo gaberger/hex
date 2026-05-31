@@ -192,9 +192,12 @@ pub enum AgentAction {
         /// Max LLM ↔ tool round-trips.
         #[arg(long, default_value_t = 30)]
         max_iters: u32,
-        /// Model override (default $HEX_AGENT_MODEL or qwen2.5-coder:32b).
+        /// Model(s) to use, in fallback order — repeat to add fallbacks. A
+        /// failing/forbidden provider (403/quota) is SKIPPED to the next.
+        /// e.g. --model "Qwen/Qwen3-32B" --model "qwen2.5-coder:32b".
+        /// Default: $HEX_AGENT_MODEL or qwen2.5-coder:32b.
         #[arg(long)]
-        model: Option<String>,
+        model: Vec<String>,
         /// Nexus inference URL.
         #[arg(long, default_value = "http://127.0.0.1:5555")]
         nexus: String,
