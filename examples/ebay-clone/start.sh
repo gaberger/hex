@@ -1,64 +1,30 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Launch the hexBay demo: a seeded in-memory backend + the Solid frontend.
+# No SpacetimeDB required for the demo profile — the backend ships an in-memory
+# marketplace pre-seeded with a catalog. (The persistent profile uses the
+# spacetime-modules/marketplace WASM module — see README.)
+set -euo pipefail
 
-# ADR-2026-05-19-0721
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+BACKEND_ADDR="${BACKEND_ADDR:-127.0.0.1:8080}"
+FRONTEND_PORT="${FRONTEND_PORT:-4173}"
 
-# Ensure necessary tools are installed
-if ! command -v spacetime &> /dev/null || ! command -v bun &> /dev/null || ! command -v rustc &> /dev/null; then
-    echo "Missing required tools: spacetime, bun, rustc"
-    exit 1
-fi
+echo "▶ building backend…"
+( cd "$ROOT/backend" && cargo build --release --quiet )
 
-# Start STDB
-spacetime db start &
-STDB_PID=$!
+echo "▶ installing + building frontend…"
+( cd "$ROOT/frontend" && npm install --silent && npm run build )
 
-# Publish marketplace
-spacetime publish --config ./path/to/config.toml &
-PUBLISH_PID=$!
-
-# Start backend (port 8080)
-cargo run --bin backend &
+echo "▶ starting backend on $BACKEND_ADDR (seeded catalog)…"
+BACKEND_ADDR="$BACKEND_ADDR" "$ROOT/backend/target/release/main" &
 BACKEND_PID=$!
 
-# Start Vite (port 5173)
-bun dev &
-VITE_PID=$!
+echo "▶ serving frontend on :$FRONTEND_PORT…"
+( cd "$ROOT/frontend" && npx vite preview --port "$FRONTEND_PORT" --host 127.0.0.1 ) &
+FRONTEND_PID=$!
 
-echo "STDB: http://localhost:9200"
-echo "Backend API: http://localhost:8080"
-echo "Vite Frontend: http://localhost:5173"
-
-# Function to clean up child processes
-cleanup() {
-    echo "Shutting down..."
-    kill $STDB_PID $PUBLISH_PID $BACKEND_PID $VITE_PID
-    sleep 5
-    wait
-    exit 0
-}
-
-# Trap SIGINT
-trap cleanup SIGINT
-
-if [ "$1" = "--smoke" ]; then
-    # Wait for all children to terminate within 60s
-    if ! timeout -k 5 60 wait; then
-        echo "Timed out waiting for services to start"
-        cleanup
-        exit 1
-    fi
-
-    # Check for any remaining child processes
-    if pgrep -P $$ &> /dev/null; then
-        echo "Child processes are still running after health checks"
-        cleanup
-        exit 1
-    fi
-
-    exit 0
-fi
-
-# Wait for all children to terminate
+trap 'kill "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null || true' EXIT
+echo ""
+echo "  ✅ hexBay running →  http://localhost:$FRONTEND_PORT   (API: http://$BACKEND_ADDR)"
+echo "     Ctrl-C to stop."
 wait
-
-exit 0
