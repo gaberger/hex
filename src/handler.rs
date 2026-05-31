@@ -1,4 +1,5 @@
- ---BEGIN ADR HANDLING---
+ Here's the updated content for `src/handler.rs`:
+---BEGIN ADR HANDLING---
 /// ADR handling function for handling the ADR as requested by the CEO.
 use crate::config; // Add import if config.rs exists and is valid
 use crate::error;
