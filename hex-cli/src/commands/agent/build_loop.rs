@@ -13,20 +13,24 @@ use std::time::Duration;
 use colored::Colorize;
 use serde_json::{json, Value};
 
-const SYSTEM: &str = r#"You are hex-agent, an autonomous coding agent. You complete the task by issuing tool calls.
+const SYSTEM: &str = r#"You are hex-agent, an autonomous coding agent. Issue exactly ONE tool call per reply and output nothing else. Use these exact formats:
 
-Respond with EXACTLY ONE tool call as a single raw JSON object and NOTHING else — no prose, no markdown fences:
-{"tool":"read_file","path":"<relative path>"}
-{"tool":"list_dir","path":"<relative path>"}
-{"tool":"write_file","path":"<relative path>","content":"<the full file content>"}
-{"tool":"run","cmd":"<shell command>"}
-{"tool":"done"}
+@read <path>            — read a file
+@list <path>            — list a directory (omit <path> for the working dir)
+@run <shell command>    — run a command (e.g. a build or test)
+@done                   — you believe the task is complete; I will run the gate to verify
+@write <path>           — create or overwrite a file; put the ENTIRE file content in a fenced code block on the lines immediately after, like:
+@write src/example.ts
+```
+import { x } from './x.js';
+export const y = x + 1;
+```
 
 Rules:
-- Paths are relative to the working directory. write_file creates or fully overwrites the file.
-- After each tool call I return its result. Inspect the project first (list_dir/read_file) before writing.
-- The task is NOT complete until the gate command exits 0. When you believe you are finished, emit {"tool":"done"} and I will run the gate; if it fails I will give you the error output and you must keep fixing.
-- Output ONLY the JSON object. Any other text is an error."#;
+- Paths are relative to the working directory. Inspect with @read / @list before writing.
+- For @write the content inside the ``` fence is taken VERBATIM — write it exactly, do NOT escape quotes or newlines.
+- The task is NOT complete until the gate command exits 0. After @done, if the gate fails I return the error and you keep fixing.
+- Reply with ONLY the tool call (the @-line, plus a fenced block for @write). No explanations."#;
 
 #[derive(Debug)]
 enum Action {
@@ -153,52 +157,56 @@ async fn infer(
     Ok(v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string())
 }
 
-/// Extract the first balanced top-level JSON object from a reply and parse it.
+/// Parse an `@tool` directive from a reply. For `@write`, the file content is
+/// the verbatim text of the first fenced ``` block that follows — no JSON
+/// escaping, which local models get right far more reliably.
 fn parse_action(reply: &str) -> Option<Action> {
-    let text = reply.trim().trim_start_matches("```json").trim_start_matches("```").trim();
-    let start = text.find('{')?;
-    let bytes = text.as_bytes();
-    let (mut depth, mut end, mut in_str, mut esc) = (0i32, None, false, false);
-    for (idx, &b) in bytes.iter().enumerate().skip(start) {
-        if in_str {
-            if esc {
-                esc = false;
-            } else if b == b'\\' {
-                esc = true;
-            } else if b == b'"' {
-                in_str = false;
-            }
-            continue;
-        }
-        match b {
-            b'"' => in_str = true,
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    end = Some(idx + 1);
-                    break;
-                }
-            }
-            _ => {}
-        }
+    let lines: Vec<&str> = reply.lines().collect();
+    let idx = lines.iter().position(|l| l.trim_start().starts_with('@'))?;
+    let line = lines[idx].trim_start();
+
+    if let Some(p) = line.strip_prefix("@read") {
+        let p = p.trim();
+        return (!p.is_empty()).then(|| Action::Read(p.to_string()));
     }
-    let obj: Value = serde_json::from_str(&text[start..end?]).ok()?;
-    match obj.get("tool").and_then(|t| t.as_str())? {
-        "read_file" => Some(Action::Read(str_field(&obj, "path")?)),
-        "list_dir" => Some(Action::ListDir(obj.get("path").and_then(|p| p.as_str()).unwrap_or(".").to_string())),
-        "write_file" => Some(Action::Write {
-            path: str_field(&obj, "path")?,
-            content: obj.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string(),
-        }),
-        "run" => Some(Action::Run(str_field(&obj, "cmd")?)),
-        "done" => Some(Action::Done),
-        _ => None,
+    if let Some(p) = line.strip_prefix("@list") {
+        let p = p.trim();
+        return Some(Action::ListDir(if p.is_empty() { ".".to_string() } else { p.to_string() }));
     }
+    if let Some(c) = line.strip_prefix("@run") {
+        let c = c.trim();
+        return (!c.is_empty()).then(|| Action::Run(c.to_string()));
+    }
+    if line.trim_end() == "@done" {
+        return Some(Action::Done);
+    }
+    if let Some(p) = line.strip_prefix("@write") {
+        let path = p.trim().to_string();
+        if path.is_empty() {
+            return None;
+        }
+        return Some(Action::Write {
+            path,
+            content: extract_fence(&lines[idx + 1..]),
+        });
+    }
+    None
 }
 
-fn str_field(obj: &Value, key: &str) -> Option<String> {
-    obj.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+/// Content of the first ``` fenced block (a leading ```lang line is dropped);
+/// if there is no fence, everything after the directive line, trimmed.
+fn extract_fence(rest: &[&str]) -> String {
+    match rest.iter().position(|l| l.trim_start().starts_with("```")) {
+        Some(open) => {
+            let after = &rest[open + 1..];
+            let close = after
+                .iter()
+                .position(|l| l.trim_start().starts_with("```"))
+                .unwrap_or(after.len());
+            after[..close].join("\n")
+        }
+        None => rest.join("\n").trim().to_string(),
+    }
 }
 
 /// Resolve a relative path, refusing escapes outside the working root.
