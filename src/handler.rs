@@ -1,4 +1,3 @@
- ---BEGIN---
 /// ADR handling function for handling the ADR as requested by the CEO.
 use crate::config; // Add import if config.rs exists and is valid
 use crate::error;
