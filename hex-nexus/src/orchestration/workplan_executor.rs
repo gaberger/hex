@@ -368,6 +368,11 @@ pub struct WorkplanTask {
     pub files: Vec<String>,
     /// Model override for this task.
     pub model: Option<String>,
+    /// Strategy hint (CLAUDE.md tier routing): `scaffold`/`transform`/`script`
+    /// → T1, `codegen` → T2, `inference` → T2.5. Until now this was documented
+    /// but never read by `classify_task_tier` — honored as of the routing fix.
+    #[serde(alias = "strategyHint", alias = "strategy_hint", default)]
+    pub strategy_hint: Option<String>,
     /// Working directory override. Defaults to ".".
     #[serde(alias = "projectDir", alias = "project_dir")]
     pub project_dir: Option<String>,
@@ -407,6 +412,24 @@ pub fn classify_task_tier(task: &WorkplanTask) -> crate::remote::transport::Task
         return tier;
     }
 
+    // strategy_hint (CLAUDE.md tier routing) — was documented but never honored.
+    // scaffold/transform/script → T1, codegen → T2, inference → T2.5.
+    match task.strategy_hint.as_deref() {
+        Some("scaffold") | Some("transform") | Some("script") => return TaskTier::T1,
+        Some("codegen") => return TaskTier::T2,
+        Some("inference") => return TaskTier::T2_5,
+        _ => {}
+    }
+
+    // UI/frontend DESIGN heuristic (lesson:tier-routing-for-ui, 2026-05-31):
+    // styling/layout/visual work needs a reasoning model — standard T2 codegen
+    // produces rough/unstyled output. Detect by file extension or design intent
+    // and route to T2.5. Checked before the generic role/layer default so a
+    // `hex-coder` building a Tailwind grid doesn't fall through to T2.
+    if task_is_ui_design(task) {
+        return TaskTier::T2_5;
+    }
+
     // Planner/reviewer agents → T2 (structured output, not heavy codegen)
     match task.agent.as_deref() {
         Some("planner" | "hex-planner") => return TaskTier::T2,
@@ -427,6 +450,27 @@ pub fn classify_task_tier(task: &WorkplanTask) -> crate::remote::transport::Task
         }
         _ => TaskTier::T2, // safe default
     }
+}
+
+/// True when a task is front-end DESIGN work (visual/layout/styling), which
+/// needs a reasoning-tier model rather than standard codegen. Detected by the
+/// files it touches (.tsx/.jsx/.vue/.svelte/.css/.scss) or design keywords in
+/// its name/description.
+fn task_is_ui_design(task: &WorkplanTask) -> bool {
+    const UI_EXT: [&str; 7] = [".tsx", ".jsx", ".vue", ".svelte", ".css", ".scss", ".html"];
+    if task
+        .files
+        .iter()
+        .any(|f| UI_EXT.iter().any(|e| f.to_ascii_lowercase().ends_with(e)))
+    {
+        return true;
+    }
+    let hay = format!("{} {}", task.name, task.description).to_ascii_lowercase();
+    const UI_KW: [&str; 9] = [
+        "tailwind", "css", "stylesheet", " ui ", "frontend", "layout", "grid of",
+        "component", "responsive",
+    ];
+    UI_KW.iter().any(|k| hay.contains(k))
 }
 
 // ── File Scope Tracking (ADR-2026-04-13-1800 P5.1) ────────
@@ -2308,6 +2352,31 @@ mod workplan_schema_tests {
         let j = r#"{"phases":[{"id":"P1","title":"just-title","tasks":[]}]}"#;
         let wp: Workplan = serde_json::from_str(j).expect("title-only phase must deserialize");
         assert_eq!(wp.phases[0].name, "just-title");
+    }
+
+    #[test]
+    fn routing_honors_strategy_hint_and_ui_design() {
+        use crate::remote::transport::TaskTier;
+        // strategy_hint=inference → T2.5 (was silently ignored before the fix)
+        let t: WorkplanTask =
+            serde_json::from_str(r#"{"id":"a","name":"x","strategy_hint":"inference"}"#).unwrap();
+        assert!(matches!(classify_task_tier(&t), TaskTier::T2_5));
+        // a hex-coder building a .tsx is UI design → T2.5, not the old T2 default
+        let ui: WorkplanTask = serde_json::from_str(
+            r#"{"id":"b","name":"grid","agent":"hex-coder","layer":"primary","files":["src/pages/Home.tsx"]}"#,
+        )
+        .unwrap();
+        assert!(matches!(classify_task_tier(&ui), TaskTier::T2_5), "UI/.tsx → T2.5");
+        // scaffold strategy → T1
+        let s: WorkplanTask =
+            serde_json::from_str(r#"{"id":"d","name":"y","strategy_hint":"scaffold"}"#).unwrap();
+        assert!(matches!(classify_task_tier(&s), TaskTier::T1));
+        // a plain Rust domain task is unaffected → stays T2
+        let dom: WorkplanTask = serde_json::from_str(
+            r#"{"id":"c","name":"value type","layer":"domain","files":["src/money.rs"]}"#,
+        )
+        .unwrap();
+        assert!(matches!(classify_task_tier(&dom), TaskTier::T2));
     }
 
     #[test]
