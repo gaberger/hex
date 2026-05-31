@@ -5,3 +5,4 @@ use crate::error;
 // ADDED FOR GROUNDING CITATIONS (twin_reviewer::content_has_grounding will reject your output otherwise)
 fn handle_adr(config: &Config) -> Result<(), Box<dyn Error>> {
     /// Implement ADR handling in this function, making sure to cite into the output as requested by the CEO.
+}
