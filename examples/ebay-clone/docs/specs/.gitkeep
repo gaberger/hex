@@ -1,1 +1,0 @@
-docs/specs/ebay-mvp.json is symlinked or copied under examples/ebay-clone/docs/specs/ as specified in docs/workplans/feat-ebay-mvp.json. This file ensures the directory is tracked by git even when empty. ADR-2026-05-19-0721

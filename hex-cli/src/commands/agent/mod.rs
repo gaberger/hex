@@ -2,6 +2,8 @@
 //!
 //! `hex agent list|info|connect|spawn-remote|disconnect|fleet` — delegates to hex-nexus agent API.
 
+mod build_loop;
+
 use clap::Subcommand;
 use colored::Colorize;
 use serde_json::json;
@@ -172,6 +174,31 @@ pub enum AgentAction {
         #[arg(long)]
         once: bool,
     },
+    /// Native agentic build loop (LLM ↔ raw tools ↔ files, gated by evidence).
+    ///
+    /// hex's OWN tight coding loop on local inference — read/write/list/run
+    /// tools, iterating until the gate command exits 0. No opencode, no
+    /// `claude -p`. Example:
+    ///   hex agent build "fix the failing build" --dir examples/foo --gate "npm run check"
+    Build {
+        /// What to build/fix, in natural language.
+        task: String,
+        /// Gate command that must exit 0 before the task is accepted as done.
+        #[arg(long)]
+        gate: Option<String>,
+        /// Working directory the agent operates in.
+        #[arg(long, default_value = ".")]
+        dir: String,
+        /// Max LLM ↔ tool round-trips.
+        #[arg(long, default_value_t = 30)]
+        max_iters: u32,
+        /// Model override (default $HEX_AGENT_MODEL or qwen2.5-coder:32b).
+        #[arg(long)]
+        model: Option<String>,
+        /// Nexus inference URL.
+        #[arg(long, default_value = "http://127.0.0.1:5555")]
+        nexus: String,
+    },
     /// Spawn a worker in the background (detached); survives CLI exit.
     ///
     /// Example: `hex agent spawn-worker --role hex-coder`
@@ -255,6 +282,14 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
             model,
         } => spawn_remote(&target, project_dir, source_dir, sandbox, model).await,
         AgentAction::Disconnect { agent_id } => disconnect(&agent_id).await,
+        AgentAction::Build {
+            task,
+            gate,
+            dir,
+            max_iters,
+            model,
+            nexus,
+        } => build_loop::build(task, gate, dir, max_iters, model, nexus).await,
         AgentAction::Run {
             intent,
             max_iterations,
