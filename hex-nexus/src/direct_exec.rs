@@ -90,6 +90,21 @@ pub struct DirectRun {
 static RUNS: LazyLock<Mutex<VecDeque<DirectRun>>> = LazyLock::new(|| Mutex::new(VecDeque::new()));
 static RUN_ID: AtomicU64 = AtomicU64::new(1);
 
+// Serialize the read→edit→evidence→commit critical section. Two concurrent runs
+// touching the working tree / git index race and can false-positive (one reports
+// ok=true + a commit while another's edit interleaves) — found by the 2026-06-04
+// review swarm. Global (not per-file) because git add/commit is process-global.
+static EXEC_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+/// A `cargo test <filter>` matching zero tests exits 0 with "running 0 tests" /
+/// "0 passed; 0 failed" — a vacuous pass. The gate must require the change to be
+/// actually exercised, so treat these as NOT satisfied.
+fn evidence_is_vacuous(output: &str) -> bool {
+    output.contains("running 0 tests")
+        || output.contains("0 passed; 0 failed; 0 ignored")
+        || output.contains("0 passed; 0 failed; 0 measured")
+}
+
 fn record_run(started_at: String, task: &DirectTask, model: &str, r: &DirectResult, duration_ms: u64) {
     let run = DirectRun {
         id: RUN_ID.fetch_add(1, Ordering::Relaxed),
@@ -146,6 +161,8 @@ pub async fn execute_direct(task: DirectTask) -> DirectResult {
 }
 
 async fn execute_direct_inner(task: DirectTask) -> DirectResult {
+    // Serialize the whole read→edit→evidence→commit section against other runs.
+    let _exec_guard = EXEC_LOCK.lock().await;
     let max_attempts = task.max_attempts.unwrap_or(3).clamp(1, 6);
     let model = task.model.clone().unwrap_or_else(|| {
         std::env::var("HEX_DIRECT_MODEL").unwrap_or_else(|_| "qwen2.5-coder:32b".to_string())
@@ -201,9 +218,14 @@ async fn execute_direct_inner(task: DirectTask) -> DirectResult {
         // 4. Run the evidence command.
         let (passed, output) = run_evidence(&task.evidence, &repo_root).await;
         result.evidence_output = output.chars().take(4000).collect();
-        if passed {
+        // A `cargo test <filter>` that matches ZERO tests prints "running 0 tests"
+        // / "0 passed; 0 failed" and still exits 0 — a vacuous pass. The whole point
+        // of the gate is that the change is *verified*, so reject it (found by the
+        // 2026-06-04 review swarm).
+        let vacuous = passed && evidence_is_vacuous(&output);
+        if passed && !vacuous {
             result.evidence_passed = true;
-            // 5. Commit.
+            // 5. Commit (scoped to the edited file only).
             match commit(&repo_root, &task.file, &task.instruction).await {
                 Ok(hash) => {
                     result.committed = Some(hash);
@@ -218,12 +240,21 @@ async fn execute_direct_inner(task: DirectTask) -> DirectResult {
             }
         } else {
             // Feed the failure back for the next attempt.
-            last_error = Some(format!(
-                "evidence `{}` FAILED. Output:\n{}",
-                task.evidence,
-                output.chars().take(2500).collect::<String>()
-            ));
-            tracing::warn!(attempt, "direct_exec: evidence failed, retrying with error fed back");
+            last_error = Some(if vacuous {
+                format!(
+                    "evidence `{}` PASSED VACUOUSLY — it ran 0 tests (exit 0 but nothing executed). \
+                     The named test must actually EXIST and RUN. Output:\n{}",
+                    task.evidence,
+                    output.chars().take(2000).collect::<String>()
+                )
+            } else {
+                format!(
+                    "evidence `{}` FAILED. Output:\n{}",
+                    task.evidence,
+                    output.chars().take(2500).collect::<String>()
+                )
+            });
+            tracing::warn!(attempt, vacuous, "direct_exec: evidence not satisfied, retrying with error fed back");
         }
     }
 
@@ -505,8 +536,12 @@ async fn commit(repo_root: &std::path::Path, file: &str, instruction: &str) -> R
          Co-Authored-By: hex-direct <noreply@hex.local>",
         subject.chars().take(72).collect::<String>()
     );
+    // Scope the commit to ONLY the edited file (pathspec) so a pre-staged or
+    // concurrently-changed file can't get swept into the executor's commit
+    // (found by the 2026-06-04 review swarm — bare `git commit` committed all
+    // staged changes).
     let c = tokio::process::Command::new("git")
-        .args(["commit", "-m", &msg])
+        .args(["commit", "-m", &msg, "--", file])
         .current_dir(repo_root)
         .output()
         .await
