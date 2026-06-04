@@ -272,6 +272,12 @@ enum Commands {
     Hey(HeyArgs),
     /// Adversarially verify a claim about the repo — returns CONFIRMED / REFUTED / INCONCLUSIVE
     Verify(commands::verify::VerifyArgs),
+    /// Direct executor — task → one agent → evidence → commit (ADR-2026-06-04-1740 Path A)
+    #[command(name = "do")]
+    Do {
+        #[command(subcommand)]
+        action: commands::direct::DoAction,
+    },
     /// Scheduler daemon — queue drain, validation, auto-fix (ADR-2026-04-15-0000)
     Sched {
         #[command(subcommand)]
@@ -690,6 +696,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::AutoRepair { action } => auto_repair_run(action).await,
         Commands::Hey(args) => commands::hey::run(args).await,
         Commands::Verify(args) => commands::verify::run(args).await,
+        Commands::Do { action } => commands::direct::run(action).await,
         Commands::Sched { action } => commands::sched::run(action).await,
         Commands::Pool { action } => commands::pool::run(action).await,
         Commands::Brain { action } => commands::brain_alias::run(action).await,

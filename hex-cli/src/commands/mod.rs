@@ -61,3 +61,4 @@ pub mod steer;
 pub mod hey;
 pub mod docs;
 pub mod verify;
+pub mod direct;
