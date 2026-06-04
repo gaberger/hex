@@ -2390,3 +2390,8 @@ mod tests {
       fn test_cqs_mid() {
           assert!(compute_quality_score(2000, true) > 0.7);
       }
+#[test]
+fn test_cqs_cli_proof() {
+    assert!(compute_quality_score(100, false) < 0.7);
+    assert!(compute_quality_score(100, true) > 0.9);
+}
