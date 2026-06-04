@@ -21,9 +21,12 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct DirectTask {
     /// What to do, in plain language.
     pub instruction: String,
@@ -57,9 +60,92 @@ pub struct DirectResult {
 const MAX_GROUND_LINES: usize = 200;
 const WINDOW: usize = 24;
 
-/// Run one task end-to-end. Returns a structured, honest result — `ok` is true
-/// ONLY if the evidence command exited 0 and the change was committed.
+// ─── observability: recorded runs ─────────────────────────────────────────────
+//
+// The new execution model's unit of work is a direct run, not a persona
+// conversation. Every run is recorded here so `GET /api/direct/runs`, the CLI,
+// and the dashboard can show what the agents actually DID — task, evidence
+// verdict, commit — instead of the retired liveness signals (personas/swarms/
+// commitments). In-memory ring buffer (last RUN_HISTORY); STDB persistence is a
+// follow-up.
+
+const RUN_HISTORY: usize = 200;
+
+/// One recorded direct-executor run — the monitorable unit of the new model.
+#[derive(Debug, Clone, Serialize)]
+pub struct DirectRun {
+    pub id: u64,
+    pub started_at: String,
+    pub instruction: String,
+    pub file: String,
+    pub model: String,
+    pub ok: bool,
+    pub attempts: u32,
+    pub evidence_passed: bool,
+    pub committed: Option<String>,
+    pub duration_ms: u64,
+    pub error: Option<String>,
+}
+
+static RUNS: LazyLock<Mutex<VecDeque<DirectRun>>> = LazyLock::new(|| Mutex::new(VecDeque::new()));
+static RUN_ID: AtomicU64 = AtomicU64::new(1);
+
+fn record_run(started_at: String, task: &DirectTask, model: &str, r: &DirectResult, duration_ms: u64) {
+    let run = DirectRun {
+        id: RUN_ID.fetch_add(1, Ordering::Relaxed),
+        started_at,
+        instruction: task.instruction.chars().take(240).collect(),
+        file: task.file.clone(),
+        model: model.to_string(),
+        ok: r.ok,
+        attempts: r.attempts,
+        evidence_passed: r.evidence_passed,
+        committed: r.committed.clone(),
+        duration_ms,
+        error: r.error.clone(),
+    };
+    if let Ok(mut q) = RUNS.lock() {
+        q.push_front(run);
+        while q.len() > RUN_HISTORY {
+            q.pop_back();
+        }
+    }
+}
+
+/// Newest-first snapshot of recorded runs for the API / CLI / dashboard.
+pub fn runs_snapshot() -> Vec<DirectRun> {
+    RUNS.lock().map(|q| q.iter().cloned().collect()).unwrap_or_default()
+}
+
+/// Aggregate counters for an at-a-glance monitor header.
+pub fn runs_summary() -> Value {
+    let runs = runs_snapshot();
+    let total = runs.len();
+    let passed = runs.iter().filter(|r| r.ok).count();
+    let committed = runs.iter().filter(|r| r.committed.is_some()).count();
+    json!({
+        "total": total,
+        "passed": passed,
+        "failed": total - passed,
+        "committed": committed,
+        "pass_rate": if total > 0 { passed as f64 / total as f64 } else { 0.0 },
+    })
+}
+
+/// Run one task end-to-end and record it. Returns a structured, honest result —
+/// `ok` is true ONLY if the evidence command exited 0 and the change committed.
 pub async fn execute_direct(task: DirectTask) -> DirectResult {
+    let started = std::time::Instant::now();
+    let started_at = chrono::Utc::now().to_rfc3339();
+    let model = task.model.clone().unwrap_or_else(|| {
+        std::env::var("HEX_DIRECT_MODEL").unwrap_or_else(|_| "qwen2.5-coder:32b".to_string())
+    });
+    let result = execute_direct_inner(task.clone()).await;
+    record_run(started_at, &task, &model, &result, started.elapsed().as_millis() as u64);
+    result
+}
+
+async fn execute_direct_inner(task: DirectTask) -> DirectResult {
     let max_attempts = task.max_attempts.unwrap_or(3).clamp(1, 6);
     let model = task.model.clone().unwrap_or_else(|| {
         std::env::var("HEX_DIRECT_MODEL").unwrap_or_else(|_| "qwen2.5-coder:32b".to_string())

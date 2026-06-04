@@ -79,6 +79,16 @@ async fn direct_execute(
 ) -> Json<crate::direct_exec::DirectResult> {
     Json(crate::direct_exec::execute_direct(task).await)
 }
+
+/// GET /api/direct/runs — the monitor for the new execution model: every direct
+/// run (task, evidence verdict, commit, duration) newest-first, plus a summary.
+/// Replaces persona/swarm/commitment liveness as the thing to actually watch.
+async fn direct_runs() -> Json<serde_json::Value> {
+    Json(json!({
+        "summary": crate::direct_exec::runs_summary(),
+        "runs": crate::direct_exec::runs_snapshot(),
+    }))
+}
 use crate::middleware::auth::auth_layer;
 use crate::middleware::capability_auth::capability_auth;
 use crate::middleware::deprecation::deprecation_layer;
@@ -922,6 +932,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/inference/calibrate-all", post(inference::calibrate_all))
         // Direct executor (ADR-2026-06-04-1740 Path A): task → one agent → evidence → commit
         .route("/api/direct/execute", post(direct_execute))
+        .route("/api/direct/runs", get(direct_runs))
         // Synchronous inference completion (hex-agent HTTP bridge)
         .route("/api/inference/complete", post(inference::inference_complete)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))

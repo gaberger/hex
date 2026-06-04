@@ -40,6 +40,7 @@ const OrgChart = lazy(() => import('../components/views/OrgChart'));
 const OrgComms = lazy(() => import('../components/views/OrgComms'));
 const TeamDashboard = lazy(() => import('../components/views/TeamDashboard'));
 const MissionControl = lazy(() => import('../components/views/MissionControl'));
+const DirectRuns = lazy(() => import('../components/views/DirectRuns'));
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
 
@@ -258,6 +259,7 @@ const App: Component = () => {
   const isOrgCommsPage = () => route().page === "org-comms";
   const isTeamPage = () => route().page === "team";
   const isMissionControlPage = () => route().page === "mission-control";
+  const isDirectRunsPage = () => route().page === "direct-runs";
 
   // ── Legacy-hash redirect ──
   // Bookmarks for the dead drill-down pages are rewritten to the
@@ -593,6 +595,24 @@ const App: Component = () => {
               </svg>
               <Show when={!sidebarCollapsed()}>Fleet Nodes</Show>
             </button>
+            {/* Direct Runs — the new evidence-gated execution model */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              classList={{
+                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "direct-runs",
+                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "direct-runs",
+                "justify-center px-0": sidebarCollapsed(),
+              }}
+              aria-label={sidebarCollapsed() ? "Direct Runs" : undefined}
+              aria-current={route().page === "direct-runs" ? "page" : undefined}
+              onClick={() => { navigate({ page: "direct-runs" }); setMobileDrawerOpen(false); }}
+            >
+              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                classList={{ "text-cyan-400": route().page === "direct-runs" }}>
+                <polygon points="5 3 19 12 5 21 5 3" /><polyline points="9 11 11 13 15 9" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Direct Runs</Show>
+            </button>
             {/* Research Lab */}
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
@@ -680,6 +700,7 @@ const App: Component = () => {
             <Match when={route().page === "research-lab"}><ResearchLab /></Match>
             <Match when={route().page === "swaps"}><SwapsView /></Match>
             <Match when={route().page === "org-chart"}><OrgChart /></Match>
+            <Match when={route().page === "direct-runs"}><DirectRuns /></Match>
           </Switch>
           {/* BottomBar -- inside center content so it doesn't span under sidebar */}
           <BottomBar />
