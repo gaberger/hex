@@ -2359,3 +2359,13 @@ async fn run_calibration(state: &SharedState, id: &str) -> CalibrationResult {
 
     result
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cqs_bounds() {
+        assert!(compute_quality_score(200, false) < 0.6);
+        assert!(compute_quality_score(200, true) > 0.9);
+    }
+}
