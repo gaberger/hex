@@ -2399,3 +2399,8 @@ fn test_cqs_cli_proof() {
 fn test_swarm_review_exec() {
     assert!(compute_quality_score(100, true) > 0.9);
 }
+#[test]
+fn test_adversarial_reverify_xyz() {
+    let score = compute_quality_score(500, true);
+    assert!(score > 0.5);
+}
