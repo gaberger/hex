@@ -41,6 +41,7 @@ pub mod usecases;
 pub mod state_config;
 pub mod spacetime_bindings;
 pub mod config_sync;
+pub mod direct_exec;
 pub mod spacetime_launcher;
 pub mod templates;
 pub mod sched_service;

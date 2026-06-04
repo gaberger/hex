@@ -70,6 +70,15 @@ use serde_json::json;
 use utoipa::OpenApi;
 use crate::state::SharedState;
 use crate::middleware::agent_guard::agent_guard;
+
+/// POST /api/direct/execute — minimal "cut the pipeline" executor
+/// (ADR-2026-06-04-1740 Path A). Body: {instruction, file, evidence, model?, max_attempts?}.
+/// Runs one agent → one evidence-gated edit → commit. No SOP/persona pipeline.
+async fn direct_execute(
+    Json(task): Json<crate::direct_exec::DirectTask>,
+) -> Json<crate::direct_exec::DirectResult> {
+    Json(crate::direct_exec::execute_direct(task).await)
+}
 use crate::middleware::auth::auth_layer;
 use crate::middleware::capability_auth::capability_auth;
 use crate::middleware::deprecation::deprecation_layer;
@@ -911,6 +920,8 @@ pub fn build_router(state: SharedState) -> Router {
         // secrets resolve, then PATCHes quality_score (wp-inference-calibrate-endpoint).
         .route("/api/inference/calibrate/{id}", post(inference::calibrate_endpoint))
         .route("/api/inference/calibrate-all", post(inference::calibrate_all))
+        // Direct executor (ADR-2026-06-04-1740 Path A): task → one agent → evidence → commit
+        .route("/api/direct/execute", post(direct_execute))
         // Synchronous inference completion (hex-agent HTTP bridge)
         .route("/api/inference/complete", post(inference::inference_complete)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
