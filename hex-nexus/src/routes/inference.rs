@@ -2374,3 +2374,7 @@ mod tests {
         assert!(compute_quality_score(9000, true) > 0.8);
         assert!(compute_quality_score(9000, false) < 0.5);
     }
+      #[test]
+      fn test_cqs_latency_bonus() {
+          assert!(compute_quality_score(100, true) > 0.9);
+      }
