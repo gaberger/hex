@@ -2404,3 +2404,9 @@ fn test_adversarial_reverify_xyz() {
     let score = compute_quality_score(500, true);
     assert!(score > 0.5);
 }
+// Tests for the compute_quality_score function under various conditions
+// This module contains tests for the inference logic.
+#[test]
+fn test_solo_path_check() {
+    assert!(compute_quality_score(100, true) > 0.9);
+}
