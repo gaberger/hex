@@ -2382,3 +2382,7 @@ mod tests {
       fn test_cqs_clamp_floor() {
           assert!(compute_quality_score(9000, false) >= 0.0);
       }
+      #[test]
+      fn test_cqs_pass() {
+          assert!(compute_quality_score(100, true) > 0.9);
+      }
