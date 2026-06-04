@@ -804,6 +804,26 @@ async fn reason_via_router(
             return Err(format!("tool round-trip cap ({}) hit without final reply", max_round_trips));
         }
 
+        // Convergence nudge (ADR-2026-06-04-1740 task 7): a model given exploration
+        // tools (repo_read/repo_grep) alongside code_patch tends to read/grep in
+        // circles and never commit to emitting the action — burning the whole
+        // round-trip budget "without finishing" (measured 2026-06-04: a one-test
+        // task hit the 16 cap on every path). Once it has spent half the budget
+        // exploring with no terminal action emitted, force the decision.
+        if emitted_kind.is_none() && round_trips > 0 && round_trips == max_round_trips / 2 {
+            tracing::warn!(role = %role, intent = %intent, round_trips, "reason loop: convergence nudge — forcing terminal action");
+            messages.push(json!({
+                "role": "user",
+                "content": format!(
+                    "You have used {} of {} tool round-trips exploring without emitting an action. \
+                     Stop calling repo_read/repo_grep now. Using what you have already read, emit \
+                     exactly ONE terminal tool call this turn: code_patch with the concrete change, \
+                     or escalate_to_operator if you are genuinely blocked. Do not explore further.",
+                    round_trips, max_round_trips
+                )
+            }));
+        }
+
         let req_body = json!({
             "model": model,
             "messages": messages,
@@ -887,6 +907,16 @@ async fn reason_via_router(
                 "elapsed_ms": result.elapsed_ms, "truncated": result.truncated,
             });
             messages.push(json!({ "role": "tool", "tool_call_id": id, "content": serde_json::to_string(&result_payload).unwrap_or_default() }));
+            tracing::info!(role = %role, intent = %intent, tool = %name, ok = result.ok, round_trips, "reason loop: tool call");
+
+            // Early-stop (ADR-2026-06-04-1740 task 7): the SOP emits exactly ONE
+            // structured action. Once a terminal action lands successfully, return
+            // immediately instead of giving the model another turn to wander off and
+            // burn the round-trip budget.
+            if result.ok && matches!(name.as_str(), "adr_draft" | "workplan_emit" | "spec_draft" | "code_patch" | "adr_status_set" | "escalate_to_operator") {
+                tracing::info!(role = %role, intent = %intent, action = %name, round_trips, "reason loop: terminal action emitted — stopping");
+                return Ok(ReasonResult { emitted_kind: Some(name.clone()), tool_round_trips: round_trips, final_text });
+            }
         }
 
         round_trips += 1;
@@ -963,6 +993,26 @@ async fn reason_via_anthropic(
     loop {
         if round_trips >= max_round_trips {
             return Err(format!("tool round-trip cap ({}) hit without final reply", max_round_trips));
+        }
+
+        // Convergence nudge (ADR-2026-06-04-1740 task 7): a model given exploration
+        // tools (repo_read/repo_grep) alongside code_patch tends to read/grep in
+        // circles and never commit to emitting the action — burning the whole
+        // round-trip budget "without finishing" (measured 2026-06-04: a one-test
+        // task hit the 16 cap on every path). Once it has spent half the budget
+        // exploring with no terminal action emitted, force the decision.
+        if emitted_kind.is_none() && round_trips > 0 && round_trips == max_round_trips / 2 {
+            tracing::warn!(role = %role, intent = %intent, round_trips, "reason loop: convergence nudge — forcing terminal action");
+            messages.push(json!({
+                "role": "user",
+                "content": format!(
+                    "You have used {} of {} tool round-trips exploring without emitting an action. \
+                     Stop calling repo_read/repo_grep now. Using what you have already read, emit \
+                     exactly ONE terminal tool call this turn: code_patch with the concrete change, \
+                     or escalate_to_operator if you are genuinely blocked. Do not explore further.",
+                    round_trips, max_round_trips
+                )
+            }));
         }
 
         let req_body = json!({
@@ -1140,6 +1190,26 @@ async fn reason_via_openrouter(
     loop {
         if round_trips >= max_round_trips {
             return Err(format!("tool round-trip cap ({}) hit without final reply", max_round_trips));
+        }
+
+        // Convergence nudge (ADR-2026-06-04-1740 task 7): a model given exploration
+        // tools (repo_read/repo_grep) alongside code_patch tends to read/grep in
+        // circles and never commit to emitting the action — burning the whole
+        // round-trip budget "without finishing" (measured 2026-06-04: a one-test
+        // task hit the 16 cap on every path). Once it has spent half the budget
+        // exploring with no terminal action emitted, force the decision.
+        if emitted_kind.is_none() && round_trips > 0 && round_trips == max_round_trips / 2 {
+            tracing::warn!(role = %role, intent = %intent, round_trips, "reason loop: convergence nudge — forcing terminal action");
+            messages.push(json!({
+                "role": "user",
+                "content": format!(
+                    "You have used {} of {} tool round-trips exploring without emitting an action. \
+                     Stop calling repo_read/repo_grep now. Using what you have already read, emit \
+                     exactly ONE terminal tool call this turn: code_patch with the concrete change, \
+                     or escalate_to_operator if you are genuinely blocked. Do not explore further.",
+                    round_trips, max_round_trips
+                )
+            }));
         }
 
         let req_body = json!({
@@ -1373,6 +1443,26 @@ async fn reason_via_ollama_fallback(
     loop {
         if round_trips >= max_round_trips {
             return Err(format!("tool round-trip cap ({}) hit without final reply", max_round_trips));
+        }
+
+        // Convergence nudge (ADR-2026-06-04-1740 task 7): a model given exploration
+        // tools (repo_read/repo_grep) alongside code_patch tends to read/grep in
+        // circles and never commit to emitting the action — burning the whole
+        // round-trip budget "without finishing" (measured 2026-06-04: a one-test
+        // task hit the 16 cap on every path). Once it has spent half the budget
+        // exploring with no terminal action emitted, force the decision.
+        if emitted_kind.is_none() && round_trips > 0 && round_trips == max_round_trips / 2 {
+            tracing::warn!(role = %role, intent = %intent, round_trips, "reason loop: convergence nudge — forcing terminal action");
+            messages.push(json!({
+                "role": "user",
+                "content": format!(
+                    "You have used {} of {} tool round-trips exploring without emitting an action. \
+                     Stop calling repo_read/repo_grep now. Using what you have already read, emit \
+                     exactly ONE terminal tool call this turn: code_patch with the concrete change, \
+                     or escalate_to_operator if you are genuinely blocked. Do not explore further.",
+                    round_trips, max_round_trips
+                )
+            }));
         }
 
         let req_body = json!({
