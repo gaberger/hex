@@ -305,7 +305,19 @@ const ADRBrowser: Component = () => {
 
   // Build a map: ADR number -> workplan count
   const adrWorkplanMap = createMemo(() => {
-    const plans = workplanList() ?? [];
+    // /api/workplan/list returns { data: { executions: [...] } } — NOT a bare
+    // array. Extract the array defensively; a `?? []` only guards null/undefined,
+    // so iterating the object threw "not iterable" and crashed the ADR view.
+    const raw = workplanList() as any;
+    const plans: any[] = Array.isArray(raw)
+      ? raw
+      : Array.isArray(raw?.data?.executions)
+        ? raw.data.executions
+        : Array.isArray(raw?.executions)
+          ? raw.executions
+          : Array.isArray(raw?.data)
+            ? raw.data
+            : [];
     const map = new Map<string, number>();
     for (const wp of plans) {
       const adrRef = wp.adr ?? wp.adrRef ?? '';
