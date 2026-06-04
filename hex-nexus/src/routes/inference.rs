@@ -2386,3 +2386,7 @@ mod tests {
       fn test_cqs_pass() {
           assert!(compute_quality_score(100, true) > 0.9);
       }
+      #[test]
+      fn test_cqs_mid() {
+          assert!(compute_quality_score(2000, true) > 0.7);
+      }
