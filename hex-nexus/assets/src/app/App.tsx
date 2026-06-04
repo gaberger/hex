@@ -297,40 +297,13 @@ const App: Component = () => {
 
   return (
     <>
-      {/* Full-screen OrgChart page */}
-      <Show when={isOrgChartPage()}>
-        <ConnectionStatusBanner />
-        <OrgChart />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
+      {/* Retired (2026-06-04): the full-screen persona/board views — Mission Control,
+          Team Dashboard, Org Chart, Org Comms — monitored the old SOP/persona pipeline
+          (liveness, not verified output). They're removed; Direct Runs is the monitor
+          now. Stale links to those pages fall through to the sidebar layout below. */}
 
-      {/* Full-screen OrgComms page */}
-      <Show when={isOrgCommsPage()}>
-        <ConnectionStatusBanner />
-        <OrgComms />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
-
-      {/* Full-screen Team Dashboard */}
-      <Show when={isTeamPage()}>
-        <ConnectionStatusBanner />
-        <TeamDashboard />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
-
-      {/* Full-screen Mission Control */}
-      <Show when={isMissionControlPage()}>
-        <ConnectionStatusBanner />
-        <MissionControl />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
-
-      {/* Standard layout with sidebar for all other pages */}
-      <Show when={!isOrgChartPage() && !isOrgCommsPage() && !isTeamPage() && !isMissionControlPage()}>
+      {/* Standard layout with sidebar — always rendered now */}
+      <Show when={true}>
         <div class="flex h-screen flex-col bg-gray-950 text-gray-100">
           {/* Connection status banner — shown when nexus or SpacetimeDB is unavailable */}
           <ConnectionStatusBanner />
@@ -430,25 +403,24 @@ const App: Component = () => {
           }}
         >
 
-          {/* Mission Control — operator's primary surface (P1.3: promoted to top with distinct treatment) */}
+          {/* Direct Runs — operator's primary surface (2026-06-04): the monitor for the
+              new evidence-gated execution model, replacing the retired Mission Control board. */}
           <div class="px-3 pt-3 pb-1">
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
               classList={{
-                "border-l-2 border-cyan-500 bg-cyan-500/10 text-cyan-100 pl-2": route().page === "mission-control",
-                "text-gray-200 hover:bg-gray-900/40 hover:text-cyan-200": route().page !== "mission-control",
+                "border-l-2 border-cyan-500 bg-cyan-500/10 text-cyan-100 pl-2": route().page === "direct-runs",
+                "text-gray-200 hover:bg-gray-900/40 hover:text-cyan-200": route().page !== "direct-runs",
                 "justify-center px-0": sidebarCollapsed(),
               }}
-              aria-label="Mission Control"
-              aria-current={route().page === "mission-control" ? "page" : undefined}
-              onClick={() => { navigate({ page: "mission-control" }); setMobileDrawerOpen(false); }}
+              aria-label="Direct Runs"
+              aria-current={route().page === "direct-runs" ? "page" : undefined}
+              onClick={() => { navigate({ page: "direct-runs" }); setMobileDrawerOpen(false); }}
             >
               <svg class="h-4 w-4 shrink-0 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="2" x2="12" y2="22" />
-                <path d="M2 12h20" />
+                <polygon points="5 3 19 12 5 21 5 3" /><polyline points="9 11 11 13 15 9" />
               </svg>
-              <Show when={!sidebarCollapsed()}>Mission Control</Show>
+              <Show when={!sidebarCollapsed()}>Direct Runs</Show>
             </button>
           </div>
 
@@ -595,9 +567,9 @@ const App: Component = () => {
               </svg>
               <Show when={!sidebarCollapsed()}>Fleet Nodes</Show>
             </button>
-            {/* Direct Runs — the new evidence-gated execution model */}
+            {/* (Direct Runs is the primary surface at the top of the sidebar) */}
             <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              class="hidden"
               classList={{
                 "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "direct-runs",
                 "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "direct-runs",
@@ -699,7 +671,6 @@ const App: Component = () => {
             <Match when={route().page === "fleet"}><ControlPlane /></Match>
             <Match when={route().page === "research-lab"}><ResearchLab /></Match>
             <Match when={route().page === "swaps"}><SwapsView /></Match>
-            <Match when={route().page === "org-chart"}><OrgChart /></Match>
             <Match when={route().page === "direct-runs"}><DirectRuns /></Match>
           </Switch>
           {/* BottomBar -- inside center content so it doesn't span under sidebar */}

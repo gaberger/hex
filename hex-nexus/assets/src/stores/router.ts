@@ -60,7 +60,7 @@ export type Route =
 // ── State ───────────────────────────────────────────────────────────────────
 
 // Signal is safe at module level — no computation, just a getter/setter pair
-const [route, setRoute] = createSignal<Route>({ page: "mission-control" });
+const [route, setRoute] = createSignal<Route>({ page: "direct-runs" });
 export { route };
 
 // ── Derived state (assigned inside createRoot by initRouterStore) ───────────
@@ -323,6 +323,9 @@ function routeToHash(r: Route): string {
 function hashToRoute(hash: string): Route {
   const path = hash.replace("#", "") || "/";
   const parts = path.split("/").filter(Boolean);
+  // Fresh load (no hash) lands on Direct Runs — the new evidence-gated monitor,
+  // not the retired Mission Control persona board (2026-06-04 cleanup).
+  if (parts.length === 0) return { page: "direct-runs" };
 
   // Global routes
   if (parts[0] === "inference") return { page: "inference" };
