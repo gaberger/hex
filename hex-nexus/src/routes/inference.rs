@@ -2369,3 +2369,8 @@ mod tests {
         assert!(compute_quality_score(200, true) > 0.9);
     }
 }
+    #[test]
+    fn test_cqs_slow_path() {
+        assert!(compute_quality_score(9000, true) > 0.8);
+        assert!(compute_quality_score(9000, false) < 0.5);
+    }
