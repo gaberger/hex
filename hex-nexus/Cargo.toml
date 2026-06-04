@@ -66,6 +66,14 @@ bollard = "0.17"
 # SpacetimeDB client SDK — optional, enabled via --features spacetimedb
 spacetimedb-sdk = { version = "2.0", optional = true }
 
+# jemalloc as the global allocator (ADR-2026-06-04-1740): glibc's malloc thrashed
+# under serde_json::Value churn from ~20 STDB poll loops — capping arenas
+# (MALLOC_ARENA_MAX=2) fixed RSS but funneled all alloc traffic onto 2 arena locks,
+# burning ~6 cores in futex contention. jemalloc's per-thread caches eliminate both
+# the fragmentation and the lock storm, letting the arena cap be removed.
+[target.'cfg(unix)'.dependencies]
+tikv-jemallocator = "0.6"
+
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tempfile = "3"

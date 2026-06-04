@@ -397,20 +397,23 @@ async fn start(port: u16, bind: &str, token: Option<&str>, _no_agent: bool) -> a
     // routing every directive through the strict Confirm/Silent prompt
     // instead of the typed-tool pipeline.
     if std::env::var("HEX_SOP_PERSONAS").is_err() {
+        // hex-coder is the doer persona that emits code_patch (auto_repair DMs
+        // it). It must be a SOP persona so its asks route through the SOP
+        // REASON phase (→ reason_via_router → tier_models → Tenstorrent) rather
+        // than org_responder's local chat reply. Its omission meant auto_repair
+        // codegen ran on local qwen, never the configured tier model.
         cmd.env(
             "HEX_SOP_PERSONAS",
-            "cto,cpo,coo,ciso,chief-visionary,chief-architect",
+            "cto,cpo,coo,ciso,chief-visionary,chief-architect,hex-coder",
         );
     }
-    // Cap glibc per-thread malloc arenas. Default is 8 × num_cpus → up to 256
-    // arenas on a 32-core box, each pulling 128 MB chunks via mmap. Measured
-    // 2026-05-22: 15h-uptime nexus with default arenas held 25 GB RSS across
-    // 390 anon regions; ARENA_MAX=2 brought the same workload to 3 GB / 67
-    // regions with a 30% CPU reduction (less arena-lock contention). User-set
-    // env wins.
-    if std::env::var("MALLOC_ARENA_MAX").is_err() {
-        cmd.env("MALLOC_ARENA_MAX", "2");
-    }
+    // NOTE (ADR-2026-06-04-1740): we used to force MALLOC_ARENA_MAX=2 here to tame a
+    // 25 GB RSS bloat (2026-05-22). That cap funneled the heavy serde_json::Value
+    // allocation traffic from ~20 STDB poll loops onto 2 glibc arena locks, burning
+    // ~6 cores in futex contention (measured: ARENA_MAX=2 → 600% idle CPU, ARENA_MAX=16
+    // → 0%). hex-nexus now uses jemalloc as its #[global_allocator], whose per-thread
+    // caches eliminate both the fragmentation and the lock storm — so the glibc arena
+    // cap is no longer set. A user-provided MALLOC_ARENA_MAX still passes through.
     // Ensure cargo (and other rustup-installed binaries) are reachable from
     // nexus-spawned shell commands. Without this, phase gates like
     // `cargo check -p hex-nexus` fail with "command not found" (exit 127) and

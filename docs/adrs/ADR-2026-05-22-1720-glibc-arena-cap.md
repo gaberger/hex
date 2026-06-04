@@ -1,7 +1,14 @@
 # ADR-2026-05-22-1720 — glibc-arena-cap
 
-Status: **Accepted**
+Status: **Superseded** by ADR-2026-06-04-1740
 Date: 2026-05-22
+
+> **Superseded 2026-06-04.** The `MALLOC_ARENA_MAX=2` cap decided here fixed the 25 GB RSS
+> bloat but funneled hex-nexus's serde_json::Value allocation traffic onto 2 glibc arena
+> locks, burning ~6 cores in futex contention at idle (the "100% futex_wait" reading below
+> was misread as benign — it was contention). ADR-2026-06-04-1740 replaces the cap by
+> switching hex-nexus to the jemalloc global allocator, which bounds RSS *and* removes the
+> lock storm. The arena cap has been removed from `hex-cli/src/commands/nexus.rs`.
 
 ## Context
 
