@@ -2410,3 +2410,8 @@ fn test_adversarial_reverify_xyz() {
 fn test_solo_path_check() {
     assert!(compute_quality_score(100, true) > 0.9);
 }
+// Additional test cases for edge scenarios
+#[test]
+fn test_harden_proof() {
+    assert!(compute_quality_score(100, true) > 0.9);
+}
