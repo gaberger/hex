@@ -2395,3 +2395,7 @@ fn test_cqs_cli_proof() {
     assert!(compute_quality_score(100, false) < 0.7);
     assert!(compute_quality_score(100, true) > 0.9);
 }
+#[test]
+fn test_swarm_review_exec() {
+    assert!(compute_quality_score(100, true) > 0.9);
+}
