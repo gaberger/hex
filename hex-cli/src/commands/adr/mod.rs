@@ -298,7 +298,10 @@ fn parse_adr_status(content: &str) -> &str {
 
         return match val.to_lowercase().as_str() {
             s if s.contains("proposed") => "proposed",
+            // "completed" before "accepted": a Completed ADR's line may mention both.
+            s if s.contains("completed") => "completed",
             s if s.contains("accepted") => "accepted",
+            s if s.contains("rejected") => "rejected",
             s if s.contains("deprecated") => "deprecated",
             s if s.contains("abandoned") => "abandoned",
             s if s.contains("superseded") => "superseded",
