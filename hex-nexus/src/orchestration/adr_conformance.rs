@@ -39,6 +39,9 @@ pub struct AdrRecord {
 pub enum AdrStatus {
     Proposed,
     Accepted,
+    /// Accepted AND implementation confirmed (workplan reconciled done + evidence).
+    /// Terminal success — authorizes adapters exactly like Accepted.
+    Completed,
     Deprecated,
     Superseded,
     Unknown(String),
@@ -49,10 +52,17 @@ impl AdrStatus {
         match s.trim().to_lowercase().as_str() {
             "proposed" => AdrStatus::Proposed,
             "accepted" => AdrStatus::Accepted,
+            "completed" => AdrStatus::Completed,
             "deprecated" => AdrStatus::Deprecated,
             "superseded" => AdrStatus::Superseded,
             other => AdrStatus::Unknown(other.into()),
         }
+    }
+
+    /// Whether this status authorizes an `adr-NNNN-*` adapter (R2). Both an
+    /// Accepted decision and a Completed (implemented) one are authoritative.
+    fn authorizes(&self) -> bool {
+        matches!(self, AdrStatus::Accepted | AdrStatus::Completed)
     }
 }
 
@@ -193,10 +203,11 @@ fn check_against(
         }
     }
 
-    // R2 — adapter_id pattern adr-NNNN must reference an Accepted ADR.
+    // R2 — adapter_id pattern adr-NNNN must reference an authorizing ADR
+    // (Accepted or Completed).
     if let Some(adr_id) = extract_adr_id(&ticket.candidate_adapter_id) {
         match registry.get(&adr_id.to_lowercase()) {
-            Some(rec) if rec.status != AdrStatus::Accepted => {
+            Some(rec) if !rec.status.authorizes() => {
                 violations.push(ConformanceViolation::AdapterReferencesNonAcceptedAdr {
                     ticket_id: ticket.id.clone(),
                     candidate_adapter_id: ticket.candidate_adapter_id.clone(),

@@ -26,11 +26,14 @@ impl Tool for AdrStatusSet {
         "adr_status_set"
     }
     fn description(&self) -> &'static str {
-        "Update an ADR's Status header line. Use Accepted when the \
-         ADR's implementation has been verified by `hex plan reconcile` \
-         (all workplan phases complete + evidence in code). Use \
-         Superseded when a later ADR replaces this one. The ADR file \
-         must contain a single line matching `Status: **<word>**`."
+        "Update an ADR's Status header line, driving it through the lifecycle: \
+         Proposed → Accepted → Completed (terminal success), with Rejected (from \
+         Proposed), Superseded (a later ADR replaces it), Abandoned (stale Proposed), \
+         or Deprecated as branches. Use Accepted when the decision is approved; \
+         Completed when the implementation is CONFIRMED (its workplan reconciles \
+         done + evidence in code, per `hex plan reconcile`); Superseded when a later \
+         ADR replaces this one. The ADR file must contain a single line matching \
+         `Status: **<word>**`."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -42,8 +45,8 @@ impl Tool for AdrStatusSet {
                 },
                 "new_status": {
                     "type": "string",
-                    "enum": ["Proposed", "Accepted", "Superseded"],
-                    "description": "Target status. Capitalised."
+                    "enum": ["Proposed", "Accepted", "Completed", "Superseded", "Rejected", "Abandoned", "Deprecated"],
+                    "description": "Target lifecycle status. Capitalised. Completed = Accepted + implementation confirmed."
                 },
                 "rationale": {
                     "type": "string",
@@ -63,8 +66,19 @@ impl Tool for AdrStatusSet {
             return ToolResult::err("adr_id must be a digits-only timestamp ≥8 chars (e.g. 2605082600)", start.elapsed().as_millis() as u64);
         }
         let new_status = match input.get("new_status").and_then(|v| v.as_str()) {
-            Some(s @ "Proposed" | s @ "Accepted" | s @ "Superseded") => s.to_string(),
-            _ => return ToolResult::err("new_status must be Proposed|Accepted|Superseded", start.elapsed().as_millis() as u64),
+            Some(
+                s @ "Proposed"
+                | s @ "Accepted"
+                | s @ "Completed"
+                | s @ "Superseded"
+                | s @ "Rejected"
+                | s @ "Abandoned"
+                | s @ "Deprecated",
+            ) => s.to_string(),
+            _ => return ToolResult::err(
+                "new_status must be Proposed|Accepted|Completed|Superseded|Rejected|Abandoned|Deprecated",
+                start.elapsed().as_millis() as u64,
+            ),
         };
         let rationale = match input.get("rationale").and_then(|v| v.as_str()) {
             Some(s) if !s.is_empty() && s.len() <= 300 => s.to_string(),

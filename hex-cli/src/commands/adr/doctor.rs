@@ -251,7 +251,7 @@ fn classify_status(value: &str) -> Option<&'static str> {
         .collect();
     let words: Vec<&str> = cleaned.split_whitespace().collect();
 
-    let known = ["proposed", "accepted", "deprecated", "superseded", "abandoned", "rejected"];
+    let known = ["proposed", "accepted", "completed", "deprecated", "superseded", "abandoned", "rejected"];
     let matches: Vec<&'static str> = known
         .iter()
         .copied()

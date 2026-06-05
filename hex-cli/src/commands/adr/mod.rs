@@ -728,7 +728,7 @@ async fn schema() -> anyhow::Result<()> {
         "id_readable": human_readable,
         "directory": adr_dir.to_string_lossy(),
         "filename_pattern": "ADR-{YYMMDDHHMM}-{kebab-slug}.md",
-        "valid_statuses": ["Proposed", "Accepted", "Deprecated", "Superseded", "Abandoned"],
+        "valid_statuses": ["Proposed", "Accepted", "Completed", "Deprecated", "Superseded", "Abandoned", "Rejected"],
         "required_sections": ["Context", "Decision", "Consequences", "Implementation", "References"],
         "frontmatter_fields": {
             "Status": "required — one of valid_statuses",
