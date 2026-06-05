@@ -210,17 +210,17 @@ const ControlPlane: Component = () => {
       const ppath = (p as any).rootPath || (p as any).path || "";
 
       // Count swarms: use shared project matching utility
-      const projectSwarms = swarms().filter((s: any) =>
+      const projectSwarms = (swarms() ?? []).filter((s: any) =>
         entityBelongsToProject(s, pid),
       );
 
       // Count agents: use shared project matching utility
-      const projectAgents = registryAgents().filter((a: any) =>
+      const projectAgents = (registryAgents() ?? []).filter((a: any) =>
         entityBelongsToProject(a, pid),
       );
 
       // Count swarm agents too
-      const swarmAgentCount = swarmAgents().filter((sa: any) => {
+      const swarmAgentCount = (swarmAgents() ?? []).filter((sa: any) => {
         const saSwarm = sa.swarm_id ?? sa.swarmId ?? "";
         return projectSwarms.some((s: any) => (s.id ?? s.swarm_id) === saSwarm);
       }).length;
@@ -228,7 +228,7 @@ const ControlPlane: Component = () => {
       const totalAgents = projectAgents.length + swarmAgentCount;
 
       // Active tasks for this project's swarms
-      const projectTasks = swarmTasks().filter((t: any) => {
+      const projectTasks = (swarmTasks() ?? []).filter((t: any) => {
         const tSwarm = t.swarm_id ?? t.swarmId ?? "";
         return projectSwarms.some((s: any) => (s.id ?? s.swarm_id) === tSwarm);
       });
@@ -241,14 +241,14 @@ const ControlPlane: Component = () => {
   );
 
   // Global totals (including unscoped swarms)
-  const totalSwarms = createMemo(() => swarms().filter((s: any) => s.status === "active").length);
+  const totalSwarms = createMemo(() => (swarms() ?? []).filter((s: any) => s.status === "active").length);
   const totalTasksInProgress = createMemo(() =>
-    swarmTasks().filter(
+    (swarmTasks() ?? []).filter(
       (t: any) => t.status === "in_progress" || t.status === "running" || t.status === "assigned",
     ).length,
   );
   const totalActiveAgents = createMemo(() =>
-    registryAgents().filter(
+    (registryAgents() ?? []).filter(
       (a: any) => a.status === "active" || a.status === "running" || a.status === "registered",
     ).length,
   );

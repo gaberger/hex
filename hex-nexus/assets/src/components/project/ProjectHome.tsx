@@ -90,13 +90,13 @@ const ProjectHome: Component<ProjectHomeProps> = (props) => {
 
   // ---- Top-right: Active Swarms ----
   const projectSwarms = createMemo(() =>
-    swarms().filter(
+    (swarms() ?? []).filter(
       (s: any) => entityBelongsToProject(s, pid()),
     ),
   );
 
   const activeSwarms = createMemo(() =>
-    projectSwarms().filter(
+    (projectSwarms() ?? []).filter(
       (s: any) => s.status === "active" || s.status === "running" || !s.status,
     ),
   );
@@ -106,7 +106,7 @@ const ProjectHome: Component<ProjectHomeProps> = (props) => {
     done: number;
     total: number;
   } {
-    const tasks = swarmTasks().filter(
+    const tasks = (swarmTasks() ?? []).filter(
       (t: any) => (t.swarmId ?? t.swarm_id ?? "") === swarmId,
     );
     if (tasks.length === 0) return { percent: 0, done: 0, total: 0 };
@@ -124,7 +124,7 @@ const ProjectHome: Component<ProjectHomeProps> = (props) => {
   // Use registryAgents (hex_agent table) not swarmAgents (swarm_agent table).
   // swarm_agent only has agents assigned to swarms; registryAgents has all connected agents.
   const projectAgents = createMemo(() =>
-    registryAgents().filter(
+    (registryAgents() ?? []).filter(
       (a: any) => entityBelongsToProject(a, pid()),
     ),
   );

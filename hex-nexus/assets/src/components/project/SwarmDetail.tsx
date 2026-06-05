@@ -76,19 +76,19 @@ const SwarmDetail: Component = () => {
   const swarmId = () => (route() as any).swarmId ?? "";
 
   const swarm = createMemo(() =>
-    swarms().find(
+    (swarms() ?? []).find(
       (s: any) => (s.id ?? s.swarm_id ?? "") === swarmId(),
     ),
   );
 
   const tasks = createMemo(() =>
-    swarmTasks().filter(
+    (swarmTasks() ?? []).filter(
       (t: any) => (t.swarm_id ?? t.swarmId ?? "") === swarmId(),
     ),
   );
 
   const agents = createMemo(() =>
-    swarmAgents().filter(
+    (swarmAgents() ?? []).filter(
       (a: any) => (a.swarm_id ?? a.swarmId ?? "") === swarmId(),
     ),
   );
@@ -108,14 +108,14 @@ const SwarmDetail: Component = () => {
   function agentName(agentId: string): string {
     if (!agentId) return "--";
     const a =
-      swarmAgents().find(
+      (swarmAgents() ?? []).find(
         (ag: any) => (ag.id ?? ag.agent_id ?? "") === agentId,
       );
     return a?.name ?? a?.agent_name ?? agentId.slice(0, 8);
   }
 
   function getHeartbeat(agentId: string): any {
-    return agentHeartbeats().find(
+    return (agentHeartbeats() ?? []).find(
       (h: any) => (h.agent_id ?? "") === agentId,
     );
   }
@@ -231,8 +231,8 @@ const SwarmDetail: Component = () => {
                       const result = task.result ?? "";
                       const assignedAgent = () => {
                         if (!assignee) return null;
-                        return registryAgents().find((a: any) => (a.agent_id ?? a.id ?? "") === assignee)
-                          ?? swarmAgents().find((a: any) => (a.id ?? a.agent_id ?? "") === assignee);
+                        return (registryAgents() ?? []).find((a: any) => (a.agent_id ?? a.id ?? "") === assignee)
+                          ?? (swarmAgents() ?? []).find((a: any) => (a.id ?? a.agent_id ?? "") === assignee);
                       };
                       const worktreePath = () => assignedAgent()?.worktree_path ?? assignedAgent()?.worktree ?? "";
                       const commitHash = () => {

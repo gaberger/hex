@@ -11,26 +11,26 @@ import { restClient } from "../../services/rest-client";
 
 const AgentLog: Component<{ agentId: string }> = (props) => {
   const agent = createMemo(() =>
-    registryAgents().find((a: any) =>
+    (registryAgents() ?? []).find((a: any) =>
       (a.id ?? a.agent_id ?? "") === props.agentId
     )
   );
 
   const heartbeat = createMemo(() =>
-    agentHeartbeats().find((h: any) =>
+    (agentHeartbeats() ?? []).find((h: any) =>
       (h.agent_id ?? "") === props.agentId
     )
   );
 
   const assignedTasks = createMemo(() =>
-    swarmTasks().filter((t: any) =>
+    (swarmTasks() ?? []).filter((t: any) =>
       (t.assigned_to ?? t.agent_id ?? "") === props.agentId
     )
   );
 
   // Agent-scoped memory from SpacetimeDB subscription (no fetch needed)
   const agentMemory = createMemo(() =>
-    hexfloMemory().filter((m: any) =>
+    (hexfloMemory() ?? []).filter((m: any) =>
       (m.scope ?? m.memory_scope ?? "").includes(`agent:${props.agentId}`)
     )
   );

@@ -329,7 +329,7 @@ const MissionsList: Component = () => {
   const rows = createMemo<AdrRow[]>(() => {
     const map = wpByAdr();
     const det = wpDetails();
-    return adrs().map((a) => {
+    return (adrs() ?? []).map((a) => {
       const wps = map.get(a.id) ?? [];
       let totalFeatures = 0;
       let doneFeatures = 0;
@@ -792,7 +792,7 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
     setActionInFlight(verb);
     try {
       if (verb === "pause" || verb === "resume") {
-        const wpIds = workplans().map((w) => w.id);
+        const wpIds = (workplans() ?? []).map((w) => w.id);
         if (wpIds.length === 0) {
           showToast(`No workplans under ${props.missionId} to ${verb}`, "info");
         } else {

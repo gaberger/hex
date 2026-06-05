@@ -29,11 +29,11 @@ const FleetView: Component = () => {
   const [registering, setRegistering] = createSignal(false);
 
   const totalAgents = createMemo(() =>
-    fleetNodes().reduce((sum: number, n: any) => sum + (n.agent_count ?? n.agents ?? 0), 0)
+    (fleetNodes() ?? []).reduce((sum: number, n: any) => sum + (n.agent_count ?? n.agents ?? 0), 0)
   );
 
   const onlineCount = createMemo(() =>
-    fleetNodes().filter((n: any) => {
+    (fleetNodes() ?? []).filter((n: any) => {
       const s = n.status ?? n.state ?? "";
       return s === "healthy" || s === "active" || s === "online";
     }).length
