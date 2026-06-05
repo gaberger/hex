@@ -1,4 +1,5 @@
 {
+  "status": "pending",
   "id": "test-typescript-food-delivery",
   "title": "Test TypeScript Support: Food Delivery Service Domain",
   "phases": [

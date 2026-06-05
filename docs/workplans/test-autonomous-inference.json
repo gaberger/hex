@@ -1,4 +1,5 @@
 {
+  "status": "pending",
   "id": "test-autonomous-inference",
   "title": "Test Autonomous Inference",
   "phases": [

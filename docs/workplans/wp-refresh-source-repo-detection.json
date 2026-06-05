@@ -1,4 +1,5 @@
 {
+  "status": "pending",
   "id": "wp-claude-md-conform",
   "title": "Make hex-intf/CLAUDE.md conform to hex refresh marker protocol",
   "rationale": "hex-intf is the source repo AND a hex project — it must dogfood its own tooling. The current CLAUDE.md lacks the <!-- hex:claude-md:start/end --> markers that `hex refresh` requires, causing refresh to bail with a yellow warning. Fix is to (a) reconcile the shipped template (`hex-cli/assets/templates/claude-md-hex-section.md`) with hex-intf's richer managed-section content so the template is authoritative, (b) insert markers into hex-intf/CLAUDE.md around the sections that map to the template (Behavioral Rules / Autonomous Operation, hex Tool Precedence, Hexagonal Architecture Rules), leaving hex-specific sections (System Components, crate layout, Standalone Mode, Tiered Inference Routing, HexFlo internals, etc.) OUTSIDE the markers as project-authoritative content. After this, `hex refresh` round-trips cleanly.",

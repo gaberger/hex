@@ -1,4 +1,5 @@
 {
+  "status": "pending",
   "id": "wp-brain-dashboard",
   "title": "Brain Dashboard — decisions lane, kanban projection, agent chat",
   "rationale": "Today the dashboard at hex-nexus :5555 is a status surface (Solid + Tailwind, real-time via STDB). The operator described the desired shape as a 'Brain' — three fused panes: TEAM rail (25 personas grouped into 5 departments), KANBAN center (work in flight by lane, plus a Decisions lane for human-in-loop bottlenecks), CHAT right (operator @-mentions a hex agent → spawns transient worker → streams response). All driven by the existing data substrate (HexFlo + STDB subs + REST). Three milestones, each shippable independently.",

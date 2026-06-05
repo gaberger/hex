@@ -1,4 +1,5 @@
 {
+  "status": "pending",
   "adr": "ADR-018",
   "feature": "Minimal language injection smoke test",
   "id": "test-language-injection-minimal",

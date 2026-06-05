@@ -1,4 +1,5 @@
 {
+  "status": "pending",
   "id": "test-escalation-fresh",
   "title": "Test escalation ladder with fresh documentation",
   "phases": [

@@ -1,4 +1,5 @@
 {
+  "status": "pending",
   "id": "test-escalation-rust",
   "phases": [
     {

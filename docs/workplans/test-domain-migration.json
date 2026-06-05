@@ -1,4 +1,5 @@
 {
+  "status": "pending",
   "id": "test-domain-migration",
   "title": "Test architectural migration: Add extensible validation rule system",
   "phases": [

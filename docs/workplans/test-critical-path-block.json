@@ -1,4 +1,5 @@
 {
+  "status": "pending",
   "test_name": "critical_path_block_test",
   "description": "Test to verify that modifying critical infrastructure files fails with 'Cannot modify critical infrastructure' error.",
   "steps": [

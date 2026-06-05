@@ -1,0 +1,15 @@
+{
+  "adr": "ADR-2026-04-11-0227",
+  "created_at": "2026-05-30T19:49:47.294961291-04:00",
+  "id": "draft-2605301949-build-an-ebay-style-marketplace",
+  "kind": "workplan-draft",
+  "next_steps": [
+    "Run /hex-feature-dev to expand this draft into a full workplan",
+    "Or run `hex plan drafts approve draft-2605301949-build-an-ebay-style-marketplace.json`",
+    "Or run `hex plan drafts clear --name draft-2605301949-build-an-ebay-style-marketplace`"
+  ],
+  "notes": "This is a draft created by ADR-2026-04-11-0227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up.",
+  "origin": "auto-invoke",
+  "prompt": "Build an eBay-style marketplace UI for the examples/ebay-clone Solid+Vite+Tailwind frontend. Requirements: (1) fix src/styles.css to contain the @tailwind base/components/utilities directives so Tailwind utilities actually generate (currently missing — the app renders unstyled); (2) a sticky top header with a hexBay logo, a full-width rounded search input, and nav links (Sell, My bids, Won, Sign up); (3) Home page shows a responsive product GRID (grid-cols-2 sm:3 lg:4) of cards; each card has an image area (gradient background + a category emoji derived from the title: camera/laptop/phone/watch/guitar/book/sneaker/bike/console), a condition badge (Mint/Vintage/Refurbished/etc parsed from the title prefix), the title (2-line clamp), and a bold price from starting_price_cents/100; (4) client-side search filters the grid by title; (5) keep it wired to the existing http client + API_BASE GET /api/v1/listings. HARD CONSTRAINT: the frontend MUST build clean — evidence: 'cd examples/ebay-clone/frontend && npm run build' must exit 0. Do not introduce React; this is Solid (createResource/createSignal, @solidjs/router). Only touch examples/ebay-clone/frontend/src.",
+  "status": "pending-planner"
+}
