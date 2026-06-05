@@ -1,6 +1,7 @@
 # ADR-2026-05-22-1720 — glibc-arena-cap
 
-Status: **Superseded** by ADR-2026-06-04-1740
+Status: Superseded
+Superseded-By: ADR-2026-06-04-1740
 Date: 2026-05-22
 
 > **Superseded 2026-06-04.** The `MALLOC_ARENA_MAX=2` cap decided here fixed the 25 GB RSS
