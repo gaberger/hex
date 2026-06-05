@@ -1,4 +1,5 @@
 pub mod adr_conformance;
+pub mod adr_steward;
 pub mod adversarial_swarm;
 pub mod agent;
 pub mod agent_loop;

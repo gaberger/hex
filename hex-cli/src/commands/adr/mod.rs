@@ -114,6 +114,14 @@ pub enum AdrAction {
         #[arg(long, short, default_value = "operator: superseded via `hex adr supersede`")]
         rationale: String,
     },
+    /// Run the in-nexus adr-steward agent: advance Accepted ADRs that hex has
+    /// confirmed implemented (Implementation-Present) to Completed. Runs in nexus,
+    /// records to the agent feed, shows in the dashboard.
+    Steward {
+        /// Report candidates without mutating.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 pub async fn run(action: AdrAction) -> anyhow::Result<()> {
@@ -122,6 +130,7 @@ pub async fn run(action: AdrAction) -> anyhow::Result<()> {
         AdrAction::Accept { adr_id, rationale } => set_adr_status(&adr_id, "Accepted", None, &rationale).await,
         AdrAction::Complete { adr_id, rationale, force } => complete_adr(&adr_id, &rationale, force).await,
         AdrAction::Supersede { adr_id, by, rationale } => supersede_adr(&adr_id, &by, &rationale).await,
+        AdrAction::Steward { dry_run } => steward_sweep(dry_run).await,
         AdrAction::Status { json } => status(json).await,
         AdrAction::Search { query } => search(&query).await,
         AdrAction::Abandoned => abandoned().await,
@@ -285,6 +294,47 @@ async fn complete_adr(adr_id: &str, rationale: &str, force: bool) -> anyhow::Res
 async fn supersede_adr(adr_id: &str, by: &str, rationale: &str) -> anyhow::Result<()> {
     find_adr_file(by).map_err(|_| anyhow::anyhow!("replacement ADR '{}' not found — create it first", by))?;
     set_adr_status(adr_id, "Superseded", Some(by), rationale).await
+}
+
+/// `hex adr steward` — trigger the in-nexus adr-steward agent (runs in nexus,
+/// records to the agent feed, shows in the dashboard).
+async fn steward_sweep(dry_run: bool) -> anyhow::Result<()> {
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    nexus.ensure_running().await?;
+    let path = if dry_run {
+        "/api/agent/adr-steward/sweep?dry_run=true"
+    } else {
+        "/api/agent/adr-steward/sweep"
+    };
+    println!("{} adr-steward (in-nexus): scanning ADRs for Accepted + Implementation-Present …", "\u{2b21}".cyan());
+    let r = nexus.post_long(path, &serde_json::json!({})).await?;
+    let completed = r.get("completed").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let accepted = r.get("accepted").and_then(|v| v.as_u64()).unwrap_or(0);
+    let scanned = r.get("scanned").and_then(|v| v.as_u64()).unwrap_or(0);
+    let committed = r.get("committed").and_then(|v| v.as_str());
+    if dry_run {
+        println!(
+            "{} {} candidate(s) Accepted→Completed (of {} accepted / {} scanned) — dry run, no changes",
+            "\u{2192}".dimmed(),
+            completed,
+            accepted,
+            scanned
+        );
+    } else {
+        println!(
+            "{} advanced {} ADR(s) Accepted→Completed (of {} accepted / {} scanned){}",
+            "\u{2713}".green().bold(),
+            completed,
+            accepted,
+            scanned,
+            committed.map(|h| format!(" \u{b7} commit {}", h.yellow())).unwrap_or_default()
+        );
+    }
+    if let Some(err) = r.get("error").and_then(|v| v.as_str()) {
+        println!("  {} {}", "error:".red(), err);
+    }
+    println!("  {} recorded to the agent-runs feed — visible in the dashboard", "\u{2192}".dimmed());
+    Ok(())
 }
 
 /// Drive the doctor subcommand: detection → optional tier-aware fix →

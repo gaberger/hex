@@ -12,6 +12,7 @@ import { restClient } from "../../services/rest-client";
 
 interface DirectRun {
   id: number;
+  agent: string;
   started_at: string;
   instruction: string;
   file: string;
@@ -67,9 +68,9 @@ const DirectRuns: Component = () => {
 
   return (
     <div class="p-6 text-gray-100">
-      <h1 class="text-xl font-semibold mb-1">Direct Runs</h1>
+      <h1 class="text-xl font-semibold mb-1">Agent Runs</h1>
       <p class="text-sm text-gray-400 mb-4">
-        Evidence-gated agent runs — task → edit → test → commit. Verified output, not liveness.
+        What hex agents actually did — direct-executor, adr-steward, … — with the commit they produced. Verified output, not liveness.
       </p>
       <Show when={err()}>
         <div class="text-red-400 text-sm mb-3">{err()}</div>
@@ -89,6 +90,7 @@ const DirectRuns: Component = () => {
                 <thead class="bg-gray-900/60 text-gray-400 text-xs uppercase">
                   <tr>
                     <th class="text-left px-3 py-2">#</th>
+                    <th class="text-left px-3 py-2">Agent</th>
                     <th class="text-left px-3 py-2">Task</th>
                     <th class="text-left px-3 py-2">File</th>
                     <th class="text-left px-3 py-2">Evidence</th>
@@ -103,6 +105,7 @@ const DirectRuns: Component = () => {
                     {(r) => (
                       <tr class="border-t border-gray-800/60 hover:bg-gray-900/40">
                         <td class="px-3 py-2 text-gray-500">{r.id}</td>
+                        <td class="px-3 py-2"><span class="text-cyan-300 text-xs font-medium">{r.agent || "direct-executor"}</span></td>
                         <td class="px-3 py-2 max-w-md truncate" title={r.instruction}>{r.instruction}</td>
                         <td class="px-3 py-2 text-gray-400 font-mono text-xs">{r.file.split("/").pop()}</td>
                         <td class="px-3 py-2">

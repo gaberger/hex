@@ -71,10 +71,14 @@ const WINDOW: usize = 24;
 
 const RUN_HISTORY: usize = 200;
 
-/// One recorded direct-executor run — the monitorable unit of the new model.
+/// One recorded agent run — the monitorable unit of the new model. Shared by the
+/// direct executor and any other in-nexus agent (e.g. adr-steward) so they all
+/// surface in one dashboard feed.
 #[derive(Debug, Clone, Serialize)]
 pub struct DirectRun {
     pub id: u64,
+    /// Which agent produced this run ("direct-executor", "adr-steward", ...).
+    pub agent: String,
     pub started_at: String,
     pub instruction: String,
     pub file: String,
@@ -85,6 +89,40 @@ pub struct DirectRun {
     pub committed: Option<String>,
     pub duration_ms: u64,
     pub error: Option<String>,
+}
+
+/// Record a run from any in-nexus agent (not just the direct executor) into the
+/// shared feed served by GET /api/direct/runs. `detail` becomes the instruction
+/// line shown in the dashboard.
+pub fn record_agent_run(
+    agent: &str,
+    started_at: String,
+    detail: String,
+    ok: bool,
+    committed: Option<String>,
+    duration_ms: u64,
+    error: Option<String>,
+) {
+    let run = DirectRun {
+        id: RUN_ID.fetch_add(1, Ordering::Relaxed),
+        agent: agent.to_string(),
+        started_at,
+        instruction: detail.chars().take(240).collect(),
+        file: String::new(),
+        model: String::new(),
+        ok,
+        attempts: 1,
+        evidence_passed: ok,
+        committed,
+        duration_ms,
+        error,
+    };
+    if let Ok(mut q) = RUNS.lock() {
+        q.push_front(run);
+        while q.len() > RUN_HISTORY {
+            q.pop_back();
+        }
+    }
 }
 
 static RUNS: LazyLock<Mutex<VecDeque<DirectRun>>> = LazyLock::new(|| Mutex::new(VecDeque::new()));
@@ -108,6 +146,7 @@ fn evidence_is_vacuous(output: &str) -> bool {
 fn record_run(started_at: String, task: &DirectTask, model: &str, r: &DirectResult, duration_ms: u64) {
     let run = DirectRun {
         id: RUN_ID.fetch_add(1, Ordering::Relaxed),
+        agent: "direct-executor".to_string(),
         started_at,
         instruction: task.instruction.chars().take(240).collect(),
         file: task.file.clone(),

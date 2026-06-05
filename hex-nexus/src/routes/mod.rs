@@ -89,6 +89,16 @@ async fn direct_runs() -> Json<serde_json::Value> {
         "runs": crate::direct_exec::runs_snapshot(),
     }))
 }
+
+/// POST /api/agent/adr-steward/sweep — run the in-nexus adr-steward agent: advance
+/// Accepted ADRs hex has confirmed implemented (Implementation-Present) to Completed.
+/// `?dry_run=true` reports candidates without mutating. Records to the agent-runs feed.
+async fn adr_steward_sweep(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<crate::orchestration::adr_steward::StewardResult> {
+    let dry = q.get("dry_run").map(|v| v == "true" || v == "1").unwrap_or(false);
+    Json(crate::orchestration::adr_steward::run_lifecycle_sweep(dry).await)
+}
 use crate::middleware::auth::auth_layer;
 use crate::middleware::capability_auth::capability_auth;
 use crate::middleware::deprecation::deprecation_layer;
@@ -933,6 +943,7 @@ pub fn build_router(state: SharedState) -> Router {
         // Direct executor (ADR-2026-06-04-1740 Path A): task → one agent → evidence → commit
         .route("/api/direct/execute", post(direct_execute))
         .route("/api/direct/runs", get(direct_runs))
+        .route("/api/agent/adr-steward/sweep", post(adr_steward_sweep))
         // Synchronous inference completion (hex-agent HTTP bridge)
         .route("/api/inference/complete", post(inference::inference_complete)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
