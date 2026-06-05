@@ -82,11 +82,46 @@ pub enum AdrAction {
         #[arg(long)]
         strict: bool,
     },
+    /// Set an ADR to Accepted (the decision is approved).
+    Accept {
+        /// ADR id (e.g. ADR-2026-06-05-1200 or 2606051200)
+        adr_id: String,
+        /// One-line rationale recorded in the commit/audit trail.
+        #[arg(long, short, default_value = "operator: accepted via `hex adr accept`")]
+        rationale: String,
+    },
+    /// Set an ADR to Completed — GATED on its workplan being reconciled done.
+    ///
+    /// Confirms the implementation (a workplan referencing this ADR exists and is
+    /// done) before flipping Accepted → Completed. `Completed` authorizes adapters
+    /// like `Accepted`. Use `--force` to override the gate.
+    Complete {
+        /// ADR id
+        adr_id: String,
+        #[arg(long, short, default_value = "operator: completed via `hex adr complete`")]
+        rationale: String,
+        /// Skip the implementation-confirmed gate (operator override).
+        #[arg(long)]
+        force: bool,
+    },
+    /// Set an ADR to Superseded by a later one (adds a `Superseded-By:` backlink).
+    Supersede {
+        /// ADR id being superseded
+        adr_id: String,
+        /// The replacement ADR id (must exist).
+        #[arg(long)]
+        by: String,
+        #[arg(long, short, default_value = "operator: superseded via `hex adr supersede`")]
+        rationale: String,
+    },
 }
 
 pub async fn run(action: AdrAction) -> anyhow::Result<()> {
     match action {
         AdrAction::List => list().await,
+        AdrAction::Accept { adr_id, rationale } => set_adr_status(&adr_id, "Accepted", None, &rationale).await,
+        AdrAction::Complete { adr_id, rationale, force } => complete_adr(&adr_id, &rationale, force).await,
+        AdrAction::Supersede { adr_id, by, rationale } => supersede_adr(&adr_id, &by, &rationale).await,
         AdrAction::Status { json } => status(json).await,
         AdrAction::Search { query } => search(&query).await,
         AdrAction::Abandoned => abandoned().await,
@@ -101,6 +136,155 @@ pub async fn run(action: AdrAction) -> anyhow::Result<()> {
             strict,
         } => doctor_run(fix, fix_and_merge, json, strict).await,
     }
+}
+
+// ── Direct lifecycle verbs (no agent dispatch — the reliable path) ────────────
+
+/// Locate the single ADR file matching an id (accepts `ADR-...`, the bare
+/// timestamp, or any unambiguous substring of the filename).
+fn find_adr_file(adr_id: &str) -> anyhow::Result<PathBuf> {
+    let dir = find_adr_dir().ok_or_else(|| anyhow::anyhow!("No docs/adrs/ directory found"))?;
+    let needle = adr_id
+        .trim()
+        .trim_start_matches("ADR-")
+        .trim_start_matches("adr-")
+        .to_lowercase();
+    let mut matches: Vec<PathBuf> = Vec::new();
+    for entry in std::fs::read_dir(&dir)?.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+        if name.contains(&needle) {
+            matches.push(p);
+        }
+    }
+    match matches.len() {
+        0 => anyhow::bail!("no ADR file matches '{}' under docs/adrs/", adr_id),
+        1 => Ok(matches.remove(0)),
+        n => anyhow::bail!("'{}' matches {} ADRs — be more specific", adr_id, n),
+    }
+}
+
+/// Rewrite the `Status:` header line (preserving its style), optionally inserting
+/// a `Superseded-By:` backlink. Mirrors the adr_status_set tool — the file is the
+/// single source of truth.
+async fn set_adr_status(
+    adr_id: &str,
+    new_status: &str,
+    superseded_by: Option<&str>,
+    rationale: &str,
+) -> anyhow::Result<()> {
+    let path = find_adr_file(adr_id)?;
+    let content = std::fs::read_to_string(&path)?;
+    let old = parse_adr_status(&content).to_string();
+    let already_has_sb = content.to_lowercase().contains("superseded-by:");
+
+    let mut out = String::with_capacity(content.len() + 80);
+    let mut found = false;
+    for line in content.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let lower = trimmed.to_lowercase();
+        let nl = if line.ends_with('\n') { "\n" } else { "" };
+        let indent = &line[..line.len() - trimmed.len()];
+        let (label, is_status) = if lower.starts_with("**status:**") {
+            ("**Status:** ", true)
+        } else if lower.starts_with("status:") && !lower.starts_with("status_") {
+            ("Status: ", true)
+        } else {
+            ("", false)
+        };
+        if !found && is_status {
+            out.push_str(indent);
+            out.push_str(label);
+            out.push_str(new_status);
+            out.push_str(nl);
+            found = true;
+            if let (Some(by), false) = (superseded_by, already_has_sb) {
+                out.push_str(indent);
+                out.push_str(if label.starts_with("**") { "**Superseded-By:** " } else { "Superseded-By: " });
+                out.push_str(by);
+                out.push('\n');
+            }
+        } else {
+            out.push_str(line);
+        }
+    }
+    if !found {
+        anyhow::bail!("no `Status:` header line in {} — unexpected ADR format", path.display());
+    }
+    std::fs::write(&path, out)?;
+    let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or(adr_id);
+    println!("{} {} : {} → {}", "\u{2b21}".cyan(), id, old.dimmed(), new_status.green().bold());
+    if let Some(by) = superseded_by {
+        println!("  Superseded-By: {}", by.yellow());
+    }
+    println!("  {}", rationale.dimmed());
+    println!("  {} file updated (uncommitted — commit to record the transition in history)", "\u{2192}".dimmed());
+    Ok(())
+}
+
+/// Is the ADR's implementation confirmed? True iff a workplan referencing it
+/// exists and is reconciled done. Returns (confirmed, detail).
+fn adr_workplan_confirmed(adr_id: &str) -> (bool, String) {
+    let needle = adr_id.trim().trim_start_matches("ADR-").trim_start_matches("adr-").to_lowercase();
+    let Some(dir) = find_workplans_dir() else {
+        return (false, "no docs/workplans/ directory".into());
+    };
+    let mut found_any = false;
+    let mut best = String::new();
+    for d in [dir.clone(), dir.join("drafts")] {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&p) else { continue };
+            let fname = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+            if !(text.to_lowercase().contains(&needle) || fname.contains(&needle)) {
+                continue;
+            }
+            found_any = true;
+            if let Ok(j) = serde_json::from_str::<serde_json::Value>(&text) {
+                let status = j.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                if matches!(status, "completed" | "done") {
+                    return (true, format!("{} status={}", fname, status));
+                }
+                best = format!("{} status={} (not done)", fname, status);
+            }
+        }
+    }
+    if found_any {
+        (false, best)
+    } else {
+        (false, format!("no workplan references {}", needle))
+    }
+}
+
+/// `hex adr complete` — gate on implementation confirmed, then set Completed.
+async fn complete_adr(adr_id: &str, rationale: &str, force: bool) -> anyhow::Result<()> {
+    if force {
+        println!("  {} --force: skipping the implementation-confirmed gate", "!".yellow());
+    } else {
+        let (ok, detail) = adr_workplan_confirmed(adr_id);
+        if !ok {
+            anyhow::bail!(
+                "not confirmed implemented — {}.\n  Accepted → Completed requires a workplan reconciled done + evidence. \
+                 Re-run with --force to override.",
+                detail
+            );
+        }
+        println!("  {} gate passed: {}", "\u{2713}".green(), detail);
+    }
+    set_adr_status(adr_id, "Completed", None, rationale).await
+}
+
+/// `hex adr supersede` — verify the replacement exists, then set Superseded + backlink.
+async fn supersede_adr(adr_id: &str, by: &str, rationale: &str) -> anyhow::Result<()> {
+    find_adr_file(by).map_err(|_| anyhow::anyhow!("replacement ADR '{}' not found — create it first", by))?;
+    set_adr_status(adr_id, "Superseded", Some(by), rationale).await
 }
 
 /// Drive the doctor subcommand: detection → optional tier-aware fix →
