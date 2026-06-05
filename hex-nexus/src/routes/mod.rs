@@ -99,6 +99,16 @@ async fn adr_steward_sweep(
     let dry = q.get("dry_run").map(|v| v == "true" || v == "1").unwrap_or(false);
     Json(crate::orchestration::adr_steward::run_lifecycle_sweep(dry).await)
 }
+
+/// POST /api/agent/workplan-steward/sweep — run the in-nexus workplan-steward
+/// agent: validate workplan format + reconcile status (all steps done → completed).
+/// `?dry_run=true` reports without mutating. Records to the agent-runs feed.
+async fn workplan_steward_sweep(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<crate::orchestration::workplan_steward::WorkplanStewardResult> {
+    let dry = q.get("dry_run").map(|v| v == "true" || v == "1").unwrap_or(false);
+    Json(crate::orchestration::workplan_steward::run_reconcile_sweep(dry).await)
+}
 use crate::middleware::auth::auth_layer;
 use crate::middleware::capability_auth::capability_auth;
 use crate::middleware::deprecation::deprecation_layer;
@@ -944,6 +954,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/direct/execute", post(direct_execute))
         .route("/api/direct/runs", get(direct_runs))
         .route("/api/agent/adr-steward/sweep", post(adr_steward_sweep))
+        .route("/api/agent/workplan-steward/sweep", post(workplan_steward_sweep))
         // Synchronous inference completion (hex-agent HTTP bridge)
         .route("/api/inference/complete", post(inference::inference_complete)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))

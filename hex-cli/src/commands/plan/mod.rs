@@ -189,6 +189,14 @@ pub enum PlanAction {
     /// reducer ticks, twin rejection rate, tool health. Exits 1 if any
     /// metric exceeds amber threshold (docs/specs/coo-observability-baseline.md).
     Health,
+    /// Run the in-nexus workplan-steward agent: validate workplan format +
+    /// reconcile status (all steps done → completed). Runs in nexus, records to
+    /// the agent feed, shows in the dashboard.
+    Steward {
+        /// Report without mutating.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 /// Subcommands for `hex plan drafts` — manage auto-generated draft workplans.
@@ -492,7 +500,46 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::Ready { json, no_tests } => ready_check(json, no_tests).await,
         PlanAction::Tests { json } => tests_check(json).await,
         PlanAction::Health => crate::commands::plan_health::run().await,
+        PlanAction::Steward { dry_run } => steward_sweep(dry_run).await,
     }
+}
+
+/// `hex plan steward` — trigger the in-nexus workplan-steward agent (runs in
+/// nexus, records to the agent feed, shows in the dashboard).
+async fn steward_sweep(dry_run: bool) -> anyhow::Result<()> {
+    use colored::Colorize;
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    nexus.ensure_running().await?;
+    let path = if dry_run {
+        "/api/agent/workplan-steward/sweep?dry_run=true"
+    } else {
+        "/api/agent/workplan-steward/sweep"
+    };
+    println!("{} workplan-steward (in-nexus): validating format + reconciling status …", "\u{2b21}".cyan());
+    let r = nexus.post_long(path, &serde_json::json!({})).await?;
+    let advanced = r.get("advanced").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let issues = r.get("format_issues").and_then(|v| v.as_array());
+    let issue_count = issues.map(|a| a.len()).unwrap_or(0);
+    let scanned = r.get("scanned").and_then(|v| v.as_u64()).unwrap_or(0);
+    let committed = r.get("committed").and_then(|v| v.as_str());
+    println!(
+        "{} {} workplan(s) reconciled→completed, {} format issue(s) (of {} scanned){}",
+        if dry_run { "\u{2192}".dimmed() } else { "\u{2713}".green().bold() },
+        advanced,
+        issue_count,
+        scanned,
+        committed.map(|h| format!(" \u{b7} commit {}", h.yellow())).unwrap_or_default()
+    );
+    if let Some(arr) = issues {
+        for it in arr.iter().take(15).filter_map(|v| v.as_str()) {
+            println!("  {} {}", "format:".yellow(), it);
+        }
+        if arr.len() > 15 {
+            println!("  … ({} total)", arr.len());
+        }
+    }
+    println!("  {} recorded to the agent-runs feed — visible in the dashboard", "\u{2192}".dimmed());
+    Ok(())
 }
 
 /// Test-coverage scan. Walks src/ for non-test source files and emits
