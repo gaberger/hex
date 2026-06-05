@@ -123,6 +123,71 @@ pub struct HexAgent {
     pub capabilities_json: String,
 }
 
+/// One recorded hex-agent run — what an agent (direct-executor, adr-steward,
+/// workplan-steward, …) actually DID, with the commit it produced. Persisted so
+/// the dashboard Agent Runs feed survives nexus restarts. Written by nexus's
+/// record_agent_run/record_run via the `record_agent_run` reducer below.
+#[table(name = agent_run, public)]
+#[derive(Clone, Debug)]
+pub struct AgentRun {
+    /// Globally-unique key (nexus uses `<started_at>#<seq>` — unique across restarts).
+    #[primary_key]
+    pub id: String,
+    pub agent: String,
+    pub started_at: String,
+    pub instruction: String,
+    pub file: String,
+    pub model: String,
+    pub ok: bool,
+    pub attempts: u32,
+    pub evidence_passed: bool,
+    /// Commit hash, or "" if none (plain String avoids STDB's Option sum-type
+    /// encoding on the SQL read path).
+    pub committed: String,
+    pub duration_ms: u64,
+    /// Error message, or "" if none.
+    pub error: String,
+}
+
+/// Upsert one agent run (persists the Agent Runs feed across restarts).
+#[reducer]
+pub fn record_agent_run(
+    ctx: &ReducerContext,
+    id: String,
+    agent: String,
+    started_at: String,
+    instruction: String,
+    file: String,
+    model: String,
+    ok: bool,
+    attempts: u32,
+    evidence_passed: bool,
+    committed: String,
+    duration_ms: u64,
+    error: String,
+) -> Result<(), String> {
+    let row = AgentRun {
+        id: id.clone(),
+        agent,
+        started_at,
+        instruction,
+        file,
+        model,
+        ok,
+        attempts,
+        evidence_passed,
+        committed,
+        duration_ms,
+        error,
+    };
+    if ctx.db.agent_run().id().find(&id).is_some() {
+        ctx.db.agent_run().id().update(row);
+    } else {
+        ctx.db.agent_run().insert(row);
+    }
+    Ok(())
+}
+
 /// Register or re-register an agent (upsert by ID).
 /// Called by hex hook session-start via /api/hex-agents/connect.
 #[reducer]

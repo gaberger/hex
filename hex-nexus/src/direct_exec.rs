@@ -117,6 +117,13 @@ pub fn record_agent_run(
         duration_ms,
         error,
     };
+    store_run(run);
+}
+
+/// Push a run into the in-memory feed (fast path for the API) AND persist it to
+/// SpacetimeDB (so the feed survives nexus restarts).
+fn store_run(run: DirectRun) {
+    persist_run_async(run.clone());
     if let Ok(mut q) = RUNS.lock() {
         q.push_front(run);
         while q.len() > RUN_HISTORY {
@@ -158,12 +165,144 @@ fn record_run(started_at: String, task: &DirectTask, model: &str, r: &DirectResu
         duration_ms,
         error: r.error.clone(),
     };
+    store_run(run);
+}
+
+// ── SpacetimeDB persistence (survives nexus restarts) ────────────────────────
+
+fn stdb_host() -> String {
+    std::env::var("HEX_STDB_HOST").unwrap_or_else(|_| hex_core::SPACETIMEDB_DEFAULT_HOST.to_string())
+}
+
+/// Fire-and-forget persist of a run to STDB. The in-memory feed is the fast path;
+/// STDB is the durable backing. Never blocks or fails a recorder.
+fn persist_run_async(run: DirectRun) {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.spawn(async move {
+            if let Err(e) = persist_run(&run).await {
+                tracing::debug!(error = %e, "agent-run STDB persist failed (non-fatal)");
+            }
+        });
+    }
+}
+
+async fn persist_run(run: &DirectRun) -> Result<(), String> {
+    // Globally-unique key — `<started_at>#<seq>` stays unique even though the
+    // in-memory RUN_ID resets to 1 on each restart (started_at differs).
+    let id = format!("{}#{}", run.started_at, run.id);
+    let url = format!("{}/v1/database/hex/call/record_agent_run", stdb_host());
+    let args = json!([
+        id,
+        run.agent,
+        run.started_at,
+        run.instruction,
+        run.file,
+        run.model,
+        run.ok,
+        run.attempts,
+        run.evidence_passed,
+        run.committed.clone().unwrap_or_default(),
+        run.duration_ms,
+        run.error.clone().unwrap_or_default(),
+    ]);
+    let res = reqwest::Client::new()
+        .post(&url)
+        .json(&args)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("reducer {}: {}", res.status(), res.text().await.unwrap_or_default()));
+    }
+    Ok(())
+}
+
+/// Hydrate the in-memory feed from STDB at startup (newest `RUN_HISTORY`). Called
+/// once after SpacetimeDB is up; safe to fail (empty feed) if the table is absent.
+pub async fn hydrate_from_stdb() {
+    let url = format!("{}/v1/database/hex/sql", stdb_host());
+    // SpacetimeDB SQL has no ORDER BY — fetch (bounded) and sort newest-first in Rust.
+    let q = "SELECT id, agent, started_at, instruction, file, model, ok, attempts, evidence_passed, committed, duration_ms, error FROM agent_run LIMIT 2000".to_string();
+    let res = match reqwest::Client::new()
+        .post(&url)
+        .header("Content-Type", "text/plain")
+        .body(q)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "agent-run hydrate: query failed");
+            return;
+        }
+    };
+    let text = match res.text().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(error = %e, "agent-run hydrate: body read failed");
+            return;
+        }
+    };
+    let body: Value = match serde_json::from_str(&text) {
+        Ok(b) => b,
+        Err(_) => {
+            tracing::warn!(body = %text.chars().take(160).collect::<String>(), "agent-run hydrate: non-JSON response");
+            return;
+        }
+    };
+    let rows = body
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|f| f.get("rows"))
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    // Rows come newest-first; rebuild the deque oldest-last and re-number for display.
+    let mut loaded: Vec<DirectRun> = Vec::new();
+    for row in &rows {
+        let c = match row.as_array() {
+            Some(c) if c.len() >= 12 => c,
+            _ => continue,
+        };
+        let s = |i: usize| c.get(i).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let opt = |i: usize| {
+            let v = s(i);
+            if v.is_empty() { None } else { Some(v) }
+        };
+        loaded.push(DirectRun {
+            id: 0, // reassigned below
+            agent: s(1),
+            started_at: s(2),
+            instruction: s(3),
+            file: s(4),
+            model: s(5),
+            ok: c.get(6).and_then(|v| v.as_bool()).unwrap_or(false),
+            attempts: c.get(7).and_then(|v| v.as_u64()).unwrap_or(1) as u32,
+            evidence_passed: c.get(8).and_then(|v| v.as_bool()).unwrap_or(false),
+            committed: opt(9),
+            duration_ms: c.get(10).and_then(|v| v.as_u64()).unwrap_or(0),
+            error: opt(11),
+        });
+    }
+    // Newest-first (RFC3339 UTC strings sort lexically = chronologically), capped.
+    loaded.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    loaded.truncate(RUN_HISTORY);
+    let n = loaded.len();
+    if n == 0 {
+        return;
+    }
+    // Display ids: highest number = most recent (loaded[0]).
+    for (idx, run) in loaded.iter_mut().enumerate() {
+        run.id = (n - idx) as u64;
+    }
+    RUN_ID.store((n as u64) + 1, Ordering::Relaxed);
     if let Ok(mut q) = RUNS.lock() {
-        q.push_front(run);
-        while q.len() > RUN_HISTORY {
-            q.pop_back();
+        for run in loaded {
+            q.push_back(run);
         }
     }
+    tracing::info!(count = n, "agent-run feed hydrated from SpacetimeDB");
 }
 
 /// Newest-first snapshot of recorded runs for the API / CLI / dashboard.
