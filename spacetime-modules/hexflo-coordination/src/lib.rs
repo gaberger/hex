@@ -185,6 +185,22 @@ pub fn record_agent_run(
     } else {
         ctx.db.agent_run().insert(row);
     }
+    // Bound the table — keep the newest AGENT_RUN_CAP rows by started_at, deleting
+    // the oldest excess. Self-pruning on insert (no separate scheduler needed).
+    const AGENT_RUN_CAP: usize = 1000;
+    let mut all: Vec<(String, String)> = ctx
+        .db
+        .agent_run()
+        .iter()
+        .map(|r| (r.id.clone(), r.started_at.clone()))
+        .collect();
+    if all.len() > AGENT_RUN_CAP {
+        all.sort_by(|a, b| a.1.cmp(&b.1)); // oldest first
+        let excess = all.len() - AGENT_RUN_CAP;
+        for (old_id, _) in all.into_iter().take(excess) {
+            ctx.db.agent_run().id().delete(&old_id);
+        }
+    }
     Ok(())
 }
 
