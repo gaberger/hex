@@ -238,7 +238,7 @@ export function navigate(newRoute: Route) {
 function routeToHash(r: Route): string {
   switch (r.page) {
     case "control-plane":
-      return "#/";
+      return "#/control-plane";
     case "inference":
       return "#/inference";
     case "fleet":
@@ -326,6 +326,7 @@ function hashToRoute(hash: string): Route {
   // Fresh load (no hash) lands on Direct Runs — the new evidence-gated monitor,
   // not the retired Mission Control persona board (2026-06-04 cleanup).
   if (parts.length === 0) return { page: "direct-runs" };
+  if (parts[0] === "control-plane") return { page: "control-plane" };
 
   // Global routes
   if (parts[0] === "inference") return { page: "inference" };
