@@ -1,6 +1,6 @@
 # ADR-2026-03-31-2100: Context Engineering for hex-agent
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-agent/src/domain/context.rs, hex-agent/src/ports/context.rs
 **Date:** 2026-03-31
 **Drivers:** hex-agent needs improved prompt engineering to match Context Engineering effectiveness in tool usage, task execution, and context management.

@@ -1,6 +1,6 @@
 # ADR-2026-04-10-0000: hex Managed Agents Gap Analysis vs Anthropic Claude Managed Agents
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/assets/mcp/mcp-tools.json
 **Date:** 2026-04-10
 **Drivers:** User asked how far hex is from achieving feature parity with Anthropic Managed Agents. This ADR identifies gaps and specifies closing them.

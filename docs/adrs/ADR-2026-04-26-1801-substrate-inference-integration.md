@@ -1,6 +1,6 @@
 # ADR-2026-04-26-1801: Substrate ↔ inference integration model
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/src/adapters/inference_router/mod.rs, hex-nexus/src/lib.rs
 **Date:** 2026-04-26
 **Accepted:** 2026-04-26

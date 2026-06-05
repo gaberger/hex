@@ -1,6 +1,6 @@
 # ADR-039: Nexus Agent Control Plane — OpenCode-Inspired Multi-Project Interface
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/Cargo.toml, hex-nexus/src/adapters/spacetime_state.rs
 **Accepted Date:** 2026-03-22
 ## Date: 2026-03-20

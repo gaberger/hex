@@ -1,6 +1,6 @@
 # ADR-044: Nexus Git Integration — Project-Scoped Git Intelligence
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/Cargo.toml
 **Accepted Date:** 2026-03-21
 ## Date: 2026-03-21

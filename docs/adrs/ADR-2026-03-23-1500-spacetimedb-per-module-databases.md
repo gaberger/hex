@@ -1,6 +1,6 @@
 # ADR-2026-03-23-1500: SpacetimeDB Per-Module Databases
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: spacetime-modules/Cargo.toml
 **Date:** 2026-03-23
 **Drivers:** 17 of 18 WASM modules are dormant because SpacetimeDB's single-database publish model replaces the entire schema on each publish. Chat, inference, secrets, and workplan features are unavailable.

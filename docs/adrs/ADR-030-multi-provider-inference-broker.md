@@ -1,6 +1,6 @@
 # ADR-030: Multi-Provider Inference Broker
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: docs/adrs/ADR-030-multi-provider-inference-broker.md, src/main.rs
 **Date:** 2026-03-18
 **Deciders:** Gary

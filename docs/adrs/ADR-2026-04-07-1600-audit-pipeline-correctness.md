@@ -1,6 +1,6 @@
 # ADR-2026-04-07-1600: Audit Pipeline Correctness — TestsExist Escalation + completed_steps Wiring
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/pipeline/objectives.rs, hex-cli/src/pipeline/supervisor.rs, hex-cli/src/tui/mod.rs
 **Date:** 2026-04-07
 **Drivers:** Three bugs caused incorrect audit reports: `TestsExist` stalled the pipeline indefinitely, `completed_steps` was never populated by the supervisor (always empty), and the fallback marked all steps done even on pipeline failure.

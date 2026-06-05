@@ -1,6 +1,6 @@
 # ADR-2026-04-15-1330 — Per-Project Sched Queue Isolation
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/sched.rs
 **Date:** 2026-04-15
 **Accepted:** 2026-05-04

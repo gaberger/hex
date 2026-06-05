@@ -1,6 +1,6 @@
 ---
 id: ADR-047
-status: accepted
+Status: Completed
 date: 2026-03-22
 supersedes: []
 superseded_by: null
