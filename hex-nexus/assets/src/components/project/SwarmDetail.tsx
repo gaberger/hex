@@ -11,12 +11,11 @@ import {
   swarmAgents,
   agentHeartbeats,
   registryAgents,
-  getHexfloConn,
 } from "../../stores/connection";
 import { navigate, route } from "../../stores/router";
 import { addToast } from "../../stores/toast";
 import QualityGatePanel from "../fleet/QualityGatePanel";
-import { uuid } from "../../utils/uuid";
+import { restClient } from "../../services/rest-client";
 
 function relativeTime(timestamp: string | undefined): string {
   if (!timestamp) return "--";
@@ -378,14 +377,15 @@ const TaskCreateForm: Component<{ swarmId: string }> = (props) => {
     e.preventDefault();
     const t = title().trim();
     if (!t) return;
-    const conn = getHexfloConn();
-    if (!conn) { addToast("error", "SpacetimeDB not connected"); return; }
     setSubmitting(true);
     try {
-      // Signature: taskCreate(id, swarmId, title, dependsOn, timestamp). The
-      // dependsOn arg was missing, shifting timestamp into its slot — same
-      // arg-mismatch class as swarmInit. Empty dependsOn = no dependency.
-      conn.reducers.taskCreate(uuid(), props.swarmId, t, "", new Date().toISOString());
+      // Create via the nexus REST gateway (server-side, persisted, awaited) —
+      // the direct-WS reducer write didn't land (anonymous browser writes don't
+      // persist; ADR-2606061359 — writes go through the gateway).
+      await restClient.post(`/api/swarms/${encodeURIComponent(props.swarmId)}/tasks`, {
+        title: t,
+        dependsOn: "",
+      });
       addToast("success", `Task created: ${t}`);
       setTitle("");
     } catch (err: any) {
