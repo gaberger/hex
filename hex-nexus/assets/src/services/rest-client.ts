@@ -17,6 +17,10 @@ class RestClient implements IRestClient {
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
+    // Identify the dashboard as an operator for the agent_guard middleware,
+    // which requires a non-empty X-Hex-Agent-Id on /api/swarms + /api/hexflo
+    // mutations. The dashboard is an operator console, not an agent.
+    headers['X-Hex-Agent-Id'] = localStorage.getItem('hex-agent-id') || 'dashboard-operator';
     return headers;
   }
 

@@ -22,6 +22,11 @@ pub struct CreateSwarmRequest {
     pub project_id: String,
     pub name: String,
     pub topology: Option<String>,
+    /// Owner agent id. Operator/dashboard-created swarms send "" (no
+    /// agent-ownership constraint). When absent, falls back to the
+    /// `X-Hex-Agent-Id` header (agent callers).
+    #[serde(default)]
+    pub created_by: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,10 +100,13 @@ pub async fn create_swarm(
     // "hex-pipeline" is hex-nexus's internal name for the phased dev topology.
     // SpacetimeDB only accepts the canonical set; map before forwarding.
     let topology = if raw_topology == "hex-pipeline" { "pipeline" } else { raw_topology };
-    let created_by = headers
+    let header_agent = headers
         .get("x-hex-agent-id")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
+    // Body `created_by` wins (dashboard sends "" → operator-created, no
+    // single-active-swarm ownership constraint); else fall back to the header.
+    let created_by = body.created_by.as_deref().unwrap_or(header_agent);
 
     port.swarm_init(&id, &body.name, topology, &body.project_id, created_by)
         .await
