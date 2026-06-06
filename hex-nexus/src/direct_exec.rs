@@ -349,6 +349,11 @@ async fn execute_direct_inner(task: DirectTask) -> DirectResult {
     let repo_root = repo_root();
     let abs_path = repo_root.join(&task.file);
 
+    // Phase 2 (ADR-2606061359): assemble graph-context + lessons once and prepend
+    // it to every edit prompt — the single agent reasons with structural context
+    // + memory (Hermes/OpenClaw), not from the file slice alone.
+    let context_block = gather_context(&task).await;
+
     let mut result = DirectResult {
         ok: false,
         attempts: 0,
@@ -375,7 +380,7 @@ async fn execute_direct_inner(task: DirectTask) -> DirectResult {
         let grounded = ground_window(&content, &task.instruction);
 
         // 2. ONE inference call for a precise edit.
-        let edit = match request_edit(&model, &task, &grounded, last_error.as_deref()).await {
+        let edit = match request_edit(&model, &task, &grounded, &context_block, last_error.as_deref()).await {
             Ok(e) => e,
             Err(e) => {
                 last_error = Some(format!("inference: {}", e));
@@ -513,6 +518,99 @@ fn ground_window(content: &str, instruction: &str) -> String {
     render(&keep)
 }
 
+// ─── Phase 2 (ADR-2606061359): context + memory for the single-agent loop ─────
+
+/// Assemble the Hermes/OpenClaw-style PROJECT CONTEXT block prepended to every
+/// edit prompt: the target file's graph neighbourhood (hex-graph engine — hex's
+/// structural-context differentiator) plus relevant learned lessons. Best-effort:
+/// any failure yields "" and never breaks the edit loop.
+async fn gather_context(task: &DirectTask) -> String {
+    let mut out = String::new();
+
+    // (a) Graph neighbourhood for the target file, from graphify-out/graph.json.
+    let graph_path = repo_root().join("graphify-out").join("graph.json");
+    if let Ok(raw) = std::fs::read_to_string(&graph_path) {
+        if let Ok(g) = hex_graph::model::KnowledgeGraph::from_json(&raw) {
+            let opts = hex_graph::context::ContextOpts { max_each: 15 };
+            if let Some(bundle) = hex_graph::context::context_for(&g, &task.file, opts) {
+                out.push_str(&hex_graph::context::render_markdown(&bundle));
+            }
+        }
+    }
+
+    // (b) Learned lessons from memory (the minimal self-improvement loop).
+    let lessons = fetch_lessons(6).await;
+    if !lessons.is_empty() {
+        out.push_str("\n## Lessons (from memory)\n");
+        for l in &lessons {
+            out.push_str("- ");
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+
+    out
+}
+
+/// Best-effort pull of `lesson:` entries from the hexflo_memory table over the
+/// STDB HTTP SQL endpoint. Columns are mapped by name (schema.elements).
+async fn fetch_lessons(limit: usize) -> Vec<String> {
+    let url = format!("{}/v1/database/hex/sql", stdb_host());
+    let http = match reqwest::Client::builder().timeout(Duration::from_secs(3)).build() {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let resp = match http
+        .post(&url)
+        .header("Content-Type", "text/plain")
+        .body("SELECT key, value FROM hexflo_memory")
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Vec::new(),
+    };
+    let body: Value = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let mut lessons = Vec::new();
+    let Some(tables) = body.as_array() else {
+        return lessons;
+    };
+    for table in tables {
+        let cols: Vec<&str> = table
+            .get("schema")
+            .and_then(|s| s.get("elements"))
+            .and_then(|e| e.as_array())
+            .map(|els| {
+                els.iter()
+                    .filter_map(|el| {
+                        el.get("name").and_then(|n| n.get("some")).and_then(|s| s.as_str())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let ki = cols.iter().position(|c| *c == "key");
+        let vi = cols.iter().position(|c| *c == "value");
+        if let Some(rows) = table.get("rows").and_then(|r| r.as_array()) {
+            for row in rows {
+                if let Some(vals) = row.as_array() {
+                    let key = ki.and_then(|i| vals.get(i)).and_then(|v| v.as_str()).unwrap_or("");
+                    let val = vi.and_then(|i| vals.get(i)).and_then(|v| v.as_str()).unwrap_or("");
+                    if key.starts_with("lesson:") && !val.is_empty() {
+                        lessons.push(val.to_string());
+                        if lessons.len() >= limit {
+                            return lessons;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    lessons
+}
+
 // ─── the one inference call ───────────────────────────────────────────────────
 
 struct Edit {
@@ -525,6 +623,7 @@ async fn request_edit(
     model: &str,
     task: &DirectTask,
     grounded: &str,
+    context: &str,
     prior_error: Option<&str>,
 ) -> Result<Edit, String> {
     let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
@@ -543,12 +642,23 @@ async fn request_edit(
         Never include the leading line numbers shown in the file. Make the SMALLEST change that \
         satisfies the task and keep surrounding code byte-for-byte identical.";
 
-    let mut user = format!(
+    let mut user = String::new();
+    if !context.is_empty() {
+        // Phase 2: structural neighbourhood + lessons. Read-only grounding —
+        // the agent edits only the FILE below, but reasons with this context.
+        user.push_str(
+            "PROJECT CONTEXT (read-only grounding — shows how the target file connects \
+             and lessons learned; do NOT edit anything here):\n",
+        );
+        user.push_str(context);
+        user.push_str("\n\n");
+    }
+    user.push_str(&format!(
         "TASK: {}\n\nFILE {} (current content; the left-margin numbers are line references — \
          do NOT copy them into your code blocks):\n----------\n{}\n----------\n\n\
          Reply now in the MODE + fenced-block format.",
         task.instruction, task.file, grounded
-    );
+    ));
     if let Some(err) = prior_error {
         user.push_str(&format!(
             "\n\nYOUR PREVIOUS EDIT DID NOT WORK. Fix it. Error:\n{}",
