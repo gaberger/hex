@@ -7,6 +7,7 @@
 import { createSignal } from 'solid-js';
 import type { ChatMessage } from '../types/chat';
 import { chatWs } from '../services/chat-ws';
+import { uuid } from '../utils/uuid';
 
 // ── Signals ──────────────────────────────────────────────────────────────────
 
@@ -24,7 +25,7 @@ let currentStreamAgent: string | null = null;
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeId(): string {
-  return crypto.randomUUID();
+  return uuid();
 }
 
 function nowISO(): string {
@@ -45,7 +46,7 @@ function backendMessageToChatMessage(msg: any): ChatMessage | null {
 
   const role = (msg.role ?? 'user').toLowerCase() as ChatMessage['role'];
   const base = {
-    id: msg.id ?? crypto.randomUUID(),
+    id: msg.id ?? uuid(),
     role,
     timestamp: msg.created_at ?? new Date().toISOString(),
     model: msg.model ?? undefined,

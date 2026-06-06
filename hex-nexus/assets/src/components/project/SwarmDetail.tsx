@@ -16,6 +16,7 @@ import {
 import { navigate, route } from "../../stores/router";
 import { addToast } from "../../stores/toast";
 import QualityGatePanel from "../fleet/QualityGatePanel";
+import { uuid } from "../../utils/uuid";
 
 function relativeTime(timestamp: string | undefined): string {
   if (!timestamp) return "--";
@@ -381,7 +382,7 @@ const TaskCreateForm: Component<{ swarmId: string }> = (props) => {
     if (!conn) { addToast("error", "SpacetimeDB not connected"); return; }
     setSubmitting(true);
     try {
-      conn.reducers.taskCreate(crypto.randomUUID(), props.swarmId, t, new Date().toISOString());
+      conn.reducers.taskCreate(uuid(), props.swarmId, t, new Date().toISOString());
       addToast("success", `Task created: ${t}`);
       setTitle("");
     } catch (err: any) {

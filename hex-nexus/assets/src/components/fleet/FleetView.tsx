@@ -7,6 +7,7 @@
 import { Component, For, Show, createSignal, createMemo } from "solid-js";
 import { fleetNodes, fleetConnected, getFleetConn } from "../../stores/connection";
 import { addToast } from "../../stores/toast";
+import { uuid } from "../../utils/uuid";
 import { restClient } from "../../services/rest-client";
 
 function healthColor(status: string): string {
@@ -48,7 +49,7 @@ const FleetView: Component = () => {
       const conn = getFleetConn();
       if (fleetConnected() && conn?.reducers?.registerNode) {
         // SpacetimeDB reducer: registerNode(id, host, port, username, maxAgents)
-        const nodeId = crypto.randomUUID();
+        const nodeId = uuid();
         conn.reducers.registerNode(nodeId, host, 22, "", 4);
         addToast("success", `Node registered via SpacetimeDB: ${host}`);
       } else {
