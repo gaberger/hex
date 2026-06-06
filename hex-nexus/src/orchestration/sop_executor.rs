@@ -595,12 +595,54 @@ async fn ground_for_intent(
         "role":          role,
     });
 
+    // Graph neighbourhood for the operator's files (hex-graph). Gives REASON the
+    // consumers/community of each touched file so it traces impact BEFORE editing
+    // — the "trace ALL consumers before deleting" rule, made structural.
+    let graph_context = graph_context_pack(&paths);
+
     json!({
         "intent": intent,
         "prefetched_paths": prefetched,
         "repo_grep": grep_result.output,
         "memory": memory_pack,
+        "graph_context": graph_context,
     })
+}
+
+/// Best-effort graph neighbourhood for a set of repo paths, loaded from the
+/// project's `graphify-out/graph.json` (produced by `hex graph build`). Returns
+/// `Null` when no graph has been built — never fails GROUND. Capped to keep the
+/// REASON prompt bounded.
+fn graph_context_pack(paths: &[String]) -> Value {
+    if paths.is_empty() {
+        return Value::Null;
+    }
+    // Locate graph.json: explicit root, else cwd.
+    let root = std::env::var("HEX_PROJECT_ROOT").unwrap_or_else(|_| ".".to_string());
+    let graph_path = std::path::Path::new(&root)
+        .join("graphify-out")
+        .join("graph.json");
+    let Ok(raw) = std::fs::read_to_string(&graph_path) else {
+        return Value::Null;
+    };
+    let Ok(graph) = hex_graph::model::KnowledgeGraph::from_json(&raw) else {
+        return Value::Null;
+    };
+    let opts = hex_graph::context::ContextOpts { max_each: 20 };
+    let mut bundles = Vec::new();
+    for p in paths.iter().take(4) {
+        if let Some(bundle) = hex_graph::context::context_for(&graph, p, opts) {
+            bundles.push(json!({
+                "path": p,
+                "markdown": hex_graph::context::render_markdown(&bundle),
+            }));
+        }
+    }
+    if bundles.is_empty() {
+        Value::Null
+    } else {
+        Value::Array(bundles)
+    }
 }
 
 /// Extract path-like tokens from the operator message. Looks for tokens

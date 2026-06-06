@@ -79,6 +79,21 @@ pub struct ExplainRequest {
     pub node: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ContextRequest {
+    #[serde(default)]
+    pub path: Option<String>,
+    /// File (or any node) to build neighbourhood context for.
+    pub target: String,
+    /// Max items per list in the bundle.
+    #[serde(default = "default_max_each")]
+    pub max_each: usize,
+}
+
+fn default_max_each() -> usize {
+    25
+}
+
 // ── handlers ─────────────────────────────────────────────
 
 /// POST /api/graph/build
@@ -209,6 +224,33 @@ pub async fn explain_graph(
     match gquery::explain(&graph, &body.node) {
         Some(ex) => (StatusCode::OK, Json(serde_json::to_value(ex).unwrap_or(json!({})))),
         None => err(StatusCode::NOT_FOUND, &format!("node not found: {}", body.node)),
+    }
+}
+
+/// POST /api/graph/context
+pub async fn context_graph(
+    Json(body): Json<ContextRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let graph = match load_graph(&body.path) {
+        Ok(g) => g,
+        Err((code, msg)) => return err(code, &msg),
+    };
+    let opts = hex_graph::context::ContextOpts {
+        max_each: body.max_each.clamp(1, 200),
+    };
+    match hex_graph::context::context_for(&graph, &body.target, opts) {
+        Some(bundle) => {
+            let markdown = hex_graph::context::render_markdown(&bundle);
+            let mut value = serde_json::to_value(&bundle).unwrap_or(json!({}));
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("markdown".to_string(), json!(markdown));
+            }
+            (StatusCode::OK, Json(value))
+        }
+        None => err(
+            StatusCode::NOT_FOUND,
+            &format!("no file node for target: {}", body.target),
+        ),
     }
 }
 

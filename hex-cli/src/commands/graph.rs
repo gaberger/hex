@@ -19,6 +19,9 @@ pub enum GraphAction {
     Path(PathArgs),
     /// Explain a node — its kind, community, and relationships.
     Explain(ExplainArgs),
+    /// Emit a file's graph neighbourhood as agent-ready context (defines, uses,
+    /// consumers, community) — trace consumers before you edit.
+    Context(ContextArgs),
 }
 
 #[derive(Debug, Args)]
@@ -68,6 +71,20 @@ pub struct ExplainArgs {
     pub path: String,
 }
 
+#[derive(Debug, Args)]
+pub struct ContextArgs {
+    /// File (or any node) to build neighbourhood context for.
+    pub target: String,
+    #[arg(long, default_value = ".")]
+    pub path: String,
+    /// Max items per list.
+    #[arg(long, default_value_t = 25)]
+    pub max_each: usize,
+    /// Emit the raw JSON bundle instead of rendered Markdown.
+    #[arg(long)]
+    pub json: bool,
+}
+
 pub async fn run(action: GraphAction) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
@@ -76,6 +93,7 @@ pub async fn run(action: GraphAction) -> anyhow::Result<()> {
         GraphAction::Query(a) => query(&nexus, a).await,
         GraphAction::Path(a) => path(&nexus, a).await,
         GraphAction::Explain(a) => explain(&nexus, a).await,
+        GraphAction::Context(a) => context(&nexus, a).await,
     }
 }
 
@@ -179,6 +197,21 @@ async fn explain(nexus: &NexusClient, a: ExplainArgs) -> anyhow::Result<()> {
             let arrow = if dir == "out" { "\u{2192}" } else { "\u{2190}" };
             println!("    {} {:<14} {}  {}", arrow.dimmed(), rel.dimmed(), nl, format!("[{conf}]").dimmed());
         }
+    }
+    Ok(())
+}
+
+async fn context(nexus: &NexusClient, a: ContextArgs) -> anyhow::Result<()> {
+    let body = json!({ "path": a.path, "target": a.target, "max_each": a.max_each });
+    let resp = nexus.post("/api/graph/context", &body).await?;
+    if a.json {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+        return Ok(());
+    }
+    // Print the engine-rendered Markdown block (agent-ready).
+    match resp.get("markdown").and_then(|v| v.as_str()) {
+        Some(md) => print!("{md}"),
+        None => println!("{}", serde_json::to_string_pretty(&resp)?),
     }
     Ok(())
 }

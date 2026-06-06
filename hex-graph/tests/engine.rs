@@ -111,6 +111,32 @@ async fn shortest_path_and_query() {
 }
 
 #[tokio::test]
+async fn context_bundle_has_neighbourhood() {
+    use hex_graph::context::{context_for, render_markdown, ContextOpts};
+    let tmp = tempfile::tempdir().unwrap();
+    let g = build_fixture(tmp.path()).await;
+
+    // Context for a.ts: defines `alpha`, and is used by b.ts.
+    let ctx = context_for(&g, "src/a.ts", ContextOpts::default()).expect("context for a.ts");
+    assert_eq!(ctx.kind, "file");
+    assert!(ctx.defines.iter().any(|d| d.label == "alpha"));
+    assert!(
+        ctx.used_by.iter().any(|u| u.file == "src/b.ts" && u.entity == "alpha"),
+        "a.ts should be used_by b.ts via alpha"
+    );
+    assert!(ctx.imported_by.iter().any(|f| f == "src/b.ts"));
+
+    // An entity target resolves to its declaring file.
+    let via_entity = context_for(&g, "Beta", ContextOpts::default()).expect("context via entity");
+    assert_eq!(via_entity.label, "src/b.ts");
+
+    // Markdown render is non-empty and mentions the file.
+    let md = render_markdown(&ctx);
+    assert!(md.contains("src/a.ts"));
+    assert!(md.contains("Defines"));
+}
+
+#[tokio::test]
 async fn build_is_deterministic() {
     let tmp1 = tempfile::tempdir().unwrap();
     let tmp2 = tempfile::tempdir().unwrap();

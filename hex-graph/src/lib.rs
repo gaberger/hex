@@ -9,6 +9,7 @@
 //! filesystem walk policy are the only impure inputs, all explicit.
 
 pub mod community;
+pub mod context;
 pub mod extract;
 pub mod model;
 pub mod query;

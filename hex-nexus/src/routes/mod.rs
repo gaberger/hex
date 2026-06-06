@@ -606,6 +606,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/graph/query", post(graph::query_graph))
         .route("/api/graph/path", post(graph::path_graph))
         .route("/api/graph/explain", post(graph::explain_graph))
+        .route("/api/graph/context", post(graph::context_graph))
         // Project management
         .route("/api/projects", get(projects::list_projects))
         .route("/api/projects/register", post(projects::register)
