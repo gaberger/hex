@@ -10,9 +10,16 @@ const DEFAULT_PORT: u16 = 5555;
 ///
 /// Search order:
 /// 1. `HEX_NEXUS_BIN` env var
-/// 2. `./target/debug/hex-nexus` (local debug build — preferred for dev)
-/// 3. `./target/release/hex-nexus` (local release build)
+/// 2. `./target/release/hex-nexus` (local release build — preferred)
+/// 3. `./target/debug/hex-nexus` (local debug build — fallback)
 /// 4. `hex-nexus` on `$PATH`
+///
+/// Release is preferred so that `cargo build -p hex-nexus --release` followed by
+/// a restart actually swaps the running binary. A stale debug artifact left over
+/// from `cargo check`/`cargo test` no longer shadows a fresh release build (the
+/// failure mode that left the daemon running old code despite release rebuilds).
+/// For iterative debug work, build release-less or set
+/// `HEX_NEXUS_BIN=target/debug/hex-nexus` explicitly.
 fn find_nexus_binary() -> Option<PathBuf> {
     // 1. Explicit env var
     if let Ok(p) = std::env::var("HEX_NEXUS_BIN") {
@@ -22,9 +29,8 @@ fn find_nexus_binary() -> Option<PathBuf> {
         }
     }
 
-    // 2-3. Local build artifacts — debug first so iterative dev builds are always picked up.
-    // Set HEX_NEXUS_BIN=target/release/hex-nexus to explicitly use a release build.
-    for profile in &["debug", "release"] {
+    // 2-3. Local build artifacts — release first (see doc comment).
+    for profile in &["release", "debug"] {
         let candidate = PathBuf::from(format!("target/{}/hex-nexus", profile));
         if candidate.is_file() {
             return Some(candidate);
