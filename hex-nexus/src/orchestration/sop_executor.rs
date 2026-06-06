@@ -614,14 +614,18 @@ async fn ground_for_intent(
 /// `Null` when no graph has been built — never fails GROUND. Capped to keep the
 /// REASON prompt bounded.
 fn graph_context_pack(paths: &[String]) -> Value {
+    // Locate graph.json: explicit root, else cwd.
+    let root = std::env::var("HEX_PROJECT_ROOT").unwrap_or_else(|_| ".".to_string());
+    graph_context_pack_in(std::path::Path::new(&root), paths)
+}
+
+/// Core of [`graph_context_pack`], parameterised on the project root so it's
+/// testable without mutating process-global env.
+fn graph_context_pack_in(root: &std::path::Path, paths: &[String]) -> Value {
     if paths.is_empty() {
         return Value::Null;
     }
-    // Locate graph.json: explicit root, else cwd.
-    let root = std::env::var("HEX_PROJECT_ROOT").unwrap_or_else(|_| ".".to_string());
-    let graph_path = std::path::Path::new(&root)
-        .join("graphify-out")
-        .join("graph.json");
+    let graph_path = root.join("graphify-out").join("graph.json");
     let Ok(raw) = std::fs::read_to_string(&graph_path) else {
         return Value::Null;
     };
@@ -1867,6 +1871,47 @@ mod tests {
         assert_eq!(classify_intent("there's a bug in the chat dispatcher"), "bug_triage");
         assert_eq!(classify_intent("Review the architecture of the merge gate"), "arch_review");
         assert_eq!(classify_intent("hello"), "code_question");
+    }
+
+    // GROUND graph-context wiring: builds a fixture graph and asserts the pack
+    // hands REASON the file's neighbourhood (env-free via the *_in helper).
+    #[tokio::test]
+    async fn graph_context_pack_returns_neighbourhood() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        for (rel, src) in [
+            ("src/a.ts", "export function alpha() {}\n"),
+            ("src/b.ts", "import { alpha } from './a.js';\nexport class Beta {}\n"),
+        ] {
+            let p = d.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, src).unwrap();
+        }
+        let opts = hex_graph::BuildOpts {
+            project_id: "t".into(),
+            mode: hex_graph::Mode::Ast,
+            include_docs: true,
+            ..Default::default()
+        };
+        let graph = hex_graph::build(d, opts, &hex_graph::semantic::NoopSemanticExtractor)
+            .await
+            .unwrap();
+        let out = d.join("graphify-out").join("graph.json");
+        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+        std::fs::write(&out, graph.to_json().unwrap()).unwrap();
+
+        // Empty paths → Null; missing graph → Null.
+        assert!(graph_context_pack_in(d, &[]).is_null());
+        let other = tempfile::tempdir().unwrap();
+        assert!(graph_context_pack_in(other.path(), &["src/a.ts".to_string()]).is_null());
+
+        // Present graph → array with the file's rendered context.
+        let pack = graph_context_pack_in(d, &["src/a.ts".to_string()]);
+        let arr = pack.as_array().expect("array");
+        assert_eq!(arr.len(), 1);
+        let md = arr[0].get("markdown").and_then(|v| v.as_str()).unwrap();
+        assert!(md.contains("src/a.ts"));
+        assert!(md.contains("Defines"));
     }
 
     // Serialize env-mutating tests against the workspace test lock.

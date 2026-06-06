@@ -493,3 +493,114 @@ fn project_id_for(root: &Path) -> String {
 fn err(code: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
     (code, Json(json!({ "error": msg })))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    fn write(dir: &Path, rel: &str, contents: &str) {
+        let p = dir.join(rel);
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(p, contents).unwrap();
+    }
+
+    /// Build a small graph and persist it to `<dir>/graphify-out/graph.json`,
+    /// exactly as the build handler would, so the read handlers have a source.
+    async fn fixture() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        write(d, "src/a.ts", "export function alpha() { return 1; }\n");
+        write(
+            d,
+            "src/b.ts",
+            "import { alpha } from './a.js';\nexport class Beta { run() { return alpha(); } }\n",
+        );
+        let opts = hex_graph::BuildOpts {
+            project_id: "t".into(),
+            mode: hex_graph::Mode::Ast,
+            include_docs: true,
+            ..Default::default()
+        };
+        let graph = hex_graph::build(d, opts, &hex_graph::semantic::NoopSemanticExtractor)
+            .await
+            .unwrap();
+        let out = d.join(OUT_DIR).join(OUT_FILE);
+        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+        std::fs::write(&out, graph.to_json().unwrap()).unwrap();
+        tmp
+    }
+
+    fn root(tmp: &tempfile::TempDir) -> Option<String> {
+        Some(tmp.path().to_string_lossy().to_string())
+    }
+
+    #[tokio::test]
+    async fn query_returns_ranked_results() {
+        let tmp = fixture().await;
+        let (code, Json(body)) = query_graph(Json(QueryRequest {
+            path: root(&tmp),
+            question: "alpha".into(),
+            limit: 10,
+        }))
+        .await;
+        assert_eq!(code, StatusCode::OK);
+        let results = body.get("results").and_then(|v| v.as_array()).unwrap();
+        assert!(results.iter().any(|r| r.get("label").and_then(|v| v.as_str()) == Some("alpha")));
+    }
+
+    #[tokio::test]
+    async fn path_finds_route_between_nodes() {
+        let tmp = fixture().await;
+        let (code, Json(body)) = path_graph(Json(PathRequest {
+            path: root(&tmp),
+            from: "file:src/b.ts".into(),
+            to: "function:src/a.ts:alpha".into(),
+        }))
+        .await;
+        assert_eq!(code, StatusCode::OK);
+        assert_eq!(body.get("found").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[tokio::test]
+    async fn explain_returns_node_with_neighbours() {
+        let tmp = fixture().await;
+        let (code, Json(body)) = explain_graph(Json(ExplainRequest {
+            path: root(&tmp),
+            node: "Beta".into(),
+        }))
+        .await;
+        assert_eq!(code, StatusCode::OK);
+        assert_eq!(body.get("label").and_then(|v| v.as_str()), Some("Beta"));
+    }
+
+    #[tokio::test]
+    async fn context_returns_bundle_and_markdown() {
+        let tmp = fixture().await;
+        let (code, Json(body)) = context_graph(Json(ContextRequest {
+            path: root(&tmp),
+            target: "src/a.ts".into(),
+            max_each: 25,
+        }))
+        .await;
+        assert_eq!(code, StatusCode::OK);
+        assert!(body.get("markdown").and_then(|v| v.as_str()).unwrap().contains("src/a.ts"));
+        // a.ts is used by b.ts (the consumer signal agents need).
+        let used_by = body.get("used_by").and_then(|v| v.as_array()).unwrap();
+        assert!(used_by.iter().any(|u| u.get("file").and_then(|v| v.as_str()) == Some("src/b.ts")));
+    }
+
+    #[tokio::test]
+    async fn query_without_built_graph_is_404() {
+        let tmp = tempfile::tempdir().unwrap(); // no graphify-out/graph.json
+        let (code, _body) = query_graph(Json(QueryRequest {
+            path: root(&tmp),
+            question: "anything".into(),
+            limit: 5,
+        }))
+        .await;
+        assert_eq!(code, StatusCode::NOT_FOUND);
+    }
+}

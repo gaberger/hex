@@ -312,7 +312,8 @@ fn extract_go(root: &Node, source: &str) -> FileExtract {
 fn collect_go_types(node: Node, source: &str, entities: &mut Vec<Entity>) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if child.kind() == "type_spec" {
+        // `type A int` / `type S struct{}` → type_spec; `type A = int` → type_alias.
+        if child.kind() == "type_spec" || child.kind() == "type_alias" {
             let Some(name) = name_field(child, source) else {
                 continue;
             };
