@@ -87,3 +87,6 @@ spacetime-modules/*/Cargo.lock
 spacetime-modules/.claude/
 tla2tools.jar
 hexflo_TTrace_*.tla
+
+# hex-graph knowledge-graph engine output
+graphify-out/

@@ -262,6 +262,11 @@ enum Commands {
     },
     /// Do the next right thing — check project health and suggest/execute actions
     Go,
+    /// Knowledge graph — build/query/path/explain a project's code+docs graph
+    Graph {
+        #[command(subcommand)]
+        action: commands::graph::GraphAction,
+    },
     /// Inspect / restart the autonomous code-repair loop
     #[command(name = "auto-repair")]
     AutoRepair {
@@ -693,6 +698,7 @@ async fn main() -> anyhow::Result<()> {
             commands::brief::run(effective_args).await
         }
         Commands::Go => commands::go::run().await,
+        Commands::Graph { action } => commands::graph::run(action).await,
         Commands::AutoRepair { action } => auto_repair_run(action).await,
         Commands::Hey(args) => commands::hey::run(args).await,
         Commands::Verify(args) => commands::verify::run(args).await,

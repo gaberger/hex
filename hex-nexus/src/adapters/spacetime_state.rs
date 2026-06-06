@@ -1992,6 +1992,15 @@ mod real {
         fn subscribe(&self) -> broadcast::Receiver<StateEvent> {
             self.event_tx.subscribe()
         }
+
+        async fn graph_reducer(
+            &self,
+            database: &str,
+            reducer: &str,
+            args: serde_json::Value,
+        ) -> Result<serde_json::Value, StateError> {
+            self.call_reducer_on(database, reducer, args).await
+        }
     }
 
     // ── Substrate swap-ticket port ─────────────────────

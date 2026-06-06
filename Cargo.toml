@@ -1,5 +1,5 @@
 [workspace]
-members = ["hex-nexus", "hex-desktop", "hex-core", "hex-parser", "hex-agent", "hex-cli", "hex-analyzer", "examples/hex-life"]
+members = ["hex-nexus", "hex-desktop", "hex-core", "hex-parser", "hex-agent", "hex-cli", "hex-analyzer", "hex-graph", "examples/hex-life"]
 exclude = ["examples/ebay-clone"]
 resolver = "2"
 

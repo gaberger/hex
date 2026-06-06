@@ -1055,6 +1055,21 @@ pub trait IStatePort:
 {
     // ── Subscriptions (real-time sync) ──────────────
     fn subscribe(&self) -> broadcast::Receiver<StateEvent>;
+
+    /// Call a reducer on an arbitrary SpacetimeDB module by name (e.g. the
+    /// `knowledge-graph` module). Used by routes that persist to modules without
+    /// dedicated typed bindings. Default impl reports unsupported; the
+    /// SpacetimeDB adapter overrides it to dispatch over HTTP.
+    async fn graph_reducer(
+        &self,
+        _database: &str,
+        _reducer: &str,
+        _args: serde_json::Value,
+    ) -> Result<serde_json::Value, StateError> {
+        Err(StateError::Storage(
+            "graph_reducer not supported by this state port".to_string(),
+        ))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

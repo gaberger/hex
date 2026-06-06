@@ -18,6 +18,7 @@ pub mod dev;
 pub mod enforce;
 pub mod git_cmd;
 pub mod go;
+pub mod graph;
 pub mod adr_review;
 pub mod agent;
 pub mod agent_audit;

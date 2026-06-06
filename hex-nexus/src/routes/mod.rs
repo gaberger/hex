@@ -13,6 +13,7 @@ pub mod coordination;
 pub mod decisions;
 pub mod fleet;
 pub mod git;
+pub mod graph;
 pub mod hex_agents;
 pub mod hexflo;
 pub mod inference;
@@ -599,6 +600,12 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/health", get(get_health))
         .route("/api/auto-repair/status", get(auto_repair_status))
         .route("/api/auto-repair/restart", post(auto_repair_restart))
+        // Knowledge graph (hex-graph engine)
+        .route("/api/graph/build", post(graph::build_graph)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/graph/query", post(graph::query_graph))
+        .route("/api/graph/path", post(graph::path_graph))
+        .route("/api/graph/explain", post(graph::explain_graph))
         // Project management
         .route("/api/projects", get(projects::list_projects))
         .route("/api/projects/register", post(projects::register)
@@ -977,6 +984,11 @@ pub fn build_router(state: SharedState) -> Router {
         // OpenAI-compatible proxy (opencode first-class — feat-hex-opencode-first-class)
         .route("/v1/models", get(inference::openai_models))
         .route("/v1/chat/completions", post(inference::openai_chat_completions))
+        // Anthropic-compatible gateway (ADR-2026-07-10-1000 follow-on): point
+        // ANTHROPIC_BASE_URL=http://localhost:5555 to run Claude Code / any
+        // Anthropic-format agent on hex's tiered, local-first routing.
+        .route("/v1/messages", post(inference::anthropic_messages))
+        .route("/v1/messages/count_tokens", post(inference::anthropic_count_tokens))
         // ═══════════════════════════════════════════════════════════
         // HEXFLO COORDINATION — write routes stay, reads via SpacetimeDB
         // ═══════════════════════════════════════════════════════════
