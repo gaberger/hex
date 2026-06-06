@@ -1,5 +1,10 @@
 //! SOP executor (ADR-2026-05-08-2500).
 //!
+//! DEPRECATED (ADR-2606061359): the multi-agent org-sim this drives is being
+//! retired in favor of the single-agent loop (`hex do` / `direct_exec.rs`).
+//! Route new work through the direct executor; do not add new dependencies on
+//! the SOP persona-dispatch path. Slated for removal once consumers migrate.
+//!
 //! Replaces the org_responder's single-LLM-call hot path with a
 //! 5-phase state machine for SOP-enabled personas (controlled by
 //! `HEX_SOP_PERSONAS` CSV env). Each phase has a deterministic gate or

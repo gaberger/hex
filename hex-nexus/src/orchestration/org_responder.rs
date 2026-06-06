@@ -1,5 +1,9 @@
 //! Org responder background task.
 //!
+//! DEPRECATED (ADR-2606061359): part of the multi-agent org-sim (the 33-persona
+//! org chart) being retired in favor of the single-agent loop (`hex do`). Do not
+//! add new dependencies; slated for removal once consumers migrate.
+//!
 //! Polls `agent_messages` for unanswered DMs addressed to ANY persona in the
 //! org chart (execs, leads, and ICs — see `Roster` / `roster()`). For each
 //! unanswered DM, generates a reply via the local `/api/inference/complete`
