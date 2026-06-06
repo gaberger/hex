@@ -792,6 +792,32 @@ pub(crate) fn priority_for_tools(ep: &crate::routes::secrets::InferenceEndpointE
     provider_tier * 10 + health
 }
 
+/// Pick Ollama's `num_ctx` (input context window). Ollama's default is only
+/// ~2-8k, which SILENTLY truncates large prompts — a Claude Code request is
+/// ~36k tokens (big system prompt + tool schemas), so the prompt fills the
+/// window and the model emits ~1 token. We size `num_ctx` to the actual prompt
+/// (≈chars/4 + generation headroom), bucketed to powers of two so same-size
+/// workloads reuse one loaded model (Ollama reloads when num_ctx changes).
+/// `HEX_OLLAMA_NUM_CTX` is a hard override for operators who want it fixed.
+fn pick_num_ctx(payload_chars: usize, num_predict: u32) -> u32 {
+    if let Ok(n) = std::env::var("HEX_OLLAMA_NUM_CTX").ok().and_then(|v| v.parse::<u32>().ok()).ok_or(()) {
+        return n;
+    }
+    let est_prompt_tokens = (payload_chars / 4) as u32;
+    // prompt + output + 25% headroom for tokenizer drift / chat-template overhead.
+    let needed = est_prompt_tokens
+        .saturating_add(num_predict)
+        .saturating_add(est_prompt_tokens / 4)
+        .saturating_add(1024);
+    // Smallest bucket that fits; clamp to a sane floor/ceiling.
+    for bucket in [8192u32, 16384, 32768, 65536, 131072] {
+        if needed <= bucket {
+            return bucket;
+        }
+    }
+    131072
+}
+
 /// Like `call_inference_endpoint` but propagates a tools schema to the
 /// provider and extracts `tool_calls` from the response. Returns
 /// (InferenceResult, tool_calls_array). When the model emits no tool
@@ -864,6 +890,12 @@ pub(crate) async fn call_inference_endpoint_with_tools(
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(2048);
+        // num_ctx sized to the actual prompt (messages + tool schemas) so large
+        // agentic clients like Claude Code aren't silently truncated. See
+        // pick_num_ctx.
+        let payload_chars = serde_json::to_string(messages).map(|s| s.len()).unwrap_or(0)
+            + serde_json::to_string(&openai_tools).map(|s| s.len()).unwrap_or(0);
+        let num_ctx = pick_num_ctx(payload_chars, num_predict);
         let think_enabled = std::env::var("HEX_OLLAMA_THINK")
             .ok()
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -876,7 +908,7 @@ pub(crate) async fn call_inference_endpoint_with_tools(
                 "stream": false,
                 "think": think_enabled,
                 "tools": openai_tools,
-                "options": { "num_predict": num_predict },
+                "options": { "num_predict": num_predict, "num_ctx": num_ctx },
             }),
         )
     } else {
@@ -1008,6 +1040,10 @@ pub(crate) async fn call_inference_endpoint(
                 let url = format!("{}/api/chat", ep.url);
                 let num_predict: u32 = std::env::var("HEX_OLLAMA_NUM_PREDICT")
                     .ok().and_then(|s| s.parse().ok()).unwrap_or(1024);
+                // num_ctx sized to the actual prompt (see pick_num_ctx) so large
+                // prompts aren't silently truncated by Ollama's small default.
+                let payload_chars = serde_json::to_string(messages).map(|s| s.len()).unwrap_or(0);
+                let num_ctx = pick_num_ctx(payload_chars, num_predict);
                 // CRITICAL: qwen3 family is a *thinking* model — by default
                 // it spends all output tokens on <think> reasoning and emits
                 // an EMPTY `message.content`. Every responder/drafter/twin
@@ -1022,7 +1058,7 @@ pub(crate) async fn call_inference_endpoint(
                     "messages": messages,
                     "stream": false,
                     "think": think_enabled,
-                    "options": { "num_predict": num_predict },
+                    "options": { "num_predict": num_predict, "num_ctx": num_ctx },
                 });
                 (url, body)
             }
@@ -1396,6 +1432,26 @@ mod compat_url_tests {
             openai_compat_chat_url("https://generativelanguage.googleapis.com/v1beta/openai/"),
             "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         );
+    }
+}
+
+#[cfg(test)]
+mod num_ctx_tests {
+    use super::pick_num_ctx;
+    #[test]
+    fn small_prompt_uses_small_bucket() {
+        // ~350 chars ≈ 90 tokens → smallest bucket.
+        assert_eq!(pick_num_ctx(350, 1024), 8192);
+    }
+    #[test]
+    fn claude_code_sized_prompt_gets_large_bucket() {
+        // ~36k tokens ≈ 144k chars → needs the 65536 bucket (or larger).
+        let n = pick_num_ctx(144_000, 2048);
+        assert!(n >= 65536, "got {n}");
+    }
+    #[test]
+    fn buckets_are_monotonic_in_prompt_size() {
+        assert!(pick_num_ctx(40_000, 1024) <= pick_num_ctx(400_000, 1024));
     }
 }
 

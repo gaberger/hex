@@ -1767,6 +1767,311 @@ pub async fn openai_chat_completions(
     (StatusCode::OK, Json(openai_resp)).into_response()
 }
 
+// ── Anthropic-compatible gateway route (/v1/messages) ────────────────────────
+//
+// Lets ANY Anthropic-Messages-API client — Claude Code itself, plus
+// Anthropic-format agents (Hermes, etc.) — point `ANTHROPIC_BASE_URL` at hex
+// and inherit hex's tiered, local-first, circuit-broken routing instead of
+// talking to a raw provider. Mirrors `openai_chat_completions`: translate the
+// Anthropic request → hex's internal `InferenceCompleteRequest`, reuse the same
+// provider selection (and the local-first fallback from
+// ADR-2026-07-10-1000), then translate the response back to Anthropic shape.
+
+/// Anthropic `system` is a top-level field that may be a bare string OR an
+/// array of `{type:"text", text}` content blocks. Flatten to a single string.
+fn flatten_anthropic_system(system: Option<&serde_json::Value>) -> Option<String> {
+    match system {
+        Some(serde_json::Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        Some(serde_json::Value::Array(blocks)) => {
+            let joined = blocks
+                .iter()
+                .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            (!joined.is_empty()).then_some(joined)
+        }
+        _ => None,
+    }
+}
+
+/// Translate Anthropic messages → OpenAI-format `[{role, content, tool_calls?, tool_call_id?}]`
+/// (what hex's provider dispatch expects). Handles the agentic tool loop so
+/// Claude Code's multi-turn tool_use/tool_result history round-trips:
+///   - assistant `tool_use` block  → OpenAI `tool_calls` entry
+///   - user `tool_result` block    → OpenAI `{role:"tool", tool_call_id, content}` message
+///   - `text` blocks               → folded into the message content string
+fn anthropic_messages_to_openai(messages: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut out: Vec<serde_json::Value> = Vec::new();
+
+    let block_text = |c: &serde_json::Value| -> String {
+        match c {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Array(blocks) => blocks
+                .iter()
+                .filter_map(|b| {
+                    // tool_result content may itself be a string or block array.
+                    if b.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        b.get("text").and_then(|t| t.as_str()).map(String::from)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => String::new(),
+        }
+    };
+
+    for msg in messages {
+        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+        let content = msg.get("content").cloned().unwrap_or(serde_json::Value::Null);
+
+        // Simple string content → straight through.
+        if let serde_json::Value::String(s) = &content {
+            out.push(json!({ "role": role, "content": s }));
+            continue;
+        }
+
+        let blocks = content.as_array().cloned().unwrap_or_default();
+        let mut text_parts: Vec<String> = Vec::new();
+        let mut tool_calls: Vec<serde_json::Value> = Vec::new();
+        let mut tool_results: Vec<serde_json::Value> = Vec::new();
+
+        for b in &blocks {
+            match b.get("type").and_then(|t| t.as_str()) {
+                Some("text") => {
+                    if let Some(t) = b.get("text").and_then(|t| t.as_str()) {
+                        text_parts.push(t.to_string());
+                    }
+                }
+                Some("tool_use") => {
+                    let id = b.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let name = b.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let input = b.get("input").cloned().unwrap_or(json!({}));
+                    tool_calls.push(json!({
+                        "id": id,
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": serde_json::to_string(&input).unwrap_or_else(|_| "{}".into()),
+                        }
+                    }));
+                }
+                Some("tool_result") => {
+                    let tool_use_id = b.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let result_content = b.get("content").map(block_text).unwrap_or_default();
+                    tool_results.push(json!({
+                        "role": "tool",
+                        "tool_call_id": tool_use_id,
+                        "content": result_content,
+                    }));
+                }
+                _ => {} // image / other blocks: ignored in v1 (text-first agents)
+            }
+        }
+
+        // OpenAI ordering: tool result messages stand alone (they answer a prior
+        // assistant tool_call); assistant/user text+tool_calls form one message.
+        if !tool_results.is_empty() {
+            out.extend(tool_results);
+        }
+        let text = text_parts.join("\n");
+        if !text.is_empty() || !tool_calls.is_empty() {
+            let mut m = serde_json::Map::new();
+            m.insert("role".into(), json!(role));
+            m.insert("content".into(), if text.is_empty() { serde_json::Value::Null } else { json!(text) });
+            if !tool_calls.is_empty() {
+                m.insert("tool_calls".into(), json!(tool_calls));
+            }
+            out.push(serde_json::Value::Object(m));
+        }
+    }
+
+    out
+}
+
+/// Build the Anthropic `content` block array + `stop_reason` from hex's internal
+/// `{content, tool_calls}` response.
+fn anthropic_content_from_inner(inner: &serde_json::Value) -> (Vec<serde_json::Value>, &'static str) {
+    let mut content: Vec<serde_json::Value> = Vec::new();
+    let text = inner.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    if !text.is_empty() {
+        content.push(json!({ "type": "text", "text": text }));
+    }
+    let tool_calls = inner.get("tool_calls").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    for tc in &tool_calls {
+        let id = tc.get("id").and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| format!("toolu_{}", Uuid::new_v4()));
+        let func = tc.get("function").cloned().unwrap_or(serde_json::Value::Null);
+        let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let args_str = func.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}");
+        let input: serde_json::Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+        content.push(json!({ "type": "tool_use", "id": id, "name": name, "input": input }));
+    }
+    let stop_reason = if !tool_calls.is_empty() { "tool_use" } else { "end_turn" };
+    // An empty content array is invalid Anthropic; emit a placeholder text block.
+    if content.is_empty() {
+        content.push(json!({ "type": "text", "text": "" }));
+    }
+    (content, stop_reason)
+}
+
+/// POST /v1/messages — Anthropic-compatible Messages API proxy.
+///
+/// Accepts an Anthropic-format request and delegates to the same routing as
+/// `/api/inference/complete` (tiered, local-first, circuit-broken). The
+/// `model` field is ignored for provider choice — hex routes — except a
+/// `hex/<id>` value pins a specific registered provider. `stream:true` returns
+/// the Anthropic SSE event sequence synthesised from the completed response
+/// (pseudo-streaming): correct on the wire for Claude Code, without per-token
+/// streaming through every provider.
+pub async fn anthropic_messages(
+    State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let model_raw = body.get("model").and_then(|v| v.as_str()).unwrap_or("hex/default");
+    let stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let max_tokens = body.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(4096) as u32;
+    let system = flatten_anthropic_system(body.get("system"));
+    let anthropic_msgs = body.get("messages").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let messages = anthropic_messages_to_openai(&anthropic_msgs);
+    let tools = body.get("tools").and_then(|v| v.as_array()).cloned();
+
+    // hex routes; only a "hex/<id>" override pins a provider. Claude Code always
+    // sends "claude-*" names — those map to default (let hex choose), never 400.
+    let resolved_model: Option<String> = model_raw
+        .strip_prefix("hex/")
+        .filter(|s| !s.is_empty() && *s != "default")
+        .map(String::from);
+
+    let complete_body = InferenceCompleteRequest {
+        model: resolved_model,
+        messages,
+        system,
+        max_tokens,
+        tools,
+    };
+
+    let (status, Json(inner)) =
+        inference_complete(State(state), headers, Json(complete_body)).await;
+
+    if !status.is_success() {
+        // Re-shape hex's error into Anthropic's error envelope.
+        let msg = inner.get("error").and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| inner.to_string());
+        return (status, Json(json!({
+            "type": "error",
+            "error": { "type": "api_error", "message": msg }
+        }))).into_response();
+    }
+
+    let model_used = inner.get("model").and_then(|v| v.as_str()).unwrap_or(model_raw).to_string();
+    let input_tokens = inner.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let output_tokens = inner.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let (content, stop_reason) = anthropic_content_from_inner(&inner);
+    let msg_id = format!("msg_{}", Uuid::new_v4());
+
+    if !stream {
+        let resp = json!({
+            "id": msg_id,
+            "type": "message",
+            "role": "assistant",
+            "model": model_used,
+            "content": content,
+            "stop_reason": stop_reason,
+            "stop_sequence": null,
+            "usage": { "input_tokens": input_tokens, "output_tokens": output_tokens }
+        });
+        return (StatusCode::OK, Json(resp)).into_response();
+    }
+
+    // Pseudo-streaming: build the full Anthropic SSE event sequence from the
+    // finished result, then stream it. Claude Code parses these events
+    // identically to real streaming; we just deliver each content block in one
+    // delta. Uses futures-mpsc (its Receiver is a Stream) to match
+    // `inference_stream`.
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use futures::channel::mpsc;
+    use futures::SinkExt;
+    use std::convert::Infallible;
+
+    let mut events: Vec<(&'static str, serde_json::Value)> = Vec::new();
+    events.push(("message_start", json!({
+        "type": "message_start",
+        "message": {
+            "id": msg_id, "type": "message", "role": "assistant", "model": model_used,
+            "content": [], "stop_reason": null, "stop_sequence": null,
+            "usage": { "input_tokens": input_tokens, "output_tokens": 0 }
+        }
+    })));
+    for (idx, block) in content.iter().enumerate() {
+        let btype = block.get("type").and_then(|t| t.as_str()).unwrap_or("text");
+        if btype == "tool_use" {
+            events.push(("content_block_start", json!({
+                "type": "content_block_start", "index": idx,
+                "content_block": { "type": "tool_use", "id": block.get("id"), "name": block.get("name"), "input": {} }
+            })));
+            let partial = serde_json::to_string(block.get("input").unwrap_or(&json!({}))).unwrap_or_else(|_| "{}".into());
+            events.push(("content_block_delta", json!({
+                "type": "content_block_delta", "index": idx,
+                "delta": { "type": "input_json_delta", "partial_json": partial }
+            })));
+        } else {
+            let text = block.get("text").and_then(|t| t.as_str()).unwrap_or("");
+            events.push(("content_block_start", json!({
+                "type": "content_block_start", "index": idx,
+                "content_block": { "type": "text", "text": "" }
+            })));
+            events.push(("content_block_delta", json!({
+                "type": "content_block_delta", "index": idx,
+                "delta": { "type": "text_delta", "text": text }
+            })));
+        }
+        events.push(("content_block_stop", json!({ "type": "content_block_stop", "index": idx })));
+    }
+    events.push(("message_delta", json!({
+        "type": "message_delta",
+        "delta": { "stop_reason": stop_reason, "stop_sequence": null },
+        "usage": { "output_tokens": output_tokens }
+    })));
+    events.push(("message_stop", json!({ "type": "message_stop" })));
+
+    let (mut tx, rx) = mpsc::channel::<Result<Event, Infallible>>(events.len() + 1);
+    tokio::spawn(async move {
+        for (name, data) in events {
+            if tx.send(Ok(Event::default().event(name).data(data.to_string()))).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    Sse::new(rx)
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+/// POST /v1/messages/count_tokens — Anthropic token-count pre-flight. Claude
+/// Code calls this before sending; a rough estimate keeps it happy without a
+/// tokenizer (hex bills on real provider usage, not this estimate).
+pub async fn anthropic_count_tokens(
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let system_len = flatten_anthropic_system(body.get("system")).map(|s| s.len()).unwrap_or(0);
+    let msgs = body.get("messages").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let openai = anthropic_messages_to_openai(&msgs);
+    let chars: usize = system_len + openai.iter()
+        .filter_map(|m| m.get("content").and_then(|c| c.as_str()).map(str::len))
+        .sum::<usize>();
+    // ~4 chars/token heuristic.
+    let input_tokens = (chars / 4).max(1) as u64;
+    (StatusCode::OK, Json(json!({ "input_tokens": input_tokens })))
+}
+
 // ── Rate State + Cost Attribution (ADR-2026-04-05-2125) ─────────────────────────
 
 /// GET /api/inference/rate-state — per-provider rate limit and circuit breaker state.
@@ -2362,6 +2667,72 @@ async fn run_calibration(state: &SharedState, id: &str) -> CalibrationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── /v1/messages Anthropic translation ──────────────────────────────────
+    #[test]
+    fn system_flattens_string_and_blocks() {
+        assert_eq!(flatten_anthropic_system(Some(&json!("hi"))).as_deref(), Some("hi"));
+        let blocks = json!([{"type":"text","text":"a"},{"type":"text","text":"b"}]);
+        assert_eq!(flatten_anthropic_system(Some(&blocks)).as_deref(), Some("a\nb"));
+        assert_eq!(flatten_anthropic_system(None), None);
+    }
+
+    #[test]
+    fn string_content_passes_through() {
+        let m = json!([{"role":"user","content":"hello"}]);
+        let out = anthropic_messages_to_openai(m.as_array().unwrap());
+        assert_eq!(out, vec![json!({"role":"user","content":"hello"})]);
+    }
+
+    #[test]
+    fn assistant_tool_use_becomes_openai_tool_calls() {
+        let m = json!([{
+            "role":"assistant",
+            "content":[
+                {"type":"text","text":"let me read"},
+                {"type":"tool_use","id":"toolu_1","name":"repo_read","input":{"path":"a.rs"}}
+            ]
+        }]);
+        let out = anthropic_messages_to_openai(m.as_array().unwrap());
+        assert_eq!(out.len(), 1);
+        let tc = &out[0]["tool_calls"][0];
+        assert_eq!(tc["id"], "toolu_1");
+        assert_eq!(tc["function"]["name"], "repo_read");
+        assert_eq!(tc["function"]["arguments"], "{\"path\":\"a.rs\"}");
+        assert_eq!(out[0]["content"], "let me read");
+    }
+
+    #[test]
+    fn user_tool_result_becomes_openai_tool_role() {
+        let m = json!([{
+            "role":"user",
+            "content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"file body"}]
+        }]);
+        let out = anthropic_messages_to_openai(m.as_array().unwrap());
+        assert_eq!(out, vec![json!({"role":"tool","tool_call_id":"toolu_1","content":"file body"})]);
+    }
+
+    #[test]
+    fn inner_text_only_is_end_turn() {
+        let (content, stop) = anthropic_content_from_inner(&json!({"content":"hi","tool_calls":[]}));
+        assert_eq!(stop, "end_turn");
+        assert_eq!(content, vec![json!({"type":"text","text":"hi"})]);
+    }
+
+    #[test]
+    fn inner_tool_calls_become_tool_use_and_stop_tool_use() {
+        let inner = json!({
+            "content":"",
+            "tool_calls":[{"id":"toolu_9","function":{"name":"code_patch","arguments":"{\"path\":\"x\"}"}}]
+        });
+        let (content, stop) = anthropic_content_from_inner(&inner);
+        assert_eq!(stop, "tool_use");
+        // empty text dropped → only the tool_use block
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "tool_use");
+        assert_eq!(content[0]["name"], "code_patch");
+        assert_eq!(content[0]["input"], json!({"path":"x"}));
+    }
 
     #[test]
     fn test_cqs_bounds() {

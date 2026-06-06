@@ -726,7 +726,14 @@ async fn reason_with_tools(
 
 /// Resolve a tier model name from `.hex/project.json` → inference.tier_models.
 /// Honors ADR-2605301224: model selection is declarative config, not a literal.
-fn tier_model_for_intent(intent: &str) -> String {
+/// Ordered, **local-first** candidate models for an intent (ADR-2026-07-10-1000,
+/// fix #1: per-tier candidate pools). `inference.tier_models[tier]` may be a
+/// scalar `"model"` OR an array `["m1", "m2", ...]`; a scalar auto-wraps. The
+/// SOP reasoner (`reason_via_router`) tries these in order, so a dead/404'ing
+/// cloud provider becomes a never-reached fallback instead of a dead-end — the
+/// factory keeps working on local inference. We always guarantee a competent
+/// local coder as the final fallback even if the config is cloud-only.
+fn tier_candidates_for_intent(intent: &str) -> Vec<String> {
     // Complex/code reasoning → T2.5; everything else → T2. Mirrors the
     // workplan-executor's classify_task_tier intent → tier mapping.
     let key = if matches!(intent, "code_patch" | "bug_triage" | "arch_review" | "adr_draft" | "spec_draft") {
@@ -734,17 +741,98 @@ fn tier_model_for_intent(intent: &str) -> String {
     } else {
         "t2"
     };
-    std::fs::read_to_string(".hex/project.json")
+    let configured: Vec<String> = std::fs::read_to_string(".hex/project.json")
         .ok()
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
         .and_then(|v| {
             v.get("inference")
                 .and_then(|i| i.get("tier_models"))
                 .and_then(|t| t.get(key).or_else(|| t.get("t2")))
-                .and_then(|m| m.as_str())
-                .map(String::from)
+                .cloned()
         })
-        .unwrap_or_else(|| "qwen2.5-coder:14b".to_string())
+        .map(|m| match m {
+            // Array form: ordered candidate pool.
+            Value::Array(arr) => arr.iter().filter_map(|x| x.as_str().map(String::from)).collect(),
+            // Scalar form: single candidate (backward compatible).
+            Value::String(s) => vec![s],
+            _ => Vec::new(),
+        })
+        .unwrap_or_default();
+
+    order_candidates_local_first(configured)
+}
+
+/// Pure ordering policy for tier candidates (extracted for testability —
+/// ADR-2026-07-10-1000 names `tests/tier_routing.rs`). Locals (model names with
+/// no vendor slug) keep their configured order and come first; clouds follow; a
+/// known-good local coder is guaranteed as the terminal fallback; order-
+/// preserving dedup.
+fn order_candidates_local_first(mut configured: Vec<String>) -> Vec<String> {
+    // A local model name has no vendor slug (no '/'); cloud ids look like
+    // "Qwen/Qwen3-32B" or "deepseek-ai/DeepSeek-R1-0528".
+    let is_local = |m: &str| !m.contains('/');
+    const LOCAL_CODER_FALLBACK: &str = "qwen2.5-coder:32b";
+
+    // Stable partition: locals keep their configured order, then clouds — so we
+    // always exhaust local options before reaching for a (possibly down) cloud
+    // provider, regardless of how the operator ordered the array.
+    configured.sort_by_key(|m| if is_local(m) { 0 } else { 1 });
+
+    // Guarantee a known-good local coder as the terminal fallback.
+    if !configured.iter().any(|m| m == LOCAL_CODER_FALLBACK) {
+        configured.push(LOCAL_CODER_FALLBACK.to_string());
+    }
+
+    // Dedup while preserving order.
+    let mut seen = HashSet::new();
+    configured.retain(|m| seen.insert(m.clone()));
+    configured
+}
+
+#[cfg(test)]
+mod tier_routing_tests {
+    use super::order_candidates_local_first;
+
+    #[test]
+    fn cloud_only_config_appends_local_fallback() {
+        // The exact incident shape: a tier configured to a cloud model that 404s.
+        let got = order_candidates_local_first(vec!["Qwen/Qwen3-32B".into()]);
+        assert_eq!(got, vec!["Qwen/Qwen3-32B", "qwen2.5-coder:32b"]);
+        // Last candidate is always a local coder → never a dead-end.
+        assert!(!got.last().unwrap().contains('/'));
+    }
+
+    #[test]
+    fn locals_are_tried_before_clouds_regardless_of_config_order() {
+        // Operator listed cloud first; we still exhaust local first.
+        let got = order_candidates_local_first(vec![
+            "deepseek-ai/DeepSeek-R1-0528".into(),
+            "gemma4-12b".into(),
+        ]);
+        assert_eq!(got, vec!["gemma4-12b", "deepseek-ai/DeepSeek-R1-0528", "qwen2.5-coder:32b"]);
+    }
+
+    #[test]
+    fn already_local_config_is_unchanged_and_not_duplicated() {
+        let got = order_candidates_local_first(vec!["qwen2.5-coder:32b".into()]);
+        assert_eq!(got, vec!["qwen2.5-coder:32b"]);
+    }
+
+    #[test]
+    fn empty_config_yields_local_fallback_only() {
+        assert_eq!(order_candidates_local_first(vec![]), vec!["qwen2.5-coder:32b"]);
+    }
+
+    #[test]
+    fn local_order_is_preserved_among_locals() {
+        let got = order_candidates_local_first(vec![
+            "gemma4-12b".into(),
+            "Qwen/Qwen3-32B".into(),
+            "qwen2.5-coder:14b".into(),
+        ]);
+        // gemma4-12b, qwen2.5-coder:14b keep their relative order; cloud after; fallback last.
+        assert_eq!(got, vec!["gemma4-12b", "qwen2.5-coder:14b", "Qwen/Qwen3-32B", "qwen2.5-coder:32b"]);
+    }
 }
 
 /// Reason through the nexus inference router (ADR-2605301224). Posts to the
@@ -759,7 +847,43 @@ async fn reason_via_router(
     ground_pack: &Value,
     registry: Arc<ToolRegistry>,
 ) -> Result<ReasonResult, String> {
-    let model = tier_model_for_intent(intent);
+    // ADR-2026-07-10-1000 fix #3: try each tier candidate in order, local-first.
+    // A provider that 404s/403s/times out no longer dead-ends the SOP — we fall
+    // through to the next candidate (a local model), so the factory keeps making
+    // progress on local inference instead of escalating into a void. Retrying is
+    // safe: a candidate only yields Err when NO terminal action committed (HTTP
+    // failure pre-emit, or round-trip cap with no successful mutation); reads
+    // (repo_read/grep) and failed patches make no durable change.
+    let candidates = tier_candidates_for_intent(intent);
+    let total = candidates.len();
+    let mut last_err = String::new();
+    for (i, model) in candidates.iter().enumerate() {
+        match reason_via_router_one(model, role, operator_message, intent, ground_pack, registry.clone()).await {
+            Ok(r) => {
+                if i > 0 {
+                    tracing::info!(model = %model, attempt = i + 1, total, "reason_via_router: recovered on local-first fallback candidate");
+                }
+                return Ok(r);
+            }
+            Err(e) => {
+                tracing::warn!(model = %model, attempt = i + 1, total, error = %e, "reason_via_router: candidate failed; falling through to next (local-first)");
+                last_err = e;
+            }
+        }
+    }
+    Err(format!("all {} tier candidate(s) failed; last error: {}", total, last_err))
+}
+
+/// One reasoning attempt against a single resolved `model`. Wrapped by
+/// `reason_via_router`, which retries the next local-first candidate on failure.
+async fn reason_via_router_one(
+    model: &str,
+    role: &str,
+    operator_message: &str,
+    intent: &str,
+    ground_pack: &Value,
+    registry: Arc<ToolRegistry>,
+) -> Result<ReasonResult, String> {
     let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
     let url = format!("http://127.0.0.1:{}/api/inference/complete", port);
 
