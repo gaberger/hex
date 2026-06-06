@@ -44,6 +44,8 @@ const OrgComms = lazy(() => import('../components/views/OrgComms'));
 const TeamDashboard = lazy(() => import('../components/views/TeamDashboard'));
 const MissionControl = lazy(() => import('../components/views/MissionControl'));
 const DirectRuns = lazy(() => import('../components/views/DirectRuns'));
+const Workbench = lazy(() => import('../components/views/Workbench'));
+const MemoryView = lazy(() => import('../components/views/MemoryView'));
 // First-class operational telemetry pages (restored 2026-06-05 — these were
 // orphaned when Mission Control was retired but their redirects were left
 // pointing at the dead hub). Each is now its own routable + sidebar-linked view.
@@ -63,12 +65,12 @@ const SYSTEM_NAV: { page: string; label: string; icon: string }[] = [
   { page: "brain",           label: "Brain",         icon: "M12 2a7 7 0 00-7 7c0 2 1 3 1 5v3a2 2 0 002 2h8a2 2 0 002-2v-3c0-2 1-3 1-5a7 7 0 00-7-7z" },
   { page: "brain-decisions", label: "Decisions",     icon: "M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
   { page: "merge-gate",      label: "Merge Gate",    icon: "M6 3v12M6 21a3 3 0 100-6 3 3 0 000 6zM6 9a3 3 0 100-6 3 3 0 000 6zM18 21a3 3 0 100-6 3 3 0 000 6zM18 15V9a3 3 0 00-3-3H9" },
-  { page: "persona-health",  label: "Persona Health",icon: "M22 12h-4l-3 9L9 3l-3 9H2" },
   { page: "thoughts",        label: "Thoughts",      icon: "M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
   { page: "resources",       label: "Resources",     icon: "M4 7v10c0 1 4 3 8 3s8-2 8-3V7M4 7c0 1 4 3 8 3s8-2 8-3M4 7c0-1 4-3 8-3s8 2 8 3" },
   { page: "commitments",     label: "Commitments",   icon: "M9 12l2 2 4-4M7 3h10l4 6-9 12L3 9z" },
-  { page: "missions",        label: "Missions",      icon: "M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z" },
   { page: "ops-sla",         label: "Ops SLA",       icon: "M12 8v4l3 2M12 2a10 10 0 100 20 10 10 0 000-20z" },
+  // Retired (ADR-2606061359): persona-health, missions — org-sim surfaces, routes
+  // now redirect to the Workbench.
 ];
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
@@ -87,18 +89,8 @@ const projectSubNav: NavItem[] = [
     page: 'project',
     routeFactory: (pid) => ({ page: 'project', projectId: pid }),
   },
-  {
-    label: 'Agents',
-    icon: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />',
-    page: 'project-agents',
-    routeFactory: (pid) => ({ page: 'project-agents', projectId: pid }),
-  },
-  {
-    label: 'Swarms',
-    icon: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />',
-    page: 'project-swarms',
-    routeFactory: (pid) => ({ page: 'project-swarms', projectId: pid }),
-  },
+  // Agents + Swarms removed (ADR-2606061359): org-sim project tabs retired in
+  // favor of the single-agent Workbench.
   {
     label: 'ADRs',
     icon: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />',
@@ -433,8 +425,8 @@ const App: Component = () => {
           }}
         >
 
-          {/* Direct Runs — operator's primary surface (2026-06-04): the monitor for the
-              new evidence-gated execution model, replacing the retired Mission Control board. */}
+          {/* Workbench — operator's primary surface (ADR-2606061359): launch + watch
+              single-agent runs (task → agent → evidence → commit). Replaces Mission Control. */}
           <div class="px-3 pt-3 pb-1">
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
@@ -443,14 +435,34 @@ const App: Component = () => {
                 "text-gray-200 hover:bg-gray-900/40 hover:text-cyan-200": route().page !== "direct-runs",
                 "justify-center px-0": sidebarCollapsed(),
               }}
-              aria-label="Direct Runs"
+              aria-label="Workbench"
               aria-current={route().page === "direct-runs" ? "page" : undefined}
               onClick={() => { navigate({ page: "direct-runs" }); setMobileDrawerOpen(false); }}
             >
               <svg class="h-4 w-4 shrink-0 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polygon points="5 3 19 12 5 21 5 3" /><polyline points="9 11 11 13 15 9" />
               </svg>
-              <Show when={!sidebarCollapsed()}>Direct Runs</Show>
+              <Show when={!sidebarCollapsed()}>Workbench</Show>
+            </button>
+          </div>
+
+          {/* Memory — the agent learning loop (lessons / gaps). */}
+          <div class="px-3 pt-1 pb-1">
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              classList={{
+                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "memory",
+                "text-gray-400 hover:bg-gray-900/30 hover:text-gray-200": route().page !== "memory",
+                "justify-center px-0": sidebarCollapsed(),
+              }}
+              aria-label="Memory"
+              aria-current={route().page === "memory" ? "page" : undefined}
+              onClick={() => { navigate({ page: "memory" }); setMobileDrawerOpen(false); }}
+            >
+              <svg class="h-4 w-4 shrink-0 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2a7 7 0 0 0-7 7c0 2 1 3 1 5v3a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-3c0-2 1-3 1-5a7 7 0 0 0-7-7z" /><path d="M9 21h6" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Memory</Show>
             </button>
           </div>
 
@@ -727,7 +739,8 @@ const App: Component = () => {
             <Match when={route().page === "fleet"}><FleetView /></Match>
             <Match when={route().page === "research-lab"}><ResearchLab /></Match>
             <Match when={route().page === "swaps"}><SwapsView /></Match>
-            <Match when={route().page === "direct-runs"}><DirectRuns /></Match>
+            <Match when={route().page === "direct-runs"}><Workbench /></Match>
+            <Match when={route().page === "memory"}><MemoryView /></Match>
             {/* Restored 2026-06-05 — operational telemetry pages, first-class again */}
             <Match when={route().page === "brain"}><Brain /></Match>
             <Match when={route().page === "brain-decisions"}><BrainDecisions /></Match>

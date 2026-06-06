@@ -37,6 +37,7 @@ export type Route =
   | { page: "mission-control" }
   | { page: "agent-runs" }
   | { page: "direct-runs" }
+  | { page: "memory" }
   | { page: "ops-sla" }
   // Project-scoped
   | { page: "project"; projectId: string }
@@ -274,6 +275,8 @@ function routeToHash(r: Route): string {
       return "#/agent-runs";
     case "direct-runs":
       return "#/direct-runs";
+    case "memory":
+      return "#/memory";
     case "missions":
       return "#/missions";
     case "mission-detail":
@@ -329,6 +332,12 @@ function hashToRoute(hash: string): Route {
   // Fresh load (no hash) lands on Direct Runs — the new evidence-gated monitor,
   // not the retired Mission Control persona board (2026-06-04 cleanup).
   if (parts.length === 0) return { page: "direct-runs" };
+  // ADR-2606061359: org-sim surfaces retired — redirect to the Workbench
+  // (single-agent loop). Overrides the legacy per-route handlers below.
+  if (["mission-control", "org-chart", "org-comms", "team", "missions", "persona-health"].includes(parts[0])) {
+    return { page: "direct-runs" };
+  }
+  if (parts[0] === "memory") return { page: "memory" };
   if (parts[0] === "control-plane") return { page: "control-plane" };
 
   // Global routes
