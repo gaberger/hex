@@ -23,6 +23,19 @@ import {
 } from "solid-js";
 import { restClient } from "../../services/rest-client";
 import { route, navigate } from "../../stores/router";
+import { projects } from "../../stores/projects";
+
+// A mission IS an ADR. Resolve a project to scope the ADR-document deep link
+// (#/project/{pid}/adrs/{adrId}); the ADR catalog is global, so default to the
+// first registered project.
+function adrLinkProjectId(): string | undefined {
+  return projects()[0]?.id;
+}
+function openAdr(e: MouseEvent, adrId: string) {
+  e.stopPropagation();
+  const pid = adrLinkProjectId();
+  if (pid) navigate({ page: "project-ADR-detail", projectId: pid, adrId });
+}
 
 // ── Data shapes ─────────────────────────────────────────────────────────────
 
@@ -526,7 +539,15 @@ const MissionsList: Component = () => {
                           {(r.status || "—").split(" ")[0]}
                         </span>
                       </td>
-                      <td class="px-2 py-1.5 font-mono text-xs text-gray-400">{r.id}</td>
+                      <td class="px-2 py-1.5 font-mono text-xs">
+                        <button
+                          onClick={(e) => openAdr(e, r.id)}
+                          class="text-gray-400 hover:text-cyan-300 hover:underline transition-colors"
+                          title={`Open ADR ${r.id}`}
+                        >
+                          {r.id}
+                        </button>
+                      </td>
                       <td class="px-2 py-1.5 min-w-0">
                         <div class="truncate text-gray-100 group-hover:text-cyan-300">{r.title || r.filename}</div>
                         <Show when={r.priority && r.priority !== "normal"}>
@@ -943,6 +964,13 @@ const MissionDetailView: Component<{ missionId: string }> = (props) => {
             <Show when={adr()!.date}>
               <span class="text-xs text-gray-400">{adr()!.date}</span>
             </Show>
+            <button
+              onClick={(e) => openAdr(e, adr()!.id)}
+              class="ml-auto shrink-0 text-xs text-cyan-400 hover:text-cyan-300 hover:underline transition-colors"
+              title={`Open ADR ${adr()!.id} document`}
+            >
+              View ADR ↗
+            </button>
           </div>
         </Show>
       </div>

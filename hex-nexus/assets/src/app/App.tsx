@@ -35,12 +35,40 @@ const WorkPlanDetail = lazy(() => import('../components/project/WorkPlanDetail')
 const InboxPanel = lazy(() => import('../components/inbox/InboxPanel'));
 const ResearchLab = lazy(() => import('../components/neural-lab/ResearchLab'));
 const SwapsView = lazy(() => import('../components/swaps/SwapsView'));
+const InferencePanel = lazy(() => import('../components/fleet/InferencePanel'));
+const FleetView = lazy(() => import('../components/fleet/FleetView'));
 const ActivityPanel = lazy(() => import('../components/views/ActivityPanel'));
 const OrgChart = lazy(() => import('../components/views/OrgChart'));
 const OrgComms = lazy(() => import('../components/views/OrgComms'));
 const TeamDashboard = lazy(() => import('../components/views/TeamDashboard'));
 const MissionControl = lazy(() => import('../components/views/MissionControl'));
 const DirectRuns = lazy(() => import('../components/views/DirectRuns'));
+// First-class operational telemetry pages (restored 2026-06-05 — these were
+// orphaned when Mission Control was retired but their redirects were left
+// pointing at the dead hub). Each is now its own routable + sidebar-linked view.
+const Brain = lazy(() => import('../components/views/Brain'));
+const BrainDecisions = lazy(() => import('../components/views/BrainDecisions'));
+const MergeGate = lazy(() => import('../components/views/MergeGate'));
+const PersonaHealth = lazy(() => import('../components/views/PersonaHealth'));
+const Thoughts = lazy(() => import('../components/views/Thoughts'));
+const Resources = lazy(() => import('../components/views/Resources'));
+const Commitments = lazy(() => import('../components/views/Commitments'));
+const Missions = lazy(() => import('../components/views/Missions'));
+const OpsSla = lazy(() => import('../components/views/OpsSla'));
+
+// Sidebar entries for the restored System telemetry pages. `page` must match a
+// Route in stores/router.ts and a <Match> in the render Switch below.
+const SYSTEM_NAV: { page: string; label: string; icon: string }[] = [
+  { page: "brain",           label: "Brain",         icon: "M12 2a7 7 0 00-7 7c0 2 1 3 1 5v3a2 2 0 002 2h8a2 2 0 002-2v-3c0-2 1-3 1-5a7 7 0 00-7-7z" },
+  { page: "brain-decisions", label: "Decisions",     icon: "M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
+  { page: "merge-gate",      label: "Merge Gate",    icon: "M6 3v12M6 21a3 3 0 100-6 3 3 0 000 6zM6 9a3 3 0 100-6 3 3 0 000 6zM18 21a3 3 0 100-6 3 3 0 000 6zM18 15V9a3 3 0 00-3-3H9" },
+  { page: "persona-health",  label: "Persona Health",icon: "M22 12h-4l-3 9L9 3l-3 9H2" },
+  { page: "thoughts",        label: "Thoughts",      icon: "M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
+  { page: "resources",       label: "Resources",     icon: "M4 7v10c0 1 4 3 8 3s8-2 8-3V7M4 7c0 1 4 3 8 3s8-2 8-3M4 7c0-1 4-3 8-3s8 2 8 3" },
+  { page: "commitments",     label: "Commitments",   icon: "M9 12l2 2 4-4M7 3h10l4 6-9 12L3 9z" },
+  { page: "missions",        label: "Missions",      icon: "M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z" },
+  { page: "ops-sla",         label: "Ops SLA",       icon: "M12 8v4l3 2M12 2a10 10 0 100 20 10 10 0 000-20z" },
+];
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
 
@@ -264,17 +292,12 @@ const App: Component = () => {
   // ── Legacy-hash redirect ──
   // Bookmarks for the dead drill-down pages are rewritten to the
   // canonical surface with a filter chip pre-selected.
+  // Restored 2026-06-05: these 10 views are first-class pages again (see lazy
+  // imports above). Mission Control was retired, so the old redirects pointed
+  // them all at a dead hub — they now route to their own components. Only
+  // #/agent-runs aliases onward, to Direct Runs (the canonical run monitor).
   const LEGACY_HASH_REDIRECTS: Record<string, string> = {
-    "#/brain": "#/mission-control?filter=brain",
-    "#/decisions": "#/mission-control?filter=brain-decisions",
-    "#/merge-gate": "#/mission-control?filter=merge-gate",
-    "#/persona-health": "#/mission-control?filter=persona-health",
-    "#/thoughts": "#/mission-control?filter=thoughts",
-    "#/resources": "#/mission-control?filter=resources",
-    "#/commitments": "#/mission-control?filter=commitments",
-    "#/missions": "#/mission-control?filter=missions",
-    "#/ops-sla": "#/mission-control?filter=ops-sla",
-    "#/agent-runs": "#/mission-control?filter=agent-runs",
+    "#/agent-runs": "#/direct-runs",
   };
   const maybeRedirectLegacyHash = () => {
     const h = window.location.hash;
@@ -604,12 +627,10 @@ const App: Component = () => {
               <Show when={!sidebarCollapsed()}>Research Lab</Show>
             </button>
             {/* P2.1 (wp-dashboard-ux-remediation-2026-05-22):
-                Brain, Brain Decisions, Merge Gate, Persona Health,
-                Thoughts, Resources, Commitments, Missions, Ops SLA,
-                Agent Runs were removed from the sidebar — all 10 alias
-                to Mission Control. They are now reachable via the
-                filter-chip row at the top of Mission Control, and old
-                bookmarks redirect via LEGACY_HASH_REDIRECTS above. */}
+                Restored 2026-06-05: Brain, Decisions, Merge Gate, Persona
+                Health, Thoughts, Resources, Commitments, Missions, Ops SLA
+                are first-class sidebar pages again (the System group below).
+                The Mission-Control consolidation they aliased to was retired. */}
             {/* Substrate Swaps (ADR-2026-04-26-1500) */}
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
@@ -628,6 +649,33 @@ const App: Component = () => {
               </svg>
               <Show when={!sidebarCollapsed()}>Swaps</Show>
             </button>
+
+            {/* System telemetry pages (restored 2026-06-05) — data-driven so the
+                set stays in sync with the router + render Switch in one place. */}
+            <Show when={!sidebarCollapsed()}>
+              <div class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold px-3 mb-2 mt-3">System</div>
+            </Show>
+            <For each={SYSTEM_NAV}>
+              {(item) => (
+                <button
+                  class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+                  classList={{
+                    "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === item.page,
+                    "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== item.page,
+                    "justify-center px-0": sidebarCollapsed(),
+                  }}
+                  aria-label={sidebarCollapsed() ? item.label : undefined}
+                  aria-current={route().page === item.page ? "page" : undefined}
+                  onClick={() => { navigate({ page: item.page } as any); setMobileDrawerOpen(false); }}
+                >
+                  <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    classList={{ "text-cyan-400": route().page === item.page }}>
+                    <path d={item.icon} />
+                  </svg>
+                  <Show when={!sidebarCollapsed()}>{item.label}</Show>
+                </button>
+              )}
+            </For>
 
             {/* Collapse toggle (desktop only) */}
             <button
@@ -667,11 +715,21 @@ const App: Component = () => {
             <Match when={route().page === "project-config"}><ConfigPage /></Match>
             <Match when={route().page === "project-inbox"}><InboxPanel /></Match>
             <Match when={route().page === "project-activity"}><ActivityPanel /></Match>
-            <Match when={route().page === "inference"}><ControlPlane /></Match>
-            <Match when={route().page === "fleet"}><ControlPlane /></Match>
+            <Match when={route().page === "inference"}><InferencePanel /></Match>
+            <Match when={route().page === "fleet"}><FleetView /></Match>
             <Match when={route().page === "research-lab"}><ResearchLab /></Match>
             <Match when={route().page === "swaps"}><SwapsView /></Match>
             <Match when={route().page === "direct-runs"}><DirectRuns /></Match>
+            {/* Restored 2026-06-05 — operational telemetry pages, first-class again */}
+            <Match when={route().page === "brain"}><Brain /></Match>
+            <Match when={route().page === "brain-decisions"}><BrainDecisions /></Match>
+            <Match when={route().page === "merge-gate"}><MergeGate /></Match>
+            <Match when={route().page === "persona-health"}><PersonaHealth /></Match>
+            <Match when={route().page === "thoughts"}><Thoughts /></Match>
+            <Match when={route().page === "resources"}><Resources /></Match>
+            <Match when={route().page === "commitments"}><Commitments /></Match>
+            <Match when={route().page === "missions"}><Missions /></Match>
+            <Match when={route().page === "ops-sla"}><OpsSla /></Match>
           </Switch>
           {/* BottomBar -- inside center content so it doesn't span under sidebar */}
           <BottomBar />
