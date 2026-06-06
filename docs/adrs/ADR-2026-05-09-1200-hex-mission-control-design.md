@@ -1,6 +1,7 @@
 # ADR-2026-05-09-1200 — hex-mission-control-design
 
-Status: **Accepted** (shipped 2026-05; commits f4001ce5 Mission Control single landing surface, 7d5ea545 CPO authors mission-control UX spec via spec_draft end-to-end)
+Status: Superseded
+Superseded-By: ADR-2606061359
 Date: 2026-05-09
 
 ## Context

@@ -1,6 +1,7 @@
 # ADR-2026-05-19-0721: Self-Improvement Loop — Closing MAPE-K (Plan / Execute / Knowledge)
 
-**Status:** Proposed
+**Status:** Superseded
+**Superseded-By:** ADR-2606061359
 **Date:** 2026-05-19
 **Drivers:** README.md §Status names "the chain that closes the operator-asks-nothing loop" as the active development frontier. The `M`onitor + `A`nalyze halves (detectors → hypotheses) are live; the `P`lan, `E`xecute, and `K`nowledge halves are scaffolded but not wired end-to-end. `hex sched scores` returns *"No scores yet. Sched service is learning."* — the K phase has no data. Without it, the improver can fire but cannot get better.
 

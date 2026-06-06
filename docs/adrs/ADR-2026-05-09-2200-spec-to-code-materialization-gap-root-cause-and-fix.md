@@ -1,6 +1,7 @@
 # ADR-2026-05-09-2200 — spec-to-code-materialization-gap-root-cause-and-fix
 
-Status: **Accepted** (shipped 2026-05; auto-emitter live in commit a140e820 `feat(self-managing): workplan_emit + adr_status_set + auto-emitter`; ADR→workplan auto-bridge confirmed per memory `project_self_managing_loop_2605091200`)
+Status: Superseded
+Superseded-By: ADR-2606061359
 Date: 2026-05-10
 
 ADR-2026-05-09-2200: Spec→Code Materialization Gap — Root Cause and Fix

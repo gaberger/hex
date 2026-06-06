@@ -1,6 +1,6 @@
 # ADR-2606061359: Collapse the multi-agent org-sim to a single gateway-mediated agent loop; code-graph context as the differentiator
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-06
 **Drivers:** Operational fragility of the autonomous multi-agent "factory" observed in a live session (unbounded agent-registry growth to 378 rows, ~100-agent spawn churn on daemon restart, persona SOP dispatch not engaging), combined with architectural convergence of the two most successful recent agent frameworks (OpenClaw, Hermes Agent) on a single-agent, tool-centric, memory-driven design.
 **Relates-To:** ADR-027 (HexFlo swarm coordination), ADR-2026-03-24-0130 (declarative swarm behavior YAMLs), ADR-2026-05-19-0721 (proposed Self-Improvement Loop — MAPE-K), ADR-2026-04-11-2000 (standalone mode), ADR-2606061359 supersedes none until Accepted.

@@ -1,6 +1,7 @@
 # ADR-2026-05-08-2500 — Typed Tool Library + SOP Execution (the Missing Spine)
 
-Status: **Accepted**
+Status: Superseded
+Superseded-By: ADR-2606061359
 Date: 2026-05-09
 Supersedes / refines: ADR-2026-05-08-2400 (personas as commitment-creators), ADR-2026-03-24-0130 (declarative swarm behavior)
 Related: paradigm-debate-judge-verdict, ADR-2026-05-08-2300 (digital twin), ADR-2026-05-08-2200 (resource supervisor), ADR-2026-05-08-1126 (merge gate)
