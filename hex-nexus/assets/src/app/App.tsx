@@ -28,6 +28,7 @@ const ADRBrowser = lazy(() => import('../components/views/ADRBrowser'));
 const ConfigPage = lazy(() => import('../components/views/ConfigPage'));
 const FileTreeView = lazy(() => import('../components/views/FileTreeView'));
 const WorkplanView = lazy(() => import('../components/views/WorkplanView'));
+const KnowledgeGraphView = lazy(() => import('../components/views/KnowledgeGraphView'));
 const AgentList = lazy(() => import('../components/project/AgentList'));
 const AgentDetailView = lazy(() => import('../components/project/AgentDetail'));
 const SwarmDetail = lazy(() => import('../components/project/SwarmDetail'));
@@ -121,6 +122,12 @@ const projectSubNav: NavItem[] = [
     icon: '<circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><circle cx="18" cy="6" r="3" /><line x1="6" y1="9" x2="6" y2="21" /><path d="M6 12h6a3 3 0 0 1 3 3v3" />',
     page: 'project-graph',
     routeFactory: (pid) => ({ page: 'project-graph', projectId: pid }),
+  },
+  {
+    label: 'Knowledge Graph',
+    icon: '<circle cx="12" cy="5" r="2" /><circle cx="5" cy="19" r="2" /><circle cx="19" cy="19" r="2" /><line x1="12" y1="7" x2="5.5" y2="17" /><line x1="12" y1="7" x2="18.5" y2="17" /><line x1="7" y1="19" x2="17" y2="19" />',
+    page: 'project-knowledge-graph',
+    routeFactory: (pid) => ({ page: 'project-knowledge-graph', projectId: pid }),
   },
   {
     label: 'Files',
@@ -709,6 +716,7 @@ const App: Component = () => {
             <Match when={route().page === "project-workplan-detail"}><WorkPlanDetail /></Match>
             <Match when={route().page === "project-health"}><ProjectDetail /></Match>
             <Match when={route().page === "project-graph"}><ProjectDetail /></Match>
+            <Match when={route().page === "project-knowledge-graph"}><KnowledgeGraphView /></Match>
             <Match when={route().page === "project-files"}><FileTreeView /></Match>
             <Match when={route().page === "project-file"}><FileTreeView /></Match>
             <Match when={route().page === "project-chat"}><ChatView /></Match>

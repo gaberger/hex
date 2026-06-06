@@ -254,6 +254,48 @@ pub async fn context_graph(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SummaryRequest {
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+/// POST /api/graph/summary — lightweight stats for the dashboard: counts, god
+/// nodes, and the largest communities. 404 when no graph has been built.
+pub async fn summary_graph(
+    Json(body): Json<SummaryRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let graph = match load_graph(&body.path) {
+        Ok(g) => g,
+        Err((code, msg)) => return err(code, &msg),
+    };
+    // Largest communities (top 12 by member count).
+    let mut comms: Vec<&hex_graph::model::Community> = graph.communities.iter().collect();
+    comms.sort_by(|a, b| b.members.len().cmp(&a.members.len()));
+    let top: Vec<serde_json::Value> = comms
+        .iter()
+        .take(12)
+        .map(|c| json!({ "id": c.id, "label": c.label, "size": c.members.len() }))
+        .collect();
+    // Node-kind breakdown.
+    let mut kinds: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for n in &graph.nodes {
+        *kinds.entry(n.kind.as_str().to_string()).or_insert(0) += 1;
+    }
+    (
+        StatusCode::OK,
+        Json(json!({
+            "mode": graph.meta.mode,
+            "node_count": graph.meta.node_count,
+            "edge_count": graph.meta.edge_count,
+            "community_count": graph.meta.community_count,
+            "god_nodes": graph.meta.god_nodes,
+            "communities": top,
+            "kinds": kinds,
+        })),
+    )
+}
+
 // ── semantic extractor (deep mode) ───────────────────────
 
 struct NexusSemanticExtractor {

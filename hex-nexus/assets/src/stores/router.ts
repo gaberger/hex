@@ -51,6 +51,7 @@ export type Route =
   | { page: "project-workplan-detail"; projectId: string; workplanId: string }
   | { page: "project-health"; projectId: string }
   | { page: "project-graph"; projectId: string }
+  | { page: "project-knowledge-graph"; projectId: string }
   | { page: "project-files"; projectId: string }
   | { page: "project-file"; projectId: string; filePath: string }
   | { page: "project-chat"; projectId: string; sessionId?: string }
@@ -303,6 +304,8 @@ function routeToHash(r: Route): string {
       return `#/project/${r.projectId}/health`;
     case "project-graph":
       return `#/project/${r.projectId}/graph`;
+    case "project-knowledge-graph":
+      return `#/project/${r.projectId}/knowledge-graph`;
     case "project-files":
       return `#/project/${r.projectId}/files`;
     case "project-file":
@@ -384,6 +387,9 @@ function hashToRoute(hash: string): Route {
 
       case "graph":
         return { page: "project-graph", projectId };
+
+      case "knowledge-graph":
+        return { page: "project-knowledge-graph", projectId };
 
       case "files":
         if (parts[3]) {
