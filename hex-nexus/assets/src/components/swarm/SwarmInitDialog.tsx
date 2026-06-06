@@ -46,10 +46,16 @@ const SwarmInitDialog: Component<SwarmInitDialogProps> = (props) => {
         // Fallback to REST if SpacetimeDB not connected
         await restClient.post("/api/swarms", { name: trimmed, topology: topology() });
       } else {
-        // Use SpacetimeDB reducer directly (WebSocket)
+        // Use SpacetimeDB reducer directly (WebSocket).
+        // Signature: swarmInit(id, name, topology, projectId, createdBy, timestamp).
+        // Was previously called with 5 args — `timestamp` landed in the `createdBy`
+        // slot and the real timestamp was undefined, so the reducer failed
+        // server-side (arg mismatch + non-empty createdBy tripping the
+        // single-active-swarm guard) while the UI reported optimistic success.
+        // createdBy="" → operator-created, no agent-ownership constraint.
         const id = uuid();
         const timestamp = new Date().toISOString();
-        conn.reducers.swarmInit(id, trimmed, topology(), "", timestamp);
+        conn.reducers.swarmInit(id, trimmed, topology(), "", "", timestamp);
       }
 
       setSuccess(`Swarm "${trimmed}" initialized`);

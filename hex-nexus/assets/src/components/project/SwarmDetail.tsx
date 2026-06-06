@@ -382,7 +382,10 @@ const TaskCreateForm: Component<{ swarmId: string }> = (props) => {
     if (!conn) { addToast("error", "SpacetimeDB not connected"); return; }
     setSubmitting(true);
     try {
-      conn.reducers.taskCreate(uuid(), props.swarmId, t, new Date().toISOString());
+      // Signature: taskCreate(id, swarmId, title, dependsOn, timestamp). The
+      // dependsOn arg was missing, shifting timestamp into its slot — same
+      // arg-mismatch class as swarmInit. Empty dependsOn = no dependency.
+      conn.reducers.taskCreate(uuid(), props.swarmId, t, "", new Date().toISOString());
       addToast("success", `Task created: ${t}`);
       setTitle("");
     } catch (err: any) {
