@@ -137,6 +137,27 @@ async fn context_bundle_has_neighbourhood() {
 }
 
 #[tokio::test]
+async fn rank_lessons_prefers_neighbourhood_mentions() {
+    use hex_graph::context::{context_for, rank_lessons, ContextOpts};
+    let tmp = tempfile::tempdir().unwrap();
+    let g = build_fixture(tmp.path()).await;
+    let ctx = context_for(&g, "src/a.ts", ContextOpts::default()).expect("context");
+
+    let lessons = vec![
+        ("lesson:alpha".into(), "the alpha function in src/a.ts needs care".into()),
+        ("lesson:unrelated".into(), "tune the postgres connection pool size".into()),
+        ("lesson:beta".into(), "Beta class consumes alpha".into()),
+    ];
+    let ranked = rank_lessons(&ctx, &lessons, 6);
+    // The unrelated lesson (no anchor mentions) is filtered out.
+    assert!(ranked.iter().all(|l| l.key != "lesson:unrelated"));
+    // The lesson mentioning the file + symbol ranks first and scores highest.
+    assert!(!ranked.is_empty());
+    assert_eq!(ranked[0].key, "lesson:alpha");
+    assert!(ranked[0].score >= ranked.last().unwrap().score);
+}
+
+#[tokio::test]
 async fn build_is_deterministic() {
     let tmp1 = tempfile::tempdir().unwrap();
     let tmp2 = tempfile::tempdir().unwrap();

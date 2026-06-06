@@ -528,33 +528,51 @@ async fn gather_context(task: &DirectTask) -> String {
     let mut out = String::new();
 
     // (a) Graph neighbourhood for the target file, from graphify-out/graph.json.
-    let graph_path = repo_root().join("graphify-out").join("graph.json");
-    if let Ok(raw) = std::fs::read_to_string(&graph_path) {
-        if let Ok(g) = hex_graph::model::KnowledgeGraph::from_json(&raw) {
-            let opts = hex_graph::context::ContextOpts { max_each: 15 };
-            if let Some(bundle) = hex_graph::context::context_for(&g, &task.file, opts) {
-                out.push_str(&hex_graph::context::render_markdown(&bundle));
-            }
-        }
+    let bundle = {
+        let graph_path = repo_root().join("graphify-out").join("graph.json");
+        std::fs::read_to_string(&graph_path)
+            .ok()
+            .and_then(|raw| hex_graph::model::KnowledgeGraph::from_json(&raw).ok())
+            .and_then(|g| {
+                hex_graph::context::context_for(&g, &task.file, hex_graph::context::ContextOpts { max_each: 15 })
+            })
+    };
+    if let Some(ref b) = bundle {
+        out.push_str(&hex_graph::context::render_markdown(b));
     }
 
-    // (b) Learned lessons from memory (the minimal self-improvement loop).
-    let lessons = fetch_lessons(6).await;
-    if !lessons.is_empty() {
-        out.push_str("\n## Lessons (from memory)\n");
-        for l in &lessons {
-            out.push_str("- ");
-            out.push_str(l);
-            out.push('\n');
+    // (b) Learned lessons — GRAPH-RELEVANT first. Rank all lessons by how many of
+    // the target file's neighbourhood labels (path/symbols) they mention, so the
+    // agent gets the lessons about THIS code, not 6 arbitrary recent ones. Falls
+    // back to recency when there's no graph/anchors (ADR-2606061359 memory loop).
+    let all = fetch_lessons().await;
+    if !all.is_empty() {
+        let chosen: Vec<(String, String)> = match &bundle {
+            Some(b) => {
+                let ranked = hex_graph::context::rank_lessons(b, &all, 6);
+                if ranked.is_empty() {
+                    all.iter().take(4).cloned().collect()
+                } else {
+                    ranked.into_iter().map(|s| (s.key, s.value)).collect()
+                }
+            }
+            None => all.iter().take(4).cloned().collect(),
+        };
+        out.push_str("\n## Lessons (from memory — most relevant to this file)\n");
+        for (k, v) in &chosen {
+            out.push_str(&format!("- [{}] {}\n", k, v));
         }
     }
 
     out
 }
 
-/// Best-effort pull of `lesson:` entries from the hexflo_memory table over the
-/// STDB HTTP SQL endpoint. Columns are mapped by name (schema.elements).
-async fn fetch_lessons(limit: usize) -> Vec<String> {
+/// Best-effort pull of `lesson:`/`gap:` entries (key, value) from the
+/// hexflo_memory table over the STDB HTTP SQL endpoint. Columns mapped by name
+/// (schema.elements). Returned unranked; callers rank by graph relevance
+/// (`hex_graph::context::rank_lessons`). Capped to keep the pull bounded.
+pub(crate) async fn fetch_lessons() -> Vec<(String, String)> {
+    const CAP: usize = 200;
     let url = format!("{}/v1/database/hex/sql", stdb_host());
     let http = match reqwest::Client::builder().timeout(Duration::from_secs(3)).build() {
         Ok(c) => c,
@@ -598,9 +616,9 @@ async fn fetch_lessons(limit: usize) -> Vec<String> {
                 if let Some(vals) = row.as_array() {
                     let key = ki.and_then(|i| vals.get(i)).and_then(|v| v.as_str()).unwrap_or("");
                     let val = vi.and_then(|i| vals.get(i)).and_then(|v| v.as_str()).unwrap_or("");
-                    if key.starts_with("lesson:") && !val.is_empty() {
-                        lessons.push(val.to_string());
-                        if lessons.len() >= limit {
+                    if (key.starts_with("lesson:") || key.starts_with("gap:")) && !val.is_empty() {
+                        lessons.push((key.to_string(), val.to_string()));
+                        if lessons.len() >= CAP {
                             return lessons;
                         }
                     }

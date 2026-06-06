@@ -190,6 +190,78 @@ pub fn context_for(
     })
 }
 
+/// Anchor terms for a context bundle — the file path + every entity label and
+/// neighbour file/symbol in its neighbourhood. These are the strings a memory
+/// entry would mention if it's *about* this file's area. Lowercased, deduped,
+/// short tokens dropped.
+pub fn anchor_terms(b: &ContextBundle) -> Vec<String> {
+    let mut terms: Vec<String> = Vec::new();
+    let mut push = |s: &str| {
+        let t = s.trim().to_ascii_lowercase();
+        if t.len() >= 4 {
+            terms.push(t);
+        }
+    };
+    push(&b.label);
+    for d in &b.defines {
+        push(&d.label);
+    }
+    for u in &b.uses {
+        push(&u.label);
+        push(&u.file);
+    }
+    for u in &b.used_by {
+        push(&u.entity);
+        push(&u.file);
+    }
+    for f in &b.imports {
+        push(f);
+    }
+    for f in &b.imported_by {
+        push(f);
+    }
+    for f in &b.community_siblings {
+        push(f);
+    }
+    terms.sort();
+    terms.dedup();
+    terms
+}
+
+/// A memory entry (key, value) scored against a bundle's neighbourhood.
+#[derive(Debug, Clone, Serialize)]
+pub struct ScoredLesson {
+    pub key: String,
+    pub value: String,
+    pub score: usize,
+}
+
+/// Rank memory entries by how many of the bundle's anchor terms their text
+/// mentions — surfacing the lessons that pertain to the file being worked on
+/// (graph-relevant memory), instead of recency. Returns up to `limit` with
+/// score > 0, most-relevant first. `lessons` is (key, value) pairs.
+pub fn rank_lessons(b: &ContextBundle, lessons: &[(String, String)], limit: usize) -> Vec<ScoredLesson> {
+    let terms = anchor_terms(b);
+    if terms.is_empty() {
+        return Vec::new();
+    }
+    let mut scored: Vec<ScoredLesson> = lessons
+        .iter()
+        .filter_map(|(k, v)| {
+            let hay = format!("{} {}", k, v).to_ascii_lowercase();
+            let score = terms.iter().filter(|t| hay.contains(t.as_str())).count();
+            if score == 0 {
+                None
+            } else {
+                Some(ScoredLesson { key: k.clone(), value: v.clone(), score })
+            }
+        })
+        .collect();
+    scored.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.key.cmp(&b.key)));
+    scored.truncate(limit);
+    scored
+}
+
 /// Truncate a list to `max`, recording how many were dropped so nothing is hidden.
 fn cap<T>(v: &mut Vec<T>, key: &str, max: usize, trunc: &mut HashMap<String, usize>) {
     if v.len() > max {

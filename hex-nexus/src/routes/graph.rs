@@ -240,10 +240,21 @@ pub async fn context_graph(
     };
     match hex_graph::context::context_for(&graph, &body.target, opts) {
         Some(bundle) => {
-            let markdown = hex_graph::context::render_markdown(&bundle);
+            let mut markdown = hex_graph::context::render_markdown(&bundle);
+            // Graph-relevant memory: lessons whose text mentions this file's
+            // neighbourhood (path/symbols), ranked — not arbitrary recency.
+            let lessons = crate::direct_exec::fetch_lessons().await;
+            let ranked = hex_graph::context::rank_lessons(&bundle, &lessons, 6);
+            if !ranked.is_empty() {
+                markdown.push_str("\n## Lessons (most relevant to this file)\n");
+                for l in &ranked {
+                    markdown.push_str(&format!("- [{}] {}\n", l.key, l.value));
+                }
+            }
             let mut value = serde_json::to_value(&bundle).unwrap_or(json!({}));
             if let Some(obj) = value.as_object_mut() {
                 obj.insert("markdown".to_string(), json!(markdown));
+                obj.insert("lessons".to_string(), serde_json::to_value(&ranked).unwrap_or(json!([])));
             }
             (StatusCode::OK, Json(value))
         }
