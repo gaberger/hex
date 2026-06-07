@@ -1,6 +1,6 @@
 # ADR-2606071340: hex-nexus must comply with hexagonal architecture — excise org-sim, split into crates behind ports, stay one daemon
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-07
 **Epoch:** single-agent
 **Drivers:** `hex analyze hex-nexus` — hex's own boundary checker, run on its own daemon — grades nexus **F (30/100) with 7 boundary violations**. At **117,033 LOC in a single crate**, nexus is a god-daemon that violates the architecture it enforces on every target project. ~31% of it (`orchestration/`, 35,934 LOC) is **retired org-sim machinery** whose ADRs were superseded 2026-06-07 (ADR-2606061359 capstone + the 22 supersessions). The platform is not eating its own dog food.

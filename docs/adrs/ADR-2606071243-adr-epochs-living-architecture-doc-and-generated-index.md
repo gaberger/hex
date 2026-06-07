@@ -1,6 +1,6 @@
 # ADR-2606071243: ADR epochs, a living ARCHITECTURE.md, and a generated index — keep the architecture story legible as the design pivots
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-07
 **Drivers:** The ADR corpus has grown to 245 records (~37k lines) spanning 2026-03-22 → 2026-07-10 across at least two hard philosophical pivots (foundation → org-sim → single-agent loop). Reading the ledger chronologically now yields a *wrong* mental model of the present system, because the current philosophy contradicts a large fraction of the log. Only ~13 ADRs carry a clean machine-readable `Accepted` status; 114 mention supersession in prose but only 5 carry a `Superseded-By:` backlink — so `hex adr doctor` and the MAPE-K GROUND phase cannot reliably distinguish live decisions from dead ones.
 **Relates-To:** ADR-2606061359 (collapse org-sim to single-agent loop — the most recent pivot, and the first ad-hoc "capstone" supersession), ADR-041 (ADR consistency review), ADR-2026-04-27-0800 (`hex adr doctor` self-consistency checker), ADR-2605301228 (`Applies-To`/`governing` retrieval). Supersedes none — this is additive governance.
