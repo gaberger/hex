@@ -15,6 +15,7 @@
   "arms": ["react", "fast"],
   "status": "verified",
   "observed_baseline": {
+    "_DIAGNOSTIC_CAVEAT": "react-arm numbers below are NOT per-model. Confirmed 2026-06-07: /api/inference/complete IGNORES the requested model on the tools path and uses the registered provider (gemma4-12b) regardless — so every react run was gemma4-12b, not the keyed model. The fast-arm numbers ARE per-model (the no-tools path honors --model). Per-model react comparison is INVALID until the gateway honors --model on the tools path. The earlier 'agentic wander is model-class' conclusion is UNSUPPORTED: qwen/devstral were never actually run on react.",
     "qwen2.5-coder:14b": {
       "measured_by": "hex bench agentic",
       "date": "2026-06-07",
