@@ -9,19 +9,20 @@ const DEFAULT_PORT: u16 = 5555;
 /// Find the hex-nexus binary.
 ///
 /// Search order:
-/// 1. `HEX_NEXUS_BIN` env var
-/// 2. `./target/release/hex-nexus` (local release build — preferred)
-/// 3. `./target/debug/hex-nexus` (local debug build — fallback)
-/// 4. `hex-nexus` on `$PATH`
+/// 1. `HEX_NEXUS_BIN` env var (always wins)
+/// 2. Freshest of `./target/{release,debug}/hex-nexus` by mtime
+/// 3. `hex-nexus` on `$PATH`
 ///
-/// Release is preferred so that `cargo build -p hex-nexus --release` followed by
-/// a restart actually swaps the running binary. A stale debug artifact left over
-/// from `cargo check`/`cargo test` no longer shadows a fresh release build (the
-/// failure mode that left the daemon running old code despite release rebuilds).
-/// For iterative debug work, build release-less or set
-/// `HEX_NEXUS_BIN=target/debug/hex-nexus` explicitly.
+/// We pick the **newest** local build by modification time, not a hardcoded
+/// profile order. Hardcoding `release`-first is a footgun in both directions: a
+/// release-deploy workflow (`cargo build --release`) and a debug-deploy workflow
+/// (`cargo build` — the cheaper iteration loop) each expect "the build I just
+/// made" to be what restarts. Whichever profile is fresher is the one the
+/// operator means; if both exist we run the fresher and warn that the other is
+/// being shadowed, so a stale artifact can never silently run old code behind a
+/// "it's live" claim (ADR-2606071651). Set `HEX_NEXUS_BIN` to pin one explicitly.
 fn find_nexus_binary() -> Option<PathBuf> {
-    // 1. Explicit env var
+    // 1. Explicit env var — always wins.
     if let Ok(p) = std::env::var("HEX_NEXUS_BIN") {
         let path = PathBuf::from(p);
         if path.is_file() {
@@ -29,15 +30,32 @@ fn find_nexus_binary() -> Option<PathBuf> {
         }
     }
 
-    // 2-3. Local build artifacts — release first (see doc comment).
+    // 2. Local build artifacts — newest mtime wins; warn on shadow.
+    let mut candidates: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
     for profile in &["release", "debug"] {
         let candidate = PathBuf::from(format!("target/{}/hex-nexus", profile));
-        if candidate.is_file() {
-            return Some(candidate);
+        if let Ok(mtime) = std::fs::metadata(&candidate).and_then(|m| m.modified()) {
+            candidates.push((candidate, mtime));
         }
     }
+    if let Some(chosen) = pick_newest_binary(&candidates).cloned() {
+        if candidates.len() > 1 {
+            let shadowed: Vec<String> = candidates
+                .iter()
+                .filter(|(p, _)| *p != chosen)
+                .map(|(p, _)| p.display().to_string())
+                .collect();
+            eprintln!(
+                "{} multiple hex-nexus builds present — running freshest {} (shadowing {}). Pin with HEX_NEXUS_BIN.",
+                "⚠".yellow(),
+                chosen.display(),
+                shadowed.join(", "),
+            );
+        }
+        return Some(chosen);
+    }
 
-    // 4. PATH lookup
+    // 3. PATH lookup
     let path_var = std::env::var("PATH").unwrap_or_default();
     for dir in path_var.split(':') {
         let candidate = PathBuf::from(dir).join("hex-nexus");
@@ -47,6 +65,12 @@ fn find_nexus_binary() -> Option<PathBuf> {
     }
 
     None
+}
+
+/// Pick the freshest candidate binary by modification time. Pure (no FS access)
+/// so the selection policy is unit-testable independent of the build tree.
+fn pick_newest_binary(candidates: &[(PathBuf, std::time::SystemTime)]) -> Option<&PathBuf> {
+    candidates.iter().max_by_key(|(_, mtime)| *mtime).map(|(p, _)| p)
 }
 
 #[derive(Subcommand)]
@@ -1147,5 +1171,56 @@ fn get_disk_build_hash() -> Option<String> {
         Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    fn at(secs: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn newest_binary_wins_when_debug_is_fresher() {
+        // The regression guarded against: release was hardcoded first, so a
+        // freshly-built debug binary (the cheap deploy loop) was ignored and the
+        // daemon kept running stale release code behind a false "it's live" claim.
+        let candidates = vec![
+            (PathBuf::from("target/release/hex-nexus"), at(1000)),
+            (PathBuf::from("target/debug/hex-nexus"), at(2000)),
+        ];
+        assert_eq!(
+            pick_newest_binary(&candidates),
+            Some(&PathBuf::from("target/debug/hex-nexus")),
+        );
+    }
+
+    #[test]
+    fn newest_binary_wins_when_release_is_fresher() {
+        let candidates = vec![
+            (PathBuf::from("target/release/hex-nexus"), at(2000)),
+            (PathBuf::from("target/debug/hex-nexus"), at(1000)),
+        ];
+        assert_eq!(
+            pick_newest_binary(&candidates),
+            Some(&PathBuf::from("target/release/hex-nexus")),
+        );
+    }
+
+    #[test]
+    fn single_candidate_is_chosen() {
+        let candidates = vec![(PathBuf::from("target/debug/hex-nexus"), at(1000))];
+        assert_eq!(
+            pick_newest_binary(&candidates),
+            Some(&PathBuf::from("target/debug/hex-nexus")),
+        );
+    }
+
+    #[test]
+    fn no_candidates_is_none() {
+        assert_eq!(pick_newest_binary(&[]), None);
     }
 }
