@@ -44,6 +44,7 @@ pub mod config_sync;
 pub mod compress;
 pub mod direct_exec;
 pub mod direct_react;
+pub mod direct_workspace;
 pub mod spacetime_launcher;
 pub mod templates;
 pub mod sched_service;

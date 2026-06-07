@@ -44,7 +44,10 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
 
     match action {
         DoAction::Run { instruction, file, evidence, model, attempts, fast, max_steps } => {
-            let mut body = json!({ "instruction": instruction, "file": file, "evidence": evidence, "fast": fast });
+            // Interactive operator run: commit on the operator's own branch
+            // (ADR-2606071323 scopes `hex do` out of worktree isolation — the
+            // human owns their tree). Unset/autonomous callers isolate by default.
+            let mut body = json!({ "instruction": instruction, "file": file, "evidence": evidence, "fast": fast, "isolate": false });
             if let Some(m) = model {
                 body["model"] = json!(m);
             }

@@ -76,9 +76,33 @@ fn react_model_from_config() -> Option<String> {
 /// Run the ReAct loop end-to-end. Returns the result, the number of steps
 /// (tool calls) taken, and the model used, for the run feed.
 pub async fn react_execute(task: DirectTask) -> (DirectResult, u32, String) {
-    let model = resolve_react_model(&task);
+    // ADR-2606071323: confine the run to its own worktree unless the operator
+    // opted out (`isolate:false`). Never silently fall back to the operator tree.
+    let isolate = direct_exec::want_isolation(&task);
+    let slug = crate::direct_workspace::next_run_slug();
+    let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate) {
+        Ok(w) => w,
+        Err(e) => return (DirectResult::err(format!("workspace: {e}")), 0, resolve_react_model(&task)),
+    };
+    if let Err(e) = workspace.assert_off_operator_tree() {
+        workspace.finish(false);
+        return (DirectResult::err(e), 0, resolve_react_model(&task));
+    }
+    let repo_root = workspace.workdir().to_path_buf();
+    let factory = workspace.is_isolated();
+    let out = react_attempts(&task, &repo_root, factory).await;
+    workspace.finish(out.0.ok);
+    out
+}
+
+/// The ReAct loop body, run inside the resolved workspace (ADR-2606071323).
+async fn react_attempts(
+    task: &DirectTask,
+    repo_root: &std::path::Path,
+    factory: bool,
+) -> (DirectResult, u32, String) {
+    let model = resolve_react_model(task);
     let max_steps = task.max_steps.unwrap_or(DEFAULT_MAX_STEPS).clamp(1, 40);
-    let repo_root = direct_exec::repo_root();
     let abs_path = repo_root.join(&task.file);
 
     let mut result = DirectResult {
@@ -91,11 +115,11 @@ pub async fn react_execute(task: DirectTask) -> (DirectResult, u32, String) {
         error: None,
     };
 
-    let context_block = direct_exec::gather_context(&task).await;
+    let context_block = direct_exec::gather_context(task).await;
     let registry = Arc::new(ToolRegistry::default());
     let tools_schema = curated_schema(&registry);
     let system_prompt = build_system_prompt(&tools_schema);
-    let seed = build_seed(&task, &context_block, &abs_path);
+    let seed = build_seed(task, &context_block, &abs_path);
     let mut messages: Vec<Value> = vec![json!({ "role": "user", "content": seed })];
 
     let inference_url = {
@@ -172,7 +196,7 @@ pub async fn react_execute(task: DirectTask) -> (DirectResult, u32, String) {
             if tu.name == "propose_edit" {
                 made_progress = true;
                 tracing::info!(step = steps, args = %serde_json::to_string(&tu.input).unwrap_or_default().chars().take(300).collect::<String>(), "react: propose_edit");
-                match apply_and_verify(&abs_path, &repo_root, &task, &tu.input).await {
+                match apply_and_verify(&abs_path, repo_root, task, &tu.input, factory).await {
                     EditOutcome::Committed(hash) => {
                         tracing::info!(step = steps, %hash, "react: propose_edit COMMITTED");
                         result.edit_applied = true;
@@ -269,6 +293,7 @@ async fn apply_and_verify(
     repo_root: &std::path::Path,
     task: &DirectTask,
     input: &Value,
+    factory: bool,
 ) -> EditOutcome {
     let edit = match parse_propose_edit(input) {
         Ok(e) => e,
@@ -284,7 +309,7 @@ async fn apply_and_verify(
     let (passed, output) = direct_exec::run_evidence(&task.evidence, repo_root).await;
     let vacuous = passed && direct_exec::evidence_is_vacuous(&output);
     if passed && !vacuous {
-        match direct_exec::commit(repo_root, &task.file, &task.instruction).await {
+        match direct_exec::commit(repo_root, &task.file, &task.instruction, factory).await {
             Ok(hash) => EditOutcome::Committed(hash),
             Err(e) => {
                 let _ = std::fs::write(abs_path, &content); // revert

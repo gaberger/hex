@@ -49,6 +49,12 @@ pub struct DirectTask {
     /// in `fast` mode.
     #[serde(default)]
     pub max_steps: Option<u32>,
+    /// Run in a dedicated `hex/auto/<id>` worktree instead of the operator's
+    /// checked-out branch (ADR-2606071323). Defaults to TRUE (safe-by-default):
+    /// only the interactive operator path (`hex do`) opts out with `isolate:false`
+    /// to commit on its own branch. Absent ⇒ isolated.
+    #[serde(default)]
+    pub isolate: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -410,21 +416,61 @@ pub(crate) fn resolve_model(task: &DirectTask) -> String {
     })
 }
 
+/// Should this run be isolated to its own worktree? Default TRUE (ADR-2606071323)
+/// — only the operator path opts out via `isolate:false`.
+pub(crate) fn want_isolation(task: &DirectTask) -> bool {
+    task.isolate.unwrap_or(true)
+}
+
+impl DirectResult {
+    pub(crate) fn err(msg: String) -> Self {
+        DirectResult {
+            ok: false,
+            attempts: 0,
+            edit_applied: false,
+            committed: None,
+            evidence_passed: false,
+            evidence_output: String::new(),
+            error: Some(msg),
+        }
+    }
+}
+
 async fn execute_direct_inner(task: DirectTask) -> DirectResult {
-    // Serialize the whole read→edit→evidence→commit section against other runs.
+    // Serialize the whole acquire→read→edit→evidence→commit→finish section.
     let _exec_guard = EXEC_LOCK.lock().await;
+
+    // ADR-2606071323: confine the run to its own worktree unless the operator
+    // explicitly opted out. Never silently fall back to the operator's tree.
+    let isolate = want_isolation(&task);
+    let slug = crate::direct_workspace::next_run_slug();
+    let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate) {
+        Ok(w) => w,
+        Err(e) => return DirectResult::err(format!("workspace: {e}")),
+    };
+    if let Err(e) = workspace.assert_off_operator_tree() {
+        workspace.finish(false);
+        return DirectResult::err(e);
+    }
+    let repo_root = workspace.workdir().to_path_buf();
+    let factory = workspace.is_isolated();
+    let result = exec_attempts(&task, &repo_root, factory).await;
+    workspace.finish(result.ok);
+    result
+}
+
+async fn exec_attempts(task: &DirectTask, repo_root: &std::path::Path, factory: bool) -> DirectResult {
     let max_attempts = task.max_attempts.unwrap_or(3).clamp(1, 6);
     let model = task.model.clone().unwrap_or_else(|| {
         std::env::var("HEX_DIRECT_MODEL").unwrap_or_else(|_| "qwen2.5-coder:32b".to_string())
     });
 
-    let repo_root = repo_root();
     let abs_path = repo_root.join(&task.file);
 
     // Phase 2 (ADR-2606061359): assemble graph-context + lessons once and prepend
     // it to every edit prompt — the single agent reasons with structural context
     // + memory (Hermes/OpenClaw), not from the file slice alone.
-    let context_block = gather_context(&task).await;
+    let context_block = gather_context(task).await;
 
     let mut result = DirectResult {
         ok: false,
@@ -452,7 +498,7 @@ async fn execute_direct_inner(task: DirectTask) -> DirectResult {
         let grounded = ground_window(&content, &task.instruction);
 
         // 2. ONE inference call for a precise edit.
-        let edit = match request_edit(&model, &task, &grounded, &context_block, last_error.as_deref()).await {
+        let edit = match request_edit(&model, task, &grounded, &context_block, last_error.as_deref()).await {
             Ok(e) => e,
             Err(e) => {
                 last_error = Some(format!("inference: {}", e));
@@ -471,7 +517,7 @@ async fn execute_direct_inner(task: DirectTask) -> DirectResult {
         tracing::info!(attempt, file = %task.file, mode = %edit.mode, "direct_exec: edit applied");
 
         // 4. Run the evidence command.
-        let (passed, output) = run_evidence(&task.evidence, &repo_root).await;
+        let (passed, output) = run_evidence(&task.evidence, repo_root).await;
         result.evidence_output = output.chars().take(4000).collect();
         // A `cargo test <filter>` that matches ZERO tests prints "running 0 tests"
         // / "0 passed; 0 failed" and still exits 0 — a vacuous pass. The whole point
@@ -481,7 +527,7 @@ async fn execute_direct_inner(task: DirectTask) -> DirectResult {
         if passed && !vacuous {
             result.evidence_passed = true;
             // 5. Commit (scoped to the edited file only).
-            match commit(&repo_root, &task.file, &task.instruction).await {
+            match commit(repo_root, &task.file, &task.instruction, factory).await {
                 Ok(hash) => {
                     result.committed = Some(hash);
                     result.ok = true;
@@ -897,7 +943,12 @@ pub(crate) async fn run_evidence(cmd: &str, repo_root: &std::path::Path) -> (boo
     }
 }
 
-pub(crate) async fn commit(repo_root: &std::path::Path, file: &str, instruction: &str) -> Result<String, String> {
+pub(crate) async fn commit(
+    repo_root: &std::path::Path,
+    file: &str,
+    instruction: &str,
+    factory: bool,
+) -> Result<String, String> {
     let add = tokio::process::Command::new("git")
         .args(["add", file])
         .current_dir(repo_root)
@@ -914,11 +965,23 @@ pub(crate) async fn commit(repo_root: &std::path::Path, file: &str, instruction:
          Co-Authored-By: hex-direct <noreply@hex.local>",
         subject.chars().take(72).collect::<String>()
     );
+    // Isolated (autonomous) commits are authored by a distinct factory identity
+    // (ADR-2606071323 §4) so they are attributable and never masquerade as the
+    // operator's `hex-coder`. `-c` keeps it commit-local (no global config change).
+    let mut cmd = tokio::process::Command::new("git");
+    if factory {
+        cmd.args([
+            "-c",
+            "user.name=hex-factory",
+            "-c",
+            "user.email=factory@hex.local",
+        ]);
+    }
     // Scope the commit to ONLY the edited file (pathspec) so a pre-staged or
     // concurrently-changed file can't get swept into the executor's commit
     // (found by the 2026-06-04 review swarm — bare `git commit` committed all
     // staged changes).
-    let c = tokio::process::Command::new("git")
+    let c = cmd
         .args(["commit", "-m", &msg, "--", file])
         .current_dir(repo_root)
         .output()
