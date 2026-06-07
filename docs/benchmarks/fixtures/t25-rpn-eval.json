@@ -18,12 +18,19 @@
   "status": "verified",
   "_verification": "oracle RED→GREEN confirmed 2026-06-07 (stub fails 7 tests; reference stack impl passes 7/7). Standalone [workspace] crate so it never collides with the hex workspace.",
   "observed_baseline": {
+    "_finding": "On this HARDER task the model ranking REVERSES vs t2-humanize-duration: qwen (coder) 4/5 > gemma3 2/5 > devstral 1/5. Devstral DRIVES the loop (all edit=y) but can't write the harder algorithm — all 4 failures were max_steps (kept editing, evidence kept failing). qwen produces correct code, faster. Loop-driving ≠ codegen; the one-liner only tested the former. This flipped the local-default choice from devstral → qwen2.5-coder:14b.",
+    "qwen2.5-coder:14b": {
+      "measured_by": "hex bench agentic (post b6964195)", "date": "2026-06-07",
+      "react": { "valid": true, "pass_rate": "4/5", "samples": 5, "outcomes": ["pass","pass","pass","no_edit","pass"], "wall_ms_range": [18170, 29447] }
+    },
+    "gemma3:12b": {
+      "measured_by": "hex bench agentic (post b6964195)", "date": "2026-06-07",
+      "react": { "valid": true, "pass_rate": "2/5", "samples": 5, "outcomes": ["pass","no_edit","pass","no_edit","no_edit"], "wall_ms_range": [43697, 81498] }
+    },
     "devstral-small-2:24b": {
-      "measured_by": "hex bench agentic (post b6964195)",
-      "date": "2026-06-07",
-      "note": "Harder T2.5 task (parse+stack+4 ops+4 error cases) — devstral solved it on BOTH arms first try.",
-      "react": { "evidence_pass": true, "did_edit": true, "failure_reason": "pass", "steps": 7, "wall_ms": 61471 },
-      "fast":  { "evidence_pass": true, "did_edit": true, "failure_reason": "pass", "wall_ms": 69324 }
+      "measured_by": "hex bench agentic (post b6964195)", "date": "2026-06-07",
+      "note": "1/5 — 4 failures all max_steps (edited but couldn't get correct code in budget). Drives the loop, weak on hard codegen.",
+      "react": { "valid": true, "pass_rate": "1/5", "samples": 5, "outcomes": ["pass","max_steps","max_steps","max_steps","max_steps"], "wall_ms_range": [51457, 93824] }
     }
   }
 }
