@@ -62,15 +62,11 @@ const OpsSla = lazy(() => import('../components/views/OpsSla'));
 // Sidebar entries for the restored System telemetry pages. `page` must match a
 // Route in stores/router.ts and a <Match> in the render Switch below.
 const SYSTEM_NAV: { page: string; label: string; icon: string }[] = [
-  { page: "brain",           label: "Brain",         icon: "M12 2a7 7 0 00-7 7c0 2 1 3 1 5v3a2 2 0 002 2h8a2 2 0 002-2v-3c0-2 1-3 1-5a7 7 0 00-7-7z" },
-  { page: "brain-decisions", label: "Decisions",     icon: "M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
-  { page: "merge-gate",      label: "Merge Gate",    icon: "M6 3v12M6 21a3 3 0 100-6 3 3 0 000 6zM6 9a3 3 0 100-6 3 3 0 000 6zM18 21a3 3 0 100-6 3 3 0 000 6zM18 15V9a3 3 0 00-3-3H9" },
-  { page: "thoughts",        label: "Thoughts",      icon: "M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
   { page: "resources",       label: "Resources",     icon: "M4 7v10c0 1 4 3 8 3s8-2 8-3V7M4 7c0 1 4 3 8 3s8-2 8-3M4 7c0-1 4-3 8-3s8 2 8 3" },
-  { page: "commitments",     label: "Commitments",   icon: "M9 12l2 2 4-4M7 3h10l4 6-9 12L3 9z" },
-  { page: "ops-sla",         label: "Ops SLA",       icon: "M12 8v4l3 2M12 2a10 10 0 100 20 10 10 0 000-20z" },
-  // Retired (ADR-2606061359): persona-health, missions — org-sim surfaces, routes
-  // now redirect to the Workbench.
+  // Retired (ADR-2606061359): the org-sim telemetry — Brain, Decisions, Merge Gate,
+  // Thoughts, Commitments, Ops SLA, Persona Health, Missions — all reflected the
+  // multi-agent persona model. Routes redirect to the Workbench (single-agent loop).
+  // Only Resources (system utilization) remains as genuine ops telemetry.
 ];
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────

@@ -334,7 +334,10 @@ function hashToRoute(hash: string): Route {
   if (parts.length === 0) return { page: "direct-runs" };
   // ADR-2606061359: org-sim surfaces retired — redirect to the Workbench
   // (single-agent loop). Overrides the legacy per-route handlers below.
-  if (["mission-control", "org-chart", "org-comms", "team", "missions", "persona-health"].includes(parts[0])) {
+  if ([
+    "mission-control", "org-chart", "org-comms", "team", "missions", "persona-health",
+    "brain", "decisions", "merge-gate", "thoughts", "commitments", "ops-sla",
+  ].includes(parts[0])) {
     return { page: "direct-runs" };
   }
   if (parts[0] === "memory") return { page: "memory" };
