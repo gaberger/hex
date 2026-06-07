@@ -445,8 +445,10 @@ pub(crate) fn normalize_tool_input(_tool: &str, input: Value) -> Value {
 /// the request body and reply in plain text.
 fn extract_text_mode_tool_uses(text: &str) -> Vec<ToolUse> {
     let mut uses: Vec<ToolUse> = Vec::new();
-    let mut rest = text;
     let mut counter: u32 = 0;
+
+    // 1) Fenced ```json blocks: { tool|name, args|arguments|<flat> } or { finish }.
+    let mut rest = text;
     while let Some(start) = rest.find("```json") {
         let after = &rest[start + 7..];
         let body_start = match after.find('\n') {
@@ -460,43 +462,103 @@ fn extract_text_mode_tool_uses(text: &str) -> Vec<ToolUse> {
         };
         let raw_json = body[..end].trim();
         rest = &body[end + 4..];
-        let parsed: Result<serde_json::Value, _> = serde_json::from_str(raw_json);
-        let v = match parsed {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        // Three shapes accepted:
-        //   { tool, args: {...} }      (canonical)
-        //   { tool, <flat fields> }    (Anthropic Haiku via OpenRouter often emits this)
-        //   { finish: "..." }
-        if let Some(name) = v.get("tool").and_then(|x| x.as_str()) {
-            let args = if let Some(args_obj) = v.get("args") {
-                args_obj.clone()
-            } else if let Some(obj) = v.as_object() {
-                // Strip the "tool" key and treat the rest as args.
-                let mut rest = obj.clone();
-                rest.remove("tool");
-                rest.remove("rationale"); // metadata, not an arg
-                Value::Object(rest)
-            } else {
-                Value::Null
-            };
-            uses.push(ToolUse {
-                id: format!("textmode_{}", counter),
-                name: name.to_string(),
-                input: args,
-            });
-            counter += 1;
-        } else if let Some(summary) = v.get("finish").and_then(|x| x.as_str()) {
-            uses.push(ToolUse {
-                id: format!("textmode_{}", counter),
-                name: "finish".to_string(),
-                input: serde_json::json!({ "summary": summary }),
-            });
-            counter += 1;
+        if let Ok(v) = serde_json::from_str::<Value>(raw_json) {
+            push_tool_obj(&v, &mut uses, &mut counter);
         }
     }
+
+    // 2) <tool_call>…</tool_call> blocks (Qwen/Hermes style — { "name", "arguments" }).
+    // Many capable open models emit tool calls this way in *text* even when a
+    // `tools` schema is supplied, instead of via the native channel.
+    let mut rest = text;
+    while let Some(start) = rest.find("<tool_call>") {
+        let after = &rest[start + "<tool_call>".len()..];
+        let (segment, advance) = match after.find("</tool_call>") {
+            Some(end) => (&after[..end], end + "</tool_call>".len()),
+            None => (after, after.len()), // unclosed (truncated) — take the rest
+        };
+        rest = &after[advance..];
+        if let Some(obj_str) = first_json_object(segment) {
+            if let Ok(v) = serde_json::from_str::<Value>(&obj_str) {
+                push_tool_obj(&v, &mut uses, &mut counter);
+            }
+        }
+    }
+
     uses
+}
+
+/// Convert one parsed JSON object into a ToolUse, accepting the several shapes
+/// models emit: { tool | name }, args from { args | arguments } (object OR
+/// stringified), or the remaining flat fields; plus { finish }.
+fn push_tool_obj(v: &Value, uses: &mut Vec<ToolUse>, counter: &mut u32) {
+    let name = v
+        .get("tool")
+        .and_then(|x| x.as_str())
+        .or_else(|| v.get("name").and_then(|x| x.as_str()));
+    if let Some(name) = name {
+        let args = match v.get("args").or_else(|| v.get("arguments")) {
+            Some(Value::String(s)) => serde_json::from_str(s).unwrap_or(Value::Object(Default::default())),
+            Some(other) => other.clone(),
+            None => {
+                // Flat fields: strip the call keys, treat the rest as args.
+                if let Some(obj) = v.as_object() {
+                    let mut r = obj.clone();
+                    r.remove("tool");
+                    r.remove("name");
+                    r.remove("rationale");
+                    Value::Object(r)
+                } else {
+                    Value::Object(Default::default())
+                }
+            }
+        };
+        uses.push(ToolUse { id: format!("textmode_{}", counter), name: name.to_string(), input: args });
+        *counter += 1;
+    } else if let Some(summary) = v.get("finish").and_then(|x| x.as_str()) {
+        uses.push(ToolUse {
+            id: format!("textmode_{}", counter),
+            name: "finish".to_string(),
+            input: serde_json::json!({ "summary": summary }),
+        });
+        *counter += 1;
+    }
+}
+
+/// Extract the first complete `{…}` object from a string by balancing braces
+/// (string-aware), so prose around the JSON — or trailing junk after an unclosed
+/// `<tool_call>` — doesn't break parsing.
+fn first_json_object(s: &str) -> Option<String> {
+    let start = s.find('{')?;
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut esc = false;
+    for i in start..bytes.len() {
+        let c = bytes[i];
+        if in_str {
+            if esc {
+                esc = false;
+            } else if c == b'\\' {
+                esc = true;
+            } else if c == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            b'"' => in_str = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(s[start..=i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Reconstruct what to put in the assistant message's `content` field so
@@ -745,6 +807,29 @@ mod tests {
             uses[0].input.get("pattern").and_then(|v| v.as_str()),
             Some("fizzbuzz")
         );
+    }
+
+    #[test]
+    fn text_mode_qwen_tool_call_tags() {
+        // Qwen3 emits tool calls as <tool_call>{name, arguments}</tool_call> text.
+        let resp = "I'll do it.\n<tool_call>\n{\"name\": \"propose_edit\", \"arguments\": {\"mode\": \"append\", \"new_string\": \"STATUS: ok\"}}\n</tool_call>";
+        let body = json!({ "content": resp });
+        let (_t, uses) = extract_tool_uses(&body);
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].name, "propose_edit");
+        assert_eq!(uses[0].input.get("mode").and_then(|v| v.as_str()), Some("append"));
+        assert_eq!(uses[0].input.get("new_string").and_then(|v| v.as_str()), Some("STATUS: ok"));
+    }
+
+    #[test]
+    fn text_mode_unclosed_tool_call() {
+        // Truncated output (no closing tag) must still parse the object.
+        let resp = "<tool_call>\n{\"name\": \"repo_grep\", \"arguments\": {\"pattern\": \"foo\"}}";
+        let body = json!({ "content": resp });
+        let (_t, uses) = extract_tool_uses(&body);
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].name, "repo_grep");
+        assert_eq!(uses[0].input.get("pattern").and_then(|v| v.as_str()), Some("foo"));
     }
 
     #[test]

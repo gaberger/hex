@@ -40,9 +40,43 @@ const NO_PROGRESS_LIMIT: u32 = 3;
 const ALLOWED_TOOLS: &[&str] =
     &["repo_read", "repo_grep", "cargo_check", "typescript_check", "dep_audit", "secret_scan"];
 
-/// Run the ReAct loop end-to-end. Returns the result + the number of steps
-/// (tool calls) taken, for the run feed.
-pub async fn react_execute(task: DirectTask, model: String) -> (DirectResult, u32) {
+/// Resolve the model for the loop. The ReAct loop needs a strong tool-caller
+/// (local code models are unreliable at multi-step function-calling), so it has
+/// its OWN setting, distinct from the single-shot default. Precedence:
+/// explicit `--model` → `HEX_REACT_MODEL` env → `.hex/project.json`
+/// `inference.react_model` → the single-shot default.
+pub(crate) fn resolve_react_model(task: &DirectTask) -> String {
+    if let Some(m) = &task.model {
+        if !m.is_empty() {
+            return m.clone();
+        }
+    }
+    if let Ok(m) = std::env::var("HEX_REACT_MODEL") {
+        if !m.is_empty() {
+            return m;
+        }
+    }
+    if let Some(m) = react_model_from_config() {
+        return m;
+    }
+    direct_exec::resolve_model(task)
+}
+
+fn react_model_from_config() -> Option<String> {
+    let path = direct_exec::repo_root().join(".hex").join("project.json");
+    let raw = std::fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    v.get("inference")?
+        .get("react_model")?
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Run the ReAct loop end-to-end. Returns the result, the number of steps
+/// (tool calls) taken, and the model used, for the run feed.
+pub async fn react_execute(task: DirectTask) -> (DirectResult, u32, String) {
+    let model = resolve_react_model(&task);
     let max_steps = task.max_steps.unwrap_or(DEFAULT_MAX_STEPS).clamp(1, 40);
     let repo_root = direct_exec::repo_root();
     let abs_path = repo_root.join(&task.file);
@@ -72,7 +106,7 @@ pub async fn react_execute(task: DirectTask, model: String) -> (DirectResult, u3
         Ok(c) => c,
         Err(e) => {
             result.error = Some(format!("http build: {}", e));
-            return (result, 0);
+            return (result, 0, model);
         }
     };
 
@@ -137,21 +171,25 @@ pub async fn react_execute(task: DirectTask, model: String) -> (DirectResult, u3
             // Terminal action: apply the edit + evidence gate (+ commit on pass).
             if tu.name == "propose_edit" {
                 made_progress = true;
+                tracing::info!(step = steps, args = %serde_json::to_string(&tu.input).unwrap_or_default().chars().take(300).collect::<String>(), "react: propose_edit");
                 match apply_and_verify(&abs_path, &repo_root, &task, &tu.input).await {
                     EditOutcome::Committed(hash) => {
+                        tracing::info!(step = steps, %hash, "react: propose_edit COMMITTED");
                         result.edit_applied = true;
                         result.evidence_passed = true;
                         result.committed = Some(hash);
                         result.ok = true;
                         result.attempts = steps;
-                        return (result, steps);
+                        return (result, steps, model);
                     }
                     EditOutcome::EvidenceFailed(msg) => {
+                        tracing::warn!(step = steps, detail = %msg.chars().take(200).collect::<String>(), "react: propose_edit evidence FAILED (reverted)");
                         result.edit_applied = true;
                         result.evidence_output = msg.chars().take(4000).collect();
                         tool_results.push(tool_result_block(&tu.id, false, &json!({ "evidence": "failed", "detail": msg })));
                     }
                     EditOutcome::ApplyFailed(msg) => {
+                        tracing::warn!(step = steps, detail = %msg, "react: propose_edit apply FAILED");
                         tool_results.push(tool_result_block(&tu.id, false, &json!({ "apply": "failed", "detail": msg })));
                     }
                 }
@@ -180,7 +218,8 @@ pub async fn react_execute(task: DirectTask, model: String) -> (DirectResult, u3
             }
 
             made_progress = true;
-            let res = registry.execute(&tu.name, normalized).await;
+            let res = registry.execute(&tu.name, normalized.clone()).await;
+            tracing::info!(step = steps, tool = %tu.name, ok = res.ok, args = %serde_json::to_string(&normalized).unwrap_or_default().chars().take(160).collect::<String>(), "react: tool");
             if res.ok {
                 prior_successes.insert(sig);
             }
@@ -213,7 +252,7 @@ pub async fn react_execute(task: DirectTask, model: String) -> (DirectResult, u3
         result.error = Some(format!("exhausted {} steps without a passing evidence-gated edit", max_steps));
     }
     result.attempts = steps;
-    (result, steps)
+    (result, steps, model)
 }
 
 enum EditOutcome {

@@ -7,14 +7,15 @@
   "inference": {
     "tier_models": {
       "t1": "qwen3:4b",
-      "t2": "Qwen/Qwen3-32B",
-      "t2.5": "deepseek-ai/DeepSeek-R1-0528"
+      "t2": "gemma4-12b",
+      "t2.5": "qwen2.5-coder:32b"
     },
     "timeout_secs": 600,
-    "sop_via_router": true
+    "sop_via_router": true,
+    "react_model": "Qwen/Qwen3-32B"
   },
   "auto_repair": {
-    "enabled": true,
+    "enabled": false,
     "project_path": "examples/ebay-clone/backend",
     "max_iterations": 20,
     "top_k_files": 3

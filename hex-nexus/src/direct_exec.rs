@@ -387,11 +387,12 @@ pub async fn execute_direct(task: DirectTask) -> DirectResult {
         record_run(started_at, &task, &model, &result, started.elapsed().as_millis() as u64);
         result
     } else {
-        let (result, steps) = crate::direct_react::react_execute(task.clone(), model.clone()).await;
+        // The loop resolves + returns its own (strong tool-caller) model.
+        let (result, steps, used_model) = crate::direct_react::react_execute(task.clone()).await;
         record_react_run(
             started_at,
             &task,
-            &model,
+            &used_model,
             result.ok,
             result.evidence_passed,
             result.committed.clone(),
