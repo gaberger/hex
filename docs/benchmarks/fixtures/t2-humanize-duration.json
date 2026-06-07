@@ -26,6 +26,13 @@
       "date": "2026-06-07",
       "react": { "evidence_pass": false, "did_edit": false, "failure_reason": "no_edit", "wall_ms": 63552 },
       "fast":  { "evidence_pass": true,  "did_edit": true,  "failure_reason": "pass",    "wall_ms": 65422 }
+    },
+    "devstral-small-2:24b": {
+      "measured_by": "hex bench agentic",
+      "date": "2026-06-07",
+      "note": "Mistral's agentic/tool-use coder — STILL no_edit on react. 3rd model family, same failure → implicates the harness tool path, not model capability.",
+      "react": { "evidence_pass": false, "did_edit": false, "failure_reason": "no_edit", "wall_ms": 63896 },
+      "fast":  { "evidence_pass": true,  "did_edit": true,  "failure_reason": "pass",    "wall_ms": 87150 }
     }
   }
 }
