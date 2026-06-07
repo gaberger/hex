@@ -89,4 +89,4 @@ tla2tools.jar
 hexflo_TTrace_*.tla
 
 # hex-graph knowledge-graph engine output
-graphify-out/
+graph-out/

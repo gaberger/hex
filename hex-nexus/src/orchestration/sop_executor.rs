@@ -615,7 +615,7 @@ async fn ground_for_intent(
 }
 
 /// Best-effort graph neighbourhood for a set of repo paths, loaded from the
-/// project's `graphify-out/graph.json` (produced by `hex graph build`). Returns
+/// project's `graph-out/graph.json` (produced by `hex graph build`). Returns
 /// `Null` when no graph has been built — never fails GROUND. Capped to keep the
 /// REASON prompt bounded.
 fn graph_context_pack(paths: &[String]) -> Value {
@@ -630,7 +630,7 @@ fn graph_context_pack_in(root: &std::path::Path, paths: &[String]) -> Value {
     if paths.is_empty() {
         return Value::Null;
     }
-    let graph_path = root.join("graphify-out").join("graph.json");
+    let graph_path = root.join("graph-out").join("graph.json");
     let Ok(raw) = std::fs::read_to_string(&graph_path) else {
         return Value::Null;
     };
@@ -1901,7 +1901,7 @@ mod tests {
         let graph = hex_graph::build(d, opts, &hex_graph::semantic::NoopSemanticExtractor)
             .await
             .unwrap();
-        let out = d.join("graphify-out").join("graph.json");
+        let out = d.join("graph-out").join("graph.json");
         std::fs::create_dir_all(out.parent().unwrap()).unwrap();
         std::fs::write(&out, graph.to_json().unwrap()).unwrap();
 

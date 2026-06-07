@@ -645,9 +645,9 @@ pub(crate) fn ground_window(content: &str, instruction: &str) -> String {
 pub(crate) async fn gather_context(task: &DirectTask) -> String {
     let mut out = String::new();
 
-    // (a) Graph neighbourhood for the target file, from graphify-out/graph.json.
+    // (a) Graph neighbourhood for the target file, from graph-out/graph.json.
     let bundle = {
-        let graph_path = repo_root().join("graphify-out").join("graph.json");
+        let graph_path = repo_root().join("graph-out").join("graph.json");
         std::fs::read_to_string(&graph_path)
             .ok()
             .and_then(|raw| hex_graph::model::KnowledgeGraph::from_json(&raw).ok())

@@ -73,7 +73,7 @@ impl EdgeKind {
     }
 }
 
-/// Confidence tag, mirroring graphify's `EXTRACTED` / `INFERRED` / `AMBIGUOUS`.
+/// Confidence tag: `EXTRACTED` / `INFERRED` / `AMBIGUOUS`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Confidence {
@@ -206,3 +206,4 @@ pub fn id_for(kind: NodeKind, file: &str, label: &str) -> String {
 pub fn edge_id(kind: EdgeKind, src: &str, dst: &str) -> String {
     format!("{}:{}->{}", kind.as_str(), src, dst)
 }
+// End of file marker

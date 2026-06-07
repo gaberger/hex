@@ -500,6 +500,8 @@ Formal specs live in `docs/algebra/` (TLA+, TLC-model-checked). Benchmarks in [I
 
 Builds on hexagonal architecture ([Alistair Cockburn, 2005](https://alistair.cockburn.us/hexagonal-architecture/)), tree-sitter ([Max Brunsfeld et al.](https://tree-sitter.github.io/)), and SpacetimeDB. HexFlo coordination was informed by [claude-flow](https://github.com/ruvnet/claude-flow) (Reuven Cohen). Architecture-fitness-functions inspiration from Ford & Parsons.
 
+**Influences.** The `hex-graph` code-knowledge engine is **graphify-influenced** — a GraphRAG-style code graph (typed nodes + edges, community detection, `EXTRACTED`/`INFERRED`/`AMBIGUOUS` confidence) reimplemented natively in Rust. The single-agent execution model (one gateway-mediated ReAct loop fed by code-graph context + memory, ADR-2606061359) converges with **OpenClaw** and **Hermes Agent** (Nous Research). These shaped the design; the implementation is hex's own.
+
 | Contributor | Role |
 |---|---|
 | Gary ([@gaberger](https://github.com/gaberger)) | Creator, architect |

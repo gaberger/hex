@@ -2,7 +2,7 @@
 //!
 //! We use synchronous **label propagation** over the undirected projection of the
 //! graph: dependency-free, near-linear, and deterministic when node visit order
-//! and tie-breaks are fixed. This stands in for graphify's Leiden clustering —
+//! and tie-breaks are fixed. This stands in for Leiden clustering —
 //! good enough to surface module-like clusters; swap for a Leiden crate later if
 //! cluster quality demands it.
 

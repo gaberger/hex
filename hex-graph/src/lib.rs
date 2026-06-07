@@ -1,4 +1,4 @@
-//! hex-graph — Rust-native knowledge-graph engine (graphify-style core).
+//! hex-graph — Rust-native knowledge-graph engine.
 //!
 //! Builds a typed knowledge graph from a project's source + docs: AST entities and
 //! imports become `Extracted` nodes/edges; an injected [`SemanticExtractor`] can add
@@ -83,7 +83,7 @@ const EXCLUDE_DIRS: &[&str] = &[
     "vendor",
     ".git",
     ".hex",
-    "graphify-out",
+    "graph-out",
     ".next",
     "__pycache__",
 ];

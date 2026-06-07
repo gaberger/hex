@@ -1,7 +1,7 @@
 //! knowledge-graph — persistent storage for hex-graph knowledge graphs.
 //!
 //! Stores nodes, edges, communities and per-project build metadata produced by the
-//! `hex-graph` engine (graphify-style core). hex-nexus runs the engine (it can touch
+//! `hex-graph` engine (knowledge-graph core). hex-nexus runs the engine (it can touch
 //! the filesystem and call inference; WASM cannot) and writes results here via the
 //! reducers below, so a built graph survives restarts and can be re-queried without
 //! a rebuild. All tables are `public` for dashboard subscriptions.

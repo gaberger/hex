@@ -1,7 +1,7 @@
 //! Knowledge-graph routes — build/query/path/explain over the `hex-graph` engine.
 //!
 //! `build` runs the engine over a project directory (nexus can touch the FS and call
-//! inference; the WASM module can't), writes `graphify-out/graph.json` as the query
+//! inference; the WASM module can't), writes `graph-out/graph.json` as the query
 //! source of truth, and best-effort mirrors the result into the `knowledge-graph`
 //! SpacetimeDB module so it survives restarts and feeds dashboard subscriptions.
 //! `query`/`path`/`explain` load `graph.json` and run the engine's read APIs.
@@ -24,7 +24,7 @@ use hex_graph::{query as gquery, BuildOpts, Mode};
 use crate::state::SharedState;
 
 const GRAPH_DB: &str = "knowledge-graph";
-const OUT_DIR: &str = "graphify-out";
+const OUT_DIR: &str = "graph-out";
 const OUT_FILE: &str = "graph.json";
 
 // ── request bodies ───────────────────────────────────────
@@ -560,7 +560,7 @@ mod tests {
         std::fs::write(p, contents).unwrap();
     }
 
-    /// Build a small graph and persist it to `<dir>/graphify-out/graph.json`,
+    /// Build a small graph and persist it to `<dir>/graph-out/graph.json`,
     /// exactly as the build handler would, so the read handlers have a source.
     async fn fixture() -> tempfile::TempDir {
         let tmp = tempfile::tempdir().unwrap();
@@ -647,7 +647,7 @@ mod tests {
 
     #[tokio::test]
     async fn query_without_built_graph_is_404() {
-        let tmp = tempfile::tempdir().unwrap(); // no graphify-out/graph.json
+        let tmp = tempfile::tempdir().unwrap(); // no graph-out/graph.json
         let (code, _body) = query_graph(Json(QueryRequest {
             path: root(&tmp),
             question: "anything".into(),

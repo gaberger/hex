@@ -1,7 +1,7 @@
 //! `hex graph` — build and query a knowledge graph of the project.
 //!
 //! Thin client over the nexus `/api/graph/*` endpoints (which run the `hex-graph`
-//! engine). Mirrors graphify's core verbs: build / query / path / explain.
+//! engine). Core verbs: build / query / path / explain.
 
 use clap::{Args, Subcommand};
 use colored::Colorize;
