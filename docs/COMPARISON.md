@@ -1,6 +1,6 @@
 # Comparison
 
-> Back to [README](../README.md) | See also: [Architecture](ARCHITECTURE.md) | [Getting Started](GETTING-STARTED.md) | [Inference](INFERENCE.md) | [Developer Experience](DEVELOPER-EXPERIENCE.md)
+> Back to [README](../README.md) | See also: [Architecture](../ARCHITECTURE.md) | [Getting Started](GETTING-STARTED.md) | [Inference](INFERENCE.md) | [Developer Experience](DEVELOPER-EXPERIENCE.md)
 
 ---
 

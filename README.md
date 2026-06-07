@@ -473,7 +473,7 @@ Formal specs live in `docs/algebra/` (TLA+, TLC-model-checked). Benchmarks in [I
 | Doc | Contents |
 |---|---|
 | [Evidence](docs/EVIDENCE.md) | Reproducer for every claim — commands, tests, expected output |
-| [Architecture](docs/ARCHITECTURE.md) | Crates, layers, analyzer rules, SpacetimeDB modules |
+| [Architecture](ARCHITECTURE.md) | Crates, layers, analyzer rules, SpacetimeDB modules |
 | [Getting Started](docs/GETTING-STARTED.md) | Install, standalone mode, remote agents |
 | [Inference](docs/INFERENCE.md) | Tier routing, GBNF grammar constraints, RL model selection |
 | [Comparison](docs/COMPARISON.md) | hex vs SpecKit, BAML, Claude Agent SDK, LangChain, Aider |
