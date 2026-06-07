@@ -498,13 +498,6 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 hex_db_for_integrator.clone(),
             );
 
-            // gap: memory → persona dispatch (closes the operator-as-dispatcher
-            // anti-pattern surfaced 2026-05-23 — see gap_dispatcher.rs preamble)
-            crate::orchestration::gap_dispatcher::spawn(
-                stdb_host_for_integrator.clone(),
-                hex_db_for_integrator.clone(),
-            );
-
             // Top-down workplan driver — owns docs/workplans/feat-*.json and
             // dispatches the next dep-satisfied incomplete step every tick
             // until the whole workplan is complete or the conductor escalates
