@@ -1210,6 +1210,45 @@ pub fn swarm_fail(
 //  Task Management Reducers
 // ============================================================
 
+/// Purge terminal swarm_task rows (failed / completed / abandoned). Tasks are
+/// status-changed on completion but never deleted, so the table grows unbounded
+/// (observed: 1857 failed rows from the retired org-sim). Operator-driven bulk
+/// cleanup — ADR-2606061359. Same pattern as agent-registry purge_all_agents.
+#[reducer]
+pub fn purge_terminal_tasks(ctx: &ReducerContext) -> Result<(), String> {
+    let ids: Vec<String> = ctx
+        .db
+        .swarm_task()
+        .iter()
+        .filter(|t| t.status == "failed" || t.status == "completed" || t.status == "abandoned")
+        .map(|t| t.id)
+        .collect();
+    let count = ids.len();
+    for id in ids {
+        ctx.db.swarm_task().id().delete(&id);
+    }
+    log::info!("purge_terminal_tasks: removed {} task(s)", count);
+    Ok(())
+}
+
+/// Purge terminal swarms (completed / failed). Companion to purge_terminal_tasks.
+#[reducer]
+pub fn purge_terminal_swarms(ctx: &ReducerContext) -> Result<(), String> {
+    let ids: Vec<String> = ctx
+        .db
+        .swarm()
+        .iter()
+        .filter(|s| s.status == "completed" || s.status == "failed")
+        .map(|s| s.id)
+        .collect();
+    let count = ids.len();
+    for id in ids {
+        ctx.db.swarm().id().delete(&id);
+    }
+    log::info!("purge_terminal_swarms: removed {} swarm(s)", count);
+    Ok(())
+}
+
 /// Create a new task in a swarm.
 /// `depends_on` is a comma-separated list of task IDs that must complete before
 /// this task can be assigned. Pass empty string for no dependencies.
