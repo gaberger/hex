@@ -831,6 +831,77 @@ fn pick_num_ctx(payload_chars: usize, num_predict: u32) -> u32 {
 /// Anything else: delegates to the no-tools `call_inference_endpoint`
 /// path and returns Vec::new() for tool_calls — caller's text-mode
 /// parser is the fallback.
+/// Translate Anthropic-style messages (string OR array content with text/
+/// tool_use/tool_result blocks) into Ollama's `/api/chat` shape:
+///   - string content passes through unchanged;
+///   - an assistant array turn → `{role:"assistant", content:<text>, tool_calls:[{function:{name,arguments}}]}`;
+///   - a user array turn's `tool_result` blocks → separate `{role:"tool", content:<string>}` messages.
+/// Without this, the react loop's multi-turn turns (which carry array content
+/// after the first tool call) make Ollama 400 with
+/// "cannot unmarshal array into ... content of type string" — so no local model
+/// can complete an agentic loop (diagnostic 2026-06-07).
+fn anthropic_messages_to_ollama(messages: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+    for m in messages {
+        let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+        match m.get("content") {
+            Some(serde_json::Value::String(s)) => {
+                out.push(json!({ "role": role, "content": s }));
+            }
+            Some(serde_json::Value::Array(blocks)) => {
+                let mut text = String::new();
+                let mut tool_calls: Vec<serde_json::Value> = Vec::new();
+                let mut tool_results: Vec<String> = Vec::new();
+                for b in blocks {
+                    match b.get("type").and_then(|t| t.as_str()) {
+                        Some("text") => {
+                            if let Some(t) = b.get("text").and_then(|t| t.as_str()) {
+                                if !text.is_empty() {
+                                    text.push('\n');
+                                }
+                                text.push_str(t);
+                            }
+                        }
+                        Some("tool_use") => {
+                            tool_calls.push(json!({
+                                "function": {
+                                    "name": b.get("name").and_then(|n| n.as_str()).unwrap_or(""),
+                                    "arguments": b.get("input").cloned().unwrap_or_else(|| json!({})),
+                                }
+                            }));
+                        }
+                        Some("tool_result") => {
+                            let s = match b.get("content") {
+                                Some(serde_json::Value::String(s)) => s.clone(),
+                                Some(v) => serde_json::to_string(v).unwrap_or_default(),
+                                None => String::new(),
+                            };
+                            tool_results.push(s);
+                        }
+                        _ => {}
+                    }
+                }
+                if role == "assistant" {
+                    let mut msg = json!({ "role": "assistant", "content": text });
+                    if !tool_calls.is_empty() {
+                        msg["tool_calls"] = json!(tool_calls);
+                    }
+                    out.push(msg);
+                } else {
+                    if !text.is_empty() {
+                        out.push(json!({ "role": "user", "content": text }));
+                    }
+                    for tr in tool_results {
+                        out.push(json!({ "role": "tool", "content": tr }));
+                    }
+                }
+            }
+            _ => out.push(json!({ "role": role, "content": "" })),
+        }
+    }
+    out
+}
+
 pub(crate) async fn call_inference_endpoint_with_tools(
     ep: &crate::routes::secrets::InferenceEndpointEntry,
     messages: &[serde_json::Value],
@@ -890,10 +961,13 @@ pub(crate) async fn call_inference_endpoint_with_tools(
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(2048);
+        // Translate Anthropic content-blocks → Ollama's string-content + tool
+        // message shape, or multi-turn agentic turns 400 (see fn doc).
+        let ollama_messages = anthropic_messages_to_ollama(messages);
         // num_ctx sized to the actual prompt (messages + tool schemas) so large
         // agentic clients like Claude Code aren't silently truncated. See
         // pick_num_ctx.
-        let payload_chars = serde_json::to_string(messages).map(|s| s.len()).unwrap_or(0)
+        let payload_chars = serde_json::to_string(&ollama_messages).map(|s| s.len()).unwrap_or(0)
             + serde_json::to_string(&openai_tools).map(|s| s.len()).unwrap_or(0);
         let num_ctx = pick_num_ctx(payload_chars, num_predict);
         let think_enabled = std::env::var("HEX_OLLAMA_THINK")
@@ -904,7 +978,7 @@ pub(crate) async fn call_inference_endpoint_with_tools(
             format!("{base}/api/chat"),
             json!({
                 "model": model,
-                "messages": messages,
+                "messages": ollama_messages,
                 "stream": false,
                 "think": think_enabled,
                 "tools": openai_tools,
