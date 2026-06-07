@@ -15,24 +15,24 @@
   "arms": ["react", "fast"],
   "status": "verified",
   "observed_baseline": {
-    "_DIAGNOSTIC_CAVEAT": "react-arm numbers below are NOT per-model. Confirmed 2026-06-07: /api/inference/complete IGNORES the requested model on the tools path and uses the registered provider (gemma4-12b) regardless — so every react run was gemma4-12b, not the keyed model. The fast-arm numbers ARE per-model (the no-tools path honors --model). Per-model react comparison is INVALID until the gateway honors --model on the tools path. The earlier 'agentic wander is model-class' conclusion is UNSUPPORTED: qwen/devstral were never actually run on react.",
+    "_history": "react per-model data is VALID as of the 2026-06-07 gateway fix (commit c73a04d8 — honor --model on the tools path for local providers). BEFORE that fix, /api/inference/complete silently ran the registered provider (gemma4-12b) for EVERY tools/react request regardless of --model, so all pre-fix react 'wander' (incl. the original hex do demo) was gemma4-12b, not the keyed model. fast-arm was always per-model. Result post-fix: react IS model-dependent — qwen2.5-coder:14b drives the loop; gemma3/devstral do not.",
     "qwen2.5-coder:14b": {
-      "measured_by": "hex bench agentic",
+      "measured_by": "hex bench agentic (post-fix)",
       "date": "2026-06-07",
-      "react": { "evidence_pass": false, "did_edit": false, "failure_reason": "no_edit",  "wall_ms": 63940 },
+      "react": { "evidence_pass": true,  "did_edit": true,  "failure_reason": "pass",    "steps": 3, "wall_ms": 120427 },
       "fast":  { "evidence_pass": true,  "did_edit": true,  "failure_reason": "pass",     "wall_ms": 61120, "first_landed_commit": "49fc3b09" }
     },
     "gemma3:12b": {
-      "measured_by": "hex bench agentic",
+      "measured_by": "hex bench agentic (post-fix)",
       "date": "2026-06-07",
-      "react": { "evidence_pass": false, "did_edit": false, "failure_reason": "no_edit", "wall_ms": 63552 },
+      "react": { "evidence_pass": false, "did_edit": false, "failure_reason": "no_edit", "wall_ms": 126981 },
       "fast":  { "evidence_pass": true,  "did_edit": true,  "failure_reason": "pass",    "wall_ms": 65422 }
     },
     "devstral-small-2:24b": {
-      "measured_by": "hex bench agentic",
+      "measured_by": "hex bench agentic (post-fix)",
       "date": "2026-06-07",
-      "note": "Mistral's agentic/tool-use coder — STILL no_edit on react. 3rd model family, same failure → implicates the harness tool path, not model capability.",
-      "react": { "evidence_pass": false, "did_edit": false, "failure_reason": "no_edit", "wall_ms": 63896 },
+      "note": "Agentic-tuned coder, yet no_edit on react via Ollama GGUF — worth a look (ollama tool-call template?). NOT a harness-universal failure: qwen passes react.",
+      "react": { "evidence_pass": false, "did_edit": false, "failure_reason": "no_edit", "wall_ms": 83926 },
       "fast":  { "evidence_pass": true,  "did_edit": true,  "failure_reason": "pass",    "wall_ms": 87150 }
     }
   }
