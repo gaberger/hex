@@ -1,0 +1,29 @@
+{
+  "id": "t25-rpn-eval",
+  "tier": "T2.5",
+  "axis_focus": ["evidence_gated_success", "react_convergence"],
+  "instruction": "Implement `pub fn eval(expr: &str) -> Result<i64, String>` in this file, replacing the stub. It evaluates a space-separated reverse-Polish-notation (postfix) integer expression. Each token is either an integer or one of the operators + - * / which pop two operands (first popped is b, second is a) and compute a OP b, pushing the result. Return Ok(value) when exactly one value remains on the stack at the end. Return Err(...) on any of: division by zero; an operator applied with fewer than two operands available; a token that is neither an operator nor a parseable integer; or a final stack whose length is not exactly 1. Examples: eval(\"3 4 +\")=Ok(7), eval(\"5 1 2 + 4 * + 3 -\")=Ok(14), eval(\"42\")=Ok(42), eval(\"10 2 /\")=Ok(5), eval(\"1 0 /\")=Err, eval(\"1 +\")=Err, eval(\"1 2 x\")=Err. Edit only this file.",
+  "target_file": "bench-sandbox/src/lib.rs",
+  "oracle": {
+    "kind": "cargo_test",
+    "setup_files": {
+      "bench-sandbox/Cargo.toml": "[package]\nname = \"bench-sandbox\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n",
+      "bench-sandbox/src/lib.rs": "pub fn eval(_expr: &str) -> Result<i64, String> {\n    Err(\"unimplemented\".into())\n}\n",
+      "bench-sandbox/tests/rpn.rs": "use bench_sandbox::eval;\n#[test] fn add() { assert_eq!(eval(\"3 4 +\"), Ok(7)); }\n#[test] fn complex() { assert_eq!(eval(\"5 1 2 + 4 * + 3 -\"), Ok(14)); }\n#[test] fn single() { assert_eq!(eval(\"42\"), Ok(42)); }\n#[test] fn div() { assert_eq!(eval(\"10 2 /\"), Ok(5)); }\n#[test] fn div_zero_errs() { assert!(eval(\"1 0 /\").is_err()); }\n#[test] fn underflow_errs() { assert!(eval(\"1 +\").is_err()); }\n#[test] fn unknown_token_errs() { assert!(eval(\"1 2 x\").is_err()); }\n"
+    },
+    "command": "cargo test --manifest-path bench-sandbox/Cargo.toml --test rpn"
+  },
+  "graph_context_required": false,
+  "arms": ["react", "fast"],
+  "status": "verified",
+  "_verification": "oracle RED→GREEN confirmed 2026-06-07 (stub fails 7 tests; reference stack impl passes 7/7). Standalone [workspace] crate so it never collides with the hex workspace.",
+  "observed_baseline": {
+    "devstral-small-2:24b": {
+      "measured_by": "hex bench agentic (post b6964195)",
+      "date": "2026-06-07",
+      "note": "Harder T2.5 task (parse+stack+4 ops+4 error cases) — devstral solved it on BOTH arms first try.",
+      "react": { "evidence_pass": true, "did_edit": true, "failure_reason": "pass", "steps": 7, "wall_ms": 61471 },
+      "fast":  { "evidence_pass": true, "did_edit": true, "failure_reason": "pass", "wall_ms": 69324 }
+    }
+  }
+}

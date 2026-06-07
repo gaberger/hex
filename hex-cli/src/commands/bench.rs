@@ -195,6 +195,15 @@ async fn run_one(nexus: &NexusClient, fx: &Fixture, arm: &str, model: Option<&st
     }
     for p in &oracle_paths {
         let _ = std::fs::remove_file(p);
+        // prune now-empty ancestor dirs the materialization created (remove_dir
+        // only succeeds on empty dirs, so it stops at the first non-empty one).
+        let mut dir = Path::new(p).parent();
+        while let Some(d) = dir {
+            if d.as_os_str().is_empty() || d == Path::new(".") || std::fs::remove_dir(d).is_err() {
+                break;
+            }
+            dir = d.parent();
+        }
     }
 
     ArmResult {

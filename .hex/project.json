@@ -8,11 +8,11 @@
     "tier_models": {
       "t1": "qwen3:4b",
       "t2": "gemma4-12b",
-      "t2.5": "qwen2.5-coder:32b"
+      "t2.5": "devstral-small-2:24b"
     },
     "timeout_secs": 600,
     "sop_via_router": true,
-    "react_model": "Qwen/Qwen3-32B"
+    "react_model": "devstral-small-2:24b"
   },
   "auto_repair": {
     "enabled": false,

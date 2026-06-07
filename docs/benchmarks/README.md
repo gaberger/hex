@@ -51,9 +51,10 @@ when its gap on T-N fixtures is ~0, not when its absolute score is high.
 
 | Fixture | Tier | Probes | Status |
 |---|---|---|---|
-| `t2-humanize-duration` | T2 | convergence + evidence gate | **verified** (commit 49fc3b09) |
-| `t1-add-derive` | T1 | mechanical transform | draft (oracle unverified) |
-| `t25-trace-consumer` | T2.5 | graph-required; don't-break-the-consumer | draft (oracle unverified) |
+| `t2-humanize-duration` | T2 | convergence + evidence gate | **verified** — 3 models measured (devstral 5/5, qwen 3/5, gemma3 0/5) |
+| `t25-rpn-eval` | T2.5 | harder: parse+stack+error-cases, single-file | **verified** — devstral 1/1 both arms |
+| `t1-add-derive` | T1 | mechanical transform | draft (needs `[workspace]` standalone like rpn) |
+| `t25-trace-consumer` | T2.5 | graph-required; cross-module rename | draft — NOT single-file-solvable (executor edits one file); aspirational |
 
 `verified` = oracle confirmed RED before / GREEN after a known-good edit. `draft` = authored but not
 yet run end-to-end. CI (per ADR) re-verifies `verified` oracles so the corpus can't silently rot.
