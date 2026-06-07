@@ -3144,6 +3144,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hex-git"
+version = "26.5.1"
+dependencies = [
+ "git2",
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "hex-graph"
 version = "26.5.1"
 dependencies = [
@@ -3186,6 +3195,7 @@ dependencies = [
  "git2",
  "hex-analysis",
  "hex-core",
+ "hex-git",
  "hex-graph",
  "hmac 0.12.1",
  "http 1.4.0",

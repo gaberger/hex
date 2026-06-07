@@ -64,6 +64,8 @@ hex-core = { path = "../hex-core" }
 hex-graph = { path = "../hex-graph" }
 # Architecture analysis engine (tree-sitter boundary checking) — ADR-2606071340 P1
 hex-analysis = { path = "../hex-analysis" }
+# Pure git plumbing (status/log/diff/blame/worktree) — ADR-2606071340 P1
+hex-git = { path = "../hex-git" }
 dirs = "5"
 # Docker container lifecycle for sandbox agent coordination (feat-docker-sandbox)
 bollard = "0.17"
