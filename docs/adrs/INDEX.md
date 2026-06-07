@@ -6,7 +6,7 @@
 > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,
 > read the ADR itself.
 
-**250 ADRs** across 4 epochs.
+**251 ADRs** across 4 epochs.
 
 ## Epoch: `single-agent` — **current**
 
@@ -21,6 +21,7 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 | ADR-2606071651 | proposed | ADR-2606071651: ReAct edit-loop progress guard — edit-nudge + single-shot fallback |  |
 | ADR-2606071702 | accepted | ADR-2606071702: `hex dev deploy` verb + installed-binary freshness gate — close the validate≠deploy gap |  |
 | ADR-2606071713 | proposed | ADR-2606071713: Code-graph as a first-class agent-harness tool (active, not just passive context) |  |
+| ADR-2606071734 | proposed | ADR-2606071734: Agentic inference benchmark suite — test the harness, not the prompt |  |
 | ADR-2606061359 | accepted | ADR-2606061359: Collapse the multi-agent org-sim to a single gateway-mediated agent loop; code-graph context as the differentiator |  |
 
 ## Epoch: `org-sim`
