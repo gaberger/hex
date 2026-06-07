@@ -15,7 +15,9 @@
 pub use hex_core;
 
 pub mod adapters;
-pub mod analysis;
+// Extracted to its own crate (ADR-2606071340 P1). Re-exported as `analysis`
+// so existing `crate::analysis::*` consumers keep working unchanged.
+pub use hex_analysis as analysis;
 pub mod build_banner;
 pub mod composition;
 pub mod composition_root;

@@ -23,7 +23,7 @@ mod tiered_routing_e2e {
     use hex_nexus::orchestration::scaffolding::{
         CompileChecker, CompileError, ScaffoldConfig, ScaffoldResult, ScaffoldedDispatch,
     };
-    use hex_nexus::remote::transport::TaskTier;
+    use hex_nexus::domain::transport::TaskTier;
 
     // ── Sequenced mock inference port ───────────────────────
 

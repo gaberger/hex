@@ -18,7 +18,7 @@ use hex_nexus::orchestration::workplan_executor::{WorkplanTask, classify_task_ti
 use hex_nexus::ports::agent_transport::IAgentTransportPort;
 use hex_nexus::ports::inference_router::IInferenceRouterPort;
 use hex_nexus::ports::remote_registry::IRemoteRegistryPort;
-use hex_nexus::remote::transport::{
+use hex_nexus::domain::transport::{
     AgentMessage, CodeGenRequest, InferenceProvider, InferenceServer, InferenceServerStatus,
     RemoteAgent, RemoteAgentStatus, TaskTier, TransportError,
 };

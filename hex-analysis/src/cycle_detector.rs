@@ -78,7 +78,7 @@ fn dfs<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::domain::HexLayer;
+    use crate::domain::HexLayer;
 
     fn edge(from: &str, to: &str) -> ImportEdge {
         ImportEdge {

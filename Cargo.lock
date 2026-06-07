@@ -3040,6 +3040,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hex-analysis"
+version = "26.5.1"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 0.8.2",
+ "tracing",
+ "tree-sitter",
+ "tree-sitter-go",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "walkdir",
+]
+
+[[package]]
 name = "hex-analyzer"
 version = "26.5.1"
 dependencies = [
@@ -3165,6 +3184,7 @@ dependencies = [
  "futures",
  "gethostname 0.5.0",
  "git2",
+ "hex-analysis",
  "hex-core",
  "hex-graph",
  "hmac 0.12.1",

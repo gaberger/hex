@@ -472,7 +472,7 @@ fn detect_unused_ports(file_data: &[FileData]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::treesitter_adapter::TreeSitterAdapter;
+    use crate::treesitter_adapter::TreeSitterAdapter;
 
     fn make_analyzer() -> ArchAnalyzer {
         ArchAnalyzer::new(Arc::new(TreeSitterAdapter::new()))
