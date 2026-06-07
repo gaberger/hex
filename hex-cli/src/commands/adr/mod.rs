@@ -122,6 +122,18 @@ pub enum AdrAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Regenerate `docs/adrs/INDEX.md` — a generated map of the ledger grouped by
+    /// epoch → status, with `Superseded-By` links (ADR-2606071243). `README.md` is
+    /// human prose and is never touched. Epoch comes from an explicit `**Epoch:**`
+    /// field, else is derived deterministically from the decision date.
+    Reindex {
+        /// Print the would-be INDEX.md to stdout instead of writing the file.
+        #[arg(long)]
+        dry_run: bool,
+        /// Emit the parsed registry as JSON (for the dashboard / GROUND retrieval).
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub async fn run(action: AdrAction) -> anyhow::Result<()> {
@@ -144,6 +156,7 @@ pub async fn run(action: AdrAction) -> anyhow::Result<()> {
             json,
             strict,
         } => doctor_run(fix, fix_and_merge, json, strict).await,
+        AdrAction::Reindex { dry_run, json } => reindex(dry_run, json).await,
     }
 }
 
@@ -647,6 +660,281 @@ fn extract_title(path: &Path, content: &str) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("untitled")
         .to_string()
+}
+
+// ── Epoch model + generated index (ADR-2606071243) ───────────────────────
+//
+// An *epoch* is a named era of the system's design philosophy. The canonical
+// epochs and their date boundaries are owned by ADR-2606071243. Membership is
+// taken from an explicit `**Epoch:**` field when present, else derived
+// deterministically from the decision date so the index is immediately useful
+// over the existing corpus without hand-editing 245 files.
+
+/// Ordered most-recent-first; `EPOCHS[0]` is the current epoch. The `start` is
+/// the inclusive lower bound (YYYY-MM-DD, lexicographically comparable because
+/// zero-padded); an ADR belongs to the first epoch whose `start` it is `>=`.
+const EPOCHS: &[(&str, &str, &str)] = &[
+    // (key, inclusive-start-date, one-line identity)
+    ("single-agent", "2026-06-06", "One gateway-mediated agent loop; code-graph context as the differentiator"),
+    ("org-sim",      "2026-04-01", "Multi-agent organization simulation: personas + SOP + autonomous spawn"),
+    ("foundation",   "0000-00-00", "Hexagonal microkernel + SpacetimeDB state core + FS-bridge daemon"),
+];
+
+/// Parse a bold (`**Field:**`), heading (`## Field:`), or YAML (`field:`)
+/// frontmatter value, first match wins. The heading form is how the legacy
+/// `ADR-NNN` corpus carries `## Date:` / `## Status`.
+fn parse_adr_field(content: &str, field: &str) -> Option<String> {
+    let bold = format!("**{}:**", field.to_lowercase());
+    let heading = format!("## {}:", field.to_lowercase());
+    let yaml = format!("{}:", field.to_lowercase());
+    let yaml_underscore = format!("{}_", field.to_lowercase());
+    for line in content.lines() {
+        let trimmed = line.trim().trim_start_matches("- ").trim_start();
+        let lower = trimmed.to_lowercase();
+        let val = if lower.starts_with(&bold) {
+            Some(trimmed[bold.len()..].trim())
+        } else if lower.starts_with(&heading) {
+            Some(trimmed[heading.len()..].trim())
+        } else if lower.starts_with(&yaml) && !lower.starts_with(&yaml_underscore) {
+            Some(trimmed[yaml.len()..].trim())
+        } else {
+            None
+        };
+        if let Some(v) = val {
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// The `Superseded-By` target id, accepting every spelling the corpus uses
+/// (mirrors `doctor::has_superseded_by`).
+fn parse_superseded_by(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let stripped = line.trim().trim_start_matches("- ").trim_start();
+        let lower = stripped.to_lowercase();
+        for prefix in [
+            "**superseded by:**",
+            "**superseded by**:",
+            "**superseded-by:**",
+            "**superseded-by**:",
+            "superseded by:",
+            "superseded-by:",
+        ] {
+            if lower.starts_with(prefix) {
+                let v = stripped[prefix.len()..].trim().trim_matches('*').trim();
+                if !v.is_empty() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Best-effort decision date (YYYY-MM-DD) for an ADR: the `**Date:**` field if
+/// present, else derived from the id (`ADR-2026-03-22-1500` → `2026-03-22`,
+/// `ADR-2606071243` → `2026-06-07`). Legacy `ADR-NNN` ids carry no date → None.
+fn adr_date(id: &str, content: &str) -> Option<String> {
+    if let Some(d) = parse_adr_field(content, "date") {
+        // Take the leading YYYY-MM-DD if the field has a suffix.
+        let head: String = d.chars().take(10).collect();
+        if head.len() == 10 && head.as_bytes()[4] == b'-' {
+            return Some(head);
+        }
+    }
+    let rest = id.trim_start_matches("ADR-").trim_start_matches("adr-");
+    let parts: Vec<&str> = rest.splitn(4, '-').collect();
+    // Hyphenated timestamp: YYYY-MM-DD-...
+    if parts.len() >= 3
+        && parts[0].len() == 4
+        && parts[1].len() == 2
+        && parts[2].len() >= 2
+        && parts[0].chars().chain(parts[1].chars()).all(|c| c.is_ascii_digit())
+    {
+        return Some(format!("{}-{}-{}", parts[0], parts[1], &parts[2][..2]));
+    }
+    // Compact YYMMDDHHMM (10 digits, no hyphens): ADR-2606071243 → 2026-06-07.
+    if rest.len() >= 6 && rest.chars().take(6).all(|c| c.is_ascii_digit()) && !rest.contains('-') {
+        let b = rest.as_bytes();
+        return Some(format!(
+            "20{}{}-{}{}-{}{}",
+            b[0] as char, b[1] as char, b[2] as char, b[3] as char, b[4] as char, b[5] as char,
+        ));
+    }
+    None
+}
+
+/// Resolve an ADR's epoch: explicit `**Epoch:**` field wins; else date-bucket;
+/// else `unassigned`.
+fn adr_epoch(id: &str, content: &str) -> String {
+    if let Some(e) = parse_adr_field(content, "epoch") {
+        let key = e.split_whitespace().next().unwrap_or("").to_lowercase();
+        if EPOCHS.iter().any(|(k, _, _)| *k == key) {
+            return key;
+        }
+    }
+    if let Some(date) = adr_date(id, content) {
+        return EPOCHS
+            .iter()
+            .find(|(_, start, _)| date.as_str() >= *start)
+            .map(|(k, _, _)| k.to_string())
+            .unwrap_or_else(|| "unassigned".to_string());
+    }
+    // Legacy sequential id (`ADR-NNN`, ≤4 digits, no timestamp) with no date
+    // field predates the timestamp scheme → foundation by construction. A
+    // compact `ADR-YYMMDDHHMM` (10 digits) would already have resolved a date.
+    let digits: String = id
+        .trim_start_matches("ADR-")
+        .trim_start_matches("adr-")
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if !digits.is_empty() && digits.len() <= 4 {
+        return "foundation".to_string();
+    }
+    "unassigned".to_string()
+}
+
+struct IndexEntry {
+    id: String,
+    title: String,
+    status: String,
+    epoch: String,
+    date: String,
+    superseded_by: Option<String>,
+}
+
+async fn collect_index_entries(dir: &Path) -> anyhow::Result<Vec<IndexEntry>> {
+    let mut entries: Vec<IndexEntry> = Vec::new();
+    for (path, content) in collect_adrs(dir).await? {
+        let fname = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        let id = extract_adr_id(fname);
+        entries.push(IndexEntry {
+            title: extract_title(&path, &content),
+            status: parse_adr_status(&content).to_string(),
+            epoch: adr_epoch(&id, &content),
+            date: adr_date(&id, &content).unwrap_or_default(),
+            superseded_by: parse_superseded_by(&content),
+            id,
+        });
+    }
+    // Stable, useful order: by date desc (newest first), id as tiebreak.
+    entries.sort_by(|a, b| b.date.cmp(&a.date).then(a.id.cmp(&b.id)));
+    Ok(entries)
+}
+
+/// Epoch ordering for display: current first, then older, `unassigned` last.
+fn epoch_rank(key: &str) -> usize {
+    EPOCHS
+        .iter()
+        .position(|(k, _, _)| *k == key)
+        .unwrap_or(EPOCHS.len())
+}
+
+fn render_index(entries: &[IndexEntry]) -> String {
+    let mut out = String::new();
+    out.push_str("# ADR Index\n\n");
+    out.push_str(
+        "> **Generated by `hex adr reindex` — do not edit by hand.**\n\
+         > This is a map of the decision *ledger*, grouped by epoch (era of design\n\
+         > philosophy, per ADR-2606071243). For the current-state architecture, read\n\
+         > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,\n\
+         > read the ADR itself.\n\n",
+    );
+
+    // Summary line.
+    out.push_str(&format!("**{} ADRs** across {} epochs.\n\n", entries.len(), {
+        let mut seen: Vec<&str> = entries.iter().map(|e| e.epoch.as_str()).collect();
+        seen.sort();
+        seen.dedup();
+        seen.len()
+    }));
+
+    // Distinct epochs present, in display order.
+    let mut epochs: Vec<&str> = entries.iter().map(|e| e.epoch.as_str()).collect();
+    epochs.sort_by_key(|k| epoch_rank(k));
+    epochs.dedup();
+
+    for epoch in epochs {
+        let identity = EPOCHS
+            .iter()
+            .find(|(k, _, _)| *k == epoch)
+            .map(|(_, _, id)| *id)
+            .unwrap_or("ADRs with no resolvable epoch — assign `**Epoch:**` or a `**Date:**`");
+        let current = epoch_rank(epoch) == 0;
+        out.push_str(&format!(
+            "## Epoch: `{}`{}\n\n_{}_\n\n",
+            epoch,
+            if current { " — **current**" } else { "" },
+            identity,
+        ));
+        out.push_str("| ADR | Status | Title | Superseded-By |\n");
+        out.push_str("|-----|--------|-------|---------------|\n");
+        for e in entries.iter().filter(|e| e.epoch == epoch) {
+            let sb = e.superseded_by.as_deref().unwrap_or("");
+            out.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                e.id,
+                e.status,
+                e.title.replace('|', "\\|"),
+                sb,
+            ));
+        }
+        out.push('\n');
+    }
+    out
+}
+
+async fn reindex(dry_run: bool, json: bool) -> anyhow::Result<()> {
+    let dir = find_adr_dir().ok_or_else(|| anyhow::anyhow!("No docs/adrs/ directory found"))?;
+    let entries = collect_index_entries(&dir).await?;
+
+    if json {
+        let items: Vec<String> = entries
+            .iter()
+            .map(|e| {
+                format!(
+                    "    {{\"id\": {:?}, \"status\": {:?}, \"epoch\": {:?}, \"date\": {:?}, \"superseded_by\": {}, \"title\": {:?}}}",
+                    e.id,
+                    e.status,
+                    e.epoch,
+                    e.date,
+                    match &e.superseded_by {
+                        Some(s) => format!("{:?}", s),
+                        None => "null".to_string(),
+                    },
+                    e.title,
+                )
+            })
+            .collect();
+        println!("{{\n  \"count\": {},\n  \"adrs\": [\n{}\n  ]\n}}", entries.len(), items.join(",\n"));
+        return Ok(());
+    }
+
+    let rendered = render_index(&entries);
+    if dry_run {
+        print!("{rendered}");
+        return Ok(());
+    }
+
+    let index_path = dir.join("INDEX.md");
+    tokio::fs::write(&index_path, &rendered).await?;
+    let unassigned = entries.iter().filter(|e| e.epoch == "unassigned").count();
+    println!(
+        "{} {} — {} ADRs indexed{}",
+        "✓".green(),
+        index_path.display().to_string().cyan(),
+        entries.len(),
+        if unassigned > 0 {
+            format!(", {} unassigned (add `**Epoch:**` or `**Date:**`)", unassigned).yellow().to_string()
+        } else {
+            String::new()
+        },
+    );
+    Ok(())
 }
 
 // ── Tabled row structs ──────────────────────────────────────────────────
@@ -1463,6 +1751,68 @@ mod tests {
         assert_eq!(
             extract_title(path, "# ADR-2026-03-22-1500: My Title\n"),
             "ADR-2026-03-22-1500: My Title"
+        );
+    }
+
+    // ── Epoch model + index field parsing (ADR-2606071243) ───────────────
+
+    #[test]
+    fn epoch_explicit_field_wins() {
+        // Date says foundation, but an explicit Epoch field overrides.
+        let c = "**Epoch:** single-agent\n## Date: 2026-03-15\n";
+        assert_eq!(adr_epoch("ADR-2026-03-22-1500", c), "single-agent");
+    }
+
+    #[test]
+    fn epoch_derived_from_body_date_over_filename() {
+        // Filename is July (single-agent), but the decision Date is org-sim era.
+        let c = "**Date:** 2026-06-05\n";
+        assert_eq!(adr_epoch("ADR-2026-07-10-1000", c), "org-sim");
+    }
+
+    #[test]
+    fn epoch_boundaries_by_date() {
+        assert_eq!(adr_epoch("ADR-x", "**Date:** 2026-03-15\n"), "foundation");
+        assert_eq!(adr_epoch("ADR-x", "**Date:** 2026-04-01\n"), "org-sim");
+        assert_eq!(adr_epoch("ADR-x", "**Date:** 2026-06-06\n"), "single-agent");
+    }
+
+    #[test]
+    fn epoch_legacy_numbered_no_date_is_foundation() {
+        // Legacy ADR-NNN with no parseable date predates the timestamp scheme.
+        assert_eq!(adr_epoch("ADR-027", ""), "foundation");
+        assert_eq!(adr_epoch("ADR-7", ""), "foundation");
+    }
+
+    #[test]
+    fn epoch_unresolvable_is_unassigned() {
+        assert_eq!(adr_epoch("ADR-extensible-validation", ""), "unassigned");
+    }
+
+    #[test]
+    fn date_parses_heading_form() {
+        // Legacy `## Date:` heading form, with a trailing rationale suffix.
+        let c = "## Date: 2026-03-15 (rationale expanded 2026-05-17)\n";
+        assert_eq!(adr_date("ADR-001", c).as_deref(), Some("2026-03-15"));
+    }
+
+    #[test]
+    fn date_from_compact_timestamp_id() {
+        assert_eq!(adr_date("ADR-2606071243", "").as_deref(), Some("2026-06-07"));
+    }
+
+    #[test]
+    fn superseded_by_accepts_hyphenated_bold_form() {
+        // The canonical TEMPLATE.md form that doctor previously missed.
+        let c = "**Superseded-By:** ADR-2606061359\n";
+        assert_eq!(parse_superseded_by(c).as_deref(), Some("ADR-2606061359"));
+    }
+
+    #[test]
+    fn superseded_by_accepts_spaced_form() {
+        assert_eq!(
+            parse_superseded_by("**Superseded by:** ADR-001\n").as_deref(),
+            Some("ADR-001")
         );
     }
 }

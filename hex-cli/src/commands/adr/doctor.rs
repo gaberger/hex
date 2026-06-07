@@ -335,9 +335,13 @@ fn has_superseded_by(content: &str) -> bool {
         let stripped = line.trim().trim_start_matches("- ").trim_start();
         let lower = stripped.to_lowercase();
         // Accept canonical `**Superseded by:**`, the buggy `**Superseded by**:`,
-        // and the YAML-style `superseded by:` / `superseded-by:`.
+        // the hyphenated `**Superseded-By:**` form that TEMPLATE.md, `hex adr
+        // supersede`, and `is_superseded` all emit, and the YAML-style
+        // `superseded by:` / `superseded-by:`.
         if lower.starts_with("**superseded by:**")
             || lower.starts_with("**superseded by**:")
+            || lower.starts_with("**superseded-by:**")
+            || lower.starts_with("**superseded-by**:")
             || lower.starts_with("superseded by:")
             || lower.starts_with("superseded-by:")
         {
