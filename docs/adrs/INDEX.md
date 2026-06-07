@@ -6,7 +6,7 @@
 > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,
 > read the ADR itself.
 
-**246 ADRs** across 4 epochs.
+**247 ADRs** across 4 epochs.
 
 ## Epoch: `single-agent` — **current**
 
@@ -16,6 +16,7 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 |-----|--------|-------|---------------|
 | ADR-2606071243 | proposed | ADR-2606071243: ADR epochs, a living ARCHITECTURE.md, and a generated index — keep the architecture story legible as the design pivots |  |
 | ADR-2606071323 | proposed | ADR-2606071323: Autonomous execution must isolate to its own git worktree — never the operator's session branch |  |
+| ADR-2606071340 | proposed | ADR-2606071340: hex-nexus must comply with hexagonal architecture — excise org-sim, split into crates behind ports, stay one daemon |  |
 | ADR-2606071500 | accepted | ADR-2606071500: ReAct tool-use loop as the default single-agent execution model (with safeguards + context compression) |  |
 | ADR-2606061359 | accepted | ADR-2606061359: Collapse the multi-agent org-sim to a single gateway-mediated agent loop; code-graph context as the differentiator |  |
 
