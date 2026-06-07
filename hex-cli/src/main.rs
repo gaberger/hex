@@ -283,6 +283,11 @@ enum Commands {
         #[command(subcommand)]
         action: commands::direct::DoAction,
     },
+    /// Agentic inference benchmarks — run the corpus through the loop in isolated worktrees (ADR-2606071734)
+    Bench {
+        #[command(subcommand)]
+        action: commands::bench::BenchAction,
+    },
     /// Scheduler daemon — queue drain, validation, auto-fix (ADR-2026-04-15-0000)
     Sched {
         #[command(subcommand)]
@@ -703,6 +708,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Hey(args) => commands::hey::run(args).await,
         Commands::Verify(args) => commands::verify::run(args).await,
         Commands::Do { action } => commands::direct::run(action).await,
+        Commands::Bench { action } => commands::bench::run(action).await,
         Commands::Sched { action } => commands::sched::run(action).await,
         Commands::Pool { action } => commands::pool::run(action).await,
         Commands::Brain { action } => commands::brain_alias::run(action).await,

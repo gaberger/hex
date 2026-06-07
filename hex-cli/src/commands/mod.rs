@@ -63,3 +63,4 @@ pub mod hey;
 pub mod docs;
 pub mod verify;
 pub mod direct;
+pub mod bench;
