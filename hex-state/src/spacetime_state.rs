@@ -15,7 +15,7 @@
 use async_trait::async_trait;
 use tokio::sync::broadcast;
 
-use crate::ports::state::*;
+use hex_core::ports::state::*;
 
 /// Configuration for connecting to SpacetimeDB.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -115,7 +115,7 @@ mod real {
         http: reqwest::Client,
         /// Optional broadcast channel for pushing InferenceTaskPush to /ws/inference subscribers.
         /// Set via `with_inference_tx()` after construction when AppState's channel is available.
-        inference_tx: Option<crate::state::InferenceTxBus>,
+        inference_tx: Option<hex_core::inference_task::InferenceTxBus>,
     }
 
     impl SpacetimeStateAdapter {
@@ -156,7 +156,7 @@ mod real {
             if !is_transport_error(err) {
                 return None;
             }
-            let candidate = crate::adapters::stdb_endpoint::discover_validated().await;
+            let candidate = crate::stdb_endpoint::discover_validated().await;
             if candidate == prev_host {
                 return None;
             }
@@ -223,7 +223,7 @@ mod real {
 
         /// Wire in the inference broadcast channel so `inference_task_create` can push
         /// to /ws/inference subscribers without polling.
-        pub fn with_inference_tx(mut self, tx: crate::state::InferenceTxBus) -> Self {
+        pub fn with_inference_tx(mut self, tx: hex_core::inference_task::InferenceTxBus) -> Self {
             self.inference_tx = Some(tx);
             self
         }
@@ -334,7 +334,7 @@ mod real {
         ///
         /// SpacetimeDB returns: `[{"schema": {"elements": [{"name": {"some": "col"}, ...}]}, "rows": [["v1", "v2"], ...]}]`
         /// We convert each row array into a `{"col1": "v1", "col2": "v2"}` object using the schema.
-        pub(crate) fn parse_stdb_response(body: serde_json::Value) -> Vec<serde_json::Value> {
+        pub fn parse_stdb_response(body: serde_json::Value) -> Vec<serde_json::Value> {
             let tables = match body.as_array() {
                 Some(arr) => arr,
                 None => return Vec::new(),
@@ -1113,7 +1113,7 @@ mod real {
             // The reducer inserts the row with status=Pending, so we broadcast immediately
             // after a successful insert rather than polling the table.
             if let Some(ref tx) = self.inference_tx {
-                let push = crate::state::InferenceTaskPush {
+                let push = hex_core::inference_task::InferenceTaskPush {
                     id: id.to_string(),
                     workplan_id: workplan_id.to_string(),
                     task_id: task_id.to_string(),
@@ -2183,7 +2183,7 @@ mod real {
         }
         impl EnvGuard {
             async fn capture(keys: &[&'static str]) -> Self {
-                let lock = crate::adapters::test_env_lock().lock_owned().await;
+                let lock = crate::test_env_lock().lock_owned().await;
                 let snapshot = keys
                     .iter()
                     .map(|k| (*k, std::env::var(k).ok()))

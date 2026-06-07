@@ -16,6 +16,7 @@
 pub mod composition;
 pub mod domain;
 pub mod inference_q;
+pub mod inference_task;
 pub mod ports;
 pub mod quantization;
 pub mod research_finding;

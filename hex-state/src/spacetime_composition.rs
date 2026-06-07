@@ -26,7 +26,7 @@ use hex_core::composition::{
 };
 use uuid::Uuid;
 
-use crate::ports::state::{ISwapTicketStatePort, StateError};
+use hex_core::ports::state::{ISwapTicketStatePort, StateError};
 
 pub struct SpacetimeRuntimeComposition {
     in_memory: InMemoryComposition,
@@ -288,15 +288,15 @@ mod tests {
             )
         }
 
-        async fn shadow_tickets_due(&self, _now: &str) -> Result<Vec<crate::ports::state::SwapTicketRecord>, StateError> {
+        async fn shadow_tickets_due(&self, _now: &str) -> Result<Vec<hex_core::ports::state::SwapTicketRecord>, StateError> {
             Ok(vec![])
         }
 
-        async fn shadow_samples_for(&self, _ticket_id: &str) -> Result<Vec<crate::ports::state::ShadowSampleRecord>, StateError> {
+        async fn shadow_samples_for(&self, _ticket_id: &str) -> Result<Vec<hex_core::ports::state::ShadowSampleRecord>, StateError> {
             Ok(vec![])
         }
 
-        async fn shadow_green_tickets(&self) -> Result<Vec<crate::ports::state::SwapTicketRecord>, StateError> {
+        async fn shadow_green_tickets(&self) -> Result<Vec<hex_core::ports::state::SwapTicketRecord>, StateError> {
             Ok(vec![])
         }
     }

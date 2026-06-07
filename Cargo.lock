@@ -3197,6 +3197,7 @@ dependencies = [
  "hex-core",
  "hex-git",
  "hex-graph",
+ "hex-state",
  "hmac 0.12.1",
  "http 1.4.0",
  "httpmock",
@@ -3244,6 +3245,23 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+]
+
+[[package]]
+name = "hex-state"
+version = "26.5.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "hex-core",
+ "httpmock",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

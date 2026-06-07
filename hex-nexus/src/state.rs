@@ -246,18 +246,9 @@ pub struct WsEnvelope {
 
 // ── Inference Task Push (ADR-2026-04-01-1200) ────────────────
 
-/// Push payload for /ws/inference subscribers.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct InferenceTaskPush {
-    pub id: String,
-    pub workplan_id: String,
-    pub task_id: String,
-    pub phase: String,
-    pub prompt: String,
-    pub role: String,
-}
-
-pub type InferenceTxBus = broadcast::Sender<InferenceTaskPush>;
+// Relocated to hex-core (ADR-2606071340 P1) so the STDB state adapter (hex-state)
+// and the /ws/inference routes share it without depending on each other's crate.
+pub use hex_core::inference_task::{InferenceTaskPush, InferenceTxBus};
 
 // ── Command Types (Hub → Project) ───────────
 
