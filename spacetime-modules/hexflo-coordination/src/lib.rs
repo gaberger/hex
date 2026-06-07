@@ -4910,6 +4910,40 @@ pub fn supervisor_init(ctx: &ReducerContext) -> Result<(), String> {
     Ok(())
 }
 
+/// Disable the worker-pool supervisor by deleting its tick schedule anchor.
+/// STDB stops calling `supervisor_tick`. The single-agent epoch runs the
+/// supervisor dormant (ADR-2606071340 P0) — the agent runs in-process, so there
+/// is no pool fleet to supervise. Re-enable with `supervisor_init`.
+#[reducer]
+pub fn supervisor_disable(ctx: &ReducerContext) -> Result<(), String> {
+    let ids: Vec<u64> = ctx
+        .db
+        .supervisor_tick_schedule()
+        .iter()
+        .map(|s| s.scheduled_id)
+        .collect();
+    let count = ids.len();
+    for id in ids {
+        ctx.db.supervisor_tick_schedule().scheduled_id().delete(&id);
+    }
+    log::info!("supervisor_disable: removed {} tick schedule(s)", count);
+    Ok(())
+}
+
+/// Purge ALL supervisor_event rows. With the supervisor dormant
+/// (ADR-2606071340 P0) the accumulated spawn_request/crash_loop backlog is inert
+/// cruft (e.g. 19k rows from the 2026-06-07 flood). Operator-invoked cleanup.
+#[reducer]
+pub fn supervisor_event_purge(ctx: &ReducerContext) -> Result<(), String> {
+    let ids: Vec<u64> = ctx.db.supervisor_event().iter().map(|e| e.id).collect();
+    let count = ids.len();
+    for id in ids {
+        ctx.db.supervisor_event().id().delete(&id);
+    }
+    log::info!("supervisor_event_purge: removed {} event(s)", count);
+    Ok(())
+}
+
 /// THE supervisor. Fires every 10s.
 ///
 /// For each non-paused worker_pool_intent:
