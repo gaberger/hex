@@ -15,25 +15,24 @@
   "arms": ["react", "fast"],
   "status": "verified",
   "observed_baseline": {
-    "_history": "react per-model data here is CONFOUNDED — do not trust it as local-model data. Found 2026-06-07 via nexus.log: (1) ollama's /api/chat rejects the react loop's multi-turn messages (Anthropic-style ARRAY content / tool_result blocks) with HTTP 400 'cannot unmarshal array into ... content of type string', so NO local model can complete a multi-step react conversation through the gateway — it 400s on turn 2. (2) the gateway walks multiple registered providers (ollama + a Tenstorrent openai_compat cloud model), so any react 'pass' came from the CLOUD provider, not the keyed local model; the qwen 3-step 'pass' was almost certainly Tenstorrent. (3) qwen react x5 = 0/5 at ~1.5s each = ollama fast-400 (Tenstorrent was 429 quota-exhausted), NOT a model rate. Earlier confound (pre-c73a04d8): --model ignored on tools path → all ran gemma4-12b. NET: the ONLY valid local-model data is the fast arm (single-shot, string content, no array messages). Local react benchmarking is BLOCKED until the ollama provider path translates content-blocks → ollama format.",
+    "_history": "Local agentic react was UNBLOCKED 2026-06-07 (commit b6964195 — translate Anthropic content-blocks → Ollama format). Before that, three stacked confounds made all react data invalid: (1) --model ignored on the tools path → every run was gemma4-12b (fixed c73a04d8); (2) provider-walk fell to Tenstorrent cloud, so multi-turn 'passes' weren't the local model; (3) ollama 400'd on multi-turn array content → local loop couldn't run at all. Post-b6964195, qwen react went 0/5 (fast-400) → 3/5 (real multi-turn, 34-136s) — first valid local agentic data. qwen react below is VALID (n=5). gemma3/devstral react below is STALE (pre-fix, confounded) and must be re-run post-fix. fast-arm data was always valid.",
     "qwen2.5-coder:14b": {
-      "measured_by": "hex bench agentic (post-fix)",
+      "measured_by": "hex bench agentic (post b6964195)",
       "date": "2026-06-07",
-      "react": { "evidence_pass": true,  "did_edit": true,  "failure_reason": "pass",    "steps": 3, "wall_ms": 120427 },
-      "fast":  { "evidence_pass": true,  "did_edit": true,  "failure_reason": "pass",     "wall_ms": 61120, "first_landed_commit": "49fc3b09" }
+      "react": { "valid": true, "pass_rate": "3/5", "samples": 5, "outcomes": ["pass","no_edit","pass","max_steps","pass"], "wall_ms_range": [7214, 135997] },
+      "fast":  { "evidence_pass": true, "did_edit": true, "failure_reason": "pass", "wall_ms": 61120, "first_landed_commit": "49fc3b09" }
     },
     "gemma3:12b": {
-      "measured_by": "hex bench agentic (post-fix)",
+      "measured_by": "hex bench agentic",
       "date": "2026-06-07",
-      "react": { "evidence_pass": false, "did_edit": false, "failure_reason": "no_edit", "wall_ms": 126981 },
-      "fast":  { "evidence_pass": true,  "did_edit": true,  "failure_reason": "pass",    "wall_ms": 65422 }
+      "react": { "valid": false, "_stale": "pre-fix (confounded) — re-run post b6964195" },
+      "fast":  { "evidence_pass": true, "did_edit": true, "failure_reason": "pass", "wall_ms": 65422 }
     },
     "devstral-small-2:24b": {
-      "measured_by": "hex bench agentic (post-fix)",
+      "measured_by": "hex bench agentic",
       "date": "2026-06-07",
-      "note": "Agentic-tuned coder, yet no_edit on react via Ollama GGUF — worth a look (ollama tool-call template?). NOT a harness-universal failure: qwen passes react.",
-      "react": { "evidence_pass": false, "did_edit": false, "failure_reason": "no_edit", "wall_ms": 83926 },
-      "fast":  { "evidence_pass": true,  "did_edit": true,  "failure_reason": "pass",    "wall_ms": 87150 }
+      "react": { "valid": false, "_stale": "pre-fix (confounded) — re-run post b6964195" },
+      "fast":  { "evidence_pass": true, "did_edit": true, "failure_reason": "pass", "wall_ms": 87150 }
     }
   }
 }
