@@ -38,9 +38,17 @@ pub struct DirectTask {
     /// Override the reasoning model (default: a calibrated code model).
     #[serde(default)]
     pub model: Option<String>,
-    /// Max edit→verify attempts before giving up (default 3).
+    /// Max edit→verify attempts before giving up (default 3). Single-shot path.
     #[serde(default)]
     pub max_attempts: Option<u32>,
+    /// Use the single-shot path (read → one edit → evidence → retry) instead of
+    /// the default multi-step ReAct tool-use loop (ADR-2606071XXX).
+    #[serde(default)]
+    pub fast: bool,
+    /// Max ReAct loop steps (tool calls) before giving up (default 12). Ignored
+    /// in `fast` mode.
+    #[serde(default)]
+    pub max_steps: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -85,6 +93,10 @@ pub struct DirectRun {
     pub model: String,
     pub ok: bool,
     pub attempts: u32,
+    /// ReAct loop steps (tool calls). 1 for non-loop runs; == attempts for the
+    /// single-shot path. Surfaced in the dashboard so operators see exploration depth.
+    #[serde(default)]
+    pub steps: u32,
     pub evidence_passed: bool,
     pub committed: Option<String>,
     pub duration_ms: u64,
@@ -112,7 +124,40 @@ pub fn record_agent_run(
         model: String::new(),
         ok,
         attempts: 1,
+        steps: 1,
         evidence_passed: ok,
+        committed,
+        duration_ms,
+        error,
+    };
+    store_run(run);
+}
+
+/// Record a ReAct-loop run (multi-step tool-use, ADR-2606071XXX) into the shared
+/// feed — keeps the run-buffer internals private to this module.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn record_react_run(
+    started_at: String,
+    task: &DirectTask,
+    model: &str,
+    ok: bool,
+    evidence_passed: bool,
+    committed: Option<String>,
+    steps: u32,
+    duration_ms: u64,
+    error: Option<String>,
+) {
+    let run = DirectRun {
+        id: RUN_ID.fetch_add(1, Ordering::Relaxed),
+        agent: "direct-react".to_string(),
+        started_at,
+        instruction: task.instruction.chars().take(240).collect(),
+        file: task.file.clone(),
+        model: model.to_string(),
+        ok,
+        attempts: steps,
+        steps,
+        evidence_passed,
         committed,
         duration_ms,
         error,
@@ -144,7 +189,7 @@ static EXEC_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::syn
 /// A `cargo test <filter>` matching zero tests exits 0 with "running 0 tests" /
 /// "0 passed; 0 failed" — a vacuous pass. The gate must require the change to be
 /// actually exercised, so treat these as NOT satisfied.
-fn evidence_is_vacuous(output: &str) -> bool {
+pub(crate) fn evidence_is_vacuous(output: &str) -> bool {
     output.contains("running 0 tests")
         || output.contains("0 passed; 0 failed; 0 ignored")
         || output.contains("0 passed; 0 failed; 0 measured")
@@ -160,6 +205,7 @@ fn record_run(started_at: String, task: &DirectTask, model: &str, r: &DirectResu
         model: model.to_string(),
         ok: r.ok,
         attempts: r.attempts,
+        steps: r.attempts,
         evidence_passed: r.evidence_passed,
         committed: r.committed.clone(),
         duration_ms,
@@ -279,6 +325,7 @@ pub async fn hydrate_from_stdb() {
             model: s(5),
             ok: c.get(6).and_then(|v| v.as_bool()).unwrap_or(false),
             attempts: c.get(7).and_then(|v| v.as_u64()).unwrap_or(1) as u32,
+            steps: c.get(7).and_then(|v| v.as_u64()).unwrap_or(1) as u32,
             evidence_passed: c.get(8).and_then(|v| v.as_bool()).unwrap_or(false),
             committed: opt(9),
             duration_ms: c.get(10).and_then(|v| v.as_u64()).unwrap_or(0),
@@ -330,12 +377,36 @@ pub fn runs_summary() -> Value {
 pub async fn execute_direct(task: DirectTask) -> DirectResult {
     let started = std::time::Instant::now();
     let started_at = chrono::Utc::now().to_rfc3339();
-    let model = task.model.clone().unwrap_or_else(|| {
+    let model = resolve_model(&task);
+
+    // Default (ADR-2606071XXX): the multi-step ReAct tool-use loop — the agent
+    // explores (grep/read/cargo_check) before editing. `--fast` keeps the
+    // single-shot path (read → one edit → evidence → retry) for trivial edits.
+    if task.fast {
+        let result = execute_direct_inner(task.clone()).await;
+        record_run(started_at, &task, &model, &result, started.elapsed().as_millis() as u64);
+        result
+    } else {
+        let (result, steps) = crate::direct_react::react_execute(task.clone(), model.clone()).await;
+        record_react_run(
+            started_at,
+            &task,
+            &model,
+            result.ok,
+            result.evidence_passed,
+            result.committed.clone(),
+            steps,
+            started.elapsed().as_millis() as u64,
+            result.error.clone(),
+        );
+        result
+    }
+}
+
+pub(crate) fn resolve_model(task: &DirectTask) -> String {
+    task.model.clone().unwrap_or_else(|| {
         std::env::var("HEX_DIRECT_MODEL").unwrap_or_else(|_| "qwen2.5-coder:32b".to_string())
-    });
-    let result = execute_direct_inner(task.clone()).await;
-    record_run(started_at, &task, &model, &result, started.elapsed().as_millis() as u64);
-    result
+    })
 }
 
 async fn execute_direct_inner(task: DirectTask) -> DirectResult {
@@ -454,7 +525,7 @@ async fn execute_direct_inner(task: DirectTask) -> DirectResult {
 /// Feed the model a focused window when the file is large: the region around the
 /// instruction's keywords plus any `#[cfg(test)]` module, with real content so
 /// `replace_string` edits match the actual file. Whole file if small enough.
-fn ground_window(content: &str, instruction: &str) -> String {
+pub(crate) fn ground_window(content: &str, instruction: &str) -> String {
     let lines: Vec<&str> = content.lines().collect();
     let render = |keep: &[bool]| -> String {
         let mut out = String::new();
@@ -524,7 +595,7 @@ fn ground_window(content: &str, instruction: &str) -> String {
 /// edit prompt: the target file's graph neighbourhood (hex-graph engine — hex's
 /// structural-context differentiator) plus relevant learned lessons. Best-effort:
 /// any failure yields "" and never breaks the edit loop.
-async fn gather_context(task: &DirectTask) -> String {
+pub(crate) async fn gather_context(task: &DirectTask) -> String {
     let mut out = String::new();
 
     // (a) Graph neighbourhood for the target file, from graphify-out/graph.json.
@@ -631,10 +702,10 @@ pub(crate) async fn fetch_lessons() -> Vec<(String, String)> {
 
 // ─── the one inference call ───────────────────────────────────────────────────
 
-struct Edit {
-    mode: String, // replace_string | append | create
-    old_string: String,
-    new_string: String,
+pub(crate) struct Edit {
+    pub(crate) mode: String, // replace_string | append | create
+    pub(crate) old_string: String,
+    pub(crate) new_string: String,
 }
 
 async fn request_edit(
@@ -774,7 +845,7 @@ fn extract_fenced_blocks(s: &str) -> Vec<String> {
 
 // ─── apply / verify / commit ──────────────────────────────────────────────────
 
-fn apply_edit(abs_path: &std::path::Path, content: &str, edit: &Edit) -> Result<(), String> {
+pub(crate) fn apply_edit(abs_path: &std::path::Path, content: &str, edit: &Edit) -> Result<(), String> {
     let new_content = match edit.mode.as_str() {
         "append" => {
             let mut c = content.to_string();
@@ -802,7 +873,7 @@ fn apply_edit(abs_path: &std::path::Path, content: &str, edit: &Edit) -> Result<
     std::fs::write(abs_path, new_content).map_err(|e| e.to_string())
 }
 
-async fn run_evidence(cmd: &str, repo_root: &std::path::Path) -> (bool, String) {
+pub(crate) async fn run_evidence(cmd: &str, repo_root: &std::path::Path) -> (bool, String) {
     // CRITICAL: run under bash with `pipefail` so the exit code reflects the FIRST
     // failing command in a pipe, not the last. Without this, an evidence command
     // like `cargo test … | tail` returns tail's 0 and a FAILING test reads as
@@ -825,7 +896,7 @@ async fn run_evidence(cmd: &str, repo_root: &std::path::Path) -> (bool, String) 
     }
 }
 
-async fn commit(repo_root: &std::path::Path, file: &str, instruction: &str) -> Result<String, String> {
+pub(crate) async fn commit(repo_root: &std::path::Path, file: &str, instruction: &str) -> Result<String, String> {
     let add = tokio::process::Command::new("git")
         .args(["add", file])
         .current_dir(repo_root)
@@ -864,7 +935,7 @@ async fn commit(repo_root: &std::path::Path, file: &str, instruction: &str) -> R
     Ok(String::from_utf8_lossy(&rev.stdout).trim().to_string())
 }
 
-fn repo_root() -> std::path::PathBuf {
+pub(crate) fn repo_root() -> std::path::PathBuf {
     // Honor explicit override; else walk up from CWD to the nearest .git.
     if let Ok(p) = std::env::var("HEX_PROJECT_ROOT") {
         return std::path::PathBuf::from(p);

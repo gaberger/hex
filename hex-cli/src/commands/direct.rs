@@ -23,9 +23,16 @@ pub enum DoAction {
         /// Reasoning model override.
         #[arg(short, long)]
         model: Option<String>,
-        /// Max edit→verify attempts (default 3).
+        /// Max edit→verify attempts in --fast mode (default 3).
         #[arg(short, long)]
         attempts: Option<u32>,
+        /// Use the single-shot path (read → one edit → evidence) instead of the
+        /// default multi-step ReAct tool-use loop (ADR-2606071XXX).
+        #[arg(long)]
+        fast: bool,
+        /// Max ReAct loop steps before giving up (default 12). Ignored with --fast.
+        #[arg(long)]
+        max_steps: Option<u32>,
     },
     /// List recent direct runs (task, evidence verdict, commit).
     Runs,
@@ -36,15 +43,19 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
     nexus.ensure_running().await?;
 
     match action {
-        DoAction::Run { instruction, file, evidence, model, attempts } => {
-            let mut body = json!({ "instruction": instruction, "file": file, "evidence": evidence });
+        DoAction::Run { instruction, file, evidence, model, attempts, fast, max_steps } => {
+            let mut body = json!({ "instruction": instruction, "file": file, "evidence": evidence, "fast": fast });
             if let Some(m) = model {
                 body["model"] = json!(m);
             }
             if let Some(a) = attempts {
                 body["max_attempts"] = json!(a);
             }
-            println!("{} {}", "⬡ direct:".cyan().bold(), instruction);
+            if let Some(s) = max_steps {
+                body["max_steps"] = json!(s);
+            }
+            let mode = if fast { "single-shot" } else { "react loop" };
+            println!("{} {} {}", "⬡ direct:".cyan().bold(), instruction, format!("[{}]", mode).dimmed());
             println!("  {} {}  {} {}", "file".dimmed(), file, "evidence".dimmed(), evidence);
 
             let r = nexus.post_long("/api/direct/execute", &body).await?;
@@ -53,23 +64,26 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
             let ev = r.get("evidence_passed").and_then(|v| v.as_bool()).unwrap_or(false);
             let attempts_n = r.get("attempts").and_then(|v| v.as_u64()).unwrap_or(0);
             let committed = r.get("committed").and_then(|v| v.as_str());
+            let step_word = if fast { "attempt(s)" } else { "step(s)" };
             let ev_label = if ev { "pass".green() } else { "fail".red() };
 
             if ok {
                 println!(
-                    "{} evidence {} · {} attempt(s) · commit {}",
+                    "{} evidence {} · {} {} · commit {}",
                     "✓ done".green().bold(),
                     ev_label,
                     attempts_n,
+                    step_word,
                     committed.unwrap_or("—").yellow()
                 );
             } else {
                 let err = r.get("error").and_then(|v| v.as_str()).unwrap_or("unknown");
                 println!(
-                    "{} evidence {} · {} attempt(s)\n  {}",
+                    "{} evidence {} · {} {}\n  {}",
                     "✗ failed".red().bold(),
                     ev_label,
                     attempts_n,
+                    step_word,
                     err.dimmed()
                 );
                 if let Some(out) = r.get("evidence_output").and_then(|v| v.as_str()) {

@@ -291,10 +291,23 @@ pub async fn run(
 }
 
 /// A parsed tool_use block from an LLM turn.
-struct ToolUse {
-    id: String,
-    name: String,
-    input: Value,
+pub(crate) struct ToolUse {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) input: Value,
+}
+
+/// Parse a function-call's `arguments`, which providers emit inconsistently:
+/// OpenAI sends a JSON **string** that must be re-parsed; the hex inference
+/// fast-path (Ollama/gemma) sends a JSON **object** directly. Accept both — a
+/// string-typed-as-object meant tool inputs were silently dropped to `{}`,
+/// causing every dispatch to fail "missing required field" (found 2026-06-07).
+fn parse_tool_arguments(func: &Value) -> Value {
+    match func.get("arguments") {
+        Some(Value::String(s)) => serde_json::from_str(s).unwrap_or(Value::Object(Default::default())),
+        Some(v @ Value::Object(_)) => v.clone(),
+        _ => Value::Object(Default::default()),
+    }
 }
 
 /// Build the system prompt enumerating tools. Intentionally terse —
@@ -367,7 +380,7 @@ fn build_system_prompt(registry: &ToolRegistry) -> String {
 /// action but the LLM's prose around it has changed. The stripped
 /// fields are explicitly NOT consumed by any tool — they're commentary
 /// the model attaches voluntarily.
-fn strip_metadata_fields(input: &Value) -> Value {
+pub(crate) fn strip_metadata_fields(input: &Value) -> Value {
     const METADATA_FIELDS: &[&str] = &["rationale", "reason", "comment", "note"];
     if let Some(obj) = input.as_object() {
         let mut stripped = obj.clone();
@@ -380,7 +393,7 @@ fn strip_metadata_fields(input: &Value) -> Value {
     }
 }
 
-fn normalize_tool_input(_tool: &str, input: Value) -> Value {
+pub(crate) fn normalize_tool_input(_tool: &str, input: Value) -> Value {
     let mut obj = match input {
         Value::Object(m) => m,
         other => return other,
@@ -488,7 +501,7 @@ fn extract_text_mode_tool_uses(text: &str) -> Vec<ToolUse> {
 
 /// Reconstruct what to put in the assistant message's `content` field so
 /// the next iteration's tool_result blocks refer to the right tool_use ids.
-fn assistant_turn_content(text: &str, tool_uses: &[ToolUse]) -> Value {
+pub(crate) fn assistant_turn_content(text: &str, tool_uses: &[ToolUse]) -> Value {
     let mut blocks: Vec<Value> = Vec::new();
     if !text.is_empty() {
         blocks.push(json!({ "type": "text", "text": text }));
@@ -507,7 +520,7 @@ fn assistant_turn_content(text: &str, tool_uses: &[ToolUse]) -> Value {
 /// Try the Anthropic content-block shape, then the OpenAI tool_calls
 /// shape, then give up and return the body as plain text. Returns
 /// (assistant_text, tool_uses).
-fn extract_tool_uses(body: &Value) -> (String, Vec<ToolUse>) {
+pub(crate) fn extract_tool_uses(body: &Value) -> (String, Vec<ToolUse>) {
     let mut text = String::new();
     let mut uses: Vec<ToolUse> = Vec::new();
 
@@ -573,12 +586,7 @@ fn extract_tool_uses(body: &Value) -> (String, Vec<ToolUse>) {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string();
-            let args_str = func
-                .get("arguments")
-                .and_then(|v| v.as_str())
-                .unwrap_or("{}");
-            let input: Value =
-                serde_json::from_str(args_str).unwrap_or(Value::Object(Default::default()));
+            let input = parse_tool_arguments(&func);
             uses.push(ToolUse { id, name, input });
         }
         if !uses.is_empty() {
@@ -605,12 +613,7 @@ fn extract_tool_uses(body: &Value) -> (String, Vec<ToolUse>) {
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
                     .to_string();
-                let args_str = func
-                    .get("arguments")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let input: Value =
-                    serde_json::from_str(args_str).unwrap_or(Value::Null);
+                let input = parse_tool_arguments(&func);
                 uses.push(ToolUse { id, name, input });
             }
         }
@@ -677,6 +680,23 @@ mod tests {
         assert_eq!(uses[0].id, "call_abc");
         let path = uses[0].input.get("path").and_then(|v| v.as_str()).unwrap_or("");
         assert_eq!(path, "foo.tsx");
+    }
+
+    #[test]
+    fn extract_tool_calls_with_object_arguments() {
+        // The hex inference fast-path (Ollama/gemma) returns `arguments` as a
+        // JSON OBJECT, not a string. Must not drop the input to {} (2026-06-07).
+        let body = json!({
+            "content": "",
+            "tool_calls": [{
+                "id": "call_x",
+                "function": { "name": "repo_grep", "arguments": { "pattern": "STATUS:" } }
+            }]
+        });
+        let (_t, uses) = extract_tool_uses(&body);
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].name, "repo_grep");
+        assert_eq!(uses[0].input.get("pattern").and_then(|v| v.as_str()), Some("STATUS:"));
     }
 
     #[test]
