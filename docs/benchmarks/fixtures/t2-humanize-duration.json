@@ -16,8 +16,10 @@
   "status": "verified",
   "observed_baseline": {
     "qwen2.5-coder:14b": {
-      "react": { "evidence_pass": false, "failure_reason": "no_edit", "steps_to_edit": null, "steps": 18 },
-      "fast":  { "evidence_pass": true,  "attempts": 1, "commit": "49fc3b09" }
+      "measured_by": "hex bench agentic",
+      "date": "2026-06-07",
+      "react": { "evidence_pass": false, "did_edit": false, "failure_reason": "no_edit",  "wall_ms": 63940 },
+      "fast":  { "evidence_pass": true,  "did_edit": true,  "failure_reason": "pass",     "wall_ms": 61120, "first_landed_commit": "49fc3b09" }
     }
   }
 }
