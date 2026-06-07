@@ -114,7 +114,7 @@ impl Tool for EscalateToOperator {
         let elapsed = start.elapsed().as_millis() as u64;
 
         // Fire-and-forget Telegram notification if configured
-        let notifier = crate::adapters::telegram_notifier::TelegramNotifier::from_env();
+        let notifier = crate::telegram_notifier::TelegramNotifier::from_env();
         let telegram_message = format!(
             "🚨 hex escalation: {} | urgency={} priority={}",
             reason, urgency, priority

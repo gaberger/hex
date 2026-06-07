@@ -23,7 +23,7 @@ pub mod directive;
 pub mod errors;
 pub mod grammars;
 pub mod inference_strategy_builder;
-pub mod simple_agent;
+pub use hex_exec::simple_agent;
 pub mod repo_grounding;
 pub mod resource_observer;
 pub mod sop_executor;

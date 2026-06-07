@@ -3144,6 +3144,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "hex-exec"
+version = "26.5.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "hex-core",
+ "hex-git",
+ "hex-graph",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml 0.8.2",
+ "tracing",
+ "urlencoding",
+ "walkdir",
+]
+
+[[package]]
 name = "hex-git"
 version = "26.5.1"
 dependencies = [
@@ -3195,6 +3216,7 @@ dependencies = [
  "git2",
  "hex-analysis",
  "hex-core",
+ "hex-exec",
  "hex-git",
  "hex-graph",
  "hex-state",

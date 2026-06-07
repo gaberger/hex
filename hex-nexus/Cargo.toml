@@ -66,6 +66,8 @@ hex-graph = { path = "../hex-graph" }
 hex-analysis = { path = "../hex-analysis" }
 # Pure git plumbing (status/log/diff/blame/worktree) — ADR-2606071340 P1
 hex-git = { path = "../hex-git" }
+# Single-agent execution loop (direct_exec/react/workspace + tools) — ADR-2606071340 P1
+hex-exec = { path = "../hex-exec" }
 # SpacetimeDB state adapter (implements hex_core::ports::state) — ADR-2606071340 P1
 hex-state = { path = "../hex-state" }
 dirs = "5"

@@ -22,7 +22,7 @@ use serde_json::{json, Value};
 
 use crate::compress::{cap_str, compress_messages, estimate_tokens, CompressOpts};
 use crate::direct_exec::{self, DirectResult, DirectTask, Edit};
-use crate::orchestration::simple_agent::{
+use crate::simple_agent::{
     assistant_turn_content, extract_tool_uses, normalize_tool_input, strip_metadata_fields,
 };
 use crate::tools::ToolRegistry;

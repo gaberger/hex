@@ -689,7 +689,7 @@ pub(crate) async fn gather_context(task: &DirectTask) -> String {
 /// hexflo_memory table over the STDB HTTP SQL endpoint. Columns mapped by name
 /// (schema.elements). Returned unranked; callers rank by graph relevance
 /// (`hex_graph::context::rank_lessons`). Capped to keep the pull bounded.
-pub(crate) async fn fetch_lessons() -> Vec<(String, String)> {
+pub async fn fetch_lessons() -> Vec<(String, String)> {
     const CAP: usize = 200;
     let url = format!("{}/v1/database/hex/sql", stdb_host());
     let http = match reqwest::Client::builder().timeout(Duration::from_secs(3)).build() {
