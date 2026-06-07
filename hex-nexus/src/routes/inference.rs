@@ -264,6 +264,22 @@ pub async fn inference_complete(
                 // providers receive a bogus `Bearer <ref>` and 401. Env var
                 // first, then the SpacetimeDB vault (3s cap).
                 let mut ep = ep.clone();
+                // Honor the requested model on LOCAL providers. One Ollama/vLLM/
+                // llama-cpp endpoint serves any locally-available model, so the
+                // registered provider's model must not pin the request — otherwise
+                // `--model` (and `hex do --model`, the bench `--model`) is silently
+                // ignored on the tools path and every call runs the registered
+                // default. Diagnostic 2026-06-07: the bench `react` arm ran
+                // gemma4-12b regardless of --model because of this.
+                if let Some(ref m) = requested_model {
+                    let m = m.trim();
+                    if !m.is_empty()
+                        && m != ep.model
+                        && matches!(ep.provider.as_str(), "ollama" | "vllm" | "llama-cpp" | "llamacpp")
+                    {
+                        ep.model = m.to_string();
+                    }
+                }
                 if ep.requires_auth && !ep.secret_key.is_empty() && !ep.secret_key.starts_with("sk-") {
                     let key_ref = ep.secret_key.clone();
                     if let Ok(val) = std::env::var(&key_ref) {
