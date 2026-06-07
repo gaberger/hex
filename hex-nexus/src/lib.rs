@@ -316,16 +316,6 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             );
         let chat_client =
             adapters::spacetime_chat::SpacetimeChatClient::new(stdb_host.clone(), chat_db.clone());
-        // hex db (hexflo-coordination) — where persona_pool / persona_health live.
-        let hex_db_for_persona = std::env::var("HEX_STDB_DATABASE")
-            .unwrap_or_else(|_| hex_core::stdb_database_for_module("hexflo-coordination").to_string());
-        let persona_supervisor = Arc::new(
-            adapters::spacetime_persona::SpacetimePersonaSupervisor::new(
-                stdb_host.clone(),
-                hex_db_for_persona,
-            )
-            .with_chat_relay(chat_db.clone()),
-        );
         let agent_comm_client =
             adapters::spacetime_agent_comm::SpacetimeAgentCommAdapter::new(stdb_host, agent_comm_db);
 
@@ -383,23 +373,6 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             }
         }
 
-        // Executive auto-responder (CEO-DM → persona reply via inference).
-        // STDB-side persona supervisor (persona_pool / persona_health / persona_tick)
-        // keeps the team online; this responder writes the actual replies.
-        let responder_disabled = std::env::var("HEX_DISABLE_ORG_RESPONDER")
-            .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        if responder_disabled {
-            tracing::info!("org_responder disabled via HEX_DISABLE_ORG_RESPONDER");
-        } else if let Some(comm) = app_state.agent_comm_stdb.clone() {
-            crate::orchestration::org_responder::spawn(
-                comm,
-                persona_supervisor.clone(),
-                config.port,
-            );
-        }
-
         // ADR-2026-05-08-1126 P4 — integrator subscriber drives merge-team voting:
         // polls merge_request rows, dispatches validation-judge (cargo check),
         // tallies via the STDB reducer, runs `hex worktree merge` on approved.
@@ -424,32 +397,6 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 );
             }
 
-            // Auto-rollback observer (ADR-2026-05-23-0900 Path B item 7).
-            // Watches persona_health for failure spikes on operator-applied
-            // persona_prompt rows and fires persona_prompt_rollback when
-            // recent_failures >= threshold past the grace period. Disabled
-            // with HEX_AUTO_ROLLBACK=0; configurable via the other HEX_AUTO_
-            // ROLLBACK_* env vars enumerated in the module doc.
-            crate::orchestration::persona_prompt_observer::spawn(
-                stdb_host_for_integrator.clone(),
-                hex_db_for_integrator.clone(),
-            );
-
-            // Autonomous hive-improver (ADR-2026-05-23-0900 Path B item 5
-            // final form). Ticks every HEX_HIVE_IMPROVE_INTERVAL_SECS
-            // (default 3600), picks the worst persona by recent_failures
-            // (or stalest applied row), runs GROUND→DISPATCH→DEBATE→JUDGE
-            // →APPLY autonomously. Cooperative-hive neighborhood boost
-            // (item 6) included — adjacent peers prioritized on the next
-            // tick after a successful apply. Disabled via
-            // HEX_DISABLE_HIVE_IMPROVE=1. Composed with the rollback
-            // observer above: if the improver applies a bad rewrite,
-            // the rollback observer reverts it within ~60s.
-            crate::orchestration::hive_improver::spawn(
-                stdb_host_for_integrator.clone(),
-                hex_db_for_integrator.clone(),
-            );
-
             // Cost watchdog: polls cost_meter every N mins, escalates if burn exceeds threshold.
             // Disabled with HEX_DISABLE_COST_WATCHDOG=1.
             if std::env::var("HEX_DISABLE_COST_WATCHDOG").is_err() {
@@ -459,37 +406,6 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                     crate::orchestration::cost_watchdog::run(stdb_host_cost, hex_db_cost).await;
                 });
                 tracing::info!("cost_watchdog spawned — monitoring inference burn rate");
-            }
-
-            // ADR-[PHONE] — digital-twin loop. drafter turns
-
-            // ADR-2026-05-08-2300 — digital-twin loop. drafter turns
-            // commitments into proposed_action(file_write); twin reviews
-            // against operator memory; executor writes the file via
-            // SafeFileWriter and satisfies the commitment.
-            {
-                let drafter_repo_root = std::env::var("HEX_REPO_ROOT")
-                    .ok()
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|| {
-                        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-                    });
-                crate::orchestration::drafter::spawn(
-                    stdb_host_for_integrator.clone(),
-                    hex_db_for_integrator.clone(),
-                    config.port,
-                    drafter_repo_root.clone(),
-                );
-                crate::orchestration::twin_reviewer::spawn(
-                    stdb_host_for_integrator.clone(),
-                    hex_db_for_integrator.clone(),
-                    config.port,
-                );
-                crate::orchestration::action_executor::spawn(
-                    stdb_host_for_integrator.clone(),
-                    hex_db_for_integrator.clone(),
-                    drafter_repo_root,
-                );
             }
 
             // ADR → workplan auto-bridge (closes the self-managing loop)
@@ -949,17 +865,6 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
     {
         let streamer_state = state.clone();
         orchestration::brain_progress_streamer::BrainProgressStreamer::spawn(streamer_state);
-    }
-
-    // Drain orphaned swarm_task rows: workplan executor + legacy "hex brain
-    // enqueue" paths create swarm_task entries that nothing currently
-    // polls — they pile up unbounded in the Kanban Ready lane. Daemon
-    // marks unassigned pending swarm_tasks older than 24h as failed every
-    // 5min so the lane stays usable while the workplan executor migrates
-    // to inference_task.
-    {
-        let drainer_state = state.clone();
-        orchestration::swarm_task_drainer::SwarmTaskDrainer::spawn(drainer_state);
     }
 
     // Background sched self-improvement service (ADR-2026-04-10-2200):
