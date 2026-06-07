@@ -16,7 +16,7 @@ use serde_json::Value;
 use tracing;
 
 use crate::ports::remote_registry::IRemoteRegistryPort;
-use crate::remote::transport::{
+use crate::domain::transport::{
     AgentCapabilities, InferenceServer, InferenceServerStatus, RemoteAgent, RemoteAgentStatus,
     TransportError,
 };

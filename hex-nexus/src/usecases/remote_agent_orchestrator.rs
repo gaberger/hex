@@ -10,7 +10,7 @@ use crate::ports::agent_orchestrator::IAgentOrchestratorPort;
 use crate::ports::agent_transport::IAgentTransportPort;
 use crate::ports::inference_router::IInferenceRouterPort;
 use crate::ports::remote_registry::IRemoteRegistryPort;
-use crate::remote::transport::*;
+use crate::domain::transport::*;
 
 // Re-export FleetStatus from the port so downstream consumers find it here too.
 pub use crate::ports::agent_orchestrator::FleetStatus;

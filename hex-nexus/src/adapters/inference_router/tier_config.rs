@@ -4,7 +4,7 @@
 //! select the right server.  Defaults are baked in; per-project overrides
 //! come from `.hex/project.json` → `inference.tier_models`.
 
-use crate::remote::transport::{TaskTier, TransportError};
+use crate::domain::transport::{TaskTier, TransportError};
 
 /// Tier→model mapping loaded by the composition root.
 ///

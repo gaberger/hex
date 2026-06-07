@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use crate::ports::inference_router::FleetCapacity;
-use crate::remote::transport::*;
+use crate::domain::transport::*;
 
 /// Fleet-wide agent status summary.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

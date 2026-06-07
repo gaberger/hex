@@ -13,7 +13,7 @@ use russh::keys::key::PrivateKeyWithHashAlg;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::ports::ssh_tunnel::ISshTunnelPort;
-use crate::remote::transport::*;
+use crate::domain::transport::*;
 
 // ── Internal Types ──────────────────────────────────
 

@@ -30,6 +30,7 @@ pub mod daemon;
 pub mod git;
 pub mod embed;
 pub mod middleware;
+pub mod domain;
 pub mod orchestration;
 pub mod ports;
 pub mod tools;

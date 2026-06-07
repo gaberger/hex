@@ -12,7 +12,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use hex_core::ports::inference::{InferenceError, InferenceRequest, InferenceResponse};
 
-use crate::remote::transport::TaskTier;
+use crate::domain::transport::TaskTier;
 
 /// Result of a scaffolded dispatch attempt.
 #[derive(Debug)]

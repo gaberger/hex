@@ -10,7 +10,7 @@ use hex_core::ports::build::IBuildPort;
 use crate::ports::state::{
     IStatePort, WorkplanEventInput, WorkplanEventKind, WorkplanTaskUpdate,
 };
-use crate::remote::transport::TaskTier;
+use crate::domain::transport::TaskTier;
 use crate::state::{AgentInstruction, InstructionType, SharedState};
 
 /// In-process shadow store for workplan transition events
@@ -389,7 +389,7 @@ pub struct WorkplanTask {
     /// Explicit task tier override (ADR-2026-04-12-0202). When set in the workplan
     /// JSON, bypasses the automatic classifier. Values: "T1", "T2", "T2.5", "T3".
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tier: Option<crate::remote::transport::TaskTier>,
+    pub tier: Option<crate::domain::transport::TaskTier>,
     /// Task completion status — read from the workplan JSON so the dispatch loop
     /// can skip tasks that `hex plan reconcile --update` already marked done.
     /// Accepts canonical `"completed"`, legacy `"done"` (what reconcile.rs writes),
@@ -404,8 +404,8 @@ pub struct WorkplanTask {
 /// Priority: explicit `tier` field > agent role heuristic > layer + deps heuristic.
 /// Conservative: false negatives (T3 classified as T2) are cheap (scaffolding
 /// retries), false positives (T1 classified as T3) waste frontier budget.
-pub fn classify_task_tier(task: &WorkplanTask) -> crate::remote::transport::TaskTier {
-    use crate::remote::transport::TaskTier;
+pub fn classify_task_tier(task: &WorkplanTask) -> crate::domain::transport::TaskTier {
+    use crate::domain::transport::TaskTier;
 
     // Explicit tier in workplan takes precedence
     if let Some(tier) = task.tier {
@@ -2356,7 +2356,7 @@ mod workplan_schema_tests {
 
     #[test]
     fn routing_honors_strategy_hint_and_ui_design() {
-        use crate::remote::transport::TaskTier;
+        use crate::domain::transport::TaskTier;
         // strategy_hint=inference → T2.5 (was silently ignored before the fix)
         let t: WorkplanTask =
             serde_json::from_str(r#"{"id":"a","name":"x","strategy_hint":"inference"}"#).unwrap();

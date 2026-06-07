@@ -9,7 +9,7 @@ use hex_core::QuantizationLevel;
 use crate::adapters::spacetime_inference::InferenceProviderRow;
 use crate::complexity::{score_complexity, ComplexityLevel};
 use crate::rate_limiter::RateLimitManager;
-use crate::remote::transport::TaskTier;
+use crate::domain::transport::TaskTier;
 use crate::task_type_classifier::classify_task_type;
 
 /// Policy for quantization selection, read from agent YAML `model.quantization`.

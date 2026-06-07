@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use crate::ports::inference_router::{FleetCapacity, IInferenceRouterPort};
 use crate::ports::remote_registry::IRemoteRegistryPort;
 use crate::ports::agent_transport::IAgentTransportPort;
-use crate::remote::transport::{
+use crate::domain::transport::{
     CodeGenRequest, CodeGenResult, InferenceServer, InferenceServerStatus, TaskTier,
     TransportError, TokenUsage,
 };
