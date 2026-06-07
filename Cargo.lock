@@ -3067,6 +3067,7 @@ dependencies = [
  "futures-util",
  "gethostname 0.4.3",
  "hex-core",
+ "hex-graph",
  "humantime",
  "libc",
  "pulldown-cmark",
