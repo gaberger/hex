@@ -19,6 +19,9 @@ async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 futures = "0.3"
+# `sync` only — broadcast channel types appear in the state-port contract
+# (ADR-2606071340 P1). No async runtime is pulled into hex-core.
+tokio = { version = "1", features = ["sync"] }
 
 [dev-dependencies]
 serde_yaml = "0.9"

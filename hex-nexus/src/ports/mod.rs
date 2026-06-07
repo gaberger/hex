@@ -2,7 +2,9 @@ pub mod events;
 pub mod live_context;
 pub mod secret_grant;
 pub mod session;
-pub mod state;
+// Relocated to hex-core (ADR-2606071340 P1); re-exported so `crate::ports::state::*`
+// consumers (41 of them) are unchanged.
+pub use hex_core::ports::state;
 pub mod ssh_tunnel;
 pub mod agent_transport;
 pub mod remote_registry;
