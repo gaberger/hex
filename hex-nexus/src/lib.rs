@@ -523,7 +523,13 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                         let owner = format!("nexus-{}", std::process::id());
                         let mut seeded = 0;
                         let mut skipped = 0;
-                        for role in POOL_ROLES {
+                        // ADR-2606071340 P0: the single-agent epoch does NOT auto-seed
+                        // the worker-pool roster — these desired=1 rows make the
+                        // supervisor spawn a hex-agent fleet (659 procs flooded the
+                        // machine 2026-06-07). Gated off by default; opt in explicitly
+                        // with HEX_SUPERVISOR_AUTOSEED=1. (Mirrors the supervisor_subscriber gate.)
+                        let autoseed = std::env::var("HEX_SUPERVISOR_AUTOSEED").as_deref() == Ok("1");
+                        for role in POOL_ROLES.iter().filter(|_| autoseed) {
                             let id = format!("{}-default", role);
                             let url = format!(
                                 "{}/v1/database/{}/call/worker_pool_intent_set",
@@ -846,9 +852,20 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
     // alerts. The supervisor's "brain" lives in the scheduled reducer
     // inside the hexflo-coordination WASM module; this subscriber is the
     // hands.
-    {
+    // ADR-2606071340 P0: the worker-pool supervisor is DORMANT in the single-agent
+    // epoch. The single agent runs in-process (hex-exec); there is no pool fleet to
+    // supervise, and running this subscriber drains the STDB spawn_request backlog
+    // into a hex-agent process flood (659+ procs observed 2026-06-07). The "brain"
+    // (scheduled reducer in the WASM module) may still emit events, but with no
+    // subscriber polling them they never become process spawns. Opt back into the
+    // multi-agent worker-pool supervisor with HEX_SUPERVISOR_AUTOSEED=1.
+    if std::env::var("HEX_SUPERVISOR_AUTOSEED").as_deref() == Ok("1") {
         let sup_state = state.clone();
         orchestration::supervisor_subscriber::SupervisorSubscriber::spawn(sup_state);
+    } else {
+        tracing::info!(
+            "supervisor subscriber DORMANT (single-agent epoch); set HEX_SUPERVISOR_AUTOSEED=1 to enable the multi-agent worker-pool supervisor"
+        );
     }
 
     // Brain-dispatch auto-reconciler: every 15s, walks Completed

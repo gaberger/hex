@@ -61,25 +61,32 @@ impl SupervisorSubscriber {
             }
         }
 
-        // Auto-seed pool placeholders from the embedded persona YAML registry.
-        // Each persona gets a worker_pool_intent row with desired=0, paused=true
-        // so it appears in `hex pool list` (discoverable) but doesn't spawn any
-        // workers until the operator opts in via `hex pool resume <id>` and
-        // a desired_count bump. Idempotent — existing pool ids are skipped, so
-        // operator-customized pools are never overwritten.
-        if let Some(port) = &self.state.state_port {
-            if let Err(e) = self.seed_persona_pools(port.as_ref()).await {
-                warn!("auto-seed persona pools skipped: {}", e);
+        // ADR-2606071340 P0 / ADR-2606061359: the single-agent epoch does NOT
+        // auto-seed the multi-agent persona/pool roster. The embedded-YAML
+        // auto-seed created worker_pool_intent rows (claimed desired=0/paused,
+        // but actually seeded desired=1/unpaused) which the supervisor then
+        // spawned — 659 hex-agent processes flooded the machine (2026-06-07), a
+        // live repro of the org-sim fragility the single-agent pivot retired.
+        // HEX_SEED_PAUSED did not prevent it. The supervisor MECHANISM below
+        // (orphan reconcile, spawn_request handling, crash-loop) still runs;
+        // only the org-sim roster auto-seed is gated. Opt back into the
+        // multi-agent roster explicitly with HEX_SUPERVISOR_AUTOSEED=1.
+        if std::env::var("HEX_SUPERVISOR_AUTOSEED").as_deref() == Ok("1") {
+            // Auto-seed pool placeholders from the embedded persona YAML registry.
+            if let Some(port) = &self.state.state_port {
+                if let Err(e) = self.seed_persona_pools(port.as_ref()).await {
+                    warn!("auto-seed persona pools skipped: {}", e);
+                }
             }
-        }
-
-        // Auto-seed persona_prompt rows from `persona_prompt_seeds` per
-        // ADR-2026-05-23-0900 Phase 3. Idempotent on byte-equality —
-        // already-seeded rows are no-ops. Failures are non-fatal: the SOP
-        // read path falls back to the same in-process seed function, so
-        // the system is functional whether the STDB call succeeds or not.
-        if let Err(e) = self.seed_persona_prompts().await {
-            warn!("auto-seed persona_prompt skipped: {}", e);
+            // Auto-seed persona_prompt rows (ADR-2026-05-23-0900 Phase 3).
+            if let Err(e) = self.seed_persona_prompts().await {
+                warn!("auto-seed persona_prompt skipped: {}", e);
+            }
+        } else {
+            info!(
+                "supervisor: org-sim roster auto-seed DISABLED (single-agent epoch); \
+                 supervision mechanism active. Set HEX_SUPERVISOR_AUTOSEED=1 to enable the multi-agent roster."
+            );
         }
 
         loop {
