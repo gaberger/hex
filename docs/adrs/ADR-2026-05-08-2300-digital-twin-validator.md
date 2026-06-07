@@ -1,6 +1,7 @@
 # ADR-2026-05-08-2300 — Digital-Twin Auto-Validator
 
-Status: **Accepted** (implementation in flight)
+Status: Superseded
+Superseded-By: ADR-2606061359
 Date: 2026-05-08
 Related: ADR-2026-05-08-2200 (resource supervisor), ADR-2026-05-08-1126 (merge gate), feedback_no_persona_fabrication, feedback_no_asking_for_permission, feedback_homeostasis
 

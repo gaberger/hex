@@ -1,6 +1,7 @@
 # ADR-2026-05-08-2400 — Personas as Commitment-Creators (Not Artifact-Producers)
 
-Status: **Accepted**
+Status: Superseded
+Superseded-By: ADR-2606061359
 Date: 2026-05-08
 Supersedes: nothing (refines ADR-2026-03-24-0130 Declarative Swarm Behavior, ADR-2026-05-08-2300 Digital Twin)
 Related: paradigm-debate-judge-verdict (`docs/specs/paradigm-debate-judge-verdict.md`), ADR-2026-05-08-1126 (merge gate), ADR-2026-05-08-2300 (digital twin), feedback_no_persona_fabrication

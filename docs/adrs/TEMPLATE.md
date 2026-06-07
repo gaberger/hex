@@ -2,6 +2,7 @@
 
 **Status:** Proposed
 **Date:** {YYYY-MM-DD}
+**Epoch:** {current design era — e.g. single-agent. Omit to derive from Date. See ADR-2606071243}
 **Drivers:** {What triggered this decision — a bug, a requirement, a constraint}
 **Supersedes:** {ADR-YYMMDDHHMM if replacing an earlier decision}
 **Superseded-By:** {ADR-YYMMDDHHMM if a later decision replaces this one}

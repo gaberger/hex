@@ -1,6 +1,7 @@
 # ADR-2026-04-14-2300: Brain Auto-Cleanup of Stale Swarms
 
-**Status:** Accepted
+**Status:** Superseded
+**Superseded-By:** ADR-2606061359
 **Date:** 2026-04-14
 **Implemented:** 2026-04-14 (`hex-cli/src/commands/brain.rs::check_stale_swarms` + `autofix_stale_swarm`)
 **Drivers:** Brain daemon auto-fixes stale binary + reconciles workplans, but swarms stay active forever even after their workplan completes. 9+ stale swarms accumulated unnoticed. Brain must own swarm lifecycle too.
