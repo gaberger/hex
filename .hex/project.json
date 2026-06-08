@@ -14,8 +14,8 @@
     "sop_via_router": true,
     "react_model": "devstral-small-2:24b",
     "react_models": [
-      "qwen2.5-coder:14b",
-      "devstral-small-2:24b"
+      "devstral-small-2:24b",
+      "claude-code"
     ]
   },
   "auto_repair": {

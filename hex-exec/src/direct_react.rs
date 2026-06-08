@@ -640,8 +640,15 @@ pub async fn react_execute_best_of_n(task: DirectTask) -> (DirectResult, u32, St
     let mut total_steps = 0u32;
     for model in candidates {
         let mut t = task.clone();
-        t.model = Some(model);
-        let (result, steps, used) = react_execute(t).await;
+        t.model = Some(model.clone());
+        // A `claude-code` candidate is the frontier fallback: delegate the whole
+        // task to `claude -p` (an agent, not a per-step completion) instead of the
+        // local ReAct tool-loop. Same evidence gate + worktree isolation.
+        let (result, steps, used) = if is_claude_model(&model) {
+            claude_execute(t).await
+        } else {
+            react_execute(t).await
+        };
         total_steps += steps;
         if result.ok {
             return (result, total_steps, used);
@@ -650,4 +657,113 @@ pub async fn react_execute_best_of_n(task: DirectTask) -> (DirectResult, u32, St
     }
     let (model, result) = select_best_of_n(outcomes);
     (result, total_steps, model)
+}
+
+/// A candidate that should be served by `claude -p` rather than the local loop.
+pub(crate) fn is_claude_model(m: &str) -> bool {
+    let m = m.to_ascii_lowercase();
+    m == "claude-code" || m == "claude" || m.starts_with("claude-code")
+}
+
+/// Frontier fallback: delegate the whole task to `claude -p` inside an isolated
+/// worktree, then gate the result with the SAME evidence command + commit as the
+/// ReAct path. `claude -p` is itself an agent, so it slots in as a task delegate
+/// (no per-step tool protocol). Uses the operator's logged-in `claude` CLI — no
+/// API key, no VRAM ceiling. Mirrors `react_execute`'s workspace lifecycle.
+pub async fn claude_execute(task: DirectTask) -> (DirectResult, u32, String) {
+    let isolate = direct_exec::want_isolation(&task);
+    let slug = crate::direct_workspace::next_run_slug();
+    let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate) {
+        Ok(w) => w,
+        Err(e) => return (DirectResult::err(format!("workspace: {e}")), 0, "claude-code".to_string()),
+    };
+    if let Err(e) = workspace.assert_off_operator_tree() {
+        workspace.finish(false);
+        return (DirectResult::err(e), 0, "claude-code".to_string());
+    }
+    let repo_root = workspace.workdir().to_path_buf();
+    let factory = workspace.is_isolated();
+    let out = claude_attempts(&task, &repo_root, factory).await;
+    workspace.finish(out.0.ok);
+    out
+}
+
+async fn claude_attempts(
+    task: &DirectTask,
+    repo_root: &std::path::Path,
+    factory: bool,
+) -> (DirectResult, u32, String) {
+    let model = "claude-code".to_string();
+    let mut result = DirectResult {
+        ok: false,
+        attempts: 0,
+        edit_applied: false,
+        committed: None,
+        evidence_passed: false,
+        evidence_output: String::new(),
+        error: None,
+    };
+    let abs_path = repo_root.join(&task.file);
+    let snapshot = std::fs::read_to_string(&abs_path).unwrap_or_default();
+
+    let binary = std::env::var("HEX_CLAUDE_BINARY").unwrap_or_else(|_| "claude".to_string());
+    let prompt = format!(
+        "Task: {}\n\nEdit ONLY the file `{}` in this repository so that the shell command \
+         `{}` exits 0. Make the change directly to the file now. Do not ask questions and do \
+         not explain — just apply the edit.",
+        task.instruction, task.file, task.evidence
+    );
+    let timeout = Duration::from_secs(
+        std::env::var("CLAUDE_TIMEOUT_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(300),
+    );
+
+    let spawn = tokio::process::Command::new(&binary)
+        .arg("-p")
+        .arg("--dangerously-skip-permissions")
+        .arg(&prompt)
+        .current_dir(repo_root)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
+
+    match tokio::time::timeout(timeout, spawn).await {
+        Ok(Ok(_out)) => {} // claude finished (or errored) — the evidence gate decides
+        Ok(Err(e)) => {
+            result.error = Some(format!("claude spawn failed ({}): {}", binary, e));
+            return (result, 1, model);
+        }
+        Err(_) => {
+            let _ = std::fs::write(&abs_path, &snapshot);
+            result.error = Some(format!("claude -p timed out after {}s", timeout.as_secs()));
+            return (result, 1, model);
+        }
+    }
+
+    result.edit_applied = std::fs::read_to_string(&abs_path).map(|c| c != snapshot).unwrap_or(false);
+    let (passed, output) = direct_exec::run_evidence(&task.evidence, repo_root).await;
+    let vacuous = passed && direct_exec::evidence_is_vacuous(&output);
+    result.evidence_output = output.chars().take(4000).collect();
+    result.attempts = 1;
+
+    if passed && !vacuous {
+        match direct_exec::commit(repo_root, &task.file, &task.instruction, factory).await {
+            Ok(hash) => {
+                result.ok = true;
+                result.evidence_passed = true;
+                result.committed = Some(hash);
+            }
+            Err(e) => {
+                let _ = std::fs::write(&abs_path, &snapshot);
+                result.error = Some(format!("commit: {}", e));
+            }
+        }
+    } else {
+        let _ = std::fs::write(&abs_path, &snapshot);
+        result.error = Some(if vacuous {
+            "claude: evidence passed vacuously (0 tests) — reverted".to_string()
+        } else {
+            "claude: evidence did not pass — reverted".to_string()
+        });
+    }
+    (result, 1, model)
 }

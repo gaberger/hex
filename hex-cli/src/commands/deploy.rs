@@ -75,6 +75,10 @@ pub async fn run(no_restart: bool, check: bool) -> Result<()> {
 
     // ── 2. install the CLI to BIN_DIR ──
     std::fs::create_dir_all(&bin_dir)?;
+    // Unlink the dest first so we can replace the binary even when the RUNNING
+    // process IS the installed `hex` (Linux pins the old inode for the live
+    // process; a copy-over-busy would fail with ETXTBSY / "Text file busy").
+    let _ = std::fs::remove_file(&installed);
     std::fs::copy(&built, &installed)?;
     println!("{} installed {} → {}", "⬡".cyan(), built.display(), installed.display());
 
