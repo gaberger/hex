@@ -568,3 +568,30 @@ pub fn candidate_models(explicit: Option<&str>, configured: &[String], single: O
     }
     vec!["devstral-small-2:24b".to_string(), "qwen2.5-coder:14b".to_string()]
 }
+/// Extract candidate model list from a parsed config JSON value
+/// and delegate ordering/precedence to candidate_models.
+pub fn react_models_from_config_value(cfg: &serde_json::Value, explicit: Option<&str>) -> Vec<String> {
+    // Step (a): read configured = cfg["inference"]["react_models"] as array of strings
+    let mut configured = Vec::<String>::new();
+    if let Some(inference) = cfg.get("inference") {
+        if let Some(react_models) = inference.get("react_models") {
+            if let Some(arr) = react_models.as_array() {
+                for item in arr {
+                    if let Some(s) = item.as_str() {
+                        configured.push(s.to_string());
+                    }
+                }
+            }
+        }
+    }
+    
+    // Step (b): read single = cfg["inference"]["react_model"] as Option<&str>
+    let single = if let Some(inference) = cfg.get("inference") {
+        inference.get("react_model").and_then(|v| v.as_str())
+    } else {
+        None
+    };
+    
+    // Step (c): return candidate_models(explicit, &configured, single)
+    candidate_models(explicit, &configured, single)
+}
