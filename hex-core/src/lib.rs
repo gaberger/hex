@@ -20,6 +20,7 @@ pub mod inference_task;
 pub mod ports;
 pub mod quantization;
 pub mod research_finding;
+pub mod resource_governor;
 pub mod rules;
 pub mod telemetry;
 pub mod types;
