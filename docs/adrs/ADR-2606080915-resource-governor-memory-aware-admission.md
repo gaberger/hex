@@ -1,6 +1,6 @@
 # ADR-2606080915: Resource governor — memory-aware admission control + model residency
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-08
 **Epoch:** hybrid-inference
 **Drivers:** A measured OOM. Loading qwen3-coder-next Q2_K (29 GB) to benchmark it, *while* the
