@@ -169,13 +169,18 @@ panel_gpu() {
   if [ -z "$GPU_DEV" ]; then
     lines="  ${c_dim}(no amdgpu sysfs surface found)${C_RESET}"
   else
-    local busy pwr vu vt edge vram_pct
+    local busy pwr vu vt gu gt edge vram_pct gtt_pct
     busy=$(cat "$GPU_DEV/gpu_busy_percent" 2>/dev/null || echo '?')
     pwr='?'; [ -n "$GPU_PWR" ] && pwr="$(microw_to_w < "$GPU_PWR")"
     vu='?'; vt='?'
     if [ -r "$GPU_DEV/mem_info_vram_used" ]; then
       vu="$(bytes_to_gb < "$GPU_DEV/mem_info_vram_used")"
       vt="$(bytes_to_gb < "$GPU_DEV/mem_info_vram_total")"
+    fi
+    gu='?'; gt='?'
+    if [ -r "$GPU_DEV/mem_info_gtt_used" ]; then
+      gu="$(bytes_to_gb < "$GPU_DEV/mem_info_gtt_used")"
+      gt="$(bytes_to_gb < "$GPU_DEV/mem_info_gtt_total")"
     fi
     edge=$(hwmon_temp amdgpu edge)
     local busy_col pwr_col edge_col
@@ -187,12 +192,19 @@ panel_gpu() {
     else
       vram_pct=0
     fi
+    if [ "$gu" != "?" ] && [ "$gt" != "?" ]; then
+      gtt_pct=$(awk -v u="$gu" -v t="$gt" 'BEGIN{if(t+0==0)print 0;else printf "%.0f", u/t*100}')
+    else
+      gtt_pct=0
+    fi
     lines+="$(printf 'busy    %s%5s%%%s  %s' \
               "$busy_col" "$busy" "$C_RESET" "$(bar "$busy" 100 18)")"$'\n'
     lines+="$(printf '%-7s %s%5s W%s  %s' \
               "$GPU_PWR_LABEL" "$pwr_col" "$pwr" "$C_RESET" "$(bar "$pwr" 120 18)")"$'\n'
     lines+="$(printf 'vram   %s%4s/%s GB%s %s' \
               "$c_cyan" "$vu" "$vt" "$C_RESET" "$(bar "$vram_pct" 100 14)")"$'\n'
+    lines+="$(printf 'gtt    %s%4s/%s GB%s %s' \
+              "$c_mag" "$gu" "$gt" "$C_RESET" "$(bar "$gtt_pct" 100 14)")"$'\n'
     lines+="$(printf 'edge   %s%5s°C%s   %s' \
               "$edge_col" "$edge" "$C_RESET" "$(bar "$edge" 100 18)")"
   fi

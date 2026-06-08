@@ -73,7 +73,13 @@ render_once() {
       vram_u="$(bytes_to_gb < "$GPU_DEV/mem_info_vram_used")GB"
       vram_t="$(bytes_to_gb < "$GPU_DEV/mem_info_vram_total")GB"
     fi
-    printf '  busy=%s%%   power=%s   vram=%s / %s\n' "$busy" "$pwr" "$vram_u" "$vram_t"
+    gtt_u='?' gtt_t='?'
+    if [ -r "$GPU_DEV/mem_info_gtt_used" ]; then
+      gtt_u="$(bytes_to_gb < "$GPU_DEV/mem_info_gtt_used")GB"
+      gtt_t="$(bytes_to_gb < "$GPU_DEV/mem_info_gtt_total")GB"
+    fi
+    printf '  busy=%s%%   power=%s   vram=%s / %s   gtt=%s / %s\n' \
+      "$busy" "$pwr" "$vram_u" "$vram_t" "$gtt_u" "$gtt_t"
   else
     printf '  (no amdgpu sysfs surface found)\n'
   fi
