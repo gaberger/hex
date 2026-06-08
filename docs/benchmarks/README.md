@@ -47,13 +47,26 @@ Per `(model × tier × arm × graph)`:
 Every run is reported as **gap-to-frontier** (Claude via the ⑤ wire) — a local model is "T-N capable"
 when its gap on T-N fixtures is ~0, not when its absolute score is high.
 
+## The grid (react, n=5) — why this corpus exists
+
+| Model | humanize | rpn | csv | total |
+|---|---|---|---|---|
+| devstral-small-2:24b | 5/5 | 1/5 | 5/5 | **11/15** |
+| qwen2.5-coder:14b | 3/5 | 4/5 | 0/5 | 7/15 |
+| gemma3:12b | 0/5 | 2/5 | 4/5 | 6/15 |
+| gpt-oss:20b | 2/5 | 1/5 | 0/5 | **3/15** |
+
+**Headline:** `gpt-oss:20b` tops external coding leaderboards yet is *last* here — and the
+ranking reorders on every fixture (no stable best). External scores do not predict
+agentic-loop performance; this corpus is the only thing that does (for hex).
+
 ## Status
 
 | Fixture | Tier | Probes | Status |
 |---|---|---|---|
-| `t2-humanize-duration` | T2 | convergence + evidence gate | **verified** — 3 models measured (devstral 5/5, qwen 3/5, gemma3 0/5) |
-| `t25-rpn-eval` | T2.5 | harder: parse+stack+error-cases | **verified** — qwen 4/5, gemma3 2/5, devstral 1/5 (react) |
-| `t25-csv-parse` | T2.5 | harder: string state-machine + quote-escaping | **verified** — qwen 0/2 smoke (max_steps) — the hardest so far |
+| `t2-humanize-duration` | T2 | convergence + evidence gate | **verified** — 4 models (devstral 5/5 · qwen 3/5 · gpt-oss 2/5 · gemma3 0/5) |
+| `t25-rpn-eval` | T2.5 | harder: parse+stack+error-cases | **verified** — qwen 4/5 · gemma3 2/5 · devstral 1/5 · gpt-oss 1/5 |
+| `t25-csv-parse` | T2.5 | harder: string state-machine + quote-escaping | **verified** — devstral 5/5 · gemma3 4/5 · qwen 0/5 · gpt-oss 0/5 |
 | `t1-add-derive` | T1 | mechanical transform | draft (needs `[workspace]` standalone like rpn) |
 | `t25-trace-consumer` | T2.5 | graph-required; cross-module rename | draft — NOT single-file-solvable (executor edits one file); aspirational |
 

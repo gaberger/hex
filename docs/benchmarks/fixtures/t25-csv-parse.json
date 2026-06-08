@@ -24,18 +24,82 @@
   "status": "verified",
   "_verification": "oracle RED->GREEN confirmed 2026-06-07 (stub fails 6 tests; reference state-machine impl passes 6/6; round-tripped from this JSON). Standalone [workspace] crate. Tests a DIFFERENT skill than t25-rpn-eval (string state-machine + quote-escaping, not stack eval).",
   "observed_baseline": {
-    "_finding": "react n=5. Ranking REVERSES AGAIN: devstral 5/5 > gemma3 4/5 > qwen 0/5 — the opposite of rpn (qwen 4/5 > devstral 1/5). qwen (coder) cannot do the quote-escaping state machine; devstral (which lost rpn) aces it. Each of the 3 fixtures has a DIFFERENT winner — no stable best local model.",
+    "_finding": "react n=5. Ranking REVERSES AGAIN: devstral 5/5 > gemma3 4/5 > qwen 0/5 \u2014 the opposite of rpn (qwen 4/5 > devstral 1/5). qwen (coder) cannot do the quote-escaping state machine; devstral (which lost rpn) aces it. Each of the 3 fixtures has a DIFFERENT winner \u2014 no stable best local model.",
     "devstral-small-2:24b": {
-      "measured_by": "hex bench agentic (post b6964195)", "date": "2026-06-07",
-      "react": { "valid": true, "pass_rate": "5/5", "samples": 5, "outcomes": ["pass","pass","pass","pass","pass"], "wall_ms_range": [11966, 41095] }
+      "measured_by": "hex bench agentic (post b6964195)",
+      "date": "2026-06-07",
+      "react": {
+        "valid": true,
+        "pass_rate": "5/5",
+        "samples": 5,
+        "outcomes": [
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass"
+        ],
+        "wall_ms_range": [
+          11966,
+          41095
+        ]
+      }
     },
     "gemma3:12b": {
-      "measured_by": "hex bench agentic (post b6964195)", "date": "2026-06-07",
-      "react": { "valid": true, "pass_rate": "4/5", "samples": 5, "outcomes": ["pass","pass","pass","pass","no_edit"], "wall_ms_range": [63670, 308473] }
+      "measured_by": "hex bench agentic (post b6964195)",
+      "date": "2026-06-07",
+      "react": {
+        "valid": true,
+        "pass_rate": "4/5",
+        "samples": 5,
+        "outcomes": [
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "no_edit"
+        ],
+        "wall_ms_range": [
+          63670,
+          308473
+        ]
+      }
     },
     "qwen2.5-coder:14b": {
-      "measured_by": "hex bench agentic (post b6964195)", "date": "2026-06-07",
-      "react": { "valid": true, "pass_rate": "0/5", "samples": 5, "outcomes": ["no_edit","max_steps","no_edit","no_edit","no_edit"], "wall_ms_range": [8815, 117343] }
+      "measured_by": "hex bench agentic (post b6964195)",
+      "date": "2026-06-07",
+      "react": {
+        "valid": true,
+        "pass_rate": "0/5",
+        "samples": 5,
+        "outcomes": [
+          "no_edit",
+          "max_steps",
+          "no_edit",
+          "no_edit",
+          "no_edit"
+        ],
+        "wall_ms_range": [
+          8815,
+          117343
+        ]
+      }
+    },
+    "gpt-oss:20b": {
+      "measured_by": "hex bench agentic (post b6964195)",
+      "date": "2026-06-08",
+      "react": {
+        "valid": true,
+        "pass_rate": "0/5",
+        "samples": 5,
+        "outcomes": [
+          "max_steps",
+          "max_steps",
+          "no_edit",
+          "max_steps",
+          "no_edit"
+        ]
+      }
     }
   }
 }

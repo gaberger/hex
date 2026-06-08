@@ -1,7 +1,10 @@
 {
   "id": "t25-rpn-eval",
   "tier": "T2.5",
-  "axis_focus": ["evidence_gated_success", "react_convergence"],
+  "axis_focus": [
+    "evidence_gated_success",
+    "react_convergence"
+  ],
   "instruction": "Implement `pub fn eval(expr: &str) -> Result<i64, String>` in this file, replacing the stub. It evaluates a space-separated reverse-Polish-notation (postfix) integer expression. Each token is either an integer or one of the operators + - * / which pop two operands (first popped is b, second is a) and compute a OP b, pushing the result. Return Ok(value) when exactly one value remains on the stack at the end. Return Err(...) on any of: division by zero; an operator applied with fewer than two operands available; a token that is neither an operator nor a parseable integer; or a final stack whose length is not exactly 1. Examples: eval(\"3 4 +\")=Ok(7), eval(\"5 1 2 + 4 * + 3 -\")=Ok(14), eval(\"42\")=Ok(42), eval(\"10 2 /\")=Ok(5), eval(\"1 0 /\")=Err, eval(\"1 +\")=Err, eval(\"1 2 x\")=Err. Edit only this file.",
   "target_file": "bench-sandbox/src/lib.rs",
   "oracle": {
@@ -14,23 +17,90 @@
     "command": "cargo test --manifest-path bench-sandbox/Cargo.toml --test rpn"
   },
   "graph_context_required": false,
-  "arms": ["react", "fast"],
+  "arms": [
+    "react",
+    "fast"
+  ],
   "status": "verified",
-  "_verification": "oracle RED→GREEN confirmed 2026-06-07 (stub fails 7 tests; reference stack impl passes 7/7). Standalone [workspace] crate so it never collides with the hex workspace.",
+  "_verification": "oracle RED\u2192GREEN confirmed 2026-06-07 (stub fails 7 tests; reference stack impl passes 7/7). Standalone [workspace] crate so it never collides with the hex workspace.",
   "observed_baseline": {
-    "_finding": "On this HARDER task the model ranking REVERSES vs t2-humanize-duration: qwen (coder) 4/5 > gemma3 2/5 > devstral 1/5. Devstral DRIVES the loop (all edit=y) but can't write the harder algorithm — all 4 failures were max_steps (kept editing, evidence kept failing). qwen produces correct code, faster. Loop-driving ≠ codegen; the one-liner only tested the former. This flipped the local-default choice from devstral → qwen2.5-coder:14b.",
+    "_finding": "On this HARDER task the model ranking REVERSES vs t2-humanize-duration: qwen (coder) 4/5 > gemma3 2/5 > devstral 1/5. Devstral DRIVES the loop (all edit=y) but can't write the harder algorithm \u2014 all 4 failures were max_steps (kept editing, evidence kept failing). qwen produces correct code, faster. Loop-driving \u2260 codegen; the one-liner only tested the former. This flipped the local-default choice from devstral \u2192 qwen2.5-coder:14b.",
     "qwen2.5-coder:14b": {
-      "measured_by": "hex bench agentic (post b6964195)", "date": "2026-06-07",
-      "react": { "valid": true, "pass_rate": "4/5", "samples": 5, "outcomes": ["pass","pass","pass","no_edit","pass"], "wall_ms_range": [18170, 29447] }
+      "measured_by": "hex bench agentic (post b6964195)",
+      "date": "2026-06-07",
+      "react": {
+        "valid": true,
+        "pass_rate": "4/5",
+        "samples": 5,
+        "outcomes": [
+          "pass",
+          "pass",
+          "pass",
+          "no_edit",
+          "pass"
+        ],
+        "wall_ms_range": [
+          18170,
+          29447
+        ]
+      }
     },
     "gemma3:12b": {
-      "measured_by": "hex bench agentic (post b6964195)", "date": "2026-06-07",
-      "react": { "valid": true, "pass_rate": "2/5", "samples": 5, "outcomes": ["pass","no_edit","pass","no_edit","no_edit"], "wall_ms_range": [43697, 81498] }
+      "measured_by": "hex bench agentic (post b6964195)",
+      "date": "2026-06-07",
+      "react": {
+        "valid": true,
+        "pass_rate": "2/5",
+        "samples": 5,
+        "outcomes": [
+          "pass",
+          "no_edit",
+          "pass",
+          "no_edit",
+          "no_edit"
+        ],
+        "wall_ms_range": [
+          43697,
+          81498
+        ]
+      }
     },
     "devstral-small-2:24b": {
-      "measured_by": "hex bench agentic (post b6964195)", "date": "2026-06-07",
-      "note": "1/5 — 4 failures all max_steps (edited but couldn't get correct code in budget). Drives the loop, weak on hard codegen.",
-      "react": { "valid": true, "pass_rate": "1/5", "samples": 5, "outcomes": ["pass","max_steps","max_steps","max_steps","max_steps"], "wall_ms_range": [51457, 93824] }
+      "measured_by": "hex bench agentic (post b6964195)",
+      "date": "2026-06-07",
+      "note": "1/5 \u2014 4 failures all max_steps (edited but couldn't get correct code in budget). Drives the loop, weak on hard codegen.",
+      "react": {
+        "valid": true,
+        "pass_rate": "1/5",
+        "samples": 5,
+        "outcomes": [
+          "pass",
+          "max_steps",
+          "max_steps",
+          "max_steps",
+          "max_steps"
+        ],
+        "wall_ms_range": [
+          51457,
+          93824
+        ]
+      }
+    },
+    "gpt-oss:20b": {
+      "measured_by": "hex bench agentic (post b6964195)",
+      "date": "2026-06-08",
+      "react": {
+        "valid": true,
+        "pass_rate": "1/5",
+        "samples": 5,
+        "outcomes": [
+          "pass",
+          "max_steps",
+          "max_steps",
+          "no_edit",
+          "max_steps"
+        ]
+      }
     }
   }
 }
