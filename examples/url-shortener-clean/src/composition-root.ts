@@ -5,8 +5,8 @@
  * No other file should import from adapters/ directly.
  */
 
-// TODO: Wire your adapters to ports here
-// import { MyPort } from './core/ports/my-port.js';
-// import { MyAdapter } from './adapters/secondary/my-adapter.js';
-//
-// export const myPort: MyPort = new MyAdapter();
+import { InMemoryUrlRepository } from './adapters/secondary/in-memory-url-repository.js';
+import { ShortenUrl } from './core/usecases/shorten-url.js';
+
+export const urlRepository = new InMemoryUrlRepository();
+export const shortenUrl = new ShortenUrl(urlRepository);
