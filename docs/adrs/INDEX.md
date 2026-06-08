@@ -6,7 +6,7 @@
 > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,
 > read the ADR itself.
 
-**253 ADRs** across 4 epochs.
+**254 ADRs** across 4 epochs.
 
 ## Epoch: `single-agent` — **current**
 
@@ -14,6 +14,7 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 
 | ADR | Status | Title | Superseded-By |
 |-----|--------|-------|---------------|
+| ADR-2606080915 | proposed | ADR-2606080915: Resource governor — memory-aware admission control + model residency |  |
 | ADR-2606071243 | completed | ADR-2606071243: ADR epochs, a living ARCHITECTURE.md, and a generated index — keep the architecture story legible as the design pivots |  |
 | ADR-2606071323 | completed | ADR-2606071323: Autonomous execution must isolate to its own git worktree — never the operator's session branch |  |
 | ADR-2606071340 | accepted | ADR-2606071340: hex-nexus must comply with hexagonal architecture — excise org-sim, split into crates behind ports, stay one daemon |  |
