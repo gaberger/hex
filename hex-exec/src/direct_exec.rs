@@ -462,6 +462,9 @@ async fn execute_direct_inner(task: DirectTask) -> DirectResult {
 }
 
 async fn exec_attempts(task: &DirectTask, repo_root: &std::path::Path, factory: bool) -> DirectResult {
+    // Snapshot pre-run dirty files so the commit includes the supporting files the
+    // evidence depends on (ADR-2606080915 follow-up — do-loop commit-gap fix).
+    let start_dirty = dirty_paths(repo_root).await;
     let max_attempts = task.max_attempts.unwrap_or(3).clamp(1, 6);
     let model = task.model.clone().unwrap_or_else(|| {
         std::env::var("HEX_DIRECT_MODEL").unwrap_or_else(|_| "qwen2.5-coder:32b".to_string())
@@ -528,8 +531,8 @@ async fn exec_attempts(task: &DirectTask, repo_root: &std::path::Path, factory: 
         let vacuous = passed && evidence_is_vacuous(&output);
         if passed && !vacuous {
             result.evidence_passed = true;
-            // 5. Commit (scoped to the edited file only).
-            match commit(repo_root, &task.file, &task.instruction, factory).await {
+            // 5. Commit the target + the pre-run supporting files (start-snapshot).
+            match commit(repo_root, &task.file, &task.instruction, factory, &start_dirty).await {
                 Ok(hash) => {
                     result.committed = Some(hash);
                     result.ok = true;
@@ -945,14 +948,80 @@ pub(crate) async fn run_evidence(cmd: &str, repo_root: &std::path::Path) -> (boo
     }
 }
 
+/// Paths already changed/untracked in the working tree (porcelain). Captured at the
+/// START of a run so the commit can include the operator's pre-run supporting files
+/// (a spec, a module registration) that the evidence depended on — without sweeping in
+/// anything that appears *concurrently* after the run begins.
+pub(crate) async fn dirty_paths(repo_root: &std::path::Path) -> Vec<String> {
+    let out = match tokio::process::Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .current_dir(repo_root)
+        .output()
+        .await
+    {
+        Ok(o) if o.status.success() => o.stdout,
+        _ => return Vec::new(),
+    };
+    String::from_utf8_lossy(&out)
+        .lines()
+        .filter_map(|l| {
+            let path = l.get(3..)?; // drop the "XY " porcelain status prefix
+            let path = path.rsplit(" -> ").next().unwrap_or(path); // renames: keep new path
+            let p = path.trim().trim_matches('"');
+            (!p.is_empty()).then(|| p.to_string())
+        })
+        .collect()
+}
+
+/// The target file's package directory (relative, trailing `/`): the nearest ancestor
+/// containing a `Cargo.toml`/`package.json`, else the file's own directory. Used to
+/// scope the start-snapshot so a feature commit only sweeps in supporting files from the
+/// *same package* — never unrelated dirty files elsewhere in the repo.
+fn package_prefix(repo_root: &std::path::Path, file: &str) -> String {
+    let mut dir = std::path::Path::new(file).parent();
+    while let Some(d) = dir {
+        if !d.as_os_str().is_empty()
+            && (repo_root.join(d).join("Cargo.toml").exists()
+                || repo_root.join(d).join("package.json").exists())
+        {
+            return format!("{}/", d.to_string_lossy());
+        }
+        dir = d.parent();
+    }
+    match std::path::Path::new(file).parent() {
+        Some(p) if !p.as_os_str().is_empty() => format!("{}/", p.to_string_lossy()),
+        _ => String::new(),
+    }
+}
+
 pub(crate) async fn commit(
     repo_root: &std::path::Path,
     file: &str,
     instruction: &str,
     factory: bool,
+    start_dirty: &[String],
 ) -> Result<String, String> {
+    // Commit the target PLUS the pre-run supporting files (spec / module-registration
+    // the evidence needed) so the commit reproduces the green state — not just the
+    // target (which left supporting files uncommitted, a broken committed state). Scope
+    // to the target's PACKAGE and exclude anything dirtied concurrently, so neither
+    // unrelated dirty files nor concurrent changes get swept (preserves the 2026-06-04
+    // review-swarm fix).
+    let pkg = package_prefix(repo_root, file);
+    let mut paths: Vec<String> = vec![file.to_string()];
+    for p in start_dirty {
+        if p != file
+            && !paths.contains(p)
+            && p.starts_with(&pkg)
+            && repo_root.join(p).exists()
+        {
+            paths.push(p.clone());
+        }
+    }
     let add = tokio::process::Command::new("git")
-        .args(["add", file])
+        .arg("add")
+        .arg("--")
+        .args(&paths)
         .current_dir(repo_root)
         .output()
         .await
@@ -979,12 +1048,12 @@ pub(crate) async fn commit(
             "user.email=factory@hex.local",
         ]);
     }
-    // Scope the commit to ONLY the edited file (pathspec) so a pre-staged or
-    // concurrently-changed file can't get swept into the executor's commit
-    // (found by the 2026-06-04 review swarm — bare `git commit` committed all
-    // staged changes).
+    // Scope the commit to the run's footprint (target + start-snapshot pathspec) so a
+    // concurrently-changed file can't get swept in (the 2026-06-04 review swarm's fix,
+    // generalized from one file to the captured set).
     let c = cmd
-        .args(["commit", "-m", &msg, "--", file])
+        .args(["commit", "-m", &msg, "--"])
+        .args(&paths)
         .current_dir(repo_root)
         .output()
         .await
@@ -1014,5 +1083,90 @@ pub(crate) fn repo_root() -> std::path::PathBuf {
         if !dir.pop() {
             return std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         }
+    }
+}
+
+#[cfg(test)]
+mod commit_snapshot_tests {
+    use super::{commit, dirty_paths};
+    use std::process::Command as Git;
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let out = Git::new("git").args(args).current_dir(dir).output().unwrap();
+        assert!(out.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+    }
+
+    fn init_repo(dir: &std::path::Path) {
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["config", "user.email", "t@t"]);
+        git(dir, &["config", "user.name", "t"]);
+        std::fs::write(dir.join("base.txt"), "base").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "init"]);
+    }
+
+    // The bug: the do-loop committed only its target, leaving the pre-run supporting
+    // files (spec / module registration) the evidence depended on uncommitted.
+    #[tokio::test]
+    async fn commit_includes_pre_run_supporting_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        init_repo(dir);
+        std::fs::write(dir.join("support.rs"), "// spec the evidence needs").unwrap();
+        let start_dirty = dirty_paths(dir).await;
+        assert!(start_dirty.iter().any(|p| p == "support.rs"),
+            "start snapshot must see the supporting file, got {start_dirty:?}");
+        std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
+        commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap();
+        let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
+        assert!(String::from_utf8_lossy(&st.stdout).trim().is_empty(),
+            "tree must be clean — support.rs should have been committed with the target");
+        let files = Git::new("git").args(["show", "--name-only", "--format=", "HEAD"]).current_dir(dir).output().unwrap();
+        let names = String::from_utf8_lossy(&files.stdout);
+        assert!(names.contains("target.rs") && names.contains("support.rs"),
+            "commit must contain both target and support, got: {names}");
+    }
+
+    // The review-swarm fix preserved: a change that appears AFTER the run starts must
+    // NOT be swept into the commit.
+    #[tokio::test]
+    async fn commit_excludes_concurrent_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        init_repo(dir);
+        let start_dirty = dirty_paths(dir).await; // empty: clean tree at start
+        std::fs::write(dir.join("concurrent.rs"), "// not ours").unwrap();
+        std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
+        commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap();
+        let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
+        assert!(String::from_utf8_lossy(&st.stdout).contains("concurrent.rs"),
+            "a change appearing after run-start must NOT be swept into the commit");
+    }
+
+    // The snapshot is scoped to the target's PACKAGE: a pre-run dirty file in a
+    // DIFFERENT package (unrelated WIP elsewhere in the repo) must not be swept in.
+    #[tokio::test]
+    async fn commit_scopes_snapshot_to_target_package() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        init_repo(dir);
+        std::fs::create_dir_all(dir.join("mypkg/src")).unwrap();
+        std::fs::write(dir.join("mypkg/Cargo.toml"), "[package]\nname=\"m\"\nversion=\"0.0.0\"").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "pkg"]);
+        // pre-run dirty: a supporting file IN the package + unrelated WIP OUTSIDE it
+        std::fs::write(dir.join("mypkg/spec.rs"), "// in-package support").unwrap();
+        std::fs::write(dir.join("unrelated.rs"), "// different package WIP").unwrap();
+        let start_dirty = dirty_paths(dir).await;
+        std::fs::write(dir.join("mypkg/src/target.rs"), "fn t() {}").unwrap();
+        commit(dir, "mypkg/src/target.rs", "add", false, &start_dirty).await.unwrap();
+        let files = Git::new("git").args(["show", "--name-only", "--format=", "HEAD"]).current_dir(dir).output().unwrap();
+        let names = String::from_utf8_lossy(&files.stdout);
+        assert!(names.contains("mypkg/src/target.rs"), "target committed");
+        assert!(names.contains("mypkg/spec.rs"), "in-package supporting file committed");
+        assert!(!names.contains("unrelated.rs"), "out-of-package WIP must NOT be swept, got: {names}");
+        let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
+        assert!(String::from_utf8_lossy(&st.stdout).contains("unrelated.rs"),
+            "unrelated WIP must remain uncommitted");
     }
 }

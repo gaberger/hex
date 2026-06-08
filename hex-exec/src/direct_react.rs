@@ -104,6 +104,9 @@ async fn react_attempts(
     let model = resolve_react_model(task);
     let max_steps = task.max_steps.unwrap_or(DEFAULT_MAX_STEPS).clamp(1, 40);
     let abs_path = repo_root.join(&task.file);
+    // Snapshot pre-run dirty files so the commit includes the supporting files the
+    // evidence depends on (do-loop commit-gap fix).
+    let start_dirty = direct_exec::dirty_paths(repo_root).await;
 
     let mut result = DirectResult {
         ok: false,
@@ -196,7 +199,7 @@ async fn react_attempts(
             if tu.name == "propose_edit" {
                 made_progress = true;
                 tracing::info!(step = steps, args = %serde_json::to_string(&tu.input).unwrap_or_default().chars().take(300).collect::<String>(), "react: propose_edit");
-                match apply_and_verify(&abs_path, repo_root, task, &tu.input, factory).await {
+                match apply_and_verify(&abs_path, repo_root, task, &tu.input, factory, &start_dirty).await {
                     EditOutcome::Committed(hash) => {
                         tracing::info!(step = steps, %hash, "react: propose_edit COMMITTED");
                         result.edit_applied = true;
@@ -294,6 +297,7 @@ async fn apply_and_verify(
     task: &DirectTask,
     input: &Value,
     factory: bool,
+    start_dirty: &[String],
 ) -> EditOutcome {
     let edit = match parse_propose_edit(input) {
         Ok(e) => e,
@@ -309,7 +313,7 @@ async fn apply_and_verify(
     let (passed, output) = direct_exec::run_evidence(&task.evidence, repo_root).await;
     let vacuous = passed && direct_exec::evidence_is_vacuous(&output);
     if passed && !vacuous {
-        match direct_exec::commit(repo_root, &task.file, &task.instruction, factory).await {
+        match direct_exec::commit(repo_root, &task.file, &task.instruction, factory, start_dirty).await {
             Ok(hash) => EditOutcome::Committed(hash),
             Err(e) => {
                 let _ = std::fs::write(abs_path, &content); // revert
@@ -719,6 +723,9 @@ async fn claude_attempts(
     factory: bool,
 ) -> (DirectResult, u32, String) {
     let model = "claude-code".to_string();
+    // Snapshot pre-run dirty files so the commit includes the supporting files the
+    // evidence depends on (do-loop commit-gap fix).
+    let start_dirty = direct_exec::dirty_paths(repo_root).await;
     let mut result = DirectResult {
         ok: false,
         attempts: 0,
@@ -771,7 +778,7 @@ async fn claude_attempts(
     result.attempts = 1;
 
     if passed && !vacuous {
-        match direct_exec::commit(repo_root, &task.file, &task.instruction, factory).await {
+        match direct_exec::commit(repo_root, &task.file, &task.instruction, factory, &start_dirty).await {
             Ok(hash) => {
                 result.ok = true;
                 result.evidence_passed = true;
