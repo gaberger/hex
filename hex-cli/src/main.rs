@@ -140,6 +140,15 @@ enum DevGroupAction {
         #[arg(long)]
         parallel: bool,
     },
+    /// Build release binaries, install hex to BIN_DIR, restart the daemon — one-command deploy (ADR-2606071702)
+    Deploy {
+        /// Install without restarting the daemon
+        #[arg(long)]
+        no_restart: bool,
+        /// Report install-vs-build drift without building
+        #[arg(long)]
+        check: bool,
+    },
     /// Run integration tests (unit, arch, services, swarm)
     Test {
         #[command(subcommand)]
@@ -658,6 +667,7 @@ async fn main() -> anyhow::Result<()> {
             DevGroupAction::Validate { skip_test, strict, parallel } => {
                 doctor::run_validate_pipeline(skip_test, strict, parallel).await
             }
+            DevGroupAction::Deploy { no_restart, check } => commands::deploy::run(no_restart, check).await,
             DevGroupAction::Test { action } => commands::test::run(action).await,
             DevGroupAction::Ci { standalone_gate } => {
                 if standalone_gate { commands::ci::run_standalone_gate().await }
