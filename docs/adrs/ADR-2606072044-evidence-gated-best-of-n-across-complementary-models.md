@@ -1,6 +1,6 @@
 # ADR-2606072044: Evidence-gated best-of-N across complementary models in the do-loop
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-07
 **Epoch:** single-agent
 **Drivers:** A measured 3×3 benchmark grid (3 verified fixtures × 3 local models, react n=5)
