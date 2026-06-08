@@ -49,3 +49,25 @@ pub fn admit(
         AdmissionDecision::RouteToFrontier
     }
 }
+
+/// Parse available system memory (in MB) from the contents of `/proc/meminfo`.
+///
+/// `/proc/meminfo` has lines like `MemAvailable:   16384000 kB`. Find the
+/// `MemAvailable:` line, take its value (always reported in **kB**), and convert to
+/// MB (integer division by 1024). Returns `None` if the line is absent or malformed.
+///
+/// Pure so it's testable without touching the real filesystem; the hex-nexus adapter
+/// reads the file and hands the contents here. See `tests/resource_governor_spec.rs`.
+pub fn parse_mem_available_mb(meminfo: &str) -> Option<u64> {
+    let line = meminfo
+        .lines()
+        .find(|l| l.trim_start().starts_with("MemAvailable:"))?;
+    let kb: u64 = line
+        .trim_start()
+        .trim_start_matches("MemAvailable:")
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    Some(kb / 1024)
+}
