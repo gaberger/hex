@@ -556,7 +556,7 @@ impl JobQueue {
             Ok(FailOutcome::DeadLettered)
         } else {
             let delay = self.backoff_delay(&mut g, new_attempts);
-            let not_before = now + delay;
+            let not_before = now.saturating_add(delay);
             let rec = WalRecord::Failed {
                 id,
                 attempts: new_attempts,

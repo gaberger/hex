@@ -1020,3 +1020,59 @@ fn test_claim_lease_deadline_no_overflow_near_u64_max() {
          double-offer)"
     );
 }
+
+// REGRESSION [FIX-FAIL-RETRY-OVERFLOW]: fail() computed the retry schedule as
+// `let not_before = now + delay;` (src/lib.rs ~559) where `now = clock.now_ms()`
+// (wall clock, up to u64::MAX) and `delay` is the backoff. This add was the one
+// place the codebase missed: enqueue, claim_locked, and claim_blocking all use
+// saturating_add, but fail() did not. With a wall clock near u64::MAX and any
+// nonzero backoff the add overflows:
+//   * debug build  -> panic "attempt to add with overflow" inside fail() WHILE
+//                     THE QUEUE MUTEX IS HELD, poisoning it so every later
+//                     lock() returns JobError::Io("lock poisoned") — the queue
+//                     is bricked.
+//   * release build -> not_before wraps to a tiny value <= now, collapsing the
+//                     backoff so the just-failed job is immediately re-claimable.
+// The fix is `now.saturating_add(delay)`. We use the normal test_cfg backoff
+// (jitter off, base 1000ms) so this isolates the now+delay add — NOT the jitter
+// multiply covered by test_backoff_jitter_no_overflow_pathological_max_backoff.
+#[test]
+fn test_fail_retry_not_before_no_overflow_near_u64_max() {
+    let tmp = TempDir::new();
+    let start = u64::MAX - 5;
+    let clock = ManualClock::new(start);
+    let q = JobQueue::open_with_clock(tmp.path(), test_cfg(), clock).unwrap();
+
+    q.enqueue(b"x").unwrap();
+    let lease = q.claim().unwrap().unwrap();
+
+    // Pre-fix debug: this panics inside fail() under the held mutex, poisoning
+    // it. Pre-fix release: not_before wraps near 0, losing the backoff.
+    let outcome = q.fail(lease.id, lease.epoch).unwrap();
+
+    // First failure of a job with max_attempts=5 must retry, and the retry
+    // schedule must saturate at u64::MAX rather than wrap below `now`.
+    match outcome {
+        FailOutcome::Retrying { ready_at_ms } => {
+            assert_eq!(
+                ready_at_ms,
+                u64::MAX,
+                "retry not_before must saturate at u64::MAX, not wrap (got {ready_at_ms})"
+            );
+            assert!(
+                ready_at_ms > start,
+                "backoff lost to overflow wrap: retry scheduled at or before now \
+                 ({start}), got {ready_at_ms}"
+            );
+        }
+        other => panic!("expected Retrying, got {other:?}"),
+    }
+
+    // The retried job must NOT be immediately claimable (a wrapped not_before
+    // near 0 would make it instantly re-claimable), and the mutex must not be
+    // poisoned — a subsequent operation still succeeds.
+    assert!(
+        q.claim().unwrap().is_none(),
+        "retried job must not be immediately claimable after overflow-safe fail()"
+    );
+}
