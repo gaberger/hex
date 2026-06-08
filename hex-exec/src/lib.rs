@@ -8,6 +8,7 @@
 //! (worktree/commit) — no daemon coupling, so the agent loop is reusable
 //! outside hex-nexus.
 
+pub mod adversarial;
 pub mod compress;
 pub mod direct_exec;
 pub mod direct_react;

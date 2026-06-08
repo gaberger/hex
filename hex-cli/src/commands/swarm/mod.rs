@@ -81,6 +81,17 @@ pub enum SwarmAction {
         #[arg(long)]
         out: Option<String>,
     },
+    /// Adversarial review — the hex-native cooperative+adversarial harness. Parallel
+    /// `claude -p` reviewers hunt bugs by lens, each finding is skeptically verified
+    /// (default-refute), confirmed bugs are fixed and gated by a test command. Finds
+    /// what the builder's own passing tests miss.
+    Review {
+        /// Path to review (file or directory), repo-relative.
+        target: String,
+        /// Ground-truth gate: a shell command that must exit 0 after each fix.
+        #[arg(long)]
+        gate: String,
+    },
 }
 
 /// Auto-complete any active swarms where all tasks are done (public for use by agent commands).
@@ -114,6 +125,7 @@ pub async fn run(action: SwarmAction) -> anyhow::Result<()> {
         SwarmAction::Fail { id, reason, .. } => fail(&id, &reason).await,
         SwarmAction::Cleanup { stale_hours, apply, .. } => cleanup(stale_hours, apply).await,
         SwarmAction::Run { tasks, concurrency, out } => run_workers(&tasks, concurrency, out.as_deref()).await,
+        SwarmAction::Review { target, gate } => run_adversarial_review(&target, &gate).await,
     }
 }
 
@@ -678,6 +690,43 @@ async fn cleanup(stale_hours: u64, apply: bool) -> anyhow::Result<()> {
         err
     );
 
+    Ok(())
+}
+
+/// `hex swarm review` — the hex-native cooperative+adversarial harness: parallel
+/// `claude -p` reviewers hunt bugs by lens, each finding is skeptically verified, and
+/// confirmed bugs are fixed under a ground-truth gate. Delegates to the tested
+/// orchestrator in hex-exec.
+async fn run_adversarial_review(target: &str, gate: &str) -> anyhow::Result<()> {
+    let repo_root = std::env::current_dir()?;
+    println!(
+        "{} {} (gate: {})",
+        "⬡ swarm review".cyan().bold(),
+        target.yellow(),
+        gate.dimmed()
+    );
+    println!("  hunt → skeptical-verify → fix-loop · claude -p workers");
+    let report = hex_exec::adversarial::run_review(target, gate, &repo_root).await;
+    println!(
+        "{} {} candidate(s) → {} confirmed real → {} fixed (gate-passed)",
+        "✓".green().bold(),
+        report.candidate,
+        report.confirmed.len(),
+        report.fixed.len()
+    );
+    for f in &report.confirmed {
+        let mark = if report.fixed.contains(&f.title) { "✓".green() } else { "•".yellow() };
+        println!("  {} [{}] {} {}", mark, f.lens, f.title, f.location.dimmed());
+    }
+    if !report.notes.is_empty() {
+        for n in &report.notes {
+            println!("  {} {}", "·".dimmed(), n.dimmed());
+        }
+    }
+    println!(
+        "  final gate: {}",
+        if report.gate_passed { "PASS".green() } else { "FAIL".red() }
+    );
     Ok(())
 }
 
