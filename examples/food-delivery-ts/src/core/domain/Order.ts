@@ -111,3 +111,7 @@ export function transitionStatus(order: Order, newStatus: OrderStatus): Order {
     updatedAt: new Date()
   };
 }
+
+export function cancelOrder(order: Order): Order {
+  return transitionStatus(order, OrderStatus.Cancelled);
+}
