@@ -92,6 +92,26 @@ pub enum SwarmAction {
         #[arg(long)]
         gate: String,
     },
+    /// Cooperative build — the design half of the harness. Diverge (N `claude -p`
+    /// designs from competing priorities) → red-team each → synthesize one spec →
+    /// build to the gate. With `--review`, chains the adversarial review+fix pass for
+    /// the FULL cooperative+adversarial pipeline.
+    Build {
+        /// The challenge: a plain-language description of the system to build.
+        challenge: String,
+        /// Directory to build into (repo-relative).
+        #[arg(long)]
+        target: String,
+        /// Ground-truth gate: a shell command that must exit 0.
+        #[arg(long)]
+        gate: String,
+        /// Number of divergent designs (2-4).
+        #[arg(long, default_value_t = 3)]
+        designs: usize,
+        /// After building, run the adversarial review+fix pass (full harness).
+        #[arg(long)]
+        review: bool,
+    },
 }
 
 /// Auto-complete any active swarms where all tasks are done (public for use by agent commands).
@@ -126,6 +146,7 @@ pub async fn run(action: SwarmAction) -> anyhow::Result<()> {
         SwarmAction::Cleanup { stale_hours, apply, .. } => cleanup(stale_hours, apply).await,
         SwarmAction::Run { tasks, concurrency, out } => run_workers(&tasks, concurrency, out.as_deref()).await,
         SwarmAction::Review { target, gate } => run_adversarial_review(&target, &gate).await,
+        SwarmAction::Build { challenge, target, gate, designs, review } => run_cooperative_build(&challenge, &target, &gate, designs, review).await,
     }
 }
 
@@ -727,6 +748,56 @@ async fn run_adversarial_review(target: &str, gate: &str) -> anyhow::Result<()> 
         "  final gate: {}",
         if report.gate_passed { "PASS".green() } else { "FAIL".red() }
     );
+    Ok(())
+}
+
+/// `hex swarm build` — the cooperative-design half of the harness (diverge → red-team
+/// → synthesize → build), optionally chaining the adversarial review for the full
+/// cooperative+adversarial pipeline. Delegates to the orchestrator in hex-exec.
+async fn run_cooperative_build(
+    challenge: &str,
+    target: &str,
+    gate: &str,
+    designs: usize,
+    review: bool,
+) -> anyhow::Result<()> {
+    let repo_root = std::env::current_dir()?;
+    println!(
+        "{} {} {} {}",
+        "⬡ swarm build".cyan().bold(),
+        target.yellow(),
+        "←".dimmed(),
+        challenge
+    );
+    println!("  diverge → red-team → synthesize → build{}", if review { " → review → fix" } else { "" });
+    let b = hex_exec::adversarial::run_build(challenge, target, gate, designs, &repo_root).await;
+    println!(
+        "{} {} designs → {} critiques → spec {}ch → build {}",
+        "✓".green().bold(),
+        b.designs,
+        b.critiques,
+        b.spec_chars,
+        if b.build_ok { "GREEN".green() } else { "FAILED".red() }
+    );
+    for n in &b.notes {
+        println!("  {} {}", "·".dimmed(), n.dimmed());
+    }
+    if review && b.build_ok {
+        println!("{} adversarial review pass", "⬡".cyan());
+        let r = hex_exec::adversarial::run_review(target, gate, &repo_root).await;
+        println!(
+            "  {} {} candidate(s) → {} confirmed → {} fixed · gate {}",
+            "✓".green().bold(),
+            r.candidate,
+            r.confirmed.len(),
+            r.fixed.len(),
+            if r.gate_passed { "PASS".green() } else { "FAIL".red() }
+        );
+        for f in &r.confirmed {
+            let mark = if r.fixed.contains(&f.title) { "✓".green() } else { "•".yellow() };
+            println!("    {} [{}] {}", mark, f.lens, f.title);
+        }
+    }
     Ok(())
 }
 

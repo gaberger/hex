@@ -201,6 +201,123 @@ pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewRep
     report
 }
 
+/// Outcome of a cooperative build run.
+#[derive(Debug, Default)]
+pub struct BuildReport {
+    pub designs: usize,
+    pub critiques: usize,
+    pub spec_chars: usize,
+    pub build_ok: bool,
+    pub notes: Vec<String>,
+}
+
+/// Competing design priorities — the divergence that makes the red-team meaningful.
+const DESIGN_PRIORITIES: &[&str] = &[
+    "durability-and-correctness-first: crash-safety, persistence, recovery, and provable invariants are paramount",
+    "concurrency-first: correct and lock-minimal under heavy parallelism; no races, no double-processing",
+    "simplicity-first: the smallest design that is obviously correct; the fewest moving parts",
+    "performance-first: throughput and low overhead, without sacrificing correctness",
+];
+
+/// Run the cooperative-design half of the harness: diverge (N designs from competing
+/// priorities) → red-team each → synthesize one spec → build to the gate. Pairs with
+/// [`run_review`] for the full cooperative+adversarial pipeline.
+pub async fn run_build(
+    challenge: &str,
+    target: &str,
+    gate: &str,
+    n_designs: usize,
+    repo_root: &Path,
+) -> BuildReport {
+    let mut report = BuildReport::default();
+    let n = n_designs.clamp(2, DESIGN_PRIORITIES.len());
+
+    // ── Phase 1: diverge — N designs from competing priorities ───────────────
+    let mut tasks = Vec::new();
+    for prio in DESIGN_PRIORITIES.iter().take(n) {
+        let prompt = format!(
+            "You are a senior systems engineer. Propose a concrete design for this challenge:\n{challenge}\n\n\
+             Your design PRIORITY: {prio}\n\nBe specific about the data model, the key algorithms, the \
+             concurrency/atomicity strategy, and the main risks. Output your design as clear prose (no code yet)."
+        );
+        let root = repo_root.to_path_buf();
+        tasks.push(tokio::spawn(async move { claude_run(&prompt, &root, 600).await }));
+    }
+    let mut designs = Vec::new();
+    for t in tasks {
+        if let Ok(Ok(d)) = t.await {
+            designs.push(d);
+        }
+    }
+    report.designs = designs.len();
+    if designs.is_empty() {
+        report.notes.push("no designs produced".into());
+        return report;
+    }
+
+    // ── Phase 2: red-team each design (adversarial) ──────────────────────────
+    let mut ctasks = Vec::new();
+    for (i, d) in designs.iter().enumerate() {
+        let prompt = format!(
+            "Adversarially review this design for the challenge:\n{challenge}\n\nBe RUTHLESS — find fatal \
+             flaws, race conditions, lost-data scenarios, correctness gaps, and unhandled edge cases. List \
+             them concretely.\n\nDESIGN {i}:\n{d}"
+        );
+        let root = repo_root.to_path_buf();
+        ctasks.push(tokio::spawn(async move { claude_run(&prompt, &root, 600).await }));
+    }
+    let mut critiques = Vec::new();
+    for t in ctasks {
+        if let Ok(Ok(c)) = t.await {
+            critiques.push(c);
+        }
+    }
+    report.critiques = critiques.len();
+
+    // ── Phase 3: synthesize one build spec ───────────────────────────────────
+    let designs_block = designs
+        .iter()
+        .enumerate()
+        .map(|(i, d)| format!("--- DESIGN {i} ---\n{d}"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let critiques_block = critiques.join("\n\n--- next critique ---\n\n");
+    let spec = match claude_run(
+        &format!(
+            "You are the lead architect. Given these candidate designs and their adversarial critiques for \
+             the challenge:\n{challenge}\n\nSynthesize ONE concrete build spec: the public API, the internal \
+             data model, the exact concurrency/correctness strategy, and a TEST PLAN that exercises the hard \
+             cases the red team raised. Every fatal flaw must be designed out. Output the spec as clear prose \
+             an implementer can follow.\n\nDESIGNS:\n{designs_block}\n\nCRITIQUES:\n{critiques_block}"
+        ),
+        repo_root,
+        600,
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            report.notes.push(format!("synthesize failed: {e}"));
+            return report;
+        }
+    };
+    report.spec_chars = spec.len();
+
+    // ── Phase 4: build to the gate ───────────────────────────────────────────
+    let build_prompt = format!(
+        "Implement the following spec as code under `{target}`. Write the full implementation AND a \
+         comprehensive test suite per the spec's test plan. Then run the gate command `{gate}` and ITERATE \
+         — fix compile errors and failing tests — until the gate exits 0. Do not stop until the gate passes.\n\n\
+         CHALLENGE:\n{challenge}\n\nSPEC:\n{spec}"
+    );
+    if let Err(e) = claude_run(&build_prompt, repo_root, 2400).await {
+        report.notes.push(format!("build agent error: {e}"));
+    }
+    let (ok, _) = crate::direct_exec::run_evidence(gate, repo_root).await;
+    report.build_ok = ok;
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use super::extract_json;
