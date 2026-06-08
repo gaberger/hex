@@ -102,9 +102,25 @@ multi-turn tool use, not single-shot codegen — is demanding, and we measured i
   "best" model on *every* fixture — devstral leads on string tasks, qwen on algorithmic ones, and
   the top-of-the-leaderboard local model scored *last* on our grid. **Leaderboard scores do not
   predict agentic-loop performance.**
+- **The *language* matters as much as the model.** We ran the *same* CSV-parser task in Rust, TS,
+  and Go (react, per-model pass rate):
+
+  | Model | Rust | TS | Go |
+  |---|---|---|---|
+  | qwen2.5-coder:14b | 0/5 | **2/3** | 0/3 |
+  | gpt-oss:20b | 0/5 | **1/3** | 0/3 |
+  | devstral-small-2:24b | 5/5 | 3/3 | 2/3 |
+  | gemma3:12b | 4/5 | 2/3 | 1/3 |
+
+  The lesson isn't "static typing is hard" — it's that **TypeScript is uniquely *forgiving*, while
+  Rust *and* Go are strict and hard for weaker local models.** The two models that recover in TS
+  (qwen, gpt-oss) crash right back to 0/3 in Go — Go's strictness (unused imports/vars are compile
+  errors, byte-vs-rune) punishes them almost like Rust's borrow checker. So the local ceiling — and
+  how much the `claude -p` fallback is load-bearing — depends heavily on your language: lowest for
+  TS/JS, high for Rust and Go.
 - **So hex doesn't bet on one model.** It runs best-of-N across a complementary pair and falls
   back to `claude -p` for tasks locals can't finish. That's the honest path to reliability on this
-  hardware.
+  hardware — most so for Rust, less needed for TS.
 
 If you have a frontier API or a logged-in `claude` CLI, hex is strong. If you're strictly local on
 commodity hardware, hex works but inherits the local models' ceiling — and the benchmark tells you
