@@ -636,9 +636,34 @@ pub(crate) fn resolve_react_models(task: &DirectTask) -> Vec<String> {
 /// by `react_execute`. (ADR-2606072044.)
 pub async fn react_execute_best_of_n(task: DirectTask) -> (DirectResult, u32, String) {
     let candidates = resolve_react_models(&task);
+    // Resource governor (ADR-2606080915): only divert a local model to the frontier
+    // when a frontier candidate actually exists later in the list — otherwise run it
+    // best-effort rather than skip the only option.
+    let has_frontier_fallback = candidates.iter().any(|m| is_claude_model(m));
     let mut outcomes: Vec<(String, DirectResult)> = Vec::new();
     let mut total_steps = 0u32;
     for model in candidates {
+        // Before loading a LOCAL model, ask the governor whether it fits in real
+        // available memory (RAM after VRAM offload + the compile job's headroom). If
+        // not, skip it and fall through to the `claude -p` candidate instead of OOMing.
+        if !is_claude_model(&model)
+            && has_frontier_fallback
+            && matches!(
+                crate::resource_governor::check_local_model(&model).await,
+                hex_core::resource_governor::AdmissionDecision::RouteToFrontier
+            )
+        {
+            eprintln!(
+                "⬡ governor: {model} won't fit in available memory — routing to frontier (ADR-2606080915)"
+            );
+            outcomes.push((
+                format!("{model} (skipped: resource governor)"),
+                DirectResult::err(
+                    "skipped by resource governor (insufficient memory; routed to frontier)".to_string(),
+                ),
+            ));
+            continue;
+        }
         let mut t = task.clone();
         t.model = Some(model.clone());
         // A `claude-code` candidate is the frontier fallback: delegate the whole

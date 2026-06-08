@@ -3,7 +3,9 @@
 //! `hex-core/src/resource_governor.rs` must satisfy it. The agent implementing
 //! `admit` does not edit this file.
 
-use hex_core::resource_governor::{admit, parse_mem_available_mb, AdmissionDecision::*};
+use hex_core::resource_governor::{
+    admit, parse_mem_available_mb, ram_footprint_after_offload_mb, AdmissionDecision::*,
+};
 
 #[test]
 fn fits_with_headroom_is_admitted() {
@@ -45,6 +47,29 @@ fn zero_workload_always_admits() {
 fn saturates_without_overflow() {
     // Absurd inputs must not panic; the sum overflows u64 → treat as "does not fit".
     assert_eq!(admit(u64::MAX, u64::MAX, 1_000, u64::MAX), RouteToFrontier);
+}
+
+#[test]
+fn model_fits_in_vram_has_zero_ram_footprint() {
+    // devstral ~14 GB on a 16 GB GPU → fits in VRAM → 0 RAM spill.
+    assert_eq!(ram_footprint_after_offload_mb(14_000, 15_800), 0);
+}
+
+#[test]
+fn model_larger_than_vram_spills_the_difference() {
+    // qwen-next ~29 GB on a 16 GB GPU → ~13 GB spills to RAM (the OOM driver).
+    assert_eq!(ram_footprint_after_offload_mb(29_000, 15_800), 13_200);
+}
+
+#[test]
+fn the_oom_case_end_to_end() {
+    // The full tonight scenario, composed: 29 GB model, 15.8 GB VRAM free, 16 GB RAM
+    // available, 4 GB job + 1.5 GB safety → spills 13.2 GB to RAM, 13.2+4+1.5=18.7 > 16
+    // → route to frontier. (And devstral, in contrast, would admit: 0+4+1.5=5.5 <= 16.)
+    let ram = ram_footprint_after_offload_mb(29_000, 15_800);
+    assert_eq!(admit(ram, 4_000, 16_000, 1_500), RouteToFrontier);
+    let devstral_ram = ram_footprint_after_offload_mb(14_000, 15_800);
+    assert_eq!(admit(devstral_ram, 4_000, 16_000, 1_500), Admit);
 }
 
 #[test]

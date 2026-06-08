@@ -12,6 +12,7 @@ pub mod compress;
 pub mod direct_exec;
 pub mod direct_react;
 pub mod direct_workspace;
+pub mod resource_governor;
 pub mod simple_agent;
 pub mod telegram_notifier;
 pub mod tools;

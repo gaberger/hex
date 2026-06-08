@@ -50,6 +50,18 @@ pub fn admit(
     }
 }
 
+/// RAM-resident footprint (MB) of a model after GPU offload.
+///
+/// ollama/llama.cpp put as much of the weights on the GPU as fit in available VRAM;
+/// the remainder spills to system RAM. *That spill* is what causes RAM OOM — not the
+/// full model size. So a model that fits entirely in VRAM has a ~0 RAM footprint
+/// (e.g. devstral 14 GB on a 16 GB GPU), while a model larger than VRAM spills the
+/// difference (e.g. qwen-next 29 GB on a 16 GB GPU → ~13 GB in RAM). Saturating: a
+/// model that fits in VRAM yields 0, never underflows.
+pub fn ram_footprint_after_offload_mb(model_size_mb: u64, available_vram_mb: u64) -> u64 {
+    model_size_mb.saturating_sub(available_vram_mb)
+}
+
 /// Parse available system memory (in MB) from the contents of `/proc/meminfo`.
 ///
 /// `/proc/meminfo` has lines like `MemAvailable:   16384000 kB`. Find the
