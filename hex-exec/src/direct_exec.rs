@@ -393,8 +393,10 @@ pub async fn execute_direct(task: DirectTask) -> DirectResult {
         record_run(started_at, &task, &model, &result, started.elapsed().as_millis() as u64);
         result
     } else {
-        // The loop resolves + returns its own (strong tool-caller) model.
-        let (result, steps, used_model) = crate::direct_react::react_execute(task.clone()).await;
+        // Evidence-gated best-of-N across candidate models (ADR-2606072044): try
+        // each in order, commit the first that passes. Single-model configs resolve
+        // to a one-element list, so this is a no-op for them.
+        let (result, steps, used_model) = crate::direct_react::react_execute_best_of_n(task.clone()).await;
         record_react_run(
             started_at,
             &task,

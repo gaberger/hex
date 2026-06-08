@@ -595,3 +595,59 @@ pub fn react_models_from_config_value(cfg: &serde_json::Value, explicit: Option<
     // Step (c): return candidate_models(explicit, &configured, single)
     candidate_models(explicit, &configured, single)
 }
+
+/// Pick the best-of-N winner from per-candidate outcomes in priority order: the
+/// first whose result passed, else the last attempt. Moves each item (DirectResult
+/// is not Clone) by holding the last as it iterates. (ADR-2606072044.)
+/// Hand-finished: both local models stalled on this ownership pattern.
+pub fn select_best_of_n(
+    outcomes: Vec<(String, DirectResult)>,
+) -> (String, DirectResult) {
+    let mut last = None;
+    for (model, result) in outcomes {
+        if result.ok {
+            return (model, result);
+        }
+        last = Some((model, result));
+    }
+    last.expect("select_best_of_n: outcomes must be non-empty")
+}
+
+/// Resolve the ordered candidate-model list for a run: explicit `task.model` or
+/// `HEX_REACT_MODEL` wins; else `.hex/project.json` `inference.react_models`; else
+/// `inference.react_model`; else the default complementary pair. (ADR-2606072044.)
+pub(crate) fn resolve_react_models(task: &DirectTask) -> Vec<String> {
+    let explicit = task
+        .model
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| std::env::var("HEX_REACT_MODEL").ok().filter(|s| !s.is_empty()));
+    let cfg = std::fs::read_to_string(direct_exec::repo_root().join(".hex").join("project.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    react_models_from_config_value(&cfg, explicit.as_deref())
+}
+
+/// Evidence-gated best-of-N: run the task on each candidate model in order and
+/// return the first that passes (it has already committed via the evidence gate);
+/// if none pass, return the last attempt. Per-candidate isolation/commit is handled
+/// by `react_execute`. (ADR-2606072044.)
+pub async fn react_execute_best_of_n(task: DirectTask) -> (DirectResult, u32, String) {
+    let candidates = resolve_react_models(&task);
+    let mut outcomes: Vec<(String, DirectResult)> = Vec::new();
+    let mut total_steps = 0u32;
+    for model in candidates {
+        let mut t = task.clone();
+        t.model = Some(model);
+        let (result, steps, used) = react_execute(t).await;
+        total_steps += steps;
+        if result.ok {
+            return (result, total_steps, used);
+        }
+        outcomes.push((used, result));
+    }
+    let (model, result) = select_best_of_n(outcomes);
+    (result, total_steps, model)
+}
