@@ -59,6 +59,17 @@ task + graph context + ranked lessons + windowed file
   distinct `hex-factory` identity, with a hard guard against ever committing to the
   operator's tree. Results merge back via `hex worktree merge`. The interactive operator
   path (`hex do`, `isolate:false`) commits on its own branch.
+- **Evidence-gated best-of-N across complementary models** — `react_execute_best_of_n`
+  (ADR-2606072044): a single attempt is one ReAct loop, but the run iterates an *ordered
+  candidate list* (`.hex/project.json → inference.react_models`, default
+  `[devstral-small-2:24b, claude-code]`) and commits the **first candidate whose edit passes
+  the evidence gate**. The gate — not a classifier — selects the winner, so a mis-route only
+  costs latency. Local models have anti-correlated blind spots (measured: `hex bench
+  agentic`), so a complementary pair covers what neither does alone.
+- **Frontier fallback via `claude -p`** — a `claude-code` candidate delegates the *whole task*
+  to the operator's logged-in `claude` CLI (`claude_execute` in `direct_react.rs` — an agent,
+  not a per-step completion), inside the same worktree + evidence gate + commit. No API key,
+  no VRAM ceiling: local runs free/fast, escalating to Claude only when the locals fail.
 
 ### Standalone vs. Claude-mediated
 
@@ -108,6 +119,13 @@ T3 is single-shot. Override per-tier in `.hex/project.json → inference.tier_mo
 | T2 | `qwen2.5-coder:32b` | standard codegen |
 | T2.5 | `devstral-small-2:24b` | complex reasoning |
 | T3 | Claude (frontier) | frontier tasks |
+
+The tier table governs the **workplan/SOP path**. The **do-loop** (`hex do`) selects its
+model(s) separately via `inference.react_models` (best-of-N + frontier fallback, above),
+chosen empirically with **`hex bench agentic`** — a worktree-isolated benchmark that runs
+fixtures through the *real* loop and scores per-model pass-rates (ADR-2606071734; corpus in
+`docs/benchmarks/`). It exists because external coding-leaderboard scores do **not** predict
+agentic-loop performance (measured: the top-leaderboard local model scored last on the grid).
 
 ## Hexagonal architecture rules (enforced — and now obeyed)
 
@@ -163,6 +181,7 @@ contradicts this file, this file wins** — and the contradiction is worth an AD
 cargo check -p hex-nexus        # the daemon (the relevant gate; --workspace needs libdbus-1-dev for hex-desktop)
 cargo build -p hex-cli --release
 hex dev validate                # chains build + test + analyze + specs
+hex dev deploy                  # one-command build + install hex → ~/.local/bin + restart daemon (ADR-2606071702)
 hex analyze hex-nexus           # the architecture grade (A+)
 
 # TypeScript library (secondary)
