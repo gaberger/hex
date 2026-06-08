@@ -1,6 +1,6 @@
 # ADR-2606071734: Agentic inference benchmark suite — test the harness, not the prompt
 
-**Status:** Proposed
+**Status:** Completed
 **Date:** 2026-06-07
 **Epoch:** single-agent
 **Drivers:** This session's live evidence: `qwen2.5-coder:14b` would score well on the existing

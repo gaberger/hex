@@ -1,6 +1,6 @@
 # ADR-2606071702: `hex dev deploy` verb + installed-binary freshness gate — close the validate≠deploy gap
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-06-07
 **Epoch:** single-agent
 **Drivers:** Deploying the ADR-2606071651 (③) fix this session exposed a gap: `hex dev

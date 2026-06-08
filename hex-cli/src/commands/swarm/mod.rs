@@ -67,6 +67,20 @@ pub enum SwarmAction {
         #[arg(long)]
         json: bool,
     },
+    /// Fan out a batch of tasks to parallel `claude -p` workers — a hex-native
+    /// frontier swarm (no API key, no VRAM ceiling). Each worker is an independent
+    /// `claude -p` agent; the supervisor bounds concurrency and collects results.
+    Run {
+        /// JSON file: `[{"id":"t1","prompt":"..."}, ...]`
+        #[arg(long)]
+        tasks: String,
+        /// Max concurrent workers
+        #[arg(long, default_value_t = 4)]
+        concurrency: usize,
+        /// Directory to write each worker's stdout to (`<id>.out`)
+        #[arg(long)]
+        out: Option<String>,
+    },
 }
 
 /// Auto-complete any active swarms where all tasks are done (public for use by agent commands).
@@ -99,7 +113,88 @@ pub async fn run(action: SwarmAction) -> anyhow::Result<()> {
         SwarmAction::Complete { id, .. } => complete(&id).await,
         SwarmAction::Fail { id, reason, .. } => fail(&id, &reason).await,
         SwarmAction::Cleanup { stale_hours, apply, .. } => cleanup(stale_hours, apply).await,
+        SwarmAction::Run { tasks, concurrency, out } => run_workers(&tasks, concurrency, out.as_deref()).await,
     }
+}
+
+/// Hex-native frontier swarm: fan a task list out to parallel `claude -p` workers,
+/// bound concurrency with a semaphore, collect outputs. This is the capability that
+/// lets hex orchestrate its own frontier agents instead of borrowing an external
+/// harness — each worker is a full `claude -p` agent (ADR-2606072044 frontier path).
+async fn run_workers(tasks_file: &str, concurrency: usize, out_dir: Option<&str>) -> anyhow::Result<()> {
+    #[derive(serde::Deserialize)]
+    struct WorkerTask {
+        id: String,
+        prompt: String,
+    }
+    let raw = std::fs::read_to_string(tasks_file)
+        .map_err(|e| anyhow::anyhow!("read {}: {}", tasks_file, e))?;
+    let tasks: Vec<WorkerTask> = serde_json::from_str(&raw)
+        .map_err(|e| anyhow::anyhow!("parse tasks JSON: {}", e))?;
+    let n = tasks.len();
+    if n == 0 {
+        println!("{} no tasks in {}", "⬡ swarm:".yellow(), tasks_file);
+        return Ok(());
+    }
+    let binary = std::env::var("HEX_CLAUDE_BINARY").unwrap_or_else(|_| "claude".to_string());
+    let conc = concurrency.max(1);
+    println!(
+        "{} {} task(s) × {} parallel {} workers",
+        "⬡ swarm run".cyan().bold(), n, conc, "claude -p".yellow()
+    );
+    if let Some(d) = out_dir {
+        std::fs::create_dir_all(d).ok();
+    }
+
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(conc));
+    let mut handles = Vec::with_capacity(n);
+    for t in tasks {
+        let sem = sem.clone();
+        let binary = binary.clone();
+        handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire().await;
+            let t0 = std::time::Instant::now();
+            let out = tokio::process::Command::new(&binary)
+                .arg("-p")
+                .arg("--dangerously-skip-permissions")
+                .arg(&t.prompt)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .output()
+                .await;
+            let (ok, body) = match out {
+                Ok(o) => (
+                    o.status.success(),
+                    String::from_utf8_lossy(&o.stdout).to_string(),
+                ),
+                Err(e) => (false, format!("spawn error: {e}")),
+            };
+            (t.id, ok, body, t0.elapsed().as_millis())
+        }));
+    }
+
+    let mut results: Vec<(String, bool, String, u128)> = Vec::with_capacity(n);
+    for h in handles {
+        if let Ok(r) = h.await {
+            results.push(r);
+        }
+    }
+    results.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let ok = results.iter().filter(|r| r.1).count();
+    println!("{} {}/{} workers ok", "✓".green().bold(), ok, n);
+    for (id, okk, body, ms) in &results {
+        let mark = if *okk { "✓".green() } else { "✗".red() };
+        let preview: String = body.lines().next().unwrap_or("").chars().take(70).collect();
+        println!("  {} {:<28} {:>6}ms  {}", mark, id, ms, preview.dimmed());
+        if let Some(dir) = out_dir {
+            let _ = std::fs::write(format!("{}/{}.out", dir, id), body);
+        }
+    }
+    if let Some(dir) = out_dir {
+        println!("  {} outputs → {}/", "→".dimmed(), dir);
+    }
+    Ok(())
 }
 
 async fn init(name: &str, topology: &str, explicit_project_id: Option<&str>, json_output: bool) -> anyhow::Result<()> {

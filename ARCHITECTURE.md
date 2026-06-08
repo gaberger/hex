@@ -7,8 +7,11 @@
 > of every decision, grouped by epoch, lives at
 > [`docs/adrs/INDEX.md`](docs/adrs/INDEX.md) (`hex adr reindex`).
 >
-> **Current epoch: `single-agent`** (since 2026-06-06). Governing decisions (all
-> Accepted): [ADR-2606061359](docs/adrs/ADR-2606061359-single-agent-loop-retire-org-sim.md)
+> **Current epoch: `hybrid-inference`** (since 2026-06-07, ADR-2606072243) — the
+> single-agent loop, now *working* on local hardware and *hybrid*: evidence-gated
+> best-of-N across complementary local models with a `claude -p` frontier fallback,
+> model choice driven by `hex bench agentic`. It matures `single-agent` (the thesis
+> is unchanged), opened by [ADR-2606061359](docs/adrs/ADR-2606061359-single-agent-loop-retire-org-sim.md)
 > (collapse the org-sim to one agent loop), [ADR-2606071500](docs/adrs/ADR-2606071500-react-tool-use-loop.md)
 > (the ReAct execution model), [ADR-2606071340](docs/adrs/ADR-2606071340-nexus-hexagonal-compliance-crate-split.md)
 > (nexus hexagonal compliance + crate split), [ADR-2606071323](docs/adrs/ADR-2606071323-autonomous-execution-worktree-isolation.md)
@@ -164,7 +167,8 @@ relocating the transport contract to `domain/`, and the state-port contract to h
 |-------|------|----------|
 | `foundation` | 2026-03 → 2026-04 | Hexagonal microkernel + SpacetimeDB state core + FS-bridge daemon |
 | `org-sim` | 2026-04 → 2026-06-06 | **(retired)** Multi-agent organization simulation: C-suite personas + SOP state machine + autonomous spawn daemon + MAPE-K |
-| **`single-agent`** *(current)* | 2026-06-06 → | One gateway-mediated agent loop; code-graph context + memory as the differentiator; nexus decomposed into crates behind ports |
+| `single-agent` | 2026-06-06 → 2026-06-07 | One gateway-mediated agent loop; code-graph context + memory as the differentiator; nexus decomposed into crates behind ports |
+| **`hybrid-inference`** *(current)* | 2026-06-07 → | The loop *works* on local + is hybrid: evidence-gated best-of-N across complementary local models + `claude -p` frontier fallback; benchmark-driven model choice; self-deploying (`hex dev deploy`); hex-native frontier swarm (`hex swarm run`) |
 
 **The org-sim epoch is retired** (ADR-2606061359). The multi-agent "factory" — ~33 persona
 agent types, the SOP dispatch state machine, the autonomous spawn daemon, declarative-swarm
