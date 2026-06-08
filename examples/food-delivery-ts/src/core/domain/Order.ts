@@ -115,3 +115,7 @@ export function transitionStatus(order: Order, newStatus: OrderStatus): Order {
 export function cancelOrder(order: Order): Order {
   return transitionStatus(order, OrderStatus.Cancelled);
 }
+
+export function isCancellable(order: Order): boolean {
+  return canTransitionTo(order.status, OrderStatus.Cancelled);
+}
