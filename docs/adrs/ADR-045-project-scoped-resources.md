@@ -1,6 +1,6 @@
 # ADR-045: Project-Scoped ADRs, Config Templates, and Embedded Chat
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2025-07-19
 **Drivers:** Projects need self-contained ADRs, customizable configs, and integrated chat for inference-driven development.
 

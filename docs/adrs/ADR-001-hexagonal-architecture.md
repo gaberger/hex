@@ -1,6 +1,6 @@
 # ADR-001: Hexagonal Architecture as Foundational Pattern
 
-**Status:** Accepted
+**Status:** Completed
 **Verified:** 2026-05-12 via `hex analyze .` — 634 files scanned, 0 boundary violations, architecture grade A+ (100/100). The ADR's claim that domain→ports→adapters→composition-root layering is enforced is empirically true across the workspace.
 ## Date: 2026-03-15 (rationale expanded 2026-05-17 under wp-hexagonal-architecture-foundation)
 

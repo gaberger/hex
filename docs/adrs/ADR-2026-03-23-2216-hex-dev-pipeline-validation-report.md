@@ -1,6 +1,6 @@
 # ADR-2026-03-23-2216: hex dev Pipeline Validation Report
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-23
 **Drivers:** Validate that `hex dev` (ADR-2026-03-23-2005) delivers a complete, self-sufficient AI development pipeline using OpenRouter inference with acceptable cost, latency, and tracking fidelity.
 

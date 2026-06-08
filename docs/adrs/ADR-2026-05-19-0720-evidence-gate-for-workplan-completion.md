@@ -1,6 +1,6 @@
 # ADR-2026-05-19-0720: Evidence Gate for Workplan Completion
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-05-19
 **Drivers:** Self-reported task completion is unreliable. LLM agents claim `done` when they mean "tried" or "intended"; downstream consumers (workplan executor, dashboard, improver) propagate that lie. We need a derivation rule that only believes a task is done when there is git or filesystem evidence to back it.
 

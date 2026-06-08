@@ -1,6 +1,6 @@
 # ADR-2026-03-31-1900: Pipeline Phase Pre-condition Gates
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-31
 **Drivers:** Research swarm b1c8ac49 identified that every `hex dev` TUI session silently skips code generation because `session.workplan_path` is never written to the session JSON — `run_code_phase()` finds `None` and skips to Validate. The broader pattern: 12 code paths where phases advance without upstream artifacts existing, all because the pipeline treats missing upstream state as best-effort rather than a blocking error.
 

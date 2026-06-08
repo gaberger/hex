@@ -14,10 +14,10 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 
 | ADR | Status | Title | Superseded-By |
 |-----|--------|-------|---------------|
-| ADR-2606071243 | accepted | ADR-2606071243: ADR epochs, a living ARCHITECTURE.md, and a generated index — keep the architecture story legible as the design pivots |  |
-| ADR-2606071323 | accepted | ADR-2606071323: Autonomous execution must isolate to its own git worktree — never the operator's session branch |  |
+| ADR-2606071243 | completed | ADR-2606071243: ADR epochs, a living ARCHITECTURE.md, and a generated index — keep the architecture story legible as the design pivots |  |
+| ADR-2606071323 | completed | ADR-2606071323: Autonomous execution must isolate to its own git worktree — never the operator's session branch |  |
 | ADR-2606071340 | accepted | ADR-2606071340: hex-nexus must comply with hexagonal architecture — excise org-sim, split into crates behind ports, stay one daemon |  |
-| ADR-2606071500 | accepted | ADR-2606071500: ReAct tool-use loop as the default single-agent execution model (with safeguards + context compression) |  |
+| ADR-2606071500 | completed | ADR-2606071500: ReAct tool-use loop as the default single-agent execution model (with safeguards + context compression) |  |
 | ADR-2606071651 | proposed | ADR-2606071651: ReAct edit-loop progress guard — edit-nudge + single-shot fallback |  |
 | ADR-2606071702 | completed | ADR-2606071702: `hex dev deploy` verb + installed-binary freshness gate — close the validate≠deploy gap |  |
 | ADR-2606071713 | proposed | ADR-2606071713: Code-graph as a first-class agent-harness tool (active, not just passive context) |  |
@@ -44,14 +44,14 @@ _Multi-agent organization simulation: personas + SOP + autonomous spawn_
 | ADR-2026-05-22-1720 | superseded | ADR-2026-05-22-1720 — glibc-arena-cap | ADR-2026-06-04-1740 |
 | ADR-2026-05-21-1400 | proposed | ADR-2026-05-21-1400 — child-reap-on-spawn-local-agent |  |
 | ADR-2026-05-20 | superseded | ADR-2026-05-20-ic-responder-gap | ADR-2606061359 |
-| ADR-2026-05-19-0720 | accepted | ADR-2026-05-19-0720: Evidence Gate for Workplan Completion |  |
+| ADR-2026-05-19-0720 | completed | ADR-2026-05-19-0720: Evidence Gate for Workplan Completion |  |
 | ADR-2026-05-19-0721 | superseded | ADR-2026-05-19-0721: Self-Improvement Loop — Closing MAPE-K (Plan / Execute / Knowledge) | ADR-2606061359 |
 | ADR-2026-05-19-0900 | superseded | ADR-2026-05-19-0900: Runtime Supervision Architecture — closing the autonomous-loop liveness gap | ADR-2606061359 |
 | ADR-2026-05-15-1200 | superseded | ADR-2026-05-15-1200 — kanban-orphan-row-filter | ADR-2606061359 |
 | ADR-2026-05-17-2030 | superseded | ADR-2026-05-17-2030 — SOP Pipeline Redesign: Tool-Only Artifact Production, Closed-Loop Retries, Structured Classifier | ADR-2606061359 |
 | ADR-2026-05-14-1135 | superseded | ADR-2026-05-14-1135: hex-as-hermes-harness — phased roadmap | ADR-2606061359 |
 | ADR-2026-05-14-1631 | superseded | ADR-2026-05-14-1631: Dashboard refactor — Hermes Agent as the model | ADR-2606061359 |
-| ADR-2026-05-13-1500 | accepted | ADR-2026-05-13-1500: Fail-open twin judge + `hex goal` verb (Hermes /goal pattern) |  |
+| ADR-2026-05-13-1500 | superseded | ADR-2026-05-13-1500: Fail-open twin judge + `hex goal` verb (Hermes /goal pattern) | ADR-2606061359-single-agent-loop-retire-org-sim |
 | ADR-2026-05-13-1849 | superseded | ADR-2026-05-13-1849: User-defined SOUL personas alongside the c-suite | ADR-2606061359 |
 | ADR-2026-05-12 | accepted | ADR-2026-05-12-structural-smell |  |
 | ADR-2026-05-12-0900 | accepted | ADR: Cost and Token Efficiency |  |
@@ -68,7 +68,7 @@ _Multi-agent organization simulation: personas + SOP + autonomous spawn_
 | ADR-2026-05-09 | accepted | ADR-2026-05-09-cost-ops-runbook |  |
 | ADR-2026-05-09-1100 | accepted | ADR-2026-05-09-1100: Multi-host substrate composition |  |
 | ADR-2026-05-09-1200 | superseded | ADR-2026-05-09-1200 — hex-mission-control-design | ADR-2606061359 |
-| ADR-2026-05-09-1430 | accepted | ADR-2026-05-09-1430: Workspace Boundary Enforcement |  |
+| ADR-2026-05-09-1430 | completed | ADR-2026-05-09-1430: Workspace Boundary Enforcement |  |
 | ADR-2026-05-09-2145 | proposed | ADR-2026-05-09-2145 — Tool Czar persona for toolchain health monitoring |  |
 | ADR-2026-05-08-1126 | completed | ADR-2026-05-08-1126: Worktree-Mandatory Development with Merge-Team Safety Gate |  |
 | ADR-2026-05-08-2200 | accepted | ADR-2026-05-08-2200 — Resource-Aware Supervisor (process_observation + tick) |  |
@@ -78,7 +78,7 @@ _Multi-agent organization simulation: personas + SOP + autonomous spawn_
 | ADR-2026-05-02-1400 | superseded | ADR-2026-05-02-1400 — Experimental Loop Representations: Persona, Workload, Trial, Verdict | ADR-2606061359 |
 | ADR-2026-05-01-0001 | completed | ADR-2026-05-01-0001: Workflow Validation Protocol |  |
 | ADR-2026-04-29-1320 | accepted | ADR-2026-04-29-1320 — Memory Health Swarm |  |
-| ADR-2026-04-29-1354 | accepted | ADR-2026-04-29-1354 — Autonomous Workplan Execution |  |
+| ADR-2026-04-29-1354 | completed | ADR-2026-04-29-1354 — Autonomous Workplan Execution |  |
 | ADR-2026-04-27-1200 | completed | ADR-2026-04-27-1200: Architectural-health detectors — the improver interrogates domain → port → adapter |  |
 | ADR-2026-04-26-1303 | accepted | ADR-2026-04-26-1303: IModelProvider port + crate split (client / orchestrator / worker) |  |
 | ADR-2026-04-26-1311 | superseded | ADR-2026-04-26-1311: Six-layer governance — adversarial swarms, judges, and structural opposition to accretion | ADR-2606061359 |
@@ -110,7 +110,7 @@ _Multi-agent organization simulation: personas + SOP + autonomous spawn_
 | ADR-2026-04-14-2155 | superseded | ADR-2026-04-14-2155 — sched daemon leaves tasks stuck `in_progress` | ADR-2606061359 |
 | ADR-2026-04-14-2200 | accepted | ADR-2026-04-14-2200: Hex Chat — Conversational Brain Interface |  |
 | ADR-2026-04-14-2201 | completed | ADR-2026-04-14-2201: Reconcile must verify file evidence, not just match names |  |
-| ADR-2026-04-14-2243 | accepted | ADR-2026-04-14-2243 — Classifier rules as data tables, not control flow |  |
+| ADR-2026-04-14-2243 | completed | ADR-2026-04-14-2243 — Classifier rules as data tables, not control flow |  |
 | ADR-2026-04-14-2300 | superseded | ADR-2026-04-14-2300: Brain Auto-Cleanup of Stale Swarms | ADR-2606061359 |
 | ADR-2026-04-15-0000 | superseded | ADR-2026-04-15-0000: Rename `brain` subsystem to `sched` | ADR-2606061359 |
 | ADR-2026-04-13-0010 | accepted | ADR-2026-04-13-0010: Worker Local Inference Discovery |  |
@@ -118,9 +118,9 @@ _Multi-agent organization simulation: personas + SOP + autonomous spawn_
 | ADR-2026-04-13-1500 | completed | ADR-2026-04-13-1500: AIOS Developer Experience — Ambient Autonomy with On-Demand Depth |  |
 | ADR-2026-04-13-1630 | accepted | ADR-2026-04-13-1630: Code-First Execution — Inference as Accelerator, Not Gate |  |
 | ADR-2026-04-13-1800 | accepted | ADR-2026-04-13-1800: Last-Mile Self-Hosting Gaps — hex Must Use hex |  |
-| ADR-2026-04-13-1930 | accepted | ADR-2026-04-13-1930: First-Class Worktree Lifecycle Management |  |
+| ADR-2026-04-13-1930 | completed | ADR-2026-04-13-1930: First-Class Worktree Lifecycle Management |  |
 | ADR-2026-04-13-1945 | accepted | ADR-2026-04-13-1945: Brain as Self-Consistency Daemon |  |
-| ADR-2026-04-13-2200 | accepted | ADR-2026-04-13-2200: CLI Simplification — Progressive Disclosure for an AIOS |  |
+| ADR-2026-04-13-2200 | completed | ADR-2026-04-13-2200: CLI Simplification — Progressive Disclosure for an AIOS |  |
 | ADR-2026-04-13-2300 | superseded | ADR-2026-04-13-2300: Brain Daemon — The Missing Supervisor Loop | ADR-2606061359 |
 | ADR-2026-04-13-2330 | superseded | ADR-2026-04-13-2330: Brain Inbox — Task Queue for the Supervisor Loop | ADR-2606061359 |
 | ADR-2026-04-12-0202 | completed | ADR-2026-04-12-0202: Tiered Inference Routing with Local Model Scaffolding |  |
@@ -134,7 +134,7 @@ _Multi-agent organization simulation: personas + SOP + autonomous spawn_
 | ADR-2026-04-10-1500 | completed | ADR-2026-04-10-1500: Local Inference First for RL Evaluator |  |
 | ADR-2026-04-10-1600 | accepted | ADR-2026-04-10-1600 — SpacetimeDB Workplan Coordination |  |
 | ADR-2026-04-10-1700 | accepted | ADR-2026-04-10-1700: Workplan Progress Visibility via SpacetimeDB |  |
-| ADR-2026-04-10-1900 | accepted | ADR-2026-04-10-1900: Steering/Interrupt API — Full Implementation |  |
+| ADR-2026-04-10-1900 | superseded | ADR-2026-04-10-1900: Steering/Interrupt API — Full Implementation | ADR-2026-04-10-2100-agentic-steerable-loop |
 | ADR-2026-04-10-2100 | completed | ADR-2026-04-10-2100: Agentic Steerable Loop |  |
 | ADR-2026-04-10-2200 | superseded | ADR-2026-04-10-2200: RL-Driven Agent Infrastructure Self-Improvement | ADR-2606061359 |
 | ADR-2026-04-10-2300 | deprecated | ADR-2026-04-10-2300: Agent Framework Competitive Positioning |  |
@@ -145,19 +145,19 @@ _Multi-agent organization simulation: personas + SOP + autonomous spawn_
 | ADR-2026-04-07-0400 | completed | ADR-2026-04-07-0400: Swarm Code Generation Quality Improvements |  |
 | ADR-2026-04-07-1300 | completed | ADR-2026-04-07-1300: Unified Hex Dev Audit Trail via SpacetimeDB |  |
 | ADR-2026-04-07-1600 | completed | ADR-2026-04-07-1600: Audit Pipeline Correctness — TestsExist Escalation + completed_steps Wiring |  |
-| ADR-2026-04-06-1000 | accepted | ADR-2026-04-06-1000: Tree-Sitter as Architecture Enforcement Engine |  |
+| ADR-2026-04-06-1000 | completed | ADR-2026-04-06-1000: Tree-Sitter as Architecture Enforcement Engine |  |
 | ADR-2026-04-06-1100 | completed | ADR-2026-04-06-1100: hex CI Enforcement — Done-Conditions, `hex ci`, and Deployed Workflows |  |
 | ADR-2026-04-06-1600 | accepted | ADR-2026-04-06-1600: Standalone Deployment Gaps — Bazzite E2E Testing |  |
 | ADR-2026-04-05-0900 | completed | ADR-2026-04-05-0900: SpacetimeDB Right-Sizing — Procedures Migration for Multi-Host Dispatch |  |
 | ADR-2026-04-05-1700 | completed | ADR-2026-04-05-1700: Enforce Workplan Gates — Instructions to Code |  |
 | ADR-2026-04-05-1800 | completed | ADR-2026-04-05-1800: AIOS Maturity Roadmap — Missing Primitives |  |
-| ADR-2026-04-05-2125 | accepted | ADR-2026-04-05-2125: Multi-Provider Free-Tier Inference Routing |  |
+| ADR-2026-04-05-2125 | completed | ADR-2026-04-05-2125: Multi-Provider Free-Tier Inference Routing |  |
 | ADR-2026-04-02-0900 | completed | ADR-2026-04-02-0900: Eliminate SQLite Fallback — SpacetimeDB as Single State Authority |  |
 | ADR-2026-04-02-1215 | completed | ADR-2026-04-02-1215: SpacetimeDB Direct Query CLI Command |  |
 | ADR-2026-04-01-0000 | superseded | ADR-2026-04-01-0000: Unified Execution Path | ADR-2606061359 |
 | ADR-2026-04-01-1200 | superseded | ADR-2026-04-01-1200: SpacetimeDB-Native Autonomous Inference Dispatch | ADR-2026-04-11-2000 — Hex Standalone Dispatch — closed the dispatch gap this ADR opened |
 | ADR-2026-04-01-2110 | completed | ADR-2026-04-01-2110: Hooks-First Architecture Enforcement |  |
-| ADR-2026-04-01-2137 | accepted | ADR-2026-04-01-2137: Tool Call Observability via WebSocket Event Log |  |
+| ADR-2026-04-01-2137 | completed | ADR-2026-04-01-2137: Tool Call Observability via WebSocket Event Log |  |
 
 ## Epoch: `foundation`
 
@@ -167,7 +167,7 @@ _Hexagonal microkernel + SpacetimeDB state core + FS-bridge daemon_
 |-----|--------|-------|---------------|
 | ADR-067 | accepted | ADR-067: Hex Installation & Pipeline Validation |  |
 | ADR-2026-03-31-1000 | completed | ADR-2026-03-31-1000: Workflow Reliability Hardening |  |
-| ADR-2026-03-31-1900 | accepted | ADR-2026-03-31-1900: Pipeline Phase Pre-condition Gates |  |
+| ADR-2026-03-31-1900 | completed | ADR-2026-03-31-1900: Pipeline Phase Pre-condition Gates |  |
 | ADR-2026-03-31-2000 | accepted | ADR-2026-03-31-2000: hex docs — Static Site Generator for the hex Manual |  |
 | ADR-2026-03-31-2100 | completed | ADR-2026-03-31-2100: Context Engineering for hex-agent |  |
 | ADR-2026-03-31-2300 | completed | ADR-2026-03-31-2300: Workplan Live Execution Overlay |  |
@@ -180,106 +180,106 @@ _Hexagonal microkernel + SpacetimeDB state core + FS-bridge daemon_
 | ADR-2026-03-30-1600 | completed | ADR-2026-03-30-1600: Batch Command Execution with Context Indexing |  |
 | ADR-2026-03-29-1900 | completed | ADR-2026-03-29-1900: Docker Worker First-Class Execution |  |
 | ADR-2026-03-28-1000 | completed | ADR-2026-03-28-1000: Context Pipeline Compression |  |
-| ADR-2026-03-28-2000 | accepted | ADR-2026-03-28-2000: hex-agent as Claude Code-Independent Runtime in Docker AI Sandbox |  |
+| ADR-2026-03-28-2000 | completed | ADR-2026-03-28-2000: hex-agent as Claude Code-Independent Runtime in Docker AI Sandbox |  |
 | ADR-2026-03-28-3000 | completed | ADR-2026-03-28-3000: Rust Workspace Boundary Analysis in hex analyze |  |
 | ADR-2026-03-27-1000 | completed | ADR-2026-03-27-1000: Quantization-Aware Inference Routing |  |
 | ADR-2026-03-26-1000 | completed | ADR-2026-03-26-1000: Secure Inference Provider Registry and Encrypted Secrets Vault |  |
 | ADR-2026-03-25-0838 | completed | ADR-2026-03-25-0838: CLI / MCP Shared Implementation — One Function, Two Skins |  |
-| ADR-2026-03-25-0900 | accepted | ADR-2026-03-25-0900: Reviewer RL Integration and Structured-Output Reliability |  |
+| ADR-2026-03-25-0900 | completed | ADR-2026-03-25-0900: Reviewer RL Integration and Structured-Output Reliability |  |
 | ADR-2026-03-24-0045 | accepted | ADR-2026-03-24-0045: Free Model Performance Tracking in SpacetimeDB |  |
 | ADR-2026-03-24-0104 | superseded | ADR-2026-03-24-0104: Swarm Agent Personalities — Specialized Roles with Context-Aware Prompting | ADR-2606061359 |
 | ADR-2026-03-24-0130 | superseded | ADR-2026-03-24-0130: Declarative Swarm Agent Behavior from YAML Definitions | ADR-2606061359 |
 | ADR-2026-03-24-1126 | accepted | ADR-2026-03-24-1126: TUI CLI Surrogate + Pipeline Traceability |  |
 | ADR-2026-03-24-1226 | completed | ADR-2026-03-24-1226: Structured CLI Table Output via `tabled` |  |
 | ADR-2026-03-24-1230 | completed | ADR-2026-03-24-1230: Neural Network Encoding in SpacetimeDB WASM |  |
-| ADR-2026-03-24-1231 | accepted | ADR-2026-03-24-1231: Persistent Agent Coordination via SpacetimeDB |  |
-| ADR-2026-03-24-1500 | accepted | ADR-2026-03-24-1500: TUI Async Channel Architecture |  |
+| ADR-2026-03-24-1231 | completed | ADR-2026-03-24-1231: Persistent Agent Coordination via SpacetimeDB |  |
+| ADR-2026-03-24-1500 | completed | ADR-2026-03-24-1500: TUI Async Channel Architecture |  |
 | ADR-2026-03-24-1800 | completed | ADR-2026-03-24-1800: Swarm Lifecycle Management (Complete / Fail / Cleanup) |  |
-| ADR-2026-03-24-1900 | accepted | ADR-2026-03-24-1900: Agent-Swarm Ownership Hierarchy with Conflict Detection |  |
+| ADR-2026-03-24-1900 | completed | ADR-2026-03-24-1900: Agent-Swarm Ownership Hierarchy with Conflict Detection |  |
 | ADR-2026-03-24-2100 | accepted | ADR-2026-03-24-2100: Comprehensive hex-cli Integration Testing |  |
-| ADR-2026-03-23-1000 | accepted | ADR-2026-03-23-1000: Dashboard Reactive Context Fix — Eliminate Module-Level Computations |  |
+| ADR-2026-03-23-1000 | completed | ADR-2026-03-23-1000: Dashboard Reactive Context Fix — Eliminate Module-Level Computations |  |
 | ADR-2026-03-23-1309 | completed | ADR-2026-03-23-1309: Map All hex CLI Commands Into Dashboard UI |  |
-| ADR-2026-03-23-1400 | accepted | ADR-2026-03-23-1400: SpacetimeDB Operational Resilience |  |
+| ADR-2026-03-23-1400 | superseded | ADR-2026-03-23-1400: SpacetimeDB Operational Resilience | ADR-2026-03-23-1500-spacetimedb-per-module-databases |
 | ADR-2026-03-23-1500 | completed | ADR-2026-03-23-1500: SpacetimeDB Per-Module Databases |  |
 | ADR-2026-03-23-1600 | completed | ADR-2026-03-23-1600: OpenRouter Inference Integration |  |
 | ADR-2026-03-23-1700 | completed | ADR-2026-03-23-1700: Worktree Enforcement in Agent Hooks |  |
-| ADR-2026-03-23-1800 | accepted | ADR-2026-03-23-1800: hex Context Injection into opencode |  |
+| ADR-2026-03-23-1800 | completed | ADR-2026-03-23-1800: hex Context Injection into opencode |  |
 | ADR-2026-03-23-1900 | completed | ADR-2026-03-23-1900: Fix `hex test all` False Skips |  |
 | ADR-2026-03-23-2000 | completed | ADR-2026-03-23-2000: Swarm-Gate Enforcement at Pre-Agent Hook |  |
 | ADR-2026-03-23-2005 | completed | ADR-2026-03-23-2005: Self-Sufficient hex-agent with TUI |  |
-| ADR-2026-03-23-2216 | accepted | ADR-2026-03-23-2216: hex dev Pipeline Validation Report |  |
+| ADR-2026-03-23-2216 | completed | ADR-2026-03-23-2216: hex dev Pipeline Validation Report |  |
 | ADR-2026-03-23-2220 | completed | ADR-2026-03-23-2220: Developer Audit Report — Full Pipeline Traceability |  |
 | ADR-2026-03-23-2230 | accepted | ADR-2026-03-23-2230: Tool Call Tracking in SpacetimeDB |  |
-| ADR-2026-03-23-2340 | accepted | ADR-2026-03-23-2340: Validate Loop — Test, Analyze, Refactor Until Grade A |  |
+| ADR-2026-03-23-2340 | completed | ADR-2026-03-23-2340: Validate Loop — Test, Analyze, Refactor Until Grade A |  |
 | ADR-047 | completed | ADR-047: Internal Documentation System |  |
-| ADR-050 | accepted | ADR-050: Hook-Enforced Agent Lifecycle Pipeline |  |
+| ADR-050 | completed | ADR-050: Hook-Enforced Agent Lifecycle Pipeline |  |
 | ADR-055 | accepted | ADR-055: README-Driven Project Specification |  |
 | ADR-056 | accepted | ADR-056: Frontend Hexagonal Architecture — Preventing UI Species Drift |  |
-| ADR-057 | accepted | ADR-057: Unified Test Harness & Linting Pipeline |  |
+| ADR-057 | completed | ADR-057: Unified Test Harness & Linting Pipeline |  |
 | ADR-058 | completed | ADR-058: Test Session Persistence and Outcome Tracking |  |
-| ADR-059 | accepted | ADR-059: Canonical Project Identity Contract |  |
-| ADR-060 | accepted | ADR-060: Agent Notification Inbox |  |
+| ADR-059 | completed | ADR-059: Canonical Project Identity Contract |  |
+| ADR-060 | completed | ADR-060: Agent Notification Inbox |  |
 | ADR-064 | accepted | ADR-064: Rust Compilation Performance |  |
-| ADR-065 | accepted | ADR-065: Registration Lifecycle Gaps — Project and Agent Identity |  |
+| ADR-065 | completed | ADR-065: Registration Lifecycle Gaps — Project and Agent Identity |  |
 | ADR-066 | accepted | ADR-066: Dashboard Visibility Overhaul |  |
-| ADR-2026-03-22-1500 | accepted | ADR-2026-03-22-1500: Timestamp-Based ADR Numbering (YYMMDDHHMM) |  |
+| ADR-2026-03-22-1500 | completed | ADR-2026-03-22-1500: Timestamp-Based ADR Numbering (YYMMDDHHMM) |  |
 | ADR-2026-03-22-1522 | completed | ADR-2026-03-22-1522: Embedded Asset Bundle — rust-embed for CLI Templates and Schemas |  |
-| ADR-2026-03-22-1939 | accepted | ADR-2026-03-22-1939: Mandatory Swarm Tracking for Background Agents |  |
+| ADR-2026-03-22-1939 | completed | ADR-2026-03-22-1939: Mandatory Swarm Tracking for Background Agents |  |
 | ADR-2026-03-22-1959 | completed | ADR-2026-03-22-1959: Provider-Agnostic Enforcement via MCP Tool Guards |  |
 | ADR-2026-03-22-2035 | accepted | ADR-2026-03-22-2035: Dependency Vulnerability Remediation |  |
 | ADR-2026-03-22-2050 | superseded | ADR-2026-03-22-2050: Remove Legacy TypeScript CLI and Adapters | ADR-2026-04-26-1800 (Excise Phantom TypeScript Library Surface) — fully removed the TS adapter layer this ADR identified as dead code. |
 | ADR-2026-03-22-2136 | accepted | ADR-2026-03-22-2136: README Restructure — Accurate, Modular Documentation |  |
 | ADR-2026-03-22-2229 | accepted | ADR-2026-03-22-2229: CLI / MCP / Dashboard Parity Investigation |  |
-| ADR-040 | accepted | ADR-040: Remote Agent Transport — WebSocket over SSH with SpacetimeDB Coordination |  |
+| ADR-040 | completed | ADR-040: Remote Agent Transport — WebSocket over SSH with SpacetimeDB Coordination |  |
 | ADR-041 | completed | ADR-041: ADR Review Agent — Architectural Consistency Guardian |  |
 | ADR-042 | completed | ADR-042: SpacetimeDB Skill Lifecycle — Ingest, Select, Serialize |  |
 | ADR-043 | completed | ADR-043: Project Manifest + Auto-Registration via SpacetimeDB |  |
 | ADR-044 | completed | ADR-044: Nexus Git Integration — Project-Scoped Git Intelligence |  |
-| ADR-046 | accepted | ADR-046: SpacetimeDB Single Authority for State Mutations |  |
+| ADR-046 | completed | ADR-046: SpacetimeDB Single Authority for State Mutations |  |
 | ADR-048 | completed | ADR-048: Claude Code Session Agent Registration |  |
 | ADR-049 | completed | ADR-049: Embedded Settings Template — Single Source of Truth |  |
 | ADR-051 | completed | ADR-051: SpacetimeDB as Single Source of State |  |
 | ADR-053 | completed | ADR-053: Framework Configuration Sync to SpacetimeDB |  |
-| ADR-054 | accepted | ADR-054: ADR Compliance Enforcement — Preventing Architectural Drift |  |
+| ADR-054 | completed | ADR-054: ADR Compliance Enforcement — Preventing Architectural Drift |  |
 | ADR-061 | completed | ADR-061: Workplan Lifecycle Management — Creation, Tracking, and Reporting |  |
-| ADR-038 | accepted | ADR-038: Vite for Development, Axum for Production |  |
+| ADR-038 | completed | ADR-038: Vite for Development, Axum for Production |  |
 | ADR-039 | completed | ADR-039: Nexus Agent Control Plane — OpenCode-Inspired Multi-Project Interface |  |
 | ADR-035 | completed | ADR-035: Hex Architecture V2 — Rust-First, SpacetimeDB-Native, Pluggable Inference |  |
 | ADR-037 | completed | ADR-037: Agent Lifecycle — Local Default + Remote Connect |  |
 | ADR-028 | completed | ADR-028: API Optimization Layer |  |
-| ADR-029 | accepted | ADR-029: Haiku Preflight Checks & Automatic Context Compaction |  |
+| ADR-029 | completed | ADR-029: Haiku Preflight Checks & Automatic Context Compaction |  |
 | ADR-030 | completed | ADR-030: Multi-Provider Inference Broker |  |
 | ADR-031 | completed | ADR-031: RL-Driven Model Selection & Token Budget Management |  |
 | ADR-032 | completed | ADR-032: Deprecate hex-hub — Consolidate into hex-nexus and hex-agent |  |
 | ADR-063 | completed | ADR-063: Deprecate SQLite, Migrate HexFlo to SpacetimeDB |  |
-| ADR-018 | accepted | ADR-018: Multi-Language Build Enforcement (Go + Rust) |  |
+| ADR-018 | completed | ADR-018: Multi-Language Build Enforcement (Go + Rust) |  |
 | ADR-019 | accepted | ADR-019: CLI–MCP Parity — Every Command Must Have an MCP Equivalent |  |
-| ADR-020 | accepted | ADR-020: Feature Development UX Improvement |  |
+| ADR-020 | superseded | ADR-020: Feature Development UX Improvement | ADR-2026-03-31-2300-workplan-live-execution-overlay |
 | ADR-021 | accepted | ADR-021: Hex Initialization Memory Exhaustion in Existing Large Projects |  |
-| ADR-022 | accepted | ADR-022: Wire Coordination into Use Cases (Last-Mile Fix) |  |
-| ADR-023 | accepted | ADR-023: Dashboard Session Cleanup and State Synchronization |  |
-| ADR-001 | accepted | ADR-001: Hexagonal Architecture as Foundational Pattern |  |
-| ADR-002 | accepted | ADR-002: Tree-Sitter for Token-Efficient LLM Communication |  |
-| ADR-003 | accepted | ADR-003: Multi-Language Support — TypeScript, Go, Rust |  |
-| ADR-004 | accepted | ADR-004: Git Worktrees for Parallel Agent Isolation |  |
-| ADR-005 | accepted | ADR-005: Compile-Lint-Test Feedback Loop with Quality Gates |  |
-| ADR-006 | accepted | ADR-006: Skills, Agent Definitions, and npm Packaging |  |
-| ADR-008 | accepted | ADR-008: Dogfooding — hex Built with Hexagonal Architecture |  |
-| ADR-010 | accepted | ADR-010: TypeScript-to-Rust Migration Cost and Risk Analysis |  |
+| ADR-022 | completed | ADR-022: Wire Coordination into Use Cases (Last-Mile Fix) |  |
+| ADR-023 | completed | ADR-023: Dashboard Session Cleanup and State Synchronization |  |
+| ADR-001 | completed | ADR-001: Hexagonal Architecture as Foundational Pattern |  |
+| ADR-002 | completed | ADR-002: Tree-Sitter for Token-Efficient LLM Communication |  |
+| ADR-003 | completed | ADR-003: Multi-Language Support — TypeScript, Go, Rust |  |
+| ADR-004 | completed | ADR-004: Git Worktrees for Parallel Agent Isolation |  |
+| ADR-005 | completed | ADR-005: Compile-Lint-Test Feedback Loop with Quality Gates |  |
+| ADR-006 | completed | ADR-006: Skills, Agent Definitions, and npm Packaging |  |
+| ADR-008 | completed | ADR-008: Dogfooding — hex Built with Hexagonal Architecture |  |
+| ADR-010 | completed | ADR-010: TypeScript-to-Rust Migration Cost and Risk Analysis |  |
 | ADR-034 | completed | ADR-034: Migrate Hex Analyzer from TypeScript to Rust |  |
-| ADR-045 | accepted | ADR-045: Project-Scoped ADRs, Config Templates, and Embedded Chat |  |
-| ADR-007 | accepted | ADR-007: Multi-Channel Notification System |  |
-| ADR-011 | accepted | ADR-011: Coordination and Multi-Instance Locking |  |
-| ADR-012 | accepted | ADR-012: ADR Lifecycle Tracking |  |
-| ADR-013 | accepted | ADR-013: Secrets Management |  |
-| ADR-014 | accepted | ADR-014: Ban mock.module() — Use Dependency Injection for Test Isolation |  |
+| ADR-045 | completed | ADR-045: Project-Scoped ADRs, Config Templates, and Embedded Chat |  |
+| ADR-007 | completed | ADR-007: Multi-Channel Notification System |  |
+| ADR-011 | completed | ADR-011: Coordination and Multi-Instance Locking |  |
+| ADR-012 | completed | ADR-012: ADR Lifecycle Tracking |  |
+| ADR-013 | completed | ADR-013: Secrets Management |  |
+| ADR-014 | completed | ADR-014: Ban mock.module() — Use Dependency Injection for Test Isolation |  |
 | ADR-015 | superseded | ADR-015: SQLite Persistence for Hub Swarm State | ADR-027 — HexFlo coordination (replaces ruflo/SQLite hub state) |
-| ADR-017 | accepted | ADR-017: Unlink Binary Before Copy to Avoid macOS Inode-Based SIGKILL Cache |  |
+| ADR-017 | completed | ADR-017: Unlink Binary Before Copy to Avoid macOS Inode-Based SIGKILL Cache |  |
 | ADR-024 | superseded | ADR-024: Hex-Hub Autonomous Nexus Architecture | ADR-027 — HexFlo coordination (replaces autonomous-hub designs) |
-| ADR-025 | accepted | ADR-025: SpacetimeDB as Distributed State Backend |  |
-| ADR-026 | accepted | ADR-026: Secure Secret Distribution via SpacetimeDB Coordination |  |
+| ADR-025 | superseded | ADR-025: SpacetimeDB as Distributed State Backend | ADR-2026-04-02-0900-eliminate-sqlite-fallback |
+| ADR-026 | completed | ADR-026: Secure Secret Distribution via SpacetimeDB Coordination |  |
 | ADR-027 | superseded | ADR-027: HexFlo — Replace Ruflo with Native Swarm Coordination | ADR-2606061359 |
-| ADR-033 | accepted | ADR-033: MCP Client Support for hex-agent |  |
+| ADR-033 | completed | ADR-033: MCP Client Support for hex-agent |  |
 
 ## Epoch: `unassigned`
 

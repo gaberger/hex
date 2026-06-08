@@ -1,6 +1,6 @@
 # ADR-2026-03-22-1939: Mandatory Swarm Tracking for Background Agents
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-22
 **Drivers:** Background agents spawned without `HEXFLO_TASK:` prefix bypass HexFlo tracking entirely. The `Agent` tool is the only tool without a `PreToolUse` hook gate. Discovered when ADR-056 style conversion agents ran invisibly — no swarm status, no dashboard visibility, no session continuity.
 

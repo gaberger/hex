@@ -1,6 +1,6 @@
 # ADR-2026-04-01-2137: Tool Call Observability via WebSocket Event Log
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-04-01
 **Related:** ADR-2026-04-01-2110 (hooks-first enforcement), ADR-025 (SQLite fallback)
 

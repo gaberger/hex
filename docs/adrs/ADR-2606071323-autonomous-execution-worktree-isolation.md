@@ -1,6 +1,6 @@
 # ADR-2606071323: Autonomous execution must isolate to its own git worktree — never the operator's session branch
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-06-07
 **Epoch:** single-agent
 **Drivers:** A live data-loss-class race observed 2026-06-07: with `autonomous.enabled: true` + `rollback_on_failure: true`, the running nexus executor committed and `git reset`-rolled-back directly on the operator's checked-out branch. A failed autonomous attempt's rollback reset swept an operator commit (ADR-2606071243, `e8437655`) out of the branch as collateral. Recovered only because the reset was `--mixed` (disk preserved). Root cause: `hex-nexus/src/direct_exec.rs::commit()` (line ~900) runs `git commit` with `.current_dir(repo_root)`, and `repo_root()` (line ~421) is the single shared main working tree — autonomous execution has no worktree isolation.

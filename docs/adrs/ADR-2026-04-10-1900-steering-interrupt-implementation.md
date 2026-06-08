@@ -1,6 +1,7 @@
 # ADR-2026-04-10-1900: Steering/Interrupt API — Full Implementation
 
-**Status:** Accepted
+**Status:** Superseded
+**Superseded-By:** ADR-2026-04-10-2100-agentic-steerable-loop
 **Date:** 2026-04-10
 **Drivers:** Gap analysis ADR-2026-04-10-0000 identified steering/interrupt API but implementation is stubbed
 

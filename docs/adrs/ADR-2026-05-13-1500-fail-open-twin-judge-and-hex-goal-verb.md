@@ -1,6 +1,7 @@
 # ADR-2026-05-13-1500: Fail-open twin judge + `hex goal` verb (Hermes /goal pattern)
 
-**Status:** Accepted (instance shipped; commit pending)
+**Status:** Superseded
+**Superseded-By:** ADR-2606061359-single-agent-loop-retire-org-sim
 **Date:** 2026-05-13
 **Authors:** Operator (direct authorship — SOP path failed twice to produce a usable draft; the persona that claimed the work hallucinated OWASP-DRP platitudes instead of the requested content, see Provenance section)
 **Supersedes:** Partially supersedes the substring/evidence-strict reconciler logic in `hex-cli/src/commands/sched/` (separate companion change tracked below)

@@ -1,6 +1,7 @@
 # ADR-2026-03-23-1400: SpacetimeDB Operational Resilience
 
-**Status:** Accepted
+**Status:** Superseded
+**Superseded-By:** ADR-2026-03-23-1500-spacetimedb-per-module-databases
 **Date:** 2026-03-23
 **Drivers:** hex-nexus reported "SpacetimeDB: unavailable" despite SpacetimeDB running. Root cause investigation revealed 4 layered failures in startup, health checking, and schema hydration.
 

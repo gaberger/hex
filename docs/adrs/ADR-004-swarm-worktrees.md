@@ -1,6 +1,6 @@
 # ADR-004: Git Worktrees for Parallel Agent Isolation
 
-**Status:** Accepted
+**Status:** Completed
 ## Date: 2026-03-15
 
 ## Context

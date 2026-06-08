@@ -1,6 +1,6 @@
 # ADR-2606071500: ReAct tool-use loop as the default single-agent execution model (with safeguards + context compression)
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-06-07
 **Drivers:** The single-agent executor (`hex do` / `direct_exec.rs`) was single-shot per attempt — it could not explore before editing (grep callers, read neighbours, `cargo check` mid-reasoning), so it failed on any task needing more than a localized edit. The OpenClaw/Hermes direction (ADR-2606061359) is explicitly "tools + context + memory feeding one strong loop"; this ADR builds that loop.
 **Relates-To:** ADR-2606061359 (collapse org-sim to a single gateway-mediated agent loop — Implementation step 2), ADR-2026-06-04-1740 (the direct executor / evidence gate).

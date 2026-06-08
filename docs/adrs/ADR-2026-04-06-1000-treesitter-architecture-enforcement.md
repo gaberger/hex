@@ -1,6 +1,6 @@
 # ADR-2026-04-06-1000: Tree-Sitter as Architecture Enforcement Engine
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-04-06
 **Drivers:** ADR-001 mandates hexagonal boundary rules but specifies only "lint rules" without defining the mechanism. ADR-002 establishes tree-sitter for token-efficient summaries but does not cover its role in enforcement. This ADR closes the gap — tree-sitter is the engine that powers `hex analyze`.
 **Supersedes:** None (extends ADR-001 and ADR-002)
