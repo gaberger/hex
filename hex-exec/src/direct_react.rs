@@ -550,3 +550,21 @@ mod tests {
         assert!(!names.contains(&"delegate"));
     }
 }
+
+/// Resolve the ordered candidate-model list for the do-loop with precedence:
+/// 1) explicit model always wins (list of one)
+/// 2) configured list in order
+/// 3) single fallback
+/// 4) default pair
+pub fn candidate_models(explicit: Option<&str>, configured: &[String], single: Option<&str>) -> Vec<String> {
+    if let Some(m) = explicit {
+        return vec![m.to_string()];
+    }
+    if !configured.is_empty() {
+        return configured.to_vec();
+    }
+    if let Some(m) = single {
+        return vec![m.to_string()];
+    }
+    vec!["devstral-small-2:24b".to_string(), "qwen2.5-coder:14b".to_string()]
+}
