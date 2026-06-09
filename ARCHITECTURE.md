@@ -80,6 +80,28 @@ With `CLAUDE_SESSION_ID` unset, nexus drives the loop itself via an Ollama/OpenA
 adapter — no Claude CLI needed (ADR-2026-04-11-2000). `hex doctor composition` diagnoses the
 active variant.
 
+## The agentic harness
+
+The single loop handles *bounded* work. For whole systems, hex runs a **cooperative+adversarial
+harness** — frontier `claude -p` agents that disagree, attack each other's work, and resolve against
+a ground-truth test gate. Orchestrated by `hex-exec/src/adversarial.rs`; two composable verbs:
+
+- **`hex swarm build '<challenge>' --target <dir> --gate '<test>'`** — *cooperative design*: N agents
+  propose divergent designs (durability-first, concurrency-first, simplicity-first, …) → each is
+  red-teamed → a lead synthesizes one spec → a build agent implements until the gate passes.
+- **`hex swarm review <path> --gate '<test>'`** — *adversarial hardening*: parallel reviewers hunt
+  bugs by failure-class lens → each finding is skeptically verified (default-refute) → confirmed bugs
+  are fixed, each gated by the test command.
+- `--review` chains them into the full design → harden pipeline.
+
+What keeps it disciplined: the **test gate is the only authority** on what counts, the verifier
+defaults to refuting (so plausible-but-wrong findings die before any edit), and every artifact is
+independently `cargo test`/`tsc`-verified. From one-line specs the harness has built a concurrent
+durable job queue (WAL + crash recovery, ~2900 LOC), a thread-safe LRU+TTL cache, and a token-bucket
+rate limiter — with the adversarial pass finding real bugs the builds' own passing tests missed (6,
+1, and 0 respectively). The agents are the frontier; hex is the pipeline, the gate, and the
+orchestration around them.
+
 ## Workspace crates (post-decomposition — ADR-2606071340)
 
 nexus was a 117k-LOC god-daemon that *failed its own architecture analyzer* (F, 30/100).
@@ -93,7 +115,7 @@ It is now decomposed: each reusable bounded context is a crate behind ports, and
 | **hex-analysis** | Tree-sitter hexagonal boundary checking, layer classifier, dead-export/cycle detection, ADR conformance. Powers `hex analyze`. |
 | **hex-git** | Pure git plumbing (status/log/diff/blame/worktree/correlation) over libgit2. |
 | **hex-state** | The SpacetimeDB state adapter — implements `hex_core::ports::state` over STDB's HTTP/reducer surface (`spacetimedb` feature; stub otherwise). |
-| **hex-exec** | The single-agent loop: `direct_exec`/`direct_react`/`direct_workspace` + transcript compression + the guarded `tools` library. Depends only on hex-core/graph/git. |
+| **hex-exec** | The agent execution engine: the single-agent loop (`direct_exec`/`direct_react`/`direct_workspace`), the **cooperative+adversarial harness** (`adversarial.rs` → `hex swarm build`/`review`), the **resource governor** (`resource_governor.rs`, memory-aware admission), transcript compression, and the guarded `tools` library. Depends only on hex-core/graph/git. |
 | **hex-nexus** | **Composition root + daemon.** axum/HTTP (primary adapter, `:5555`), the dashboard host (rust-embed), DI wiring, and the daemon-coupled adapters/orchestration (HexFlo coordination, the git poller, routes). The only place that wires adapters together. |
 | **hex-cli** | The canonical user entry point — every `hex` verb calls nexus (or runs standalone, e.g. `hex graph consumers`). |
 | **hex-agent / hex-parser / hex-desktop** | Architecture-enforcement runtime · parsing · Tauri wrapper for the dashboard. |
@@ -168,15 +190,18 @@ relocating the transport contract to `domain/`, and the state-port contract to h
 | `foundation` | 2026-03 → 2026-04 | Hexagonal microkernel + SpacetimeDB state core + FS-bridge daemon |
 | `org-sim` | 2026-04 → 2026-06-06 | **(retired)** Multi-agent organization simulation: C-suite personas + SOP state machine + autonomous spawn daemon + MAPE-K |
 | `single-agent` | 2026-06-06 → 2026-06-07 | One gateway-mediated agent loop; code-graph context + memory as the differentiator; nexus decomposed into crates behind ports |
-| **`hybrid-inference`** *(current)* | 2026-06-07 → | The loop *works* on local + is hybrid: evidence-gated best-of-N across complementary local models + `claude -p` frontier fallback; benchmark-driven model choice; self-deploying (`hex dev deploy`); hex-native frontier swarm (`hex swarm run`) |
+| **`hybrid-inference`** *(current)* | 2026-06-07 → | The loop *works* and is hybrid: evidence-gated best-of-N across complementary local models + `claude -p` frontier path; benchmark-driven model choice; self-deploying (`hex dev deploy`); a **hex-native agent harness** — parallel workers (`hex swarm run`) and a **cooperative+adversarial build/harden pipeline** (`hex swarm build`/`review`) that has produced three real systems from one-line specs; a memory-aware resource governor |
 
 **The org-sim epoch is retired** (ADR-2606061359). The multi-agent "factory" — ~33 persona
 agent types, the SOP dispatch state machine, the autonomous spawn daemon, declarative-swarm
 YAMLs, and the proposed MAPE-K loop — proved operationally fragile and was collapsed to the
 single ReAct loop above. Much of its code has since been excised from nexus (ADR-2606071340
-Phase 0); the remaining org-sim ADRs are kept in the ledger as `Superseded` history. **If a
-component you find in the code or older docs (personas, the brain/sched spawn daemon, SOP)
-contradicts this file, this file wins** — and the contradiction is worth an ADR.
+Phase 0); the remaining org-sim ADRs are kept in the ledger as `Superseded` history. The
+multi-agent goal returned in `hybrid-inference` — but as the disciplined
+[cooperative+adversarial harness](#the-agentic-harness) (frontier agents, a ground-truth gate,
+independently verified), not a simulated org. **If a component you find in the code or older docs
+(personas, the brain/sched spawn daemon, SOP) contradicts this file, this file wins** — and the
+contradiction is worth an ADR.
 
 ## Build & test
 
