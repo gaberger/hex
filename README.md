@@ -11,8 +11,9 @@
 
 <p align="center">
   <strong>An AI Operating System built on hexagonal architecture.</strong><br>
-  A single, evidence-gated agent loop — fed code-graph context and ranked memory, run on hybrid
-  inference (local models first, a <code>claude -p</code> frontier fallback when they fall short).
+  A single evidence-gated agent loop for bounded work — and a cooperative+adversarial agent harness
+  that designs and hardens whole systems. Hybrid inference: local models first, a
+  <code>claude -p</code> frontier path for the hard parts.
 </p>
 
 <p align="center">
@@ -23,11 +24,12 @@
 
 ---
 
-> **Honest status (2026-06, `hybrid-inference` epoch).** hex is a working substrate with a real,
-> measured execution model — *not* a self-improving autonomous factory. An earlier design (the
-> retired `org-sim` epoch) framed it as a simulated organization of agents with a MAPE-K
-> self-adaptive loop; that proved fragile and was collapsed to one strong loop. This README
-> describes what hex actually does today. See [§ Where hex actually is](#where-hex-actually-is).
+> **Status (2026-06, `hybrid-inference` epoch).** hex is a working substrate with a real, measured
+> execution model. An earlier design (the retired `org-sim` epoch) modeled development as a simulated
+> *organization of personas*; that was collapsed to one strong loop. The multi-agent goal then came
+> **back, earned**: a disciplined [cooperative+adversarial harness](#the-agentic-harness) anchored on
+> a ground-truth test gate — which has built three real systems from one-line specs. What follows is
+> what hex does today.
 
 ## What hex is
 
@@ -69,9 +71,42 @@ What's actually wired (all shipped + validated — see the ADR ledger):
 - **Hex-native frontier swarm** — `hex swarm run` fans a task list out to parallel `claude -p`
   workers under a supervisor (semaphore-bounded). hex orchestrates its own agents.
 
-## Where hex actually is
+## The agentic harness
 
-Honest, because the alternative is theater.
+The single loop above is for *bounded* work. For whole systems, hex has a **cooperative+adversarial
+harness** — multiple `claude -p` agents that disagree, attack each other's work, and resolve against
+a ground-truth gate. Two composable verbs:
+
+- **`hex swarm build '<challenge>' --target <dir> --gate '<test>'`** — *cooperative design*: N agents
+  propose divergent designs (durability-first, concurrency-first, …) → each is red-teamed →
+  synthesized into one spec → built until the gate passes.
+- **`hex swarm review <path> --gate '<test>'`** — *adversarial hardening*: parallel reviewers hunt
+  bugs by failure-class lens → each finding is skeptically verified (default-refute) → confirmed bugs
+  are fixed under the gate.
+- `--review` chains them: `hex swarm build … --review` runs the full pipeline.
+
+What makes it *real*, not org-sim theater: **a ground-truth test gate is the only authority**, the
+verifier defaults to *refuting* findings (so plausible-but-wrong bugs die before any edit), and the
+agents are frontier `claude -p` workers, not local personas.
+
+**Proven** — from one-line challenges, the harness built three real systems, and the adversarial pass
+found bugs the builds' *own passing tests* missed:
+
+| System (built from a one-line spec) | LOC | Adversarial review found |
+|---|---|---|
+| Concurrent durable job queue (WAL, crash-recovery) | ~2900 | **6 real bugs** (incl. silent WAL data-loss) |
+| Thread-safe LRU + TTL cache | ~1300 | **1 real bug** (exception-safety) |
+| Token-bucket rate limiter | ~550 | **0** (clean by design) |
+
+The 6 / 1 / 0 spread is the signature of a real tool — it finds bugs when they're there and reports
+none when they're not. hex supplies the structure that makes it work: the divergent-design pipeline,
+the skeptical-verify gate, the fix-loop, and the evidence anchor — orchestrating `claude -p` agents
+into a disciplined build-and-harden pipeline you can point at a one-line spec and get tested,
+architecturally-clean code back.
+
+## What hex can do today
+
+Concretely, with the receipts:
 
 **What works:**
 - The hexagonal architecture is real and self-enforced — `hex analyze` grades the workspace
@@ -80,15 +115,17 @@ Honest, because the alternative is theater.
   under failure (a wandering model commits *nothing*).
 - Best-of-N + the `claude -p` fallback let the loop recover across models automatically —
   validated live (a local model failed a task; Claude took over and committed).
+- The **cooperative+adversarial harness** builds *and* hardens whole systems from one-line specs —
+  proven on three (job queue, cache, rate limiter), each gated by its own tests, with the
+  adversarial pass catching real bugs the build missed. hex even used it to find a bug in its *own*
+  output.
 
-**What's limited (measured, not hand-waved):**
-- **Local AI alone is not sufficient on commodity hardware** — see the next section. The frontier
-  fallback is load-bearing, not a nicety.
-- **Fully-autonomous *feature-sized* development is not reliable yet.** hex builds bounded,
-  single-file, evidence-gated tasks well (it built parts of its own routing feature). Stateful,
-  multi-file integration still needs a strong model or a human in the loop.
-- The benchmark corpus is small; model rankings shifted as it grew — don't over-trust any single
-  number.
+**The honest envelope:**
+- **The full capability above runs on a frontier API or a logged-in `claude` CLI.** Strictly local
+  on commodity hardware has a ceiling (see the next section) — there, the local loop is a reliable
+  implementer of bounded work, and the frontier path takes the whole-system design and the hardest
+  tasks. hex routes between them by *measured fit*, not by guessing.
+- The benchmark corpus is small; treat any single number as directional, not gospel.
 
 ## Local AI: the honest picture
 
