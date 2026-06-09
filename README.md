@@ -24,12 +24,11 @@
 
 ---
 
-> **Status (2026-06, `hybrid-inference` epoch).** hex is a working substrate with a real, measured
-> execution model. An earlier design (the retired `org-sim` epoch) modeled development as a simulated
-> *organization of personas*; that was collapsed to one strong loop. The multi-agent goal then came
-> **back, earned**: a disciplined [cooperative+adversarial harness](#the-agentic-harness) anchored on
-> a ground-truth test gate — which has built three real systems from one-line specs. What follows is
-> what hex does today.
+> **Status (2026-06, alpha).** hex is a working substrate with a real, measured execution model: an
+> evidence-gated agent loop for bounded work, and a [cooperative+adversarial harness](#the-agentic-harness)
+> that designs and hardens whole systems — proven on three real systems built from one-line specs.
+> The full capability runs on frontier inference; strictly-local on commodity hardware has a measured
+> ceiling. What follows is what hex does today.
 
 ## What hex is
 
@@ -38,8 +37,9 @@ hex is a microkernel-based **AI Operating System (AIOS)** built on **hexagonal a
 **agents are the users, developers are the sysadmins.** Hooks, skills, agents, and settings are
 instantiated into the target project; `examples/` holds sample targets.
 
-The differentiator is **the quality of context assembled for one agent loop** — code-graph
-relevance plus ranked lessons — not a head-count of simulated personas.
+The differentiator is **the quality of context assembled for each agent** — code-graph relevance
+plus ranked lessons — and a structure that turns frontier models into a disciplined, gated,
+architecturally-aware development pipeline.
 
 ## The execution model
 
@@ -85,9 +85,9 @@ a ground-truth gate. Two composable verbs:
   are fixed under the gate.
 - `--review` chains them: `hex swarm build … --review` runs the full pipeline.
 
-What makes it *real*, not org-sim theater: **a ground-truth test gate is the only authority**, the
-verifier defaults to *refuting* findings (so plausible-but-wrong bugs die before any edit), and the
-agents are frontier `claude -p` workers, not local personas.
+What keeps it disciplined: **a ground-truth test gate is the only authority**, the verifier defaults
+to *refuting* findings (so plausible-but-wrong bugs die before any edit), and every artifact is
+independently re-verified (`cargo test` / `tsc`) — not taken on the agents' word.
 
 **Proven** — from one-line challenges, the harness built three real systems, and the adversarial pass
 found bugs the builds' *own passing tests* missed:
