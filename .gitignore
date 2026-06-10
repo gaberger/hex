@@ -27,11 +27,14 @@ Thumbs.db
 !.claude/agents/
 .claude/agents/*
 !.claude/agents/hex-intf/
+!.claude/agents/neural-lab-researcher.yml
 .claude-flow/
 .mcp.json
 
 # Bun
 bun.lockb
+# bun.lock is the root lockfile; keep npm's out (hex-nexus/assets has its own)
+/package-lock.json
 
 # Coverage
 coverage/
@@ -60,10 +63,18 @@ docs/algebra/states/
 !docs/DEVELOPER-EXPERIENCE.md
 !docs/FORMAL-VERIFICATION.md
 !docs/EVIDENCE.md
+!docs/BOOTSTRAP.md
+!docs/hex-primer.md
+!docs/remote-agent-walkthrough.md
+!docs/ARCHITECTURE-VALIDATION.md
+!docs/AUTONOMOUS-HEXAGONAL-BUILD.md
 
 # Filesystem artifacts
 Volumes/
-.hex/
+# .hex is runtime state (at any depth) except the two committed root config files
+**/.hex/*
+!.hex/project.json
+!.hex/project.yaml
 .superset/
 examples/hex-worktrees/
 target/
