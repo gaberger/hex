@@ -79,6 +79,13 @@ examples/sandbox-demo/target/
 bin/hex-agent
 bin/hex-cli
 bin/hex-nexus
+bin/hex
+bin/hex-chat
+
+# Scratch / generated artifacts
+tmp/
+test-output/
+*.tmp
 
 # SpacetimeDB module lock files
 spacetime-modules/*/Cargo.lock
