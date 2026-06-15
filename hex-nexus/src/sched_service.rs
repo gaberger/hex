@@ -482,13 +482,39 @@ async fn locally_served_models() -> Result<std::collections::HashSet<String>, St
     let endpoints = raw.as_array()
         .or_else(|| raw.get("endpoints").and_then(|v| v.as_array()))
         .ok_or_else(|| "endpoints response neither array nor {endpoints:[...]}".to_string())?;
-    Ok(endpoints.iter()
-        .filter(|e| matches!(
-            e.get("provider").and_then(|v| v.as_str()),
-            Some("ollama") | Some("openai_compat")
-        ))
-        .filter_map(|e| e.get("model").and_then(|v| v.as_str()).map(String::from))
-        .collect())
+    let mut served = std::collections::HashSet::new();
+    for e in endpoints.iter() {
+        let provider = e.get("provider").and_then(|v| v.as_str());
+        if !matches!(provider, Some("ollama") | Some("openai_compat")) {
+            continue;
+        }
+        // The registered `model` field is only the provider's *representative*
+        // model (e.g. an Ollama provider lists one of its installed models).
+        // Without enumerating the full set, the RL cycle's Q-table intersection
+        // sees a single model, never matches, and dead-ends to the env fallback.
+        if let Some(m) = e.get("model").and_then(|v| v.as_str()) {
+            served.insert(m.to_string());
+        }
+        // For Ollama, enumerate every locally-installed model via /api/tags so
+        // the cycle can actually explore the full local fleet.
+        if provider == Some("ollama") {
+            if let Some(base) = e.get("url").and_then(|v| v.as_str()) {
+                let tags_url = format!("{}/api/tags", base.trim_end_matches('/'));
+                if let Ok(r) = client.get(&tags_url).send().await {
+                    if let Ok(body) = r.json::<serde_json::Value>().await {
+                        if let Some(models) = body.get("models").and_then(|v| v.as_array()) {
+                            for m in models {
+                                if let Some(name) = m.get("name").and_then(|v| v.as_str()) {
+                                    served.insert(name.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(served)
 }
 
 /// Pick a model action for the next improvement cycle.
@@ -546,7 +572,20 @@ async fn select_model_for_cycle(
     }).collect();
 
     if candidates.is_empty() {
-        return Err("no local model candidates intersect rl_q_entry".into());
+        // Bootstrap: the Q-table has no rows yet for any locally-served model
+        // (fresh table, or rewards only ever landed on the env-fallback model).
+        // Rather than dead-end to the env default forever, explore a real local
+        // model so record_reward seeds its row and the loop self-heals. Skip
+        // tiny utility models that aren't real codegen candidates.
+        let mut bootstrap: Vec<&String> = local_models.iter()
+            .filter(|m| !m.starts_with("nemotron-mini"))
+            .collect();
+        bootstrap.sort();
+        if bootstrap.is_empty() {
+            return Err("no local model candidates intersect rl_q_entry".into());
+        }
+        let idx = rand::thread_rng().gen_range(0..bootstrap.len());
+        return Ok((bootstrap[idx].clone(), "bootstrap"));
     }
 
     let explore = rand::thread_rng().gen_bool(SCHED_EPSILON);
