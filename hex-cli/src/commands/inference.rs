@@ -2001,13 +2001,26 @@ async fn bench_chat(
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,
+            // Reasoning models (Nemotron, DeepSeek-R1, qwen3) spend output budget on
+            // chain-of-thought before emitting the final answer. Without a generous
+            // cap they hit finish_reason=length mid-thought and return empty content,
+            // scoring 0 despite being correct. 8192 leaves room to finish.
+            "max_tokens": 8192,
         });
         let resp = http.post(&chat_url)
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&body)
             .send().await?;
         let d: serde_json::Value = resp.json().await?;
-        let content = d["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
+        let msg = &d["choices"][0]["message"];
+        let mut content = msg["content"].as_str().unwrap_or("").to_string();
+        // Reasoning models stream CoT into a separate `reasoning` field and only
+        // fill `content` once they conclude. If content is empty (truncated or the
+        // provider splits the fields), fall back to reasoning so a responsive model
+        // isn't scored as a non-response.
+        if content.trim().is_empty() {
+            content = msg["reasoning"].as_str().unwrap_or("").to_string();
+        }
         let tokens = d["usage"]["completion_tokens"].as_u64().unwrap_or(content.len() as u64 / 4);
         let wall = start.elapsed().as_secs_f64();
         Ok((content, tokens, wall))
@@ -2018,11 +2031,21 @@ async fn bench_chat(
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": false,
-            "options": {"temperature": 0.2},
+            // Ollama defaults num_predict to 128 — far too short for a reasoning
+            // model, which burns that budget on chain-of-thought and returns an
+            // empty/truncated answer (scoring 0). Mirror the OpenRouter cap.
+            "options": {"temperature": 0.2, "num_predict": 8192},
         });
         let resp = http.post(&chat_url).json(&body).send().await?;
         let d: serde_json::Value = resp.json().await?;
-        let content = d["message"]["content"].as_str().unwrap_or("").to_string();
+        let msg = &d["message"];
+        let mut content = msg["content"].as_str().unwrap_or("").to_string();
+        // Reasoning models served via Ollama (qwen3, deepseek-r1) emit CoT into a
+        // separate `thinking` field when think-mode is on. If the answer content
+        // is empty, fall back to thinking so a responsive model isn't scored empty.
+        if content.trim().is_empty() {
+            content = msg["thinking"].as_str().unwrap_or("").to_string();
+        }
         let tokens = d["eval_count"].as_u64().unwrap_or(content.len() as u64 / 4);
         let wall = start.elapsed().as_secs_f64();
         Ok((content, tokens, wall))
@@ -2425,6 +2448,28 @@ async fn bench_provider(
             r.model = format!("hex/{}", r.model);
         } else {
             println!("{} nexus not reachable — cannot bench cloud provider '{}' (vault key needs nexus)", "✗".red(), r.id);
+            return Ok(());
+        }
+    }
+
+    // OpenRouter targets keep the direct path (to measure true latency), but
+    // bench_chat reads OPENROUTER_API_KEY from the process env — and hex stores
+    // it in the STDB vault, not env. Without this the Bearer header is empty and
+    // every request fails auth, scoring the model 0. Hydrate env from the vault.
+    if (r.ptype == "openrouter" || r.url.contains("openrouter.ai"))
+        && std::env::var("OPENROUTER_API_KEY").map(|v| v.trim().is_empty()).unwrap_or(true)
+    {
+        if nexus.ensure_running().await.is_ok() {
+            if let Ok(resp) = nexus.get("/api/secrets/vault/OPENROUTER_API_KEY").await {
+                if let Some(k) = resp.get("value").and_then(|v| v.as_str()) {
+                    if !k.trim().is_empty() {
+                        std::env::set_var("OPENROUTER_API_KEY", k);
+                    }
+                }
+            }
+        }
+        if std::env::var("OPENROUTER_API_KEY").map(|v| v.trim().is_empty()).unwrap_or(true) {
+            println!("{} OPENROUTER_API_KEY not in env or vault — bench will fail auth. Set it with `hex secrets set OPENROUTER_API_KEY <key>`", "✗".red());
             return Ok(());
         }
     }
