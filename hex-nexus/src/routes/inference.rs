@@ -1212,7 +1212,28 @@ pub async fn queue_pending(
 /// Resolve the tier model used for corpus augmentation. Cheap T1 by default;
 /// overridable so a box without qwen3 can point at whatever it serves.
 fn resolve_lora_augment_model() -> String {
-    std::env::var("HEX_LORA_AUGMENT_MODEL").unwrap_or_else(|_| "qwen3:4b".to_string())
+    // 1. env (highest precedence)
+    if let Ok(m) = std::env::var("HEX_LORA_AUGMENT_MODEL") {
+        if !m.trim().is_empty() {
+            return m;
+        }
+    }
+    // 2. .hex/project.json → inference.lora.augment_model
+    let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
+        .or_else(|_| std::env::var("HEX_PROJECT_DIR"))
+        .unwrap_or_else(|_| ".".to_string());
+    let project_json = std::path::Path::new(&project_dir).join(".hex/project.json");
+    if let Ok(content) = std::fs::read_to_string(&project_json) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(m) = v["inference"]["lora"]["augment_model"].as_str() {
+                if !m.trim().is_empty() {
+                    return m.to_string();
+                }
+            }
+        }
+    }
+    // 3. default: fast local T1
+    "qwen3:4b".to_string()
 }
 
 /// Resolve the registered local Ollama base URL (empty string if none registered).

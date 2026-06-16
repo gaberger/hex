@@ -260,11 +260,13 @@ async fn augment_via_ollama(
         "stream": false,
         "think": false,
         "format": "json",
-        "options": {"temperature": 0.4, "num_predict": 2048},
+        // Room for several code-bearing pairs; a strong teacher (e.g. a 32B coder)
+        // is slower, so the client timeout below is generous.
+        "options": {"temperature": 0.4, "num_predict": 3072},
     });
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(180))
+        .timeout(std::time::Duration::from_secs(600))
         .build()
         .ok()?;
     let url = format!("{}/api/chat", ollama_url.trim_end_matches('/'));
