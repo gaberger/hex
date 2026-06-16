@@ -88,32 +88,59 @@ pub async fn resolve_serving_model(
     }
 }
 
-/// Ensure a derived Ollama model exists, creating it once from a Modelfile that pins
-/// the frozen base and the LoRA GGUF. Idempotent: if the model already exists we skip
-/// the (re)create so cached weights + KV-cache are reused.
+/// Ensure a derived Ollama model exists, creating it once from the frozen base + the
+/// LoRA GGUF. Idempotent: if the model already exists we skip the (re)create so cached
+/// weights + KV-cache are reused.
+///
+/// Ollama ≥0.6 dropped the inline-Modelfile create; file-based models must reference an
+/// uploaded blob by sha256 digest. So: (1) sha256 the GGUF, (2) upload it as a blob,
+/// (3) `create {from, adapters:{name: "sha256:<digest>"}}`.
 async fn ensure_ollama_model(
     ollama_url: &str,
     derived: &str,
     base_model: &str,
     artifact_ref: &str,
 ) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
+        .timeout(std::time::Duration::from_secs(180))
         .build()
         .map_err(|e| format!("http client: {e}"))?;
+    let base = ollama_url.trim_end_matches('/');
 
     if ollama_has_model(&client, ollama_url, derived).await {
         return Ok(());
     }
 
-    // FROM the frozen base + ADAPTER the trained GGUF (final-layer FFN per the ADR).
-    let modelfile = format!("FROM {base_model}\nADAPTER {artifact_ref}\n");
-    let url = format!("{}/api/create", ollama_url.trim_end_matches('/'));
+    // (1) Read the adapter GGUF and compute its sha256 digest.
+    let bytes = tokio::fs::read(artifact_ref)
+        .await
+        .map_err(|e| format!("read adapter '{artifact_ref}': {e}"))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let digest: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+
+    // (2) Upload the blob (201 created / 200 already-present are both fine).
+    let blob_url = format!("{base}/api/blobs/sha256:{digest}");
+    let blob_resp = client
+        .post(&blob_url)
+        .body(bytes)
+        .send()
+        .await
+        .map_err(|e| format!("ollama blob upload: {e}"))?;
+    if !blob_resp.status().is_success() {
+        return Err(format!("ollama blob upload returned {}", blob_resp.status()));
+    }
+
+    // (3) Create FROM the frozen base with the LoRA adapter blob (FFN per the ADR).
+    let create_url = format!("{base}/api/create");
     let resp = client
-        .post(&url)
+        .post(&create_url)
         .json(&serde_json::json!({
             "model": derived,
-            "modelfile": modelfile,
+            "from": base_model,
+            "adapters": { "adapter.gguf": format!("sha256:{digest}") },
             "stream": false,
         }))
         .send()
@@ -123,7 +150,9 @@ async fn ensure_ollama_model(
     if resp.status().is_success() {
         Ok(())
     } else {
-        Err(format!("ollama create returned {}", resp.status()))
+        let code = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        Err(format!("ollama create returned {code}: {body}"))
     }
 }
 
