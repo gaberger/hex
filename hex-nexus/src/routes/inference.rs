@@ -1215,6 +1215,25 @@ fn resolve_lora_augment_model() -> String {
     std::env::var("HEX_LORA_AUGMENT_MODEL").unwrap_or_else(|_| "qwen3:4b".to_string())
 }
 
+/// Resolve the registered local Ollama base URL (empty string if none registered).
+/// Used for model-driven corpus augmentation and adapter eval — both measure/generate
+/// against local Ollama, since `state.inference_port` is only wired in standalone mode.
+async fn resolve_ollama_url(state: &SharedState) -> String {
+    match &state.inference_stdb {
+        Some(stdb) => stdb
+            .list_providers()
+            .await
+            .ok()
+            .and_then(|ps| {
+                ps.into_iter()
+                    .find(|p| p.provider_type == "ollama" && !p.base_url.is_empty())
+                    .map(|p| p.base_url)
+            })
+            .unwrap_or_default(),
+        None => String::new(),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CorpusBuildRequest {
     pub expert: String,
@@ -1230,14 +1249,15 @@ pub async fn corpus_build(
     State(state): State<SharedState>,
     Json(body): Json<CorpusBuildRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
+    let ollama_url = resolve_ollama_url(&state).await;
     let cfg = crate::corpus_build::CorpusBuildConfig {
         repo_root: crate::corpus_build::resolve_repo_root(),
         qa_count: crate::state_config::resolve_lora_corpus_qa_count(),
         dry_run: body.dry_run,
         augment_model: resolve_lora_augment_model(),
+        ollama_url: if ollama_url.is_empty() { None } else { Some(ollama_url) },
     };
-    match crate::corpus_build::build_corpus(&body.expert, &cfg, state.inference_port.as_ref()).await
-    {
+    match crate::corpus_build::build_corpus(&body.expert, &cfg).await {
         Ok(m) => (
             StatusCode::OK,
             Json(json!({
@@ -1345,6 +1365,8 @@ pub async fn adapter_list() -> (StatusCode, Json<serde_json::Value>) {
         qa_count: crate::state_config::resolve_lora_corpus_qa_count(),
         dry_run: true,
         augment_model: String::new(),
+        // Staleness must be a deterministic function of the source, so no model.
+        ollama_url: None,
     };
     let mut fresh: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for r in &records {
@@ -1425,19 +1447,7 @@ pub async fn adapter_evaluate(
     // 3. Resolve the local Ollama URL and ensure the derived base+adapter model exists.
     //    The eval compares two local Ollama models directly (the bench gate's authority
     //    rests on real measurement), so it needs a registered Ollama provider.
-    let ollama_url = match &state.inference_stdb {
-        Some(stdb) => stdb
-            .list_providers()
-            .await
-            .ok()
-            .and_then(|ps| {
-                ps.into_iter()
-                    .find(|p| p.provider_type == "ollama" && !p.base_url.is_empty())
-                    .map(|p| p.base_url)
-            })
-            .unwrap_or_default(),
-        None => String::new(),
-    };
+    let ollama_url = resolve_ollama_url(&state).await;
     if ollama_url.is_empty() {
         return (
             StatusCode::SERVICE_UNAVAILABLE,

@@ -106,19 +106,88 @@ pub fn admit_local_job(
     }
 }
 
-/// Built-in codegen tasks for the Phase-1 acceptance proxy. Small, hex-idiomatic Rust
-/// so the proxy is fast; the real suite is ADR-2606071734. Eight tasks → acceptance
-/// granularity of 0.125, less noisy than the original three.
-const PROXY_TASKS: &[&str] = &[
-    "Write a Rust function `pub fn add(a: i32, b: i32) -> i32` that returns the sum. Output only code.",
-    "Write a Rust function `pub fn slen(s: &str) -> usize` returning the byte length. Output only code.",
-    "Write a Rust struct `Point { x: f64, y: f64 }` with `fn norm(&self) -> f64`. Output only code.",
-    "Write a Rust function `pub fn parse_i32(s: &str) -> Result<i32, String>` mapping the error to a String. Output only code.",
-    "Write a Rust trait `Greet` with `fn greet(&self) -> String`. Output only code.",
-    "Write a Rust function `pub fn evens(v: &[i32]) -> Vec<i32>` returning the even numbers. Output only code.",
-    "Write a Rust enum `Direction` with variants North, South, East, West. Output only code.",
-    "Write a Rust function `pub fn max3(a: i32, b: i32, c: i32) -> i32` returning the largest. Output only code.",
-];
+/// A bench task: a prompt plus a deterministic acceptance predicate over the draft.
+struct ProxyTask {
+    prompt: &'static str,
+    /// Returns true if the draft is "accepted" — for generic tasks this is the syntactic
+    /// gate; for boundary tasks it checks the specific hex idiom the adapter should inject.
+    check: fn(&str) -> bool,
+}
+
+/// Built-in tasks for the Phase-1 acceptance proxy. Two kinds, so one acceptance number
+/// reflects both concerns:
+///   * GENERIC codegen (the no-regression guard — the first adapter *hurt* this).
+///   * BOUNDARY idioms (what a `hex-boundaries` adapter is actually meant to inject:
+///     no cross-adapter imports, `.js` relative-import extensions, ports-only deps,
+///     composition-root wiring — CLAUDE.md hexagonal rules).
+/// Deterministic, no model in the loop. The real verdict authority is ADR-2606071734.
+fn proxy_tasks() -> Vec<ProxyTask> {
+    vec![
+        // ── Generic codegen guard ──────────────────────────────────────────
+        ProxyTask { prompt: "Write a Rust function `pub fn add(a: i32, b: i32) -> i32` that returns the sum. Output only code.", check: generic_ok },
+        ProxyTask { prompt: "Write a Rust function `pub fn parse_i32(s: &str) -> Result<i32, String>` mapping the error to a String. Output only code.", check: generic_ok },
+        ProxyTask { prompt: "Write a Rust trait `Greet` with `fn greet(&self) -> String`. Output only code.", check: generic_ok },
+        ProxyTask { prompt: "Write a Rust function `pub fn evens(v: &[i32]) -> Vec<i32>` returning the even numbers. Output only code.", check: generic_ok },
+        // ── Hex boundary idioms ────────────────────────────────────────────
+        ProxyTask {
+            prompt: "In a hexagonal (ports & adapters) TypeScript project, write the import statement a secondary adapter uses to depend on its `UserRepository` port. Output only the import line.",
+            check: imports_port_not_adapter,
+        },
+        ProxyTask {
+            prompt: "Write a TypeScript relative import of `./domain/user` for a NodeNext project. Output only the import line.",
+            check: uses_js_extension,
+        },
+        ProxyTask {
+            prompt: "A primary adapter contains `import { Db } from '../secondary/db.js'`. That violates hex layering. Write the corrected approach (depend on a port instead). Output only code.",
+            check: no_cross_adapter_import,
+        },
+        ProxyTask {
+            prompt: "Write a TypeScript composition-root snippet that constructs a `FileSystemAdapter` and injects it into a `ReadFile` use case. Output only code.",
+            check: wires_in_composition,
+        },
+    ]
+}
+
+/// Generic syntactic acceptance: contains a definition, balanced, no `todo!`.
+fn generic_ok(text: &str) -> bool {
+    draft_accepted(text)
+}
+
+/// The draft imports from a `ports/` module and NOT from a sibling adapter.
+fn imports_port_not_adapter(text: &str) -> bool {
+    let code = strip_code_fences(text).to_lowercase();
+    code.contains("port") && !mentions_cross_adapter_import(&code)
+}
+
+/// Relative imports carry an explicit `.js` extension (NodeNext rule).
+fn uses_js_extension(text: &str) -> bool {
+    let code = strip_code_fences(text);
+    code.contains(".js'") || code.contains(".js\"")
+}
+
+/// The corrected code does not import from a sibling adapter directory.
+fn no_cross_adapter_import(text: &str) -> bool {
+    let code = strip_code_fences(text).to_lowercase();
+    !mentions_cross_adapter_import(&code)
+}
+
+/// Composition-root wiring: constructs an adapter and passes it into a use case.
+fn wires_in_composition(text: &str) -> bool {
+    let code = strip_code_fences(text);
+    let lc = code.to_lowercase();
+    code.contains("new ") && lc.contains("adapter") && (lc.contains("usecase") || lc.contains("readfile") || lc.contains("use case"))
+}
+
+/// Heuristic for a cross-adapter import (a primary/secondary adapter importing another
+/// adapter directory) — the canonical hex boundary violation.
+fn mentions_cross_adapter_import(lc: &str) -> bool {
+    lc.contains("from '../secondary/")
+        || lc.contains("from \"../secondary/")
+        || lc.contains("from '../primary/")
+        || lc.contains("from \"../primary/")
+        || lc.contains("from '../adapters/")
+        || lc.contains("from \"../adapters/")
+}
 
 /// Score one draft for first-draft acceptance (Phase-1 syntactic proxy): the snippet
 /// must contain a `fn`, have balanced braces/parens, and not punt with `todo!()` /
@@ -216,17 +285,18 @@ pub async fn measure_model(ollama_url: &str, model: &str) -> Result<EvalMetrics,
         .map_err(|e| format!("http client: {e}"))?;
     let url = format!("{}/api/chat", ollama_url.trim_end_matches('/'));
 
+    let tasks = proxy_tasks();
     let mut accepted = 0usize;
     let mut quality_ok = 0usize;
     let mut tps_sum = 0.0f64;
     let mut ran = 0usize;
 
-    for task in PROXY_TASKS {
+    for task in &tasks {
         let body = serde_json::json!({
             "model": model,
             "messages": [
-                {"role": "system", "content": "You are a Rust codegen assistant. Output only code."},
-                {"role": "user", "content": task},
+                {"role": "system", "content": "You are an expert hexagonal-architecture coding assistant. Output only code."},
+                {"role": "user", "content": task.prompt},
             ],
             "stream": false,
             // Disable reasoning so the budget goes to code, not <think> (Qwen3 et al.);
@@ -253,7 +323,7 @@ pub async fn measure_model(ollama_url: &str, model: &str) -> Result<EvalMetrics,
             .and_then(|m| m.get("content"))
             .and_then(|c| c.as_str())
             .unwrap_or("");
-        if draft_accepted(text) {
+        if (task.check)(text) {
             accepted += 1;
         }
         if draft_quality_ok(text) {

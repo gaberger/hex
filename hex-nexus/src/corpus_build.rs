@@ -14,17 +14,16 @@
 //!    its corpus, and building one expert never touches another's directory
 //!    (`corpus-knowledge-unit-isolation`).
 //!
-//! Augmentation routes through the existing tiered-inference path (a T1/T2 call) when
-//! an inference port is wired. When it isn't (offline build, unit tests), a
-//! deterministic source-derived fallback keeps every record traceable — it never
-//! fabricates content the source doesn't contain.
+//! Augmentation routes through the local Ollama `/api/chat` (a tier model) when an
+//! Ollama URL is configured, producing code-shaped instruction pairs that teach the
+//! idiom by example. When it isn't (offline build, unit tests), a deterministic
+//! source-derived fallback keeps every record traceable — it never fabricates content
+//! the source doesn't contain. (The first real run regressed because it fell back to
+//! raw doc-prose chunks; reaching a model is what makes the corpus teach *codegen*.)
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use hex_core::corpus::{content_hash, default_unit_for, CorpusManifest, InstructionPair, KnowledgeUnit};
-use hex_core::domain::messages::{ContentBlock, Message};
-use hex_core::ports::inference::{IInferencePort, InferenceRequest, Priority};
 
 /// Per-build configuration (resolved by the caller from `state_config`).
 pub struct CorpusBuildConfig {
@@ -34,9 +33,13 @@ pub struct CorpusBuildConfig {
     pub qa_count: usize,
     /// When true, compute the manifest but write nothing (`--dry-run`).
     pub dry_run: bool,
-    /// Tier model used for augmentation (e.g. the T1 model). Ignored when no
-    /// inference port is supplied.
+    /// Tier model used for augmentation (e.g. the T1 model). Ignored when
+    /// `ollama_url` is `None`.
     pub augment_model: String,
+    /// Local Ollama base URL for model-driven augmentation. `None` → use the
+    /// deterministic source-chunk fallback (model-free; also used for the staleness
+    /// hash so it stays a stable function of the source, not model sampling).
+    pub ollama_url: Option<String>,
 }
 
 /// Cap on bytes read per source artifact — bounds prompt size + corpus growth.
@@ -201,77 +204,82 @@ fn collect_sources(repo_root: &Path, unit: &KnowledgeUnit) -> Vec<(String, Strin
 
 /// Augment one source artifact into instruction records.
 ///
-/// With an inference port: ask the tier model for a content-preserving paraphrase +
-/// `qa_count` Q/A pairs, parsed from JSON. On any inference/parse failure — or with no
-/// port at all — fall back to a deterministic source-chunk split so the build always
-/// yields traceable records and never blocks on a model.
+/// With an Ollama URL: ask the model for `qa_count` **code-shaped** instruction pairs
+/// that teach the source's idiom (a coding ask + a response demonstrating it, often
+/// with a short snippet). On any request/parse failure — or with no URL — fall back to
+/// a deterministic source-chunk split so the build always yields traceable records and
+/// never blocks on a model.
 async fn augment(
-    inference: Option<&Arc<dyn IInferencePort>>,
     cfg: &CorpusBuildConfig,
     rel_path: &str,
     content: &str,
 ) -> Vec<(String, String, String)> {
-    if let Some(port) = inference {
-        if let Some(pairs) = augment_via_model(port, cfg, rel_path, content).await {
+    if let Some(url) = cfg.ollama_url.as_deref().filter(|u| !u.is_empty()) {
+        if let Some(pairs) = augment_via_ollama(url, cfg, rel_path, content).await {
             if !pairs.is_empty() {
                 return pairs;
             }
         }
-        tracing::warn!(source = %rel_path, "augmentation model unavailable/unparseable — using source-derived fallback");
+        tracing::warn!(source = %rel_path, "ollama augmentation unavailable/unparseable — using source-derived fallback");
     }
     fallback_chunks(cfg.qa_count, rel_path, content)
 }
 
-/// Model-driven augmentation. Returns `None` on any failure so the caller falls back.
-async fn augment_via_model(
-    port: &Arc<dyn IInferencePort>,
+/// Model-driven augmentation via Ollama `/api/chat`. Returns `None` on any failure so
+/// the caller falls back. Produces code-shaped pairs because the experts ride on code
+/// models and the corpus must teach *codegen* idioms, not prose (the first real run
+/// regressed precisely because the corpus was raw doc-prose — see lora_eval verdict).
+async fn augment_via_ollama(
+    ollama_url: &str,
     cfg: &CorpusBuildConfig,
     rel_path: &str,
     content: &str,
 ) -> Option<Vec<(String, String, String)>> {
     let prompt = format!(
-        "You are building a STYLE training corpus for hex's coding conventions.\n\
-         Source artifact: {rel_path}\n\
+        "You are building an INSTRUCTION-TUNING corpus that teaches hex's coding \
+         conventions to a code model.\n\
+         Source convention (from {rel_path}):\n\
          --- SOURCE START ---\n{content}\n--- SOURCE END ---\n\n\
-         Return ONLY JSON of the form:\n\
-         {{\"paraphrase\": \"<restate the source's guidance in your own words, \
-         preserving meaning, inventing NOTHING not present above>\", \
-         \"qa\": [{{\"q\": \"<question about the convention>\", \"a\": \"<answer grounded \
-         strictly in the source>\"}}]}}\n\
-         Produce exactly {} q/a pairs. Do not leak any answer string not derivable \
-         from the source.",
-        cfg.qa_count
+         Produce exactly {n} instruction/response pairs. Each pair must teach the \
+         convention ABOVE as it applies to writing code:\n\
+         - `instruction`: a realistic coding ask (\"Write a … that …\", \"Show how to …\").\n\
+         - `output`: a concise, correct response that FOLLOWS the convention, including \
+         a short Rust or TypeScript code snippet wherever it helps. Demonstrate the \
+         idiom; do not merely describe it.\n\
+         Invent NOTHING that contradicts the source. Return ONLY JSON:\n\
+         {{\"pairs\":[{{\"instruction\":\"…\",\"output\":\"…\"}}]}}",
+        n = cfg.qa_count
     );
 
-    let req = InferenceRequest {
-        model: cfg.augment_model.clone(),
-        system_prompt: "Output strict JSON only. Never invent facts absent from the provided source.".to_string(),
-        messages: vec![Message::user(&prompt)],
-        tools: vec![],
-        max_tokens: 2048,
-        temperature: 0.3,
-        thinking_budget: None,
-        cache_control: false,
-        priority: Priority::Low,
-        grammar: None,
-    };
+    let body = serde_json::json!({
+        "model": cfg.augment_model,
+        "messages": [
+            {"role": "system", "content": "Output strict JSON only. Teach by example; never contradict the provided source."},
+            {"role": "user", "content": prompt},
+        ],
+        "stream": false,
+        "think": false,
+        "format": "json",
+        "options": {"temperature": 0.4, "num_predict": 2048},
+    });
 
-    let resp = port.complete(req).await.ok()?;
-    let text: String = resp
-        .content
-        .iter()
-        .filter_map(|b| match b {
-            ContentBlock::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-
-    parse_augmentation_json(&text, rel_path)
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(180))
+        .build()
+        .ok()?;
+    let url = format!("{}/api/chat", ollama_url.trim_end_matches('/'));
+    let resp = client.post(&url).json(&body).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: serde_json::Value = resp.json().await.ok()?;
+    let text = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str())?;
+    parse_augmentation_json(text)
 }
 
-/// Extract `{paraphrase, qa:[{q,a}]}` from a model response (tolerant of prose around
-/// the JSON object). Returns `None` if no usable object is found.
-fn parse_augmentation_json(text: &str, rel_path: &str) -> Option<Vec<(String, String, String)>> {
+/// Extract `{pairs:[{instruction,output}]}` from a model response (tolerant of prose
+/// around the JSON object). Returns `None` if no usable pair is found.
+fn parse_augmentation_json(text: &str) -> Option<Vec<(String, String, String)>> {
     let start = text.find('{')?;
     let end = text.rfind('}')?;
     if end <= start {
@@ -280,21 +288,12 @@ fn parse_augmentation_json(text: &str, rel_path: &str) -> Option<Vec<(String, St
     let value: serde_json::Value = serde_json::from_str(&text[start..=end]).ok()?;
 
     let mut pairs = Vec::new();
-    if let Some(p) = value.get("paraphrase").and_then(|v| v.as_str()) {
-        if !p.trim().is_empty() {
-            pairs.push((
-                format!("Restate the hex convention from `{rel_path}` in your own words."),
-                String::new(),
-                p.trim().to_string(),
-            ));
-        }
-    }
-    if let Some(qa) = value.get("qa").and_then(|v| v.as_array()) {
-        for item in qa {
-            let q = item.get("q").and_then(|v| v.as_str()).unwrap_or("").trim();
-            let a = item.get("a").and_then(|v| v.as_str()).unwrap_or("").trim();
-            if !q.is_empty() && !a.is_empty() {
-                pairs.push((q.to_string(), String::new(), a.to_string()));
+    if let Some(arr) = value.get("pairs").and_then(|v| v.as_array()) {
+        for item in arr {
+            let instr = item.get("instruction").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let out = item.get("output").and_then(|v| v.as_str()).unwrap_or("").trim();
+            if !instr.is_empty() && !out.is_empty() {
+                pairs.push((instr.to_string(), String::new(), out.to_string()));
             }
         }
     }
@@ -335,7 +334,6 @@ fn fallback_chunks(qa_count: usize, rel_path: &str, content: &str) -> Vec<(Strin
 pub async fn build_corpus(
     expert: &str,
     cfg: &CorpusBuildConfig,
-    inference: Option<&Arc<dyn IInferencePort>>,
 ) -> Result<CorpusManifest, String> {
     let unit = resolve_unit(&cfg.repo_root, expert)?;
     let sources = collect_sources(&cfg.repo_root, &unit);
@@ -344,7 +342,7 @@ pub async fn build_corpus(
     // deliberately excludes that field, so post-stamping doesn't change it).
     let mut records: Vec<InstructionPair> = Vec::new();
     for (rel_path, content) in &sources {
-        for (instruction, input, output) in augment(inference, cfg, rel_path, content).await {
+        for (instruction, input, output) in augment(cfg, rel_path, content).await {
             records.push(InstructionPair {
                 instruction,
                 input,
@@ -419,11 +417,12 @@ pub async fn current_corpus_hash(
         qa_count: cfg.qa_count,
         dry_run: true,
         augment_model: cfg.augment_model.clone(),
+        // No model (ollama_url None): the fallback is deterministic, so the hash is a
+        // stable function of the SOURCE content — exactly what staleness should track
+        // (idiom drift comes from the source changing, not from model sampling noise).
+        ollama_url: None,
     };
-    // No inference: the fallback is deterministic, so the hash is a stable function of
-    // the SOURCE content — exactly what staleness should track (idiom drift comes from
-    // the source changing, not from model sampling noise).
-    Ok(build_corpus(expert, &dry, None).await?.content_hash)
+    Ok(build_corpus(expert, &dry).await?.content_hash)
 }
 
 #[cfg(test)]
@@ -452,6 +451,8 @@ mod tests {
             qa_count: 2,
             dry_run,
             augment_model: "test-model".to_string(),
+            // Tests run model-free (deterministic fallback) so they're hermetic.
+            ollama_url: None,
         }
     }
 
@@ -483,7 +484,7 @@ mod tests {
         write(&root, "CLAUDE.md", "All relative imports use .js extensions.");
 
         let cfg = cfg_for(&root, false);
-        let m = build_corpus("hex-boundaries", &cfg, None).await.unwrap();
+        let m = build_corpus("hex-boundaries", &cfg).await.unwrap();
         assert!(m.record_count > 0);
         assert_eq!(m.content_hash, m.corpus_version);
 
@@ -506,7 +507,7 @@ mod tests {
         write(&root, "docs/specs/some-spec.json", "{\"behavioral\": \"spec\"}");
 
         let cfg = cfg_for(&root, false);
-        build_corpus("hex-boundaries", &cfg, None).await.unwrap();
+        build_corpus("hex-boundaries", &cfg).await.unwrap();
 
         let jsonl = std::fs::read_to_string(root.join(".hex/corpus/hex-boundaries/corpus.jsonl")).unwrap();
         for line in jsonl.lines().filter(|l| !l.trim().is_empty()) {
@@ -526,7 +527,7 @@ mod tests {
         write(&root, "CLAUDE.md", "Adapters never import other adapters.");
 
         let cfg = cfg_for(&root, true);
-        let m = build_corpus("hex-boundaries", &cfg, None).await.unwrap();
+        let m = build_corpus("hex-boundaries", &cfg).await.unwrap();
         assert!(m.record_count > 0);
         assert!(
             !root.join(".hex/corpus/hex-boundaries").exists(),
@@ -539,7 +540,7 @@ mod tests {
     async fn unknown_expert_errors() {
         let root = tmp();
         let cfg = cfg_for(&root, true);
-        assert!(build_corpus("nope-not-an-expert", &cfg, None).await.is_err());
+        assert!(build_corpus("nope-not-an-expert", &cfg).await.is_err());
         std::fs::remove_dir_all(&root).ok();
     }
 
