@@ -106,12 +106,18 @@ pub fn admit_local_job(
     }
 }
 
-/// Built-in codegen tasks for the Phase-1 acceptance proxy. Deliberately small and
-/// hex-idiomatic so the proxy is fast; the real suite is ADR-2606071734.
+/// Built-in codegen tasks for the Phase-1 acceptance proxy. Small, hex-idiomatic Rust
+/// so the proxy is fast; the real suite is ADR-2606071734. Eight tasks → acceptance
+/// granularity of 0.125, less noisy than the original three.
 const PROXY_TASKS: &[&str] = &[
     "Write a Rust function `pub fn add(a: i32, b: i32) -> i32` that returns the sum. Output only code.",
-    "Write a Rust function that returns the length of a &str. Output only code.",
-    "Write a Rust struct `Point { x: f64, y: f64 }` with a `fn norm(&self) -> f64`. Output only code.",
+    "Write a Rust function `pub fn slen(s: &str) -> usize` returning the byte length. Output only code.",
+    "Write a Rust struct `Point { x: f64, y: f64 }` with `fn norm(&self) -> f64`. Output only code.",
+    "Write a Rust function `pub fn parse_i32(s: &str) -> Result<i32, String>` mapping the error to a String. Output only code.",
+    "Write a Rust trait `Greet` with `fn greet(&self) -> String`. Output only code.",
+    "Write a Rust function `pub fn evens(v: &[i32]) -> Vec<i32>` returning the even numbers. Output only code.",
+    "Write a Rust enum `Direction` with variants North, South, East, West. Output only code.",
+    "Write a Rust function `pub fn max3(a: i32, b: i32, c: i32) -> i32` returning the largest. Output only code.",
 ];
 
 /// Score one draft for first-draft acceptance (Phase-1 syntactic proxy): the snippet
@@ -134,17 +140,50 @@ fn draft_quality_ok(text: &str) -> bool {
     code.trim().len() >= 40
 }
 
-fn strip_code_fences(text: &str) -> String {
-    // Keep content between the first pair of ``` fences if present, else the whole text.
-    if let Some(open) = text.find("```") {
-        let after = &text[open + 3..];
-        // skip an optional language tag on the same line
-        let body_start = after.find('\n').map(|i| open + 3 + i + 1).unwrap_or(open + 3);
-        if let Some(close_rel) = text[body_start..].find("```") {
-            return text[body_start..body_start + close_rel].to_string();
+/// Strip `<think>…</think>` reasoning blocks (best-effort) so they don't pollute the
+/// brace-balance / fence checks.
+fn strip_think(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find("<think>") {
+        out.push_str(&rest[..open]);
+        if let Some(close) = rest[open..].find("</think>") {
+            rest = &rest[open + close + "</think>".len()..];
+        } else {
+            rest = ""; // unterminated think block → drop the remainder
+            break;
         }
     }
-    text.to_string()
+    out.push_str(rest);
+    out
+}
+
+/// Extract code from a model response: concatenate ALL fenced code blocks if any are
+/// present, otherwise return the think-stripped text. Tolerant of reasoning preamble.
+fn strip_code_fences(text: &str) -> String {
+    let text = strip_think(text);
+    let mut blocks = String::new();
+    let mut rest = text.as_str();
+    while let Some(open) = rest.find("```") {
+        let after = &rest[open + 3..];
+        // Skip an optional language tag on the fence's opening line.
+        let body_start = after.find('\n').map(|i| i + 1).unwrap_or(after.len());
+        let body = &after[body_start..];
+        if let Some(close_rel) = body.find("```") {
+            blocks.push_str(&body[..close_rel]);
+            blocks.push('\n');
+            rest = &body[close_rel + 3..];
+        } else {
+            // Unterminated fence → take the rest as code.
+            blocks.push_str(body);
+            break;
+        }
+    }
+    if blocks.trim().is_empty() {
+        text
+    } else {
+        blocks
+    }
 }
 
 fn balanced(s: &str, open: char, close: char) -> bool {
@@ -190,7 +229,11 @@ pub async fn measure_model(ollama_url: &str, model: &str) -> Result<EvalMetrics,
                 {"role": "user", "content": task},
             ],
             "stream": false,
-            "options": {"temperature": 0.2, "num_predict": 512},
+            // Disable reasoning so the budget goes to code, not <think> (Qwen3 et al.);
+            // ignored by non-thinking models. Measures the draft, which is what the gate
+            // and the throughput number should reflect.
+            "think": false,
+            "options": {"temperature": 0.2, "num_predict": 768},
         });
         let resp = client
             .post(&url)
