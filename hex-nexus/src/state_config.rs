@@ -206,6 +206,77 @@ pub fn resolve_decision_deadline_secs() -> u64 {
     DEFAULT_DECISION_DEADLINE_SECS
 }
 
+/// Default number of Q/A pairs minted per source artifact during corpus build.
+const DEFAULT_LORA_CORPUS_QA_COUNT: usize = 3;
+
+/// Whether LoRA idiom experts may be attached on the serving path (ADR-2606161300).
+///
+/// Priority:
+/// 1. `HEX_LORA_DISABLED` env var (any truthy value → disabled, returns false)
+/// 2. `.hex/project.json` → `inference.lora.enabled`
+/// 3. Default: true (experts attach when registered+enabled; absent adapters → bare base)
+///
+/// This NEVER gates correctness — it only governs whether an idiom adapter rides the
+/// tier (ADR-2606161300 §1). With it false, every request serves the bare base.
+pub fn resolve_lora_experts_enabled() -> bool {
+    // 1. Kill switch env var (highest precedence).
+    if let Ok(val) = std::env::var("HEX_LORA_DISABLED") {
+        let v = val.trim().to_ascii_lowercase();
+        if matches!(v.as_str(), "1" | "true" | "yes" | "on") {
+            tracing::info!("LoRA experts disabled via HEX_LORA_DISABLED");
+            return false;
+        }
+    }
+
+    // 2. .hex/project.json → inference.lora.enabled
+    let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
+        .or_else(|_| std::env::var("HEX_PROJECT_DIR"))
+        .unwrap_or_else(|_| ".".to_string());
+    let project_json = std::path::Path::new(&project_dir).join(".hex/project.json");
+    if let Ok(content) = std::fs::read_to_string(&project_json) {
+        if let Ok(project) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(enabled) = project["inference"]["lora"]["enabled"].as_bool() {
+                tracing::info!(enabled, "LoRA experts setting from .hex/project.json");
+                return enabled;
+            }
+        }
+    }
+
+    // 3. Default: enabled.
+    true
+}
+
+/// Number of Q/A pairs to mint per source artifact during corpus extraction.
+///
+/// Priority: `HEX_LORA_CORPUS_QA_COUNT` env → `.hex/project.json`
+/// `inference.lora.corpus_qa_count` → default (3).
+pub fn resolve_lora_corpus_qa_count() -> usize {
+    if let Ok(val) = std::env::var("HEX_LORA_CORPUS_QA_COUNT") {
+        if let Ok(n) = val.parse::<usize>() {
+            if n > 0 {
+                return n;
+            }
+            tracing::warn!("HEX_LORA_CORPUS_QA_COUNT must be > 0, ignoring");
+        }
+    }
+
+    let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
+        .or_else(|_| std::env::var("HEX_PROJECT_DIR"))
+        .unwrap_or_else(|_| ".".to_string());
+    let project_json = std::path::Path::new(&project_dir).join(".hex/project.json");
+    if let Ok(content) = std::fs::read_to_string(&project_json) {
+        if let Ok(project) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(n) = project["inference"]["lora"]["corpus_qa_count"].as_u64() {
+                if n > 0 {
+                    return n as usize;
+                }
+            }
+        }
+    }
+
+    DEFAULT_LORA_CORPUS_QA_COUNT
+}
+
 /// Like `create_default_state_backend` but wires an `InferenceTxBus` so that
 /// `inference_task_create` broadcasts to /ws/inference subscribers immediately
 /// on insert (ADR-2026-04-01-1200 P2.T3).

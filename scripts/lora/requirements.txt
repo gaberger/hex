@@ -1,0 +1,14 @@
+# hex LoRA trainer dependencies (offline dev tooling — ADR-2606161300).
+# torch is installed separately by setup.sh against the right CUDA index
+# (RTX 5070 Ti is Blackwell / sm_120 → needs cu128 wheels), so it is NOT pinned here.
+transformers>=4.46
+peft>=0.13
+trl>=0.12
+datasets>=3.0
+accelerate>=1.0
+sentencepiece
+safetensors
+gguf
+protobuf
+# 4-bit QLoRA path (optional; bf16 LoRA is used when this import fails on Blackwell).
+bitsandbytes>=0.45
