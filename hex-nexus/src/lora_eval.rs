@@ -14,9 +14,6 @@
 //! verdict is the full agentic bench suite (ADR-2606071734); the proxy is honest about
 //! being a floor, and every verdict string says which gate produced it.
 
-use std::sync::Arc;
-
-use hex_core::ports::inference::{IInferencePort, InferenceRequest, Priority};
 use hex_core::resource_governor::{self, AdmissionDecision};
 
 /// Metrics captured for one serving configuration (bare base, or base+adapter).
@@ -165,52 +162,65 @@ fn balanced(s: &str, open: char, close: char) -> bool {
     depth == 0
 }
 
-/// Measure [`EvalMetrics`] for one model by running it over [`PROXY_TASKS`].
+/// Measure [`EvalMetrics`] for one model by running it over [`PROXY_TASKS`] directly
+/// against Ollama (`{ollama_url}/api/chat`).
 ///
-/// Returns an error if the inference port can't serve the model at all (so the caller
-/// reports "could not evaluate" rather than fabricating a verdict).
-pub async fn measure_model(
-    inference: &Arc<dyn IInferencePort>,
-    model: &str,
-) -> Result<EvalMetrics, String> {
+/// We hit Ollama directly rather than the inference port because the eval compares two
+/// *local* models (the bare base and the derived base+adapter), and `state.inference_port`
+/// is only wired in standalone/headless deployments. Returns an error if Ollama can't
+/// serve the model at all (so the caller reports "could not evaluate" rather than
+/// fabricating a verdict — the bench gate's authority depends on real measurement).
+pub async fn measure_model(ollama_url: &str, model: &str) -> Result<EvalMetrics, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("http client: {e}"))?;
+    let url = format!("{}/api/chat", ollama_url.trim_end_matches('/'));
+
     let mut accepted = 0usize;
     let mut quality_ok = 0usize;
     let mut tps_sum = 0.0f64;
     let mut ran = 0usize;
 
     for task in PROXY_TASKS {
-        let req = InferenceRequest {
-            model: model.to_string(),
-            system_prompt: "You are a Rust codegen assistant. Output only code.".to_string(),
-            messages: vec![hex_core::domain::messages::Message::user(task)],
-            tools: vec![],
-            max_tokens: 512,
-            temperature: 0.2,
-            thinking_budget: None,
-            cache_control: false,
-            priority: Priority::Low,
-            grammar: None,
-        };
-        let resp = inference
-            .complete(req)
+        let body = serde_json::json!({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You are a Rust codegen assistant. Output only code."},
+                {"role": "user", "content": task},
+            ],
+            "stream": false,
+            "options": {"temperature": 0.2, "num_predict": 512},
+        });
+        let resp = client
+            .post(&url)
+            .json(&body)
+            .send()
             .await
-            .map_err(|e| format!("inference failed for model '{model}': {e:?}"))?;
-        let text: String = resp
-            .content
-            .iter()
-            .filter_map(|b| match b {
-                hex_core::domain::messages::ContentBlock::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
-        if draft_accepted(&text) {
+            .map_err(|e| format!("ollama chat request for '{model}': {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("ollama chat for '{model}' returned {}", resp.status()));
+        }
+        let v: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("parse ollama response for '{model}': {e}"))?;
+        let text = v
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("");
+        if draft_accepted(text) {
             accepted += 1;
         }
-        if draft_quality_ok(&text) {
+        if draft_quality_ok(text) {
             quality_ok += 1;
         }
-        if resp.latency_ms > 0 {
-            tps_sum += resp.output_tokens as f64 / (resp.latency_ms as f64 / 1000.0);
+        // Ollama reports eval_count (tokens) and eval_duration (ns).
+        let eval_count = v.get("eval_count").and_then(|x| x.as_f64()).unwrap_or(0.0);
+        let eval_ns = v.get("eval_duration").and_then(|x| x.as_f64()).unwrap_or(0.0);
+        if eval_ns > 0.0 {
+            tps_sum += eval_count / (eval_ns / 1.0e9);
         }
         ran += 1;
     }

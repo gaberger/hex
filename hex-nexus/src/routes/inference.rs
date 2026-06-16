@@ -1422,15 +1422,9 @@ pub async fn adapter_evaluate(
         return (StatusCode::OK, Json(json!({ "deferred": true, "reason": reason })));
     }
 
-    // 3. Need a local inference backend + the derived adapter model.
-    let Some(inference) = state.inference_port.clone() else {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({ "error": "no inference backend wired — cannot evaluate" })),
-        );
-    };
-
-    // Resolve the local Ollama URL to ensure/attach the derived model.
+    // 3. Resolve the local Ollama URL and ensure the derived base+adapter model exists.
+    //    The eval compares two local Ollama models directly (the bench gate's authority
+    //    rests on real measurement), so it needs a registered Ollama provider.
     let ollama_url = match &state.inference_stdb {
         Some(stdb) => stdb
             .list_providers()
@@ -1444,24 +1438,30 @@ pub async fn adapter_evaluate(
             .unwrap_or_default(),
         None => String::new(),
     };
+    if ollama_url.is_empty() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "no local Ollama provider registered — cannot evaluate" })),
+        );
+    }
     let Some(derived) =
         crate::lora_attach::resolve_serving_model("ollama", &record.base_model, &ollama_url).await
     else {
         return (
             StatusCode::OK,
             Json(json!({
-                "error": "adapter could not be attached (no local Ollama or create failed) — not promoted",
+                "error": "adapter could not be attached (Ollama create failed) — not promoted",
                 "promoted": false
             })),
         );
     };
 
-    // 4. Measure bare base vs base+adapter.
-    let base = match crate::lora_eval::measure_model(&inference, &record.base_model).await {
+    // 4. Measure bare base vs base+adapter, both directly against Ollama.
+    let base = match crate::lora_eval::measure_model(&ollama_url, &record.base_model).await {
         Ok(m) => m,
         Err(e) => return (StatusCode::OK, Json(json!({ "error": e, "promoted": false }))),
     };
-    let adapter = match crate::lora_eval::measure_model(&inference, &derived).await {
+    let adapter = match crate::lora_eval::measure_model(&ollama_url, &derived).await {
         Ok(m) => m,
         Err(e) => return (StatusCode::OK, Json(json!({ "error": e, "promoted": false }))),
     };
