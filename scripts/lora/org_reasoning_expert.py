@@ -162,14 +162,14 @@ def train_expert(base: str, records, rank: int, epochs: int, max_seq: int):
     return model, tok
 
 
-def answer(model, tok, question: str, context: str | None) -> str:
+def answer(model, tok, question: str, context: str | None, max_new: int = 90) -> str:
     import torch
     sys_p = SYS if not context else SYS + "\n\nCompany policy:\n" + context
     msgs = [{"role": "system", "content": sys_p}, {"role": "user", "content": question}]
     prompt = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
     inp = tok(prompt, return_tensors="pt", add_special_tokens=False).to(model.device)
     with torch.no_grad():
-        out = model.generate(**inp, max_new_tokens=90, do_sample=False, repetition_penalty=1.15,
+        out = model.generate(**inp, max_new_tokens=max_new, do_sample=False, repetition_penalty=1.15,
                              eos_token_id=tok.eos_token_id, pad_token_id=tok.pad_token_id)
     return tok.decode(out[0][inp["input_ids"].shape[1]:], skip_special_tokens=True).strip()
 
@@ -221,13 +221,41 @@ def main() -> None:
     with model.disable_adapter():
         bq = evaluate(model, tok, REASONING, "Dense (bare base, closed-book)", debug=0)
         oq = evaluate(model, tok, REASONING, "Open-book (facts in context)", context=ctx, debug=dbg)
+
+    # ── THE PROOF: cartridge as a knowledge DATABASE you can dump + reason over ──
+    # Ask the cartridge to DUMP its whole knowledge (pure recall, no relevance judgment),
+    # put that dump into context, and let the BARE base reason over it. This separates
+    # STORAGE fidelity (can it regenerate the corpus from weights?) from relevance
+    # retrieval (a reasoning task it fails). If dump-reason ≈ open-book, the cartridge is
+    # a faithful, queryable knowledge store — exactly the "schema-free reference DB" claim.
+    dump = answer(model, tok, "List ALL company policy facts you know. One fact per line, "
+                              "state them plainly, do not skip any.", None, max_new=400)   # adapter ON
+    # Storage fidelity: how many true facts' key tokens survive in the dump?
+    keys = ["january 31", "december 15", "january 5", "auto-approved", "director", "vp",
+            "cfo", "dana reeves", "sam okoro", "10 business days", "3 business days",
+            "january 6", "100,000", "board", "manager"]
+    covered = sum(1 for k in keys if k in dump.lower())
+    log(f"DUMP fidelity: {covered}/{len(keys)} key facts regenerated; dump chars={len(dump)}")
+    if dbg:
+        log(f"    dump head: {dump[:200]}")
+    hits = 0
+    for i, (q, groups) in enumerate(REASONING):
+        with model.disable_adapter():
+            pred = answer(model, tok, q, context=dump)          # bare base reasons over the dump
+        ok = graded(pred, groups)
+        hits += ok
+        if i < dbg:
+            log(f"    [{'OK ' if ok else 'MISS'}] {q[:54]}  pred: {pred[:70]}")
+    hq = hits / len(REASONING)
+    log(f"  {'Dump-then-reason (cartridge DB)':<34} {hits}/{len(REASONING)} = {hq:.2f}")
+
     log("=" * 66)
     log(f"RECALL    base={br:.2f}  cartridge={cr:.2f}  open-book={orr:.2f}")
-    log(f"REASONING base={bq:.2f}  cartridge={cq:.2f}  open-book={oq:.2f}")
+    log(f"REASONING base={bq:.2f}  weights-only={cq:.2f}  DUMP-then-reason={hq:.2f}  open-book(true facts)={oq:.2f}")
     log("-" * 66)
-    log(f"Injection RECALL lift (cartridge−base):     {cr-br:+.2f}")
-    log(f"Injection REASONING lift (cartridge−base):  {cq-bq:+.2f}")
-    log(f"Reasoning gap to context (cartridge−openbk): {cq-oq:+.2f}  (~0 ⇒ weights reason like context)")
+    log(f"Reason-from-weights gap to context:        {cq-oq:+.2f}")
+    log(f"KNOWLEDGE-DB recovery (dump−weights-only):  {hq-cq:+.2f}  (dumping to context helps)")
+    log(f"KNOWLEDGE-DB gap to ceiling (dump−open):    {hq-oq:+.2f}  (~0 ⇒ faithful queryable knowledge store)")
 
 
 if __name__ == "__main__":
