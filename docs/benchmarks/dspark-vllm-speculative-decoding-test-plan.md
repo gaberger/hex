@@ -1,8 +1,10 @@
 # Test plan: does a vLLM + speculative-decoding swap actually help a hex tier?
 
 **Status:** Phase 0–2 executed 2026-07-01 on `qwen3:4b`, including the quantization-matched (AWQ)
-follow-up. **Result: FAIL, and now well-understood** — see [Results](#results--2026-07-01) below.
-Devstral/Gemma pilots not run (no reason to, given the finding below).
+vLLM follow-up AND a llama.cpp-native speculative-decoding follow-up. **Result: FAIL for both paths
+on this hardware/model** — see [Results](#results--2026-07-01) and
+[Follow-up 2](#follow-up-2-llamacpp-native-speculative-decoding-same-day) below. Devstral/Gemma pilots
+not run (no reason to, given the findings below).
 **Related:** DSpark paper analysis (`deepseek-ai/DeepSpec`, see project memory `project_dspark_speculative_decoding`);
 [ADR-2606071734](../adrs/ADR-2606071734-agentic-inference-benchmark-suite.md) (agentic benchmark suite —
 this reuses its fixture corpus and axis-6 "throughput economics" metrics rather than inventing a
@@ -202,6 +204,58 @@ itself (which Ollama wraps) supports draft-model speculative decoding natively v
 --model-draft`, keeping the fast Q4_K_M kernels that are winning here while adding drafting on top —
 Ollama doesn't expose this flag today. That would need a new "raw llama.cpp" provider path in hex, not
 a vLLM swap, and is a separate, not-yet-scoped piece of work.
+
+## Follow-up 2: llama.cpp-native speculative decoding, same day
+
+The most promising untried lead from the vLLM results above: llama.cpp itself (which Ollama wraps)
+supports `--model-draft` speculative decoding with a *real* draft model (not just n-gram matching),
+which should keep the fast Q4_K_M kernels that won every round against vLLM. Tested directly.
+
+**Setup:** No CUDA toolkit on this box (driver only, no `nvcc`), and llama.cpp ships no prebuilt Linux
+CUDA binaries — only Windows CUDA and several Linux non-CUDA backends. Used the prebuilt
+`llama-b9857-bin-ubuntu-vulkan-x64` release instead: the NVIDIA Vulkan ICD was already present
+(`libnvidia-gl-580`), so this GPU gets real Vulkan compute acceleration without needing a source build.
+Target and draft weights were used directly from Ollama's own blob store (`/usr/share/ollama/.ollama/models/blobs/sha256-*`,
+world-readable, valid GGUF headers) — no re-download needed for the target; pulled `qwen3:0.6b` for a
+same-family, same-tokenizer draft model (only ~520MB, mostly already deduped/cached by Ollama).
+
+| Config | tok/s (mean, both fixtures) | vs. Ollama baseline | draft acceptance |
+|---|---|---|---|
+| Ollama, Q4_K_M (CUDA backend) | ~236 | — | — |
+| llama.cpp, Q4_K_M (**Vulkan**), plain, no draft | ~192 | -19% | — |
+| llama.cpp, Q4_K_M (Vulkan), + real draft, `n-max=8` | ~133 | -44% | 54-71% (mean len ~3.0-4.0) |
+| llama.cpp, Q4_K_M (Vulkan), + real draft, `n-max=4` (tuned) | ~177 | -25% | 62-83% (mean len ~2.7-3.1) |
+
+Two findings, both real:
+
+1. **Same kernels, different GPU backend, and the backend gap alone (~19%) is much smaller than
+   vLLM's best result (~36%, quantization-matched).** This is consistent with the earlier hypothesis:
+   llama.cpp's simpler CUDA kernels aren't available prebuilt for Linux, but even its more
+   general-purpose Vulkan path lands far closer to Ollama's native CUDA path than vLLM's
+   FlashAttention/PagedAttention stack does on this same sm_120 GPU.
+2. **Speculative decoding itself was a wash-to-regression here, despite a legitimately good draft.**
+   Acceptance rates of 54-83% and mean accepted lengths of ~3-4 tokens/round are *far* better than
+   vLLM's 20-26% n-gram matching — this is what a properly-matched draft model looks like, not a
+   config error. Untuned (`n-max=8`) it actively regressed throughput (-44%, worse than plain);
+   tuning the draft length down to roughly match the observed acceptance length (`n-max=4`) recovered
+   most of the loss but still landed at parity-or-slightly-worse (-25%) vs. plain llama.cpp with no
+   draft at all. Oracle correctness held (3/3 pass, checked on the tuned config).
+
+**Why a well-accepted draft still doesn't win here:** qwen3:4b is already hex's *smallest, fastest*
+tier (T1) — each autoregressive step is already cheap on this GPU (~200 tok/s plain). Speculative
+decoding's win comes from amortizing an expensive target-verification pass over several draft tokens;
+that only pays off when a single autoregressive step is expensive enough that batched verification is
+meaningfully cheaper per accepted token than the sequential draft-generation + dispatch/sync overhead
+between two separate models. For a target this small and already this fast, that overhead is
+comparable to the savings — there isn't much slack left to amortize into.
+
+**Implication for hex, if this ever gets revisited:** the T1 tier (small, already-fast models) is
+close to the *worst* candidate for speculative decoding of any kind. If this is retried, the more
+promising target is a genuinely large/slow tier — `gemma4-12b` (T2) or `devstral-small-2:24b` (T2.5,
+the `react_model`) — where a single autoregressive step costs enough that amortizing it over an
+accepted draft run has real slack to win against the draft/dispatch overhead. Not tested this round
+(Devstral's GGUF is 15GB, needs its own VRAM check per Phase 0; Gemma4 architecture support in this
+llama.cpp build wasn't verified).
 
 ## Execution mechanics
 
