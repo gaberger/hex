@@ -1,10 +1,12 @@
 # Test plan: does a vLLM + speculative-decoding swap actually help a hex tier?
 
-**Status:** Phase 0–2 executed 2026-07-01 on `qwen3:4b`, including the quantization-matched (AWQ)
-vLLM follow-up AND a llama.cpp-native speculative-decoding follow-up. **Result: FAIL for both paths
-on this hardware/model** — see [Results](#results--2026-07-01) and
-[Follow-up 2](#follow-up-2-llamacpp-native-speculative-decoding-same-day) below. Devstral/Gemma pilots
-not run (no reason to, given the findings below).
+**Status:** Phase 0–2 executed 2026-07-01 on `qwen3:4b` (T1) — FAIL, for both vLLM (even
+quantization-matched) and llama.cpp-native speculative decoding. But the *same day*, on a bigger
+stand-in model (`qwen2.5-coder:14b`), llama.cpp-native speculative decoding was a **clear +27% win**
+over Ollama with 100% draft acceptance. **Net conclusion: speculative decoding is real and worth
+having on hex's local tiers, but not on T1 — only on models expensive enough per step to amortize it.**
+See [Results](#results--2026-07-01), [Follow-up 2](#follow-up-2-llamacpp-native-speculative-decoding-same-day),
+and [Follow-up 3](#follow-up-3-biggerslower-model-same-day--the-first-real-win) below.
 **Related:** DSpark paper analysis (`deepseek-ai/DeepSpec`, see project memory `project_dspark_speculative_decoding`);
 [ADR-2606071734](../adrs/ADR-2606071734-agentic-inference-benchmark-suite.md) (agentic benchmark suite —
 this reuses its fixture corpus and axis-6 "throughput economics" metrics rather than inventing a
@@ -250,12 +252,47 @@ between two separate models. For a target this small and already this fast, that
 comparable to the savings — there isn't much slack left to amortize into.
 
 **Implication for hex, if this ever gets revisited:** the T1 tier (small, already-fast models) is
-close to the *worst* candidate for speculative decoding of any kind. If this is retried, the more
-promising target is a genuinely large/slow tier — `gemma4-12b` (T2) or `devstral-small-2:24b` (T2.5,
-the `react_model`) — where a single autoregressive step costs enough that amortizing it over an
-accepted draft run has real slack to win against the draft/dispatch overhead. Not tested this round
-(Devstral's GGUF is 15GB, needs its own VRAM check per Phase 0; Gemma4 architecture support in this
-llama.cpp build wasn't verified).
+close to the *worst* candidate for speculative decoding of any kind. The more promising target is a
+genuinely large/slow tier — tested below.
+
+## Follow-up 3: bigger/slower model, same day — the first real win
+
+Tried to test this directly on hex's actual T2 (`gemma4-12b`) and T2.5 (`devstral-small-2:24b`)
+tiers and hit real obstacles on *both*, worth recording rather than hiding:
+
+- `gemma4-12b` has **no smaller same-family Gemma4 sibling** in Ollama's library (`gemma4:2b`,
+  `gemma4:1b` don't exist) — no draft-model candidate available.
+- `devstral-small-2:24b` has **no VRAM headroom** for a second resident model (15GB weights on a
+  16GB card, per Phase 0) — even if a smaller Devstral sibling existed.
+- `qwen2.5-coder:32b` (the LoRA `augment_model`) is **19GB on disk — doesn't fit fully in 16GB VRAM
+  at all**, so it wasn't a clean target either (would need partial CPU offload, confounding the
+  comparison with PCIe transfer cost, unrelated to the speculative-decoding question).
+
+Substituted `qwen2.5-coder:14b` (9GB, comfortable fit, already in the local fleet) as target with
+`qwen2.5-coder:1.5b` as draft (same family/tokenizer) — not one of hex's three named tiers, but a
+genuine bigger/slower-per-step stand-in that isolates the same variable.
+
+| Config | tok/s (mean, both fixtures) | vs. Ollama baseline |
+|---|---|---|
+| Ollama, Q4_K_M (CUDA) | ~86 | — |
+| llama.cpp, Q4_K_M (Vulkan), plain | ~72 | -16% (consistent with the qwen3:4b backend gap) |
+| llama.cpp, Q4_K_M (Vulkan), **+ real draft** | **~109** | **+27%** |
+
+**First clear win of the whole investigation.** Draft acceptance was **100%** (24/24, 19/19 accepted
+across sampled requests, mean accepted length ~4.8-5.0, i.e. hitting the `n-max=4`+bonus-token
+ceiling essentially every round) — the 1.5B draft predicted the 14B target's output almost perfectly
+on this low-entropy, near-deterministic mechanical-fix task. +27% over Ollama's own baseline, +51%
+over llama.cpp-plain-no-draft. Oracle correctness held (3/3 pass).
+
+**This confirms the earlier hypothesis directly:** speculative decoding needs an expensive-enough
+target step to amortize against. qwen3:4b (T1) didn't have that slack; qwen2.5-coder:14b does, and the
+win was immediate and large even without much tuning. **Reframed recommendation:** if hex wants to
+chase this, the win is real and available today for any tier at or above ~14B params *if* a
+same-family smaller sibling model exists and fits alongside the target in VRAM — which rules out
+`devstral-small-2:24b` (no headroom) and `gemma4-12b` (no sibling) as they stand today, but not, e.g.,
+adding a `qwen2.5-coder:1.5b`-drafted `qwen2.5-coder:14b` tier, or sourcing a smaller Devstral/Gemma4
+build later. Correctness-wise this is genuinely low-risk (rejection sampling is lossless by
+construction, and it held in every test run this session, T1 and mid-size alike).
 
 ## Execution mechanics
 
