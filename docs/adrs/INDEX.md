@@ -6,7 +6,7 @@
 > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,
 > read the ADR itself.
 
-**255 ADRs** across 4 epochs.
+**257 ADRs** across 4 epochs.
 
 ## Epoch: `single-agent` — **current**
 
@@ -14,6 +14,8 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 
 | ADR | Status | Title | Superseded-By |
 |-----|--------|-------|---------------|
+| ADR-2606191907 | proposed | ADR-2606191907: A layered token-compression subsystem in the hook path — shrink context, not just route models |  |
+| ADR-2606161300 | proposed | ADR-2606161300: Encoding hex into a model via LoRA — idiom injection, not constraint enforcement |  |
 | ADR-2606080915 | accepted | ADR-2606080915: Resource governor — memory-aware admission control + model residency |  |
 | ADR-2606081916 | accepted | ADR-2606081916: hex-native adversarial review harness — `hex swarm review` |  |
 | ADR-2606071243 | completed | ADR-2606071243: ADR epochs, a living ARCHITECTURE.md, and a generated index — keep the architecture story legible as the design pivots |  |
