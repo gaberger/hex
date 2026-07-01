@@ -1,0 +1,26 @@
+{
+  "id": "t3-lru-cache",
+  "tier": "T3",
+  "axis_focus": [
+    "evidence_gated_success",
+    "react_convergence"
+  ],
+  "instruction": "Implement a fixed-capacity LRU (least-recently-used) cache in the target file, replacing the stub. Provide `pub struct Lru` with: `pub fn new(cap: usize) -> Self`; `pub fn get(&mut self, key: i64) -> Option<i64>` returning the value and marking the key most-recently-used; `pub fn put(&mut self, key: i64, val: i64)` inserting/updating and marking most-recently-used, evicting the least-recently-used entry when at capacity. Both get and put count as a use. Standard LeetCode-146 semantics. Edit only this file; do not use external crates.",
+  "target_file": "bench-sandbox/src/lib.rs",
+  "oracle": {
+    "kind": "cargo_test",
+    "setup_files": {
+      "bench-sandbox/Cargo.toml": "[package]\nname = \"bench-sandbox\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n",
+      "bench-sandbox/src/lib.rs": "pub struct Lru;\nimpl Lru {\n    pub fn new(_cap: usize) -> Self { Lru }\n    pub fn get(&mut self, _key: i64) -> Option<i64> { None }\n    pub fn put(&mut self, _key: i64, _val: i64) {}\n}\n",
+      "bench-sandbox/tests/lru.rs": "use bench_sandbox::Lru;\n#[test] fn lru_sequence() {\n    let mut c = Lru::new(2);\n    c.put(1,1); c.put(2,2);\n    assert_eq!(c.get(1), Some(1));\n    c.put(3,3);\n    assert_eq!(c.get(2), None);\n    c.put(4,4);\n    assert_eq!(c.get(1), None);\n    assert_eq!(c.get(3), Some(3));\n    assert_eq!(c.get(4), Some(4));\n}\n#[test] fn update_existing() {\n    let mut c = Lru::new(2);\n    c.put(1,1); c.put(1,10);\n    assert_eq!(c.get(1), Some(10));\n}\n"
+    },
+    "command": "cargo test --manifest-path bench-sandbox/Cargo.toml --test lru"
+  },
+  "graph_context_required": false,
+  "arms": [
+    "react"
+  ],
+  "status": "verified",
+  "_verification": "oracle RED→GREEN confirmed 2026-06-30 (stub fails, reference impl passes all tests). Standalone [workspace] crate; command uses --manifest-path so it never collides with the hex workspace.",
+  "observed_baseline": {}
+}

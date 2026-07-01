@@ -8,16 +8,17 @@
   "oracle": {
     "kind": "cargo_test",
     "setup_files": {
-      "bench-sandbox/Cargo.toml": "[package]\nname = \"bench-sandbox\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+      "bench-sandbox/Cargo.toml": "[package]\nname = \"bench-sandbox\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n",
       "bench-sandbox/src/lib.rs": "pub mod order;\npub mod invoice;\n",
       "bench-sandbox/src/order.rs": "pub struct Order { pub qty: u32, pub sku: String }\nimpl Order { pub fn new(sku: &str, qty: u32) -> Self { Self { qty, sku: sku.into() } } }\n",
       "bench-sandbox/src/invoice.rs": "use crate::order::Order;\n// CONSUMER in another module — reads the field the agent is renaming.\npub fn line_total(o: &Order, unit_price: u32) -> u32 { o.qty * unit_price }\n",
       "bench-sandbox/tests/rename.rs": "use bench_sandbox::order::Order;\nuse bench_sandbox::invoice::line_total;\n#[test] fn quantity_field_and_consumer_intact() {\n    let o = Order::new(\"abc\", 3);\n    assert_eq!(o.quantity, 3);            // new name required\n    assert_eq!(line_total(&o, 10), 30);  // consumer must still work\n}\n"
     },
-    "command": "cargo test -p bench-sandbox --test rename"
+    "command": "cargo test --manifest-path bench-sandbox/Cargo.toml --test rename"
   },
   "graph_context_required": true,
   "arms": ["react"],
-  "status": "draft",
+  "status": "verified",
+  "_verification": "oracle RED→GREEN confirmed 2026-06-30 after fixing two harness bugs ([workspace] + --manifest-path, same as t1-add-derive). Stub (qty + consumer reads o.qty) fails to compile against the test's o.quantity; renaming qty→quantity in BOTH order.rs and the invoice.rs consumer passes. The differentiator still holds: a naive rename of only order.rs leaves invoice.rs referencing o.qty → E0609, so only consumer-tracing agents pass.",
   "observed_baseline": {}
 }
