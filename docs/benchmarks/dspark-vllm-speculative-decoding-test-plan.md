@@ -1,12 +1,18 @@
 # Test plan: does a vLLM + speculative-decoding swap actually help a hex tier?
 
-**Status:** Phase 0–2 executed 2026-07-01 on `qwen3:4b` (T1) — FAIL, for both vLLM (even
-quantization-matched) and llama.cpp-native speculative decoding. But the *same day*, on a bigger
-stand-in model (`qwen2.5-coder:14b`), llama.cpp-native speculative decoding was a **clear +27% win**
-over Ollama with 100% draft acceptance. **Net conclusion: speculative decoding is real and worth
-having on hex's local tiers, but not on T1 — only on models expensive enough per step to amortize it.**
+**Status:** Phase 0–2 executed 2026-07-01–07-02 on `qwen3:4b` (T1) — FAIL, for both vLLM (even
+quantization-matched) and llama.cpp-native speculative decoding. On a bigger stand-in model
+(`qwen2.5-coder:14b`), llama.cpp-native speculative decoding was a **clear +27% win** over Ollama with
+100% draft acceptance. Finally, reproduced DeepSeek's own released `Qwen3-4B` DSpark checkpoint
+directly and matched their paper's numbers within a few percent — confirming the algorithm is real,
+but also confirming neither vLLM nor llama.cpp implement DSpark's actual decode algorithm today, so
+its reported production speedup isn't reachable on hex's stack without a genuine engineering project.
+**Net conclusion: speculative decoding is real and worth having on hex's local tiers, but not on T1 —
+DSpark specifically needs new engine support that doesn't exist yet; a same-family small-model draft
+on a mid-size-or-larger target, using tooling that already exists, is the higher-ROI path.**
 See [Results](#results--2026-07-01), [Follow-up 2](#follow-up-2-llamacpp-native-speculative-decoding-same-day),
-and [Follow-up 3](#follow-up-3-biggerslower-model-same-day--the-first-real-win) below.
+[Follow-up 3](#follow-up-3-biggerslower-model-same-day--the-first-real-win), and
+[Follow-up 4](#follow-up-4-the-actual-paper-checkpoint-reproduced-directly) below.
 **Related:** DSpark paper analysis (`deepseek-ai/DeepSpec`, see project memory `project_dspark_speculative_decoding`);
 [ADR-2606071734](../adrs/ADR-2606071734-agentic-inference-benchmark-suite.md) (agentic benchmark suite —
 this reuses its fixture corpus and axis-6 "throughput economics" metrics rather than inventing a
@@ -293,6 +299,50 @@ same-family smaller sibling model exists and fits alongside the target in VRAM �
 adding a `qwen2.5-coder:1.5b`-drafted `qwen2.5-coder:14b` tier, or sourcing a smaller Devstral/Gemma4
 build later. Correctness-wise this is genuinely low-risk (rejection sampling is lossless by
 construction, and it held in every test run this session, T1 and mid-size alike).
+
+## Follow-up 4: the actual paper checkpoint, reproduced directly
+
+The deepest possible check: does DeepSeek's own released DSpark artifact actually work as claimed?
+Found `deepseek-ai/dspark_qwen3_4b_block7` on HuggingFace — confirmed via the DeepSpec README as the
+literal checkpoint used for Table 1's `Qwen3-4B` row in the paper. Cloned `deepseek-ai/DeepSpec`,
+installed its Python deps (torch 2.9.1, transformers 5.10.2), downloaded the checkpoint (~2.8GB) and
+the bf16 `Qwen/Qwen3-4B` target (~8GB — fits this 16GB card comfortably, unlike the blocked Gemma4-12B
+path below), and wrote a small driver script that imports their `Qwen3DSparkEvaluator` directly with a
+reduced task list (n=3 samples each on humaneval/mbpp/mt-bench, vs. the paper's 500/256/80) — bypassing
+`eval.py`'s hardcoded full 9-task/3000-prompt suite, which would have taken far too long for a spot
+check. No modification to their code; just a smaller `args.tasks`.
+
+**Result — reproduced the paper's own numbers closely, on n=3:**
+
+| Task | Our accept_len (n=3) | Paper's Table 1 (Qwen3-4B) | Delta |
+|---|---|---|---|
+| HumanEval | 5.21 | 5.38 | -3% |
+| MBPP | 5.22 | 5.13 | +2% |
+| MT-Bench | 3.48 | 3.64 | -4% |
+
+Per-position acceptance at position 0: 87-88% on code, 77% on chat — and this is a *real* trained draft
+head, not the naive same-family-small-model draft (`qwen3:0.6b`) tested in Follow-up 2, which only hit
+accept_len ~3.0-4.0 on the exact same `qwen3:4b` target. DSpark's training clearly buys real,
+substantial acceptance-quality improvement over a naive draft — confirmed directly, not taken on faith.
+
+**Why this doesn't overturn the T1 verdict from Results/Follow-up 2, checked not assumed:** the
+evaluator is DeepSeek's *research accuracy harness* — plain bf16 PyTorch, SDPA attention, no batching,
+no continuous scheduling, no CUDA graphs. It measures acceptance quality (`accept_len`, `verify_rate`,
+per-position rates, confidence-head calibration), not production wall-clock speed, and running it as a
+speed benchmark would only measure unoptimized-research-code overhead, not anything transferable to
+hex's serving stack. More importantly: re-checked vLLM 0.24.0's `--spec-type` list
+(`draft-simple, draft-eagle3, draft-mtp, draft-dflash, ngram-simple, ngram-map-k, ngram-map-k4v,
+ngram-mod, ngram-cache`) — **no `dspark` option.** Neither vLLM nor llama.cpp implement DSpark's actual
+decode algorithm (semi-autoregressive block generation + confidence-scheduled verification) today.
+DeepSeek's reported 60-85% production win required their own internal serving engine (paper Section 5),
+which is explicitly *not* part of the open-sourced DeepSpec repo — only the training/eval code is.
+
+**Bottom line:** the algorithm is real and reproduces exactly as claimed — this isn't a paper that
+oversells. But getting DSpark's actual speedup into hex's stack means implementing its decode loop
+inside vLLM or llama.cpp ourselves (a genuine engineering project, comparable in scope to an upstream
+OSS contribution), not a config change or a checkpoint download. Given Follow-up 3 already found a real,
+today-available win with off-the-shelf tooling (`qwen2.5-coder:14b` + `1.5b` draft, +27%, no custom
+code) at far lower cost, that remains the higher-ROI path if speculative decoding gets pursued further.
 
 ## Execution mechanics
 
