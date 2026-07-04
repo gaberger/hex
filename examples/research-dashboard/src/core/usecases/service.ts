@@ -8,7 +8,7 @@ import type {
   ISystemStatsReader,
 } from "../ports/index.js";
 
-const TOP_K = 8;
+const TOP_K = 10;
 
 export class DashboardService implements IDashboardService {
   constructor(

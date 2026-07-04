@@ -91,7 +91,7 @@ describe("DashboardService", () => {
   it("askQuestion retrieves matches then asks the chat model, citing sources", async () => {
     const { service, knowledge, chatModel } = makeService();
     const result = await service.askQuestion("what is this?");
-    expect(knowledge.search).toHaveBeenCalledWith("what is this?", 8);
+    expect(knowledge.search).toHaveBeenCalledWith("what is this?", 10);
     expect(chatModel.answer).toHaveBeenCalledWith("what is this?", [{ source: "[benchmarks] a", text: "hi" }]);
     expect(result).toEqual({
       question: "what is this?",

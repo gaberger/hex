@@ -7,7 +7,7 @@ interface ChunkRecord {
   embedding: number[];
 }
 
-function chunkMarkdown(text: string, maxChars = 1500): string[] {
+function chunkMarkdown(text: string, maxChars = 700): string[] {
   const paragraphs = text.split(/\n{2,}/);
   const chunks: string[] = [];
   let current = "";
@@ -76,14 +76,14 @@ export class EmbeddingKnowledgeIndex implements IKnowledgeIndex {
       .map((r) => ({ record: r, score: cosineSimilarity(queryEmbedding, r.embedding) }))
       .sort((a, b) => b.score - a.score);
 
-    // Allow up to 2 chunks per document — a single long doc (e.g. a 24KB test plan) can have its
+    // Allow up to 3 chunks per document — a single long doc (e.g. a 24KB test plan) can have its
     // most relevant section several paragraphs past whichever chunk scores highest on its own.
     const perDocCount = new Map<string, number>();
     const results: KnowledgeMatch[] = [];
     for (const { record, score } of scored) {
       const key = `${record.entry.collection}/${record.entry.relativePath}`;
       const count = perDocCount.get(key) ?? 0;
-      if (count >= 2) continue;
+      if (count >= 3) continue;
       perDocCount.set(key, count + 1);
       results.push({ entry: record.entry, excerpt: record.text, score });
       if (results.length >= topK) break;

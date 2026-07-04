@@ -36,11 +36,11 @@ the layer rules, only new ports/adapters within them.
   - `ollama-chat-model.ts` — calls local Ollama's `/api/chat` with `devstral-small-2:24b`, a system
     prompt constraining it to answer only from the provided context and say so when it can't.
   - `embedding-knowledge-index.ts` — **no persistence, no vector DB**: chunks every doc's markdown by
-    paragraph boundaries (~1500 chars/chunk), embeds each chunk via `IEmbedder`, caches in a plain
-    in-memory array (2,395 chunks across all 9 collections), computes cosine similarity by hand (no
-    library). Rebuilds from scratch on every process restart — acceptable since this is a dev-box
-    side app restarted rarely, and rebuild is a background task that doesn't block the rest of the app
-    from serving.
+    paragraph boundaries (~700 chars/chunk, tuned down from an initial 1500 — see Consequences), embeds
+    each chunk via `IEmbedder`, caches in a plain in-memory array (4,982 chunks across all 9
+    collections), computes cosine similarity by hand (no library). Rebuilds from scratch on every
+    process restart — acceptable since this is a dev-box side app restarted rarely, and rebuild is a
+    background task that doesn't block the rest of the app from serving.
   - `sqlite-chat-history-store.ts` — **SQLite via `bun:sqlite`** (Bun's built-in module, zero new
     dependency), one `chat_history` table. Operator explicitly asked for SQLite over the initial
     JSON-file-append design once that was in place; swapped before ever committing the JSON version.
@@ -69,29 +69,31 @@ chat both go over HTTP to Ollama (already running locally), and SQLite is a Bun 
   running, SQLite ships inside Bun.
 
 **Negative:**
-- **Retrieval granularity is a real, observed limitation, not a hypothetical one.** Asking "does
-  speculative decoding help hex's T1 tier" correctly retrieved the DSpark test plan (the right
-  document) but the model still answered "not in the provided context" — the chunk(s) that scored
-  highest were the test plan's objective/framing section, not its buried `Results` section where the
-  actual FAIL verdict is stated in different vocabulary than the question. Paragraph-sized chunking
-  with whole-corpus top-K selection doesn't guarantee the single most-informative paragraph of a long,
-  dense document gets retrieved over that same document's intro. This was tried once (allowing 2 chunks
-  per doc instead of 1, upping topK 5→8) and the fix wasn't sufficient for this specific query — not
-  further pursued this session past that one iteration.
-- In-memory index means every restart pays a ~2-3 minute rebuild cost (2,395 embedding calls,
-  sequential) before `/` gives fully warmed answers; earlier questions during that window still work,
-  just wait on the same shared build promise.
+- **Retrieval granularity was a real, observed limitation — found, then fixed, in the same session.**
+  First pass: asking "does speculative decoding help hex's T1 tier" correctly retrieved the DSpark test
+  plan (the right document, 0.81 score) but the model still answered "not in the provided context" —
+  the chunk that scored highest was the test plan's objective/framing section, not its buried `Results`
+  section where the actual FAIL verdict is stated in different vocabulary than the question. A first
+  fix attempt (1→2 chunks/doc, topK 5→8) wasn't sufficient for this specific query. A second pass
+  (chunk size 1500→700 chars, 2→3 chunks/doc, topK 8→10 — roughly doubling the index to 4,982 chunks)
+  **did** fix it: re-running the identical question retrieved and correctly quoted the exact "T1 tier
+  is close to the worst candidate for speculative decoding of any kind" verdict, cited to the right
+  source. Root cause confirmed by the fix working: our own dense technical writing packs multiple
+  distinct claims into one paragraph, and 1500-char chunks diluted the embedding of any single claim.
+- In-memory index means every restart pays a rebuild cost (now longer, ~4,982 embedding calls
+  sequential, since chunk count roughly doubled) before `/` gives fully warmed answers; earlier
+  questions during that window still work, just wait on the same shared build promise.
 - No auth (same as ADR-2607041035) — anything on the bound port can both read every doc and query the
   chat model.
 
 **Mitigations:**
-- The failure mode is honest-refusal, not confident-wrong-answer — for a knowledge base whose whole
-  point is trustworthy citations, this is the safer of the two possible failure directions.
+- The failure mode when retrieval *does* fall short is honest-refusal, not confident-wrong-answer — for
+  a knowledge base whose whole point is trustworthy citations, this is the safer of the two possible
+  failure directions, and was true throughout both the failing and the fixed retrieval configuration.
 - Sources are always listed with links back to the actual doc, so a human can always get the real
   answer by clicking through even when the model's synthesis falls short.
-- If retrieval depth becomes a recurring problem: smaller chunk size (trade more chunks for finer
-  granularity), or a hierarchical approach (retrieve at doc level, then re-chunk just the top document
-  more finely) are the natural next things to try — not done here, flagged for later.
+- If a future query exposes the same gap again: an even smaller chunk size, or a hierarchical approach
+  (retrieve at doc level, then re-chunk just the top document more finely) are the natural next steps.
 
 ## Implementation
 
@@ -100,7 +102,7 @@ chat both go over HTTP to Ollama (already running locally), and SQLite is a Bun 
 | P1 | Domain + ports (`ChatAnswer`, `IEmbedder`, `IChatModel`, `IKnowledgeIndex`, `IChatHistoryStore`) | Done | code:examples/research-dashboard/src/core |
 | P2 | `ollama-embedder.ts` + `ollama-chat-model.ts` secondary adapters | Done | code:examples/research-dashboard/src/adapters/secondary |
 | P3 | `embedding-knowledge-index.ts` — chunking, in-memory cosine-similarity search | Done | test:`cd examples/research-dashboard && bun test` |
-| P4 | Retrieval tuning: 1→2 chunks/doc, topK 5→8, after live testing exposed a real gap | Done | manual: `curl -X POST /api/chat` against a known DSpark question |
+| P4 | Retrieval tuning, two iterations: (a) 1→2 chunks/doc, topK 5→8 — insufficient; (b) chunk size 1500→700 chars, 2→3 chunks/doc, topK 8→10 — fixed the observed gap | Done | manual: re-ran the identical failing question, got the correct cited answer |
 | P5 | `sqlite-chat-history-store.ts` via `bun:sqlite`, replacing an interim JSON-file design before it was ever committed | Done | code:examples/research-dashboard/src/adapters/secondary/sqlite-chat-history-store.ts |
 | P6 | Chat moved to `/` (home); `/system` absorbed the displaced recent-docs widget | Done | manual: `curl /` shows chat UI, `curl /system` shows stats + recent docs |
 | P7 | This ADR | Done | code:docs/adrs/ADR-2607041205-research-dashboard-rag-chat.md |
