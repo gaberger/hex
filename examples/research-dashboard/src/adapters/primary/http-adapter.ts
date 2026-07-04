@@ -24,11 +24,11 @@ export function createHttpApp(service: IDashboardService): Express {
 
     const body = `
       <h1>research-dashboard</h1>
-      <section hx-get="/fragments/system" hx-trigger="load, every 5s" hx-swap="innerHTML">
+      <div hx-get="/fragments/system" hx-trigger="load, every 5s" hx-swap="innerHTML">
         ${systemFragment(snapshot)}
-      </section>
+      </div>
       <h2>Recently updated docs</h2>
-      ${docListFragment(recent, true)}
+      <div class="card">${docListFragment(recent, true)}</div>
     `;
     res.send(layout({ title: "home", collections, body }));
   });
@@ -61,7 +61,7 @@ export function createHttpApp(service: IDashboardService): Express {
   app.get("/docs/:collection", async (req, res) => {
     const collection = req.params.collection;
     const entries = await service.listDocs(collection);
-    const body = `<h1>${collection}</h1><p class="muted">${entries.length} docs</p>${docListFragment(entries)}`;
+    const body = `<h1>${collection}</h1><p class="muted">${entries.length} docs</p><div class="card">${docListFragment(entries)}</div>`;
     res.send(layout({ title: collection, collections: service.collections(), activeCollection: collection, body }));
   });
 
@@ -74,7 +74,7 @@ export function createHttpApp(service: IDashboardService): Express {
     const collection = req.params.collection;
     const relativePath = (req.params.path as unknown as string[]).join("/");
     const doc = await service.readDoc(collection, relativePath);
-    const body = `<p class="muted"><a href="/docs/${collection}">&larr; back to ${collection}</a></p><h1>${doc.name}</h1>${await marked.parse(doc.markdown)}`;
+    const body = `<p class="muted"><a href="/docs/${collection}">&larr; back to ${collection}</a></p><h1>${doc.name}</h1><div class="card">${await marked.parse(doc.markdown)}</div>`;
     res.send(layout({ title: doc.name, collections: service.collections(), activeCollection: collection, body }));
   });
 
