@@ -16,7 +16,26 @@ const COLLECTION_ICONS: Record<string, string> = {
   algebra: "🧮",
   reference: "📚",
   examples: "🧩",
+  workplans: "🗂️",
 };
+
+// PARA (Projects/Areas/Resources/Archives) grouping for the sidebar — presentation-only,
+// doesn't touch where files actually live on disk. Order here is the display order.
+const PARA_GROUPS: { label: string; collections: string[] }[] = [
+  { label: "Projects", collections: ["workplans"] },
+  { label: "Areas", collections: ["specs"] },
+  { label: "Resources", collections: ["guides", "reference", "algebra", "examples"] },
+  { label: "Archives", collections: ["adrs", "analysis", "benchmarks"] },
+];
+
+function paraGroupsFor(collections: string[]): { label: string; collections: string[] }[] {
+  const known = new Set(PARA_GROUPS.flatMap((g) => g.collections));
+  const leftover = collections.filter((c) => !known.has(c));
+  const groups = PARA_GROUPS.map((g) => ({ ...g, collections: g.collections.filter((c) => collections.includes(c)) })).filter(
+    (g) => g.collections.length > 0,
+  );
+  return leftover.length > 0 ? [...groups, { label: "Other", collections: leftover }] : groups;
+}
 
 const STYLE = `
   :root {
@@ -45,7 +64,8 @@ const STYLE = `
   aside a:hover { background: var(--sidebar-active); color: #fff; }
   aside a.active { background: var(--accent); color: #fff; font-weight: 600; }
   aside hr { border: none; border-top: 1px solid #2c2f3a; margin: 0.75rem 0; }
-  aside .section-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: #6b6f80; padding: 0.4rem 0.6rem 0.2rem; }
+  aside .section-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: #6b6f80; padding: 0.4rem 0.6rem 0.2rem; margin-top: 0.5rem; }
+  aside .section-label:first-of-type { margin-top: 0; }
   main { flex: 1; padding: 2rem 2.5rem; max-width: 960px; }
   h1 { font-size: 1.5rem; margin: 0 0 1rem; letter-spacing: -0.01em; }
   h2 { font-size: 1.1rem; margin: 1.75rem 0 0.75rem; color: var(--text); }
@@ -87,10 +107,16 @@ export function layout(opts: {
   activeCollection?: string;
   body: string;
 }): string {
-  const navItems = opts.collections
+  const navGroups = paraGroupsFor(opts.collections)
     .map(
-      (c) =>
-        `<a href="/docs/${c}" class="${c === opts.activeCollection ? "active" : ""}">${COLLECTION_ICONS[c] ?? "📄"} ${c}</a>`,
+      (g) => `
+        <div class="section-label">${g.label}</div>
+        ${g.collections
+          .map(
+            (c) =>
+              `<a href="/docs/${c}" class="${c === opts.activeCollection ? "active" : ""}">${COLLECTION_ICONS[c] ?? "📄"} ${c}</a>`,
+          )
+          .join("")}`,
     )
     .join("");
 
@@ -104,8 +130,7 @@ export function layout(opts: {
   <a href="/" class="${!opts.activeCollection ? "active" : ""}">🏠 home</a>
   <a href="/system">🖥️ system</a>
   <hr>
-  <div class="section-label">docs</div>
-  ${navItems}
+  ${navGroups}
 </aside>
 <main>
   <input id="search-box" type="search" placeholder="Search all docs…" autocomplete="off"

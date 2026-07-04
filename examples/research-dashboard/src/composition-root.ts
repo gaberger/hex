@@ -9,7 +9,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 // examples/research-dashboard/src -> up 3 levels -> the hex repo root -> docs/
 const hexRepoRoot = resolve(here, "..", "..", "..");
 
-const COLLECTIONS = ["benchmarks", "adrs", "analysis", "specs", "guides", "algebra", "reference", "examples"];
+const COLLECTIONS = ["benchmarks", "adrs", "analysis", "specs", "guides", "algebra", "reference", "examples", "workplans"];
 const docs = new DocsFsReader(
   Object.fromEntries(COLLECTIONS.map((c) => [c, resolve(hexRepoRoot, "docs", c)])),
 );
