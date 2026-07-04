@@ -90,7 +90,7 @@ dependency-free, per hex's hexagonal rules).
 | P2 | Implement system-stats + docs-fs secondary adapters, http-adapter primary adapter | Done | code:examples/research-dashboard/src/adapters |
 | P3 | Unit tests (London-school mocks against the ports) | Done | test:`cd examples/research-dashboard && bun test` |
 | P4 | Typecheck + live smoke test | Done | test:`cd examples/research-dashboard && bun run typecheck` |
-| P5 | Firewall rule for remote access on the chosen port | Pending | — |
+| P5 | Firewall rule for remote access on the chosen port | Done | `sudo ufw status \| grep 8090` |
 | P6 | This ADR (backfill) | Done | code:docs/adrs/ADR-2607041035-research-dashboard-standalone-app.md |
 
 ## References
