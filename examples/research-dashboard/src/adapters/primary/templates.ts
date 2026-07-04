@@ -1,4 +1,4 @@
-import type { DocEntry, SystemSnapshot } from "../../core/domain/entities.js";
+import type { ChatAnswer, DocEntry, SystemSnapshot } from "../../core/domain/entities.js";
 
 export function fmtBytes(n: number): string {
   if (n <= 0) return "0 B";
@@ -105,6 +105,7 @@ export function layout(opts: {
   title: string;
   collections: string[];
   activeCollection?: string;
+  activeNav?: "chat" | "system";
   body: string;
 }): string {
   const navGroups = paraGroupsFor(opts.collections)
@@ -127,8 +128,8 @@ export function layout(opts: {
 <body>
 <aside>
   <div class="brand">research<span>.</span>dashboard</div>
-  <a href="/" class="${!opts.activeCollection ? "active" : ""}">🏠 home</a>
-  <a href="/system">🖥️ system</a>
+  <a href="/" class="${opts.activeNav === "chat" ? "active" : ""}">💬 chat</a>
+  <a href="/system" class="${opts.activeNav === "system" ? "active" : ""}">🖥️ system</a>
   <hr>
   ${navGroups}
 </aside>
@@ -191,4 +192,21 @@ export function docListFragment(entries: DocEntry[], showCollection = false): st
     )
     .join("");
   return `<ul class="doc-list">${rows}</ul>`;
+}
+
+export function chatAnswerFragment(result: ChatAnswer): string {
+  const sources = result.sources
+    .map(
+      (s) =>
+        `<li><a href="/docs/${s.collection}/${s.relativePath}">[${s.collection}] ${s.name}</a> <span class="muted">(${s.score.toFixed(2)})</span></li>`,
+    )
+    .join("");
+  return `
+    <div class="card">
+      <p class="muted">${new Date(result.answeredAt).toLocaleString()}</p>
+      <p><strong>Q:</strong> ${result.question}</p>
+      <p>${result.answer.replace(/\n/g, "<br>")}</p>
+      ${result.sources.length ? `<h3>sources</h3><ul class="doc-list">${sources}</ul>` : ""}
+    </div>
+  `;
 }

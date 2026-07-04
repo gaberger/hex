@@ -53,3 +53,17 @@ export interface DocContent {
   name: string;
   markdown: string;
 }
+
+export interface ChatSource {
+  collection: string;
+  relativePath: string;
+  name: string;
+  score: number;
+}
+
+export interface ChatAnswer {
+  question: string;
+  answer: string;
+  sources: ChatSource[];
+  answeredAt: string;
+}

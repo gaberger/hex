@@ -1,6 +1,12 @@
 import { describe, expect, it, mock } from "bun:test";
-import type { DocContent, DocEntry, SystemSnapshot } from "../../src/core/domain/entities.js";
-import type { IDocsReader, ISystemStatsReader } from "../../src/core/ports/index.js";
+import type { ChatAnswer, DocContent, DocEntry, SystemSnapshot } from "../../src/core/domain/entities.js";
+import type {
+  IChatHistoryStore,
+  IChatModel,
+  IDocsReader,
+  IKnowledgeIndex,
+  ISystemStatsReader,
+} from "../../src/core/ports/index.js";
 import { DashboardService } from "../../src/core/usecases/service.js";
 
 const fakeSnapshot: SystemSnapshot = {
@@ -18,6 +24,12 @@ const fakeEntries: DocEntry[] = [
 
 const fakeContent: DocContent = { collection: "benchmarks", relativePath: "a.md", name: "a", markdown: "# hi" };
 
+const fakeMatches = [{ entry: fakeEntries[0], excerpt: "hi", score: 0.9 }];
+
+const fakeHistory: ChatAnswer[] = [
+  { question: "old q", answer: "old a", sources: [], answeredAt: "2026-01-01T00:00:00.000Z" },
+];
+
 function makeService() {
   const stats: ISystemStatsReader = { read: mock(() => Promise.resolve(fakeSnapshot)) };
   const docs: IDocsReader = {
@@ -26,7 +38,20 @@ function makeService() {
     search: mock(() => Promise.resolve(fakeEntries)),
     collections: mock(() => ["benchmarks", "adrs"]),
   };
-  return { service: new DashboardService(stats, docs), stats, docs };
+  const knowledge: IKnowledgeIndex = { search: mock(() => Promise.resolve(fakeMatches)) };
+  const chatModel: IChatModel = { answer: mock(() => Promise.resolve("the answer")) };
+  const history: IChatHistoryStore = {
+    append: mock(() => Promise.resolve()),
+    list: mock(() => Promise.resolve(fakeHistory)),
+  };
+  return {
+    service: new DashboardService(stats, docs, knowledge, chatModel, history),
+    stats,
+    docs,
+    knowledge,
+    chatModel,
+    history,
+  };
 }
 
 describe("DashboardService", () => {
@@ -61,5 +86,31 @@ describe("DashboardService", () => {
     const result = await service.searchDocs("test");
     expect(result).toEqual(fakeEntries);
     expect(docs.search).toHaveBeenCalledWith("test");
+  });
+
+  it("askQuestion retrieves matches then asks the chat model, citing sources", async () => {
+    const { service, knowledge, chatModel } = makeService();
+    const result = await service.askQuestion("what is this?");
+    expect(knowledge.search).toHaveBeenCalledWith("what is this?", 8);
+    expect(chatModel.answer).toHaveBeenCalledWith("what is this?", [{ source: "[benchmarks] a", text: "hi" }]);
+    expect(result).toEqual({
+      question: "what is this?",
+      answer: "the answer",
+      answeredAt: expect.any(String),
+      sources: [{ collection: "benchmarks", relativePath: "a.md", name: "a", score: 0.9 }],
+    });
+  });
+
+  it("askQuestion appends the result to the history store", async () => {
+    const { service, history } = makeService();
+    const result = await service.askQuestion("what is this?");
+    expect(history.append).toHaveBeenCalledWith(result);
+  });
+
+  it("delegates getChatHistory to the history store", async () => {
+    const { service, history } = makeService();
+    const result = await service.getChatHistory();
+    expect(result).toEqual(fakeHistory);
+    expect(history.list).toHaveBeenCalledTimes(1);
   });
 });

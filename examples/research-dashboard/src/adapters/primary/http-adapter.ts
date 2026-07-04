@@ -3,35 +3,41 @@ import { fileURLToPath } from "node:url";
 import express, { type Express } from "express";
 import { marked } from "marked";
 import type { IDashboardService } from "../../core/ports/index.js";
-import { docListFragment, layout, systemFragment } from "./templates.js";
+import { chatAnswerFragment, docListFragment, layout, systemFragment } from "./templates.js";
 
 const publicDir = join(dirname(fileURLToPath(import.meta.url)), "public");
 
 export function createHttpApp(service: IDashboardService): Express {
   const app = express();
   app.use(express.static(publicDir));
+  app.use(express.urlencoded({ extended: true }));
 
   app.get("/", async (_req, res) => {
-    const collections = service.collections();
-    const [snapshot, recentByCollection] = await Promise.all([
-      service.getOverview(),
-      Promise.all(collections.map((c) => service.listDocs(c))),
-    ]);
-    const recent = recentByCollection
-      .flat()
-      .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt))
-      .slice(0, 10);
-
+    const history = await service.getChatHistory();
+    const historyHtml = history
+      .slice()
+      .reverse()
+      .map((h) => chatAnswerFragment(h))
+      .join("");
     const body = `
-      <h1>research-dashboard</h1>
-      <div hx-get="/fragments/system" hx-trigger="load, every 5s" hx-swap="innerHTML">
-        ${systemFragment(snapshot)}
+      <h1>ask the knowledge base</h1>
+      <p class="muted">Semantic search over every doc collection, answered by a local model. First
+      question after a restart waits for the index to finish building. History persists across
+      restarts.</p>
+      <div class="card">
+        <form hx-post="/api/chat" hx-target="#chat-log" hx-swap="afterbegin" hx-indicator="#chat-spinner"
+              hx-on::after-request="this.reset()">
+          <input type="text" name="question" placeholder="Ask about the docs…" autocomplete="off" required
+                 style="width:100%;padding:0.65rem 0.9rem;border:1px solid var(--border);border-radius:8px;font-size:0.95rem;" />
+        </form>
+        <div id="chat-spinner" class="htmx-indicator muted">thinking…</div>
       </div>
-      <h2>Recently updated docs</h2>
-      <div class="card">${docListFragment(recent, true)}</div>
+      <div id="chat-log">${historyHtml}</div>
     `;
-    res.send(layout({ title: "home", collections, body }));
+    res.send(layout({ title: "chat", collections: service.collections(), activeNav: "chat", body }));
   });
+
+  app.get("/chat", (_req, res) => res.redirect("/"));
 
   app.get("/fragments/system", async (_req, res) => {
     res.send(systemFragment(await service.getOverview()));
@@ -42,9 +48,26 @@ export function createHttpApp(service: IDashboardService): Express {
   });
 
   app.get("/system", async (_req, res) => {
-    const s = await service.getOverview();
-    const body = `<h1>system overview</h1><div hx-get="/fragments/system" hx-trigger="load, every 5s" hx-swap="innerHTML">${systemFragment(s)}</div>`;
-    res.send(layout({ title: "system", collections: service.collections(), body }));
+    const collections = service.collections();
+    const [s, recentByCollection] = await Promise.all([
+      service.getOverview(),
+      Promise.all(collections.map((c) => service.listDocs(c))),
+    ]);
+    const recent = recentByCollection.flat().sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 10);
+    const body = `
+      <h1>system overview</h1>
+      <div hx-get="/fragments/system" hx-trigger="load, every 5s" hx-swap="innerHTML">${systemFragment(s)}</div>
+      <h2>Recently updated docs</h2>
+      <div class="card">${docListFragment(recent, true)}</div>
+    `;
+    res.send(layout({ title: "system", collections, activeNav: "system", body }));
+  });
+
+  app.post("/api/chat", async (req, res) => {
+    const question = String(req.body.question ?? "").trim();
+    if (!question) return res.send("");
+    const result = await service.askQuestion(question);
+    res.send(chatAnswerFragment(result));
   });
 
   app.get("/search", async (req, res) => {
