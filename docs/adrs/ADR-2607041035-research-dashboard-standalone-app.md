@@ -53,6 +53,24 @@ no persistence — every request reads live).
 New external dependencies: `express ^5.1.0`, `marked ^15.0.6` (adapter-layer only — domain/ports remain
 dependency-free, per hex's hexagonal rules).
 
+**Amendment 2026-07-04, same day — "full portal" expansion.** Operator asked for more than the MVP:
+richer navigation, live-updating stats, and search, without adding a build step. Chosen approach:
+**htmx** (vendored locally as a static asset, `adapters/primary/public/htmx.min.js` — no CDN
+dependency, no bundler) layered onto the existing server-rendered Express app, rather than adopting a
+client framework (e.g. matching hex-nexus's own Solid.js + Vite stack). Added:
+- `IDocsReader.search()` / `IDashboardService.searchDocs()` — new port methods, filename-substring
+  search across all collections (kept simple; no content-body indexing).
+- A persistent sidebar nav (`adapters/primary/templates.ts`, split out of `http-adapter.ts` to keep
+  files under the hex-scaffold size guideline) listing every collection, plus a live-polling home page
+  (`hx-trigger="load, every 5s"` against a new `/fragments/system` endpoint) and an as-you-type search
+  box (`hx-trigger="keyup changed delay:250ms"` against `/search`).
+- Doc collections expanded from 2 (`benchmarks`, `adrs`) to 8: `benchmarks`, `adrs`, `analysis`,
+  `specs`, `guides`, `algebra`, `reference`, `examples` — every `docs/*` subdirectory in the parent
+  repo that actually contains markdown.
+
+No change to the domain/ports/adapters *boundaries* themselves, only new capability within them — the
+architecture from the original decision above holds unchanged.
+
 ## Consequences
 
 **Positive:**
@@ -92,6 +110,8 @@ dependency-free, per hex's hexagonal rules).
 | P4 | Typecheck + live smoke test | Done | test:`cd examples/research-dashboard && bun run typecheck` |
 | P5 | Firewall rule for remote access on the chosen port | Done | `sudo ufw status \| grep 8090` |
 | P6 | This ADR (backfill) | Done | code:docs/adrs/ADR-2607041035-research-dashboard-standalone-app.md |
+| P7 | htmx (vendored) + sidebar nav + live-polling stats + search | Done | test:`cd examples/research-dashboard && bun test` |
+| P8 | Expand doc collections from 2 to all 8 markdown-bearing `docs/*` dirs | Done | code:examples/research-dashboard/src/composition-root.ts |
 
 ## References
 
