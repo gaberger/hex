@@ -39,6 +39,7 @@ use commands::{
     neural_lab::NeuralLabAction,
     nexus::NexusAction,
     sandbox::SandboxAction,
+    service::ServiceAction,
     plan::PlanAction,
     fingerprint::FingerprintAction,
     fs::FsAction,
@@ -253,6 +254,11 @@ enum Commands {
     Nexus {
         #[command(subcommand)]
         action: NexusAction,
+    },
+    /// Manage hex as systemd user services (boot-persistent stdb + nexus)
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
     },
     /// Manage remote agents (list, connect, spawn, disconnect)
     Agent {
@@ -704,6 +710,7 @@ async fn main() -> anyhow::Result<()> {
         // ── Standalone commands ──────────────────────────────────────
         Commands::Bootstrap(args) => commands::bootstrap::run(args).await,
         Commands::Nexus { action } => commands::nexus::run(action).await,
+        Commands::Service { action } => commands::service::run(action).await,
         Commands::Agent { action } => commands::agent::run(action).await,
         Commands::Brief { action, args } => {
             let effective_args = match action {
