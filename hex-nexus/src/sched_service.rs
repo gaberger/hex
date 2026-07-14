@@ -135,6 +135,265 @@ pub fn resolve_hardware_feasibility(repo: &str) -> Option<HardwareFeasibility> {
     })
 }
 
+// ─── Daily HuggingFace discovery tick (ADR-2607140850 P3) ──────────────────
+//
+// Fetches HuggingFace's public models API once a day via the existing
+// `WebFetchPort` (hex-core/src/ports/web.rs) with `FetchFormat::Raw` -- the
+// ADR explicitly rejected a bespoke discovery port/adapter in favor of this
+// one. New repos are hardware-feasibility-checked via P2's
+// `resolve_hardware_feasibility` and recorded into `discovered_model`; P4
+// wires the local-feasible-vs-surface-for-review branches on top of the rows
+// this tick writes.
+
+/// Interval between HuggingFace discovery ticks (24 hours) -- the
+/// operator-confirmed daily cadence (ADR-2607140850): model releases don't
+/// warrant tighter polling, and HuggingFace's public API has no SLA for this
+/// use pattern.
+pub const HF_RESEARCH_INTERVAL_SECS: u64 = 86400;
+
+/// HuggingFace's public models-listing REST API, newest-first so the daily
+/// tick sees new releases promptly. Capped to a page size the dedup pass can
+/// process in one cycle.
+const HF_MODELS_API_URL: &str =
+    "https://huggingface.co/api/models?sort=createdAt&direction=-1&limit=50";
+
+/// Minimal reqwest-backed `WebFetchPort` implementation. No concrete adapter
+/// for this port exists anywhere in the workspace yet -- hex-core stays
+/// dependency-free per its own module doc, so it can't host one -- and this
+/// is the smallest impl that lets the daily tick call the port the way the
+/// ADR prescribes, rather than bypassing it with an ad hoc reqwest call the
+/// way this file's other external calls (STDB, Ollama) already do.
+struct HttpWebFetch {
+    http: reqwest::Client,
+}
+
+impl HttpWebFetch {
+    fn new() -> Self {
+        Self { http: reqwest::Client::new() }
+    }
+}
+
+#[async_trait::async_trait]
+impl hex_core::ports::web::WebFetchPort for HttpWebFetch {
+    async fn fetch(
+        &self,
+        url: &hex_core::domain::web::Url,
+        opts: hex_core::domain::web::FetchOptions,
+    ) -> Result<hex_core::domain::web::FetchedPage, hex_core::ports::web::WebError> {
+        use hex_core::ports::web::WebError;
+
+        let resp = self.http.get(url).timeout(opts.timeout).send().await.map_err(|e| {
+            if e.is_timeout() {
+                WebError::Timeout
+            } else {
+                WebError::ProviderError(e.to_string())
+            }
+        })?;
+        let status = resp.status();
+        if status.as_u16() == 429 {
+            return Err(WebError::RateLimited);
+        }
+        if !status.is_success() {
+            return Err(WebError::ProviderError(format!("HTTP {}", status)));
+        }
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let bytes = resp.bytes().await.map_err(|e| WebError::ProviderError(e.to_string()))?;
+        let truncated = &bytes[..bytes.len().min(opts.max_bytes)];
+        let text = String::from_utf8_lossy(truncated).into_owned();
+        Ok(hex_core::domain::web::FetchedPage {
+            url: url.clone(),
+            status: status.as_u16(),
+            content_type,
+            text,
+            markdown: None,
+            fetched_at: std::time::SystemTime::now(),
+        })
+    }
+}
+
+/// One HuggingFace model repo entry from the public models-listing API.
+/// Only the field the tick actually needs is deserialized -- the real
+/// response carries many more (tags, pipeline_tag, siblings, …) this phase
+/// doesn't use yet. Accepts both `id` and the older `modelId` key so a
+/// HuggingFace response-shape change doesn't immediately break parsing (see
+/// ADR-2607140850's "no SLA" risk note).
+#[derive(Debug, Clone, serde::Deserialize)]
+struct HfModelListing {
+    #[serde(alias = "modelId")]
+    id: String,
+}
+
+/// Parse the raw HuggingFace models-API response body into repo ids.
+fn parse_hf_model_repos(raw: &str) -> Result<Vec<String>, String> {
+    let listings: Vec<HfModelListing> =
+        serde_json::from_str(raw).map_err(|e| format!("HF response parse error: {}", e))?;
+    Ok(listings.into_iter().map(|l| l.id).collect())
+}
+
+/// Repos already present in the `discovered_model` table (the ADR's
+/// dedup-known-models behavior) -- fetched once per cycle so the tick can
+/// filter the day's listing in memory instead of one SQL round-trip per repo.
+async fn known_discovered_repos(
+    stdb_host: &str,
+    database: &str,
+) -> Result<std::collections::HashSet<String>, String> {
+    let url = format!("{}/v1/database/{}/sql", stdb_host, database);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("client error: {}", e))?;
+    let resp = client
+        .post(&url)
+        .header("content-type", "text/plain")
+        .body("SELECT repo FROM discovered_model")
+        .send()
+        .await
+        .map_err(|e| format!("STDB SQL error: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("STDB SQL returned {}", resp.status()));
+    }
+    let parsed: Vec<serde_json::Value> =
+        resp.json().await.map_err(|e| format!("STDB SQL parse: {}", e))?;
+    let rows = parsed
+        .into_iter()
+        .next()
+        .and_then(|v| v.get("rows").cloned())
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    Ok(rows
+        .iter()
+        .filter_map(|r| r.as_array()?.first()?.as_str().map(String::from))
+        .collect())
+}
+
+/// Record a newly-discovered repo into `discovered_model` via the reducer,
+/// which itself no-ops on an already-known repo -- belt-and-suspenders dedup
+/// alongside the in-memory filter in `run_hf_discovery_tick`. `feasibility`
+/// of `None` (P2's resolver has no data for this repo yet) is recorded as
+/// `local_feasible = false`: unknown quant size must never default to
+/// auto-pull/bench, only to the surfaced-for-review branch P4 wires.
+async fn record_discovered_model(
+    stdb_host: &str,
+    database: &str,
+    repo: &str,
+    feasibility: Option<&HardwareFeasibility>,
+) -> Result<(), String> {
+    let (label, bytes, local_feasible) = match feasibility {
+        Some(f) => (f.smallest_quant_label.clone(), f.smallest_quant_bytes, f.local_feasible),
+        None => (String::new(), 0u64, false),
+    };
+    let url = format!("{}/v1/database/{}/call/discovered_model_record", stdb_host, database);
+    let payload = json!([
+        repo,
+        chrono::Utc::now().to_rfc3339(),
+        label,
+        bytes,
+        local_feasible,
+    ]);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("client error: {}", e))?;
+    let resp = client
+        .post(&url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("discovered_model_record call error: {}", e))?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("discovered_model_record returned {}", resp.status()))
+    }
+}
+
+/// Outcome of one daily discovery cycle, for the caller (`spawn_hf_discovery`)
+/// to log.
+#[derive(Debug, Default)]
+pub struct HfDiscoveryReport {
+    pub fetched: usize,
+    pub newly_discovered: usize,
+    pub skipped_known: usize,
+}
+
+/// Runs one HuggingFace discovery cycle: fetch the public models API via
+/// `web_fetch` (the existing `WebFetchPort`, `FetchFormat::Raw` per the ADR),
+/// dedup against `discovered_model`, and record every genuinely new repo with
+/// its hardware-feasibility verdict (P2's `resolve_hardware_feasibility`).
+///
+/// Soft-fails per ADR-2607140850 ("hf-api-failure-is-soft-fail"): any error
+/// fetching or parsing HuggingFace's response is returned to the caller to
+/// log-and-skip for the day, never panics, and never blocks the other
+/// sched_service ticks.
+pub async fn run_hf_discovery_tick(
+    web_fetch: &dyn hex_core::ports::web::WebFetchPort,
+    stdb_host: &str,
+    database: &str,
+) -> Result<HfDiscoveryReport, String> {
+    let opts = hex_core::domain::web::FetchOptions {
+        format: hex_core::domain::web::FetchFormat::Raw,
+        ..Default::default()
+    };
+    let page = web_fetch
+        .fetch(&HF_MODELS_API_URL.to_string(), opts)
+        .await
+        .map_err(|e| format!("HF discovery fetch failed: {}", e))?;
+
+    let repos = parse_hf_model_repos(&page.text)?;
+    let known = known_discovered_repos(stdb_host, database).await?;
+
+    let mut report = HfDiscoveryReport { fetched: repos.len(), ..Default::default() };
+    for repo in repos {
+        if known.contains(&repo) {
+            report.skipped_known += 1;
+            continue;
+        }
+        let feasibility = resolve_hardware_feasibility(&repo);
+        match record_discovered_model(stdb_host, database, &repo, feasibility.as_ref()).await {
+            Ok(()) => report.newly_discovered += 1,
+            Err(e) => tracing::warn!(repo = %repo, error = %e, "hf_discovery: failed to record candidate"),
+        }
+    }
+    Ok(report)
+}
+
+/// Spawns the daily HF discovery tick (ADR-2607140850 P3). Runs independently
+/// of the other sched_service loops; a failed cycle is logged and skipped,
+/// never crashes the process or blocks `run_improvement_cycle` / the
+/// substrate ticks.
+fn spawn_hf_discovery() {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(HF_RESEARCH_INTERVAL_SECS));
+        interval.tick().await; // initial delay -- first fetch one interval after startup
+
+        let web_fetch = HttpWebFetch::new();
+        let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
+            .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+        let database = hex_core::stdb_database_for_module("hexflo-coordination").to_string();
+
+        loop {
+            match run_hf_discovery_tick(&web_fetch, &stdb_host, &database).await {
+                Ok(report) => {
+                    tracing::info!(
+                        fetched = report.fetched,
+                        new = report.newly_discovered,
+                        known = report.skipped_known,
+                        "hf_discovery: daily tick complete"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("hf_discovery: daily tick failed (soft-fail, skipping today): {}", e);
+                }
+            }
+            interval.tick().await;
+        }
+    });
+}
+
 /// Spawns the sched self-improvement service.
 ///
 /// This runs as a background task that:
@@ -168,6 +427,12 @@ pub fn spawn(state: SharedState) {
     // gates auto-propose behind operator opt-in. No-op when inference
     // port or swap_ticket port aren't wired.
     spawn_substrate_autopilot(state.clone());
+
+    // Daily HuggingFace model-discovery tick (ADR-2607140850 P3). No
+    // dependency on `state` -- unlike the substrate ticks, discovery reads
+    // HuggingFace + `discovered_model` directly and doesn't touch shared
+    // in-memory ports.
+    spawn_hf_discovery();
 
     tokio::spawn(async move {
         // ADR-2026-04-24-1820: seed Q-values before the loop starts so RL has priors.
@@ -766,5 +1031,43 @@ mod hardware_feasibility_tests {
     #[test]
     fn hardware_feasibility_returns_none_for_unknown_repo() {
         assert_eq!(resolve_hardware_feasibility("some-org/never-researched"), None);
+    }
+}
+
+#[cfg(test)]
+mod hf_discovery_tests {
+    use super::*;
+
+    #[test]
+    fn hf_research_interval_is_one_day() {
+        assert_eq!(HF_RESEARCH_INTERVAL_SECS, 86400);
+    }
+
+    #[test]
+    fn parse_hf_model_repos_extracts_ids() {
+        let raw = r#"[{"id":"org/model-a"},{"id":"org/model-b"}]"#;
+        let repos = parse_hf_model_repos(raw).expect("valid JSON must parse");
+        assert_eq!(repos, vec!["org/model-a".to_string(), "org/model-b".to_string()]);
+    }
+
+    #[test]
+    fn parse_hf_model_repos_accepts_model_id_alias() {
+        // HuggingFace's API has used both `id` and `modelId` for this field
+        // across versions/endpoints -- accept either so a response-shape
+        // change doesn't immediately break the daily tick.
+        let raw = r#"[{"modelId":"org/legacy-field-name"}]"#;
+        let repos = parse_hf_model_repos(raw).expect("valid JSON must parse");
+        assert_eq!(repos, vec!["org/legacy-field-name".to_string()]);
+    }
+
+    #[test]
+    fn parse_hf_model_repos_errors_on_malformed_json() {
+        assert!(parse_hf_model_repos("not json").is_err());
+    }
+
+    #[test]
+    fn parse_hf_model_repos_handles_empty_listing() {
+        let repos = parse_hf_model_repos("[]").expect("empty array is valid");
+        assert!(repos.is_empty());
     }
 }
