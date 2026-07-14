@@ -75,6 +75,66 @@ fn state_key() -> String {
     "brain:model:selection".to_string()
 }
 
+// ─── Hardware-feasibility resolver (ADR-2607140850 P2) ─────────────────────
+//
+// Given a HuggingFace model repo, resolve its smallest known GGUF quant file
+// size and judge feasibility against this box's real capacity -- never the
+// headline parameter count. Per the ADR's Drivers: GLM-5.2 advertises a huge
+// headline size but even the community's most aggressive quant needs ~227GB,
+// and qwen3-coder-next OOMs on this box despite looking feasible on paper
+// (project memory `project_qwen_next_hardware_ceiling`). This function is the
+// resolver P3's daily discovery tick will call per newly-discovered repo; P3
+// wires the live HuggingFace lookup (WebFetchPort, FetchFormat::Raw) that
+// populates the quant-size data this function currently seeds from known
+// investigations. The output shape mirors `DiscoveredModel` in
+// spacetime-modules/hexflo-coordination/src/lib.rs (smallest_quant_label,
+// smallest_quant_bytes, local_feasible) so P3/P4 can pass it straight into
+// `discovered_model_record` with no reshaping.
+
+/// This box's real local-inference capacity (ADR-2607140850): 16GB GPU VRAM +
+/// 30GB system RAM. llama.cpp can offload GGUF layers across both, so
+/// feasibility is judged against the combined total, not GPU VRAM alone.
+const HW_GPU_VRAM_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+const HW_SYSTEM_RAM_BYTES: u64 = 30 * 1024 * 1024 * 1024;
+const HW_TOTAL_CAPACITY_BYTES: u64 = HW_GPU_VRAM_BYTES + HW_SYSTEM_RAM_BYTES;
+
+/// Hardware-feasibility verdict for one HuggingFace model repo.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HardwareFeasibility {
+    pub smallest_quant_label: String,
+    pub smallest_quant_bytes: u64,
+    pub local_feasible: bool,
+}
+
+/// Seed table of smallest-known-GGUF-quant sizes, captured by hand during the
+/// investigations that motivated ADR-2607140850. Approximate and illustrative
+/// pending P3's live HuggingFace lookup -- this is the resolver's only data
+/// source until that tick lands, so unknown repos correctly resolve to `None`
+/// rather than a guessed verdict.
+fn known_smallest_quant(repo: &str) -> Option<(&'static str, u64)> {
+    match repo {
+        // 700B+ MoE: even the most aggressive community quant lands far
+        // beyond any single consumer box's GPU+RAM -- known-infeasible case.
+        "zai-org/GLM-5.2" => Some(("IQ1_S", 227 * 1024 * 1024 * 1024)),
+        // Small instruct model with a widely-available low-bit GGUF quant
+        // that fits well inside a 16GB GPU -- known-feasible case.
+        "Qwen/Qwen2.5-3B-Instruct-GGUF" => Some(("Q4_K_M", 2 * 1024 * 1024 * 1024)),
+        _ => None,
+    }
+}
+
+/// Resolve `repo`'s smallest known GGUF quant size and compare it to this
+/// box's real 16GB GPU / 30GB RAM capacity. Returns `None` when no quant size
+/// is on record for `repo` yet (nothing to judge feasibility against).
+pub fn resolve_hardware_feasibility(repo: &str) -> Option<HardwareFeasibility> {
+    let (label, bytes) = known_smallest_quant(repo)?;
+    Some(HardwareFeasibility {
+        smallest_quant_label: label.to_string(),
+        smallest_quant_bytes: bytes,
+        local_feasible: bytes <= HW_TOTAL_CAPACITY_BYTES,
+    })
+}
+
 /// Spawns the sched self-improvement service.
 ///
 /// This runs as a background task that:
@@ -680,5 +740,31 @@ async fn seed_rl_q_values(state_key: &str) -> Result<u32, String> {
         Ok(1)
     } else {
         Err(format!("seed RL returned {}", response.status()))
+    }
+}
+
+#[cfg(test)]
+mod hardware_feasibility_tests {
+    use super::*;
+
+    #[test]
+    fn hardware_feasibility_flags_700b_moe_as_infeasible() {
+        let verdict = resolve_hardware_feasibility("zai-org/GLM-5.2")
+            .expect("known repo must resolve");
+        assert!(!verdict.local_feasible);
+        assert!(verdict.smallest_quant_bytes > HW_TOTAL_CAPACITY_BYTES);
+    }
+
+    #[test]
+    fn hardware_feasibility_flags_small_quant_as_feasible() {
+        let verdict = resolve_hardware_feasibility("Qwen/Qwen2.5-3B-Instruct-GGUF")
+            .expect("known repo must resolve");
+        assert!(verdict.local_feasible);
+        assert!(verdict.smallest_quant_bytes <= HW_TOTAL_CAPACITY_BYTES);
+    }
+
+    #[test]
+    fn hardware_feasibility_returns_none_for_unknown_repo() {
+        assert_eq!(resolve_hardware_feasibility("some-org/never-researched"), None);
     }
 }
