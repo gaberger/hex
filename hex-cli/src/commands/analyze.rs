@@ -10,13 +10,15 @@ use hex_core::rules::boundary::{self, Layer};
 
 use crate::nexus_client::NexusClient;
 
-/// Layer directories to check, paired with their expected `hex_core` Layer enum.
-const LAYER_DIRS: &[(&str, &str, Layer)] = &[
-    ("core/domain", "Domain", Layer::Domain),
-    ("core/ports", "Ports", Layer::Ports),
-    ("core/usecases", "Use Cases", Layer::Usecases),
-    ("adapters/primary", "Primary Adapters", Layer::AdapterPrimary),
-    ("adapters/secondary", "Secondary Adapters", Layer::AdapterSecondary),
+/// Layers shown in the "Hex layers" checklist, in display order. Detection itself is
+/// language-agnostic (`hex_core::rules::boundary::detect_layer`, a path-substring
+/// matcher) — this is purely display labeling, not a second hardcoded detection path.
+const DISPLAY_LAYERS: &[(Layer, &str)] = &[
+    (Layer::Domain, "Domain"),
+    (Layer::Ports, "Ports"),
+    (Layer::Usecases, "Use Cases"),
+    (Layer::AdapterPrimary, "Primary Adapters"),
+    (Layer::AdapterSecondary, "Secondary Adapters"),
 ];
 
 #[allow(clippy::too_many_arguments)]
@@ -63,6 +65,9 @@ pub async fn run(
         let has_package_json = root.join("package.json").is_file();
         let has_cargo_toml = root.join("Cargo.toml").is_file();
         let has_go_mod = root.join("go.mod").is_file();
+        let has_pyproject = root.join("pyproject.toml").is_file()
+            || root.join("setup.py").is_file()
+            || root.join("requirements.txt").is_file();
         let has_hex_config = root.join(".hex").is_dir();
         let has_docs_adrs = root.join("docs").join("adrs").is_dir();
 
@@ -71,49 +76,43 @@ pub async fn run(
         print_check("package.json", has_package_json);
         print_check("Cargo.toml", has_cargo_toml);
         print_check("go.mod", has_go_mod);
+        print_check("pyproject.toml/setup.py/requirements.txt", has_pyproject);
         print_check(".hex/ config", has_hex_config);
         print_check("docs/adrs/", has_docs_adrs);
 
-        // Check hex architecture layers using hex_core boundary types
+        // Check hex architecture layers by classifying every source file under src/
+        // via hex_core::rules::boundary::detect_layer — a path-substring matcher that's
+        // language-agnostic and tolerant of arbitrary package-name nesting (e.g. both
+        // "src/domain/x.ts" and "src/mypkg/core/domain/x.py" resolve to Layer::Domain).
         let mut layer_file_counts: Vec<(&str, usize)> = Vec::new();
+        let mut layer_counts: std::collections::HashMap<Layer, usize> = std::collections::HashMap::new();
         if has_src {
             println!();
-            println!("  {}", "Hex layers (TypeScript):".bold());
+            println!("  {}", "Hex layers:".bold());
 
-            for (dir, label, expected_layer) in LAYER_DIRS {
-                let layer_path = root.join("src").join(dir);
-                let exists = layer_path.is_dir();
-                let file_count = if exists {
-                    collect_source_files(&layer_path).len()
-                } else {
-                    0
-                };
+            for file in collect_source_files(&root.join("src")) {
+                let rel = file
+                    .strip_prefix(&root)
+                    .unwrap_or(&file)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                *layer_counts.entry(boundary::detect_layer(&rel)).or_insert(0) += 1;
+            }
 
-                // Print with file count
-                let indicator = if exists { "\u{2713}".green() } else { "\u{2717}".red() };
-                if exists {
-                    println!("    {} {} ({} files)", indicator, label, file_count);
+            for (layer, label) in DISPLAY_LAYERS {
+                let count = layer_counts.get(layer).copied().unwrap_or(0);
+                let indicator = if count > 0 { "\u{2713}".green() } else { "\u{2717}".red() };
+                if count > 0 {
+                    println!("    {} {} ({} files)", indicator, label, count);
                 } else {
                     println!("    {} {}", indicator, label);
                 }
-                layer_file_counts.push((label, file_count));
-
-                // Verify boundary::detect_layer agrees with our expectation
-                if exists {
-                    let detected = boundary::detect_layer(&format!("src/{}/mod.rs", dir));
-                    if detected != *expected_layer {
-                        println!(
-                            "      {} Layer mismatch: expected {}, detected {}",
-                            "!".yellow(),
-                            expected_layer,
-                            detected,
-                        );
-                    }
-                }
+                layer_file_counts.push((label, count));
             }
 
             let has_composition_root = root.join("src").join("composition-root.ts").is_file()
-                || root.join("src").join("composition_root.rs").is_file();
+                || root.join("src").join("composition_root.rs").is_file()
+                || layer_counts.get(&Layer::CompositionRoot).copied().unwrap_or(0) > 0;
             print_check("Composition Root", has_composition_root);
         }
 
@@ -946,7 +945,7 @@ fn scan_local_violations(root: &Path) -> Vec<boundary::Violation> {
     all_violations
 }
 
-/// Recursively collect `.rs`, `.ts`, and `.js` source files under a directory.
+/// Recursively collect `.rs`, `.ts`, `.js`, `.go`, and `.py` source files under a directory.
 fn collect_source_files(dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     collect_source_files_recursive(dir, &mut files);
@@ -963,7 +962,7 @@ fn collect_source_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
         if path.is_dir() {
             collect_source_files_recursive(&path, out);
         } else if let Some(ext) = path.extension().and_then(|x| x.to_str()) {
-            if matches!(ext, "rs" | "ts" | "js" | "go") {
+            if matches!(ext, "rs" | "ts" | "js" | "go" | "py") {
                 out.push(path);
             }
         }

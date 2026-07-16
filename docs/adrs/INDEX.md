@@ -6,7 +6,7 @@
 > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,
 > read the ADR itself.
 
-**259 ADRs** across 4 epochs.
+**261 ADRs** across 4 epochs.
 
 ## Epoch: `single-agent` — **current**
 
@@ -14,6 +14,8 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 
 | ADR | Status | Title | Superseded-By |
 |-----|--------|-------|---------------|
+| ADR-2607140850 | completed | ADR-2607140850: Continuous HuggingFace Model Researcher | — |
+| ADR-2607131500 | accepted | ADR-2607131500: Scaffold git hygiene, polyglot architecture analysis, and swarm-build retry resilience |  |
 | ADR-2607041035 | completed | ADR-2607041035: research-dashboard — a standalone hexagonal app to share results remotely |  |
 | ADR-2607041205 | completed | ADR-2607041205: research-dashboard — semantic chat over the knowledge base |  |
 | ADR-2606191907 | proposed | ADR-2606191907: A layered token-compression subsystem in the hook path — shrink context, not just route models |  |
