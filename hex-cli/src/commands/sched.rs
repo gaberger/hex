@@ -3871,8 +3871,9 @@ async fn enqueue_brain_task_with_priority(kind: &str, payload: &str, priority: u
             // retry_count never persists for string-payload kinds like
             // workplan (it tries to JSON-parse the payload path itself, which
             // always fails), a rejected/failed draft stub retries forever
-            // instead of hitting the retry cap. Draft stubs must go through
-            // planner expansion first.
+            // instead of hitting the retry cap. Draft stubs must be promoted
+            // via hex plan drafts approve and expanded by a planner agent (e.g.
+            // via the hex-feature-dev flow) first.
             let is_draft_stub = wp.get("kind").and_then(|v| v.as_str()) == Some("workplan-draft")
                 || wp.get("status").and_then(|v| v.as_str()) == Some("pending-planner");
             if is_draft_stub {
