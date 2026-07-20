@@ -3865,6 +3865,26 @@ async fn enqueue_brain_task_with_priority(kind: &str, payload: &str, priority: u
 
         // Validate critical path safety before enqueueing
         if let Some(ref wp) = workplan_content {
+            // Reject unexpanded draft stubs (hex plan draft's raw output) at
+            // enqueue time. These have no phases/specs yet, so dispatching them
+            // is a silent no-op -- and because the sched auto-retry loop's
+            // retry_count never persists for string-payload kinds like
+            // workplan (it tries to JSON-parse the payload path itself, which
+            // always fails), a rejected/failed draft stub retries forever
+            // instead of hitting the retry cap. Draft stubs must go through
+            // planner expansion first.
+            let is_draft_stub = wp.get("kind").and_then(|v| v.as_str()) == Some("workplan-draft")
+                || wp.get("status").and_then(|v| v.as_str()) == Some("pending-planner");
+            if is_draft_stub {
+                anyhow::bail!(
+                    "refusing to enqueue unexpanded draft workplan '{}': this is a `hex plan draft` \
+                     stub (kind=workplan-draft, status=pending-planner) with no phases/specs yet. \
+                     Run `hex plan drafts approve <name>` and expand it via `/hex-feature-dev` or a \
+                     planner agent first, then enqueue the resulting phases[]-based workplan.",
+                    payload
+                );
+            }
+
             if let Some(phases) = wp.get("phases").and_then(|v| v.as_array()) {
                 for phase in phases {
                     if let Some(tasks) = phase.get("tasks").and_then(|v| v.as_array()) {
