@@ -26,6 +26,39 @@ pub struct SpacetimeAgentCommAdapter {
     database: String,
 }
 
+/// Pure binary-search over an `exists_above(x)` probe, independent of any
+/// live STDB connection so it can be unit tested in isolation.
+async fn binary_search_max_id<F, Fut>(exists_above: F) -> Option<u64>
+where
+    F: Fn(u64) -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    if !exists_above(0).await {
+        return None;
+    }
+
+    let mut lo: u64 = 0;
+    let mut hi: u64 = 1;
+    while exists_above(hi).await {
+        lo = hi;
+        hi = match hi.checked_mul(2) {
+            Some(v) => v,
+            None => break,
+        };
+    }
+
+    while lo + 1 < hi {
+        let mid = lo + (hi - lo) / 2;
+        if exists_above(mid).await {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+
+    Some(hi)
+}
+
 impl SpacetimeAgentCommAdapter {
     pub fn new(host: String, database: String) -> Self {
         let http = reqwest::Client::builder()
@@ -130,35 +163,11 @@ impl SpacetimeAgentCommAdapter {
     /// for the max directly — instead we probe `WHERE id > x LIMIT 1` and
     /// binary-search the boundary. Returns None if the table is empty.
     async fn find_max_id(&self) -> Option<u64> {
-        async fn probe(this: &SpacetimeAgentCommAdapter, x: u64) -> bool {
+        binary_search_max_id(|x| async move {
             let q = format!("SELECT id FROM agent_messages WHERE id > {} LIMIT 1", x);
-            this.sql_query(&q).await.map(|rows| !rows.is_empty()).unwrap_or(false)
-        }
-
-        if !probe(self, 0).await {
-            return None;
-        }
-
-        let mut lo: u64 = 0;
-        let mut hi: u64 = 1;
-        while probe(self, hi).await {
-            lo = hi;
-            hi = match hi.checked_mul(2) {
-                Some(v) => v,
-                None => break,
-            };
-        }
-
-        while lo + 1 < hi {
-            let mid = lo + (hi - lo) / 2;
-            if probe(self, mid).await {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-        }
-
-        Some(hi)
+            self.sql_query(&q).await.map(|rows| !rows.is_empty()).unwrap_or(false)
+        })
+        .await
     }
 }
 
