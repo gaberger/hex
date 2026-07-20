@@ -407,7 +407,7 @@ fn load_agents() -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
-async fn fetch_hex_context(nexus_url: &str) -> String {
+pub(crate) async fn fetch_hex_context(nexus_url: &str) -> String {
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
         .build()

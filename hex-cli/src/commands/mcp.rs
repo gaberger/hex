@@ -1546,20 +1546,27 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
         }
 
         // ── Chat ──
+        // NOTE: there is no persisted named-channel message store in hex-nexus
+        // (checked state.rs — only ephemeral ws broadcast channels exist), and
+        // `hex chat` has no `send`/`history` subcommands or `--channel` flag.
+        // `hex_chat_send` does the same thing `hex chat --no-tui` does — a
+        // single-turn call to the inference endpoint — via direct REST rather
+        // than a fabricated CLI subcommand string that /api/exec can't run.
         "hex_chat_send" => {
             let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
-            let channel = args.get("channel").and_then(|v| v.as_str()).unwrap_or("general");
-            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("chat send {} --channel {}", message, channel)})).await
-                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+            let body = serde_json::json!({
+                "messages": [{"role": "user", "content": message}],
+            });
+            nexus.post_long("/api/inference/complete", &body).await
+                .map(|v| {
+                    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or_default();
+                    serde_json::json!({"output": content})
+                })
                 .map_err(|e| e.to_string())
         }
 
         "hex_chat_history" => {
-            let channel = args.get("channel").and_then(|v| v.as_str()).unwrap_or("general");
-            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20);
-            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("chat history --channel {} --limit {}", channel, limit)})).await
-                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
-                .map_err(|e| e.to_string())
+            Err("hex_chat_history has no backing store — hex-nexus does not persist named-channel chat history (only ephemeral per-connection WebSocket sessions). Use hex_chat_send for one-shot replies.".to_string())
         }
 
         // ── Skills ──

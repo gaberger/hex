@@ -421,6 +421,12 @@ async fn start(port: u16, bind: &str, token: Option<&str>, _no_agent: bool) -> a
     if let Some(t) = token {
         cmd.args(["--token", t]);
     }
+    // Tell the spawned hex-nexus where to find `hex` itself — /api/exec shells
+    // out to this to run CLI subcommands. current_exe() inside the nexus
+    // process would resolve to `hex-nexus`, which can't dispatch subcommands.
+    if let Ok(exe) = std::env::current_exe() {
+        cmd.env("HEX_CLI_BIN", exe);
+    }
     // NOTE (ADR-2026-06-04-1740): we used to force MALLOC_ARENA_MAX=2 here to tame a
     // 25 GB RSS bloat (2026-05-22). That cap funneled the heavy serde_json::Value
     // allocation traffic from ~20 STDB poll loops onto 2 glibc arena locks, burning
