@@ -2883,15 +2883,9 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             for task in failed_tasks {
                 let task_id = task.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 let created_at = task.get("created_at").and_then(|v| v.as_str());
-                let payload_retry_count = task
-                    .get("payload")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-                    .and_then(|p| p.get("retry_count").and_then(|v| v.as_u64()));
                 let retry_count = task
                     .get("retry_count")
                     .and_then(|v| v.as_u64())
-                    .or(payload_retry_count)
                     .unwrap_or(0);
 
                 if let Some(created_str) = created_at {
@@ -2901,14 +2895,13 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                             let kind = task.get("kind").and_then(|v| v.as_str()).unwrap_or("");
                             let payload = task.get("payload").and_then(|v| v.as_str()).unwrap_or("");
                             eprintln!("  ⬡ auto-retry {} (attempt {}/3, age {}h)", task_id, retry_count + 1, age.num_hours());
-                            // Re-enqueue with incremented retry_count
-                            let updated_payload = if let Ok(mut p) = serde_json::from_str::<serde_json::Value>(payload) {
-                                p["retry_count"] = serde_json::json!(retry_count + 1);
-                                p.to_string()
-                            } else {
-                                payload.to_string()
-                            };
-                            let _ = enqueue_brain_task(kind, &updated_payload).await;
+                            // Re-enqueue with the retry_count persisted as a real top-level field on
+                            // the new task record via enqueue_brain_task_with_retry (payload itself
+                            // is left untouched -- for string-payload kinds like workplan/shell/
+                            // hex-command it is not valid JSON, so the old approach of embedding
+                            // retry_count inside it silently produced a no-op and the counter never
+                            // advanced, making retries effectively unbounded).
+                            let _ = enqueue_brain_task_with_retry(kind, payload, 0, retry_count + 1).await;
                             // Mark original as completed to prevent re-retry
                             let _ = update_brain_task(task_id, BrainTaskStatus::Completed, "auto-retried").await;
                         } else if retry_count >= 3 {
