@@ -218,20 +218,33 @@ impl hex_core::ports::web::WebFetchPort for HttpWebFetch {
 /// One HuggingFace model repo entry from the public models-listing API.
 /// Only the field the tick actually needs is deserialized -- the real
 /// response carries many more (tags, pipeline_tag, siblings, …) this phase
-/// doesn't use yet. Accepts both `id` and the older `modelId` key so a
-/// HuggingFace response-shape change doesn't immediately break parsing (see
-/// ADR-2607140850's "no SLA" risk note).
+/// doesn't use yet.
+///
+/// `id` and `modelId` are two SEPARATE optional fields, not a `#[serde(alias)]`
+/// pair -- 2026-07-20 dog-food finding: the live API returns both keys on the
+/// same object simultaneously (confirmed via a manual probe against the real
+/// endpoint), and serde's `alias` mechanism hard-errors ("duplicate field")
+/// when both the primary name and its alias are present at once. It was
+/// written assuming id/modelId were either/or across API versions; in
+/// practice they co-occur. `repo_id()` reconciles the two, preferring `id`.
 #[derive(Debug, Clone, serde::Deserialize)]
 struct HfModelListing {
-    #[serde(alias = "modelId")]
-    id: String,
+    id: Option<String>,
+    #[serde(rename = "modelId")]
+    model_id: Option<String>,
+}
+
+impl HfModelListing {
+    fn repo_id(self) -> Option<String> {
+        self.id.or(self.model_id)
+    }
 }
 
 /// Parse the raw HuggingFace models-API response body into repo ids.
 fn parse_hf_model_repos(raw: &str) -> Result<Vec<String>, String> {
     let listings: Vec<HfModelListing> =
         serde_json::from_str(raw).map_err(|e| format!("HF response parse error: {}", e))?;
-    Ok(listings.into_iter().map(|l| l.id).collect())
+    Ok(listings.into_iter().filter_map(HfModelListing::repo_id).collect())
 }
 
 /// Repos already present in the `discovered_model` table (the ADR's
@@ -1299,6 +1312,18 @@ mod hf_discovery_tests {
     }
 
     #[test]
+    fn parse_hf_model_repos_handles_both_id_and_model_id_present() {
+        // 2026-07-20 dog-food finding: the live HF API returns BOTH `id` and
+        // `modelId` on the same object simultaneously, not either/or. A prior
+        // `#[serde(alias = "modelId")]` implementation hard-errored on this
+        // real-world shape ("duplicate field `id`") -- confirmed via a manual
+        // probe against the actual endpoint. `id` must win when both are present.
+        let raw = r#"[{"id":"org/model-a","modelId":"org/model-a"}]"#;
+        let repos = parse_hf_model_repos(raw).expect("both id and modelId present must not error");
+        assert_eq!(repos, vec!["org/model-a".to_string()]);
+    }
+
+    #[test]
     fn parse_hf_model_repos_errors_on_malformed_json() {
         assert!(parse_hf_model_repos("not json").is_err());
     }
@@ -1425,5 +1450,43 @@ mod feasibility_branch_tests {
     fn ollama_model_tag_takes_last_path_segment_lowercased() {
         assert_eq!(ollama_model_tag("Qwen/Qwen2.5-3B-Instruct-GGUF"), "qwen2.5-3b-instruct-gguf");
         assert_eq!(ollama_model_tag("standalone-model"), "standalone-model");
+    }
+
+    /// MANUAL PROBE — `#[ignore]`d by design, never runs in normal `cargo
+    /// test` (network + live-STDB side effects). Exercises the exact
+    /// production path `spawn_hf_discovery` calls once every 24h, triggered
+    /// on demand instead of waiting on the tokio interval. Requires a live
+    /// HuggingFace API and the local SpacetimeDB at 127.0.0.1:3033 (database
+    /// "hex"). Uses RecordingTester, not HexCliCandidateTester, so even an
+    /// unlikely local-feasible match never shells out to a real
+    /// `hex inference add`/`hex bench agentic`.
+    ///
+    /// Kept permanently: this exact test caught the `duplicate field "id"`
+    /// bug on 2026-07-20 (the `#[serde(alias)]` parsing fix a few lines up)
+    /// — the ADR's own unit tests (id-only, modelId-only) both passed while
+    /// the real API silently sent both fields at once. A unit test built
+    /// from assumptions about a third-party API's shape didn't catch it;
+    /// hitting the real endpoint did. Re-run this after any change near
+    /// HfModelListing/run_hf_discovery_tick, and periodically regardless —
+    /// third-party API shapes drift with no warning.
+    /// Run: cargo test -p hex-nexus --lib manual_probe_real_hf_discovery_tick -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn manual_probe_real_hf_discovery_tick() {
+        let web_fetch = HttpWebFetch::new();
+        let tester = RecordingTester::new();
+        let report = run_hf_discovery_tick(&web_fetch, "http://127.0.0.1:3033", "hex", &tester, None)
+            .await
+            .expect("discovery tick should succeed against a live HF API + STDB");
+
+        println!(
+            "PROBE RESULT: fetched={} newly_discovered={} skipped_known={}",
+            report.fetched, report.newly_discovered, report.skipped_known
+        );
+        println!(
+            "PROBE: candidates that would have been benched (local-feasible): {:?}",
+            tester.called_with.lock().unwrap()
+        );
+        assert!(report.fetched > 0, "HF API should return at least one model listing");
     }
 }
