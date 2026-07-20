@@ -124,6 +124,42 @@ impl SpacetimeAgentCommAdapter {
             })
             .max()
     }
+
+    /// Binary-search STDB for the current max `id` in agent_messages.
+    /// STDB SQL rejects `ORDER BY id` on this table, so we can't just ask
+    /// for the max directly — instead we probe `WHERE id > x LIMIT 1` and
+    /// binary-search the boundary. Returns None if the table is empty.
+    async fn find_max_id(&self) -> Option<u64> {
+        async fn probe(this: &SpacetimeAgentCommAdapter, x: u64) -> bool {
+            let q = format!("SELECT id FROM agent_messages WHERE id > {} LIMIT 1", x);
+            this.sql_query(&q).await.map(|rows| !rows.is_empty()).unwrap_or(false)
+        }
+
+        if !probe(self, 0).await {
+            return None;
+        }
+
+        let mut lo: u64 = 0;
+        let mut hi: u64 = 1;
+        while probe(self, hi).await {
+            lo = hi;
+            hi = match hi.checked_mul(2) {
+                Some(v) => v,
+                None => break,
+            };
+        }
+
+        while lo + 1 < hi {
+            let mid = lo + (hi - lo) / 2;
+            if probe(self, mid).await {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+
+        Some(hi)
+    }
 }
 
 #[async_trait]
@@ -199,17 +235,16 @@ impl IAgentCommPort for SpacetimeAgentCommAdapter {
         //   2. `ORDER BY id DESC LIMIT N` is unsupported on this table —
         //      so we can't ask STDB for the newest N rows directly.
         //   3. Plain `LIMIT N` returns the OLDEST N rows by insertion order,
-        //      which means new traffic is INVISIBLE if total > N. This was
-        //      the silent bug that made org_responder skip every recent DM.
+        //      so an unbounded window would make new traffic INVISIBLE once
+        //      the table grows past N rows.
         //
-        // Workaround: scan all rows up to HEX_AGENT_COMM_SCAN_CAP (default
-        // 5000), filter both directions in Rust, sort newest-first by id,
-        // dedup, truncate to caller's limit. For an agent_messages table at
-        // 117 rows this costs ~1 ms.
+        // Fix: floor-bound the scan window via find_max_id() so it always
+        // covers the newest scan_cap rows regardless of table size, instead
+        // of relying on scan_cap alone to outrun table growth (that already
+        // failed once — see the 5000 → 20000 bump below). Filter both
+        // directions in Rust, sort newest-first by id, dedup, truncate to
+        // caller's limit.
         //
-        // If/when agent_messages grows past ~5K rows the right move is a
-        // side-table indexing inbound (to_agent, id) pairs so we can push
-        // the filter back down to STDB.
         // Default bumped 5000 → 20000 on 2026-05-29 after the post-recap
         // diagnosis: agent_messages grew past 5000 rows during the ebay-mvp
         // scaling test and the newest messages became INVISIBLE to org_responder
@@ -221,7 +256,8 @@ impl IAgentCommPort for SpacetimeAgentCommAdapter {
             .and_then(|v| v.parse().ok())
             .unwrap_or(20000);
         let cols = "id, from_agent, to_agent, channel, message, thread_id, timestamp, read_by";
-        let scan_q = format!("SELECT {cols} FROM agent_messages LIMIT {scan_cap}");
+        let floor = self.find_max_id().await.unwrap_or(0).saturating_sub(scan_cap as u64);
+        let scan_q = format!("SELECT {cols} FROM agent_messages WHERE id > {floor} LIMIT {scan_cap}");
 
         let rows = self.sql_query(&scan_q).await?;
         let all = self.parse_messages(rows)?;
