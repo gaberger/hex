@@ -1554,8 +1554,10 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
         // than a fabricated CLI subcommand string that /api/exec can't run.
         "hex_chat_send" => {
             let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            let system = crate::commands::chat::fetch_hex_context(nexus.url()).await;
             let body = serde_json::json!({
                 "messages": [{"role": "user", "content": message}],
+                "system": system,
             });
             nexus.post_long("/api/inference/complete", &body).await
                 .map(|v| {
