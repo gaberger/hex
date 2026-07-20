@@ -429,18 +429,76 @@ fn parse_project_scope(content: &str) -> Option<String> {
 }
 
 fn load_org_chart() -> Result<Vec<AgentMention>, StatusCode> {
-    // Reuse org_chart parsing logic
-    let chart = super::org_chart::parse_agent_yamls()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    parse_agent_yaml_mentions().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
 
-    Ok(chart
-        .into_iter()
-        .map(|node| AgentMention {
-            name: node.name,
-            tier: node.tier,
-            reports_to: node.reports_to,
-        })
-        .collect())
+/// Parse the embedded persona YAMLs for @mention resolution — just
+/// `name`/`tier`/`reports_to`, the only fields this module reads. Ported
+/// from the retired `routes::org_chart::parse_agent_yamls` (deleted along
+/// with the rest of the dead org-chart visualization, per the operator's
+/// "clean up if not useful" call) rather than kept as a shared dependency,
+/// since org_comms is now the only consumer and the other fields
+/// (role/direct_reports/communication/model/context_level) were only ever
+/// serialized into the now-dead HTTP responses, never read here.
+fn parse_agent_yaml_mentions() -> Result<Vec<AgentMention>, String> {
+    let mut possible_paths = vec![];
+    if let Ok(cwd) = std::env::current_dir() {
+        possible_paths.push(cwd.join("hex-cli/assets/agents/hex/hex"));
+        let cwd_str = cwd.to_string_lossy();
+        if cwd_str.starts_with("/var/home/") {
+            let alt = std::path::PathBuf::from(cwd_str.replace("/var/home/", "/home/"));
+            possible_paths.push(alt.join("hex-cli/assets/agents/hex/hex"));
+        } else if cwd_str.starts_with("/home/") {
+            let alt = std::path::PathBuf::from(cwd_str.replace("/home/", "/var/home/"));
+            possible_paths.push(alt.join("hex-cli/assets/agents/hex/hex"));
+        }
+    }
+    if let Ok(root) = std::env::var("HEX_PROJECT_ROOT") {
+        possible_paths.push(std::path::PathBuf::from(&root).join("hex-cli/assets/agents/hex/hex"));
+        if root.starts_with("/var/home/") {
+            let alt = root.replace("/var/home/", "/home/");
+            possible_paths.push(std::path::PathBuf::from(alt).join("hex-cli/assets/agents/hex/hex"));
+        } else if root.starts_with("/home/") {
+            let alt = root.replace("/home/", "/var/home/");
+            possible_paths.push(std::path::PathBuf::from(alt).join("hex-cli/assets/agents/hex/hex"));
+        }
+    }
+    possible_paths.push(std::path::PathBuf::from("hex-cli/assets/agents/hex/hex"));
+
+    for path in possible_paths.iter() {
+        if path.exists() {
+            tracing::debug!(path = ?path, "Found agent YAML directory");
+            return parse_mentions_from_filesystem(path);
+        }
+    }
+    Err(format!(
+        "Agent YAML directory not found. Tried: {}",
+        possible_paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+    ))
+}
+
+fn parse_mentions_from_filesystem(dir: &std::path::Path) -> Result<Vec<AgentMention>, String> {
+    use std::fs;
+
+    let mut out = Vec::new();
+    for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("yml") {
+            continue;
+        }
+        let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let yaml: serde_yaml::Value = serde_yaml::from_str(&content)
+            .map_err(|e| format!("Failed to parse {:?}: {}", path, e))?;
+        let name = yaml["name"]
+            .as_str()
+            .ok_or_else(|| format!("Missing 'name' in {:?}", path))?
+            .to_string();
+        let tier = yaml["tier"].as_str().unwrap_or("ic").to_string();
+        let reports_to = yaml["reports_to"].as_str().map(|s| s.to_string());
+        out.push(AgentMention { name, tier, reports_to });
+    }
+    Ok(out)
 }
 
 async fn route_to_agent(

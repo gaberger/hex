@@ -50,14 +50,12 @@ pub mod steer;
 pub mod classifier;
 pub mod taste;
 pub mod trust;
-pub mod org_chart;
 pub mod stdb_registry;
 pub mod org_comms;
 pub mod dead_letter;
 pub mod worker_pool;
 pub mod liveness;
 pub mod merge_gate;
-pub mod mission_control;
 pub mod resources;
 pub mod observability;
 // pub mod workplan; // removed stub module
@@ -647,10 +645,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/trust", get(trust::get_trust).post(trust::set_trust))
         .route("/api/trust/history", get(trust::get_trust_history))
         .route("/api/trust/{scope}/pin", patch(trust::pin_trust))
-        // Org chart — hierarchical agent visualization
-        .route("/api/org/chart", get(org_chart::get_org_chart))
-        .route("/api/org/personas", get(org_chart::get_persona_status))
-        .route("/api/org/agent/start", post(org_chart::start_agent))
         // Org comms — hierarchical message routing
         .route("/api/org/send-message", post(org_comms::send_message))
         .route("/api/org/messages", get(org_comms::list_messages))
@@ -682,7 +676,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/commitments", get(resources::list_commitments))
         .route("/api/commitments/satisfy", post(resources::satisfy_commitment))
         .route("/api/commitments/abandon", post(resources::abandon_commitment))
-        .route("/api/mission-control", get(mission_control::get_mission_control))
         // ── ADR-2026-05-17-2030 SOP pipeline redesign (P6.2) ────────────────
         // Silent-drop counter — drives the 48h acceptance gate.
         .route("/api/observability/silent-drops", get(observability::silent_drops))

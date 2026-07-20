@@ -39,10 +39,6 @@ const SwapsView = lazy(() => import('../components/swaps/SwapsView'));
 const InferencePanel = lazy(() => import('../components/fleet/InferencePanel'));
 const FleetView = lazy(() => import('../components/fleet/FleetView'));
 const ActivityPanel = lazy(() => import('../components/views/ActivityPanel'));
-const OrgChart = lazy(() => import('../components/views/OrgChart'));
-const OrgComms = lazy(() => import('../components/views/OrgComms'));
-const TeamDashboard = lazy(() => import('../components/views/TeamDashboard'));
-const MissionControl = lazy(() => import('../components/views/MissionControl'));
 const DirectRuns = lazy(() => import('../components/views/DirectRuns'));
 const Workbench = lazy(() => import('../components/views/Workbench'));
 const MemoryView = lazy(() => import('../components/views/MemoryView'));
@@ -272,16 +268,6 @@ const App: Component = () => {
     window.removeEventListener('keydown', handleKeyboard);
   });
 
-  // P2.1 (wp-dashboard-ux-remediation-2026-05-22): drill-down hashes
-  // (#/brain, #/resources, …) used to alias to Mission Control via a
-  // DRILLDOWN_PAGES set, leaving 11 dead sidebar links. They are now
-  // redirected to #/mission-control?filter=<name> by the legacy-hash
-  // redirector (see onMount below). Only OrgChart / OrgComms / Team
-  // still render full-screen outside Mission Control.
-  const isOrgChartPage = () => route().page === "org-chart";
-  const isOrgCommsPage = () => route().page === "org-comms";
-  const isTeamPage = () => route().page === "team";
-  const isMissionControlPage = () => route().page === "mission-control";
   const isDirectRunsPage = () => route().page === "direct-runs";
 
   // ── Legacy-hash redirect ──
@@ -291,6 +277,8 @@ const App: Component = () => {
   // imports above). Mission Control was retired, so the old redirects pointed
   // them all at a dead hub — they now route to their own components. Only
   // #/agent-runs aliases onward, to Direct Runs (the canonical run monitor).
+  // Mission Control / Team Dashboard / Org Chart / Org Comms views themselves
+  // (and their isXPage() helpers) were deleted outright, not just redirected.
   const LEGACY_HASH_REDIRECTS: Record<string, string> = {
     "#/agent-runs": "#/direct-runs",
   };
