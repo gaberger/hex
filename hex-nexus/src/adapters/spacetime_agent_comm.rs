@@ -447,3 +447,64 @@ fn vec_col(cols: &[Value], idx: usize) -> Vec<String> {
         })
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod binary_search_max_id_tests {
+    use super::binary_search_max_id;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    async fn max_id_in(dataset_max: Option<u64>, probe_calls: &AtomicUsize) -> Option<u64> {
+        binary_search_max_id(|x| {
+            probe_calls.fetch_add(1, Ordering::Relaxed);
+            let exists = dataset_max.map(|m| m > x).unwrap_or(false);
+            async move { exists }
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn empty_table_returns_none() {
+        let calls = AtomicUsize::new(0);
+        assert_eq!(max_id_in(None, &calls).await, None);
+    }
+
+    #[tokio::test]
+    async fn single_row_at_id_one() {
+        let calls = AtomicUsize::new(0);
+        assert_eq!(max_id_in(Some(1), &calls).await, Some(1));
+    }
+
+    #[tokio::test]
+    async fn finds_max_id_far_beyond_any_fixed_scan_window() {
+        // Regression guard: this mirrors the real production scenario that
+        // caused the agent_messages scan-window bug -- a max id (32813) far
+        // past any fixed LIMIT/cap must still be found exactly, not missed.
+        let calls = AtomicUsize::new(0);
+        assert_eq!(max_id_in(Some(32813), &calls).await, Some(32813));
+    }
+
+    #[tokio::test]
+    async fn converges_in_logarithmic_probes_not_linear_scan() {
+        // The whole point of this search over a plain LIMIT scan is to stay
+        // cheap regardless of table size -- assert it does not degrade into
+        // an O(n) probe-per-row scan for a large max id.
+        let calls = AtomicUsize::new(0);
+        max_id_in(Some(1_000_000), &calls).await;
+        assert!(
+            calls.load(Ordering::Relaxed) < 60,
+            "expected O(log n) probes, got {}",
+            calls.load(Ordering::Relaxed)
+        );
+    }
+
+    #[tokio::test]
+    async fn max_id_zero_is_indistinguishable_from_empty() {
+        // id=0 can never be found as a max since exists_above(0) is the
+        // empty-table check itself -- document this boundary explicitly
+        // rather than leaving it as an unstated assumption (STDB ids here
+        // are never actually 0 in practice, but the function should not
+        // panic or loop forever on this edge case).
+        let calls = AtomicUsize::new(0);
+        assert_eq!(max_id_in(Some(0), &calls).await, None);
+    }
+}
