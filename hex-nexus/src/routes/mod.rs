@@ -53,7 +53,6 @@ pub mod trust;
 pub mod org_chart;
 pub mod stdb_registry;
 pub mod org_comms;
-pub mod sop;
 pub mod dead_letter;
 pub mod worker_pool;
 pub mod liveness;
@@ -657,10 +656,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/org/messages", get(org_comms::list_messages))
         .route("/api/org/conversation/{id}", get(org_comms::get_conversation))
         .route("/api/ops-sla", get(org_comms::ops_sla))
-        // SOP run telemetry (2026-05-18 — closes the IC-responder-gap follow-on)
-        .route("/api/org/sop/active", get(sop::list_active))
-        .route("/api/org/sop/recent", get(sop::list_recent))
-        .route("/api/org/sop/runs", get(sop::list_all))
         // Dead-letter quarantine surface (ADR-2026-05-19-0900 P2.3) — operator-
         // visible audit of brain-tasks that exceeded their retry budget.
         .route("/api/dead-letter", get(dead_letter::list))

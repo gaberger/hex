@@ -39,9 +39,11 @@ fn adr_reviewer_yaml_loads_with_preferred_model() {
 }
 
 // `planner_yaml_loads_with_preferred_model` was removed: planner.yml was
-// retired in commit 88ce6ad1. The planner role's responsibilities now
-// live inside the SOP executor's typed-tool pipeline
-// (orchestration::sop_executor) instead of as a standalone agent YAML.
+// retired in commit 88ce6ad1. The planner role's responsibilities moved
+// into the SOP executor's typed-tool pipeline at the time, which was
+// itself retired per ADR-2606061359/ADR-2606071340 P0 — planning now
+// happens inside the single-agent loop (`hex do`), not a standalone
+// agent YAML or a persona dispatch pipeline.
 
 // ── S02: hex-coder has TDD workflow phases ───────────────────────────────────
 

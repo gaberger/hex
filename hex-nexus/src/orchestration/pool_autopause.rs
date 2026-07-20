@@ -20,7 +20,6 @@
 //! Activity signals (any one wakes the team):
 //!   - Unhandled operator DM in agent_messages (from=operator, not in read_by)
 //!   - proposed_action row in {pending, escalated, approved}
-//!   - Active SOP runs (sop_executor::active_runs)
 //!
 //! Disabled via `HEX_DISABLE_POOL_AUTOPAUSE=1` (operator override for
 //! always-on workloads). Threshold configurable via
@@ -150,19 +149,14 @@ async fn has_pending_work(state: &SharedState) -> bool {
         return true;
     }
 
-    // Signal 3: active SOP runs (in-memory, no STDB roundtrip).
-    let _ = state; // SOP runs live in the executor's ring buffer
-    let active = crate::orchestration::sop_executor::active_runs().await;
-    if !active.is_empty() {
-        return true;
-    }
+    let _ = state; // unused now that the SOP-runs signal is retired (kept for signature parity)
 
     // NOTE: deliberately NOT checking agent_messages here. Operator DMs
     // ARE a work signal, but STDB SQL has no time arithmetic — the query
     // `WHERE from_agent='operator'` returns every DM ever sent, so the
     // table is permanently non-empty and autopause never fires. The
-    // three signals above (pending/escalated/approved proposed_action,
-    // open commitments, active SOP runs) cover everything that flows
+    // two signals above (pending/escalated/approved proposed_action,
+    // open commitments) cover everything that flows
     // FROM a DM into the team's work surface. When operator sends a
     // brief, the drafter+twin chain creates a proposed_action within
     // seconds — that's what wakes the pools.

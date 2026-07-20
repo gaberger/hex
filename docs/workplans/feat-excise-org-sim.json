@@ -1,0 +1,178 @@
+{
+  "id": "feat-excise-org-sim",
+  "title": "Excise retired org-sim (ADR-2606071340 P0 / ADR-2606061359)",
+  "specs": "docs/specs/excise-org-sim.json",
+  "mode": "interactive",
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Rewire pool_autopause.rs::has_pending_work() to drop the SOP-active-runs signal. Remove the `let active = crate::orchestration::sop_executor::active_runs().await; if !active.is_empty() { return true; }` block (current line 155) and the doc-comment bullet '- Active SOP runs (sop_executor::active_runs)' (current line 23). Leave Signal 1 (proposed_action pending/escalated/approved) and Signal 2 (open commitment rows) untouched.",
+      "spec_refs": ["S03"],
+      "file": "hex-nexus/src/orchestration/pool_autopause.rs",
+      "action": "rewire",
+      "dependencies": [],
+      "done_condition": "grep -c sop_executor hex-nexus/src/orchestration/pool_autopause.rs returns 0; has_pending_work() still gates on proposed_action pending/escalated/approved rows and open commitment rows, unchanged (S03 'then' clause)."
+    },
+    {
+      "id": "step-2",
+      "description": "Rewire supervisor_subscriber.rs to drop the persona_prompt seed/cache-refresh calls. Remove the seed_persona_prompts() call site (current line 82, inside the HEX_SUPERVISOR_AUTOSEED=1 branch) and its full method body (current ~lines 241-3xx, imports classify_seed/reason_seed/SEEDED_ROLES from persona_prompt_seeds). Remove the refresh_persona_prompt_cache() call site (current line 102, unconditional per-tick) and its full method body (current ~lines 111-172, imports refresh_active_prompts/ActivePersonaPrompt from persona_prompt_seeds). Leave the HEX_SUPERVISOR_AUTOSEED-gated seed_persona_pools() (embedded-YAML generic seeding, current ~lines 184-233), the orphan-reconcile block, and spawn_request/crash-loop handling in the tick loop unchanged.",
+      "spec_refs": ["S07"],
+      "file": "hex-nexus/src/orchestration/supervisor_subscriber.rs",
+      "action": "rewire",
+      "dependencies": [],
+      "done_condition": "grep -c persona_prompt_seeds hex-nexus/src/orchestration/supervisor_subscriber.rs returns 0; seed_persona_pools() and its HEX_SUPERVISOR_AUTOSEED gate are still present and unchanged; the orphan-reconcile / spawn_request / crash-loop tick logic is unchanged (S07 'then' clause)."
+    },
+    {
+      "id": "step-3",
+      "description": "Delete routes/sop.rs in full (its three handlers list_active/list_recent/list_all exist solely to expose sop_executor's ring buffer). In routes/mod.rs remove `pub mod sop;` (current line 56) and the three `.route(\"/api/org/sop/...\")` registrations plus their preceding 'SOP run telemetry' comment (current lines ~660-663).",
+      "spec_refs": ["S08", "S13"],
+      "files": ["hex-nexus/src/routes/sop.rs", "hex-nexus/src/routes/mod.rs"],
+      "action": "delete",
+      "dependencies": [],
+      "done_condition": "hex-nexus/src/routes/sop.rs no longer exists in the repo tree; grep -n 'org/sop\\|pub mod sop;' hex-nexus/src/routes/mod.rs returns zero matches (S08, S13)."
+    },
+    {
+      "id": "step-4",
+      "description": "Interim compile gate. sop_executor.rs and persona_prompt_seeds.rs still exist untouched at this point — this validates the three rewires/deletion (step-1, step-2, step-3) in isolation before either of the two big files is deleted.",
+      "spec_refs": ["S10"],
+      "action": "gate",
+      "dependencies": ["step-1", "step-2", "step-3"],
+      "done_condition": "`cargo check --workspace` exits 0 with zero diagnostics."
+    },
+    {
+      "id": "step-5",
+      "description": "S19 resolution step — confirm or consciously drop order_candidates_local_first's guarantees before sop_executor.rs is deleted. sop_executor.rs::order_candidates_local_first (with 5 passing unit tests) provides three specific guarantees over `.hex/project.json` -> inference.tier_models[t2/t2.5] read as an array: (1) locals (no vendor '/' in the name) always precede clouds regardless of configured order, (2) a known-good local coder (qwen2.5-coder:32b) is always appended as a terminal fallback if absent, (3) order-preserving dedup. Planner-time comparison against the three candidate surviving mechanisms found NONE to be a full equivalent: (a) hex-nexus/src/adapters/inference_router/tier_config.rs::TierModelConfig (ADR-2026-04-12-0202, the CLAUDE.md-documented tiered-inference system, tested in hex-nexus/tests/tier_routing.rs) maps each tier to a SINGLE scalar model string, not an ordered multi-candidate array — no local-first reordering, no fallback guarantee, no dedup; (b) hex-nexus/src/routes/inference.rs has two adjacent-but-different mechanisms: a provider-*type* priority chain (ollama/vllm/llama-cpp before openai-compat, ~line 126) and a narrower one-shot local-fallback-on-OpenRouter-exhaustion (lines ~816-838, reads the same tier_models.t2 key but only fires after ALL free-tier cloud attempts fail, and only picks ONE model, not a full reordered list); (c) hex-exec/src/direct_react.rs::candidate_models is precedence-based (explicit > configured-array-as-is > single > hardcoded default pair \"devstral-small-2:24b\"/\"qwen2.5-coder:14b\") with zero local-first reordering, zero terminal-fallback guarantee, and zero dedup. Confirm this comparison (re-verify by reading the three files) and write the one-line resolution note for the eventual excision commit message: state explicitly that the local-first-reordering + dedup + guaranteed-local-terminal-fallback behavior over a multi-candidate array is consciously dropped (no surviving path reproduces all three), OR port order_candidates_local_first (it is a pure fn, trivially portable) into hex-exec::candidate_models and/or routes/inference.rs before proceeding, if the operator wants to preserve it.",
+      "spec_refs": ["S19"],
+      "file": "hex-nexus/src/orchestration/sop_executor.rs",
+      "action": "investigate",
+      "dependencies": [],
+      "done_condition": "A one-line resolution note is drafted (to be included verbatim in the step-6 deletion commit message) stating either (a) the specific surviving equivalent and where it lives, or (b) that the local-first/dedup/terminal-fallback guarantee is consciously dropped. Step-6 (sop_executor.rs deletion) MUST NOT proceed until this note exists (S19)."
+    },
+    {
+      "id": "step-6",
+      "description": "Delete sop_executor.rs (2059 lines) in full — the 5-phase CLASSIFY/GROUND/REASON/VERIFY/EMIT SOP state machine for C-suite persona dispatch. By this point pool_autopause.rs (step-1) no longer calls it and routes/sop.rs (step-3, its only other real caller) is gone, so this is now a leaf file. Include the step-5 resolution note in the commit message.",
+      "spec_refs": ["S01", "S19"],
+      "file": "hex-nexus/src/orchestration/sop_executor.rs",
+      "action": "delete",
+      "dependencies": ["step-1", "step-3", "step-5"],
+      "done_condition": "hex-nexus/src/orchestration/sop_executor.rs no longer exists in the repo tree (S01). Commit message includes the step-5 resolution note (S19)."
+    },
+    {
+      "id": "step-7",
+      "description": "Delete persona_prompt_seeds.rs (464 lines, including its own #[cfg(test)] suite) in full. Its only real callers were sop_executor.rs::build_reason_system_prompt (now gone, step-6) and supervisor_subscriber.rs's seed/cache-refresh helpers (already rewired away, step-2); its CLASSIFY read-path (active_classify_or_seed) already had zero callers workspace-wide.",
+      "spec_refs": ["S04"],
+      "file": "hex-nexus/src/orchestration/persona_prompt_seeds.rs",
+      "action": "delete",
+      "dependencies": ["step-2", "step-6"],
+      "done_condition": "hex-nexus/src/orchestration/persona_prompt_seeds.rs no longer exists in the repo tree (S04)."
+    },
+    {
+      "id": "step-8",
+      "description": "Surgical two-line edit to orchestration/mod.rs: remove `pub mod sop_executor;` (current line 29) and `pub mod persona_prompt_seeds;` (current line 10). Every other line — build_role_preamble(), build_taste_section(), is_claude_code_session(), all other `pub mod` declarations, and their existing #[cfg(test)] suites — must remain byte-for-byte unchanged.",
+      "spec_refs": ["S05"],
+      "file": "hex-nexus/src/orchestration/mod.rs",
+      "action": "edit",
+      "dependencies": ["step-6", "step-7"],
+      "done_condition": "grep -n 'pub mod sop_executor\\|pub mod persona_prompt_seeds' hex-nexus/src/orchestration/mod.rs returns zero matches; `git diff hex-nexus/src/orchestration/mod.rs` shows exactly two removed lines and zero other changes (S05)."
+    },
+    {
+      "id": "step-9",
+      "description": "Full compile + architecture gate after the core deletion tier (sop_executor.rs, persona_prompt_seeds.rs, routes/sop.rs all gone; mod.rs and routes/mod.rs deregistered).",
+      "spec_refs": ["S10", "S11"],
+      "action": "gate",
+      "dependencies": ["step-8"],
+      "done_condition": "`cargo check --workspace` exits 0 with zero 'unresolved import' diagnostics for sop_executor or persona_prompt_seeds anywhere in the workspace (S10). `hex analyze hex-nexus` run after this step shows orchestration/ LOC reduced by at least ~2059+465 lines vs the 2026-06-07 baseline, boundary-violation count <= 7 (does not increase), and zero dead-code findings naming sop_executor or persona_prompt_seeds (S11)."
+    },
+    {
+      "id": "step-10",
+      "description": "Update the stale doc comment in classifier_adapter.rs. No functional code change — the file has zero use/call-site references to sop_executor. Replace \"- It does not score or route the classifier output — that's P4 (`sop_executor`).\" (current line 50) to reference the surviving single-agent loop (e.g. orchestration/agent_loop/driver.rs) instead of the retired P4 phase.",
+      "spec_refs": ["S06"],
+      "file": "hex-nexus/src/orchestration/classifier_adapter.rs",
+      "action": "edit",
+      "dependencies": ["step-6"],
+      "done_condition": "classifier_adapter.rs no longer mentions sop_executor anywhere; `cargo test -p hex-nexus orchestration::classifier_adapter` passes unmodified (S06)."
+    },
+    {
+      "id": "step-11",
+      "description": "Update the 3 comment-only mentions of sop_executor found workspace-wide outside the 6 consumer files, so none of them names sop_executor as a live consumer. hex-cli/tests/declarative_swarm_test.rs (~line 44, inside a comment explaining a removed test — reword to drop the now-dead 'orchestration::sop_executor' module path, keep the historical explanation). hex-exec/src/simple_agent.rs (~line 67, doc comment 'the sop_executor uses' — reword to reference the surviving direct_exec/agent_loop endpoint instead). spacetime-modules/hexflo-coordination/src/lib.rs (~lines 5251 and 5276, doc comments on the `persona_prompt` STDB table/reducer — reword 'Read by org_responder / sop_executor at every SOP tick' and 'Body used by sop_executor's REASON phase' to note these are historical/orphaned readers per ADR-2606071340, WITHOUT touching the table schema or reducer signature — S17 keeps the STDB schema itself out of scope).",
+      "spec_refs": ["S12", "S17"],
+      "files": [
+        "hex-cli/tests/declarative_swarm_test.rs",
+        "hex-exec/src/simple_agent.rs",
+        "spacetime-modules/hexflo-coordination/src/lib.rs"
+      ],
+      "action": "edit",
+      "dependencies": ["step-6", "step-7"],
+      "done_condition": "grep -rn 'orchestration::sop_executor\\|use.*sop_executor' --include=*.rs . returns zero matches anywhere in the workspace (S12); spacetime-modules/hexflo-coordination/src/lib.rs's `persona_prompt` table definition and `seed_persona_prompt` reducer are byte-for-byte unchanged except the two doc-comment lines (S17)."
+    },
+    {
+      "id": "step-12",
+      "description": "Retire the HEX_SOP_* env knobs at their write site (not just their read site). sop_executor.rs (now deleted, step-6) was the only reader of HEX_SOP_PERSONAS, HEX_SOP_REASON_MODEL, HEX_SOP_REASON_PREFER_OLLAMA, HEX_SOP_REASON_VIA_ROUTER, HEX_SOP_MAX_ROUND_TRIPS, HEX_SOP_MAX_TOKENS — but two files still WRITE/default HEX_SOP_PERSONAS for the now-dead reader: hex-cli/src/commands/nexus.rs (current lines 424-439, the `if std::env::var(\"HEX_SOP_PERSONAS\").is_err() { cmd.env(...) }` block in the `hex nexus start` spawn path) and scripts/hex-up.sh (current lines 22-27, the `export HEX_SOP_PERSONAS=...` line plus its preceding ADR-2026-05-08-2500 comment). Remove both blocks in full.",
+      "spec_refs": ["S16"],
+      "files": ["hex-cli/src/commands/nexus.rs", "scripts/hex-up.sh"],
+      "action": "edit",
+      "dependencies": ["step-6"],
+      "done_condition": "grep -rn 'HEX_SOP_' --include=*.rs . returns zero matches anywhere in the workspace (S16); grep -n 'HEX_SOP_' scripts/hex-up.sh returns zero matches; `hex nexus start` no longer sets HEX_SOP_PERSONAS in the spawned process environment."
+    },
+    {
+      "id": "step-13",
+      "description": "Update CLAUDE.md Autonomous Operation rule 11, which currently reads 'Persona work routes through SOP, not direct file edits... send the ask to the right persona via /api/org/send-message... and let the SOP path emit the artifact via typed tools (adr_draft, spec_draft, code_patch, workplan_emit, adr_status_set)'. This contradicts the Accepted direction of ADR-2606061359/ADR-2606071340: the SOP dispatch path no longer exists. Rewrite the rule to reflect the target behavior in spec S15: a board ask via /api/org/send-message (or the Mission Control compose box) must be picked up and acted on by a live functional-role agent through `hex do` / the direct executor, or explicitly rejected/escalated to the operator with a visible error/notification — it must never be silently accepted, persisted, and never processed. Keep the 'persona-domain change routes through the factory, not manual edits' spirit, but retarget the mechanism from the retired SOP typed-tool dispatch to the surviving hex do / direct-executor path.",
+      "spec_refs": ["S15"],
+      "file": "CLAUDE.md",
+      "action": "edit",
+      "dependencies": ["step-6", "step-7", "step-8"],
+      "done_condition": "CLAUDE.md rule 11 no longer says work 'routes through SOP' or names the retired typed-tool SOP dispatch as the mechanism; it describes routing a board ask through hex do / a functional-role agent, with explicit rejection/escalation as the only other acceptable outcome (S15)."
+    },
+    {
+      "id": "step-14",
+      "description": "Negative-spec verification sweep across the cleanup tier (step-10 through step-13).",
+      "spec_refs": ["S12", "S13", "S16"],
+      "action": "gate",
+      "dependencies": ["step-10", "step-11", "step-12", "step-13"],
+      "done_condition": "All three return zero matches, run from the repo root: `grep -rn \"orchestration::sop_executor\\|use.*sop_executor\" --include=*.rs .` (S12); `grep -n \"org/sop\" hex-nexus/src/routes/mod.rs` (S13); `grep -rn \"HEX_SOP_\" --include=*.rs .` (S16)."
+    },
+    {
+      "id": "step-15",
+      "description": "Runtime + regression verification. Rebuild hex-nexus (per CLAUDE.md Autonomous Operation rule 2 — `hex dev validate` or `cargo build -p hex-nexus --release` if hex dev itself is unavailable), restart the daemon, and verify: (a) GET /api/org/sop/active, /api/org/sop/recent, /api/org/sop/runs each return a plain 404 (S09); (b) `hex do run <instruction> --file <f> --evidence <cmd>` still succeeds end-to-end with zero code changes needed in hex-exec (S02); (c) build_role_preamble(\"hex-coder\"|\"hex-planner\"|\"hex-reviewer\"|\"hex-integrator\") still returns unchanged non-empty preambles and `cargo test -p hex-nexus orchestration::mod::role_preamble_tests` passes, and the functional-role YAMLs under hex-cli/assets/agents/hex/hex/ remain on disk (S14).",
+      "spec_refs": ["S02", "S09", "S14"],
+      "action": "investigate",
+      "dependencies": ["step-9", "step-14"],
+      "done_condition": "All three checks (a)/(b)/(c) above pass as described; no 500 or panic on the three /api/org/sop/* probes; no missing-data regression in the dashboard (no view ever fetched those paths per S09's given clause)."
+    },
+    {
+      "id": "step-16",
+      "description": "Final full validation gate closing out the excision. Confirm adversarial_swarm.rs, twin_deterministic.rs, and adapters/spacetime_persona.rs remain byte-for-byte untouched (S18 — explicitly out of scope for this pass).",
+      "spec_refs": ["S10", "S11", "S18"],
+      "action": "gate",
+      "dependencies": ["step-15"],
+      "done_condition": "`hex dev validate` (build + test + analyze + 38 specs) passes clean. `git status`/`git diff` shows zero changes to hex-nexus/src/orchestration/adversarial_swarm.rs, hex-nexus/src/orchestration/twin_deterministic.rs, and hex-nexus/src/adapters/spacetime_persona.rs (S18)."
+    }
+  ],
+  "review_tiers": [
+    {
+      "tier": 1,
+      "step_ids": ["step-1", "step-2", "step-3", "step-4"],
+      "rationale": "Non-destructive rewires (pool_autopause, supervisor_subscriber) plus the routes/sop.rs consumer removal — each drops a dependency on sop_executor/persona_prompt_seeds without deleting either file yet. Reviewed as one batch because they're mechanically similar (call-site + doc-comment removal) and independently revertible; closed by an interim cargo check --workspace so a bad rewire is caught before the irreversible deletions in tier 3."
+    },
+    {
+      "tier": 2,
+      "step_ids": ["step-5"],
+      "rationale": "The S19 model-fallback-equivalence resolution is a judgment call, not a mechanical edit — it decides whether a tested behavioral guarantee is silently lost. Reviewed alone so the operator can weigh in on 'drop and document' vs. 'port order_candidates_local_first forward' before the only implementation is deleted in tier 3."
+    },
+    {
+      "tier": 3,
+      "step_ids": ["step-6", "step-7", "step-8", "step-9"],
+      "rationale": "The core irreversible deletion tier: sop_executor.rs (2059 lines) and persona_prompt_seeds.rs (464 lines) are deleted in dependency order, mod.rs's registry is edited to match, and the tier closes with the full cargo check --workspace + hex analyze hex-nexus gate (S10/S11). This is the highest-risk tier and should get the most careful review — it's where ~2500 LOC of the ~20-25k LOC ADR-2606071340 target actually leaves the tree."
+    },
+    {
+      "tier": 4,
+      "step_ids": ["step-10", "step-11", "step-12", "step-13", "step-14"],
+      "rationale": "Low-risk, mutually-independent cleanups with no compile dependency on each other: a doc-comment update (classifier_adapter.rs), three stale-comment rewrites in files outside the 6 named consumers, the HEX_SOP_* env-var write-site retirement (a scope addition discovered during planning-time grep, beyond the originally named 6 files), and the CLAUDE.md rule 11 rewrite. Reviewed together as a batch since none blocks the others; closed by the negative-spec grep sweep (S12/S13/S16)."
+    },
+    {
+      "tier": 5,
+      "step_ids": ["step-15", "step-16"],
+      "rationale": "Final sign-off: rebuild + restart the actual binary and probe runtime behavior (404s, hex do smoke test, functional-role preambles), then run the full hex dev validate suite and confirm the three explicitly-out-of-scope org-sim remnants (S18: adversarial_swarm.rs, twin_deterministic.rs, adapters/spacetime_persona.rs) were never touched."
+    }
+  ]
+}

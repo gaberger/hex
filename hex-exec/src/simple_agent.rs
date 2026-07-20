@@ -64,9 +64,10 @@ pub struct RunSummary {
 /// budget is exhausted, or on transport error.
 ///
 /// The inference path here is the same /api/anthropic-messages-compatible
-/// endpoint the sop_executor uses, but with NO persona system prompt,
-/// NO SOP phase scaffolding, and NO single-action emit constraint. The
-/// LLM is just told what it can do and is left to drive.
+/// endpoint the single-agent do-loop (`direct_react`/`agent_loop`) uses,
+/// but with NO persona system prompt, NO SOP phase scaffolding, and NO
+/// single-action emit constraint. The LLM is just told what it can do and
+/// is left to drive.
 pub async fn run(
     cfg: RunConfig,
     registry: Arc<ToolRegistry>,

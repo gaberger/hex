@@ -47,7 +47,8 @@
 //!
 //! ## What this adapter does NOT do
 //!
-//! - It does not score or route the classifier output — that's P4 (`sop_executor`).
+//! - It does not score or route the classifier output — that's the single-agent
+//!   loop (`orchestration::agent_loop::driver`), per ADR-2606061359.
 //! - It does not write to STDB — that's P2's `classifier_response` table writer.
 //! - It does not pick a model — the caller picks the `model` string and tier
 //!   knob upstream (typically the persona's classifier-tier pin).

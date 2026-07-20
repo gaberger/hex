@@ -1,0 +1,15 @@
+{
+  "adr": "ADR-2026-04-11-0227",
+  "created_at": "2026-07-20T08:25:16.715168511-04:00",
+  "id": "draft-2607200825-excise-the-retired-multi-agent",
+  "kind": "workplan-draft",
+  "next_steps": [
+    "Run /hex-feature-dev to expand this draft into a full workplan",
+    "Or run `hex plan drafts approve draft-2607200825-excise-the-retired-multi-agent.json`",
+    "Or run `hex plan drafts clear --name draft-2607200825-excise-the-retired-multi-agent`"
+  ],
+  "notes": "This is a draft created by ADR-2026-04-11-0227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up.",
+  "origin": "auto-invoke",
+  "prompt": "Excise the retired multi-agent org-sim per ADR-2606071340 P0 (Accepted, driven by ADR-2606061359): remove hex-nexus/src/orchestration/sop_executor.rs and its SOP persona-dispatch path, C-suite persona orchestration, and the associated org-sim routes/adapters. Consumers to migrate/remove: pool_autopause.rs, persona_prompt_seeds.rs, orchestration/mod.rs, classifier_adapter.rs, supervisor_subscriber.rs, routes/sop.rs. Route new work through the single-agent gateway loop (hex do / direct_exec.rs) instead. Also update CLAUDE.md rule 11 (Persona work routes through SOP) since it contradicts the Accepted ADR direction. Trace all consumers with hex graph consumers before deleting; gate every deletion phase on cargo check --workspace and hex analyze hex-nexus per project convention.",
+  "status": "pending-planner"
+}

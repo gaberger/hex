@@ -5248,10 +5248,13 @@ pub struct PersonaTickSchedule {
 // Persona prompt — STDB mirror of the seed bodies in
 // hex-nexus::orchestration::persona_prompt_seeds (ADR-2026-05-23-0900).
 //
-// One row per role. Read by org_responder / sop_executor at every SOP
-// tick, ahead of the hardcoded fallback. Seeded by nexus at cold-start
-// via `seed_persona_prompt` below. Body cap 8 KB per field; row cap
-// well under the BSATN 24 KB payload threshold.
+// One row per role. Historically read by org_responder / sop_executor at
+// every SOP tick, ahead of the hardcoded fallback — both retired per
+// ADR-2606061359/ADR-2606071340 P0, so this table has no live reader as
+// of that excision (schema/reducer cleanup deferred to a later,
+// spacetime-modules-scoped workplan; out of scope here per S17). Seeded
+// by nexus at cold-start via `seed_persona_prompt` below. Body cap 8 KB
+// per field; row cap well under the BSATN 24 KB payload threshold.
 //
 // Notable absences (deferred to future ADRs that ship the consumers):
 //   - no `version` field — single row per role in v1; history table
@@ -5273,7 +5276,8 @@ pub struct PersonaPrompt {
     pub role: String,
     /// Body used by org_responder's CLASSIFY phase (strict-JSON classifier).
     pub classify_body: String,
-    /// Body used by sop_executor's REASON phase (post-CLASSIFY, post-GROUND).
+    /// Body historically used by the now-retired sop_executor's REASON phase
+    /// (post-CLASSIFY, post-GROUND) — see the table-level comment above.
     pub reason_body: String,
     pub model_preferred: String,
     pub model_upgrade_to: String,

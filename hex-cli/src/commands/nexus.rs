@@ -421,22 +421,6 @@ async fn start(port: u16, bind: &str, token: Option<&str>, _no_agent: bool) -> a
     if let Some(t) = token {
         cmd.args(["--token", t]);
     }
-    // Provide a sensible default for the SOP persona set so `hex nexus start`
-    // works out-of-the-box (matches scripts/hex-up.sh). User-set env wins.
-    // Without this the SOP path is dead unless you launched via hex-up.sh —
-    // routing every directive through the strict Confirm/Silent prompt
-    // instead of the typed-tool pipeline.
-    if std::env::var("HEX_SOP_PERSONAS").is_err() {
-        // hex-coder is the doer persona that emits code_patch (auto_repair DMs
-        // it). It must be a SOP persona so its asks route through the SOP
-        // REASON phase (→ reason_via_router → tier_models → Tenstorrent) rather
-        // than org_responder's local chat reply. Its omission meant auto_repair
-        // codegen ran on local qwen, never the configured tier model.
-        cmd.env(
-            "HEX_SOP_PERSONAS",
-            "cto,cpo,coo,ciso,chief-visionary,chief-architect,hex-coder",
-        );
-    }
     // NOTE (ADR-2026-06-04-1740): we used to force MALLOC_ARENA_MAX=2 here to tame a
     // 25 GB RSS bloat (2026-05-22). That cap funneled the heavy serde_json::Value
     // allocation traffic from ~20 STDB poll loops onto 2 glibc arena locks, burning

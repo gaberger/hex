@@ -15,6 +15,7 @@
 //! `max_steps` + duplicate-call detection + a no-progress guard, and the evidence
 //! gate as the ultimate authority on what commits.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -600,6 +601,85 @@ pub fn react_models_from_config_value(cfg: &serde_json::Value, explicit: Option<
     candidate_models(explicit, &configured, single)
 }
 
+/// Pure ordering policy for candidate models (ported from the retired
+/// `sop_executor.rs::order_candidates_local_first`, ADR-2606071340 P0 /
+/// spec S19 — the do-loop's only surviving multi-candidate best-of-N path
+/// must keep this guarantee once the SOP reasoner is gone). Locals (model
+/// names with no vendor slug) keep their configured order and come first;
+/// clouds follow; a known-good local coder is guaranteed as the terminal
+/// fallback; order-preserving dedup. Applied in [`resolve_react_models`]
+/// AFTER [`react_models_from_config_value`], not inside `candidate_models`
+/// itself — `candidate_models`'s explicit/configured/single/default-pair
+/// precedence is a separately pinned contract (`tests/candidate_models_oracle.rs`,
+/// `tests/react_models_config_oracle.rs`, ADR-2606072044) and must not change.
+pub fn order_candidates_local_first(mut configured: Vec<String>) -> Vec<String> {
+    // A local model name has no vendor slug (no '/'); cloud ids look like
+    // "Qwen/Qwen3-32B" or "deepseek-ai/DeepSeek-R1-0528".
+    let is_local = |m: &str| !m.contains('/');
+    const LOCAL_CODER_FALLBACK: &str = "qwen2.5-coder:32b";
+
+    // Stable partition: locals keep their configured order, then clouds — so we
+    // always exhaust local options before reaching for a (possibly down) cloud
+    // provider, regardless of how the operator ordered the array.
+    configured.sort_by_key(|m| if is_local(m) { 0 } else { 1 });
+
+    // Guarantee a known-good local coder as the terminal fallback.
+    if !configured.iter().any(|m| m == LOCAL_CODER_FALLBACK) {
+        configured.push(LOCAL_CODER_FALLBACK.to_string());
+    }
+
+    // Dedup while preserving order.
+    let mut seen = HashSet::new();
+    configured.retain(|m| seen.insert(m.clone()));
+    configured
+}
+
+#[cfg(test)]
+mod local_first_ordering_tests {
+    use super::order_candidates_local_first;
+
+    #[test]
+    fn cloud_only_config_appends_local_fallback() {
+        // The exact incident shape: a tier configured to a cloud model that 404s.
+        let got = order_candidates_local_first(vec!["Qwen/Qwen3-32B".into()]);
+        assert_eq!(got, vec!["Qwen/Qwen3-32B", "qwen2.5-coder:32b"]);
+        // Last candidate is always a local coder → never a dead-end.
+        assert!(!got.last().unwrap().contains('/'));
+    }
+
+    #[test]
+    fn locals_are_tried_before_clouds_regardless_of_config_order() {
+        // Operator listed cloud first; we still exhaust local first.
+        let got = order_candidates_local_first(vec![
+            "deepseek-ai/DeepSeek-R1-0528".into(),
+            "gemma4-12b".into(),
+        ]);
+        assert_eq!(got, vec!["gemma4-12b", "deepseek-ai/DeepSeek-R1-0528", "qwen2.5-coder:32b"]);
+    }
+
+    #[test]
+    fn already_local_config_is_unchanged_and_not_duplicated() {
+        let got = order_candidates_local_first(vec!["qwen2.5-coder:32b".into()]);
+        assert_eq!(got, vec!["qwen2.5-coder:32b"]);
+    }
+
+    #[test]
+    fn empty_config_yields_local_fallback_only() {
+        assert_eq!(order_candidates_local_first(vec![]), vec!["qwen2.5-coder:32b"]);
+    }
+
+    #[test]
+    fn local_order_is_preserved_among_locals() {
+        let got = order_candidates_local_first(vec![
+            "gemma4-12b".into(),
+            "Qwen/Qwen3-32B".into(),
+            "qwen2.5-coder:14b".into(),
+        ]);
+        // gemma4-12b, qwen2.5-coder:14b keep their relative order; cloud after; fallback last.
+        assert_eq!(got, vec!["gemma4-12b", "qwen2.5-coder:14b", "Qwen/Qwen3-32B", "qwen2.5-coder:32b"]);
+    }
+}
+
 /// Pick the best-of-N winner from per-candidate outcomes in priority order: the
 /// first whose result passed, else the last attempt. Moves each item (DirectResult
 /// is not Clone) by holding the last as it iterates. (ADR-2606072044.)
@@ -620,6 +700,15 @@ pub fn select_best_of_n(
 /// Resolve the ordered candidate-model list for a run: explicit `task.model` or
 /// `HEX_REACT_MODEL` wins; else `.hex/project.json` `inference.react_models`; else
 /// `inference.react_model`; else the default complementary pair. (ADR-2606072044.)
+///
+/// The result is then run through [`order_candidates_local_first`] (S19 —
+/// ADR-2606071340 P0) so this, the surviving best-of-N path, keeps the
+/// retired SOP reasoner's guarantee: locals exhausted before clouds, and a
+/// known-good local coder always available as a terminal fallback. Applied
+/// here rather than inside `react_models_from_config_value`/`candidate_models`
+/// so their separately pinned precedence contracts (the two oracle test
+/// files) are untouched — an explicit single-model pin is still tried
+/// first, this only adds a safety net after it.
 pub(crate) fn resolve_react_models(task: &DirectTask) -> Vec<String> {
     let explicit = task
         .model
@@ -631,7 +720,8 @@ pub(crate) fn resolve_react_models(task: &DirectTask) -> Vec<String> {
         .ok()
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
         .unwrap_or_else(|| serde_json::json!({}));
-    react_models_from_config_value(&cfg, explicit.as_deref())
+    let resolved = react_models_from_config_value(&cfg, explicit.as_deref());
+    order_candidates_local_first(resolved)
 }
 
 /// Evidence-gated best-of-N: run the task on each candidate model in order and

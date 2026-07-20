@@ -78,10 +78,12 @@ pub trait Tool: Send + Sync {
 /// Canonical list of typed tool names the SOP pipeline can dispatch.
 ///
 /// Single source of truth for both `ToolRegistry::default()` (the runtime
-/// registry) and `persona_prompt_seeds::classify_seed` (the LLM prompt
-/// allowlist) and `org_responder::open_typed_tool_commitment` (the
-/// commitment validator). Keep these in lockstep — adding a tool means
-/// extending this array and registering it in `Default::default()`.
+/// registry) and the retired SOP path's LLM prompt allowlist and commitment
+/// validator (`persona_prompt_seeds::classify_seed` /
+/// `org_responder::open_typed_tool_commitment`, both removed per
+/// ADR-2606061359/ADR-2606071340 P0). Keep this list in lockstep with
+/// `Default::default()` regardless — it's still the runtime registry's
+/// source of truth for tool-name validation, SOP path or not.
 ///
 /// Surfaced 2026-05-28 during the ebay-mvp scaling test: engineering-lead
 /// kept replying with tool plans citing `investigate_hex_coder_pool_state`,
