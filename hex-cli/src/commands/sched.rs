@@ -3806,6 +3806,10 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
 }
 
 async fn enqueue_brain_task_with_priority(kind: &str, payload: &str, priority: u8) -> anyhow::Result<String> {
+    enqueue_brain_task_with_retry(kind, payload, priority, 0).await
+}
+
+async fn enqueue_brain_task_with_retry(kind: &str, payload: &str, priority: u8, retry_count: u64) -> anyhow::Result<String> {
     use crate::nexus_client::NexusClient;
 
     // Reject "audit theater" stubs: shell tasks whose payload is just an echo
@@ -3940,6 +3944,7 @@ async fn enqueue_brain_task_with_priority(kind: &str, payload: &str, priority: u
         "result": serde_json::Value::Null,
         "timeout_s": timeout,
         "priority": priority,
+        "retry_count": retry_count,
     });
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
