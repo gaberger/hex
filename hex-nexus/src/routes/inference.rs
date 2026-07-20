@@ -2666,6 +2666,88 @@ pub async fn usage_report(
     )
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DiscoveredModelsParams {
+    /// Only include local_feasible = true rows.
+    #[serde(default)]
+    pub feasible_only: bool,
+    /// Filter to an exact review_status value ("", "pending", "approved", "rejected").
+    pub review_status: Option<String>,
+    #[serde(default = "default_discovered_limit")]
+    pub limit: u32,
+}
+
+fn default_discovered_limit() -> u32 {
+    50
+}
+
+/// GET /api/inference/discovered-models — report surface for the HF model
+/// researcher (ADR-2607140850). The discovery tick itself only ever writes
+/// to `discovered_model` + `hex inbox`; before this endpoint, the only way
+/// to see what it found was a raw `hex stdb query` against a table name an
+/// operator would have to already know (2026-07-20 dog-food finding, filed
+/// alongside the tick's own bugs this same session).
+pub async fn discovered_models_report(
+    axum::extract::Query(params): axum::extract::Query<DiscoveredModelsParams>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let rows = match stdb_query_core("SELECT * FROM discovered_model").await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "discovered-models: failed to query discovered_model");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e })));
+        }
+    };
+
+    let total = rows.len();
+    let feasible_count = rows
+        .iter()
+        .filter(|r| r.get("local_feasible").and_then(|v| v.as_bool()).unwrap_or(false))
+        .count();
+    let mut by_review_status: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for r in &rows {
+        let status = r.get("review_status").and_then(|v| v.as_str()).unwrap_or("");
+        let key = if status.is_empty() { "unreviewed".to_string() } else { status.to_string() };
+        *by_review_status.entry(key).or_insert(0) += 1;
+    }
+
+    let mut out: Vec<serde_json::Value> = rows
+        .into_iter()
+        .filter(|r| {
+            if params.feasible_only && !r.get("local_feasible").and_then(|v| v.as_bool()).unwrap_or(false) {
+                return false;
+            }
+            if let Some(ref want) = params.review_status {
+                let got = r.get("review_status").and_then(|v| v.as_str()).unwrap_or("");
+                if got != want.as_str() {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        let da = a.get("discovered_at").and_then(|v| v.as_str()).unwrap_or("");
+        let db = b.get("discovered_at").and_then(|v| v.as_str()).unwrap_or("");
+        db.cmp(da) // newest first
+    });
+    out.truncate(params.limit as usize);
+    let returned = out.len();
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "candidates": out,
+            "returned": returned,
+            "summary": {
+                "total": total,
+                "local_feasible": feasible_count,
+                "non_local_feasible": total - feasible_count,
+                "by_review_status": by_review_status,
+            },
+        })),
+    )
+}
+
 /// GET /api/inference/q-report — Q-table report with filtering, sorting, and 7-day trend.
 pub async fn q_report(
     axum::extract::Query(params): axum::extract::Query<QReportParams>,

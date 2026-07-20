@@ -17,6 +17,7 @@ use clap::Subcommand;
 use colored::Colorize;
 
 use crate::assets::Assets;
+use crate::fmt::truncate;
 use crate::nexus_client::NexusClient;
 
 /// Known free-tier provider template names (ADR-2026-04-05-2125).
@@ -196,6 +197,23 @@ pub enum InferenceAction {
         #[arg(long, default_value_t = 30)]
         limit: u32,
     },
+    /// Show HuggingFace models found by the daily discovery tick (ADR-2607140850) —
+    /// hardware feasibility, review status, and a summary count. Before this command
+    /// the only way to see results was a raw `hex stdb query` against the raw table.
+    Discovered {
+        /// Only show locally-feasible candidates (fit this box's GPU/RAM)
+        #[arg(long)]
+        feasible: bool,
+        /// Filter by review status: pending, approved, rejected (default: no filter)
+        #[arg(long)]
+        review_status: Option<String>,
+        /// Maximum rows to display
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+        /// Emit raw JSON instead of a formatted table
+        #[arg(long)]
+        json: bool,
+    },
     /// Benchmark a model: code-gen, reasoning, and identity prompts — quality + speed + tier recommendation (ADR-2026-04-13-1238)
     Bench {
         /// Provider ID, model name, or URL (e.g. "bazzite-ollama", "minimax-m2.7:cloud", "http://bazzite:11434")
@@ -359,6 +377,9 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
         }
         InferenceAction::Usage { since, model, limit } => {
             usage_report(since.as_deref(), model.as_deref(), limit).await
+        }
+        InferenceAction::Discovered { feasible, review_status, limit, json } => {
+            discovered_models_report(feasible, review_status.as_deref(), limit, json).await
         }
         InferenceAction::Bench { target, model, quick, compare, save } => {
             bench_provider(&target, model.as_deref(), quick, compare.as_deref(), save).await
@@ -1059,6 +1080,100 @@ async fn usage_report(since: Option<&str>, model: Option<&str>, limit: u32) -> a
             println!("  Usage endpoint not available. Ensure hex-nexus is rebuilt.");
         }
     }
+    Ok(())
+}
+
+/// `hex config inference discovered` — report surface for the HF model
+/// researcher (ADR-2607140850). Before this command the only way to see
+/// what the daily discovery tick found was `hex stdb query` against the raw
+/// `discovered_model` table (2026-07-20 dog-food finding, same session that
+/// found and fixed the tick's own bugs — see sched_service.rs history).
+async fn discovered_models_report(
+    feasible_only: bool,
+    review_status: Option<&str>,
+    limit: u32,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = NexusClient::from_env();
+    if client.ensure_running().await.is_err() {
+        println!("{} hex-nexus not running — cannot fetch discovered models", "✗".red());
+        return Ok(());
+    }
+
+    let mut path = format!("/api/inference/discovered-models?limit={}", limit);
+    if feasible_only {
+        path.push_str("&feasible_only=true");
+    }
+    if let Some(rs) = review_status {
+        path.push_str(&format!("&review_status={}", rs));
+    }
+
+    let data = match client.get(&path).await {
+        Ok(d) => d,
+        Err(_) => {
+            println!("  Discovered-models endpoint not available. Ensure hex-nexus is rebuilt.");
+            return Ok(());
+        }
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&data)?);
+        return Ok(());
+    }
+
+    println!("{}", "── HF Model Researcher — Discovered Models (ADR-2607140850) ──".cyan());
+    println!();
+
+    let summary = data.get("summary");
+    let total = summary.and_then(|s| s.get("total")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let feasible = summary.and_then(|s| s.get("local_feasible")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let non_feasible = summary.and_then(|s| s.get("non_local_feasible")).and_then(|v| v.as_u64()).unwrap_or(0);
+    println!(
+        "  {} total  ·  {} local-feasible  ·  {} not locally feasible",
+        total, feasible, non_feasible
+    );
+    if let Some(by_status) = summary.and_then(|s| s.get("by_review_status")).and_then(|v| v.as_object()) {
+        let mut parts: Vec<String> = by_status
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v.as_u64().unwrap_or(0)))
+            .collect();
+        parts.sort();
+        println!("  review status: {}", parts.join(", "));
+    }
+    println!();
+
+    let rows = data.get("candidates").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    if rows.is_empty() {
+        println!("  No candidates match the given filters.");
+        return Ok(());
+    }
+
+    println!(
+        "  {:<70} {:>8} {:<12} {:<10} {:<20}",
+        "REPO", "FEASIBLE", "QUANT", "REVIEW", "DISCOVERED"
+    );
+    println!("  {}", "─".repeat(126));
+    for r in &rows {
+        let s = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("");
+        let feasible = r.get("local_feasible").and_then(|v| v.as_bool()).unwrap_or(false);
+        let review = {
+            let rs = s("review_status");
+            if rs.is_empty() { "unreviewed" } else { rs }
+        };
+        let discovered_at = s("discovered_at");
+        let discovered_short = discovered_at.split('T').next().unwrap_or(discovered_at);
+        println!(
+            "  {:<70} {:>8} {:<12} {:<10} {:<20}",
+            truncate(s("repo"), 70),
+            if feasible { "yes" } else { "no" },
+            s("smallest_quant_label"),
+            review,
+            discovered_short,
+        );
+    }
+    let returned = data.get("returned").and_then(|v| v.as_u64()).unwrap_or(rows.len() as u64);
+    println!();
+    println!("  {} of {} shown (source: discovered_model)", returned, total);
     Ok(())
 }
 
