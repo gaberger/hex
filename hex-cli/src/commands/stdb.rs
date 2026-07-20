@@ -419,10 +419,19 @@ async fn publish(modules_dir: &str, host: &str, database: &str) -> anyhow::Resul
         let name = entry.file_name().to_string_lossy().to_string();
         print!("  {} {} ... ", "\u{25cb}".dimmed(), name);
 
-        // Each module is published to its own database (module name = database name).
-        // The `database` arg here is just the fallback/legacy alias; per-module names
-        // are canonical so `hex stdb generate` and SDK bindings resolve correctly.
-        let db_name = name.clone();
+        // 2026-07-20 dog-food finding: this used to hardcode `db_name = name.clone()`
+        // ("module name = database name") — but that's not what the rest of the
+        // system uses. `hex_core::STDB_MODULE_DATABASES` maps e.g.
+        // "hexflo-coordination" -> "hex" (the database hex-nexus/CLI actually
+        // read/write), and `hexflo-coordination` was the ONLY module in that map
+        // whose db name differs from its dir name. The old behavior silently
+        // published hexflo-coordination schema changes (e.g. the discovered_model
+        // table, ADR-2607140850) to a stray "hexflo-coordination" database that
+        // nothing else ever reads, while the real "hex" database quietly went
+        // stale — `hex stdb tables` against "hex" never showed the new table even
+        // after a reported "OK" publish. Resolve through the same mapping the
+        // runtime uses so publish and consumption agree on where data lives.
+        let db_name = hex_core::stdb_database_for_module(&name).to_string();
         let output = tokio::process::Command::new(&binary)
             .arg("publish")
             .arg("--server")

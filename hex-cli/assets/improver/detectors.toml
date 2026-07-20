@@ -71,9 +71,24 @@ allow_nonzero_exit = true
 
 [[detector]]
 source = "build_readiness"
-cmd = "hex plan ready --json"
-description = "Typecheck AND test-suite failures in the current project. Closes the gap between 'structural layers exist' and 'code in them actually works.' Tests are included so failing test runs (vitest/cargo test) surface as findings — a green typecheck with red tests is exactly the silent-failure mode this loop must catch. Cost: one `npm test` / `cargo test` per tick; if your test suite is too slow for every-tick polling, gate it via `cmd = ... --no-tests` and add a separate longer-period detector."
+cmd = "hex plan ready --json --no-tests"
+description = "Typecheck failures in the current project (tests excluded — see 2026-07-20 dog-food finding below). Closes part of the gap between 'structural layers exist' and 'code in them actually works.'"
 allow_nonzero_exit = true
+
+# 2026-07-20 dog-food finding: this detector previously ran without
+# --no-tests ("hex plan ready --json"), i.e. one full `cargo test`
+# (workspace-wide) / `npm test` per tick. On this repo that hangs
+# indefinitely (>60s, zero output, confirmed via `timeout 60 hex plan
+# ready --json`) — every tick that reached discover() wedged the entire
+# sched daemon loop forever, since discover() runs unconditionally each
+# tick before the idle/scheduled-trigger and drain logic. This is very
+# likely why the idle research sweep (ADR-2026-04-15-1200) has never
+# fired autonomously: idle_tick_count never got a chance to advance.
+# The description above already prescribed this exact fix
+# ("gate it via cmd = ... --no-tests and add a separate longer-period
+# detector") but it was never applied. --no-tests is applied now; the
+# "separate longer-period detector" for full test-suite build-readiness
+# is not yet built — tracked as a follow-up, not done here.
 
 [[detector]]
 source = "test_coverage"

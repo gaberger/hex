@@ -2665,7 +2665,8 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
 
         let timestamp = chrono::Utc::now().to_rfc3339();
         let start = Instant::now();
-        let pending_count = list_brain_tasks(Some("pending")).await.map(|t| t.len()).unwrap_or(0);
+        let pending_tasks = list_brain_tasks(Some("pending")).await.unwrap_or_default();
+        let pending_count = pending_tasks.len();
         let in_progress_count = list_brain_tasks(Some("in_progress")).await.map(|t| t.len()).unwrap_or(0);
         let failed_count = list_brain_tasks(Some("failed")).await.map(|t| t.len()).unwrap_or(0);
         let validate_result = validate(true).await;
@@ -2742,6 +2743,14 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                 consecutive_failures += 1;
                 eprintln!("  {} ({}/{}) validate: {}", "fail".red(), consecutive_failures, max_failures, err);
             }
+        }
+
+        // Idle-tracking + self-enqueue triggers (research-sweep, memory-health)
+        // — see tick_idle_and_scheduled_triggers' doc comment. This is what was
+        // missing from the background loop entirely before this fix; runs every
+        // tick regardless of validate() or the drain outcome below.
+        if let Err(err) = tick_idle_and_scheduled_triggers(&pending_tasks).await {
+            eprintln!("  {} idle/scheduled triggers: {}", "✗".red(), err);
         }
 
         // Drain brain queue — hand up to 1 pending task per tick to a
@@ -5268,8 +5277,17 @@ async fn queue_clear() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn queue_drain() -> anyhow::Result<()> {
-    let pending = list_brain_tasks(Some("pending")).await?;
+/// Idle-tracking + self-enqueue triggers (research-sweep preemption/enqueue,
+/// hourly memory-health) — split out of `queue_drain` because the long-running
+/// `hex brain daemon` background loop never called `queue_drain` at all (it
+/// drains via its own separate `drain_brain_tasks`/swarm-lease dispatch path).
+/// That meant `idle_tick_count` never advanced in the background, so the idle
+/// research sweep could never self-enqueue no matter how long the daemon ran
+/// — the only place this logic ever executed was the one-shot `hex brain
+/// queue drain` CLI command. Both `queue_drain` and the `daemon` loop now call
+/// this each tick, sharing one already-fetched `pending` snapshot rather than
+/// each re-querying it.
+async fn tick_idle_and_scheduled_triggers(pending: &[serde_json::Value]) -> anyhow::Result<()> {
     // Snapshot in_flight alongside pending so the idle-tick gate counts real
     // inactivity (no queued work AND no tasks actively running). A failure to
     // read in_progress is treated as "unknown" → non-idle, so we don't
@@ -5377,6 +5395,15 @@ async fn queue_drain() -> anyhow::Result<()> {
             }
         }
     }
+
+    Ok(())
+}
+
+async fn queue_drain() -> anyhow::Result<()> {
+    let pending = list_brain_tasks(Some("pending")).await?;
+    tick_idle_and_scheduled_triggers(&pending).await?;
+    let idle_ticks = load_daemon_state().idle_tick_count;
+    let threshold = load_idle_threshold_ticks();
 
     if pending.is_empty() {
         if idle_ticks >= threshold {
