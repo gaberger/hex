@@ -389,7 +389,15 @@ async fn list(json_output: bool, show_all: bool) -> anyhow::Result<()> {
         .ok()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
 
-    let (resp, project_scoped) = if let Some(ref hint) = project_hint {
+    let (resp, project_scoped) = if show_all {
+        // --all means show everything regardless of project scoping -- go
+        // straight to the unscoped endpoint instead of trying project-scoped
+        // first, since a narrow/empty project-scoped result (e.g. a swarm
+        // created under a different project_id convention) would otherwise
+        // silently hide swarms that are active but not tagged with this
+        // cwds exact project_id.
+        (nexus.get("/api/swarms/all?limit=50").await?, false)
+    } else if let Some(ref hint) = project_hint {
         match nexus.get(&format!("/api/projects/{}/swarms", hint)).await {
             Ok(r) => (r, true),
             Err(_) => (nexus.get("/api/swarms/all?limit=50").await?, false),
