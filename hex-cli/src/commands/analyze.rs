@@ -930,6 +930,16 @@ fn scan_local_violations(root: &Path) -> Vec<boundary::Violation> {
             .to_string_lossy()
             .to_string();
 
+        // Test code is exempt. A use case under test constructing the in-memory
+        // adapter is the pattern ports-and-adapters exists to enable, not a
+        // boundary breach — the dependency is compiled out of the shipped
+        // artifact. Counting it turns a real finding into noise: measured on the
+        // homelab project, 8 of 12 reported violations were test doubles, which
+        // is how the 4 genuine ones stayed invisible behind a grade of F.
+        if is_test_file(&rel) {
+            continue;
+        }
+
         let source_layer = boundary::detect_layer(&rel);
         if source_layer == Layer::Unknown || source_layer == Layer::CompositionRoot {
             continue;
@@ -944,6 +954,26 @@ fn scan_local_violations(root: &Path) -> Vec<boundary::Violation> {
     }
 
     all_violations
+}
+
+/// Whether a path is test code, by the naming convention of its language.
+///
+/// Deliberately applied at the violation scan rather than in
+/// [`collect_source_files`], which also feeds the per-layer file counts —
+/// excluding tests there would silently shrink the reported size of the
+/// project.
+fn is_test_file(rel: &str) -> bool {
+    let p = rel.replace('\\', "/").to_lowercase();
+    let name = p.rsplit('/').next().unwrap_or(&p);
+
+    // Go and Rust integration tests carry it in the filename or the directory.
+    name.ends_with("_test.go")
+        || name.ends_with("_test.rs")
+        || p.contains("/tests/")
+        || p.starts_with("tests/")
+        // TS/JS colocated tests: foo.test.ts, foo.spec.tsx, …
+        || name.contains(".test.")
+        || name.contains(".spec.")
 }
 
 /// Recursively collect `.rs`, `.ts`, and `.js` source files under a directory.
@@ -984,8 +1014,42 @@ fn extract_import_paths(source: &str, source_rel: &str) -> Vec<String> {
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
 
+    // Rust puts its unit tests *inside* the file it tests, behind `#[cfg(test)]`.
+    // Those imports never reach the shipped binary, so an adapter imported there
+    // is a test double rather than a boundary breach. Tracked by brace depth:
+    // the attribute arms the skip, the next line that opens a block starts it,
+    // and returning to the depth it started at ends it.
+    let mut cfg_test_armed = false;
+    let mut test_block_depth: Option<i32> = None;
+    let mut depth: i32 = 0;
+
     for line in source.lines() {
         let trimmed = line.trim();
+
+        if trimmed.starts_with("#[cfg(test)]") {
+            cfg_test_armed = true;
+        }
+
+        let opens = line.matches('{').count() as i32;
+        let closes = line.matches('}').count() as i32;
+
+        if cfg_test_armed && opens > 0 {
+            test_block_depth = Some(depth);
+            cfg_test_armed = false;
+        }
+
+        let in_test_block = test_block_depth.is_some();
+        depth += opens - closes;
+        if let Some(started_at) = test_block_depth {
+            if depth <= started_at {
+                test_block_depth = None;
+            }
+        }
+
+        if in_test_block {
+            continue;
+        }
+
         // Rust: use crate::adapters::...
         if let Some(rest) = trimmed.strip_prefix("use crate::") {
             if let Some(path_part) = rest.split(';').next() {
@@ -1346,6 +1410,118 @@ mod tests {
         let p = base.join(rel);
         fs::create_dir_all(p.parent().unwrap()).unwrap();
         fs::write(&p, content).unwrap();
+    }
+
+    // ── Test code is not a boundary violation ───────────────────────────────
+
+    /// The defect this guards: a use case importing the in-memory adapter to
+    /// build a test double was reported as `usecases/ may only import from
+    /// domain/ and ports/`. The import is inside `#[cfg(test)]` and never
+    /// reaches the binary.
+    #[test]
+    fn imports_inside_cfg_test_are_not_extracted() {
+        let src = r#"
+use crate::ports::Store;
+
+pub struct Maintenance;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::secondary::memory_store::MemoryStore;
+
+    #[test]
+    fn sweeps() {
+        let s = MemoryStore::new();
+    }
+}
+"#;
+        let imports = extract_import_paths(src, "src/usecases/maintain.rs");
+        assert!(
+            imports.iter().any(|i| i.contains("ports")),
+            "production import was dropped: {imports:?}"
+        );
+        assert!(
+            !imports.iter().any(|i| i.contains("adapters")),
+            "test-only import leaked into production imports: {imports:?}"
+        );
+    }
+
+    /// The block must END. A file that closes its test module and then declares
+    /// more production code must have that code scanned, or the fix would hide
+    /// real violations below the tests.
+    #[test]
+    fn extraction_resumes_after_the_test_module_closes() {
+        let src = r#"
+#[cfg(test)]
+mod tests {
+    use crate::adapters::secondary::memory_store::MemoryStore;
+}
+
+use crate::adapters::secondary::broadcast_bus::BroadcastBus;
+"#;
+        let imports = extract_import_paths(src, "src/adapters/primary/http.rs");
+        assert!(
+            imports.iter().any(|i| i.contains("broadcast_bus")),
+            "production import after the test module was skipped: {imports:?}"
+        );
+        assert!(
+            !imports.iter().any(|i| i.contains("memory_store")),
+            "test-only import leaked: {imports:?}"
+        );
+    }
+
+    /// Nested braces inside the test module must not end it early.
+    #[test]
+    fn nested_blocks_do_not_terminate_the_test_module() {
+        let src = r#"
+#[cfg(test)]
+mod tests {
+    fn helper() {
+        if true { let _ = 1; }
+    }
+    use crate::adapters::secondary::memory_store::MemoryStore;
+}
+"#;
+        let imports = extract_import_paths(src, "src/usecases/triage.rs");
+        assert!(
+            imports.is_empty(),
+            "nested braces ended the test block early: {imports:?}"
+        );
+    }
+
+    /// A file with no test module at all must be unaffected.
+    #[test]
+    fn production_only_files_are_unchanged() {
+        let src = "use crate::adapters::secondary::usage::UsageLog;\n";
+        let imports = extract_import_paths(src, "src/adapters/primary/gateway.rs");
+        assert_eq!(imports.len(), 1, "production import lost: {imports:?}");
+    }
+
+    #[test]
+    fn test_files_are_recognised_by_convention() {
+        for p in [
+            "src/domain/search.test.ts",
+            "src/domain/twin.spec.tsx",
+            "internal/svc/handler_test.go",
+            "tests/integration.rs",
+            "src/adapters/tests/helper.rs",
+        ] {
+            assert!(is_test_file(p), "should be treated as test code: {p}");
+        }
+    }
+
+    #[test]
+    fn production_files_are_not_mistaken_for_tests() {
+        for p in [
+            "src/usecases/maintain.rs",
+            "src/adapters/primary/http.rs",
+            // "latest" contains "test" — a substring match would misfire here.
+            "src/domain/latest_reading.rs",
+            "src/domain/contest.ts",
+        ] {
+            assert!(!is_test_file(p), "wrongly treated as test code: {p}");
+        }
     }
 
     // ── P5.1: scan_rust_workspace_layers ────────────────────────────────
