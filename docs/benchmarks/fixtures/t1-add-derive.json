@@ -7,14 +7,15 @@
   "oracle": {
     "kind": "cargo_test",
     "setup_files": {
-      "bench-sandbox/Cargo.toml": "[package]\nname = \"bench-sandbox\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+      "bench-sandbox/Cargo.toml": "[package]\nname = \"bench-sandbox\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n",
       "bench-sandbox/src/lib.rs": "#[derive(Clone)]\npub struct Widget { pub id: u32 }\n",
       "bench-sandbox/tests/debug.rs": "use bench_sandbox::Widget;\n#[test] fn widget_is_debug() { let w = Widget { id: 7 }; assert_eq!(format!(\"{:?}\", w), \"Widget { id: 7 }\"); }\n"
     },
-    "command": "cargo test -p bench-sandbox --test debug"
+    "command": "cargo test --manifest-path bench-sandbox/Cargo.toml --test debug"
   },
   "graph_context_required": false,
   "arms": ["react", "fast"],
-  "status": "draft",
+  "status": "verified",
+  "_verification": "oracle RED→GREEN confirmed 2026-06-30 after fixing two harness bugs: (1) added [workspace] so the sandbox crate does not get absorbed into the hex workspace; (2) changed command from `-p bench-sandbox` (did-not-match-any-packages from the hex root) to `--manifest-path`. Pre-fix this T1-trivial task failed for ALL models (false negative). Stub (Clone only) fails to compile; Clone+Debug passes.",
   "observed_baseline": {}
 }

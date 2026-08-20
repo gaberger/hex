@@ -488,6 +488,36 @@ mod tests {
     }
 
     #[test]
+    fn test_unanchored_layer_pattern_matches_nested_package_path() {
+        // hex dev new's default ADR-rules.toml now writes unanchored patterns like
+        // "/domain/" instead of "src/domain", so a Python (or any nested-package)
+        // layout like src/<pkg>/core/domain/models.py is still correctly classified
+        // as the domain layer — this was the actual bug behind the Python build's
+        // vacuous "0 files scanned" / "matches no hex layer" result.
+        let rules = make_rules(
+            &[],
+            &[
+                ("/domain/", "domain"),
+                ("/ports/", "ports"),
+                ("/adapters/primary/", "adapters/primary"),
+            ],
+        );
+        assert_eq!(
+            evaluate_path("src/kb/core/domain/models.py", &rules),
+            PathVerdict::Allow
+        );
+        assert_eq!(
+            evaluate_path("src/kb/adapters/primary/cli.py", &rules),
+            PathVerdict::Allow
+        );
+        // Guards against a false positive: "domainxyz" must not match "/domain/".
+        assert!(matches!(
+            evaluate_path("src/domainxyz/foo.py", &rules),
+            PathVerdict::Warn { .. }
+        ));
+    }
+
+    #[test]
     fn test_src_file_without_layer_match_warns() {
         let rules = make_rules(
             &[],

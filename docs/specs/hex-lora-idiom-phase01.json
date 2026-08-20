@@ -1,0 +1,123 @@
+{
+  "feature": "hex-lora-idiom-phase01",
+  "adr": "ADR-2606161300",
+  "implementation_loop": {
+    "description": "Full Phase 0 -> Phase 1 loop. Corpus extraction and adapter serving run inside hex-nexus (the FS bridge / daemon); ACTUAL LoRA gradient training is offline dev tooling (scripts/train-lora.sh) because it is neither in-process Rust nor a daemon responsibility and would OOM a 16GB-GPU/30GB-RAM box (project_qwen_next_hardware_ceiling). Promotion authority is the bench gate, never training loss.",
+    "steps": [
+      "1. hex inference corpus build <expert>      -> .hex/corpus/<expert>/corpus.jsonl + manifest.json (auditable; every record carries source_path)",
+      "2. scripts/train-lora.sh <expert> [--run]   -> GGUF adapter (offline; rank 4 / alpha 16 / final-layer FFN per DMoE; requires HEX_LORA_TRAINER to actually train)",
+      "3. hex inference adapter register --expert <e> --base <m> --tier <t> --artifact <gguf> --corpus-version <v>",
+      "4. (serving) base+adapter rides the existing tier router automatically; absent/disabled/HEX_LORA_DISABLED -> bare base, never an error; touches NO correctness gate",
+      "5. hex inference adapter evaluate <expert>   -> bench gate: promote ONLY on first-draft acceptance lift with no quality/throughput regression; verdict stored as lesson:hex-lora-<expert>"
+    ],
+    "hardware_caveat": "rank-4 LoRA on a 24-32B base is feasible but tight on 16GB GPU / 30GB RAM — prefer a quantized (q4) base or off-box training, and respect the resource governor (ADR-2606080915). The evaluate path requests governor admission and DEFERS (never OOMs) under memory pressure.",
+    "invariant": "ADR-2606161300 §1 HARD: removing every adapter must not weaken any correctness gate. The LoRA is an idiom prior, never enforcement."
+  },
+  "specs": [
+    {
+      "category": "corpus-extraction-auditable-artifacts",
+      "description": "Building a corpus for a named expert produces human-auditable instruction artifacts on disk, derived only from hex's own ADRs/specs/exemplar diffs — never opaque/binary blobs.",
+      "given": "hex ADRs in docs/adrs/, behavioral specs in docs/specs/, and analyzer-passing exemplar source exist in the repo, and an expert name (e.g. hex-boundaries) maps to a declared knowledge-unit glob set.",
+      "when": "The operator runs `hex inference corpus build hex-boundaries` (CLI → nexus endpoint POST /api/inference/corpus/build).",
+      "then": "A corpus artifact is written under .hex/corpus/<expert>/corpus.jsonl as newline-delimited JSON instruction pairs (each {instruction, input, output, source_path, corpus_version}); every record carries the source_path it was derived from so a human can trace it back; and a manifest .hex/corpus/<expert>/manifest.json records the corpus_version, source globs, record count, and a content hash. No record lacks a source_path.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "cli_verb": "hex inference corpus build <expert> [--dry-run]",
+        "endpoint": "POST /api/inference/corpus/build {expert}",
+        "artifact_path": ".hex/corpus/<expert>/corpus.jsonl + manifest.json",
+        "augmentation": "PRAG-style: per source artifact, one content-preserving paraphrase + N Q/A pairs; no answer-string leakage from benchmarks",
+        "record_shape": "{instruction, input, output, source_path, corpus_version}",
+        "no_runtime_scripts": "extraction runs in hex-nexus (the FS bridge), not a shell script"
+      }
+    },
+    {
+      "category": "corpus-knowledge-unit-isolation",
+      "description": "Each expert's corpus is built only from its declared knowledge-unit globs; a source artifact outside the expert's unit never leaks into its corpus.",
+      "given": "hex-boundaries declares globs over docs/adrs/**/*hexagon*, CLAUDE.md hex rules, and analyzer-passing exemplars; hex-testing declares globs over docs/specs/** and Deps-pattern test exemplars.",
+      "when": "`hex inference corpus build hex-boundaries` runs.",
+      "then": "Every record in the hex-boundaries corpus has a source_path matching a hex-boundaries glob; no record is sourced from a hex-testing-only artifact. Building one expert never mutates another expert's corpus directory (decoupled units, DMoE-style).",
+      "negative_spec": false,
+      "domain_conventions": {
+        "unit_declaration": ".hex/corpus/experts.toml or embedded default mapping expert→globs",
+        "isolation": "one corpus dir per expert; builds are independent"
+      }
+    },
+    {
+      "category": "adapter-registry-versioned-swappable",
+      "description": "A trained LoRA adapter is registered against a (base-model, tier, expert) tuple with a corpus-version stamp, and can be added/removed without touching the base model record.",
+      "given": "A LoRA adapter artifact (produced by the external training step) exists for the T2 qwen2.5-coder base, trained on the hex-boundaries corpus at a known corpus_version.",
+      "when": "The adapter is registered via `hex inference adapter register --expert hex-boundaries --base qwen2.5-coder:32b --tier 2 --artifact <path> --corpus-version <v>`.",
+      "then": "The registry persists an AdapterRecord {expert, base_model, tier, artifact_ref, corpus_version, enabled} ; the base-model endpoint record is unchanged; and `hex inference adapter list` shows the new adapter. Removing it (`adapter remove`) restores the un-adapted base path with zero change to any correctness gate.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "registry_shape": "{expert, base_model, tier, artifact_ref, corpus_version, enabled}",
+        "cli_verbs": "hex inference adapter register|list|remove|disable",
+        "invariant": "ADR-2606161300 §1 HARD: removing every adapter must not weaken any gate"
+      }
+    },
+    {
+      "category": "inference-path-adapter-attachment",
+      "description": "When an enabled adapter exists for the tier handling a request, the inference call serves base+adapter; otherwise it serves the bare base — selection is by the existing tier router, no new router.",
+      "given": "An enabled hex-boundaries adapter is registered for tier 2 on qwen2.5-coder, and a codegen task is routed to tier 2 by the existing strategy_hint tier router.",
+      "when": "hex-nexus issues the inference HTTP call for that task.",
+      "then": "The call targets the adapter-composed model (e.g. an Ollama model created with an ADAPTER directive, or the gateway passes the adapter ref) ; KV-cache reuse across the ReAct loop is preserved (adapter attached such that prefix cache stays valid) ; and if the adapter is disabled or absent, the identical request path serves the bare base with no error.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "routing": "reuse existing tier router (strategy_hint); adapter rides the tier — no learned router",
+        "serving_path": "Ollama Modelfile ADAPTER directive for local GGUF LoRA, or inference-gateway adapter ref",
+        "kv_cache": "final-layer/attachment choice must not invalidate prefix cache (DMoE efficiency result)",
+        "fallback": "absent/disabled adapter → bare base, never an error"
+      }
+    },
+    {
+      "category": "bench-gate-acceptance-lift-blocking",
+      "description": "BLOCKING: an adapter is only promoted to a tier default when the agentic bench suite shows first-draft acceptance-rate lift vs the bare base with no quality/throughput regression.",
+      "given": "A registered-but-not-default hex-boundaries adapter and the agentic inference benchmark suite (ADR-2606071734).",
+      "when": "`hex inference adapter evaluate hex-boundaries` runs the suite against bare-base and base+adapter on the same tier and tasks.",
+      "then": "The verdict records first-draft pass rate through `hex analyze` + the best-of-N compile gate for both; the adapter is marked promotable ONLY if (acceptance_rate_adapter > acceptance_rate_base) AND (general codegen quality_score not regressed beyond tolerance) AND (throughput tok/s not regressed beyond the configured budget). A non-lift or regressing adapter is NOT promoted, and the verdict is stored (`hex memory store lesson:hex-lora-<expert>`).",
+      "negative_spec": false,
+      "domain_conventions": {
+        "verdict_authority": "agentic bench harness (ADR-2606071734), NOT training loss",
+        "primary_metric": "first-draft acceptance rate through hex analyze + compile gate (ADR-2606072044)",
+        "guard_metrics": "no codegen-quality regression; no throughput regression beyond budget",
+        "promotion": "only on lift + no regression; else stays registered-not-default"
+      }
+    },
+    {
+      "category": "enforcement-stays-external-negative",
+      "description": "NEGATIVE: no correctness gate may be relaxed because an idiom adapter is active. Disabling every adapter must leave analyzer/spec/compile verdicts identical.",
+      "given": "An enabled hex-boundaries adapter serving tier-2 codegen.",
+      "when": "Generated code contains a hexagonal boundary violation (e.g. an adapter importing another adapter) that the model emitted confidently.",
+      "then": "`hex analyze` STILL flags the violation and the best-of-N compile/acceptance gate STILL rejects the draft exactly as it would with the bare base; the adapter never suppresses, bypasses, or pre-approves any gate; and removing all adapters yields byte-identical gate verdicts on the same input.",
+      "negative_spec": true,
+      "domain_conventions": {
+        "principle": "ADR-2606161300: LoRA = idiom prior, never enforcement; preserves independent-oracle property",
+        "hard_invariant": "gates are adapter-agnostic; token-uncertainty is NOT used as a rule oracle"
+      }
+    },
+    {
+      "category": "resource-governor-training-admission-negative",
+      "description": "NEGATIVE: LoRA training/eval must request admission from the resource governor and be refused (not OOM-crash) when the 16GB-GPU/30GB-RAM box lacks headroom.",
+      "given": "The resource governor (ADR-2606080915) reports insufficient GPU/RAM headroom on the local box (per project_qwen_next_hardware_ceiling).",
+      "when": "An adapter training or evaluation job requests admission.",
+      "then": "The job is refused or queued by the governor with a logged reason; the daemon and other inference work are unaffected; no OOM crash occurs. Admission is required before any training/eval dispatch.",
+      "negative_spec": true,
+      "domain_conventions": {
+        "governor": "ADR-2606080915 resource-governor memory-aware admission",
+        "constraint": "project_qwen_next_hardware_ceiling: 16GB GPU / 30GB RAM — large-base LoRA may need quantized/off-box training"
+      }
+    },
+    {
+      "category": "corpus-version-staleness-trigger",
+      "description": "When source ADRs/specs change (epoch or content), the corpus manifest content-hash changes, marking dependent adapters stale so they are not silently serving obsolete idioms.",
+      "given": "A registered adapter stamped with corpus_version V1, and an ADR in its knowledge unit is later edited (or the ADR epoch advances per ADR-2606071243).",
+      "when": "`hex inference corpus build <expert>` is re-run (or a staleness check runs).",
+      "then": "The new manifest content-hash differs from V1; `hex inference adapter list` flags the adapter as stale (registered corpus_version != current corpus_version); a stale adapter is surfaced for retrain and does NOT auto-promote.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "staleness": "registered corpus_version != freshly-built manifest hash → stale",
+        "epoch_link": "ADR-2606071243 epochs as a retrain trigger"
+      }
+    }
+  ]
+}

@@ -76,6 +76,8 @@ Volumes/
 !.hex/project.json
 !.hex/project.yaml
 .superset/
+# weave framework runtime state (sibling repo ~/development/weave integration) — local db only
+.weave/
 examples/hex-worktrees/
 target/
 examples/rust-api/target/

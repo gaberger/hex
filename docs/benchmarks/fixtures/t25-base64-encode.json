@@ -1,0 +1,27 @@
+{
+  "id": "t25-base64-encode",
+  "tier": "T2.5",
+  "axis_focus": [
+    "evidence_gated_success",
+    "react_convergence"
+  ],
+  "instruction": "Implement `pub fn b64encode(input: &[u8]) -> String` in the target file, replacing the stub. It performs standard RFC 4648 Base64 encoding with the alphabet A-Z a-z 0-9 + / and `=` padding. Do NOT use any external crate. RFC 4648 vectors: b64encode(b\"\")=\"\", b64encode(b\"f\")=\"Zg==\", b64encode(b\"fo\")=\"Zm8=\", b64encode(b\"foo\")=\"Zm9v\", b64encode(b\"foob\")=\"Zm9vYg==\", b64encode(b\"fooba\")=\"Zm9vYmE=\", b64encode(b\"foobar\")=\"Zm9vYmFy\". Edit only this file.",
+  "target_file": "bench-sandbox/src/lib.rs",
+  "oracle": {
+    "kind": "cargo_test",
+    "setup_files": {
+      "bench-sandbox/Cargo.toml": "[package]\nname = \"bench-sandbox\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n",
+      "bench-sandbox/src/lib.rs": "pub fn b64encode(_input: &[u8]) -> String { String::new() }\n",
+      "bench-sandbox/tests/b64.rs": "use bench_sandbox::b64encode;\n#[test] fn empty() { assert_eq!(b64encode(b\"\"), \"\"); }\n#[test] fn f() { assert_eq!(b64encode(b\"f\"), \"Zg==\"); }\n#[test] fn fo() { assert_eq!(b64encode(b\"fo\"), \"Zm8=\"); }\n#[test] fn foo() { assert_eq!(b64encode(b\"foo\"), \"Zm9v\"); }\n#[test] fn foob() { assert_eq!(b64encode(b\"foob\"), \"Zm9vYg==\"); }\n#[test] fn fooba() { assert_eq!(b64encode(b\"fooba\"), \"Zm9vYmE=\"); }\n#[test] fn foobar() { assert_eq!(b64encode(b\"foobar\"), \"Zm9vYmFy\"); }\n"
+    },
+    "command": "cargo test --manifest-path bench-sandbox/Cargo.toml --test b64"
+  },
+  "graph_context_required": false,
+  "arms": [
+    "react",
+    "fast"
+  ],
+  "status": "verified",
+  "_verification": "oracle RED→GREEN confirmed 2026-06-30 (stub fails, reference impl passes all tests). Standalone [workspace] crate; command uses --manifest-path so it never collides with the hex workspace.",
+  "observed_baseline": {}
+}

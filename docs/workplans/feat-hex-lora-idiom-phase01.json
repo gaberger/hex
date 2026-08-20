@@ -1,0 +1,72 @@
+{
+  "id": "feat-hex-lora-idiom-phase01",
+  "title": "hex LoRA idiom experts — Phase 0 (corpus extraction) + Phase 1 (hex-boundaries adapter on T2)",
+  "adr": "ADR-2606161300",
+  "specs": "docs/specs/hex-lora-idiom-phase01.json",
+  "architecture_decision": "Split the work along the hex FS-bridge boundary and treat ACTUAL LoRA weight-training as external dev tooling, NOT in-process daemon work. Rationale: (1) Corpus extraction reads ADRs/specs/exemplar source from the filesystem and runs tree-sitter-aware augmentation — that is exactly hex-nexus's job (the FS bridge; WASM can't touch FS), so the extractor lives in hex-nexus with pure domain types in hex-core (KnowledgeUnit, InstructionPair, CorpusManifest — zero-dep). The CLI verb is a thin NexusClient call. (2) The adapter REGISTRY and the inference-path ATTACHMENT are runtime concerns and MUST route through hex (CLAUDE.md no-runtime-scripts): registry persists via the existing inference-endpoint state adapter; attachment reuses the existing tier router + inference-gateway HTTP path, adding only an adapter-ref/Modelfile-ADAPTER step — NO new router (DMoE's 'training-free routing' maps onto our existing strategy_hint tier router). (3) ACTUAL LoRA gradient training of a 24-32B base is NOT representable as in-process Rust and NOT a daemon responsibility; it is a dev-tooling step (scripts/train-lora.sh — permitted under the build/dev-tooling exception) that consumes .hex/corpus/<expert>/corpus.jsonl, produces a GGUF adapter artifact, and registers it via `hex inference adapter register`. The daemon only ever SERVES a pre-built adapter and never trains in the hot path. (4) Promotion authority is the agentic bench harness (ADR-2606071734), never training loss — the bench measures first-draft acceptance lift through `hex analyze` + the best-of-N compile gate (ADR-2606072044), preserving the independent-oracle property. Rejected alternatives: (a) training in-process in nexus — violates no-runtime-scripts spirit, would block the daemon, infeasible on a 16GB GPU under load (project_qwen_next_hardware_ceiling); (b) a new neural router for experts — rejected, DMoE itself uses a training-free router and we already have tier routing; (c) modifying base weights via full SFT — rejected by the ADR (catastrophic forgetting).",
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Add corpus domain types to hex-core (zero business deps, mirroring hex-core::bench's posture). Define `pub struct KnowledgeUnit { expert: String, source_globs: Vec<String> }`, `pub struct InstructionPair { instruction: String, input: String, output: String, source_path: String, corpus_version: String }`, `pub struct CorpusManifest { expert: String, corpus_version: String, source_globs: Vec<String>, record_count: usize, content_hash: String }`, and the default expert→glob mapping (hex-boundaries → docs/adrs/**hexagon**, CLAUDE.md, analyzer-passing exemplars; hex-rust-idiom; hex-testing → docs/specs/** + Deps-pattern tests; hex-scaffold → hex-cli/assets/**). Add a `pub fn content_hash(records: &[InstructionPair]) -> String` (stable hash for the staleness trigger). Register `pub mod corpus;` in hex-core/src/lib.rs. No I/O in hex-core — pure types + hashing only.",
+      "files": ["hex-core/src/corpus.rs", "hex-core/src/lib.rs"],
+      "dependencies": [],
+      "done_condition": "cargo check -p hex-core passes"
+    },
+    {
+      "id": "step-2",
+      "description": "Implement the corpus extractor in hex-nexus as `async fn build_corpus(expert: &str, dry_run: bool) -> Result<CorpusManifest, String>` under a new module hex-nexus/src/corpus_build.rs. Resolve the expert's KnowledgeUnit globs (from .hex/corpus/experts.toml if present, else the hex-core default), read each matching source file via the existing FileSystemAdapter (safePath traversal protection), and apply PRAG-style augmentation per artifact: one content-preserving paraphrase + N (default 3) Q/A instruction pairs, each stamped with source_path and corpus_version. CRITICAL: never emit a record without a source_path; never pull a source outside the expert's globs (spec corpus-knowledge-unit-isolation). Write .hex/corpus/<expert>/corpus.jsonl (newline-delimited InstructionPair) + manifest.json (CorpusManifest with hex_core::corpus::content_hash). On --dry-run, compute the manifest and return it WITHOUT writing. Augmentation text generation routes through the existing tiered-inference path (a T1/T2 call), NOT a hardcoded template, so paraphrases are natural — but the prompt forbids inventing facts not present in the source.",
+      "files": ["hex-nexus/src/corpus_build.rs", "hex-nexus/src/lib.rs"],
+      "dependencies": ["step-1"],
+      "done_condition": "cargo check -p hex-nexus passes"
+    },
+    {
+      "id": "step-3",
+      "description": "Expose corpus build over the nexus REST API and the CLI. Add `POST /api/inference/corpus/build {expert, dry_run}` to hex-nexus/src/routes/inference.rs calling corpus_build::build_corpus and returning the CorpusManifest as JSON; add `GET /api/inference/corpus/list` returning known experts + their current manifest (or 'not built'). Add the CLI verb `hex inference corpus build <expert> [--dry-run]` and `hex inference corpus list` in hex-cli/src/commands/inference.rs as thin NexusClient calls, printing the manifest (expert, corpus_version, record_count, content_hash, source globs) with print formatting consistent with print_bench_results.",
+      "files": ["hex-nexus/src/routes/inference.rs", "hex-cli/src/commands/inference.rs"],
+      "dependencies": ["step-2"],
+      "done_condition": "cargo check -p hex-cli && cargo check -p hex-nexus pass"
+    },
+    {
+      "id": "step-4",
+      "description": "Add the adapter registry. Define `pub struct AdapterRecord { expert, base_model, tier: u8, artifact_ref: String, corpus_version: String, enabled: bool, promoted: bool }` in hex-core/src/corpus.rs. Persist via the existing inference-state adapter in hex-nexus (a new table/collection alongside inference endpoints; SQLite fallback per ADR-025). Add config in hex-nexus/src/state_config.rs mirroring resolve_model_bench_* precedence: `resolve_lora_experts_enabled() -> bool` (env HEX_LORA_DISABLED / project.json inference.lora.enabled, default true) and `resolve_lora_corpus_qa_count() -> usize` (default 3). NO behavior change to base endpoints — adapters are a sibling record set.",
+      "files": ["hex-core/src/corpus.rs", "hex-nexus/src/state_config.rs", "hex-nexus/src/adapters/inference_state.rs"],
+      "dependencies": ["step-1"],
+      "done_condition": "cargo check -p hex-nexus passes"
+    },
+    {
+      "id": "step-5",
+      "description": "Expose adapter registry CRUD over REST + CLI. Add to hex-nexus/src/routes/inference.rs: `POST /api/inference/adapters` (register AdapterRecord), `GET /api/inference/adapters` (list, flagging stale = registered corpus_version != freshly-built manifest content_hash for that expert, per spec corpus-version-staleness-trigger), `DELETE /api/inference/adapters/{id}`, `PATCH /api/inference/adapters/{id}` (enable/disable). Add CLI `hex inference adapter register|list|remove|disable` in hex-cli. The register verb takes --expert --base --tier --artifact --corpus-version. list shows enabled, promoted, and stale flags.",
+      "files": ["hex-nexus/src/routes/inference.rs", "hex-cli/src/commands/inference.rs"],
+      "dependencies": ["step-4"],
+      "done_condition": "cargo check -p hex-cli && cargo check -p hex-nexus pass"
+    },
+    {
+      "id": "step-6",
+      "description": "Wire adapter attachment into the inference serving path WITHOUT a new router. In the hex-nexus inference dispatch (where a tier-routed request resolves its target model), after the existing strategy_hint→tier resolution, look up an enabled AdapterRecord for (resolved base_model, tier). If found: serve base+adapter — for local Ollama, ensure a derived model exists via an ADAPTER-directive Modelfile (create-once, cache by {base, artifact_ref}); for an inference-gateway target, pass the adapter_ref through. If multiple experts apply to the tier, compose them (registry returns the set; document the ordering). If none / disabled / HEX_LORA_DISABLED: serve the bare base unchanged (spec inference-path-adapter-attachment fallback). The attachment MUST preserve prefix KV-cache validity (final-layer attachment / Ollama adapter load); add a comment citing ADR-2606161300 + the DMoE KV-cache result. CRITICAL (spec enforcement-stays-external-negative): the adapter only changes which weights generate — it touches NO gate, NO analyzer call, NO compile/acceptance check.",
+      "files": ["hex-nexus/src/sched_service.rs", "hex-nexus/src/routes/inference.rs"],
+      "dependencies": ["step-5"],
+      "done_condition": "cargo check -p hex-nexus passes"
+    },
+    {
+      "id": "step-7",
+      "description": "Add the bench-gate evaluation verb. Implement `hex inference adapter evaluate <expert>` (CLI → POST /api/inference/adapters/{id}/evaluate). The handler runs the agentic bench suite (ADR-2606071734) TWICE on the same tier+tasks: once bare-base, once base+adapter, capturing for each the first-draft acceptance rate through `hex analyze` + the best-of-N compile gate (ADR-2606072044), the general codegen quality_score, and throughput tok/s. Mark the AdapterRecord.promoted=true ONLY if acceptance_adapter > acceptance_base AND codegen quality not regressed beyond tolerance AND tok/s not regressed beyond budget (spec bench-gate-acceptance-lift-blocking). Persist the verdict and write `hex memory store lesson:hex-lora-<expert> \"<verdict>\"`. Before dispatching training OR a (potentially heavy) eval, request admission from the resource governor (ADR-2606080915); on refusal, defer with a logged reason and do not OOM (spec resource-governor-training-admission-negative).",
+      "files": ["hex-nexus/src/routes/inference.rs", "hex-cli/src/commands/inference.rs", "hex-nexus/src/sched_service.rs"],
+      "dependencies": ["step-6"],
+      "done_condition": "cargo check -p hex-nexus passes"
+    },
+    {
+      "id": "step-8",
+      "description": "Add the external training dev-tool + docs. Create scripts/train-lora.sh (permitted build/dev-tooling exception — NOT runtime): consumes .hex/corpus/<expert>/corpus.jsonl, runs a LoRA fine-tune (rank 4, alpha 16, target final-layer FFN modules per ADR-2606161300/DMoE) of the configured T2 base, exports a GGUF adapter, and prints the `hex inference adapter register ...` command to run. The script is the ONLY non-hex surface and is clearly fenced as offline dev tooling. Document the full Phase 0→1 loop (corpus build → train → register → attach → evaluate → promote) in docs/adrs/ADR-2606161300 References or a sibling docs/specs note, including the 16GB-GPU caveat (quantized/off-box training per project_qwen_next_hardware_ceiling).",
+      "files": ["scripts/train-lora.sh", "docs/specs/hex-lora-idiom-phase01.json"],
+      "dependencies": ["step-7"],
+      "done_condition": "shellcheck scripts/train-lora.sh passes and the script --help documents the loop"
+    },
+    {
+      "id": "step-9",
+      "description": "Tests + full validation against the 8 behavioral specs. Unit tests in hex-core/src/corpus.rs (content_hash stability/sensitivity; default glob mapping per expert). hex-nexus tests for build_corpus (every record has source_path; knowledge-unit isolation — a hex-testing glob never appears in a hex-boundaries corpus; --dry-run writes nothing) and for adapter attachment fallback (disabled/absent adapter → bare-base path; enabled → composed path) using injected fixtures, NOT live model calls. A regression test for spec enforcement-stays-external-negative: a fixture diff with a known boundary violation yields an IDENTICAL `hex analyze` verdict whether or not an adapter is registered. Run `hex dev validate` so all 8 specs in docs/specs/hex-lora-idiom-phase01.json are exercised.",
+      "files": ["hex-core/src/corpus.rs", "hex-nexus/src/corpus_build.rs", "docs/specs/hex-lora-idiom-phase01.json"],
+      "dependencies": ["step-8"],
+      "done_condition": "hex dev validate passes (build + test + analyze + behavioral specs)"
+    }
+  ]
+}
