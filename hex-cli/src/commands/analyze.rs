@@ -670,31 +670,43 @@ pub struct RustViolation {
 /// so nested workspaces like `spacetime-modules/hexflo-coordination/` are included.
 /// Excludes `target/` directories and git worktrees (`hex-worktrees*/`).
 fn find_workspace_crate_dirs(root: &Path) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    let Ok(depth1) = std::fs::read_dir(root) else { return dirs; };
-    for entry in depth1.flatten() {
-        let path = entry.path();
-        if !path.is_dir() { continue; }
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if name == "target" || name.starts_with("hex-worktrees") || name.starts_with('.') {
-            continue;
+    // Recursive, bounded. The previous scan went exactly two levels deep, which misses the common
+    // hexagonal layout that groups adapter crates under a parent directory:
+    //
+    //   okf-adapters/secondary/yaml-serde/Cargo.toml     <- depth 3, previously invisible
+    //
+    // A workspace whose adapters are invisible reports no adapter layers and no adapter boundary
+    // violations, which reads as a clean result rather than an incomplete scan.
+    const MAX_DEPTH: usize = 4;
+    fn walk(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+        if depth > MAX_DEPTH {
+            return;
         }
-        if path.join("Cargo.toml").is_file() {
-            dirs.push(path.clone());
-        }
-        // Also scan one level deeper (e.g. spacetime-modules/hexflo-coordination/)
-        if let Ok(depth2) = std::fs::read_dir(&path) {
-            for sub in depth2.flatten() {
-                let sub_path = sub.path();
-                if sub_path.is_dir() && sub_path.join("Cargo.toml").is_file() {
-                    let sub_name = sub_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if sub_name != "target" {
-                        dirs.push(sub_path);
-                    }
-                }
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
             }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            // Never descend into build output, VCS/tooling dirs, or a crate's own sources.
+            if name == "target"
+                || name == "src"
+                || name == "node_modules"
+                || name.starts_with("hex-worktrees")
+                || name.starts_with('.')
+            {
+                continue;
+            }
+            if path.join("Cargo.toml").is_file() {
+                out.push(path.clone());
+            }
+            // Keep descending regardless: a crate may contain nested member crates.
+            walk(&path, depth + 1, out);
         }
     }
+    let mut dirs = Vec::new();
+    walk(root, 1, &mut dirs);
     dirs
 }
 
@@ -732,6 +744,49 @@ static RUST_LAYER_RULES: &[RustLayerRule] = &[
     RustLayerRule { label: "usecases", layer: "Use Cases", signals: &["orchestration/", "usecases/"], matches: match_rust_usecases },
 ];
 
+
+/// Classify a hex layer from the CRATE's path, for workspaces that put one layer per crate.
+///
+/// Two layouts are idiomatic for hexagonal Rust, and hex must read both:
+///
+///   dir-per-layer     `hex-core/src/domain/tokens.rs`        layer is a subdirectory of src/
+///   crate-per-layer   `okf-domain/src/lib.rs`                layer IS the crate
+///
+/// Only the first was recognised, so a crate-per-layer workspace classified every file as
+/// Infrastructure and `analyze` reported score 100 with zero violations — a vacuous pass
+/// indistinguishable from a clean one. That is the layout hex should most approve of: with a crate
+/// per layer, Cargo refuses to resolve an undeclared import, so a boundary violation is a compile
+/// error rather than something a linter has to notice.
+///
+/// `crate_rel` is the crate directory relative to the workspace root, so nested adapter crates
+/// (`okf-adapters/secondary/yaml-serde`) are classified by their path, and flat layer crates
+/// (`okf-domain`) by the last `-`/`_` separated segment of the directory name.
+fn classify_rust_crate_layer(crate_rel: &str) -> Option<&'static str> {
+    let p = crate_rel.replace('\\', "/");
+    // Path form first: an adapter crate says which side it is on by where it lives.
+    if p.contains("adapters/primary/") {
+        return Some("Primary Adapters");
+    }
+    if p.contains("adapters/secondary/") {
+        return Some("Secondary Adapters");
+    }
+    // Otherwise the crate NAME carries the layer: okf-domain, my_app_ports, usecases.
+    let last = p.rsplit('/').next().unwrap_or(&p);
+    let seg = last.rsplit(['-', '_']).next().unwrap_or(last);
+    match seg {
+        "domain" => Some("Domain"),
+        "ports" | "port" => Some("Ports"),
+        "usecases" | "usecase" | "orchestration" => Some("Use Cases"),
+        _ => None,
+    }
+}
+
+/// Layer for a file, from the crate it lives in and its path under `src/`.
+/// The `src/` path wins so existing dir-per-layer workspaces classify exactly as before.
+fn classify_rust_layer(crate_rel: &str, rel_to_src: &str) -> Option<&'static str> {
+    classify_rust_src_layer(rel_to_src).or_else(|| classify_rust_crate_layer(crate_rel))
+}
+
 /// Classify a path relative to a crate's `src/` directory into a hex layer label.
 /// Returns `None` for infrastructure (unclassified) files.
 fn classify_rust_src_layer(rel_to_src: &str) -> Option<&'static str> {
@@ -760,7 +815,8 @@ fn scan_rust_workspace_layers(root: &Path) -> Vec<(String, usize)> {
                 .unwrap_or(file)
                 .to_string_lossy()
                 .to_string();
-            match classify_rust_src_layer(&rel) {
+            let crate_rel = crate_dir.strip_prefix(root).unwrap_or(crate_dir).to_string_lossy().to_string();
+            match classify_rust_layer(&crate_rel, &rel) {
                 Some(layer) => *counts.entry(layer).or_insert(0) += 1,
                 None => infra_count += 1,
             }
@@ -810,7 +866,8 @@ fn scan_rust_boundary_violations(root: &Path) -> Vec<RustViolation> {
                 .unwrap_or(file_path)
                 .to_string_lossy()
                 .to_string();
-            let Some(layer) = classify_rust_src_layer(&rel_to_src) else {
+            let crate_rel = crate_dir.strip_prefix(root).unwrap_or(crate_dir).to_string_lossy().to_string();
+            let Some(layer) = classify_rust_layer(&crate_rel, &rel_to_src) else {
                 continue;
             };
             let file_rel = file_path
