@@ -1,0 +1,23 @@
+{
+  "name": "research-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone hexagonal app: host system overview + a browser for hex research docs (benchmarks, ADRs).",
+  "scripts": {
+    "start": "bun run src/composition-root.ts",
+    "dev": "bun --watch run src/composition-root.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "marked": "^15.0.6"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "id": "t1-fix-add",
+  "tier": "T1",
+  "axis_focus": [
+    "tool_protocol_fidelity",
+    "react_convergence"
+  ],
+  "instruction": "The function `add` in the target file returns `a - b`, which is wrong. Fix it so it returns the sum `a + b`. Change nothing else.",
+  "target_file": "bench-sandbox/src/lib.rs",
+  "oracle": {
+    "kind": "cargo_test",
+    "setup_files": {
+      "bench-sandbox/Cargo.toml": "[package]\nname = \"bench-sandbox\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n",
+      "bench-sandbox/src/lib.rs": "pub fn add(a: i64, b: i64) -> i64 { a - b }\n",
+      "bench-sandbox/tests/add.rs": "use bench_sandbox::add;\n#[test] fn pos() { assert_eq!(add(2,3), 5); }\n#[test] fn zero() { assert_eq!(add(-1,1), 0); }\n#[test] fn id() { assert_eq!(add(0,0), 0); }\n"
+    },
+    "command": "cargo test --manifest-path bench-sandbox/Cargo.toml --test add"
+  },
+  "graph_context_required": false,
+  "arms": [
+    "react",
+    "fast"
+  ],
+  "status": "verified",
+  "_verification": "oracle RED→GREEN confirmed 2026-06-30 (stub fails, reference impl passes all tests). Standalone [workspace] crate; command uses --manifest-path so it never collides with the hex workspace.",
+  "observed_baseline": {}
+}

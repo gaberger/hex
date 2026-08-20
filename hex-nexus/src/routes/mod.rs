@@ -959,6 +959,15 @@ pub fn build_router(state: SharedState) -> Router {
         // secrets resolve, then PATCHes quality_score (wp-inference-calibrate-endpoint).
         .route("/api/inference/calibrate/{id}", post(inference::calibrate_endpoint))
         .route("/api/inference/calibrate-all", post(inference::calibrate_all))
+        // LoRA idiom-expert corpus extraction (ADR-2606161300 Phase 0)
+        .route("/api/inference/corpus/build", post(inference::corpus_build))
+        .route("/api/inference/corpus/list", get(inference::corpus_list))
+        // LoRA adapter registry (ADR-2606161300 Phase 1)
+        .route("/api/inference/adapters", post(inference::adapter_register)
+            .get(inference::adapter_list))
+        .route("/api/inference/adapters/{id}", delete(inference::adapter_remove)
+            .patch(inference::adapter_patch))
+        .route("/api/inference/adapters/{id}/evaluate", post(inference::adapter_evaluate))
         // Direct executor (ADR-2026-06-04-1740 Path A): task → one agent → evidence → commit
         .route("/api/direct/execute", post(direct_execute))
         .route("/api/direct/runs", get(direct_runs))
