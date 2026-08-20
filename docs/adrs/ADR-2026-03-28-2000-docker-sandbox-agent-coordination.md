@@ -1,6 +1,6 @@
 # ADR-2026-03-28-2000: hex-agent as Claude Code-Independent Runtime in Docker AI Sandbox
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-28
 **Drivers:** Claude Code dependency limits model choice and portability; agents run without isolation on the host filesystem; no enforcement of worktree boundaries; no credential scoping per agent
 **Supersedes:** None

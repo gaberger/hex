@@ -430,7 +430,7 @@ const TeamDashboard: Component = () => {
   // Get agent status from REST API + SpacetimeDB
   const getAgentStatus = (name: string) => {
     const node = nodes().find(n => n.name === name);
-    const tasks = swarmTasks().filter((t: any) =>
+    const tasks = (swarmTasks() ?? []).filter((t: any) =>
       t.assignedAgent === name && t.status === "in_progress"
     );
 

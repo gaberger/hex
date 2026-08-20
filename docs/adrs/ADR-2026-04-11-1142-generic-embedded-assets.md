@@ -1,6 +1,6 @@
 # ADR-2026-04-11-1142: Generic-Only Embedded Assets in hex-cli/assets/
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/assets/ci/hex-ci.yml, hex-cli/assets/context-templates/services/hexflo-global.md, hex-cli/assets/context-templates/services/session-memory.md (+4 more)
 **Accepted:** 2026-05-04
 **Date:** 2026-04-11

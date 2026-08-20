@@ -11,7 +11,7 @@ use hex_nexus::adapters::ssh_tunnel::SshTunnelAdapter;
 use hex_nexus::adapters::remote_registry::RemoteRegistryAdapter;
 use hex_nexus::ports::ssh_tunnel::ISshTunnelPort;
 use hex_nexus::ports::remote_registry::IRemoteRegistryPort;
-use hex_nexus::remote::transport::*;
+use hex_nexus::domain::transport::*;
 use uuid::Uuid;
 
 const BAZZITE_HOST: &str = "bazzite.local";

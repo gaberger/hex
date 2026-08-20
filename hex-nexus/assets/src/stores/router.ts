@@ -36,6 +36,8 @@ export type Route =
   | { page: "commitments" }
   | { page: "mission-control" }
   | { page: "agent-runs" }
+  | { page: "direct-runs" }
+  | { page: "memory" }
   | { page: "ops-sla" }
   // Project-scoped
   | { page: "project"; projectId: string }
@@ -50,6 +52,7 @@ export type Route =
   | { page: "project-workplan-detail"; projectId: string; workplanId: string }
   | { page: "project-health"; projectId: string }
   | { page: "project-graph"; projectId: string }
+  | { page: "project-knowledge-graph"; projectId: string }
   | { page: "project-files"; projectId: string }
   | { page: "project-file"; projectId: string; filePath: string }
   | { page: "project-chat"; projectId: string; sessionId?: string }
@@ -59,7 +62,7 @@ export type Route =
 // ── State ───────────────────────────────────────────────────────────────────
 
 // Signal is safe at module level — no computation, just a getter/setter pair
-const [route, setRoute] = createSignal<Route>({ page: "mission-control" });
+const [route, setRoute] = createSignal<Route>({ page: "direct-runs" });
 export { route };
 
 // ── Derived state (assigned inside createRoot by initRouterStore) ───────────
@@ -237,7 +240,7 @@ export function navigate(newRoute: Route) {
 function routeToHash(r: Route): string {
   switch (r.page) {
     case "control-plane":
-      return "#/";
+      return "#/control-plane";
     case "inference":
       return "#/inference";
     case "fleet":
@@ -270,6 +273,10 @@ function routeToHash(r: Route): string {
       return "#/mission-control";
     case "agent-runs":
       return "#/agent-runs";
+    case "direct-runs":
+      return "#/direct-runs";
+    case "memory":
+      return "#/memory";
     case "missions":
       return "#/missions";
     case "mission-detail":
@@ -300,6 +307,8 @@ function routeToHash(r: Route): string {
       return `#/project/${r.projectId}/health`;
     case "project-graph":
       return `#/project/${r.projectId}/graph`;
+    case "project-knowledge-graph":
+      return `#/project/${r.projectId}/knowledge-graph`;
     case "project-files":
       return `#/project/${r.projectId}/files`;
     case "project-file":
@@ -320,6 +329,19 @@ function routeToHash(r: Route): string {
 function hashToRoute(hash: string): Route {
   const path = hash.replace("#", "") || "/";
   const parts = path.split("/").filter(Boolean);
+  // Fresh load (no hash) lands on Direct Runs — the new evidence-gated monitor,
+  // not the retired Mission Control persona board (2026-06-04 cleanup).
+  if (parts.length === 0) return { page: "direct-runs" };
+  // ADR-2606061359: org-sim surfaces retired — redirect to the Workbench
+  // (single-agent loop). Overrides the legacy per-route handlers below.
+  if ([
+    "mission-control", "org-chart", "org-comms", "team", "missions", "persona-health",
+    "brain", "decisions", "merge-gate", "thoughts", "commitments", "ops-sla",
+  ].includes(parts[0])) {
+    return { page: "direct-runs" };
+  }
+  if (parts[0] === "memory") return { page: "memory" };
+  if (parts[0] === "control-plane") return { page: "control-plane" };
 
   // Global routes
   if (parts[0] === "inference") return { page: "inference" };
@@ -338,6 +360,7 @@ function hashToRoute(hash: string): Route {
   if (parts[0] === "commitments") return { page: "commitments" };
   if (parts[0] === "mission-control") return { page: "mission-control" };
   if (parts[0] === "agent-runs") return { page: "agent-runs" };
+  if (parts[0] === "direct-runs") return { page: "direct-runs" };
   if (parts[0] === "missions") {
     if (parts[1]) return { page: "mission-detail", missionId: decodeURIComponent(parts[1]) };
     return { page: "missions" };
@@ -376,6 +399,9 @@ function hashToRoute(hash: string): Route {
 
       case "graph":
         return { page: "project-graph", projectId };
+
+      case "knowledge-graph":
+        return { page: "project-knowledge-graph", projectId };
 
       case "files":
         if (parts[3]) {

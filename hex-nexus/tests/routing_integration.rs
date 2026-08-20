@@ -11,7 +11,7 @@
 
 use hex_nexus::adapters::spacetime_inference::InferenceProviderRow;
 use hex_nexus::quant_router::select_provider_task_aware;
-use hex_nexus::remote::transport::TaskTier;
+use hex_nexus::domain::transport::TaskTier;
 use hex_nexus::task_type_classifier::{classify, TaskType};
 
 // ── Helpers ───────────────────────────────────────────────────────────────

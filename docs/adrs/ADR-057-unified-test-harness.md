@@ -1,6 +1,6 @@
 # ADR-057: Unified Test Harness & Linting Pipeline
 
-**Status:** Accepted
+**Status:** Completed
 **Accepted Date:** 2026-03-22
 ## Date: 2026-03-22
 

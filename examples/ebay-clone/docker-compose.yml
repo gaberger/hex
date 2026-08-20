@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  stdb:
+    image: hex-nexus/stdb:latest
+    container_name: stdb_container
+    ports:
+      - "5001:5001"
+    environment:
+      STDB_PORT: 5001
+
+  backend:
+    build: ./backend
+    container_name: backend_container
+    ports:
+      - "8080:8080"
+    depends_on:
+      - stdb
+    environment:
+      BACKEND_PORT: 8080
+      STDB_URL: http://stdb_container:5001
+
+  vite:
+    build: ./vite
+    container_name: vite_container
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    environment:
+      VITE_PORT: 5173
+      BACKEND_URL: http://backend_container:8080
+
+networks:
+  default:
+    driver: bridge

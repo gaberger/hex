@@ -171,7 +171,7 @@ const ProjectDetail: Component = () => {
   const projectTasks = createMemo(() => {
     const ids = new Set(projectSwarmIds());
     if (ids.size === 0) return swarmTasks(); // fallback: show all if no project-scoped swarms
-    return swarmTasks().filter((t: any) => ids.has(t.swarm_id ?? t.swarmId ?? ""));
+    return (swarmTasks() ?? []).filter((t: any) => ids.has(t.swarm_id ?? t.swarmId ?? ""));
   });
 
   // Active workplan for this project

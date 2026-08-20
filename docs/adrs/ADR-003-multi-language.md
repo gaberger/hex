@@ -1,6 +1,6 @@
 # ADR-003: Multi-Language Support — TypeScript, Go, Rust
 
-**Status:** Accepted
+**Status:** Completed
 **Verified:** 2026-05-12 via adversarial check — Rust workspace (hex-cli, hex-nexus, hex-core, hex-agent) + TS bundle (hex-nexus/assets) all present
 ## Date: 2026-03-15
 

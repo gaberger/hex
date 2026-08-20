@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use tokio::sync::mpsc;
-use crate::remote::transport::{AgentMessage, TransportError};
+use crate::domain::transport::{AgentMessage, TransportError};
 
 /// Bidirectional WebSocket transport for agent communication.
 ///

@@ -792,6 +792,32 @@ pub(crate) fn priority_for_tools(ep: &crate::routes::secrets::InferenceEndpointE
     provider_tier * 10 + health
 }
 
+/// Pick Ollama's `num_ctx` (input context window). Ollama's default is only
+/// ~2-8k, which SILENTLY truncates large prompts — a Claude Code request is
+/// ~36k tokens (big system prompt + tool schemas), so the prompt fills the
+/// window and the model emits ~1 token. We size `num_ctx` to the actual prompt
+/// (≈chars/4 + generation headroom), bucketed to powers of two so same-size
+/// workloads reuse one loaded model (Ollama reloads when num_ctx changes).
+/// `HEX_OLLAMA_NUM_CTX` is a hard override for operators who want it fixed.
+fn pick_num_ctx(payload_chars: usize, num_predict: u32) -> u32 {
+    if let Ok(n) = std::env::var("HEX_OLLAMA_NUM_CTX").ok().and_then(|v| v.parse::<u32>().ok()).ok_or(()) {
+        return n;
+    }
+    let est_prompt_tokens = (payload_chars / 4) as u32;
+    // prompt + output + 25% headroom for tokenizer drift / chat-template overhead.
+    let needed = est_prompt_tokens
+        .saturating_add(num_predict)
+        .saturating_add(est_prompt_tokens / 4)
+        .saturating_add(1024);
+    // Smallest bucket that fits; clamp to a sane floor/ceiling.
+    for bucket in [8192u32, 16384, 32768, 65536, 131072] {
+        if needed <= bucket {
+            return bucket;
+        }
+    }
+    131072
+}
+
 /// Like `call_inference_endpoint` but propagates a tools schema to the
 /// provider and extracts `tool_calls` from the response. Returns
 /// (InferenceResult, tool_calls_array). When the model emits no tool
@@ -805,6 +831,77 @@ pub(crate) fn priority_for_tools(ep: &crate::routes::secrets::InferenceEndpointE
 /// Anything else: delegates to the no-tools `call_inference_endpoint`
 /// path and returns Vec::new() for tool_calls — caller's text-mode
 /// parser is the fallback.
+/// Translate Anthropic-style messages (string OR array content with text/
+/// tool_use/tool_result blocks) into Ollama's `/api/chat` shape:
+///   - string content passes through unchanged;
+///   - an assistant array turn → `{role:"assistant", content:<text>, tool_calls:[{function:{name,arguments}}]}`;
+///   - a user array turn's `tool_result` blocks → separate `{role:"tool", content:<string>}` messages.
+/// Without this, the react loop's multi-turn turns (which carry array content
+/// after the first tool call) make Ollama 400 with
+/// "cannot unmarshal array into ... content of type string" — so no local model
+/// can complete an agentic loop (diagnostic 2026-06-07).
+fn anthropic_messages_to_ollama(messages: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+    for m in messages {
+        let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+        match m.get("content") {
+            Some(serde_json::Value::String(s)) => {
+                out.push(json!({ "role": role, "content": s }));
+            }
+            Some(serde_json::Value::Array(blocks)) => {
+                let mut text = String::new();
+                let mut tool_calls: Vec<serde_json::Value> = Vec::new();
+                let mut tool_results: Vec<String> = Vec::new();
+                for b in blocks {
+                    match b.get("type").and_then(|t| t.as_str()) {
+                        Some("text") => {
+                            if let Some(t) = b.get("text").and_then(|t| t.as_str()) {
+                                if !text.is_empty() {
+                                    text.push('\n');
+                                }
+                                text.push_str(t);
+                            }
+                        }
+                        Some("tool_use") => {
+                            tool_calls.push(json!({
+                                "function": {
+                                    "name": b.get("name").and_then(|n| n.as_str()).unwrap_or(""),
+                                    "arguments": b.get("input").cloned().unwrap_or_else(|| json!({})),
+                                }
+                            }));
+                        }
+                        Some("tool_result") => {
+                            let s = match b.get("content") {
+                                Some(serde_json::Value::String(s)) => s.clone(),
+                                Some(v) => serde_json::to_string(v).unwrap_or_default(),
+                                None => String::new(),
+                            };
+                            tool_results.push(s);
+                        }
+                        _ => {}
+                    }
+                }
+                if role == "assistant" {
+                    let mut msg = json!({ "role": "assistant", "content": text });
+                    if !tool_calls.is_empty() {
+                        msg["tool_calls"] = json!(tool_calls);
+                    }
+                    out.push(msg);
+                } else {
+                    if !text.is_empty() {
+                        out.push(json!({ "role": "user", "content": text }));
+                    }
+                    for tr in tool_results {
+                        out.push(json!({ "role": "tool", "content": tr }));
+                    }
+                }
+            }
+            _ => out.push(json!({ "role": role, "content": "" })),
+        }
+    }
+    out
+}
+
 pub(crate) async fn call_inference_endpoint_with_tools(
     ep: &crate::routes::secrets::InferenceEndpointEntry,
     messages: &[serde_json::Value],
@@ -864,6 +961,15 @@ pub(crate) async fn call_inference_endpoint_with_tools(
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(2048);
+        // Translate Anthropic content-blocks → Ollama's string-content + tool
+        // message shape, or multi-turn agentic turns 400 (see fn doc).
+        let ollama_messages = anthropic_messages_to_ollama(messages);
+        // num_ctx sized to the actual prompt (messages + tool schemas) so large
+        // agentic clients like Claude Code aren't silently truncated. See
+        // pick_num_ctx.
+        let payload_chars = serde_json::to_string(&ollama_messages).map(|s| s.len()).unwrap_or(0)
+            + serde_json::to_string(&openai_tools).map(|s| s.len()).unwrap_or(0);
+        let num_ctx = pick_num_ctx(payload_chars, num_predict);
         let think_enabled = std::env::var("HEX_OLLAMA_THINK")
             .ok()
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -872,11 +978,11 @@ pub(crate) async fn call_inference_endpoint_with_tools(
             format!("{base}/api/chat"),
             json!({
                 "model": model,
-                "messages": messages,
+                "messages": ollama_messages,
                 "stream": false,
                 "think": think_enabled,
                 "tools": openai_tools,
-                "options": { "num_predict": num_predict },
+                "options": { "num_predict": num_predict, "num_ctx": num_ctx },
             }),
         )
     } else {
@@ -884,12 +990,15 @@ pub(crate) async fn call_inference_endpoint_with_tools(
         // Different vendors use different OpenAI-compat root paths;
         // openai_compat_chat_url handles all of them.
         let url = openai_compat_chat_url(&ep.url);
+        // 16384 ceiling for reasoning models (see call_inference_endpoint).
+        let max_tokens: u32 = std::env::var("HEX_OPENAI_MAX_TOKENS")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(16384);
         (
             url,
             json!({
                 "model": model,
                 "messages": messages,
-                "max_tokens": 4096,
+                "max_tokens": max_tokens,
                 "tools": openai_tools,
             }),
         )
@@ -1005,6 +1114,10 @@ pub(crate) async fn call_inference_endpoint(
                 let url = format!("{}/api/chat", ep.url);
                 let num_predict: u32 = std::env::var("HEX_OLLAMA_NUM_PREDICT")
                     .ok().and_then(|s| s.parse().ok()).unwrap_or(1024);
+                // num_ctx sized to the actual prompt (see pick_num_ctx) so large
+                // prompts aren't silently truncated by Ollama's small default.
+                let payload_chars = serde_json::to_string(messages).map(|s| s.len()).unwrap_or(0);
+                let num_ctx = pick_num_ctx(payload_chars, num_predict);
                 // CRITICAL: qwen3 family is a *thinking* model — by default
                 // it spends all output tokens on <think> reasoning and emits
                 // an EMPTY `message.content`. Every responder/drafter/twin
@@ -1019,17 +1132,26 @@ pub(crate) async fn call_inference_endpoint(
                     "messages": messages,
                     "stream": false,
                     "think": think_enabled,
-                    "options": { "num_predict": num_predict },
+                    "options": { "num_predict": num_predict, "num_ctx": num_ctx },
                 });
                 (url, body)
             }
             _ => {
                 // OpenAI-compatible (vLLM, Google Gemini compat layer, etc).
                 let url = openai_compat_chat_url(&ep.url);
+                // 16384 ceiling (not 4096): reasoning models served via this
+                // path (Tenstorrent DeepSeek-R1, Qwen3-32B in thinking mode)
+                // spend thousands of tokens reasoning before emitting the
+                // answer; a 4096 cap truncated their output mid-string or left
+                // it empty. max_tokens is a ceiling — models still stop at
+                // natural completion — so a higher bound is safe. Override via
+                // HEX_OPENAI_MAX_TOKENS.
+                let max_tokens: u32 = std::env::var("HEX_OPENAI_MAX_TOKENS")
+                    .ok().and_then(|s| s.parse().ok()).unwrap_or(16384);
                 let body = json!({
                     "model": model,
                     "messages": messages,
-                    "max_tokens": 4096,
+                    "max_tokens": max_tokens,
                 });
                 (url, body)
             }
@@ -1384,6 +1506,26 @@ mod compat_url_tests {
             openai_compat_chat_url("https://generativelanguage.googleapis.com/v1beta/openai/"),
             "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         );
+    }
+}
+
+#[cfg(test)]
+mod num_ctx_tests {
+    use super::pick_num_ctx;
+    #[test]
+    fn small_prompt_uses_small_bucket() {
+        // ~350 chars ≈ 90 tokens → smallest bucket.
+        assert_eq!(pick_num_ctx(350, 1024), 8192);
+    }
+    #[test]
+    fn claude_code_sized_prompt_gets_large_bucket() {
+        // ~36k tokens ≈ 144k chars → needs the 65536 bucket (or larger).
+        let n = pick_num_ctx(144_000, 2048);
+        assert!(n >= 65536, "got {n}");
+    }
+    #[test]
+    fn buckets_are_monotonic_in_prompt_size() {
+        assert!(pick_num_ctx(40_000, 1024) <= pick_num_ctx(400_000, 1024));
     }
 }
 

@@ -1,6 +1,6 @@
 # ADR-2026-03-24-1231: Persistent Agent Coordination via SpacetimeDB
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-24
 - **Relates to**: ADR-025 (SpacetimeDB State Backend), ADR-027 (HexFlo Swarm Coordination), ADR-037 (Agent Lifecycle), ADR-048 (Session Agent Registration), ADR-2026-03-24-0130 (Declarative Swarm from YAML)
 

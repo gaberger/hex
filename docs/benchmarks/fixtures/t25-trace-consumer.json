@@ -1,0 +1,23 @@
+{
+  "id": "t25-trace-consumer",
+  "tier": "T2.5",
+  "axis_focus": ["graph_context_utilization", "evidence_gated_success"],
+  "_note": "The differentiator case: the naive edit (rename the field) compiles in the target file but BREAKS a consumer in another module. Only an agent that traces consumers (via the graph, or by reading widely) passes. Run this arm both graph-on and graph-off — Δ_graph is the thesis signal.",
+  "instruction": "Rename the field `qty` to `quantity` on the `Order` struct in src/order.rs, and update every use of it across the crate so the build still passes. Do not leave any reference to the old name.",
+  "target_file": "bench-sandbox/src/order.rs",
+  "oracle": {
+    "kind": "cargo_test",
+    "setup_files": {
+      "bench-sandbox/Cargo.toml": "[package]\nname = \"bench-sandbox\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+      "bench-sandbox/src/lib.rs": "pub mod order;\npub mod invoice;\n",
+      "bench-sandbox/src/order.rs": "pub struct Order { pub qty: u32, pub sku: String }\nimpl Order { pub fn new(sku: &str, qty: u32) -> Self { Self { qty, sku: sku.into() } } }\n",
+      "bench-sandbox/src/invoice.rs": "use crate::order::Order;\n// CONSUMER in another module — reads the field the agent is renaming.\npub fn line_total(o: &Order, unit_price: u32) -> u32 { o.qty * unit_price }\n",
+      "bench-sandbox/tests/rename.rs": "use bench_sandbox::order::Order;\nuse bench_sandbox::invoice::line_total;\n#[test] fn quantity_field_and_consumer_intact() {\n    let o = Order::new(\"abc\", 3);\n    assert_eq!(o.quantity, 3);            // new name required\n    assert_eq!(line_total(&o, 10), 30);  // consumer must still work\n}\n"
+    },
+    "command": "cargo test -p bench-sandbox --test rename"
+  },
+  "graph_context_required": true,
+  "arms": ["react"],
+  "status": "draft",
+  "observed_baseline": {}
+}

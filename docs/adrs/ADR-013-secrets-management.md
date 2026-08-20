@@ -1,6 +1,6 @@
 # ADR-013: Secrets Management
 
-**Status:** Accepted
+**Status:** Completed
 **Verified:** 2026-05-12 via adversarial check — tracked `.env` files (committed secrets risk): 0 matches (target: 0)
 ## Date
 

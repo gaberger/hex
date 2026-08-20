@@ -182,7 +182,11 @@ fn adr_id_re() -> &'static Regex {
     // pattern first). Falls back to legacy sequential / 10-digit form.
     // Without this, `ADR-2026-03-22-1500` truncates to `ADR-2026` and the
     // doctor reports 154 duplicates.
-    RE.get_or_init(|| Regex::new(r"ADR-\d{4}-\d{2}-\d{2}-\d{4}|ADR-\d+").unwrap())
+    // Order matters (leftmost-first): full date-time (YYYY-MM-DD-HHMM), then
+    // date-only (YYYY-MM-DD, used by ADR-2026-05-09/-05-12/-05-20), then the
+    // legacy sequential / 10-digit fallback. Without the date-only form those
+    // three collapse to `ADR-2026` and read as duplicates.
+    RE.get_or_init(|| Regex::new(r"ADR-\d{4}-\d{2}-\d{2}-\d{4}|ADR-\d{4}-\d{2}-\d{2}|ADR-\d+").unwrap())
 }
 
 /// Strict canonical-format extraction. Mirrors the parent module's
@@ -247,7 +251,7 @@ fn classify_status(value: &str) -> Option<&'static str> {
         .collect();
     let words: Vec<&str> = cleaned.split_whitespace().collect();
 
-    let known = ["proposed", "accepted", "deprecated", "superseded", "abandoned", "rejected"];
+    let known = ["proposed", "accepted", "completed", "deprecated", "superseded", "abandoned", "rejected"];
     let matches: Vec<&'static str> = known
         .iter()
         .copied()
@@ -331,9 +335,13 @@ fn has_superseded_by(content: &str) -> bool {
         let stripped = line.trim().trim_start_matches("- ").trim_start();
         let lower = stripped.to_lowercase();
         // Accept canonical `**Superseded by:**`, the buggy `**Superseded by**:`,
-        // and the YAML-style `superseded by:` / `superseded-by:`.
+        // the hyphenated `**Superseded-By:**` form that TEMPLATE.md, `hex adr
+        // supersede`, and `is_superseded` all emit, and the YAML-style
+        // `superseded by:` / `superseded-by:`.
         if lower.starts_with("**superseded by:**")
             || lower.starts_with("**superseded by**:")
+            || lower.starts_with("**superseded-by:**")
+            || lower.starts_with("**superseded-by**:")
             || lower.starts_with("superseded by:")
             || lower.starts_with("superseded-by:")
         {

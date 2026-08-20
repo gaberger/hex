@@ -1,6 +1,6 @@
 # ADR-012: ADR Lifecycle Tracking
 
-**Status:** Accepted
+**Status:** Completed
 ## Date
 
 2026-03-17

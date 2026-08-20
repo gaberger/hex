@@ -1,6 +1,6 @@
 # ADR-2026-03-22-1500: Timestamp-Based ADR Numbering (YYMMDDHHMM)
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-22
 **Drivers:** Duplicate ADR-059 collision (two files with same sequential number); multi-agent concurrent ADR creation makes sequential `max+1` unreliable
 **Supersedes:** None (extends ADR-012 lifecycle tracking)

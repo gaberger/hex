@@ -1,6 +1,6 @@
 # ADR-2026-03-25-0900: Reviewer RL Integration and Structured-Output Reliability
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-25
 **Deciders**: Gary
 

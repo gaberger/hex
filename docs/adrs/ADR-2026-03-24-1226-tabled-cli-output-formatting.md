@@ -1,6 +1,6 @@
 # ADR-2026-03-24-1226: Structured CLI Table Output via `tabled`
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/fmt.rs
 **Date:** 2026-03-24
 **Drivers:** CLI commands (`hex adr list`, `hex task list`, `hex agent list`, `hex status`, etc.) use hand-crafted `println!` with manual padding and Unicode box-drawing characters. This is fragile, hard to maintain, and produces inconsistent formatting across commands.

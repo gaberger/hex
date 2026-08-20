@@ -1,6 +1,6 @@
 # ADR-2026-04-11-2000: Hex Self-Sufficient Dispatch (Standalone Mode)
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/src/adapters/spacetime_state.rs, hex-nexus/src/orchestration/workplan_executor.rs
 **Verified:** 2026-05-12 via adversarial check — hex-cli/src/commands/ci.rs::standalone_gate exists (referenced ADR target file present)
 **Date:** 2026-04-11

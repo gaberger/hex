@@ -1,6 +1,7 @@
 # ADR-2026-04-15-1430 — Parallel Worktree-Isolated Drain
 
-**Status:** Accepted
+**Status:** Superseded
+**Superseded-By:** ADR-2606061359
 **Date:** 2026-04-15
 **Accepted:** 2026-05-05
 **Related:** ADR-2026-04-15-0100 (worktree merge fast-forward guard), ADR-2026-04-15-0130 (worktree cleanup safety), ADR-2026-04-14-1400 (sched evidence-guard), ADR-2026-04-15-1200 (idle research swarm), ADR-2026-04-15-1330 (per-project queue isolation), ADR-2026-04-15-1400 (queue list show running)

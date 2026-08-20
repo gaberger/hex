@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-07
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: spacetime-modules/hexflo-coordination/src/lib.rs
 
 ## Context

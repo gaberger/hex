@@ -60,11 +60,29 @@ git2 = { version = "0.20", features = ["vendored-libgit2"] }
 toml = "0.8"
 # Shared domain types and port traits (hex-core is the gravity center)
 hex-core = { path = "../hex-core" }
+# Knowledge-graph engine
+hex-graph = { path = "../hex-graph" }
+# Architecture analysis engine (tree-sitter boundary checking) — ADR-2606071340 P1
+hex-analysis = { path = "../hex-analysis" }
+# Pure git plumbing (status/log/diff/blame/worktree) — ADR-2606071340 P1
+hex-git = { path = "../hex-git" }
+# Single-agent execution loop (direct_exec/react/workspace + tools) — ADR-2606071340 P1
+hex-exec = { path = "../hex-exec" }
+# SpacetimeDB state adapter (implements hex_core::ports::state) — ADR-2606071340 P1
+hex-state = { path = "../hex-state" }
 dirs = "5"
 # Docker container lifecycle for sandbox agent coordination (feat-docker-sandbox)
 bollard = "0.17"
 # SpacetimeDB client SDK — optional, enabled via --features spacetimedb
 spacetimedb-sdk = { version = "2.0", optional = true }
+
+# jemalloc as the global allocator (ADR-2026-06-04-1740): glibc's malloc thrashed
+# under serde_json::Value churn from ~20 STDB poll loops — capping arenas
+# (MALLOC_ARENA_MAX=2) fixed RSS but funneled all alloc traffic onto 2 arena locks,
+# burning ~6 cores in futex contention. jemalloc's per-thread caches eliminate both
+# the fragmentation and the lock storm, letting the arena cap be removed.
+[target.'cfg(unix)'.dependencies]
+tikv-jemallocator = "0.6"
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

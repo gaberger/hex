@@ -92,7 +92,7 @@ Tier is driven by WorkplanTask `strategy_hint` (`scaffold`/`transform`/`script` 
 - ALWAYS read a file before editing it.
 - NEVER save files to the root folder.
 - NEVER commit secrets, credentials, or `.env` files.
-- ALWAYS run `bun test` after code changes; `bun run build` before committing.
+- ALWAYS run `hex dev validate` after code changes and before committing.
 - NEVER `mock.module()` in tests — use the Deps pattern (ADR-014).
 
 ## Task Tier Routing (ADR-2026-04-11-0227)
@@ -129,7 +129,7 @@ Checked by `hex analyze .` + the dead-code-analyzer agent:
 ## File Organization
 
 ```
-# Rust workspace (6 crates)
+# Rust workspace
 hex-cli/                 CLI binary — the canonical user entry point
 hex-nexus/               FS-bridge daemon + dashboard (axum, :5555)
   src/analysis/            Tree-sitter, boundary checking
@@ -142,6 +142,7 @@ hex-core/                Shared domain types & port traits (zero deps)
 hex-agent/               Architecture enforcement runtime
 hex-desktop/             Tauri wrapper for dashboard
 hex-parser/              Code parsing utilities
+hex-analyzer/ hex-analysis/ hex-git/ hex-state/ hex-exec/ hex-graph/
 
 # SpacetimeDB WASM modules (7 total — ADR-2026-04-05-0900)
 spacetime-modules/
@@ -150,14 +151,6 @@ spacetime-modules/
   inference-gateway/       LLM routing
   secret-grant/            TTL-based key distribution
   rl-engine/ chat-relay/ neural-lab/
-
-# TypeScript library
-src/
-  core/domain/ core/ports/ core/usecases/
-  adapters/primary/ adapters/secondary/
-  infrastructure/           Tree-sitter queries
-  composition-root.ts       Single DI point
-  cli.ts index.ts
 
 # Embedded templates — baked into hex-cli & hex-nexus via rust-embed
 hex-cli/assets/
@@ -169,22 +162,21 @@ hex-cli/assets/
 # Enforced by `hex doctor` + `hex ci` (embedded-assets-generic check).
 
 # Support
-tests/{unit,integration}/   examples/   docs/{adrs,specs,workplans,analysis}/
+examples/   docs/{adrs,specs,workplans,analysis}/
 .claude/{skills,agents}/    agents/  skills/  config/  scripts/
 ```
 
 ## Build & Test
 
 ```bash
-# Rust (primary)
+hex dev validate   # build + test + analyze + behavioral specs (preferred)
+
+# Raw cargo (bootstrap/emergency only — see Autonomous Operation rule 0)
 cargo build -p hex-cli --release
 cargo build -p hex-nexus --release
-
-# TypeScript library (secondary)
-bun run build   # bundle to dist/
-bun test        # unit + property + smoke
-bun run check   # tsc --noEmit
 ```
+
+The TypeScript library that previously lived in `src/` was excised (wp-excise-ts-phantom); hexagonal TS rules above apply to scaffolded target projects, not this repo.
 
 **IMPORTANT**: Never recommend commands not in `hex --help`. If it's not in the Rust CLI, it doesn't exist.
 

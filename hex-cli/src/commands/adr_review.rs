@@ -901,7 +901,7 @@ impl LocalAdrReviewer {
     fn check_metadata(adr: &AdrMetadata) -> Vec<ReviewFinding> {
         let mut findings = Vec::new();
         let valid_statuses = [
-            "proposed", "accepted", "superseded", "abandoned", "deferred", "deprecated",
+            "proposed", "accepted", "completed", "superseded", "abandoned", "deferred", "deprecated", "rejected",
         ];
 
         if adr.status.is_empty() {

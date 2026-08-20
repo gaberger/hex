@@ -1,6 +1,6 @@
 # ADR-046: SpacetimeDB Single Authority for State Mutations
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-21
 **Drivers:** Ghost re-registration bug — ControlPlane was re-creating deleted projects via REST
 

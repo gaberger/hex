@@ -17,8 +17,8 @@ use crate::ports::agent_lifecycle::IAgentLifecyclePort;
 use crate::ports::agent_transport::IAgentTransportPort;
 use crate::ports::remote_registry::IRemoteRegistryPort;
 use crate::ports::ssh_tunnel::ISshTunnelPort;
-use crate::remote::transport::*;
-use crate::remote::transport::SshAuth;
+use crate::domain::transport::*;
+use crate::domain::transport::SshAuth;
 
 /// Manages the full lifecycle of remote agents:
 /// spawn → register → heartbeat → task assignment → result collection → teardown

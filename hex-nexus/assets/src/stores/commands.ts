@@ -205,7 +205,7 @@ const commands: Command[] = [
     action: tracked("Retrieve Memory", "memory", async () => {
       const key = prompt("Key to retrieve:");
       if (!key) return;
-      const entry = hexfloMemory().find((m: any) => m.key === key);
+      const entry = (hexfloMemory() ?? []).find((m: any) => m.key === key);
       if (entry) {
         const val = String(entry.value ?? "").slice(0, 100);
         addToast("success", `${key} = ${val}`);

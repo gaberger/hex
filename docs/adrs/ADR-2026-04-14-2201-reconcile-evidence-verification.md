@@ -1,6 +1,6 @@
 # ADR-2026-04-14-2201: Reconcile must verify file evidence, not just match names
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-core/src/domain/web.rs, hex-core/src/ports/web.rs
 **Accepted:** 2026-04-15 (via wp-enforce-workplan-evidence commits `0fac2e9f` `14a91f9b` `7f0e886b` `daa16c3c`)
 **Date:** 2026-04-14

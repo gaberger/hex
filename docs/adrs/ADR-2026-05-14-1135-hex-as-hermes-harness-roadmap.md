@@ -1,6 +1,7 @@
 # ADR-2026-05-14-1135: hex-as-hermes-harness — phased roadmap
 
-**Status:** Accepted (Phase 0 proven by commit `f33c7a37` — first truly autonomous commit on main. Phases 1-6 are work-in-progress with their own per-phase ADRs to come.)
+**Status:** Superseded
+**Superseded-By:** ADR-2606061359
 **Date:** 2026-05-14
 **Drivers:** Operator wants hex to expose the **fully-featured operator ergonomics of Hermes Agent (Nous Research)** while preserving hex's distinguishing architectural primitives — typed-tool SOP, c-suite persona topology with atomic-claim mediation, twin reviewer with content-grounding gate, tiered inference routing, hexagonal-architecture enforcement. The 2026-05-13 session diagnosed (a) the autonomous artifact-authoring half works end-to-end (proven by `8e929b58` agentic-dev-roundtrip), (b) the autonomous *commit* step was missing and just shipped in `11169fb1`, but (c) the autonomous *construction* loop (workplan dispatch → hex-coder IC workers) is structurally broken (phantom cc_agent UUIDs, no IC workers register in `hex agent list`, `/api/workplan/execute/<id>/status` returns 404). The user request — *"i want a fully featured hermes agent harness but based on hex"* — is a multi-week port, not single-session work. This ADR is the master index that breaks it into phases, each shippable as its own workplan, each measurable against a concrete deliverable.
 

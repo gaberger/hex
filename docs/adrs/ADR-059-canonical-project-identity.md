@@ -1,6 +1,6 @@
 # ADR-059: Canonical Project Identity Contract
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-22
 **Drivers:** Dashboard showed 0 swarms/agents for projects because SpacetimeDB entities stored project names while the registry stored name+suffix IDs. Every component that filters by project had a different matching strategy, all broken differently.
 

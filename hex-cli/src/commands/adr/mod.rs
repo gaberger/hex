@@ -44,6 +44,15 @@ pub enum AdrAction {
         /// ADR identifier (e.g. ADR-2026-03-24-0130 or partial match like 2603240130)
         adr_id: String,
     },
+    /// Show which Accepted ADRs govern a path/area via `Applies-To` (ADR-2605301228).
+    ///
+    /// Deterministic backbone of the conflict gate: before changing a file,
+    /// ask which binding decisions constrain it. Matches the query against each
+    /// Accepted, non-superseded ADR's `## Applies-To:` declarations.
+    Governing {
+        /// File path or area to check (e.g. "hex-nexus/src/orchestration/org_responder.rs" or "inference routing")
+        path: String,
+    },
     /// Self-consistency checker over docs/adrs/ (ADR-2026-04-27-0800).
     ///
     /// Detects unparseable status, duplicate IDs, dangling Depends-on links,
@@ -73,24 +82,272 @@ pub enum AdrAction {
         #[arg(long)]
         strict: bool,
     },
+    /// Set an ADR to Accepted (the decision is approved).
+    Accept {
+        /// ADR id (e.g. ADR-2026-06-05-1200 or 2606051200)
+        adr_id: String,
+        /// One-line rationale recorded in the commit/audit trail.
+        #[arg(long, short, default_value = "operator: accepted via `hex adr accept`")]
+        rationale: String,
+    },
+    /// Set an ADR to Completed — GATED on its workplan being reconciled done.
+    ///
+    /// Confirms the implementation (a workplan referencing this ADR exists and is
+    /// done) before flipping Accepted → Completed. `Completed` authorizes adapters
+    /// like `Accepted`. Use `--force` to override the gate.
+    Complete {
+        /// ADR id
+        adr_id: String,
+        #[arg(long, short, default_value = "operator: completed via `hex adr complete`")]
+        rationale: String,
+        /// Skip the implementation-confirmed gate (operator override).
+        #[arg(long)]
+        force: bool,
+    },
+    /// Set an ADR to Superseded by a later one (adds a `Superseded-By:` backlink).
+    Supersede {
+        /// ADR id being superseded
+        adr_id: String,
+        /// The replacement ADR id (must exist).
+        #[arg(long)]
+        by: String,
+        #[arg(long, short, default_value = "operator: superseded via `hex adr supersede`")]
+        rationale: String,
+    },
+    /// Run the in-nexus adr-steward agent: advance Accepted ADRs that hex has
+    /// confirmed implemented (Implementation-Present) to Completed. Runs in nexus,
+    /// records to the agent feed, shows in the dashboard.
+    Steward {
+        /// Report candidates without mutating.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Regenerate `docs/adrs/INDEX.md` — a generated map of the ledger grouped by
+    /// epoch → status, with `Superseded-By` links (ADR-2606071243). `README.md` is
+    /// human prose and is never touched. Epoch comes from an explicit `**Epoch:**`
+    /// field, else is derived deterministically from the decision date.
+    Reindex {
+        /// Print the would-be INDEX.md to stdout instead of writing the file.
+        #[arg(long)]
+        dry_run: bool,
+        /// Emit the parsed registry as JSON (for the dashboard / GROUND retrieval).
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub async fn run(action: AdrAction) -> anyhow::Result<()> {
     match action {
         AdrAction::List => list().await,
+        AdrAction::Accept { adr_id, rationale } => set_adr_status(&adr_id, "Accepted", None, &rationale).await,
+        AdrAction::Complete { adr_id, rationale, force } => complete_adr(&adr_id, &rationale, force).await,
+        AdrAction::Supersede { adr_id, by, rationale } => supersede_adr(&adr_id, &by, &rationale).await,
+        AdrAction::Steward { dry_run } => steward_sweep(dry_run).await,
         AdrAction::Status { json } => status(json).await,
         AdrAction::Search { query } => search(&query).await,
         AdrAction::Abandoned => abandoned().await,
         AdrAction::Review { adr_id, strict } => super::adr_review::run(adr_id, strict).await,
         AdrAction::Schema => schema().await,
         AdrAction::Specs { adr_id } => specs_for_adr(&adr_id).await,
+        AdrAction::Governing { path } => governing(&path).await,
         AdrAction::Doctor {
             fix,
             fix_and_merge,
             json,
             strict,
         } => doctor_run(fix, fix_and_merge, json, strict).await,
+        AdrAction::Reindex { dry_run, json } => reindex(dry_run, json).await,
     }
+}
+
+// ── Direct lifecycle verbs (no agent dispatch — the reliable path) ────────────
+
+/// Locate the single ADR file matching an id (accepts `ADR-...`, the bare
+/// timestamp, or any unambiguous substring of the filename).
+fn find_adr_file(adr_id: &str) -> anyhow::Result<PathBuf> {
+    let dir = find_adr_dir().ok_or_else(|| anyhow::anyhow!("No docs/adrs/ directory found"))?;
+    let needle = adr_id
+        .trim()
+        .trim_start_matches("ADR-")
+        .trim_start_matches("adr-")
+        .to_lowercase();
+    let mut matches: Vec<PathBuf> = Vec::new();
+    for entry in std::fs::read_dir(&dir)?.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+        if name.contains(&needle) {
+            matches.push(p);
+        }
+    }
+    match matches.len() {
+        0 => anyhow::bail!("no ADR file matches '{}' under docs/adrs/", adr_id),
+        1 => Ok(matches.remove(0)),
+        n => anyhow::bail!("'{}' matches {} ADRs — be more specific", adr_id, n),
+    }
+}
+
+/// Rewrite the `Status:` header line (preserving its style), optionally inserting
+/// a `Superseded-By:` backlink. Mirrors the adr_status_set tool — the file is the
+/// single source of truth.
+async fn set_adr_status(
+    adr_id: &str,
+    new_status: &str,
+    superseded_by: Option<&str>,
+    rationale: &str,
+) -> anyhow::Result<()> {
+    let path = find_adr_file(adr_id)?;
+    let content = std::fs::read_to_string(&path)?;
+    let old = parse_adr_status(&content).to_string();
+    let already_has_sb = content.to_lowercase().contains("superseded-by:");
+
+    let mut out = String::with_capacity(content.len() + 80);
+    let mut found = false;
+    for line in content.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let lower = trimmed.to_lowercase();
+        let nl = if line.ends_with('\n') { "\n" } else { "" };
+        let indent = &line[..line.len() - trimmed.len()];
+        let (label, is_status) = if lower.starts_with("**status:**") {
+            ("**Status:** ", true)
+        } else if lower.starts_with("status:") && !lower.starts_with("status_") {
+            ("Status: ", true)
+        } else {
+            ("", false)
+        };
+        if !found && is_status {
+            out.push_str(indent);
+            out.push_str(label);
+            out.push_str(new_status);
+            out.push_str(nl);
+            found = true;
+            if let (Some(by), false) = (superseded_by, already_has_sb) {
+                out.push_str(indent);
+                out.push_str(if label.starts_with("**") { "**Superseded-By:** " } else { "Superseded-By: " });
+                out.push_str(by);
+                out.push('\n');
+            }
+        } else {
+            out.push_str(line);
+        }
+    }
+    if !found {
+        anyhow::bail!("no `Status:` header line in {} — unexpected ADR format", path.display());
+    }
+    std::fs::write(&path, out)?;
+    let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or(adr_id);
+    println!("{} {} : {} → {}", "\u{2b21}".cyan(), id, old.dimmed(), new_status.green().bold());
+    if let Some(by) = superseded_by {
+        println!("  Superseded-By: {}", by.yellow());
+    }
+    println!("  {}", rationale.dimmed());
+    println!("  {} file updated (uncommitted — commit to record the transition in history)", "\u{2192}".dimmed());
+    Ok(())
+}
+
+/// Is the ADR's implementation confirmed? True iff a workplan referencing it
+/// exists and is reconciled done. Returns (confirmed, detail).
+fn adr_workplan_confirmed(adr_id: &str) -> (bool, String) {
+    let needle = adr_id.trim().trim_start_matches("ADR-").trim_start_matches("adr-").to_lowercase();
+    let Some(dir) = find_workplans_dir() else {
+        return (false, "no docs/workplans/ directory".into());
+    };
+    let mut found_any = false;
+    let mut best = String::new();
+    for d in [dir.clone(), dir.join("drafts")] {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&p) else { continue };
+            let fname = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+            if !(text.to_lowercase().contains(&needle) || fname.contains(&needle)) {
+                continue;
+            }
+            found_any = true;
+            if let Ok(j) = serde_json::from_str::<serde_json::Value>(&text) {
+                let status = j.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                if matches!(status, "completed" | "done") {
+                    return (true, format!("{} status={}", fname, status));
+                }
+                best = format!("{} status={} (not done)", fname, status);
+            }
+        }
+    }
+    if found_any {
+        (false, best)
+    } else {
+        (false, format!("no workplan references {}", needle))
+    }
+}
+
+/// `hex adr complete` — gate on implementation confirmed, then set Completed.
+async fn complete_adr(adr_id: &str, rationale: &str, force: bool) -> anyhow::Result<()> {
+    if force {
+        println!("  {} --force: skipping the implementation-confirmed gate", "!".yellow());
+    } else {
+        let (ok, detail) = adr_workplan_confirmed(adr_id);
+        if !ok {
+            anyhow::bail!(
+                "not confirmed implemented — {}.\n  Accepted → Completed requires a workplan reconciled done + evidence. \
+                 Re-run with --force to override.",
+                detail
+            );
+        }
+        println!("  {} gate passed: {}", "\u{2713}".green(), detail);
+    }
+    set_adr_status(adr_id, "Completed", None, rationale).await
+}
+
+/// `hex adr supersede` — verify the replacement exists, then set Superseded + backlink.
+async fn supersede_adr(adr_id: &str, by: &str, rationale: &str) -> anyhow::Result<()> {
+    find_adr_file(by).map_err(|_| anyhow::anyhow!("replacement ADR '{}' not found — create it first", by))?;
+    set_adr_status(adr_id, "Superseded", Some(by), rationale).await
+}
+
+/// `hex adr steward` — trigger the in-nexus adr-steward agent (runs in nexus,
+/// records to the agent feed, shows in the dashboard).
+async fn steward_sweep(dry_run: bool) -> anyhow::Result<()> {
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    nexus.ensure_running().await?;
+    let path = if dry_run {
+        "/api/agent/adr-steward/sweep?dry_run=true"
+    } else {
+        "/api/agent/adr-steward/sweep"
+    };
+    println!("{} adr-steward (in-nexus): scanning ADRs for Accepted + Implementation-Present …", "\u{2b21}".cyan());
+    let r = nexus.post_long(path, &serde_json::json!({})).await?;
+    let completed = r.get("completed").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let accepted = r.get("accepted").and_then(|v| v.as_u64()).unwrap_or(0);
+    let scanned = r.get("scanned").and_then(|v| v.as_u64()).unwrap_or(0);
+    let committed = r.get("committed").and_then(|v| v.as_str());
+    if dry_run {
+        println!(
+            "{} {} candidate(s) Accepted→Completed (of {} accepted / {} scanned) — dry run, no changes",
+            "\u{2192}".dimmed(),
+            completed,
+            accepted,
+            scanned
+        );
+    } else {
+        println!(
+            "{} advanced {} ADR(s) Accepted→Completed (of {} accepted / {} scanned){}",
+            "\u{2713}".green().bold(),
+            completed,
+            accepted,
+            scanned,
+            committed.map(|h| format!(" \u{b7} commit {}", h.yellow())).unwrap_or_default()
+        );
+    }
+    if let Some(err) = r.get("error").and_then(|v| v.as_str()) {
+        println!("  {} {}", "error:".red(), err);
+    }
+    println!("  {} recorded to the agent-runs feed — visible in the dashboard", "\u{2192}".dimmed());
+    Ok(())
 }
 
 /// Drive the doctor subcommand: detection → optional tier-aware fix →
@@ -288,7 +545,10 @@ fn parse_adr_status(content: &str) -> &str {
 
         return match val.to_lowercase().as_str() {
             s if s.contains("proposed") => "proposed",
+            // "completed" before "accepted": a Completed ADR's line may mention both.
+            s if s.contains("completed") => "completed",
             s if s.contains("accepted") => "accepted",
+            s if s.contains("rejected") => "rejected",
             s if s.contains("deprecated") => "deprecated",
             s if s.contains("abandoned") => "abandoned",
             s if s.contains("superseded") => "superseded",
@@ -368,6 +628,17 @@ fn extract_adr_id(filename: &str) -> String {
         return format!("ADR-{}-{}-{}-{}", parts[0], parts[1], parts[2], parts[3]);
     }
 
+    // Date-only timestamp: YYYY-MM-DD (4-2-2, no HHMM) — e.g.
+    // ADR-2026-05-09-cost-ops-runbook. Checked after the date-time form so a
+    // full timestamp still wins; without this these collapse to "ADR-2026".
+    if parts.len() >= 3
+        && parts[0].len() == 4 && parts[0].chars().all(|c| c.is_ascii_digit())
+        && parts[1].len() == 2 && parts[1].chars().all(|c| c.is_ascii_digit())
+        && parts[2].len() == 2 && parts[2].chars().all(|c| c.is_ascii_digit())
+    {
+        return format!("ADR-{}-{}-{}", parts[0], parts[1], parts[2]);
+    }
+
     // Fall back to leading-digit run (covers ADR-059 + ADR-2026-03-22-1500 legacy).
     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     if !digits.is_empty() {
@@ -389,6 +660,281 @@ fn extract_title(path: &Path, content: &str) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("untitled")
         .to_string()
+}
+
+// ── Epoch model + generated index (ADR-2606071243) ───────────────────────
+//
+// An *epoch* is a named era of the system's design philosophy. The canonical
+// epochs and their date boundaries are owned by ADR-2606071243. Membership is
+// taken from an explicit `**Epoch:**` field when present, else derived
+// deterministically from the decision date so the index is immediately useful
+// over the existing corpus without hand-editing 245 files.
+
+/// Ordered most-recent-first; `EPOCHS[0]` is the current epoch. The `start` is
+/// the inclusive lower bound (YYYY-MM-DD, lexicographically comparable because
+/// zero-padded); an ADR belongs to the first epoch whose `start` it is `>=`.
+const EPOCHS: &[(&str, &str, &str)] = &[
+    // (key, inclusive-start-date, one-line identity)
+    ("single-agent", "2026-06-06", "One gateway-mediated agent loop; code-graph context as the differentiator"),
+    ("org-sim",      "2026-04-01", "Multi-agent organization simulation: personas + SOP + autonomous spawn"),
+    ("foundation",   "0000-00-00", "Hexagonal microkernel + SpacetimeDB state core + FS-bridge daemon"),
+];
+
+/// Parse a bold (`**Field:**`), heading (`## Field:`), or YAML (`field:`)
+/// frontmatter value, first match wins. The heading form is how the legacy
+/// `ADR-NNN` corpus carries `## Date:` / `## Status`.
+fn parse_adr_field(content: &str, field: &str) -> Option<String> {
+    let bold = format!("**{}:**", field.to_lowercase());
+    let heading = format!("## {}:", field.to_lowercase());
+    let yaml = format!("{}:", field.to_lowercase());
+    let yaml_underscore = format!("{}_", field.to_lowercase());
+    for line in content.lines() {
+        let trimmed = line.trim().trim_start_matches("- ").trim_start();
+        let lower = trimmed.to_lowercase();
+        let val = if lower.starts_with(&bold) {
+            Some(trimmed[bold.len()..].trim())
+        } else if lower.starts_with(&heading) {
+            Some(trimmed[heading.len()..].trim())
+        } else if lower.starts_with(&yaml) && !lower.starts_with(&yaml_underscore) {
+            Some(trimmed[yaml.len()..].trim())
+        } else {
+            None
+        };
+        if let Some(v) = val {
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// The `Superseded-By` target id, accepting every spelling the corpus uses
+/// (mirrors `doctor::has_superseded_by`).
+fn parse_superseded_by(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let stripped = line.trim().trim_start_matches("- ").trim_start();
+        let lower = stripped.to_lowercase();
+        for prefix in [
+            "**superseded by:**",
+            "**superseded by**:",
+            "**superseded-by:**",
+            "**superseded-by**:",
+            "superseded by:",
+            "superseded-by:",
+        ] {
+            if lower.starts_with(prefix) {
+                let v = stripped[prefix.len()..].trim().trim_matches('*').trim();
+                if !v.is_empty() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Best-effort decision date (YYYY-MM-DD) for an ADR: the `**Date:**` field if
+/// present, else derived from the id (`ADR-2026-03-22-1500` → `2026-03-22`,
+/// `ADR-2606071243` → `2026-06-07`). Legacy `ADR-NNN` ids carry no date → None.
+fn adr_date(id: &str, content: &str) -> Option<String> {
+    if let Some(d) = parse_adr_field(content, "date") {
+        // Take the leading YYYY-MM-DD if the field has a suffix.
+        let head: String = d.chars().take(10).collect();
+        if head.len() == 10 && head.as_bytes()[4] == b'-' {
+            return Some(head);
+        }
+    }
+    let rest = id.trim_start_matches("ADR-").trim_start_matches("adr-");
+    let parts: Vec<&str> = rest.splitn(4, '-').collect();
+    // Hyphenated timestamp: YYYY-MM-DD-...
+    if parts.len() >= 3
+        && parts[0].len() == 4
+        && parts[1].len() == 2
+        && parts[2].len() >= 2
+        && parts[0].chars().chain(parts[1].chars()).all(|c| c.is_ascii_digit())
+    {
+        return Some(format!("{}-{}-{}", parts[0], parts[1], &parts[2][..2]));
+    }
+    // Compact YYMMDDHHMM (10 digits, no hyphens): ADR-2606071243 → 2026-06-07.
+    if rest.len() >= 6 && rest.chars().take(6).all(|c| c.is_ascii_digit()) && !rest.contains('-') {
+        let b = rest.as_bytes();
+        return Some(format!(
+            "20{}{}-{}{}-{}{}",
+            b[0] as char, b[1] as char, b[2] as char, b[3] as char, b[4] as char, b[5] as char,
+        ));
+    }
+    None
+}
+
+/// Resolve an ADR's epoch: explicit `**Epoch:**` field wins; else date-bucket;
+/// else `unassigned`.
+fn adr_epoch(id: &str, content: &str) -> String {
+    if let Some(e) = parse_adr_field(content, "epoch") {
+        let key = e.split_whitespace().next().unwrap_or("").to_lowercase();
+        if EPOCHS.iter().any(|(k, _, _)| *k == key) {
+            return key;
+        }
+    }
+    if let Some(date) = adr_date(id, content) {
+        return EPOCHS
+            .iter()
+            .find(|(_, start, _)| date.as_str() >= *start)
+            .map(|(k, _, _)| k.to_string())
+            .unwrap_or_else(|| "unassigned".to_string());
+    }
+    // Legacy sequential id (`ADR-NNN`, ≤4 digits, no timestamp) with no date
+    // field predates the timestamp scheme → foundation by construction. A
+    // compact `ADR-YYMMDDHHMM` (10 digits) would already have resolved a date.
+    let digits: String = id
+        .trim_start_matches("ADR-")
+        .trim_start_matches("adr-")
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if !digits.is_empty() && digits.len() <= 4 {
+        return "foundation".to_string();
+    }
+    "unassigned".to_string()
+}
+
+struct IndexEntry {
+    id: String,
+    title: String,
+    status: String,
+    epoch: String,
+    date: String,
+    superseded_by: Option<String>,
+}
+
+async fn collect_index_entries(dir: &Path) -> anyhow::Result<Vec<IndexEntry>> {
+    let mut entries: Vec<IndexEntry> = Vec::new();
+    for (path, content) in collect_adrs(dir).await? {
+        let fname = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        let id = extract_adr_id(fname);
+        entries.push(IndexEntry {
+            title: extract_title(&path, &content),
+            status: parse_adr_status(&content).to_string(),
+            epoch: adr_epoch(&id, &content),
+            date: adr_date(&id, &content).unwrap_or_default(),
+            superseded_by: parse_superseded_by(&content),
+            id,
+        });
+    }
+    // Stable, useful order: by date desc (newest first), id as tiebreak.
+    entries.sort_by(|a, b| b.date.cmp(&a.date).then(a.id.cmp(&b.id)));
+    Ok(entries)
+}
+
+/// Epoch ordering for display: current first, then older, `unassigned` last.
+fn epoch_rank(key: &str) -> usize {
+    EPOCHS
+        .iter()
+        .position(|(k, _, _)| *k == key)
+        .unwrap_or(EPOCHS.len())
+}
+
+fn render_index(entries: &[IndexEntry]) -> String {
+    let mut out = String::new();
+    out.push_str("# ADR Index\n\n");
+    out.push_str(
+        "> **Generated by `hex adr reindex` — do not edit by hand.**\n\
+         > This is a map of the decision *ledger*, grouped by epoch (era of design\n\
+         > philosophy, per ADR-2606071243). For the current-state architecture, read\n\
+         > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,\n\
+         > read the ADR itself.\n\n",
+    );
+
+    // Summary line.
+    out.push_str(&format!("**{} ADRs** across {} epochs.\n\n", entries.len(), {
+        let mut seen: Vec<&str> = entries.iter().map(|e| e.epoch.as_str()).collect();
+        seen.sort();
+        seen.dedup();
+        seen.len()
+    }));
+
+    // Distinct epochs present, in display order.
+    let mut epochs: Vec<&str> = entries.iter().map(|e| e.epoch.as_str()).collect();
+    epochs.sort_by_key(|k| epoch_rank(k));
+    epochs.dedup();
+
+    for epoch in epochs {
+        let identity = EPOCHS
+            .iter()
+            .find(|(k, _, _)| *k == epoch)
+            .map(|(_, _, id)| *id)
+            .unwrap_or("ADRs with no resolvable epoch — assign `**Epoch:**` or a `**Date:**`");
+        let current = epoch_rank(epoch) == 0;
+        out.push_str(&format!(
+            "## Epoch: `{}`{}\n\n_{}_\n\n",
+            epoch,
+            if current { " — **current**" } else { "" },
+            identity,
+        ));
+        out.push_str("| ADR | Status | Title | Superseded-By |\n");
+        out.push_str("|-----|--------|-------|---------------|\n");
+        for e in entries.iter().filter(|e| e.epoch == epoch) {
+            let sb = e.superseded_by.as_deref().unwrap_or("");
+            out.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                e.id,
+                e.status,
+                e.title.replace('|', "\\|"),
+                sb,
+            ));
+        }
+        out.push('\n');
+    }
+    out
+}
+
+async fn reindex(dry_run: bool, json: bool) -> anyhow::Result<()> {
+    let dir = find_adr_dir().ok_or_else(|| anyhow::anyhow!("No docs/adrs/ directory found"))?;
+    let entries = collect_index_entries(&dir).await?;
+
+    if json {
+        let items: Vec<String> = entries
+            .iter()
+            .map(|e| {
+                format!(
+                    "    {{\"id\": {:?}, \"status\": {:?}, \"epoch\": {:?}, \"date\": {:?}, \"superseded_by\": {}, \"title\": {:?}}}",
+                    e.id,
+                    e.status,
+                    e.epoch,
+                    e.date,
+                    match &e.superseded_by {
+                        Some(s) => format!("{:?}", s),
+                        None => "null".to_string(),
+                    },
+                    e.title,
+                )
+            })
+            .collect();
+        println!("{{\n  \"count\": {},\n  \"adrs\": [\n{}\n  ]\n}}", entries.len(), items.join(",\n"));
+        return Ok(());
+    }
+
+    let rendered = render_index(&entries);
+    if dry_run {
+        print!("{rendered}");
+        return Ok(());
+    }
+
+    let index_path = dir.join("INDEX.md");
+    tokio::fs::write(&index_path, &rendered).await?;
+    let unassigned = entries.iter().filter(|e| e.epoch == "unassigned").count();
+    println!(
+        "{} {} — {} ADRs indexed{}",
+        "✓".green(),
+        index_path.display().to_string().cyan(),
+        entries.len(),
+        if unassigned > 0 {
+            format!(", {} unassigned (add `**Epoch:**` or `**Date:**`)", unassigned).yellow().to_string()
+        } else {
+            String::new()
+        },
+    );
+    Ok(())
 }
 
 // ── Tabled row structs ──────────────────────────────────────────────────
@@ -707,7 +1253,7 @@ async fn schema() -> anyhow::Result<()> {
         "id_readable": human_readable,
         "directory": adr_dir.to_string_lossy(),
         "filename_pattern": "ADR-{YYMMDDHHMM}-{kebab-slug}.md",
-        "valid_statuses": ["Proposed", "Accepted", "Deprecated", "Superseded", "Abandoned"],
+        "valid_statuses": ["Proposed", "Accepted", "Completed", "Deprecated", "Superseded", "Abandoned", "Rejected"],
         "required_sections": ["Context", "Decision", "Consequences", "Implementation", "References"],
         "frontmatter_fields": {
             "Status": "required — one of valid_statuses",
@@ -767,6 +1313,136 @@ async fn abandoned() -> anyhow::Result<()> {
         println!("  {} ADR(s) need attention", rows.len());
     }
 
+    Ok(())
+}
+
+// ── Governance: Applies-To / supersession (ADR-2605301228) ────────────────────
+
+/// Parse the `Applies-To` field — comma-separated areas/globs an ADR governs.
+/// Supports `## Applies-To: a, b` heading, `**Applies-To:** a, b` bold, and
+/// `applies-to: a, b` / `applies_to: [..]` frontmatter forms.
+fn parse_applies_to(content: &str) -> Vec<String> {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        let lower = trimmed.to_lowercase();
+        let val: Option<&str> = if let Some(r) = trimmed.strip_prefix("## Applies-To:") {
+            Some(r)
+        } else if lower.starts_with("**applies-to:**") {
+            Some(&trimmed["**Applies-To:**".len()..])
+        } else if lower.starts_with("applies-to:") {
+            Some(&trimmed["applies-to:".len()..])
+        } else if lower.starts_with("applies_to:") {
+            Some(&trimmed["applies_to:".len()..])
+        } else {
+            None
+        };
+        if let Some(v) = val {
+            return v
+                .split(',')
+                .map(|s| s.trim().trim_matches(|c| c == '"' || c == '[' || c == ']' || c == '`').trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+/// True if this ADR carries a non-empty `Superseded-By` backlink, so it must
+/// NOT be surfaced as a governing decision (the supersession filter — prevents
+/// stale decisions resurfacing). The status==superseded case is covered too.
+fn is_superseded(content: &str) -> bool {
+    if parse_adr_status(content) == "superseded" {
+        return true;
+    }
+    for line in content.lines() {
+        let lower = line.trim().to_lowercase();
+        if lower.starts_with("**superseded-by:**")
+            || lower.starts_with("superseded-by:")
+            || lower.starts_with("superseded_by:")
+        {
+            let v = line
+                .splitn(2, ':')
+                .nth(1)
+                .map(|s| s.trim().trim_matches(|c| c == '*' || c == '"').trim())
+                .unwrap_or("");
+            let vl = v.to_lowercase();
+            if !v.is_empty() && vl != "null" && vl != "none" && v != "\u{2014}" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Deterministic area match: an `Applies-To` token governs the query if either
+/// contains the other (case-insensitive), after stripping trailing glob stars.
+fn area_matches(applies: &str, query: &str) -> bool {
+    let a = applies
+        .trim()
+        .trim_end_matches("/**")
+        .trim_end_matches("**")
+        .trim_end_matches('*')
+        .trim_matches('/')
+        .to_lowercase();
+    let q = query.trim().to_lowercase();
+    if a.is_empty() || q.is_empty() {
+        return false;
+    }
+    q.contains(&a) || a.contains(&q)
+}
+
+/// `hex adr governing <path>` — list Accepted, non-superseded ADRs whose
+/// `Applies-To` matches the path/area. The deterministic backbone of the
+/// ADR conflict gate (ADR-2605301228).
+async fn governing(path: &str) -> anyhow::Result<()> {
+    let adr_dir = find_adr_dir().ok_or_else(|| anyhow::anyhow!("No docs/adrs/ directory found"))?;
+    let adrs = collect_adrs(&adr_dir).await?;
+
+    println!("{} ADRs governing '{}'", "\u{2b21}".cyan(), path.bold());
+    println!();
+
+    let mut hits: Vec<(String, String, Vec<String>)> = Vec::new();
+    let mut accepted_with_applies = 0usize;
+    for (p, content) in &adrs {
+        // Only Accepted decisions are binding; proposals and superseded are not.
+        if parse_adr_status(content) != "accepted" || is_superseded(content) {
+            continue;
+        }
+        let applies = parse_applies_to(content);
+        if !applies.is_empty() {
+            accepted_with_applies += 1;
+        }
+        let matched: Vec<String> = applies
+            .iter()
+            .filter(|a| area_matches(a, path))
+            .cloned()
+            .collect();
+        if !matched.is_empty() {
+            let fname = p.file_stem().and_then(|s| s.to_str()).unwrap_or("???");
+            hits.push((extract_adr_id(fname), extract_title(p, content), matched));
+        }
+    }
+
+    if hits.is_empty() {
+        println!("  {} No Accepted ADR's Applies-To matches this path.", "\u{2014}".dimmed());
+        if accepted_with_applies == 0 {
+            println!(
+                "  {} No Accepted ADR declares `## Applies-To:` yet — backfill needed (ADR-2605301228).",
+                "\u{2139}".dimmed()
+            );
+        }
+    } else {
+        for (id, title, areas) in &hits {
+            println!("  {} {} — {}", "\u{26a0}".yellow(), id.bold(), truncate(title, 58));
+            println!("      governs: {}", areas.join(", ").dimmed());
+        }
+        println!();
+        println!(
+            "  {} {} governing ADR(s) — review before changing this path.",
+            "\u{2b21}".cyan(),
+            hits.len()
+        );
+    }
     Ok(())
 }
 
@@ -1075,6 +1751,68 @@ mod tests {
         assert_eq!(
             extract_title(path, "# ADR-2026-03-22-1500: My Title\n"),
             "ADR-2026-03-22-1500: My Title"
+        );
+    }
+
+    // ── Epoch model + index field parsing (ADR-2606071243) ───────────────
+
+    #[test]
+    fn epoch_explicit_field_wins() {
+        // Date says foundation, but an explicit Epoch field overrides.
+        let c = "**Epoch:** single-agent\n## Date: 2026-03-15\n";
+        assert_eq!(adr_epoch("ADR-2026-03-22-1500", c), "single-agent");
+    }
+
+    #[test]
+    fn epoch_derived_from_body_date_over_filename() {
+        // Filename is July (single-agent), but the decision Date is org-sim era.
+        let c = "**Date:** 2026-06-05\n";
+        assert_eq!(adr_epoch("ADR-2026-07-10-1000", c), "org-sim");
+    }
+
+    #[test]
+    fn epoch_boundaries_by_date() {
+        assert_eq!(adr_epoch("ADR-x", "**Date:** 2026-03-15\n"), "foundation");
+        assert_eq!(adr_epoch("ADR-x", "**Date:** 2026-04-01\n"), "org-sim");
+        assert_eq!(adr_epoch("ADR-x", "**Date:** 2026-06-06\n"), "single-agent");
+    }
+
+    #[test]
+    fn epoch_legacy_numbered_no_date_is_foundation() {
+        // Legacy ADR-NNN with no parseable date predates the timestamp scheme.
+        assert_eq!(adr_epoch("ADR-027", ""), "foundation");
+        assert_eq!(adr_epoch("ADR-7", ""), "foundation");
+    }
+
+    #[test]
+    fn epoch_unresolvable_is_unassigned() {
+        assert_eq!(adr_epoch("ADR-extensible-validation", ""), "unassigned");
+    }
+
+    #[test]
+    fn date_parses_heading_form() {
+        // Legacy `## Date:` heading form, with a trailing rationale suffix.
+        let c = "## Date: 2026-03-15 (rationale expanded 2026-05-17)\n";
+        assert_eq!(adr_date("ADR-001", c).as_deref(), Some("2026-03-15"));
+    }
+
+    #[test]
+    fn date_from_compact_timestamp_id() {
+        assert_eq!(adr_date("ADR-2606071243", "").as_deref(), Some("2026-06-07"));
+    }
+
+    #[test]
+    fn superseded_by_accepts_hyphenated_bold_form() {
+        // The canonical TEMPLATE.md form that doctor previously missed.
+        let c = "**Superseded-By:** ADR-2606061359\n";
+        assert_eq!(parse_superseded_by(c).as_deref(), Some("ADR-2606061359"));
+    }
+
+    #[test]
+    fn superseded_by_accepts_spaced_form() {
+        assert_eq!(
+            parse_superseded_by("**Superseded by:** ADR-001\n").as_deref(),
+            Some("ADR-001")
         );
     }
 }

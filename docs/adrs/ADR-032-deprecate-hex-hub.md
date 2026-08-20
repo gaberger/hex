@@ -1,6 +1,6 @@
 # ADR-032: Deprecate hex-hub — Consolidate into hex-nexus and hex-agent
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-nexus/Cargo.toml, hex-nexus/build.rs, hex-nexus/src/adapters/spacetime_state.rs (+4 more)
 **Date:** 2026-03-18
 **Supersedes:** ADR-016 (Hub Binary Version Verification)

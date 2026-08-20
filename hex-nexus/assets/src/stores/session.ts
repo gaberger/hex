@@ -7,6 +7,7 @@ import { addToast } from "./toast";
 import { loadChatHistory } from "./chat";
 import { restClient } from "../services/rest-client";
 import { storage } from "../services/local-storage";
+import { uuid } from "../utils/uuid";
 
 export interface Session {
   id: string;
@@ -105,7 +106,7 @@ export async function createSession(name?: string): Promise<Session> {
     // Fall back to local-only session
     addToast("error", `Failed to create session: ${e.message}`);
     const local: Session = {
-      id: crypto.randomUUID(),
+      id: uuid(),
       name: title,
       createdAt: new Date().toISOString(),
       messageCount: 0,

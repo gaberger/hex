@@ -1,6 +1,6 @@
 # ADR-2026-03-24-1900: Agent-Swarm Ownership Hierarchy with Conflict Detection
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-24
 **Deciders**: Gary
 **Required by**: ADR-2026-03-24-0130 (Declarative Swarm Agent Behavior from YAML)

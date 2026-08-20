@@ -1,6 +1,6 @@
 # ADR-2026-04-05-2125: Multi-Provider Free-Tier Inference Routing
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-04-05
 **Deciders:** Gary, Claude
 **Relates to:** ADR-030 (Multi-Provider Inference Broker), ADR-031 (RL-Driven Model Selection), ADR-2026-03-27-1000 (Quantization-Aware Inference Routing), ADR-2026-03-23-1600 (OpenRouter Integration)

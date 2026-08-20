@@ -58,7 +58,7 @@ const AgentFleet: Component = () => {
   const filteredAgents = createMemo(() => {
     const pid = projectId();
     if (!pid) return registryAgents();
-    return registryAgents().filter((a: any) =>
+    return (registryAgents() ?? []).filter((a: any) =>
       matchesProject(pid, getEntityProjectRef(a)) ||
       matchesProject(pid, getAgentProjectDir(a)) ||
       matchesProject(pid, a.project_id ?? a.projectId ?? a.project ?? "")
@@ -118,7 +118,7 @@ const AgentFleet: Component = () => {
   }
 
   function agentTask(agent: any): string | null {
-    const task = swarmTasks().find(
+    const task = (swarmTasks() ?? []).find(
       (t: any) =>
         (t.assigned_to ?? t.agent_id ?? "") === (agent.id ?? agent.agent_id ?? "") &&
         (t.status === "in_progress" || t.status === "active")

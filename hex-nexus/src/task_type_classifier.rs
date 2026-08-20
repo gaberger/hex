@@ -5,7 +5,7 @@
 //! precise syntax translation, and reasoning-heavy tasks all need T2.5 even
 //! when the prompt is short.
 
-use crate::remote::transport::TaskTier;
+use crate::domain::transport::TaskTier;
 
 /// Task type signals that raise the minimum inference tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

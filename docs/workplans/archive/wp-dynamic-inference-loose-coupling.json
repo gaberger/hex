@@ -1,0 +1,67 @@
+{
+  "id": "wp-dynamic-inference-loose-coupling",
+  "feature": "Dynamic, loosely-coupled inference model selection",
+  "description": "Route every inference consumer through the existing inference port and resolve the model from a declarative role/tier mapping against the live provider registry, so adding a model is config (hex config inference add + one mapping line), never code. Implements ADR-2605301224. POLICY-NEUTRAL: this refactor does NOT decide which model the hot path uses (local Ollama vs Tenstorrent) — that stays a declarative policy value, governed separately.",
+  "adr": "ADR-2605301224",
+  "status": "planned",
+  "priority": "normal",
+  "created_by": "human",
+  "created_at": "2026-05-30T12:40:00Z",
+  "notes": "Out of scope: the hot-path model policy (ADR-2026-05-22-1710 reframe). The resolver must keep a local-Ollama fallback wired for cloud outage/credit exhaustion. Roll out the SOP reroute behind a flag.",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Role/tier -> model resolver behind the port",
+      "tier": 0,
+      "description": "Add a resolve(role, tier) -> model function on IInferenceRouterPort, backed by the live STDB provider registry + declarative tier_models/agent-YAML mapping. No consumer hardcodes a model string after this.",
+      "gate": { "type": "build", "command": "cargo check -p hex-nexus -p hex-core", "blocking": true },
+      "tasks": [
+        { "id": "P0.1", "name": "Define resolve(role,tier)->model on the inference port", "layer": "ports", "strategy_hint": "codegen", "agent": "hex-coder", "deps": [], "files": ["hex-nexus/src/ports/inference_router.rs", "hex-core/src/ports/inference/mod.rs"] },
+        { "id": "P0.2", "name": "Resolver impl: registry lookup + declarative mapping + local fallback", "layer": "secondary", "strategy_hint": "codegen", "agent": "hex-coder", "deps": ["P0.1"], "files": ["hex-nexus/src/adapters/inference_router/mod.rs", "hex-nexus/src/adapters/inference_router/tier_config.rs"] }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "Route SOP executor through the port (flagged)",
+      "tier": 1,
+      "description": "Replace reason_via_{anthropic,openrouter,ollama} direct provider posts with a port-backed reason path (HEX_SOP_REASON_VIA_ROUTER), preserving the multi-round tool-call loop and content-filter/credit fallbacks. Highest-risk consumer; flag-gated rollout.",
+      "gate": { "type": "build", "command": "cargo check -p hex-nexus", "blocking": true },
+      "tasks": [
+        { "id": "P1.1", "name": "reason_via_router: port-backed tool-loop reasoning path", "layer": "secondary", "strategy_hint": "inference", "agent": "hex-coder", "deps": ["P0.2"], "files": ["hex-nexus/src/orchestration/sop_executor.rs"] },
+        { "id": "P1.2", "name": "Prefer router path in reason_with_tools when flag set; keep legacy as fallback", "layer": "secondary", "strategy_hint": "codegen", "agent": "hex-coder", "deps": ["P1.1"], "files": ["hex-nexus/src/orchestration/sop_executor.rs"] }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Route remaining consumers through the port",
+      "tier": 1,
+      "description": "drafter, org_responder, inference_strategy_builder, auto_repair dispatch call the resolver instead of hardcoded models/direct posts.",
+      "gate": { "type": "build", "command": "cargo check -p hex-nexus", "blocking": true },
+      "tasks": [
+        { "id": "P2.1", "name": "drafter + org_responder via resolver", "layer": "secondary", "strategy_hint": "transform", "agent": "hex-coder", "deps": ["P0.2"], "files": ["hex-nexus/src/orchestration/drafter.rs", "hex-nexus/src/orchestration/org_responder.rs"] },
+        { "id": "P2.2", "name": "inference_strategy_builder via resolver (remove direct provider URL)", "layer": "secondary", "strategy_hint": "transform", "agent": "hex-coder", "deps": ["P0.2"], "files": ["hex-nexus/src/orchestration/inference_strategy_builder.rs"] }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Purge hardcoded model literals + hot-reload",
+      "tier": 3,
+      "description": "Remove the 28 hardcoded model literals from orchestration/ (one declarative fallback remains); make the resolver + registry hot-reloadable (no nexus restart).",
+      "gate": { "type": "build", "command": "cargo check --workspace", "blocking": true },
+      "tasks": [
+        { "id": "P3.1", "name": "Replace hardcoded model constants/env defaults with resolver lookups", "layer": "secondary", "strategy_hint": "transform", "agent": "hex-coder", "deps": ["P1.2", "P2.1", "P2.2"], "files": ["hex-nexus/src/orchestration/sop_executor.rs", "hex-nexus/src/orchestration/drafter.rs", "hex-nexus/src/orchestration/org_responder.rs"] },
+        { "id": "P3.2", "name": "Hot-reload resolver mapping + provider registry on /api/config/sync", "layer": "secondary", "strategy_hint": "codegen", "agent": "hex-coder", "deps": ["P0.2"], "files": ["hex-nexus/src/config_sync.rs", "hex-nexus/src/adapters/inference_router/mod.rs"] }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Verify: adding a model is config-only",
+      "tier": 4,
+      "description": "Integration test: register a new provider + add a mapping line -> a tier task routes to it with zero code change. Assert no orchestration file contains a literal model name.",
+      "gate": { "type": "test", "command": "cargo test -p hex-nexus inference", "blocking": true },
+      "tasks": [
+        { "id": "P4.1", "name": "Integration test: new model via config only; no-literal lint", "layer": "secondary", "strategy_hint": "codegen", "agent": "integrator", "deps": ["P3.1", "P3.2"], "files": ["hex-nexus/tests/inference_loose_coupling.rs"] }
+      ]
+    }
+  ]
+}

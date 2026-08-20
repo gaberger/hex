@@ -1,6 +1,6 @@
 # ADR-2026-04-26-1500: Hex as a continuously self-modifying application substrate
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-core/src/composition.rs, hex-core/src/ports/adapter_generator.rs, hex-core/src/ports/inference.rs (+3 more)
 **Date:** 2026-04-26
 **Accepted:** 2026-04-26

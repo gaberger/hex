@@ -137,7 +137,8 @@ function formatTime(ts: string | null): string {
   });
 }
 
-function completedPhases(phases: WorkplanPhase[]): number {
+function completedPhases(phases: WorkplanPhase[] | undefined): number {
+  if (!Array.isArray(phases)) return 0;
   return phases.filter(
     (p) => p.status === "passed" || p.status === "completed" || p.status === "skipped"
   ).length;
@@ -422,9 +423,9 @@ const WorkplanView: Component = () => {
                     {/* Phases progress */}
                     <div class="hidden md:flex items-center gap-2">
                       <span class="text-xs text-gray-300">
-                        {completedPhases(execution.phases)}/{execution.phases.length}
+                        {completedPhases(execution.phases)}/{execution.phases?.length ?? 0}
                       </span>
-                      <PhaseProgressMini phases={execution.phases} />
+                      <PhaseProgressMini phases={execution.phases ?? []} />
                     </div>
 
                     {/* Duration */}
@@ -611,7 +612,7 @@ const ActiveBanner: Component<{
 }> = (props) => {
   const progress = createMemo(() => {
     const phases = props.execution.phases;
-    if (phases.length === 0) return 0;
+    if (!Array.isArray(phases) || phases.length === 0) return 0;
     return Math.round((completedPhases(phases) / phases.length) * 100);
   });
 

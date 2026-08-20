@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use hex_core::ports::inference::IInferencePort;
 
-use crate::adapters::inference::OllamaInferenceAdapter;
+use crate::adapters::inference::{ClaudeCodeInferenceAdapter, OllamaInferenceAdapter};
 use crate::composition::{build_agent_manager, CompositionInputs};
 use crate::orchestration::agent_manager::AgentManager;
 use crate::orchestration::errors::MissingComposition;
@@ -53,4 +53,50 @@ pub fn compose_standalone(
 /// Callers must `health()` asynchronously after construction.
 pub fn default_inference_adapter() -> Arc<dyn IInferencePort> {
     Arc::new(OllamaInferenceAdapter::new(None))
+}
+
+/// Construct the frontier (T3) inference adapter — `claude -p` subprocess.
+///
+/// Returns `None` when the `claude` binary is not on `$PATH`, so callers
+/// can degrade to local-only inference without crashing. Returns
+/// `Some(adapter)` otherwise; the adapter is hardcoded to pass
+/// `--dangerously-skip-permissions` and a 300s timeout (overridable via
+/// `CLAUDE_TIMEOUT_SECS`).
+///
+/// Used by autonomous loops (auto_repair, scaffolded-dispatch frontier
+/// escalation) to break through local-model plateaus without operator
+/// intervention. See retro §5.12.
+///
+/// Wire-time contract: probes `$PATH` only — no subprocess spawn at wire
+/// time. Health is the caller's responsibility (via `IInferencePort::health()`).
+pub fn frontier_inference_adapter() -> Option<Arc<dyn IInferencePort>> {
+    let binary = std::env::var("HEX_CLAUDE_BINARY").unwrap_or_else(|_| "claude".to_string());
+    if binary_on_path(&binary) {
+        Some(Arc::new(ClaudeCodeInferenceAdapter::new(Some(binary))))
+    } else {
+        None
+    }
+}
+
+/// Pure-filesystem check for an executable on `$PATH`. Used by
+/// [`frontier_inference_adapter`] so wire-time composition never spawns
+/// a subprocess just to detect the claude CLI.
+fn binary_on_path(name: &str) -> bool {
+    // Absolute or relative path: check directly.
+    if name.contains('/') {
+        return std::path::Path::new(name).is_file();
+    }
+    let Ok(path) = std::env::var("PATH") else {
+        return false;
+    };
+    for dir in path.split(':') {
+        if dir.is_empty() {
+            continue;
+        }
+        let candidate = std::path::Path::new(dir).join(name);
+        if candidate.is_file() {
+            return true;
+        }
+    }
+    false
 }

@@ -13,6 +13,7 @@ pub mod coordination;
 pub mod decisions;
 pub mod fleet;
 pub mod git;
+pub mod graph;
 pub mod hex_agents;
 pub mod hexflo;
 pub mod inference;
@@ -70,6 +71,45 @@ use serde_json::json;
 use utoipa::OpenApi;
 use crate::state::SharedState;
 use crate::middleware::agent_guard::agent_guard;
+
+/// POST /api/direct/execute — minimal "cut the pipeline" executor
+/// (ADR-2026-06-04-1740 Path A). Body: {instruction, file, evidence, model?, max_attempts?}.
+/// Runs one agent → one evidence-gated edit → commit. No SOP/persona pipeline.
+async fn direct_execute(
+    Json(task): Json<crate::direct_exec::DirectTask>,
+) -> Json<crate::direct_exec::DirectResult> {
+    Json(crate::direct_exec::execute_direct(task).await)
+}
+
+/// GET /api/direct/runs — the monitor for the new execution model: every direct
+/// run (task, evidence verdict, commit, duration) newest-first, plus a summary.
+/// Replaces persona/swarm/commitment liveness as the thing to actually watch.
+async fn direct_runs() -> Json<serde_json::Value> {
+    Json(json!({
+        "summary": crate::direct_exec::runs_summary(),
+        "runs": crate::direct_exec::runs_snapshot(),
+    }))
+}
+
+/// POST /api/agent/adr-steward/sweep — run the in-nexus adr-steward agent: advance
+/// Accepted ADRs hex has confirmed implemented (Implementation-Present) to Completed.
+/// `?dry_run=true` reports candidates without mutating. Records to the agent-runs feed.
+async fn adr_steward_sweep(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<crate::orchestration::adr_steward::StewardResult> {
+    let dry = q.get("dry_run").map(|v| v == "true" || v == "1").unwrap_or(false);
+    Json(crate::orchestration::adr_steward::run_lifecycle_sweep(dry).await)
+}
+
+/// POST /api/agent/workplan-steward/sweep — run the in-nexus workplan-steward
+/// agent: validate workplan format + reconcile status (all steps done → completed).
+/// `?dry_run=true` reports without mutating. Records to the agent-runs feed.
+async fn workplan_steward_sweep(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<crate::orchestration::workplan_steward::WorkplanStewardResult> {
+    let dry = q.get("dry_run").map(|v| v == "true" || v == "1").unwrap_or(false);
+    Json(crate::orchestration::workplan_steward::run_reconcile_sweep(dry).await)
+}
 use crate::middleware::auth::auth_layer;
 use crate::middleware::capability_auth::capability_auth;
 use crate::middleware::deprecation::deprecation_layer;
@@ -146,6 +186,25 @@ async fn get_version() -> Json<serde_json::Value> {
         "name": "hex-hub",
         "buildProfile": if cfg!(debug_assertions) { "debug" } else { "release" },
     }))
+}
+
+/// GET /api/auto-repair/status — return the auto_repair loop's current state.
+/// Surfaced 2026-05-29 PM so the operator can see what the loop is doing
+/// without grepping nexus.log.
+async fn auto_repair_status() -> Json<serde_json::Value> {
+    let snap = crate::orchestration::auto_repair::snapshot();
+    Json(serde_json::to_value(snap).unwrap_or_else(|_| json!({"error": "serialize_failed"})))
+}
+
+/// POST /api/auto-repair/restart — reset the auto_repair loop state so
+/// it re-engages without a full nexus restart. The next tick fires
+/// fresh: iterations=0, no_progress=0, cooldowns cleared. Useful after
+/// the loop self-pauses on a plateau and the operator has shipped a
+/// targeted fix (e.g. created missing modules, downgraded a problem
+/// dep) and wants to re-run.
+async fn auto_repair_restart() -> Json<serde_json::Value> {
+    crate::orchestration::auto_repair::reset();
+    Json(json!({"ok": true, "status": "loop state reset; next tick fires fresh"}))
 }
 
 /// GET /api/health — lightweight health check for hooks and CLI.
@@ -539,6 +598,16 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/assets/{*path}", get(serve_static))
         .route("/api/version", get(get_version))
         .route("/api/health", get(get_health))
+        .route("/api/auto-repair/status", get(auto_repair_status))
+        .route("/api/auto-repair/restart", post(auto_repair_restart))
+        // Knowledge graph (hex-graph engine)
+        .route("/api/graph/build", post(graph::build_graph)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/graph/query", post(graph::query_graph))
+        .route("/api/graph/path", post(graph::path_graph))
+        .route("/api/graph/explain", post(graph::explain_graph))
+        .route("/api/graph/context", post(graph::context_graph))
+        .route("/api/graph/summary", post(graph::summary_graph))
         // Project management
         .route("/api/projects", get(projects::list_projects))
         .route("/api/projects/register", post(projects::register)
@@ -890,6 +959,11 @@ pub fn build_router(state: SharedState) -> Router {
         // secrets resolve, then PATCHes quality_score (wp-inference-calibrate-endpoint).
         .route("/api/inference/calibrate/{id}", post(inference::calibrate_endpoint))
         .route("/api/inference/calibrate-all", post(inference::calibrate_all))
+        // Direct executor (ADR-2026-06-04-1740 Path A): task → one agent → evidence → commit
+        .route("/api/direct/execute", post(direct_execute))
+        .route("/api/direct/runs", get(direct_runs))
+        .route("/api/agent/adr-steward/sweep", post(adr_steward_sweep))
+        .route("/api/agent/workplan-steward/sweep", post(workplan_steward_sweep))
         // Synchronous inference completion (hex-agent HTTP bridge)
         .route("/api/inference/complete", post(inference::inference_complete)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
@@ -906,11 +980,17 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/inference/rate-state", get(inference::rate_state))
         .route("/api/inference/stats", get(inference::inference_stats_endpoint))
         .route("/api/inference/q-report", get(inference::q_report))
+        .route("/api/inference/usage", get(inference::usage_report))
         // SSE streaming chat endpoint (hex chat TUI — wp-cli-chat-tui)
         .route("/api/inference/chat/stream", post(inference::inference_stream))
         // OpenAI-compatible proxy (opencode first-class — feat-hex-opencode-first-class)
         .route("/v1/models", get(inference::openai_models))
         .route("/v1/chat/completions", post(inference::openai_chat_completions))
+        // Anthropic-compatible gateway (ADR-2026-07-10-1000 follow-on): point
+        // ANTHROPIC_BASE_URL=http://localhost:5555 to run Claude Code / any
+        // Anthropic-format agent on hex's tiered, local-first routing.
+        .route("/v1/messages", post(inference::anthropic_messages))
+        .route("/v1/messages/count_tokens", post(inference::anthropic_count_tokens))
         // ═══════════════════════════════════════════════════════════
         // HEXFLO COORDINATION — write routes stay, reads via SpacetimeDB
         // ═══════════════════════════════════════════════════════════

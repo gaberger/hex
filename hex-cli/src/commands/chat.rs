@@ -1,9 +1,8 @@
-//! `hex chat` — launch opencode with hex MCP + project context injected.
+//! `hex chat` — interactive AI chat session.
 //!
-//! Interactive mode (default): writes `opencode.json` with hex context as
-//! instructions, then exec's opencode (replacing this process).
-//!
-//! Plain mode (--no-tui): single-turn inference via nexus REST, pipe-friendly.
+//! Default: ratatui streaming chat TUI (resurrected, ADR-2604011300).
+//! `--opencode`: legacy opencode launcher (writes opencode.json + exec).
+//! `--no-tui`: single-turn inference via nexus REST, pipe-friendly.
 
 use anyhow::Result;
 use clap::Args;
@@ -12,11 +11,11 @@ use crate::nexus_client::NexusClient;
 
 #[derive(Args, Debug)]
 pub struct ChatArgs {
-    /// Message to send (non-interactive via `opencode run <msg>`)
+    /// Message to send (non-interactive)
     #[arg(short = 'm', long)]
     pub message: Option<String>,
 
-    /// Model override forwarded to opencode
+    /// Model override
     #[arg(short = 'M', long)]
     pub model: Option<String>,
 
@@ -24,7 +23,11 @@ pub struct ChatArgs {
     #[arg(long)]
     pub no_tui: bool,
 
-    /// System prompt (appended to hex context in opencode instructions)
+    /// Launch via opencode instead of the built-in ratatui TUI
+    #[arg(long)]
+    pub opencode: bool,
+
+    /// System prompt
     #[arg(short = 's', long)]
     pub system: Option<String>,
 
@@ -45,21 +48,23 @@ pub async fn run(args: ChatArgs) -> Result<()> {
     if args.no_tui {
         return run_plain(args).await;
     }
+    if args.opencode {
+        return run_opencode(args).await;
+    }
+    crate::tui::chat::run(args).await
+}
 
-    // Locate opencode binary
+async fn run_opencode(args: ChatArgs) -> Result<()> {
     let opencode = find_opencode()?;
 
-    // Ensure nexus is running — non-fatal
     let nexus = NexusClient::from_env();
     let nexus_url = nexus.url().to_string();
     let _ = nexus.ensure_running().await;
 
-    // Inject hex project context into opencode.json in CWD
     if !args.no_context {
         let _ = write_opencode_config(&nexus_url, args.system.as_deref()).await;
     }
 
-    // Build opencode argv
     let mut argv: Vec<std::ffi::OsString> = Vec::new();
     if let Some(msg) = &args.message {
         argv.push("run".into());
@@ -70,7 +75,6 @@ pub async fn run(args: ChatArgs) -> Result<()> {
         argv.push(model.into());
     }
 
-    // exec — replace this process with opencode
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

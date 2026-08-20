@@ -1,6 +1,6 @@
 # ADR-028: API Optimization Layer
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: src/main.rs
 **Date:** 2026-03-18
 **Deciders:** Gary

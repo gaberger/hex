@@ -65,7 +65,7 @@ export function startHexFloMonitor() {
       for (const [swarmId, counts] of tasksBySwarm) {
         if (counts.total > 0 && counts.completed === counts.total && !completedSwarms.has(swarmId)) {
           completedSwarms.add(swarmId);
-          const swarm = swarms().find((s: any) => (s.id ?? s.swarm_id ?? '') === swarmId);
+          const swarm = (swarms() ?? []).find((s: any) => (s.id ?? s.swarm_id ?? '') === swarmId);
           // Don't toast for swarms already marked completed in SpacetimeDB —
           // they fire on subscription re-delivery after reconnect (ADR-055 fix)
           const swarmStatus = swarm?.status ?? swarm?.swarm_status ?? 'active';

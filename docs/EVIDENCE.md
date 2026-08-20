@@ -1,6 +1,6 @@
 # Evidence
 
-> Back to [README](../README.md) | See also: [Inference](INFERENCE.md) | [Architecture](ARCHITECTURE.md)
+> Back to [README](../README.md) | See also: [Inference](INFERENCE.md) | [Architecture](../ARCHITECTURE.md)
 
 Each claim in the README is backed by a test, fixture, or example you can run locally. This page maps claim → reproducer → expected output. No marketing — just commands and what they print.
 

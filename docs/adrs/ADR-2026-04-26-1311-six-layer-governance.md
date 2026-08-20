@@ -1,6 +1,7 @@
 # ADR-2026-04-26-1311: Six-layer governance — adversarial swarms, judges, and structural opposition to accretion
 
-**Status:** Accepted
+**Status:** Superseded
+**Superseded-By:** ADR-2606061359
 **Date:** 2026-04-26
 **Accepted:** 2026-04-26
 **Drivers:** Hexagonal architecture told us *where* code goes once we'd decided we needed it. It did not tell us whether we needed it. The result is visible in the repo: 57 files in `hex-cli/src/commands/` (vs. ~10 user-facing verbs), 188 ADRs, 57 active workplans, 7 SpacetimeDB modules where 2 would do, an `inference_router` doing string-parsing on `"model:X|context:Y"` compound actions. Each addition was locally justified; the system as a whole drifted away from its founding goals (model tiering & independence, multi-host scaleout, hexagonal rigor). LLM agents amplify this failure mode because they ship faster than humans, with more confidence, and no agent's KPI rewards declining the task or deleting code.

@@ -39,6 +39,7 @@ use commands::{
     neural_lab::NeuralLabAction,
     nexus::NexusAction,
     sandbox::SandboxAction,
+    service::ServiceAction,
     plan::PlanAction,
     fingerprint::FingerprintAction,
     fs::FsAction,
@@ -140,6 +141,15 @@ enum DevGroupAction {
         #[arg(long)]
         parallel: bool,
     },
+    /// Build release binaries, install hex to BIN_DIR, restart the daemon — one-command deploy (ADR-2606071702)
+    Deploy {
+        /// Install without restarting the daemon
+        #[arg(long)]
+        no_restart: bool,
+        /// Report install-vs-build drift without building
+        #[arg(long)]
+        check: bool,
+    },
     /// Run integration tests (unit, arch, services, swarm)
     Test {
         #[command(subcommand)]
@@ -200,6 +210,16 @@ enum OverrideAction {
     Direct(Vec<String>),
 }
 
+#[derive(Subcommand, Clone, Debug)]
+enum AutoRepairAction {
+    /// Show the loop's current state (iterations, error count, paused?)
+    Status,
+    /// Reset the loop state so the next tick fires fresh — useful after
+    /// the loop has self-paused on a plateau and you've shipped a fix
+    /// you want it to retry against.
+    Restart,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     // ════════════════════════════════════════════════════════════════════
@@ -235,6 +255,11 @@ enum Commands {
         #[command(subcommand)]
         action: NexusAction,
     },
+    /// Manage hex as systemd user services (boot-persistent stdb + nexus)
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
     /// Manage remote agents (list, connect, spawn, disconnect)
     Agent {
         #[command(subcommand)]
@@ -252,10 +277,32 @@ enum Commands {
     },
     /// Do the next right thing — check project health and suggest/execute actions
     Go,
+    /// Knowledge graph — build/query/path/explain a project's code+docs graph
+    Graph {
+        #[command(subcommand)]
+        action: commands::graph::GraphAction,
+    },
+    /// Inspect / restart the autonomous code-repair loop
+    #[command(name = "auto-repair")]
+    AutoRepair {
+        #[command(subcommand)]
+        action: AutoRepairAction,
+    },
     /// Hey Hex — natural language task classifier (ADR-2026-04-14-0000)
     Hey(HeyArgs),
     /// Adversarially verify a claim about the repo — returns CONFIRMED / REFUTED / INCONCLUSIVE
     Verify(commands::verify::VerifyArgs),
+    /// Direct executor — task → one agent → evidence → commit (ADR-2026-06-04-1740 Path A)
+    #[command(name = "do")]
+    Do {
+        #[command(subcommand)]
+        action: commands::direct::DoAction,
+    },
+    /// Agentic inference benchmarks — run the corpus through the loop in isolated worktrees (ADR-2606071734)
+    Bench {
+        #[command(subcommand)]
+        action: commands::bench::BenchAction,
+    },
     /// Scheduler daemon — queue drain, validation, auto-fix (ADR-2026-04-15-0000)
     Sched {
         #[command(subcommand)]
@@ -563,6 +610,27 @@ enum Commands {
     },
 }
 
+async fn auto_repair_run(action: AutoRepairAction) -> anyhow::Result<()> {
+    let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".into());
+    let base = format!("http://127.0.0.1:{}", port);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+    match action {
+        AutoRepairAction::Status => {
+            let resp = client.get(format!("{}/api/auto-repair/status", base)).send().await?;
+            let j: serde_json::Value = resp.json().await?;
+            println!("{}", serde_json::to_string_pretty(&j)?);
+        }
+        AutoRepairAction::Restart => {
+            let resp = client.post(format!("{}/api/auto-repair/restart", base)).send().await?;
+            let j: serde_json::Value = resp.json().await?;
+            println!("{}", serde_json::to_string_pretty(&j)?);
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -605,6 +673,7 @@ async fn main() -> anyhow::Result<()> {
             DevGroupAction::Validate { skip_test, strict, parallel } => {
                 doctor::run_validate_pipeline(skip_test, strict, parallel).await
             }
+            DevGroupAction::Deploy { no_restart, check } => commands::deploy::run(no_restart, check).await,
             DevGroupAction::Test { action } => commands::test::run(action).await,
             DevGroupAction::Ci { standalone_gate } => {
                 if standalone_gate { commands::ci::run_standalone_gate().await }
@@ -641,6 +710,7 @@ async fn main() -> anyhow::Result<()> {
         // ── Standalone commands ──────────────────────────────────────
         Commands::Bootstrap(args) => commands::bootstrap::run(args).await,
         Commands::Nexus { action } => commands::nexus::run(action).await,
+        Commands::Service { action } => commands::service::run(action).await,
         Commands::Agent { action } => commands::agent::run(action).await,
         Commands::Brief { action, args } => {
             let effective_args = match action {
@@ -650,8 +720,12 @@ async fn main() -> anyhow::Result<()> {
             commands::brief::run(effective_args).await
         }
         Commands::Go => commands::go::run().await,
+        Commands::Graph { action } => commands::graph::run(action).await,
+        Commands::AutoRepair { action } => auto_repair_run(action).await,
         Commands::Hey(args) => commands::hey::run(args).await,
         Commands::Verify(args) => commands::verify::run(args).await,
+        Commands::Do { action } => commands::direct::run(action).await,
+        Commands::Bench { action } => commands::bench::run(action).await,
         Commands::Sched { action } => commands::sched::run(action).await,
         Commands::Pool { action } => commands::pool::run(action).await,
         Commands::Brain { action } => commands::brain_alias::run(action).await,

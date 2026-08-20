@@ -1,6 +1,6 @@
 # ADR-2026-04-10-2100: Agentic Steerable Loop
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/agent/mod.rs, hex-nexus/src/orchestration/workplan_executor.rs, hex-nexus/src/state.rs
 **Date:** 2026-04-10
 **Accepted:** 2026-05-04 — P1–P4 shipped (workplan-executor polling, AgentInstruction/InstructionType state, CLI agent loop, pause/resume/stop handlers); workspace `cargo check` clean. P5 (full pause/resume e2e test) tracked as a separate follow-up.

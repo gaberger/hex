@@ -95,7 +95,20 @@ export async function fetchWorkplans(): Promise<WorkplanExecution[]> {
   setWorkplanLoading(true);
   try {
     const json = await restClient.get<any>("/api/workplan/list");
-    const list: WorkplanExecution[] = json.ok ? json.data : (Array.isArray(json) ? json : []);
+    // /api/workplan/list returns { data: { executions: [...], activeCount, ... } }.
+    // The array lives at data.executions — NOT data (the wrapper) and NOT the root.
+    // Extract defensively so workplans() is ALWAYS an array; otherwise every
+    // consumer's `.find()` throws "all.find is not a function" (ProjectDetail,
+    // ADRBrowser, …). Found 2026-06-05 in dev mode.
+    const list: WorkplanExecution[] = Array.isArray(json)
+      ? json
+      : Array.isArray(json?.data?.executions)
+        ? json.data.executions
+        : Array.isArray(json?.executions)
+          ? json.executions
+          : Array.isArray(json?.data)
+            ? json.data
+            : [];
     setWorkplans(list);
     setWorkplanError(null);
 

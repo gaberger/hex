@@ -1,6 +1,6 @@
 # ADR-029: Haiku Preflight Checks & Automatic Context Compaction
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-18
 **Deciders:** Gary
 **Relates to:** ADR-028 (API Optimization Layer)

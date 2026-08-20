@@ -16,13 +16,13 @@ const STATUS_COLUMNS = [
 
 const TaskBoard: Component<{ swarmId: string }> = (props) => {
   const tasks = createMemo(() =>
-    swarmTasks().filter((t: any) =>
+    (swarmTasks() ?? []).filter((t: any) =>
       (t.swarmId ?? t.swarm_id ?? "") === props.swarmId
     )
   );
 
   const agents = createMemo(() =>
-    swarmAgents().filter((a: any) =>
+    (swarmAgents() ?? []).filter((a: any) =>
       (a.swarmId ?? a.swarm_id ?? "") === props.swarmId
     )
   );

@@ -123,6 +123,87 @@ pub struct HexAgent {
     pub capabilities_json: String,
 }
 
+/// One recorded hex-agent run — what an agent (direct-executor, adr-steward,
+/// workplan-steward, …) actually DID, with the commit it produced. Persisted so
+/// the dashboard Agent Runs feed survives nexus restarts. Written by nexus's
+/// record_agent_run/record_run via the `record_agent_run` reducer below.
+#[table(name = agent_run, public)]
+#[derive(Clone, Debug)]
+pub struct AgentRun {
+    /// Globally-unique key (nexus uses `<started_at>#<seq>` — unique across restarts).
+    #[primary_key]
+    pub id: String,
+    pub agent: String,
+    pub started_at: String,
+    pub instruction: String,
+    pub file: String,
+    pub model: String,
+    pub ok: bool,
+    pub attempts: u32,
+    pub evidence_passed: bool,
+    /// Commit hash, or "" if none (plain String avoids STDB's Option sum-type
+    /// encoding on the SQL read path).
+    pub committed: String,
+    pub duration_ms: u64,
+    /// Error message, or "" if none.
+    pub error: String,
+}
+
+/// Upsert one agent run (persists the Agent Runs feed across restarts).
+#[reducer]
+pub fn record_agent_run(
+    ctx: &ReducerContext,
+    id: String,
+    agent: String,
+    started_at: String,
+    instruction: String,
+    file: String,
+    model: String,
+    ok: bool,
+    attempts: u32,
+    evidence_passed: bool,
+    committed: String,
+    duration_ms: u64,
+    error: String,
+) -> Result<(), String> {
+    let row = AgentRun {
+        id: id.clone(),
+        agent,
+        started_at,
+        instruction,
+        file,
+        model,
+        ok,
+        attempts,
+        evidence_passed,
+        committed,
+        duration_ms,
+        error,
+    };
+    if ctx.db.agent_run().id().find(&id).is_some() {
+        ctx.db.agent_run().id().update(row);
+    } else {
+        ctx.db.agent_run().insert(row);
+    }
+    // Bound the table — keep the newest AGENT_RUN_CAP rows by started_at, deleting
+    // the oldest excess. Self-pruning on insert (no separate scheduler needed).
+    const AGENT_RUN_CAP: usize = 1000;
+    let mut all: Vec<(String, String)> = ctx
+        .db
+        .agent_run()
+        .iter()
+        .map(|r| (r.id.clone(), r.started_at.clone()))
+        .collect();
+    if all.len() > AGENT_RUN_CAP {
+        all.sort_by(|a, b| a.1.cmp(&b.1)); // oldest first
+        let excess = all.len() - AGENT_RUN_CAP;
+        for (old_id, _) in all.into_iter().take(excess) {
+            ctx.db.agent_run().id().delete(&old_id);
+        }
+    }
+    Ok(())
+}
+
 /// Register or re-register an agent (upsert by ID).
 /// Called by hex hook session-start via /api/hex-agents/connect.
 #[reducer]
@@ -1128,6 +1209,45 @@ pub fn swarm_fail(
 // ============================================================
 //  Task Management Reducers
 // ============================================================
+
+/// Purge terminal swarm_task rows (failed / completed / abandoned). Tasks are
+/// status-changed on completion but never deleted, so the table grows unbounded
+/// (observed: 1857 failed rows from the retired org-sim). Operator-driven bulk
+/// cleanup — ADR-2606061359. Same pattern as agent-registry purge_all_agents.
+#[reducer]
+pub fn purge_terminal_tasks(ctx: &ReducerContext) -> Result<(), String> {
+    let ids: Vec<String> = ctx
+        .db
+        .swarm_task()
+        .iter()
+        .filter(|t| t.status == "failed" || t.status == "completed" || t.status == "abandoned")
+        .map(|t| t.id)
+        .collect();
+    let count = ids.len();
+    for id in ids {
+        ctx.db.swarm_task().id().delete(&id);
+    }
+    log::info!("purge_terminal_tasks: removed {} task(s)", count);
+    Ok(())
+}
+
+/// Purge terminal swarms (completed / failed). Companion to purge_terminal_tasks.
+#[reducer]
+pub fn purge_terminal_swarms(ctx: &ReducerContext) -> Result<(), String> {
+    let ids: Vec<String> = ctx
+        .db
+        .swarm()
+        .iter()
+        .filter(|s| s.status == "completed" || s.status == "failed")
+        .map(|s| s.id)
+        .collect();
+    let count = ids.len();
+    for id in ids {
+        ctx.db.swarm().id().delete(&id);
+    }
+    log::info!("purge_terminal_swarms: removed {} swarm(s)", count);
+    Ok(())
+}
 
 /// Create a new task in a swarm.
 /// `depends_on` is a comma-separated list of task IDs that must complete before
@@ -4790,6 +4910,40 @@ pub fn supervisor_init(ctx: &ReducerContext) -> Result<(), String> {
     Ok(())
 }
 
+/// Disable the worker-pool supervisor by deleting its tick schedule anchor.
+/// STDB stops calling `supervisor_tick`. The single-agent epoch runs the
+/// supervisor dormant (ADR-2606071340 P0) — the agent runs in-process, so there
+/// is no pool fleet to supervise. Re-enable with `supervisor_init`.
+#[reducer]
+pub fn supervisor_disable(ctx: &ReducerContext) -> Result<(), String> {
+    let ids: Vec<u64> = ctx
+        .db
+        .supervisor_tick_schedule()
+        .iter()
+        .map(|s| s.scheduled_id)
+        .collect();
+    let count = ids.len();
+    for id in ids {
+        ctx.db.supervisor_tick_schedule().scheduled_id().delete(&id);
+    }
+    log::info!("supervisor_disable: removed {} tick schedule(s)", count);
+    Ok(())
+}
+
+/// Purge ALL supervisor_event rows. With the supervisor dormant
+/// (ADR-2606071340 P0) the accumulated spawn_request/crash_loop backlog is inert
+/// cruft (e.g. 19k rows from the 2026-06-07 flood). Operator-invoked cleanup.
+#[reducer]
+pub fn supervisor_event_purge(ctx: &ReducerContext) -> Result<(), String> {
+    let ids: Vec<u64> = ctx.db.supervisor_event().iter().map(|e| e.id).collect();
+    let count = ids.len();
+    for id in ids {
+        ctx.db.supervisor_event().id().delete(&id);
+    }
+    log::info!("supervisor_event_purge: removed {} event(s)", count);
+    Ok(())
+}
+
 /// THE supervisor. Fires every 10s.
 ///
 /// For each non-paused worker_pool_intent:
@@ -7294,6 +7448,265 @@ pub fn claim_persona_turn(
         claimed_by,
         claimed_at: ctx.timestamp,
         originating_msg_id,
+    });
+    Ok(())
+}
+
+// ============================================================
+//  Agent-loop observability (wp-sop-agent-loop P6)
+// ============================================================
+//
+// One row in `agent_trajectory` per ReAct loop driver::run() call. One
+// row in `agent_step` per agent step inside that trajectory. Together
+// they're the audit trail the operator uses to see what the autonomous
+// SOP path actually did: which tools the persona called, what arguments,
+// what observations came back, and where the trajectory terminated.
+
+/// One ReAct driver run.
+#[table(name = agent_trajectory, public)]
+#[derive(Clone, Debug)]
+pub struct AgentTrajectory {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    /// Persona role that ran the loop (e.g. "hex-coder").
+    pub role: String,
+    /// First ~1k chars of the task brief the driver was given. Truncated
+    /// at insert time by the caller — the table doesn't enforce a cap.
+    pub task_brief: String,
+    /// Serialised TerminatedReason. One of: "terminal_action", "max_steps",
+    /// "token_budget", "parse_exhausted", "unknown_tool:<name>",
+    /// "inference_failed:<error>".
+    pub terminated_reason: String,
+    /// Path the terminal action targeted (empty if non-terminal).
+    pub final_action_path: String,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    /// Cumulative cost in USD across all steps (0 for local-AI runs).
+    pub total_cost_usd: f64,
+    pub total_latency_ms: u64,
+    /// ISO-8601 timestamp of when the trajectory was opened. Set by the
+    /// caller; nexus formats ctx.timestamp the same way it does in
+    /// agent-comms (STDB doesn't auto-populate String columns).
+    pub opened_at: String,
+    /// ISO-8601 timestamp of when the trajectory was closed. Empty until
+    /// agent_trajectory_close fires.
+    pub closed_at: String,
+}
+
+/// One step within a trajectory. step_idx is monotonic per trajectory.
+#[table(name = agent_step, public)]
+#[derive(Clone, Debug)]
+pub struct AgentStep {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub trajectory_id: u64,
+    pub step_idx: u32,
+    /// Persona's free-text reasoning for this step (the "thought" field
+    /// of the ReAct contract). Capped at ~2k chars by the caller.
+    pub thought: String,
+    /// Tool name invoked. For parse-failure steps the empty string;
+    /// for synthetic compile/twin-feedback steps "cargo_check" /
+    /// "twin_review" respectively.
+    pub tool: String,
+    /// JSON-serialised args the persona emitted. Empty object if none.
+    pub args_json: String,
+    /// What the tool returned. Capped at ~4k chars by the caller; the
+    /// `truncated` flag indicates whether the original was longer.
+    pub observation: String,
+    pub bytes: u64,
+    pub truncated: bool,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub latency_ms: u64,
+    pub created_at: String,
+}
+
+/// Open a new trajectory row. Returns the auto-incremented id via the
+/// `agent_trajectory_opened` event the caller subscribes to (no direct
+/// return value from reducers in STDB — read it back via SQL).
+#[reducer]
+pub fn agent_trajectory_open(
+    ctx: &ReducerContext,
+    role: String,
+    task_brief: String,
+    opened_at: String,
+) -> Result<(), String> {
+    if role.is_empty() {
+        return Err("role is required".to_string());
+    }
+    let truncated_brief: String = task_brief.chars().take(1024).collect();
+    ctx.db.agent_trajectory().insert(AgentTrajectory {
+        id: 0,
+        role,
+        task_brief: truncated_brief,
+        terminated_reason: String::new(),
+        final_action_path: String::new(),
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_cost_usd: 0.0,
+        total_latency_ms: 0,
+        opened_at,
+        closed_at: String::new(),
+    });
+    Ok(())
+}
+
+/// Record one step. Caller is responsible for passing the trajectory_id
+/// returned from agent_trajectory_open (looked up via SQL post-open). The
+/// step inserts unconditionally; concurrent recorders simply produce
+/// independent rows ordered by id.
+#[reducer]
+pub fn agent_step_record(
+    ctx: &ReducerContext,
+    trajectory_id: u64,
+    step_idx: u32,
+    thought: String,
+    tool: String,
+    args_json: String,
+    observation: String,
+    bytes: u64,
+    truncated: bool,
+    input_tokens: u64,
+    output_tokens: u64,
+    latency_ms: u64,
+    created_at: String,
+) -> Result<(), String> {
+    if trajectory_id == 0 {
+        return Err("trajectory_id is required".to_string());
+    }
+    let thought = thought.chars().take(2048).collect();
+    let observation = observation.chars().take(4096).collect();
+    let args_json = args_json.chars().take(2048).collect();
+    ctx.db.agent_step().insert(AgentStep {
+        id: 0,
+        trajectory_id,
+        step_idx,
+        thought,
+        tool,
+        args_json,
+        observation,
+        bytes,
+        truncated,
+        input_tokens,
+        output_tokens,
+        latency_ms,
+        created_at,
+    });
+    Ok(())
+}
+
+/// Close a trajectory, populating its terminal fields + totals. Idempotent:
+/// re-closing an already-closed trajectory overwrites the existing close.
+#[reducer]
+pub fn agent_trajectory_close(
+    ctx: &ReducerContext,
+    trajectory_id: u64,
+    terminated_reason: String,
+    final_action_path: String,
+    total_input_tokens: u64,
+    total_output_tokens: u64,
+    total_cost_usd: f64,
+    total_latency_ms: u64,
+    closed_at: String,
+) -> Result<(), String> {
+    if trajectory_id == 0 {
+        return Err("trajectory_id is required".to_string());
+    }
+    let Some(existing) = ctx.db.agent_trajectory().id().find(trajectory_id) else {
+        return Err(format!("trajectory {} not found", trajectory_id));
+    };
+    ctx.db.agent_trajectory().id().update(AgentTrajectory {
+        terminated_reason,
+        final_action_path,
+        total_input_tokens,
+        total_output_tokens,
+        total_cost_usd,
+        total_latency_ms,
+        closed_at,
+        ..existing
+    });
+    Ok(())
+}
+
+// ============================================================
+// classifier_response — SOP pipeline P2.1 (ADR-2026-05-17-2030)
+//
+// One row per classifier LLM call from the org_responder CLASSIFY phase.
+// Producer: nexus `post_classifier_response_open` (hex-nexus/src/orchestration/
+// org_responder.rs). Consumers: routes/observability.rs `silent_drops`
+// counter; future autonomy_ratio dashboard metric.
+//
+// Shipped 2026-05-28 to close the P2.1 gap surfaced during the ebay-mvp
+// scaling test — the writer had been calling this reducer for ~11 days
+// while the WASM module half of the change never landed, producing a
+// silent 404 on every classify call.
+//
+// Schema rationale:
+//   - `id: u64 auto_inc` — observability.rs SELECTs `id`
+//   - `created_at: String` (RFC3339) — caller-supplied, matches the
+//     module-wide convention; observability.rs uses RFC3339 string compare
+//   - `tool_plan_json` / `tool_spec_json` — serde_json strings, not BSATN;
+//     classifier schema is permissive (Option<Vec<ToolPlanStep>>) and
+//     consumers parse client-side
+//   - Insert-only, no update. Fire-and-forget at the call site.
+// ============================================================
+
+#[table(name = classifier_response, public)]
+#[derive(Clone, Debug)]
+pub struct ClassifierResponse {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub msg_id: u64,
+    pub from_role: String,
+    pub to_role: String,
+    pub decision: String,
+    pub tool_plan_json: String,
+    pub reason: String,
+    pub target_persona: String,
+    pub question: String,
+    pub tool_spec_json: String,
+    pub reparse_attempts: u32,
+    pub final_outcome: String,
+    pub cost_usd: f32,
+    pub created_at: String,
+}
+
+#[reducer]
+#[allow(clippy::too_many_arguments)]
+pub fn classifier_response_open(
+    ctx: &ReducerContext,
+    msg_id: u64,
+    from_role: String,
+    to_role: String,
+    decision: String,
+    tool_plan_json: String,
+    reason: String,
+    target_persona: String,
+    question: String,
+    tool_spec_json: String,
+    reparse_attempts: u32,
+    final_outcome: String,
+    cost_usd: f32,
+    created_at: String,
+) -> Result<(), String> {
+    ctx.db.classifier_response().insert(ClassifierResponse {
+        id: 0, // auto_inc
+        msg_id,
+        from_role,
+        to_role,
+        decision,
+        tool_plan_json,
+        reason,
+        target_persona,
+        question,
+        tool_spec_json,
+        reparse_attempts,
+        final_outcome,
+        cost_usd,
+        created_at,
     });
     Ok(())
 }

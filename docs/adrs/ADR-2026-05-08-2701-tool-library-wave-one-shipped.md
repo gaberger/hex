@@ -1,6 +1,7 @@
 # ADR-2026-05-08-2701 — tool-library-wave-one-shipped
 
-Status: **Accepted** (shipped 2026-05; cargo_check / repo_grep / adr_draft all live per memory `project_typed_tool_sop_proven`; title literally says "shipped")
+Status: Superseded
+Superseded-By: ADR-2606061359
 Date: 2026-05-09
 
 ## Context

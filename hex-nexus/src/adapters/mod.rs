@@ -9,16 +9,16 @@ pub mod ssh_tunnel;
 pub mod ws_transport;
 pub mod spacetime_agent_comm;
 pub mod spacetime_chat;
-pub mod spacetime_composition;
+pub use hex_state::spacetime_composition;
 pub mod spacetime_dead_letter;
 pub mod spacetime_heartbeat;
 pub mod spacetime_inference;
 pub mod spacetime_persona;
 pub mod spacetime_secrets;
 pub mod spacetime_session;
-pub mod spacetime_state;
+pub use hex_state::spacetime_state;
 pub mod spacetime_worker_pool;
-pub mod stdb_endpoint;
+pub use hex_state::stdb_endpoint;
 pub mod remote_registry;
 pub mod agent_lifecycle;
 pub mod inference_router;
@@ -27,7 +27,7 @@ pub mod events;
 pub mod in_memory_experiment;
 pub mod spacetime_experiment;
 pub mod stash_experiment;
-pub mod telegram_notifier;
+pub use hex_exec::telegram_notifier;
 
 #[cfg(test)]
 mod state_tests;

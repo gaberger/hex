@@ -1,6 +1,6 @@
 # ADR-2026-04-26-2100: Substrate port-migration cookbook
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-core/src/composition.rs, hex-nexus/src/orchestration/secret_shadow_router.rs, hex-nexus/src/orchestration/shadow_decision.rs (+1 more)
 **Date:** 2026-04-26
 **Accepted:** 2026-04-26

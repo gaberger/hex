@@ -1,6 +1,6 @@
 # ADR-2026-03-28-3000: Rust Workspace Boundary Analysis in hex analyze
 
-**Status:** Accepted
+**Status:** Completed
 **Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/analyze.rs, hex-nexus/src/analysis/layer_classifier.rs
 **Date:** 2026-03-28
 **Drivers:** `hex analyze` reports A+/100 while ignoring 87% of the codebase — all Rust files are invisible to layer counting and boundary violation detection

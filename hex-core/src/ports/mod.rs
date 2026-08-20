@@ -18,6 +18,10 @@ pub mod heartbeat;
 pub mod inference;
 pub mod sandbox;
 pub mod secret;
+// State port contract (IStatePort + focused sub-traits + DTOs). Relocated from
+// hex-nexus where it was an anomaly — port traits belong in hex-core with the
+// rest (ADR-2606071340 P1). Implemented by the STDB/SQLite adapters.
+pub mod state;
 pub mod validator;
 pub mod web;
 pub mod worker_pool;

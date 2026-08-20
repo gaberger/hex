@@ -1,6 +1,7 @@
 # ADR-2026-05-08-2700 — SOP REASON-phase Ollama fallback for content-filtered asks
 
-Status: **Accepted** (shipped 2026-05; commits 33082785 Ollama-fallback on content-filter, 1a481b16 fallback on HTTP 402, 4a0dd52e parse_text_tool_calls in fallback path)
+Status: Superseded
+Superseded-By: ADR-2606061359
 Date: 2026-05-09
 
 ## Context

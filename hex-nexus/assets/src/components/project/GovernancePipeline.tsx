@@ -51,13 +51,13 @@ const GovernancePipeline: Component<GovernancePipelineProps> = (props) => {
 
   // Swarm data from SpacetimeDB subscription
   const projectSwarms = createMemo(() =>
-    swarms().filter(
+    (swarms() ?? []).filter(
       (s: any) => entityBelongsToProject(s, props.projectId),
     ),
   );
 
   const runningSwarms = createMemo(() =>
-    projectSwarms().filter(
+    (projectSwarms() ?? []).filter(
       (s: any) => s.status === "active" || s.status === "running" || !s.status,
     ),
   );
@@ -66,7 +66,7 @@ const GovernancePipeline: Component<GovernancePipelineProps> = (props) => {
     const running = runningSwarms();
     if (running.length === 0) return 0;
     const ids = running.map((s: any) => s.id ?? s.swarm_id ?? "");
-    const tasks = swarmTasks().filter((t: any) =>
+    const tasks = (swarmTasks() ?? []).filter((t: any) =>
       ids.includes(t.swarmId ?? t.swarm_id ?? ""),
     );
     if (tasks.length === 0) return 0;

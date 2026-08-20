@@ -1,5 +1,10 @@
 //! SOP executor (ADR-2026-05-08-2500).
 //!
+//! DEPRECATED (ADR-2606061359): the multi-agent org-sim this drives is being
+//! retired in favor of the single-agent loop (`hex do` / `direct_exec.rs`).
+//! Route new work through the direct executor; do not add new dependencies on
+//! the SOP persona-dispatch path. Slated for removal once consumers migrate.
+//!
 //! Replaces the org_responder's single-LLM-call hot path with a
 //! 5-phase state machine for SOP-enabled personas (controlled by
 //! `HEX_SOP_PERSONAS` CSV env). Each phase has a deterministic gate or
@@ -595,12 +600,58 @@ async fn ground_for_intent(
         "role":          role,
     });
 
+    // Graph neighbourhood for the operator's files (hex-graph). Gives REASON the
+    // consumers/community of each touched file so it traces impact BEFORE editing
+    // — the "trace ALL consumers before deleting" rule, made structural.
+    let graph_context = graph_context_pack(&paths);
+
     json!({
         "intent": intent,
         "prefetched_paths": prefetched,
         "repo_grep": grep_result.output,
         "memory": memory_pack,
+        "graph_context": graph_context,
     })
+}
+
+/// Best-effort graph neighbourhood for a set of repo paths, loaded from the
+/// project's `graph-out/graph.json` (produced by `hex graph build`). Returns
+/// `Null` when no graph has been built — never fails GROUND. Capped to keep the
+/// REASON prompt bounded.
+fn graph_context_pack(paths: &[String]) -> Value {
+    // Locate graph.json: explicit root, else cwd.
+    let root = std::env::var("HEX_PROJECT_ROOT").unwrap_or_else(|_| ".".to_string());
+    graph_context_pack_in(std::path::Path::new(&root), paths)
+}
+
+/// Core of [`graph_context_pack`], parameterised on the project root so it's
+/// testable without mutating process-global env.
+fn graph_context_pack_in(root: &std::path::Path, paths: &[String]) -> Value {
+    if paths.is_empty() {
+        return Value::Null;
+    }
+    let graph_path = root.join("graph-out").join("graph.json");
+    let Ok(raw) = std::fs::read_to_string(&graph_path) else {
+        return Value::Null;
+    };
+    let Ok(graph) = hex_graph::model::KnowledgeGraph::from_json(&raw) else {
+        return Value::Null;
+    };
+    let opts = hex_graph::context::ContextOpts { max_each: 20 };
+    let mut bundles = Vec::new();
+    for p in paths.iter().take(4) {
+        if let Some(bundle) = hex_graph::context::context_for(&graph, p, opts) {
+            bundles.push(json!({
+                "path": p,
+                "markdown": hex_graph::context::render_markdown(&bundle),
+            }));
+        }
+    }
+    if bundles.is_empty() {
+        Value::Null
+    } else {
+        Value::Array(bundles)
+    }
 }
 
 /// Extract path-like tokens from the operator message. Looks for tokens
@@ -687,13 +738,364 @@ async fn reason_with_tools(
         }
     }
 
+    // Loose-coupling path (ADR-2605301224): when enabled, route reasoning
+    // through the nexus inference router, which resolves the model from
+    // tier_models against the live provider registry (honoring config, e.g.
+    // Tenstorrent) and handles tools + vault keys + fallback. This is how
+    // personas honor tier_models instead of the hardcoded provider chains
+    // below. Opt-in via HEX_SOP_REASON_VIA_ROUTER for safe rollout; falls
+    // through to the legacy chain on error.
+    // Gate: env var OR declarative `.hex/project.json` → inference.sop_via_router
+    // (config is preferred — survives restarts and supervisor respawns, and is
+    // the ADR-2605301224 declarative surface).
+    let via_router = std::env::var("HEX_SOP_REASON_VIA_ROUTER")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+        || std::fs::read_to_string(".hex/project.json")
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .and_then(|v| v.get("inference").and_then(|i| i.get("sop_via_router")).and_then(|b| b.as_bool()))
+            .unwrap_or(false);
+    if via_router {
+        match reason_via_router(role, operator_message, intent, ground_pack, registry.clone()).await {
+            Ok(r) => return Ok(r),
+            Err(e) => tracing::warn!(error = %e, "router reason path failed; falling back to legacy provider chain"),
+        }
+    }
+
     if let Some(key) = anthropic_key {
         return reason_via_anthropic(role, operator_message, intent, ground_pack, registry, key).await;
     }
     if let Some(key) = openrouter_key {
         return reason_via_openrouter(role, operator_message, intent, ground_pack, registry, key).await;
     }
-    Err("no ANTHROPIC_API_KEY or OPENROUTER_API_KEY available".to_string())
+    // Last resort even with no cloud key: the router can still serve local
+    // Ollama via tier_models, so try it unconditionally before giving up.
+    reason_via_router(role, operator_message, intent, ground_pack, registry).await
+        .map_err(|e| format!("no provider available (router fallback also failed: {e})"))
+}
+
+/// Resolve a tier model name from `.hex/project.json` → inference.tier_models.
+/// Honors ADR-2605301224: model selection is declarative config, not a literal.
+/// Ordered, **local-first** candidate models for an intent (ADR-2026-07-10-1000,
+/// fix #1: per-tier candidate pools). `inference.tier_models[tier]` may be a
+/// scalar `"model"` OR an array `["m1", "m2", ...]`; a scalar auto-wraps. The
+/// SOP reasoner (`reason_via_router`) tries these in order, so a dead/404'ing
+/// cloud provider becomes a never-reached fallback instead of a dead-end — the
+/// factory keeps working on local inference. We always guarantee a competent
+/// local coder as the final fallback even if the config is cloud-only.
+fn tier_candidates_for_intent(intent: &str) -> Vec<String> {
+    // Complex/code reasoning → T2.5; everything else → T2. Mirrors the
+    // workplan-executor's classify_task_tier intent → tier mapping.
+    let key = if matches!(intent, "code_patch" | "bug_triage" | "arch_review" | "adr_draft" | "spec_draft") {
+        "t2.5"
+    } else {
+        "t2"
+    };
+    let configured: Vec<String> = std::fs::read_to_string(".hex/project.json")
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| {
+            v.get("inference")
+                .and_then(|i| i.get("tier_models"))
+                .and_then(|t| t.get(key).or_else(|| t.get("t2")))
+                .cloned()
+        })
+        .map(|m| match m {
+            // Array form: ordered candidate pool.
+            Value::Array(arr) => arr.iter().filter_map(|x| x.as_str().map(String::from)).collect(),
+            // Scalar form: single candidate (backward compatible).
+            Value::String(s) => vec![s],
+            _ => Vec::new(),
+        })
+        .unwrap_or_default();
+
+    order_candidates_local_first(configured)
+}
+
+/// Pure ordering policy for tier candidates (extracted for testability —
+/// ADR-2026-07-10-1000 names `tests/tier_routing.rs`). Locals (model names with
+/// no vendor slug) keep their configured order and come first; clouds follow; a
+/// known-good local coder is guaranteed as the terminal fallback; order-
+/// preserving dedup.
+fn order_candidates_local_first(mut configured: Vec<String>) -> Vec<String> {
+    // A local model name has no vendor slug (no '/'); cloud ids look like
+    // "Qwen/Qwen3-32B" or "deepseek-ai/DeepSeek-R1-0528".
+    let is_local = |m: &str| !m.contains('/');
+    const LOCAL_CODER_FALLBACK: &str = "qwen2.5-coder:32b";
+
+    // Stable partition: locals keep their configured order, then clouds — so we
+    // always exhaust local options before reaching for a (possibly down) cloud
+    // provider, regardless of how the operator ordered the array.
+    configured.sort_by_key(|m| if is_local(m) { 0 } else { 1 });
+
+    // Guarantee a known-good local coder as the terminal fallback.
+    if !configured.iter().any(|m| m == LOCAL_CODER_FALLBACK) {
+        configured.push(LOCAL_CODER_FALLBACK.to_string());
+    }
+
+    // Dedup while preserving order.
+    let mut seen = HashSet::new();
+    configured.retain(|m| seen.insert(m.clone()));
+    configured
+}
+
+#[cfg(test)]
+mod tier_routing_tests {
+    use super::order_candidates_local_first;
+
+    #[test]
+    fn cloud_only_config_appends_local_fallback() {
+        // The exact incident shape: a tier configured to a cloud model that 404s.
+        let got = order_candidates_local_first(vec!["Qwen/Qwen3-32B".into()]);
+        assert_eq!(got, vec!["Qwen/Qwen3-32B", "qwen2.5-coder:32b"]);
+        // Last candidate is always a local coder → never a dead-end.
+        assert!(!got.last().unwrap().contains('/'));
+    }
+
+    #[test]
+    fn locals_are_tried_before_clouds_regardless_of_config_order() {
+        // Operator listed cloud first; we still exhaust local first.
+        let got = order_candidates_local_first(vec![
+            "deepseek-ai/DeepSeek-R1-0528".into(),
+            "gemma4-12b".into(),
+        ]);
+        assert_eq!(got, vec!["gemma4-12b", "deepseek-ai/DeepSeek-R1-0528", "qwen2.5-coder:32b"]);
+    }
+
+    #[test]
+    fn already_local_config_is_unchanged_and_not_duplicated() {
+        let got = order_candidates_local_first(vec!["qwen2.5-coder:32b".into()]);
+        assert_eq!(got, vec!["qwen2.5-coder:32b"]);
+    }
+
+    #[test]
+    fn empty_config_yields_local_fallback_only() {
+        assert_eq!(order_candidates_local_first(vec![]), vec!["qwen2.5-coder:32b"]);
+    }
+
+    #[test]
+    fn local_order_is_preserved_among_locals() {
+        let got = order_candidates_local_first(vec![
+            "gemma4-12b".into(),
+            "Qwen/Qwen3-32B".into(),
+            "qwen2.5-coder:14b".into(),
+        ]);
+        // gemma4-12b, qwen2.5-coder:14b keep their relative order; cloud after; fallback last.
+        assert_eq!(got, vec!["gemma4-12b", "qwen2.5-coder:14b", "Qwen/Qwen3-32B", "qwen2.5-coder:32b"]);
+    }
+}
+
+/// Reason through the nexus inference router (ADR-2605301224). Posts to the
+/// local `/api/inference/complete` with the tier-resolved model + tools; the
+/// router selects the provider (Tenstorrent/Ollama/…) by model name, resolves
+/// vault keys, and falls back. Same tool-call loop as `reason_via_openrouter`,
+/// but the response carries top-level `content` + `tool_calls`.
+async fn reason_via_router(
+    role: &str,
+    operator_message: &str,
+    intent: &str,
+    ground_pack: &Value,
+    registry: Arc<ToolRegistry>,
+) -> Result<ReasonResult, String> {
+    // ADR-2026-07-10-1000 fix #3: try each tier candidate in order, local-first.
+    // A provider that 404s/403s/times out no longer dead-ends the SOP — we fall
+    // through to the next candidate (a local model), so the factory keeps making
+    // progress on local inference instead of escalating into a void. Retrying is
+    // safe: a candidate only yields Err when NO terminal action committed (HTTP
+    // failure pre-emit, or round-trip cap with no successful mutation); reads
+    // (repo_read/grep) and failed patches make no durable change.
+    let candidates = tier_candidates_for_intent(intent);
+    let total = candidates.len();
+    let mut last_err = String::new();
+    for (i, model) in candidates.iter().enumerate() {
+        match reason_via_router_one(model, role, operator_message, intent, ground_pack, registry.clone()).await {
+            Ok(r) => {
+                if i > 0 {
+                    tracing::info!(model = %model, attempt = i + 1, total, "reason_via_router: recovered on local-first fallback candidate");
+                }
+                return Ok(r);
+            }
+            Err(e) => {
+                tracing::warn!(model = %model, attempt = i + 1, total, error = %e, "reason_via_router: candidate failed; falling through to next (local-first)");
+                last_err = e;
+            }
+        }
+    }
+    Err(format!("all {} tier candidate(s) failed; last error: {}", total, last_err))
+}
+
+/// One reasoning attempt against a single resolved `model`. Wrapped by
+/// `reason_via_router`, which retries the next local-first candidate on failure.
+async fn reason_via_router_one(
+    model: &str,
+    role: &str,
+    operator_message: &str,
+    intent: &str,
+    ground_pack: &Value,
+    registry: Arc<ToolRegistry>,
+) -> Result<ReasonResult, String> {
+    let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
+    let url = format!("http://127.0.0.1:{}/api/inference/complete", port);
+
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(600))
+        .build()
+        .map_err(|e| format!("http build: {}", e))?;
+
+    let system = build_reason_system_prompt(role, intent);
+    let user_content = format!(
+        "Operator message:\n>>> {}\n\nGround pack (deterministic tool results):\n{}\n\n\
+         Per the SOP: emit exactly ONE structured action via tool call \
+         (adr_draft, spec_draft, workplan_emit, code_patch, adr_status_set, escalate_to_operator), \
+         or — if the operator's ask is genuinely answered by the ground pack alone with no \
+         artifact needed — reply with a brief 1-2 sentence direct answer and no tool call. \
+         For code-modifying asks (intent=code_patch, bug_triage, 'fix the X'): emit code_patch \
+         after grounding the exact file:line via repo_read.",
+        operator_message,
+        serde_json::to_string_pretty(ground_pack).unwrap_or_default()
+    );
+
+    let mut messages: Vec<Value> = vec![
+        json!({ "role": "system", "content": system }),
+        json!({ "role": "user", "content": user_content }),
+    ];
+
+    // /api/inference/complete expects Anthropic-format tools (it converts to the
+    // provider's shape internally via anthropic_tool_to_openai).
+    let tools_arr: Vec<Value> = registry.anthropic_schema().as_array().cloned().unwrap_or_default();
+
+    let mut emitted_kind: Option<String> = None;
+    let mut final_text = String::new();
+    let mut round_trips: u32 = 0;
+    let max_round_trips: u32 = std::env::var("HEX_SOP_MAX_ROUND_TRIPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(16);
+    let mut paths_written_this_conversation: HashSet<String> = HashSet::new();
+
+    loop {
+        if round_trips >= max_round_trips {
+            return Err(format!("tool round-trip cap ({}) hit without final reply", max_round_trips));
+        }
+
+        // Convergence nudge (ADR-2026-06-04-1740 task 7): a model given exploration
+        // tools (repo_read/repo_grep) alongside code_patch tends to read/grep in
+        // circles and never commit to emitting the action — burning the whole
+        // round-trip budget "without finishing" (measured 2026-06-04: a one-test
+        // task hit the 16 cap on every path). Once it has spent half the budget
+        // exploring with no terminal action emitted, force the decision.
+        if emitted_kind.is_none() && round_trips > 0 && round_trips == max_round_trips / 2 {
+            tracing::warn!(role = %role, intent = %intent, round_trips, "reason loop: convergence nudge — forcing terminal action");
+            messages.push(json!({
+                "role": "user",
+                "content": format!(
+                    "You have used {} of {} tool round-trips exploring without emitting an action. \
+                     Stop calling repo_read/repo_grep now. Using what you have already read, emit \
+                     exactly ONE terminal tool call this turn: code_patch with the concrete change, \
+                     or escalate_to_operator if you are genuinely blocked. Do not explore further.",
+                    round_trips, max_round_trips
+                )
+            }));
+        }
+
+        let req_body = json!({
+            "model": model,
+            "messages": messages,
+            "tools": tools_arr,
+            "max_tokens": std::env::var("HEX_SOP_MAX_TOKENS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(8192),
+        });
+
+        let resp = http
+            .post(&url)
+            .header("content-type", "application/json")
+            .json(&req_body)
+            .send()
+            .await
+            .map_err(|e| format!("router http: {}", e))?;
+        let status = resp.status();
+        let body: Value = resp.json().await.map_err(|e| format!("router json: {}", e))?;
+        if !status.is_success() {
+            return Err(format!("router HTTP {}: {}", status, body));
+        }
+
+        // /api/inference/complete returns top-level content + tool_calls.
+        let assistant_content = body.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let mut tool_calls = body.get("tool_calls").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        if tool_calls.is_empty() && !assistant_content.is_empty() {
+            tool_calls = parse_text_tool_calls(&assistant_content);
+        }
+
+        messages.push(json!({
+            "role": "assistant",
+            "content": if assistant_content.is_empty() { Value::Null } else { Value::String(assistant_content.clone()) },
+            "tool_calls": tool_calls.clone(),
+        }));
+        if !assistant_content.is_empty() {
+            final_text.push_str(&assistant_content);
+        }
+
+        if tool_calls.is_empty() {
+            return Ok(ReasonResult { emitted_kind, tool_round_trips: round_trips, final_text });
+        }
+
+        for tc in &tool_calls {
+            let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let func = tc.get("function").cloned().unwrap_or(Value::Null);
+            let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let args_str = func.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}");
+            let input: Value = serde_json::from_str(args_str).unwrap_or(Value::Null);
+
+            if emitted_kind.is_none() && matches!(name.as_str(), "adr_draft" | "workplan_emit" | "spec_draft" | "code_patch" | "adr_status_set" | "escalate_to_operator") {
+                emitted_kind = Some(name.clone());
+            }
+
+            if name == "code_patch" {
+                if let Some(path_str) = input.get("path").and_then(|v| v.as_str()) {
+                    if paths_written_this_conversation.contains(path_str) {
+                        let err_payload = json!({
+                            "ok": false, "output": {},
+                            "error": format!("race detected: path '{}' was already patched this round; re-read via repo_read and emit a replace_string patch next round", path_str),
+                            "elapsed_ms": 0, "truncated": false,
+                        });
+                        messages.push(json!({ "role": "tool", "tool_call_id": id, "content": serde_json::to_string(&err_payload).unwrap_or_default() }));
+                        continue;
+                    }
+                }
+            }
+
+            let patched_path: Option<String> = if name == "code_patch" {
+                input.get("path").and_then(|v| v.as_str()).map(String::from)
+            } else {
+                None
+            };
+
+            let result = registry.execute(&name, input).await;
+            if result.ok {
+                if let Some(p) = patched_path {
+                    paths_written_this_conversation.insert(p);
+                }
+            }
+
+            let result_payload = json!({
+                "ok": result.ok, "output": result.output, "error": result.error,
+                "elapsed_ms": result.elapsed_ms, "truncated": result.truncated,
+            });
+            messages.push(json!({ "role": "tool", "tool_call_id": id, "content": serde_json::to_string(&result_payload).unwrap_or_default() }));
+            tracing::info!(role = %role, intent = %intent, tool = %name, ok = result.ok, round_trips, "reason loop: tool call");
+
+            // Early-stop (ADR-2026-06-04-1740 task 7): the SOP emits exactly ONE
+            // structured action. Once a terminal action lands successfully, return
+            // immediately instead of giving the model another turn to wander off and
+            // burn the round-trip budget.
+            if result.ok && matches!(name.as_str(), "adr_draft" | "workplan_emit" | "spec_draft" | "code_patch" | "adr_status_set" | "escalate_to_operator") {
+                tracing::info!(role = %role, intent = %intent, action = %name, round_trips, "reason loop: terminal action emitted — stopping");
+                return Ok(ReasonResult { emitted_kind: Some(name.clone()), tool_round_trips: round_trips, final_text });
+            }
+        }
+
+        round_trips += 1;
+    }
 }
 
 async fn reason_via_anthropic(
@@ -704,8 +1106,31 @@ async fn reason_via_anthropic(
     registry: Arc<ToolRegistry>,
     api_key: String,
 ) -> Result<ReasonResult, String> {
-    let model = std::env::var("HEX_SOP_REASON_MODEL")
-        .unwrap_or_else(|_| "claude-sonnet-4-5".to_string());
+    // REASON model selection. When the operator has no cloud-frontier key
+    // configured, defaulting to claude-sonnet-4-5 forces the inference fallback
+    // chain to walk every OpenRouter free-tier candidate (each with a 2s
+    // inter-attempt sleep), then collapse to local Ollama qwen2.5-coder:32b.
+    // That 32b call competes with org_responder's qwen2.5-coder:14b for the GPU,
+    // which thrashes the model load/unload loop ~25×/minute.
+    //
+    // Detect the "standalone, no cloud key" case and use the same local model
+    // org_responder uses, so the GPU stays warm on a single model and the
+    // openrouter pre-attempt is skipped entirely (the endpoint selector will
+    // route the local model name directly to the registered Ollama provider).
+    //
+    // Surfaced 2026-05-28 ebay-mvp scaling test: GPU was loading 14b → 32b
+    // ↔ 14b every ~2s. Switching the REASON default to 14b in standalone
+    // mode collapsed the swap.
+    let model = std::env::var("HEX_SOP_REASON_MODEL").unwrap_or_else(|_| {
+        let has_anthropic = std::env::var("ANTHROPIC_API_KEY")
+            .map(|v| !v.is_empty() && v.starts_with("sk-ant-"))
+            .unwrap_or(false);
+        if has_anthropic {
+            "claude-sonnet-4-5".to_string()
+        } else {
+            "qwen2.5-coder:14b".to_string()
+        }
+    });
 
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
@@ -743,6 +1168,26 @@ async fn reason_via_anthropic(
     loop {
         if round_trips >= max_round_trips {
             return Err(format!("tool round-trip cap ({}) hit without final reply", max_round_trips));
+        }
+
+        // Convergence nudge (ADR-2026-06-04-1740 task 7): a model given exploration
+        // tools (repo_read/repo_grep) alongside code_patch tends to read/grep in
+        // circles and never commit to emitting the action — burning the whole
+        // round-trip budget "without finishing" (measured 2026-06-04: a one-test
+        // task hit the 16 cap on every path). Once it has spent half the budget
+        // exploring with no terminal action emitted, force the decision.
+        if emitted_kind.is_none() && round_trips > 0 && round_trips == max_round_trips / 2 {
+            tracing::warn!(role = %role, intent = %intent, round_trips, "reason loop: convergence nudge — forcing terminal action");
+            messages.push(json!({
+                "role": "user",
+                "content": format!(
+                    "You have used {} of {} tool round-trips exploring without emitting an action. \
+                     Stop calling repo_read/repo_grep now. Using what you have already read, emit \
+                     exactly ONE terminal tool call this turn: code_patch with the concrete change, \
+                     or escalate_to_operator if you are genuinely blocked. Do not explore further.",
+                    round_trips, max_round_trips
+                )
+            }));
         }
 
         let req_body = json!({
@@ -920,6 +1365,26 @@ async fn reason_via_openrouter(
     loop {
         if round_trips >= max_round_trips {
             return Err(format!("tool round-trip cap ({}) hit without final reply", max_round_trips));
+        }
+
+        // Convergence nudge (ADR-2026-06-04-1740 task 7): a model given exploration
+        // tools (repo_read/repo_grep) alongside code_patch tends to read/grep in
+        // circles and never commit to emitting the action — burning the whole
+        // round-trip budget "without finishing" (measured 2026-06-04: a one-test
+        // task hit the 16 cap on every path). Once it has spent half the budget
+        // exploring with no terminal action emitted, force the decision.
+        if emitted_kind.is_none() && round_trips > 0 && round_trips == max_round_trips / 2 {
+            tracing::warn!(role = %role, intent = %intent, round_trips, "reason loop: convergence nudge — forcing terminal action");
+            messages.push(json!({
+                "role": "user",
+                "content": format!(
+                    "You have used {} of {} tool round-trips exploring without emitting an action. \
+                     Stop calling repo_read/repo_grep now. Using what you have already read, emit \
+                     exactly ONE terminal tool call this turn: code_patch with the concrete change, \
+                     or escalate_to_operator if you are genuinely blocked. Do not explore further.",
+                    round_trips, max_round_trips
+                )
+            }));
         }
 
         let req_body = json!({
@@ -1153,6 +1618,26 @@ async fn reason_via_ollama_fallback(
     loop {
         if round_trips >= max_round_trips {
             return Err(format!("tool round-trip cap ({}) hit without final reply", max_round_trips));
+        }
+
+        // Convergence nudge (ADR-2026-06-04-1740 task 7): a model given exploration
+        // tools (repo_read/repo_grep) alongside code_patch tends to read/grep in
+        // circles and never commit to emitting the action — burning the whole
+        // round-trip budget "without finishing" (measured 2026-06-04: a one-test
+        // task hit the 16 cap on every path). Once it has spent half the budget
+        // exploring with no terminal action emitted, force the decision.
+        if emitted_kind.is_none() && round_trips > 0 && round_trips == max_round_trips / 2 {
+            tracing::warn!(role = %role, intent = %intent, round_trips, "reason loop: convergence nudge — forcing terminal action");
+            messages.push(json!({
+                "role": "user",
+                "content": format!(
+                    "You have used {} of {} tool round-trips exploring without emitting an action. \
+                     Stop calling repo_read/repo_grep now. Using what you have already read, emit \
+                     exactly ONE terminal tool call this turn: code_patch with the concrete change, \
+                     or escalate_to_operator if you are genuinely blocked. Do not explore further.",
+                    round_trips, max_round_trips
+                )
+            }));
         }
 
         let req_body = json!({
@@ -1391,6 +1876,47 @@ mod tests {
         assert_eq!(classify_intent("there's a bug in the chat dispatcher"), "bug_triage");
         assert_eq!(classify_intent("Review the architecture of the merge gate"), "arch_review");
         assert_eq!(classify_intent("hello"), "code_question");
+    }
+
+    // GROUND graph-context wiring: builds a fixture graph and asserts the pack
+    // hands REASON the file's neighbourhood (env-free via the *_in helper).
+    #[tokio::test]
+    async fn graph_context_pack_returns_neighbourhood() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        for (rel, src) in [
+            ("src/a.ts", "export function alpha() {}\n"),
+            ("src/b.ts", "import { alpha } from './a.js';\nexport class Beta {}\n"),
+        ] {
+            let p = d.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, src).unwrap();
+        }
+        let opts = hex_graph::BuildOpts {
+            project_id: "t".into(),
+            mode: hex_graph::Mode::Ast,
+            include_docs: true,
+            ..Default::default()
+        };
+        let graph = hex_graph::build(d, opts, &hex_graph::semantic::NoopSemanticExtractor)
+            .await
+            .unwrap();
+        let out = d.join("graph-out").join("graph.json");
+        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+        std::fs::write(&out, graph.to_json().unwrap()).unwrap();
+
+        // Empty paths → Null; missing graph → Null.
+        assert!(graph_context_pack_in(d, &[]).is_null());
+        let other = tempfile::tempdir().unwrap();
+        assert!(graph_context_pack_in(other.path(), &["src/a.ts".to_string()]).is_null());
+
+        // Present graph → array with the file's rendered context.
+        let pack = graph_context_pack_in(d, &["src/a.ts".to_string()]);
+        let arr = pack.as_array().expect("array");
+        assert_eq!(arr.len(), 1);
+        let md = arr[0].get("markdown").and_then(|v| v.as_str()).unwrap();
+        assert!(md.contains("src/a.ts"));
+        assert!(md.contains("Defines"));
     }
 
     // Serialize env-mutating tests against the workspace test lock.

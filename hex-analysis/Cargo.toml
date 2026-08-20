@@ -1,0 +1,27 @@
+[package]
+name = "hex-analysis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+toml = "0.8"
+async-trait = "0.1"
+walkdir = "2"
+tracing = "0.1"
+# tokio::fs is used at runtime (adr_compliance, analyzer, fingerprint_extractor);
+# `macros` covers the in-crate #[tokio::test]s.
+tokio = { version = "1", features = ["fs", "rt", "macros"] }
+tree-sitter = "0.24"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-rust = "0.23"
+
+[dev-dependencies]
+tempfile = "3"

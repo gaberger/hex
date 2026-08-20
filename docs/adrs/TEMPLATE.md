@@ -1,11 +1,24 @@
 # ADR-{YYMMDDHHMM}: {Title}
 
-**Status:** Accepted (resolved 2026-05-08)
+**Status:** Proposed
 **Date:** {YYYY-MM-DD}
+**Epoch:** {current design era — e.g. single-agent. Omit to derive from Date. See ADR-2606071243}
 **Drivers:** {What triggered this decision — a bug, a requirement, a constraint}
 **Supersedes:** {ADR-YYMMDDHHMM if replacing an earlier decision}
+**Superseded-By:** {ADR-YYMMDDHHMM if a later decision replaces this one}
 
 <!-- ID format: YYMMDDHHMM — use your local time. Example: 2603221500 = 2026-03-22 15:00 -->
+
+<!-- LIFECYCLE (owned by the adr-steward agent; change Status only via the
+     adr_status_set tool):
+       Proposed → Accepted → Completed        (the success path)
+       Proposed → Rejected | Abandoned        (declined / went stale >30d)
+       Accepted|Completed → Superseded | Deprecated
+     • Accepted   = the decision is approved.
+     • Completed  = Accepted AND implementation CONFIRMED — its workplan
+                    reconciles done (`hex plan reconcile`) and evidence passes.
+                    Completed authorizes adapters exactly like Accepted.
+     • Superseded MUST carry a `Superseded-By: ADR-XXX` backlink. -->
 
 ## Context
 

@@ -1,6 +1,6 @@
 # ADR-2026-03-23-1000: Dashboard Reactive Context Fix — Eliminate Module-Level Computations
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-23
 **Drivers:** Dashboard SolidJS SPA crashes on load with `TypeError: workplans is not a function or its return value is not iterable` at WorkplanView.tsx:227. Console shows 15+ "computations created outside a `createRoot` or `render` will never be disposed" warnings. Root cause: reactive primitives (`createMemo`, `createEffect`, `createSignal`) created at module scope outside any reactive ownership context, violating Solid.js's reactive model.
 

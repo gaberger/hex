@@ -1,6 +1,6 @@
 # ADR-2026-03-24-1500: TUI Async Channel Architecture
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-24
 - **Supersedes**: ADR-2026-03-24-1430 (TUI Non-Blocking Phase Execution — two-tick workaround)
 - **Relates to**: ADR-2026-03-23-2005 (Self-Sufficient hex-agent with TUI)

@@ -1,6 +1,7 @@
 # ADR-2026-05-17-2030 — SOP Pipeline Redesign: Tool-Only Artifact Production, Closed-Loop Retries, Structured Classifier
 
-**Status:** Accepted
+**Status:** Superseded
+**Superseded-By:** ADR-2606061359
 
 > Status flipped 2026-05-23 (operator). Workplan derivation will land via `workplan_auto_emitter` on next tick.
 

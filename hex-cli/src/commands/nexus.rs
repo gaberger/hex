@@ -9,12 +9,20 @@ const DEFAULT_PORT: u16 = 5555;
 /// Find the hex-nexus binary.
 ///
 /// Search order:
-/// 1. `HEX_NEXUS_BIN` env var
-/// 2. `./target/debug/hex-nexus` (local debug build — preferred for dev)
-/// 3. `./target/release/hex-nexus` (local release build)
-/// 4. `hex-nexus` on `$PATH`
+/// 1. `HEX_NEXUS_BIN` env var (always wins)
+/// 2. Freshest of `./target/{release,debug}/hex-nexus` by mtime
+/// 3. `hex-nexus` on `$PATH`
+///
+/// We pick the **newest** local build by modification time, not a hardcoded
+/// profile order. Hardcoding `release`-first is a footgun in both directions: a
+/// release-deploy workflow (`cargo build --release`) and a debug-deploy workflow
+/// (`cargo build` — the cheaper iteration loop) each expect "the build I just
+/// made" to be what restarts. Whichever profile is fresher is the one the
+/// operator means; if both exist we run the fresher and warn that the other is
+/// being shadowed, so a stale artifact can never silently run old code behind a
+/// "it's live" claim (ADR-2606071651). Set `HEX_NEXUS_BIN` to pin one explicitly.
 fn find_nexus_binary() -> Option<PathBuf> {
-    // 1. Explicit env var
+    // 1. Explicit env var — always wins.
     if let Ok(p) = std::env::var("HEX_NEXUS_BIN") {
         let path = PathBuf::from(p);
         if path.is_file() {
@@ -22,16 +30,32 @@ fn find_nexus_binary() -> Option<PathBuf> {
         }
     }
 
-    // 2-3. Local build artifacts — debug first so iterative dev builds are always picked up.
-    // Set HEX_NEXUS_BIN=target/release/hex-nexus to explicitly use a release build.
-    for profile in &["debug", "release"] {
+    // 2. Local build artifacts — newest mtime wins; warn on shadow.
+    let mut candidates: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
+    for profile in &["release", "debug"] {
         let candidate = PathBuf::from(format!("target/{}/hex-nexus", profile));
-        if candidate.is_file() {
-            return Some(candidate);
+        if let Ok(mtime) = std::fs::metadata(&candidate).and_then(|m| m.modified()) {
+            candidates.push((candidate, mtime));
         }
     }
+    if let Some(chosen) = pick_newest_binary(&candidates).cloned() {
+        if candidates.len() > 1 {
+            let shadowed: Vec<String> = candidates
+                .iter()
+                .filter(|(p, _)| *p != chosen)
+                .map(|(p, _)| p.display().to_string())
+                .collect();
+            eprintln!(
+                "{} multiple hex-nexus builds present — running freshest {} (shadowing {}). Pin with HEX_NEXUS_BIN.",
+                "⚠".yellow(),
+                chosen.display(),
+                shadowed.join(", "),
+            );
+        }
+        return Some(chosen);
+    }
 
-    // 4. PATH lookup
+    // 3. PATH lookup
     let path_var = std::env::var("PATH").unwrap_or_default();
     for dir in path_var.split(':') {
         let candidate = PathBuf::from(dir).join("hex-nexus");
@@ -41,6 +65,12 @@ fn find_nexus_binary() -> Option<PathBuf> {
     }
 
     None
+}
+
+/// Pick the freshest candidate binary by modification time. Pure (no FS access)
+/// so the selection policy is unit-testable independent of the build tree.
+fn pick_newest_binary(candidates: &[(PathBuf, std::time::SystemTime)]) -> Option<&PathBuf> {
+    candidates.iter().max_by_key(|(_, mtime)| *mtime).map(|(p, _)| p)
 }
 
 #[derive(Subcommand)]
@@ -397,20 +427,23 @@ async fn start(port: u16, bind: &str, token: Option<&str>, _no_agent: bool) -> a
     // routing every directive through the strict Confirm/Silent prompt
     // instead of the typed-tool pipeline.
     if std::env::var("HEX_SOP_PERSONAS").is_err() {
+        // hex-coder is the doer persona that emits code_patch (auto_repair DMs
+        // it). It must be a SOP persona so its asks route through the SOP
+        // REASON phase (→ reason_via_router → tier_models → Tenstorrent) rather
+        // than org_responder's local chat reply. Its omission meant auto_repair
+        // codegen ran on local qwen, never the configured tier model.
         cmd.env(
             "HEX_SOP_PERSONAS",
-            "cto,cpo,coo,ciso,chief-visionary,chief-architect",
+            "cto,cpo,coo,ciso,chief-visionary,chief-architect,hex-coder",
         );
     }
-    // Cap glibc per-thread malloc arenas. Default is 8 × num_cpus → up to 256
-    // arenas on a 32-core box, each pulling 128 MB chunks via mmap. Measured
-    // 2026-05-22: 15h-uptime nexus with default arenas held 25 GB RSS across
-    // 390 anon regions; ARENA_MAX=2 brought the same workload to 3 GB / 67
-    // regions with a 30% CPU reduction (less arena-lock contention). User-set
-    // env wins.
-    if std::env::var("MALLOC_ARENA_MAX").is_err() {
-        cmd.env("MALLOC_ARENA_MAX", "2");
-    }
+    // NOTE (ADR-2026-06-04-1740): we used to force MALLOC_ARENA_MAX=2 here to tame a
+    // 25 GB RSS bloat (2026-05-22). That cap funneled the heavy serde_json::Value
+    // allocation traffic from ~20 STDB poll loops onto 2 glibc arena locks, burning
+    // ~6 cores in futex contention (measured: ARENA_MAX=2 → 600% idle CPU, ARENA_MAX=16
+    // → 0%). hex-nexus now uses jemalloc as its #[global_allocator], whose per-thread
+    // caches eliminate both the fragmentation and the lock storm — so the glibc arena
+    // cap is no longer set. A user-provided MALLOC_ARENA_MAX still passes through.
     // Ensure cargo (and other rustup-installed binaries) are reachable from
     // nexus-spawned shell commands. Without this, phase gates like
     // `cargo check -p hex-nexus` fail with "command not found" (exit 127) and
@@ -1138,5 +1171,56 @@ fn get_disk_build_hash() -> Option<String> {
         Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    fn at(secs: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn newest_binary_wins_when_debug_is_fresher() {
+        // The regression guarded against: release was hardcoded first, so a
+        // freshly-built debug binary (the cheap deploy loop) was ignored and the
+        // daemon kept running stale release code behind a false "it's live" claim.
+        let candidates = vec![
+            (PathBuf::from("target/release/hex-nexus"), at(1000)),
+            (PathBuf::from("target/debug/hex-nexus"), at(2000)),
+        ];
+        assert_eq!(
+            pick_newest_binary(&candidates),
+            Some(&PathBuf::from("target/debug/hex-nexus")),
+        );
+    }
+
+    #[test]
+    fn newest_binary_wins_when_release_is_fresher() {
+        let candidates = vec![
+            (PathBuf::from("target/release/hex-nexus"), at(2000)),
+            (PathBuf::from("target/debug/hex-nexus"), at(1000)),
+        ];
+        assert_eq!(
+            pick_newest_binary(&candidates),
+            Some(&PathBuf::from("target/release/hex-nexus")),
+        );
+    }
+
+    #[test]
+    fn single_candidate_is_chosen() {
+        let candidates = vec![(PathBuf::from("target/debug/hex-nexus"), at(1000))];
+        assert_eq!(
+            pick_newest_binary(&candidates),
+            Some(&PathBuf::from("target/debug/hex-nexus")),
+        );
+    }
+
+    #[test]
+    fn no_candidates_is_none() {
+        assert_eq!(pick_newest_binary(&[]), None);
     }
 }

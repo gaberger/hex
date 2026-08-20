@@ -28,6 +28,7 @@ const ADRBrowser = lazy(() => import('../components/views/ADRBrowser'));
 const ConfigPage = lazy(() => import('../components/views/ConfigPage'));
 const FileTreeView = lazy(() => import('../components/views/FileTreeView'));
 const WorkplanView = lazy(() => import('../components/views/WorkplanView'));
+const KnowledgeGraphView = lazy(() => import('../components/views/KnowledgeGraphView'));
 const AgentList = lazy(() => import('../components/project/AgentList'));
 const AgentDetailView = lazy(() => import('../components/project/AgentDetail'));
 const SwarmDetail = lazy(() => import('../components/project/SwarmDetail'));
@@ -35,11 +36,38 @@ const WorkPlanDetail = lazy(() => import('../components/project/WorkPlanDetail')
 const InboxPanel = lazy(() => import('../components/inbox/InboxPanel'));
 const ResearchLab = lazy(() => import('../components/neural-lab/ResearchLab'));
 const SwapsView = lazy(() => import('../components/swaps/SwapsView'));
+const InferencePanel = lazy(() => import('../components/fleet/InferencePanel'));
+const FleetView = lazy(() => import('../components/fleet/FleetView'));
 const ActivityPanel = lazy(() => import('../components/views/ActivityPanel'));
 const OrgChart = lazy(() => import('../components/views/OrgChart'));
 const OrgComms = lazy(() => import('../components/views/OrgComms'));
 const TeamDashboard = lazy(() => import('../components/views/TeamDashboard'));
 const MissionControl = lazy(() => import('../components/views/MissionControl'));
+const DirectRuns = lazy(() => import('../components/views/DirectRuns'));
+const Workbench = lazy(() => import('../components/views/Workbench'));
+const MemoryView = lazy(() => import('../components/views/MemoryView'));
+// First-class operational telemetry pages (restored 2026-06-05 — these were
+// orphaned when Mission Control was retired but their redirects were left
+// pointing at the dead hub). Each is now its own routable + sidebar-linked view.
+const Brain = lazy(() => import('../components/views/Brain'));
+const BrainDecisions = lazy(() => import('../components/views/BrainDecisions'));
+const MergeGate = lazy(() => import('../components/views/MergeGate'));
+const PersonaHealth = lazy(() => import('../components/views/PersonaHealth'));
+const Thoughts = lazy(() => import('../components/views/Thoughts'));
+const Resources = lazy(() => import('../components/views/Resources'));
+const Commitments = lazy(() => import('../components/views/Commitments'));
+const Missions = lazy(() => import('../components/views/Missions'));
+const OpsSla = lazy(() => import('../components/views/OpsSla'));
+
+// Sidebar entries for the restored System telemetry pages. `page` must match a
+// Route in stores/router.ts and a <Match> in the render Switch below.
+const SYSTEM_NAV: { page: string; label: string; icon: string }[] = [
+  { page: "resources",       label: "Resources",     icon: "M4 7v10c0 1 4 3 8 3s8-2 8-3V7M4 7c0 1 4 3 8 3s8-2 8-3M4 7c0-1 4-3 8-3s8 2 8 3" },
+  // Retired (ADR-2606061359): the org-sim telemetry — Brain, Decisions, Merge Gate,
+  // Thoughts, Commitments, Ops SLA, Persona Health, Missions — all reflected the
+  // multi-agent persona model. Routes redirect to the Workbench (single-agent loop).
+  // Only Resources (system utilization) remains as genuine ops telemetry.
+];
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
 
@@ -57,18 +85,8 @@ const projectSubNav: NavItem[] = [
     page: 'project',
     routeFactory: (pid) => ({ page: 'project', projectId: pid }),
   },
-  {
-    label: 'Agents',
-    icon: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />',
-    page: 'project-agents',
-    routeFactory: (pid) => ({ page: 'project-agents', projectId: pid }),
-  },
-  {
-    label: 'Swarms',
-    icon: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />',
-    page: 'project-swarms',
-    routeFactory: (pid) => ({ page: 'project-swarms', projectId: pid }),
-  },
+  // Agents + Swarms removed (ADR-2606061359): org-sim project tabs retired in
+  // favor of the single-agent Workbench.
   {
     label: 'ADRs',
     icon: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />',
@@ -92,6 +110,12 @@ const projectSubNav: NavItem[] = [
     icon: '<circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><circle cx="18" cy="6" r="3" /><line x1="6" y1="9" x2="6" y2="21" /><path d="M6 12h6a3 3 0 0 1 3 3v3" />',
     page: 'project-graph',
     routeFactory: (pid) => ({ page: 'project-graph', projectId: pid }),
+  },
+  {
+    label: 'Knowledge Graph',
+    icon: '<circle cx="12" cy="5" r="2" /><circle cx="5" cy="19" r="2" /><circle cx="19" cy="19" r="2" /><line x1="12" y1="7" x2="5.5" y2="17" /><line x1="12" y1="7" x2="18.5" y2="17" /><line x1="7" y1="19" x2="17" y2="19" />',
+    page: 'project-knowledge-graph',
+    routeFactory: (pid) => ({ page: 'project-knowledge-graph', projectId: pid }),
   },
   {
     label: 'Files',
@@ -258,21 +282,17 @@ const App: Component = () => {
   const isOrgCommsPage = () => route().page === "org-comms";
   const isTeamPage = () => route().page === "team";
   const isMissionControlPage = () => route().page === "mission-control";
+  const isDirectRunsPage = () => route().page === "direct-runs";
 
   // ── Legacy-hash redirect ──
   // Bookmarks for the dead drill-down pages are rewritten to the
   // canonical surface with a filter chip pre-selected.
+  // Restored 2026-06-05: these 10 views are first-class pages again (see lazy
+  // imports above). Mission Control was retired, so the old redirects pointed
+  // them all at a dead hub — they now route to their own components. Only
+  // #/agent-runs aliases onward, to Direct Runs (the canonical run monitor).
   const LEGACY_HASH_REDIRECTS: Record<string, string> = {
-    "#/brain": "#/mission-control?filter=brain",
-    "#/decisions": "#/mission-control?filter=brain-decisions",
-    "#/merge-gate": "#/mission-control?filter=merge-gate",
-    "#/persona-health": "#/mission-control?filter=persona-health",
-    "#/thoughts": "#/mission-control?filter=thoughts",
-    "#/resources": "#/mission-control?filter=resources",
-    "#/commitments": "#/mission-control?filter=commitments",
-    "#/missions": "#/mission-control?filter=missions",
-    "#/ops-sla": "#/mission-control?filter=ops-sla",
-    "#/agent-runs": "#/mission-control?filter=agent-runs",
+    "#/agent-runs": "#/direct-runs",
   };
   const maybeRedirectLegacyHash = () => {
     const h = window.location.hash;
@@ -295,40 +315,13 @@ const App: Component = () => {
 
   return (
     <>
-      {/* Full-screen OrgChart page */}
-      <Show when={isOrgChartPage()}>
-        <ConnectionStatusBanner />
-        <OrgChart />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
+      {/* Retired (2026-06-04): the full-screen persona/board views — Mission Control,
+          Team Dashboard, Org Chart, Org Comms — monitored the old SOP/persona pipeline
+          (liveness, not verified output). They're removed; Direct Runs is the monitor
+          now. Stale links to those pages fall through to the sidebar layout below. */}
 
-      {/* Full-screen OrgComms page */}
-      <Show when={isOrgCommsPage()}>
-        <ConnectionStatusBanner />
-        <OrgComms />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
-
-      {/* Full-screen Team Dashboard */}
-      <Show when={isTeamPage()}>
-        <ConnectionStatusBanner />
-        <TeamDashboard />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
-
-      {/* Full-screen Mission Control */}
-      <Show when={isMissionControlPage()}>
-        <ConnectionStatusBanner />
-        <MissionControl />
-        <ToastContainer />
-        <ShortcutsOverlay />
-      </Show>
-
-      {/* Standard layout with sidebar for all other pages */}
-      <Show when={!isOrgChartPage() && !isOrgCommsPage() && !isTeamPage() && !isMissionControlPage()}>
+      {/* Standard layout with sidebar — always rendered now */}
+      <Show when={true}>
         <div class="flex h-screen flex-col bg-gray-950 text-gray-100">
           {/* Connection status banner — shown when nexus or SpacetimeDB is unavailable */}
           <ConnectionStatusBanner />
@@ -428,25 +421,44 @@ const App: Component = () => {
           }}
         >
 
-          {/* Mission Control — operator's primary surface (P1.3: promoted to top with distinct treatment) */}
+          {/* Workbench — operator's primary surface (ADR-2606061359): launch + watch
+              single-agent runs (task → agent → evidence → commit). Replaces Mission Control. */}
           <div class="px-3 pt-3 pb-1">
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
               classList={{
-                "border-l-2 border-cyan-500 bg-cyan-500/10 text-cyan-100 pl-2": route().page === "mission-control",
-                "text-gray-200 hover:bg-gray-900/40 hover:text-cyan-200": route().page !== "mission-control",
+                "border-l-2 border-cyan-500 bg-cyan-500/10 text-cyan-100 pl-2": route().page === "direct-runs",
+                "text-gray-200 hover:bg-gray-900/40 hover:text-cyan-200": route().page !== "direct-runs",
                 "justify-center px-0": sidebarCollapsed(),
               }}
-              aria-label="Mission Control"
-              aria-current={route().page === "mission-control" ? "page" : undefined}
-              onClick={() => { navigate({ page: "mission-control" }); setMobileDrawerOpen(false); }}
+              aria-label="Workbench"
+              aria-current={route().page === "direct-runs" ? "page" : undefined}
+              onClick={() => { navigate({ page: "direct-runs" }); setMobileDrawerOpen(false); }}
             >
               <svg class="h-4 w-4 shrink-0 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="2" x2="12" y2="22" />
-                <path d="M2 12h20" />
+                <polygon points="5 3 19 12 5 21 5 3" /><polyline points="9 11 11 13 15 9" />
               </svg>
-              <Show when={!sidebarCollapsed()}>Mission Control</Show>
+              <Show when={!sidebarCollapsed()}>Workbench</Show>
+            </button>
+          </div>
+
+          {/* Memory — the agent learning loop (lessons / gaps). */}
+          <div class="px-3 pt-1 pb-1">
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              classList={{
+                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "memory",
+                "text-gray-400 hover:bg-gray-900/30 hover:text-gray-200": route().page !== "memory",
+                "justify-center px-0": sidebarCollapsed(),
+              }}
+              aria-label="Memory"
+              aria-current={route().page === "memory" ? "page" : undefined}
+              onClick={() => { navigate({ page: "memory" }); setMobileDrawerOpen(false); }}
+            >
+              <svg class="h-4 w-4 shrink-0 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2a7 7 0 0 0-7 7c0 2 1 3 1 5v3a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-3c0-2 1-3 1-5a7 7 0 0 0-7-7z" /><path d="M9 21h6" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Memory</Show>
             </button>
           </div>
 
@@ -593,6 +605,24 @@ const App: Component = () => {
               </svg>
               <Show when={!sidebarCollapsed()}>Fleet Nodes</Show>
             </button>
+            {/* (Direct Runs is the primary surface at the top of the sidebar) */}
+            <button
+              class="hidden"
+              classList={{
+                "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "direct-runs",
+                "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "direct-runs",
+                "justify-center px-0": sidebarCollapsed(),
+              }}
+              aria-label={sidebarCollapsed() ? "Direct Runs" : undefined}
+              aria-current={route().page === "direct-runs" ? "page" : undefined}
+              onClick={() => { navigate({ page: "direct-runs" }); setMobileDrawerOpen(false); }}
+            >
+              <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                classList={{ "text-cyan-400": route().page === "direct-runs" }}>
+                <polygon points="5 3 19 12 5 21 5 3" /><polyline points="9 11 11 13 15 9" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Direct Runs</Show>
+            </button>
             {/* Research Lab */}
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
@@ -612,12 +642,10 @@ const App: Component = () => {
               <Show when={!sidebarCollapsed()}>Research Lab</Show>
             </button>
             {/* P2.1 (wp-dashboard-ux-remediation-2026-05-22):
-                Brain, Brain Decisions, Merge Gate, Persona Health,
-                Thoughts, Resources, Commitments, Missions, Ops SLA,
-                Agent Runs were removed from the sidebar — all 10 alias
-                to Mission Control. They are now reachable via the
-                filter-chip row at the top of Mission Control, and old
-                bookmarks redirect via LEGACY_HASH_REDIRECTS above. */}
+                Restored 2026-06-05: Brain, Decisions, Merge Gate, Persona
+                Health, Thoughts, Resources, Commitments, Missions, Ops SLA
+                are first-class sidebar pages again (the System group below).
+                The Mission-Control consolidation they aliased to was retired. */}
             {/* Substrate Swaps (ADR-2026-04-26-1500) */}
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
@@ -636,6 +664,33 @@ const App: Component = () => {
               </svg>
               <Show when={!sidebarCollapsed()}>Swaps</Show>
             </button>
+
+            {/* System telemetry pages (restored 2026-06-05) — data-driven so the
+                set stays in sync with the router + render Switch in one place. */}
+            <Show when={!sidebarCollapsed()}>
+              <div class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold px-3 mb-2 mt-3">System</div>
+            </Show>
+            <For each={SYSTEM_NAV}>
+              {(item) => (
+                <button
+                  class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+                  classList={{
+                    "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === item.page,
+                    "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== item.page,
+                    "justify-center px-0": sidebarCollapsed(),
+                  }}
+                  aria-label={sidebarCollapsed() ? item.label : undefined}
+                  aria-current={route().page === item.page ? "page" : undefined}
+                  onClick={() => { navigate({ page: item.page } as any); setMobileDrawerOpen(false); }}
+                >
+                  <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    classList={{ "text-cyan-400": route().page === item.page }}>
+                    <path d={item.icon} />
+                  </svg>
+                  <Show when={!sidebarCollapsed()}>{item.label}</Show>
+                </button>
+              )}
+            </For>
 
             {/* Collapse toggle (desktop only) */}
             <button
@@ -669,17 +724,29 @@ const App: Component = () => {
             <Match when={route().page === "project-workplan-detail"}><WorkPlanDetail /></Match>
             <Match when={route().page === "project-health"}><ProjectDetail /></Match>
             <Match when={route().page === "project-graph"}><ProjectDetail /></Match>
+            <Match when={route().page === "project-knowledge-graph"}><KnowledgeGraphView /></Match>
             <Match when={route().page === "project-files"}><FileTreeView /></Match>
             <Match when={route().page === "project-file"}><FileTreeView /></Match>
             <Match when={route().page === "project-chat"}><ChatView /></Match>
             <Match when={route().page === "project-config"}><ConfigPage /></Match>
             <Match when={route().page === "project-inbox"}><InboxPanel /></Match>
             <Match when={route().page === "project-activity"}><ActivityPanel /></Match>
-            <Match when={route().page === "inference"}><ControlPlane /></Match>
-            <Match when={route().page === "fleet"}><ControlPlane /></Match>
+            <Match when={route().page === "inference"}><InferencePanel /></Match>
+            <Match when={route().page === "fleet"}><FleetView /></Match>
             <Match when={route().page === "research-lab"}><ResearchLab /></Match>
             <Match when={route().page === "swaps"}><SwapsView /></Match>
-            <Match when={route().page === "org-chart"}><OrgChart /></Match>
+            <Match when={route().page === "direct-runs"}><Workbench /></Match>
+            <Match when={route().page === "memory"}><MemoryView /></Match>
+            {/* Restored 2026-06-05 — operational telemetry pages, first-class again */}
+            <Match when={route().page === "brain"}><Brain /></Match>
+            <Match when={route().page === "brain-decisions"}><BrainDecisions /></Match>
+            <Match when={route().page === "merge-gate"}><MergeGate /></Match>
+            <Match when={route().page === "persona-health"}><PersonaHealth /></Match>
+            <Match when={route().page === "thoughts"}><Thoughts /></Match>
+            <Match when={route().page === "resources"}><Resources /></Match>
+            <Match when={route().page === "commitments"}><Commitments /></Match>
+            <Match when={route().page === "missions"}><Missions /></Match>
+            <Match when={route().page === "ops-sla"}><OpsSla /></Match>
           </Switch>
           {/* BottomBar -- inside center content so it doesn't span under sidebar */}
           <BottomBar />

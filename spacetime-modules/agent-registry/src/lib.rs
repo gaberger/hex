@@ -182,11 +182,13 @@ pub fn run_agent_cleanup(
         let last = hb.last_seen.replace('Z', "+00:00");
 
         if last < dead_c && (agent.status == "stale") {
-            // Stale → Dead
-            ctx.db.agent().id().update(Agent {
-                status: "dead".to_string(),
-                ..agent
-            });
+            // Stale → Dead → DELETE. Previously this only marked the row "dead",
+            // leaving it in the table until the hourly evict_dead removed rows
+            // older than 1h. Under heavy spawn churn that let thousands of dead
+            // rows accumulate (observed: 378 rows from one session). Deleting on
+            // death bounds the registry to live agents only.
+            ctx.db.agent().id().delete(&agent.id);
+            ctx.db.agent_heartbeat().agent_id().delete(&agent.id);
             dead_count += 1;
             reclaimed_count += 1; // agent slot reclaimed
         } else if last < stale_c && (agent.status == "registered" || agent.status == "active") {
@@ -214,6 +216,21 @@ pub fn run_agent_cleanup(
         );
     }
 
+    Ok(())
+}
+
+/// Purge ALL agent rows (and their heartbeats). A hard reset for the registry
+/// when it has accumulated junk — e.g. after spawn churn. Operator-driven; the
+/// live agents simply re-register on their next heartbeat.
+#[reducer]
+pub fn purge_all_agents(ctx: &ReducerContext) -> Result<(), String> {
+    let ids: Vec<String> = ctx.db.agent().iter().map(|a| a.id).collect();
+    let count = ids.len();
+    for id in ids {
+        ctx.db.agent().id().delete(&id);
+        ctx.db.agent_heartbeat().agent_id().delete(&id);
+    }
+    log::info!("purge_all_agents: removed {} agent row(s)", count);
     Ok(())
 }
 
