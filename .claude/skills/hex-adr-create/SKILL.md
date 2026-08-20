@@ -12,17 +12,23 @@ must include a full consumer dependency map before it can be accepted.
 
 ## Phase 1: Gather Intent
 
-1. Ask the user for:
+1. Get the next available ADR number and schema:
+   ```bash
+   hex adr schema
+   ```
+   This returns the next number — atomically reserved in SpacetimeDB — plus the
+   template, valid statuses, and required sections. Never derive the number by
+   listing `docs/adrs/` and taking the tail: that races against every other agent
+   creating an ADR concurrently, and two agents will pick the same number.
+
+2. Ask the user for:
    - **Title** (required)
    - **Brief context description** — why this decision is needed
    - **Decision type**: one of `add | modify | delete | restructure | migrate`
+   - **Drivers** — what triggered this decision
 
-2. Find the highest ADR number in `docs/adrs/`:
-   ```bash
-   ls docs/adrs/ADR-*.md docs/adrs/adr-*.md 2>/dev/null | sort -t- -k2 -n | tail -1
-   ```
-
-3. Generate the ADR ID using timestamp format: `ADR-YYMMDDHHMM`
+3. If a reserved placeholder exists (`ADR-{NNN}-reserved.md`), delete it after
+   creating the real ADR.
 
 ## Phase 2: Dependency Impact Analysis (REQUIRED for modify/delete/restructure/migrate)
 
