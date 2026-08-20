@@ -41,10 +41,17 @@ pub struct ScoredHypothesis {
 /// (source name asc, then scope asc) so two judge runs over the same
 /// discover output produce identical ordering.
 pub fn rank(hypotheses: &[Hypothesis]) -> Vec<ScoredHypothesis> {
+    // Load the Q-table ONCE for the whole pass. `score` used to load it per
+    // hypothesis, so a concurrent writer (the sched daemon persists this file
+    // on every learn tick) could swap it mid-pass and score two hypotheses of
+    // the same source against different tables. That makes the comparator
+    // below inconsistent — which both breaks reproducibility of the ranking
+    // and violates the total-order contract `sort_by` requires.
+    let q_table = super::learn::load_q_table();
     let mut scored: Vec<ScoredHypothesis> = hypotheses
         .iter()
         .map(|h| {
-            let (score, reason) = score(h);
+            let (score, reason) = score_with(h, &q_table);
             ScoredHypothesis {
                 hypothesis: h.clone(),
                 score,
@@ -63,6 +70,14 @@ pub fn rank(hypotheses: &[Hypothesis]) -> Vec<ScoredHypothesis> {
 
 /// Closed-formula score for one hypothesis. Returns (score, reason).
 pub fn score(h: &Hypothesis) -> (u32, String) {
+    score_with(h, &super::learn::load_q_table())
+}
+
+/// Same formula as [`score`], against a caller-supplied Q-table.
+///
+/// [`rank`] uses this so every hypothesis in one pass is scored against the
+/// same table snapshot.
+pub fn score_with(h: &Hypothesis, q_table: &super::learn::QTable) -> (u32, String) {
     // Detector_health hypotheses come from the homeostatic discover guard
     // (a detector that couldn't produce parseable findings tags itself).
     // These are pre-eminent — every downstream finding the broken detector
@@ -150,7 +165,7 @@ pub fn score(h: &Hypothesis) -> (u32, String) {
     // authoritative until enough samples accumulate. Subtracting a positive
     // offset would never make sense (rewards favor the action) so we treat
     // negative offsets as a small demotion.
-    let q = super::learn::q_offset(&super::learn::load_q_table(), h.source);
+    let q = super::learn::q_offset(q_table, h.source);
     let q_component: i32 = q.clamp(-10, 10);
 
     let static_total = severity_base
