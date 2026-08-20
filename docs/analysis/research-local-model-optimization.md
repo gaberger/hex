@@ -92,4 +92,4 @@ Scope: Phases 1-2 (techniques 1-6). Deliverables:
 - Add GBNF grammar support to OllamaInferenceAdapter
 - Wire escalation from local failure → frontier
 
-This covers the highest-ROI techniques with the lowest infrastructure cost, all buildable on the standalone dispatch path (ADR-2604112000) just shipped.
+This covers the highest-ROI techniques with the lowest infrastructure cost, all buildable on the standalone dispatch path (ADR-2026-04-11-2000) just shipped.

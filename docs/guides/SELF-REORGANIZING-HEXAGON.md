@@ -18,11 +18,11 @@ Honest inventory, three columns. The pattern is consistent: telemetry is wired, 
 |---|---|---|
 | Tier routing T1/T2/T2.5/T3 — `InferenceRouterAdapter` reads tier hint, picks model from `TierModelConfig` | RL Q-values — written by `report_outcome()`, read by no inference decision | Boundary rules `TIER0..TIER4` in `hex-cli/src/pipeline/supervisor.rs:37-65` |
 | Architecture fingerprint injection — `hex-cli/src/nexus_client.rs:219`, written every session, in every prompt | `spacetime-modules/neural-lab/` — tables + scheduled reducers exist, GPU bridge deferred | Workplan schema in `hex-core/src/domain/workplan.rs` — Rust types |
-| Brain daemon — `hex-cli/src/commands/sched.rs`, polls workplans, marks done from git evidence | Escalation rate tracking — planned ADR-2604120202 P2 step 8, not implemented | RL reward function in `hex-cli/src/.../model_selection.rs` — hardcoded constants |
+| Brain daemon — `hex-cli/src/commands/sched.rs`, polls workplans, marks done from git evidence | Escalation rate tracking — planned ADR-2026-04-12-0202 P2 step 8, not implemented | RL reward function in `hex-cli/src/.../model_selection.rs` — hardcoded constants |
 | Auto-fix loop — `fix_agent.rs`, max 2 retries | | Composition root in `hex-nexus` — env-gated only, no hot-swap |
-| Declarative agent/swarm YAMLs (ADR-2603240130) | | MCP tool registry — embedded at compile, project-local override only |
+| Declarative agent/swarm YAMLs (ADR-2026-03-24-0130) | | MCP tool registry — embedded at compile, project-local override only |
 | HexFlo memory across sessions | | |
-| Process-boundary adapters — stash sidecar (ADR-2604261430) | | |
+| Process-boundary adapters — stash sidecar (ADR-2026-04-26-1430) | | |
 
 **The missing closed loop.** Execution outcomes (spec failures, validation rejections, merge conflicts, latency, cost) feed back to *nothing that mutates future runs*. Telemetry exists. Consumers do not.
 
@@ -34,7 +34,7 @@ Five forward stages. Stages 1 and 2 interleave. Each stage carries a **Target-Ap
 
 **What changes.** Connect telemetry to consumers. RL Q-values feed tier routing decisions (advisory → active under flag). Escalation rate becomes a fingerprint input. Auto-fix outcomes mutate agent YAML thresholds. Validation patterns mutate swarm topology weights. *No new infrastructure* — just connect existing wires.
 
-**Invariants preserved.** ADR-001 hexagonal rules; declarative YAML as agent source of truth (ADR-2603240130).
+**Invariants preserved.** ADR-001 hexagonal rules; declarative YAML as agent source of truth (ADR-2026-03-24-0130).
 
 **Target-app benefit.** Lower cost-per-task on target work; faster first-pass success on repeat feature shapes.
 
@@ -50,7 +50,7 @@ Five forward stages. Stages 1 and 2 interleave. Each stage carries a **Target-Ap
 
 **What changes.** Boundary rules → SpacetimeDB tables. Workplan schema → versioned JSON Schema with migrations. Reward function → user-editable expression. Composition root → config-driven adapter selection.
 
-**Precedent.** ADR-2604142243 already established "Rust constants → SpacetimeDB tables" as a sanctioned migration pattern (classifier rules), with structural-assertion testing. Boundary rules follow the same path.
+**Precedent.** ADR-2026-04-14-2243 already established "Rust constants → SpacetimeDB tables" as a sanctioned migration pattern (classifier rules), with structural-assertion testing. Boundary rules follow the same path.
 
 **Invariants preserved.** ADR-001 still holds — but now its rules are queryable, versionable, and per-project overridable instead of edit-recompile.
 
@@ -66,7 +66,7 @@ Five forward stages. Stages 1 and 2 interleave. Each stage carries a **Target-Ap
 
 ### Stage 3 — The adapter plane becomes a registry
 
-**What changes.** Adapters move from compile-time wiring to runtime registration. Two coexisting paths: **WASM adapters** (in-process fast path, extending what SpacetimeDB modules already do) and **process-boundary adapters** (polyglot heavy path, per ADR-2604261430). Adapter registry lives in `spacetime-modules/agent-registry/`. Adapters can be replaced under load without restart.
+**What changes.** Adapters move from compile-time wiring to runtime registration. Two coexisting paths: **WASM adapters** (in-process fast path, extending what SpacetimeDB modules already do) and **process-boundary adapters** (polyglot heavy path, per ADR-2026-04-26-1430). Adapter registry lives in `spacetime-modules/agent-registry/`. Adapters can be replaced under load without restart.
 
 **Invariants preserved.** Adapters still implement port traits exactly as today. The registry is a discovery mechanism, not a contract change.
 
@@ -122,7 +122,7 @@ This is the smallest possible demonstration that **feedback signals are no longe
 - **Recursive-introspection trap.** Hex must not become about hex. Every stage's acceptance signal is a *target-app* metric, not a hex-internal metric. If a stage can't show a target-app win, it doesn't ship.
 - **WASM ↔ sidecar coexistence.** They are not competing. WASM is the in-process fast path; sidecars are the polyglot/heavy path. The decision rule is language and weight: Rust-on-WASM if it fits, sidecar otherwise.
 - **ADR-001 is non-negotiable** at every stage. Domain only knows itself; ports only know domain; adapters only know ports.
-- **Rust kernel stays canonical** (ADR-2604261800 — phantom TS surface excised).
+- **Rust kernel stays canonical** (ADR-2026-04-26-1800 — phantom TS surface excised).
 - **Apache-2.0 / MIT discipline** holds. Stash and any future sidecar carry their license verbatim.
 - **Human ADR gate stays** through Stage 4. Autonomous code generation, gated decision-making.
 
@@ -145,14 +145,14 @@ How to test that the vision is being realized end-to-end:
 
 ## Critical files (read order for an implementer)
 
-1. `docs/adrs/ADR-2604142243-classifier-rule-tables.md` — the precedent pattern for Stage 2.
+1. `docs/adrs/ADR-2026-04-14-2243-classifier-rule-tables.md` — the precedent pattern for Stage 2.
 2. `hex-cli/src/pipeline/supervisor.rs:37-65` — the boundary rules to data-fy.
 3. `hex-cli/src/pipeline/model_selection.rs` — the RL handoff point for Stage 1.
 4. `hex-cli/src/nexus_client.rs:219` — the fingerprint extension point.
 5. `spacetime-modules/rl-engine/src/lib.rs` — the dead-end to revive.
 6. `spacetime-modules/agent-registry/src/lib.rs` — the seed of Stage 3.
 7. `hex-cli/assets/agents/hex/hex/feature-developer.yml` — the agent YAML that will gain mutation surfaces in Stage 1.
-8. `docs/adrs/ADR-2604261430-stash-consolidation-memory-port.md` — the WASM/sidecar coexistence precedent for Stage 3.
+8. `docs/adrs/ADR-2026-04-26-1430-stash-consolidation-memory-port.md` — the WASM/sidecar coexistence precedent for Stage 3.
 
 ---
 

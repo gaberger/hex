@@ -1,0 +1,16 @@
+[package]
+name = "marketplace"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Public SpacetimeDB crate only — no hex-internal crates. This is an example
+# (target) project that consumes hex; it must not depend on hex's own crates
+# (was `spacetime = { git = "github.com/hex-core/..." }` + `use hex_core::*`).
+spacetimedb = "1.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+# Standalone package: kept out of the hex repo-root cargo workspace.
+[workspace]

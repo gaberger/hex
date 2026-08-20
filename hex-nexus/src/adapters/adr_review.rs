@@ -83,13 +83,38 @@ impl AdrReviewAdapter {
     fn parse_adr_metadata(content: &str, path: &Path) -> Option<AdrMetadata> {
         let filename = path.file_stem()?.to_str()?;
 
-        // Extract ADR number from filename (e.g. "ADR-041-some-title" -> "041")
+        // Extract ADR number from filename. Accepts both shapes:
+        //   legacy:    ADR-041-some-title         -> 041
+        //   timestamp: ADR-2026-04-12-0202-title  -> 2026-04-12-0202
+        // The old impl took only the first dash-segment, so every
+        // 2026-prefixed ADR collapsed to `2026` and the duplicate-
+        // numbering detector flagged ~160 false positives. Match the
+        // walk-digits-and-interior-dashes shape used in hex-cli.
         let number = filename
             .strip_prefix("ADR-")
             .or_else(|| filename.strip_prefix("adr-"))
-            .and_then(|rest| rest.split('-').next())
-            .unwrap_or("")
-            .to_string();
+            .map(|rest| {
+                let chars: Vec<char> = rest.chars().collect();
+                let mut out = String::new();
+                let mut i = 0;
+                while i < chars.len() {
+                    let c = chars[i];
+                    if c.is_ascii_digit() {
+                        out.push(c);
+                        i += 1;
+                    } else if c == '-'
+                        && i + 1 < chars.len()
+                        && chars[i + 1].is_ascii_digit()
+                    {
+                        out.push(c);
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+                out
+            })
+            .unwrap_or_default();
 
         let id = if number.is_empty() {
             filename.to_string()
@@ -111,21 +136,71 @@ impl AdrReviewAdapter {
         let mut informed_by = Vec::new();
         let mut supersedes = None;
 
+        // Skip lines inside fenced code blocks (``` or ~~~) and only
+        // honor the FIRST header value per field. Otherwise a later
+        // Rust struct field or comment that mentions `Status:` overrides
+        // the real header. Matches the hex-cli adr_review parser fix.
+        let mut in_fence = false;
+        // Heading-only follow-on tracking (see hex-cli mirror).
+        let mut awaiting_status = false;
+        let mut awaiting_date = false;
+        let mut awaiting_authors = false;
         for line in content.lines() {
-            let trimmed = line.trim().to_lowercase();
+            let trimmed_raw = line.trim();
+            if trimmed_raw.starts_with("```") || trimmed_raw.starts_with("~~~") {
+                in_fence = !in_fence;
+                continue;
+            }
+            if in_fence {
+                continue;
+            }
+            let trimmed = trimmed_raw.to_lowercase();
 
-            // Match "- **Status**: Proposed" or "**Status**: Proposed" or "Status: Proposed"
-            if trimmed.starts_with("- **status**:") || trimmed.starts_with("**status**:") || trimmed.starts_with("status:") {
+            if (awaiting_status || awaiting_date || awaiting_authors)
+                && !trimmed_raw.is_empty()
+            {
+                if awaiting_status && status.is_empty() {
+                    status = trimmed_raw.to_string();
+                }
+                if awaiting_date && date.is_empty() {
+                    date = trimmed_raw.to_string();
+                }
+                if awaiting_authors && authors.is_empty() {
+                    authors = trimmed_raw.to_string();
+                }
+                awaiting_status = false;
+                awaiting_date = false;
+                awaiting_authors = false;
+                continue;
+            }
+            if trimmed_raw.is_empty() {
+                continue;
+            }
+
+            if status.is_empty() && Self::heading_only(&trimmed, "status") {
+                awaiting_status = true;
+                continue;
+            }
+            if date.is_empty() && Self::heading_only(&trimmed, "date") {
+                awaiting_date = true;
+                continue;
+            }
+            if authors.is_empty() && Self::heading_only(&trimmed, "authors") {
+                awaiting_authors = true;
+                continue;
+            }
+
+            // Accept the standard header styles (see hex-cli mirror).
+            if status.is_empty() && Self::field_line(&trimmed, "status") {
                 status = Self::extract_field_value(line);
-            } else if trimmed.starts_with("- **date**:") || trimmed.starts_with("**date**:") || trimmed.starts_with("date:") {
+            } else if date.is_empty() && Self::field_line(&trimmed, "date") {
                 date = Self::extract_field_value(line);
-            } else if trimmed.starts_with("- **authors**:") || trimmed.starts_with("**authors**:") || trimmed.starts_with("authors:") {
+            } else if authors.is_empty() && Self::field_line(&trimmed, "authors") {
                 authors = Self::extract_field_value(line);
-            } else if trimmed.starts_with("- **informed by**:") || trimmed.starts_with("**informed by**:") || trimmed.starts_with("informed by:") {
+            } else if informed_by.is_empty() && Self::field_line(&trimmed, "informed by") {
                 let val = Self::extract_field_value(line);
-                // Parse comma-separated ADR references
                 informed_by = Self::extract_adr_refs(&val);
-            } else if trimmed.starts_with("- **supersedes**:") || trimmed.starts_with("**supersedes**:") || trimmed.starts_with("supersedes:") {
+            } else if supersedes.is_none() && Self::field_line(&trimmed, "supersedes") {
                 let val = Self::extract_field_value(line);
                 let refs = Self::extract_adr_refs(&val);
                 supersedes = refs.into_iter().next();
@@ -155,6 +230,25 @@ impl AdrReviewAdapter {
         }
     }
 
+    /// Field-line matcher accepting every ADR header style observed
+    /// in the corpus. Mirror of hex-cli/src/commands/adr_review.rs.
+    fn field_line(trimmed_lower: &str, key: &str) -> bool {
+        trimmed_lower.starts_with(&format!("- **{key}**:"))
+            || trimmed_lower.starts_with(&format!("**{key}**:"))
+            || trimmed_lower.starts_with(&format!("- **{key}:**"))
+            || trimmed_lower.starts_with(&format!("**{key}:**"))
+            || trimmed_lower.starts_with(&format!("## {key}:"))
+            || trimmed_lower.starts_with(&format!("### {key}:"))
+            || trimmed_lower.starts_with(&format!("{key}:"))
+    }
+
+    /// Heading-only declaration of `key` — value is on the next line.
+    fn heading_only(trimmed_lower: &str, key: &str) -> bool {
+        let h2 = format!("## {key}");
+        let h3 = format!("### {key}");
+        trimmed_lower == h2 || trimmed_lower == h3
+    }
+
     /// Extract ADR-NNN references from a string.
     fn extract_adr_refs(text: &str) -> Vec<String> {
         let mut refs = Vec::new();
@@ -181,6 +275,7 @@ impl AdrReviewAdapter {
 
     /// Extract domain keywords from ADR title and context section.
     fn extract_keywords(content: &str) -> HashSet<String> {
+        // Mirror of hex-cli stop-word set — keep these in sync.
         let stop_words: HashSet<&str> = [
             "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
             "have", "has", "had", "do", "does", "did", "will", "would", "could",
@@ -194,6 +289,28 @@ impl AdrReviewAdapter {
             "those", "it", "its", "if", "when", "where", "how", "what", "which",
             "who", "whom", "why", "we", "they", "them", "their", "our", "you",
             "i", "me", "my", "he", "she", "his", "her", "up", "about",
+            // Project vocabulary — every ADR mentions these.
+            "hex", "adr", "adrs", "module", "src", "path", "paths",
+            "assets", "components", "change", "changes", "decision",
+            "context", "etc", "new", "required", "needs", "filter",
+            "kanban", "board", "cto", "ceo", "cpo", "ciso", "coo",
+            "agent", "agents", "code", "test", "tests", "data", "type",
+            "types", "field", "fields", "value", "values", "status",
+            "state", "states", "id", "ids", "config", "file", "files",
+            "system", "node", "nodes", "name", "names", "key", "keys",
+            "use", "used", "uses", "using", "via", "per", "see", "rule",
+            "rules", "check", "checks", "case", "cases", "way", "ways",
+            "set", "sets", "list", "lists", "one", "two", "three",
+            "first", "second", "next", "last", "now", "current",
+            "old", "future", "today", "still", "instead", "also",
+            "since", "without", "within", "across", "every", "ever",
+            "always", "never", "often", "sometimes", "while", "until",
+            "already", "almost", "even", "though", "however",
+            "therefore", "thus", "hence", "phase", "phases", "step",
+            "steps", "tier", "tiers", "layer", "layers", "make",
+            "made", "let", "lets", "get", "got", "gets", "getting",
+            "go", "goes", "going", "want", "wants", "wanted", "like",
+            "likes", "liked",
         ].into_iter().collect();
 
         let mut keywords = HashSet::new();
@@ -254,12 +371,13 @@ impl AdrReviewAdapter {
             let other_keywords = Self::extract_keywords(&other.content);
             let shared: Vec<_> = target_keywords.intersection(&other_keywords).collect();
 
-            if shared.len() > 3 {
+            // Threshold + severity matched to hex-cli mirror.
+            if shared.len() > 8 {
                 let mut shared_sorted: Vec<_> = shared.into_iter().cloned().collect();
                 shared_sorted.sort();
                 shared_sorted.truncate(8);
                 findings.push(ReviewFinding {
-                    severity: Severity::Warning,
+                    severity: Severity::Info,
                     check: "scope_conflict".to_string(),
                     adr_a: target.id.clone(),
                     adr_b: Some(other.id.clone()),
@@ -505,7 +623,9 @@ impl AdrReviewAdapter {
             }
         }
 
-        if adr.date.is_empty() {
+        // Missing Date is suppressed when the file is git-tracked — the
+        // commit log is the canonical date. Matches the hex-cli mirror.
+        if adr.date.is_empty() && !Self::is_git_tracked(&adr.path) {
             findings.push(ReviewFinding {
                 severity: Severity::Info,
                 check: "metadata_validation".to_string(),
@@ -518,7 +638,12 @@ impl AdrReviewAdapter {
             });
         }
 
-        if adr.authors.is_empty() {
+        // Authors is opt-in (env: HEX_ADR_REVIEW_REQUIRE_AUTHORS=1). The
+        // hex ADR corpus uses the git log as the attribution layer
+        // rather than a hand-typed Authors header.
+        if adr.authors.is_empty()
+            && std::env::var("HEX_ADR_REVIEW_REQUIRE_AUTHORS").is_ok()
+        {
             findings.push(ReviewFinding {
                 severity: Severity::Info,
                 check: "metadata_validation".to_string(),
@@ -532,6 +657,23 @@ impl AdrReviewAdapter {
         }
 
         findings
+    }
+
+    /// True if the file is tracked in the repo's git history.
+    fn is_git_tracked(path: &std::path::Path) -> bool {
+        let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let filename = match path.file_name().and_then(|s| s.to_str()) {
+            Some(f) => f,
+            None => return false,
+        };
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(parent)
+            .args(["log", "-1", "--format=%H", "--"])
+            .arg(filename)
+            .output()
+            .map(|o| o.status.success() && !o.stdout.is_empty())
+            .unwrap_or(false)
     }
 
     /// Compute verdict from findings.

@@ -211,7 +211,7 @@ impl NexusClient {
         &self.base_url
     }
 
-    /// Fetch the architecture fingerprint injection block for a project (ADR-2603301200).
+    /// Fetch the architecture fingerprint injection block for a project (ADR-2026-03-30-1200).
     ///
     /// Returns the formatted text block ready to prepend to an inference system prompt,
     /// or `None` if the fingerprint has not been generated or nexus is unavailable.

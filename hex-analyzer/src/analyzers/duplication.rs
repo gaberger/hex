@@ -233,10 +233,15 @@ fn find_decl_list(node: Node<'_>) -> Option<Node<'_>> {
     if let Some(b) = node.child_by_field_name("body") {
         return Some(b);
     }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "declaration_list" {
-            return Some(child);
+    // See cohesion.rs::declaration_list — tree-sitter Node<'cursor>
+    // lifetime forces an explicit loop.
+    #[allow(clippy::manual_find)]
+    {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "declaration_list" {
+                return Some(child);
+            }
         }
     }
     None

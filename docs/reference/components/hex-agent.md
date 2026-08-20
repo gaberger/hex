@@ -90,6 +90,6 @@ If you are running a background agent against the hex-intf repo itself, expect S
 - `docs/adrs/ADR-001-hexagonal-architecture.md` — the rules being enforced.
 - `docs/adrs/ADR-027-hexflo-swarm-coordination.md` — task dispatch.
 - `docs/adrs/ADR-048-task-state-sync.md` — `subagent-start`/`stop` hook contract.
-- `docs/adrs/ADR-2603240130-declarative-swarm-behavior.md` — agent + swarm YAMLs.
+- `docs/adrs/ADR-2026-03-24-0130-declarative-swarm-behavior.md` — agent + swarm YAMLs.
 - `docs/reference/system-architecture.md` — where hex-agent sits.
 - `docs/reference/components/hex-nexus.md` — the bridge hex-agent calls into.

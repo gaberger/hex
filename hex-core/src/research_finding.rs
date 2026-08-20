@@ -99,7 +99,7 @@ mod tests {
             title: "adapter→adapter import violates hex rules".into(),
             evidence: vec![
                 "adapters/primary/cli.rs:42 imports adapters/secondary/db.rs".into(),
-                "hex analyze . --json: violations[0].rule = adr-hex-adapter-isolation".into(),
+                "hex analyze . --json: violations[0].rule = ADR-hex-adapter-isolation".into(),
             ],
             suggested_action: SuggestedAction {
                 kind: ActionKind::DraftWorkplan,
@@ -160,7 +160,7 @@ evidence:
   - "Cargo.lock: foo 1.2.3"
 suggested_action:
   kind: draft_adr
-  draft_ref: ADR-2604241200-supply-chain
+  draft_ref: ADR-2026-04-24-1200-supply-chain
 "#;
         let finding: Finding = serde_yaml::from_str(yaml).expect("deserialize yaml");
         assert_eq!(finding.domain, Domain::Other("supply_chain".into()));

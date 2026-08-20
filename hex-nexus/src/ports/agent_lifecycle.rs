@@ -1,7 +1,7 @@
 //! Port for remote agent lifecycle management (ADR-040).
 
 use async_trait::async_trait;
-use crate::remote::transport::*;
+use crate::domain::transport::*;
 
 /// Manages the full lifecycle of remote agents.
 ///

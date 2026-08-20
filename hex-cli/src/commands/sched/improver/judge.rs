@@ -1,4 +1,4 @@
-//! Improver judge phase (ADR-2604271100 P3).
+//! Improver judge phase (ADR-2026-04-27-1100 P3).
 //!
 //! Takes the unordered hypothesis stream from [`discover`] and scores each
 //! one so [`act`] can pick the top-N. Scoring is deliberately a closed
@@ -135,6 +135,12 @@ pub fn score(h: &Hypothesis) -> (u32, String) {
         // urgent, so they sit at the bottom of the pile.
         Source::PunchList => 8,
         Source::GitDrift => 5,
+        // ThoughtPattern (BS-5) — meta-signal: personas are *talking* about
+        // a problem repeatedly. Surfaces above PunchList/GitDrift because
+        // the pattern aggregates evidence from multiple personas (higher
+        // signal-to-noise) but below BuildReadiness/Workplan integrity:
+        // chat about a problem is weaker than the problem itself.
+        Source::ThoughtPattern => 14,
     };
 
     let evidence_boost: u32 = evidence_boost(h);

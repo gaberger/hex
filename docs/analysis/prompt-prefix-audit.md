@@ -17,7 +17,7 @@
 | validation-judge | reviewer | 3 | Y | Y | N* | Y |
 | swarm-coordinator | hierarchical-coordinator | 3 | Y | Y | Y | Y |
 | behavioral-spec-writer | researcher | 3 | Y | Y | N* | Y |
-| adr-reviewer | reviewer | 2 | Y | Y | Y | Y |
+| ADR-reviewer | reviewer | 2 | Y | Y | Y | Y |
 | dead-code-analyzer | reviewer | 2 | Y | N | N* | Y |
 | dependency-analyst | researcher | 3 | Y | N | N* | Y |
 | dev-tracker | coordinator | 3 | Y | Y | Y | Y |
@@ -76,7 +76,7 @@ tools:
     - Bash
 ```
 
-**Present verbatim in**: hex-coder, planner, integrator, adr-reviewer, dev-tracker, feature-developer, swarm-coordinator, adversarial-reviewer, status-monitor (Read/Glob/Grep only), rust-refactorer (different names but same semantics).
+**Present verbatim in**: hex-coder, planner, integrator, ADR-reviewer, dev-tracker, feature-developer, swarm-coordinator, adversarial-reviewer, status-monitor (Read/Glob/Grep only), rust-refactorer (different names but same semantics).
 
 ### 4. HexFlo tool block (~60 tokens, 6/18 agents)
 
@@ -120,7 +120,7 @@ pressure:
   relief: summarize_history | escalate
 ```
 
-**Present in**: hex-coder, planner, integrator, swarm-coordinator, feature-developer, dev-tracker, adr-reviewer, status-monitor.
+**Present in**: hex-coder, planner, integrator, swarm-coordinator, feature-developer, dev-tracker, ADR-reviewer, status-monitor.
 
 ### 7. "Never cross adapter boundaries" / hex architecture rules (~30 tokens, 7/18 agents)
 
@@ -151,7 +151,7 @@ Various phrasings of the same rule:
 | dead-code-analyzer | `analysis_phases` (graph build, dead exports, hex validation, circular detection, port coverage) |
 | dependency-analyst | `analysis_phases` (decompose, language fit, library selection, runtime requirements, communication pattern, risk) |
 | scaffold-validator | `validation_phases` (readme, quickstart, scripts, dev server, env, actually-runs, gitignore) |
-| adr-reviewer | `workflow.steps` (index, validate-structure, status-transitions, cross-references, compliance, staleness) |
+| ADR-reviewer | `workflow.steps` (index, validate-structure, status-transitions, cross-references, compliance, staleness) |
 | hex-reviewer | Minimal — only model config |
 | hex-tester | Minimal — only model config |
 | hex-fixer | Minimal — only model config |

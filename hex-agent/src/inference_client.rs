@@ -170,7 +170,7 @@ impl InferenceClient {
             for file in files {
                 prompt.push_str(&format!("- {}\n", file));
             }
-            prompt.push_str("\n");
+            prompt.push('\n');
         }
 
         if !evidence.is_empty() {
@@ -178,7 +178,7 @@ impl InferenceClient {
             for cmd in evidence {
                 prompt.push_str(&format!("- {}\n", cmd));
             }
-            prompt.push_str("\n");
+            prompt.push('\n');
         }
 
         prompt.push_str("INSTRUCTIONS:\n");

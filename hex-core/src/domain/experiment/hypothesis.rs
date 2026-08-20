@@ -1,8 +1,8 @@
 //! [`Hypothesis`] — a falsifiable predicted effect on a target [`super::objective::Objective`]
-//! (ADR-2605021400).
+//! (ADR-2026-05-02-1400).
 //!
 //! Field set kept deliberately minimal so the future `StashExperimentAdapter`
-//! (ADR-2605021400 §Implementation P3) can projection-map cleanly to stash's
+//! (ADR-2026-05-02-1400 §Implementation P3) can projection-map cleanly to stash's
 //! native `hypothesis` shape.
 
 use super::objective::ObjectiveId;

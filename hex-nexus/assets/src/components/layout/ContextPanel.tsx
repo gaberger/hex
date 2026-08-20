@@ -180,7 +180,7 @@ const ContextPanel: Component = () => {
         <Match when={content().type === "agent-detail"}>
           {(() => {
             const c = content() as { type: "agent-detail"; agentId: string; agentName: string };
-            const agent = () => registryAgents().find((a: any) => (a.id ?? a.agent_id) === c.agentId);
+            const agent = () => (registryAgents() ?? []).find((a: any) => (a.id ?? a.agent_id) === c.agentId);
             return (
               <div class="flex flex-col">
                 {/* Header with back button */}
@@ -212,9 +212,9 @@ const ContextPanel: Component = () => {
         <Match when={content().type === "swarm-detail"}>
           {(() => {
             const c = content() as { type: "swarm-detail"; swarmId: string; swarmName: string };
-            const swarm = () => swarms().find((s: any) => (s.id ?? s.swarm_id) === c.swarmId);
-            const tasks = () => swarmTasks().filter((t: any) => (t.swarmId ?? t.swarm_id) === c.swarmId);
-            const agents = () => swarmAgents().filter((a: any) => (a.swarmId ?? a.swarm_id) === c.swarmId);
+            const swarm = () => (swarms() ?? []).find((s: any) => (s.id ?? s.swarm_id) === c.swarmId);
+            const tasks = () => (swarmTasks() ?? []).filter((t: any) => (t.swarmId ?? t.swarm_id) === c.swarmId);
+            const agents = () => (swarmAgents() ?? []).filter((a: any) => (a.swarmId ?? a.swarm_id) === c.swarmId);
             const doneCount = () => tasks().filter((t: any) => t.status === 'completed').length;
 
             return (

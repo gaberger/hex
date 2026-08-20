@@ -72,7 +72,7 @@ hex brain daemon-status
 
 If any of {SpacetimeDB, hex-nexus} is down, all clients degrade. There is **no SQLite fallback path** — earlier ADRs proposed one (ADR-015) but ADR-025 mandates SpacetimeDB as the canonical backend.
 
-## Standalone mode (ADR-2604112000)
+## Standalone mode (ADR-2026-04-11-2000)
 
 When `CLAUDE_SESSION_ID` is unset, hex-nexus uses an `AgentManager` + `OllamaInferenceAdapter` composition — no Claude CLI, no Anthropic API key required. Tasks dispatch to local inference (Ollama / vLLM) via the same `inference-gateway` WASM module as Claude-mode.
 
@@ -85,7 +85,7 @@ hex ci --standalone-gate         # validates the standalone path end-to-end
 
 The composition variant is selected at nexus startup based on env vars — the wiring lives in `hex-nexus/src/composition.rs`.
 
-## Tiered inference routing (ADR-2604120202 / ADR-2604131630)
+## Tiered inference routing (ADR-2026-04-12-0202 / ADR-2026-04-13-1630)
 
 Every inference request is tagged with a tier derived from the `WorkplanTask.strategy_hint`. The `inference-gateway` module and `inference-bridge` route to the configured model per tier; hex-nexus makes the actual outbound HTTP call.
 
@@ -173,7 +173,7 @@ hex-agent/               Architecture enforcement runtime
 hex-desktop/             Tauri wrapper for dashboard
 hex-parser/              Code parsing utilities
 
-# SpacetimeDB WASM modules (7 — ADR-2604050900)
+# SpacetimeDB WASM modules (7 — ADR-2026-04-05-0900)
 spacetime-modules/
   hexflo-coordination/     Swarms, tasks, agents, memory, fleet
   agent-registry/          Lifecycle + heartbeats + cleanup
@@ -203,7 +203,7 @@ When >1 nexus instance runs against the same project, `ICoordinationPort` + file
 
 Subagent prompts include `HEXFLO_TASK:{task_id}`. `hex hook subagent-start` flips the task to `in_progress`; `hex hook subagent-stop` flips it to `completed` with the result. State persists in `~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json`.
 
-### Declarative agents and swarms (ADR-2603240130)
+### Declarative agents and swarms (ADR-2026-03-24-0130)
 
 Agent + swarm behavior is declared in YAML, not hardcoded:
 
@@ -225,6 +225,6 @@ The supervisor reads YAMLs at startup; templates are baked into hex-cli + hex-ne
 - `docs/adrs/ADR-025-spacetimedb-state-backend.md` — why SpacetimeDB.
 - `docs/adrs/ADR-027-hexflo-swarm-coordination.md` — native Rust coordination.
 - `docs/adrs/ADR-044-nexus-git-integration.md` — config sync.
-- `docs/adrs/ADR-2604112000-hex-standalone-dispatch.md` — standalone mode.
-- `docs/adrs/ADR-2604120202-tiered-inference-routing.md` — tier routing.
-- `docs/adrs/ADR-2604131630-code-first-execution.md` — best-of-N + compile gate.
+- `docs/adrs/ADR-2026-04-11-2000-hex-standalone-dispatch.md` — standalone mode.
+- `docs/adrs/ADR-2026-04-12-0202-tiered-inference-routing.md` — tier routing.
+- `docs/adrs/ADR-2026-04-13-1630-code-first-execution.md` — best-of-N + compile gate.

@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# DEPRECATED (ADR-2606071702): use `hex dev deploy` instead — it builds the
+# CURRENT workspace bins, installs to ~/.local/bin (this script copies to ./bin
+# and references a stale hex-chat crate), and restarts the daemon. One command.
+echo "⚠ scripts/rebuild.sh is deprecated — use: hex dev deploy" >&2
 # Rebuild all hex binaries and restart services
 set -e
 

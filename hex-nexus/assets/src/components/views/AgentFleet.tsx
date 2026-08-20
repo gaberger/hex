@@ -58,7 +58,7 @@ const AgentFleet: Component = () => {
   const filteredAgents = createMemo(() => {
     const pid = projectId();
     if (!pid) return registryAgents();
-    return registryAgents().filter((a: any) =>
+    return (registryAgents() ?? []).filter((a: any) =>
       matchesProject(pid, getEntityProjectRef(a)) ||
       matchesProject(pid, getAgentProjectDir(a)) ||
       matchesProject(pid, a.project_id ?? a.projectId ?? a.project ?? "")
@@ -72,7 +72,7 @@ const AgentFleet: Component = () => {
   });
 
   const remoteAgents = createMemo(() => {
-    // Merge two sources: SpacetimeDB remote_agent table (ADR-2604050900) + heuristic
+    // Merge two sources: SpacetimeDB remote_agent table (ADR-2026-04-05-0900) + heuristic
     // filter from hex_agent table (agents with host/remote/transport fields).
     const heuristic = filteredAgents().filter(
       (a: any) => a.host || a.remote || a.transport
@@ -118,7 +118,7 @@ const AgentFleet: Component = () => {
   }
 
   function agentTask(agent: any): string | null {
-    const task = swarmTasks().find(
+    const task = (swarmTasks() ?? []).find(
       (t: any) =>
         (t.assigned_to ?? t.agent_id ?? "") === (agent.id ?? agent.agent_id ?? "") &&
         (t.status === "in_progress" || t.status === "active")

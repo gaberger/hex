@@ -91,7 +91,7 @@ hex-agent/src/adapters/validator.rs
 hex-core/src/validation.rs
 └── Backward-compatible re-exports
 
-docs/adrs/adr-extensible-validation.md
+docs/adrs/ADR-extensible-validation.md
 └── Architecture decision documentation
 ```
 
@@ -178,7 +178,7 @@ Boundary analysis:
 | P3.1 | `cargo check -p hex-agent` | ✅ |
 | P4.1 | `grep -q '#\[cfg(test)\]'` | ✅ |
 | P4.1 | `cargo test -p hex-agent validator` | ✅ |
-| P5.1 | `test -f docs/adrs/adr-extensible-validation.md` | ✅ |
+| P5.1 | `test -f docs/adrs/ADR-extensible-validation.md` | ✅ |
 | P5.1 | `grep -q 'ValidationRule'` in ADR | ✅ |
 | P5.1 | `grep -q 'migration'` in ADR | ✅ |
 

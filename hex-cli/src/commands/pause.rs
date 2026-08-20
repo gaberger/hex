@@ -1,4 +1,4 @@
-//! Emergency pause/resume (ADR-2604131500 §1 Layer 4).
+//! Emergency pause/resume (ADR-2026-04-13-1500 §1 Layer 4).
 
 use clap::Subcommand;
 use colored::Colorize;

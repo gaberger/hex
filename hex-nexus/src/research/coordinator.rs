@@ -32,7 +32,7 @@ use super::{
 };
 
 /// Default upper bound on findings emitted by a single sweep
-/// (ADR-2604151200 §Risks: "a buggy analyst could spam draft ADRs/workplans
+/// (ADR-2026-04-15-1200 §Risks: "a buggy analyst could spam draft ADRs/workplans
 /// — mitigation: hard cap of `max_drafts_per_sweep: 5`").
 pub const DEFAULT_MAX_DRAFTS_PER_SWEEP: usize = 5;
 

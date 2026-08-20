@@ -1,0 +1,309 @@
+{
+  "id": "wp-sop-agent-loop",
+  "feature": "SOP agent loop with tool use",
+  "adr": "ADR-2026-05-27-1330",
+  "draft_id": "draft-2605271310-workplan-sop-agent-loop-with",
+  "created_at": "2026-05-27T13:30:00-04:00",
+  "created_by": "operator+claude",
+  "priority": "P0-BLOCKER",
+  "status": "in_progress",
+  "specs": "docs/specs/sop-agent-loop.md (TODO — P0)",
+  "relates_to": [
+    "wp-hex-standalone-dispatch",
+    "ADR-2026-05-08-2500",
+    "ADR-2026-05-17-2030"
+  ],
+  "description": "Convert the SOP 'accept' content-generation path from one-shot persona inference to a ReAct agent loop with callable tools (repo_read, repo_grep, cargo_check, code_patch_propose). Closes the content-quality gap surfaced by today's end-to-end dogfooding run (2026-05-27): the outer SOP shell now works (classifier → typed commitments → drafter → twin → executor) but local-AI drafts have fabricated imports, markdown fences, and other one-shot blind-prediction artifacts. Letting the persona read the target file + check compilation + iterate before submitting eliminates this class of failure.",
+  "acceptance_gate": "Re-dispatching today's P7.2 brief (`hex ci --standalone-gate` wiring) through the new loop produces a hex-cli/tests/standalone_gate.rs file that: (a) the persona called repo_read at least once before code_patch_propose, (b) cargo_check returned success on the final draft, (c) twin accepted first pass, (d) cargo test -p hex-cli --test standalone_gate -- --nocapture exits 0 with HEX_NEXUS_URL+OLLAMA_HOST set, (e) zero frontier-model calls in the trajectory.",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Spec + ADR",
+      "tier": 0,
+      "tasks": [
+        {
+          "id": "P0.1",
+          "name": "Draft ADR-2026-05-27-1330 'Agent Loop with Tool Use for Persona Drafting'",
+          "agent": "chief-architect",
+          "layer": "docs",
+          "files": ["docs/adrs/ADR-2026-05-27-1330-agent-loop-tool-use.md"],
+          "deps": [],
+          "status": "todo",
+          "description": "Document the decision: why ReAct (vs single-shot, vs pure RAG), tool surface boundary (4 tools v1), persona-prompt contract (thought+action JSON), termination conditions, observability schema. Body 200-50000 chars with Context/Decision/Consequences. Reference the dogfooding session that motivated it (docs/analysis/standalone-ollama-proof-2026-05-27.md).",
+          "done_condition": "ADR file exists, status=Accepted, contains all 3 required sections."
+        },
+        {
+          "id": "P0.2",
+          "name": "Behavioral spec for the agent loop",
+          "agent": "behavioral-spec-writer",
+          "layer": "docs",
+          "files": ["docs/specs/sop-agent-loop.md"],
+          "deps": ["P0.1"],
+          "status": "todo",
+          "description": "Acceptance specs: given (task brief, tool surface), the loop MUST emit at most max_steps tool calls, MUST terminate on code_patch_propose, MUST return a Trajectory with non-empty steps[]. Spec the JSON contract for {thought, action} persona output. Spec failure modes (parse error → reprompt, tool error → observation, max_steps → abandon).",
+          "done_condition": "Spec file exists with at least 5 testable acceptance criteria."
+        }
+      ],
+      "gate": {"type": "presence", "command": "test -f docs/adrs/ADR-2026-05-27-1330-agent-loop-tool-use.md -a -f docs/specs/sop-agent-loop.md", "blocking": true}
+    },
+    {
+      "id": "P1",
+      "name": "Tool surface",
+      "tier": 1,
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "IAgentTool trait + Observation/ToolError types",
+          "agent": "hex-coder",
+          "layer": "ports",
+          "files": ["hex-nexus/src/orchestration/agent_loop/mod.rs", "hex-nexus/src/orchestration/agent_loop/tool.rs"],
+          "deps": ["P0.2"],
+          "status": "done",
+          "description": "Define `pub trait IAgentTool { fn name(&self) -> &str; fn schema(&self) -> serde_json::Value; async fn invoke(&self, args: serde_json::Value) -> Result<Observation, ToolError>; }`. Observation carries `output: String + truncated: bool + bytes: usize`. ToolError is a thiserror enum {InvalidArgs, NotFound, PolicyDenied, Exec, Timeout}. mod.rs re-exports the trait + a `Trajectory` skeleton.",
+          "done_condition": "cargo check -p hex-nexus passes. trait is pub. mod.rs is in orchestration/mod.rs."
+        },
+        {
+          "id": "P1.2",
+          "name": "repo_read tool",
+          "agent": "hex-coder",
+          "layer": "adapters",
+          "files": ["hex-nexus/src/orchestration/agent_loop/tools/repo_read.rs"],
+          "deps": ["P1.1"],
+          "status": "done",
+          "description": "Implements IAgentTool. args: {path: String}. Reads repo-relative path bounded by the SAME allowlist as twin_reviewer.rs:810 (factor that to a hex-nexus::policy::allowed_repo_path helper as part of this task). Returns first 16k chars + truncated flag. Path-traversal-safe (rejects .. and absolute paths).",
+          "done_condition": "Unit tests: ok for hex-cli/tests/, denied for /etc/passwd + ../foo, truncates at 16k."
+        },
+        {
+          "id": "P1.3",
+          "name": "repo_grep tool",
+          "agent": "hex-coder",
+          "layer": "adapters",
+          "files": ["hex-nexus/src/orchestration/agent_loop/tools/repo_grep.rs"],
+          "deps": ["P1.1"],
+          "status": "done",
+          "description": "Implements IAgentTool. args: {pattern, path_glob?}. Wraps `rg --json` (ripgrep) — if rg not on PATH, falls back to `grep -RnI`. Returns at most 50 matches as `path:line: text` lines. 5s timeout.",
+          "done_condition": "Unit test: grep for 'pub fn' in hex-core/src/ returns >0 matches."
+        },
+        {
+          "id": "P1.4",
+          "name": "cargo_check tool",
+          "agent": "hex-coder",
+          "layer": "adapters",
+          "files": ["hex-nexus/src/orchestration/agent_loop/tools/cargo_check.rs"],
+          "deps": ["P1.1"],
+          "status": "done",
+          "description": "Implements IAgentTool. args: {crate: String}. Runs `cargo check -p <crate>` with $HOME/.cargo/bin on PATH (same fix as run.sh today). 60s timeout. Returns success/failure + first 30 lines of diagnostics. Uses tokio::process. Workspace-root resolution via HEX_REPO_ROOT or current_dir.",
+          "done_condition": "Unit test: invoking with crate=hex-core returns success when workspace compiles cleanly."
+        },
+        {
+          "id": "P1.5",
+          "name": "code_patch_propose terminal tool",
+          "agent": "hex-coder",
+          "layer": "adapters",
+          "files": ["hex-nexus/src/orchestration/agent_loop/tools/code_patch_propose.rs"],
+          "deps": ["P1.1"],
+          "status": "done",
+          "description": "Implements IAgentTool. args: {path, mode, content}. Does NOT directly write — just packages a `TerminalAction` that the driver returns as Trajectory.final_action. The drafter then converts it to a proposed_action_open call. Validates path against the policy::allowed_repo_path helper from P1.2.",
+          "done_condition": "Unit test: returns Observation with action=TerminalAction populated."
+        }
+      ],
+      "gate": {"type": "compile", "command": "cargo check -p hex-nexus && cargo test -p hex-nexus --lib agent_loop::", "blocking": true}
+    },
+    {
+      "id": "P2",
+      "name": "ReAct driver",
+      "tier": 2,
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Trajectory + AgentStep types",
+          "agent": "hex-coder",
+          "layer": "domain",
+          "files": ["hex-nexus/src/orchestration/agent_loop/trajectory.rs"],
+          "deps": ["P1.1"],
+          "status": "done",
+          "description": "Trajectory{id, role, steps: Vec<AgentStep>, final_action: Option<TerminalAction>, total_tokens, total_cost_usd, total_latency_ms, terminated_reason: TerminatedReason}. AgentStep{step_idx, thought, tool, args_json, observation, tokens, latency_ms}. Serde+Clone+Debug.",
+          "done_condition": "Types compile and serialize round-trip via serde_json."
+        },
+        {
+          "id": "P2.2",
+          "name": "Driver loop with persona inference + tool dispatch",
+          "agent": "hex-coder",
+          "layer": "usecases",
+          "files": ["hex-nexus/src/orchestration/agent_loop/driver.rs"],
+          "deps": ["P2.1", "P1.5"],
+          "status": "done",
+          "description": "pub async fn run(role, task_brief, tools: Vec<Box<dyn IAgentTool>>, max_steps, inference: Arc<dyn IInferencePort>, model) -> Result<Trajectory>. Each step: build prompt from (system + task_brief + accumulated observations + tool descriptions), call inference, parse {thought, action: {tool, args}} JSON, dispatch tool by name, record step, append observation. Loop until terminal tool or max_steps. Max token budget = 32k cumulative.",
+          "done_condition": "Test with MockInferencePort returning fixed sequence: produces a 3-step trajectory ending in code_patch_propose. Parser tolerates leading ```json fence + trailing prose."
+        },
+        {
+          "id": "P2.3",
+          "name": "Driver tests — termination conditions",
+          "agent": "hex-tester",
+          "layer": "tests",
+          "files": ["hex-nexus/src/orchestration/agent_loop/driver.rs (#[cfg(test)] mod)"],
+          "deps": ["P2.2"],
+          "status": "done",
+          "description": "Cover: (a) clean termination on code_patch_propose, (b) max_steps exhausted → TerminatedReason::MaxSteps, (c) token budget exhausted → TerminatedReason::TokenBudget, (d) malformed JSON 3x → TerminatedReason::ParseExhausted, (e) tool returns ToolError::PolicyDenied → step recorded, loop continues, (f) tool times out → step recorded with error, loop continues.",
+          "done_condition": "cargo test -p hex-nexus driver_tests passes with 6 assertions green."
+        }
+      ],
+      "gate": {"type": "test", "command": "cargo test -p hex-nexus --lib agent_loop::driver", "blocking": true}
+    },
+    {
+      "id": "P3",
+      "name": "Drafter integration",
+      "tier": 3,
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "drafter_trajectory bridge",
+          "agent": "hex-coder",
+          "layer": "usecases",
+          "files": ["hex-nexus/src/orchestration/drafter_trajectory.rs", "hex-nexus/src/orchestration/agent_loop/inference_shim.rs"],
+          "deps": ["P2.2"],
+          "status": "done",
+          "description": "pub async fn draft_via_loop(commitment, http, inference_url, model) -> Result<DraftOutcome>. Builds the task_brief from commitment.action + commitment.success_artifact, instantiates the 4 tools from P1, calls agent_loop::run(max_steps=8), extracts trajectory.final_action.content, returns DraftOutcome::ProposedAction with the content for drafter::draft_one to wrap into a proposed_action_open call.",
+          "done_condition": "Test: given a commitment + mocked inference returning [tool_call(repo_read), tool_call(code_patch_propose)], returns DraftOutcome with non-empty content."
+        },
+        {
+          "id": "P3.2",
+          "name": "Swap draft_one to use the bridge",
+          "agent": "hex-coder",
+          "layer": "usecases",
+          "files": ["hex-nexus/src/orchestration/drafter.rs"],
+          "deps": ["P3.1"],
+          "status": "done",
+          "description": "Replace the existing inline LLM call in draft_one() with a call to drafter_trajectory::draft_via_loop. Feature-flag via HEX_AGENT_LOOP_ENABLED=1 (default off until P7 acceptance passes) so the old path is the fallback during rollout. Keep all existing drafter.rs surface (REJECT_BUDGET, abandon path, idempotency check).",
+          "done_condition": "When HEX_AGENT_LOOP_ENABLED=1, drafter logs 'drafter: using agent_loop bridge' before each commitment. Existing drafter tests still pass."
+        }
+      ],
+      "gate": {"type": "compile+test", "command": "cargo check -p hex-nexus && cargo test -p hex-nexus drafter", "blocking": true}
+    },
+    {
+      "id": "P4",
+      "name": "Compile-gate-before-twin",
+      "tier": 4,
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Pre-twin compile gate",
+          "agent": "hex-coder",
+          "layer": "usecases",
+          "files": ["hex-nexus/src/orchestration/drafter_trajectory.rs", "hex-nexus/src/orchestration/agent_loop/driver.rs"],
+          "deps": ["P3.2"],
+          "status": "done",
+          "description": "Before promoting a pending proposed_action to twin review, write its content to a temp tree (target/agent-loop-scratch/<id>/<path>), run cargo check on the affected crate, capture pass/fail + first 30 lines of diagnostics. On fail: mark the proposed_action with compile_status='fail' + diagnostics, do NOT send to twin, instead post a synthetic observation back into the trajectory (re-fires the agent loop with the error in context). On pass: send to twin as today.",
+          "done_condition": "Integration test: a draft that fails to compile gets compile_status=fail + diagnostics + a new agent_step with the error appended; twin is not invoked."
+        },
+        {
+          "id": "P4.2",
+          "name": "STDB schema: compile_status column",
+          "agent": "hex-coder",
+          "layer": "domain",
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "deps": ["P4.1"],
+          "status": "deferred",
+          "notes": "Deferred — P4.1 gate is in-nexus only (logs visible via nexus.log; failures abstain). Adding STDB column requires WASM republish + dashboard surface; punt to a follow-up workplan that bundles full observability for both compile_status AND P6 agent_trajectory rows."
+          "description": "Add `compile_status: String` (one of '', 'pass', 'fail', 'skipped') + `compile_diagnostics: String` to the proposed_action table. Default empty. Migration: leave existing rows blank. Update WASM, rebuild, republish via the existing spacetime_launcher path.",
+          "done_condition": "curl SQL probe shows the columns exist on agent-comms STDB after nexus restart."
+        }
+      ],
+      "gate": {"type": "test", "command": "cargo test -p hex-nexus compile_gate", "blocking": true}
+    },
+    {
+      "id": "P5",
+      "name": "Rejection feedback",
+      "tier": 5,
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Feed twin rejection back into the trajectory",
+          "agent": "hex-coder",
+          "layer": "usecases",
+          "files": ["hex-nexus/src/orchestration/drafter_trajectory.rs", "hex-nexus/src/orchestration/drafter.rs"],
+          "deps": ["P3.2"],
+          "status": "done",
+          "description": "When twin emits a rejection on a proposed_action that was produced by the agent loop, drafter looks up the trajectory_id, appends a synthetic AgentStep with the rejection rationale as the observation, and re-fires agent_loop::run(resume=true) with the appended context. Existing REJECT_BUDGET still bounds total attempts (3) but each attempt now has more context.",
+          "done_condition": "Integration test: twin rejects draft → next trajectory step shows the rejection rationale in its system context."
+        }
+      ],
+      "gate": {"type": "test", "command": "cargo test -p hex-nexus rejection_feedback", "blocking": true}
+    },
+    {
+      "id": "P6",
+      "name": "Observability",
+      "tier": 6,
+      "tasks": [
+        {
+          "id": "P6.1",
+          "name": "STDB tables: agent_trajectory + agent_step",
+          "agent": "hex-coder",
+          "layer": "domain",
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "deps": ["P2.1"],
+          "status": "done",
+          "evidence": "Both tables + 3 reducers (agent_trajectory_open, agent_step_record, agent_trajectory_close) appended to lib.rs. WASM built + synced via scripts/build-wasm.sh. Schema verified live: SELECT * FROM agent_trajectory returns the 11-column schema."
+          "description": "agent_trajectory: id (auto), role, task_brief, terminated_reason, total_tokens, total_cost_usd, total_latency_ms, created_at. agent_step: trajectory_id (fk), step_idx, thought, tool, args_json, observation, tokens, latency_ms, created_at. Reducers agent_trajectory_open / agent_step_record / agent_trajectory_close.",
+          "done_condition": "SQL probe on STDB returns the new tables after publish."
+        },
+        {
+          "id": "P6.2",
+          "name": "Driver writes trajectory + steps to STDB",
+          "agent": "hex-coder",
+          "layer": "usecases",
+          "files": ["hex-nexus/src/orchestration/agent_loop/driver.rs", "hex-nexus/src/orchestration/agent_loop/observability.rs"],
+          "deps": ["P6.1"],
+          "status": "done",
+          "evidence": "observability.rs ships open_trajectory/record_step/close_trajectory wrappers. driver.rs calls all three on the happy path + all 6 termination paths (parse_exhausted, unknown_tool, terminal_action, token_budget, max_steps, inference_failed). First live run captured trajectory id=1 (role=hex-coder, terminated_reason=terminal_action, in=2349 out=170 latency=2676ms, final_path=hex-cli/tests/agent_loop_smoke5.rs) + step id=1 (thought='Check if the target file already exists and gather context.', tool=repo_read, observation='error: not found: ...'). Best-effort: STDB outage does not block dispatch. 58 unit tests including 4 new observability tests."
+          "description": "Each driver.run() call opens a trajectory row at start, records each step as it executes, closes the trajectory at termination. Best-effort: STDB outage MUST NOT block dispatch (same pattern as classifier_response_open).",
+          "done_condition": "Running the agent loop once leaves N+1 rows in STDB (N steps + 1 trajectory)."
+        },
+        {
+          "id": "P6.3",
+          "name": "Solid view: /agent-trajectories",
+          "agent": "hex-ux",
+          "layer": "primary",
+          "files": ["hex-nexus/assets/src/views/AgentTrajectories.tsx", "hex-nexus/assets/src/router.tsx"],
+          "deps": ["P6.2"],
+          "status": "deferred",
+          "notes": "Deferred to a follow-up dashboard workplan. Data is in STDB and queryable via SQL today (curl POST /v1/database/hex/sql 'SELECT * FROM agent_trajectory'). Pairs naturally with the deferred P4.2 compile_status surface — both belong in one observability-presentation workplan."
+          "description": "List view of recent trajectories with: role, terminated_reason, total_tokens, total_cost_usd, total_latency_ms, expand-to-see steps. Steps render thought + tool + args + observation. Dashboard accessible at #/agent-trajectories.",
+          "done_condition": "View renders on hard-refresh of http://127.0.0.1:5555/#/agent-trajectories and shows at least one row when an agent loop has run."
+        }
+      ],
+      "gate": {"type": "compile+manual", "command": "cargo build --release -p hex-nexus", "blocking": false}
+    },
+    {
+      "id": "P7",
+      "name": "Acceptance",
+      "tier": 7,
+      "tasks": [
+        {
+          "id": "P7.1",
+          "name": "Re-dispatch P7.2 brief via agent loop",
+          "agent": "integrator",
+          "layer": "tests",
+          "files": ["hex-cli/tests/standalone_gate_v2.rs"],
+          "deps": ["P3.2", "P4.1", "P5.1"],
+          "status": "done",
+          "evidence": "Autonomous commits 425944d3 (action#16, 1702B) + a94e4965 (action#17, 1904B) — both authored by hex-autonomous, content produced by qwen2.5-coder:14b through the full agent_loop chain. Surviving file (1904B) compiles AND `cargo test -p hex-cli --test standalone_gate_v2` exits 0 in 15.34s with run.sh actually executing T1 tier against local Ollama. Pre-fix attempt 4f70b015 surfaced the --test gate gap, which was closed by 91ff8fee before the v2 retry succeeded."
+          "description": "Integration test that sets HEX_AGENT_LOOP_ENABLED=1, sends the exact P7.2 brief to hex-coder via hex ops send, polls until either a commit lands or 5min elapses. Asserts: (a) agent_trajectory row exists for this run, (b) steps include at least one repo_read on examples/standalone-pipeline-test/run.sh, (c) the final step is code_patch_propose with path=hex-cli/tests/standalone_gate.rs, (d) compile_status='pass', (e) twin_verdict='approve' on first pass, (f) cargo test -p hex-cli --test standalone_gate exits 0, (g) trajectory.total_cost_usd == 0 (all local AI).",
+          "done_condition": "cargo test -p hex-cli --test agent_loop_p72_acceptance exits 0 with HEX_NEXUS_URL+OLLAMA_HOST set."
+        },
+        {
+          "id": "P7.2",
+          "name": "Proof writeup",
+          "agent": "hex-documenter",
+          "layer": "docs",
+          "files": ["docs/analysis/agent-loop-p72-proof-2026-MM-DD.md"],
+          "deps": ["P7.1"],
+          "status": "todo",
+          "description": "Captures the trajectory from a successful P7.1 run: each step (thought + tool + observation), final action, compile diagnostics, twin verdict, total cost. Funnel: blind-draft baseline (today's failure) → agent-loop result. Names what each part of the pipeline did.",
+          "done_condition": "Doc file exists, contains a full trajectory transcript and the funnel comparison."
+        }
+      ],
+      "gate": {"type": "test", "command": "cargo test -p hex-cli --test agent_loop_p72_acceptance", "blocking": true}
+    }
+  ]
+}

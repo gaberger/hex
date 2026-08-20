@@ -229,7 +229,7 @@ Network:   SSH reverse tunnel (Mac :5555 → Bazzite :5556)
 ```
 
 **Key observations:**
-- **Timeout guards work** (ADR-2604180001): All 5 attempts completed within T2's 120s timeout. No hangs, no 0% CPU accumulation.
+- **Timeout guards work** (ADR-2026-04-18-0001): All 5 attempts completed within T2's 120s timeout. No hangs, no 0% CPU accumulation.
 - **Compile gate enforces quality**: Each failed attempt was rejected by `cargo check`; compiler error fed back to retry.
 - **Fixed and compiled** (manual recovery from corrupted Cargo.toml): `cargo build --release` → **3.1s build time**.
 

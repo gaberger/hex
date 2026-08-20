@@ -43,7 +43,7 @@ const BranchPicker: Component<BranchPickerProps> = (props) => {
   onCleanup(() => document.removeEventListener("mousedown", handleClickOutside));
 
   const currentBranch = createMemo(() => {
-    const head = gitBranches().find((b) => b.isHead);
+    const head = (gitBranches() ?? []).find((b) => b.isHead);
     return head?.name ?? "main";
   });
 

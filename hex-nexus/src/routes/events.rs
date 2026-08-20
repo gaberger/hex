@@ -1,4 +1,4 @@
-//! REST endpoints for the tool-call event log (ADR-2604012137, ADR-2604020900).
+//! REST endpoints for the tool-call event log (ADR-2026-04-01-2137, ADR-2026-04-02-0900).
 //!
 //! POST /api/events  — write one event; broadcasts to WebSocket dashboard.
 //! GET  /api/events  — query recent events for a session (initial dashboard load).

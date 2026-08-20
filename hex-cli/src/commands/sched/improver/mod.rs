@@ -1,4 +1,4 @@
-//! Self-improvement loop (ADR-2604271100).
+//! Self-improvement loop (ADR-2026-04-27-1100).
 //!
 //! Pipeline: [`discover`] → variant generation (P2) → judge (P3) → act (P4),
 //! tied together by a sched tick (P5). This module hosts the discovery
@@ -12,6 +12,7 @@ pub mod act;
 pub mod discover;
 pub mod judge;
 pub mod learn;
+pub mod thought_patterns;
 
 use std::time::Duration;
 
@@ -42,7 +43,7 @@ pub enum ImproverAction {
         #[arg(long, default_value_t = DEFAULT_INTERVAL_SECS)]
         interval: u64,
     },
-    /// Run discover() then rank hypotheses by impact (ADR-2604271100 P3).
+    /// Run discover() then rank hypotheses by impact (ADR-2026-04-27-1100 P3).
     /// Outputs the ranked list with score + reason. Read-only.
     Judge {
         /// Emit ranked output as JSON instead of a table.
@@ -120,6 +121,16 @@ pub enum ImproverAction {
         #[arg(long)]
         json: bool,
     },
+    /// BS-5 detector: scan agent_thought for cross-persona patterns
+    /// (ADR-IDs cited by multiple personas, frustration-kind spikes).
+    /// Emits `{findings: [...]}` so the improver detector table can
+    /// route it like any other Source.
+    ThoughtPatterns {
+        /// Emit findings as JSON (the contract the improver detector
+        /// loop consumes). Plain text mode is for operator preview.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub async fn run(action: ImproverAction) -> Result<()> {
@@ -133,6 +144,7 @@ pub async fn run(action: ImproverAction) -> Result<()> {
         ImproverAction::Scores { json, starvation } => run_scores(json, starvation).await,
         ImproverAction::Status { json, watch, no_history } => run_status(json, watch, no_history).await,
         ImproverAction::History { limit, json } => run_history(limit, json).await,
+        ImproverAction::ThoughtPatterns { json } => thought_patterns::run(json).await,
     }
 }
 

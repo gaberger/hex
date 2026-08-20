@@ -8,6 +8,7 @@ members = [
     "rl-engine",
     "chat-relay",
     "neural-lab",
+    "knowledge-graph",
 ]
 resolver = "2"
 

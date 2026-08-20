@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use crate::ports::agent_lifecycle::IAgentLifecyclePort;
 use crate::ports::agent_orchestrator::IAgentOrchestratorPort;
-use crate::remote::transport::*;
+use crate::domain::transport::*;
 
 // ── Shared state for agent routes ────────────────────
 

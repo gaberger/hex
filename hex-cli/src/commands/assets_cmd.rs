@@ -50,7 +50,7 @@ pub async fn run(action: AssetsAction) -> Result<()> {
 // ── hex assets list ──────────────────────────────────────────────────
 
 async fn list() -> Result<()> {
-    println!("{} Embedded Assets (ADR-2603221522)", "\u{2b21}".cyan());
+    println!("{} Embedded Assets (ADR-2026-03-22-1522)", "\u{2b21}".cyan());
     println!();
 
     let mut total_size: usize = 0;

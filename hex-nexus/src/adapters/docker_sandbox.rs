@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 /// Secondary adapter: manages Docker AI Sandbox microVMs as hex agent sandboxes.
 ///
-/// Supports both local and remote Docker daemons (ADR-2604050900 P5.1).
+/// Supports both local and remote Docker daemons (ADR-2026-04-05-0900 P5.1).
 /// When `docker_host` is set, all `docker` CLI commands include
 /// `DOCKER_HOST=<value>` to target a remote daemon (e.g., `ssh://user@host`).
 pub struct DockerSandboxAdapter {

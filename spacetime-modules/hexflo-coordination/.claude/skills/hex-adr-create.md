@@ -1,7 +1,7 @@
 ---
-name: hex-adr-create
+name: hex-ADR-create
 description: Create a new Architecture Decision Record with auto-numbering, dependency impact analysis, and validation gates
-trigger: /hex-adr-create
+trigger: /hex-ADR-create
 ---
 
 # Create New ADR
@@ -28,7 +28,7 @@ must include a full consumer dependency map before it can be accepted.
 
 ## Phase 2: Dependency Impact Analysis (REQUIRED for modify/delete/restructure/migrate)
 
-**This phase exists because ADR-2604050900 proved that deleting modules without tracing
+**This phase exists because ADR-2026-04-05-0900 proved that deleting modules without tracing
 all consumers leaves compilation broken in downstream crates.**
 
 ### 2a. Identify Affected Artifacts
@@ -131,7 +131,7 @@ Before marking complete:
 3. **Gate completeness**: Every implementation phase has at least one validation gate
 4. **Workplan alignment**: If a workplan will be created, verify it includes all gates
 
-## Anti-Patterns (Lessons from ADR-2604050900)
+## Anti-Patterns (Lessons from ADR-2026-04-05-0900)
 
 | Anti-Pattern | Problem | Fix |
 |-------------|---------|-----|
@@ -147,4 +147,4 @@ The `hex adr schema` command reserves the ADR number atomically via `POST /api/a
 
 | Command | What it does |
 |---------|-------------|
-| `/hex-adr-create` | Create a new ADR with full impact analysis |
+| `/hex-ADR-create` | Create a new ADR with full impact analysis |

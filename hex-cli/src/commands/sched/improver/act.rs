@@ -1,4 +1,4 @@
-//! Improver act phase (ADR-2604271100 P4).
+//! Improver act phase (ADR-2026-04-27-1100 P4).
 //!
 //! Takes a ranked stream from [`judge::rank`] and turns each top-N
 //! hypothesis into a concrete action — a sched task or a recommendation
@@ -23,7 +23,7 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use super::discover::Source;
+use super::discover::{Severity, Source};
 use super::judge::ScoredHypothesis;
 
 /// One proposed action — either an enqueueable sched task or an
@@ -194,7 +194,7 @@ pub fn derive(scored: &ScoredHypothesis) -> Option<Action> {
         }
 
         // Stale worktrees → recommend cleanup; never auto-delete because
-        // worktree cleanup can destroy uncommitted work (ADR-2604150130).
+        // worktree cleanup can destroy uncommitted work (ADR-2026-04-15-0130).
         Source::GitDrift => {
             let branch = h
                 .evidence
@@ -394,6 +394,58 @@ pub fn derive(scored: &ScoredHypothesis) -> Option<Action> {
             });
         }
 
+        // BS-5: thought-pattern findings — cross-persona signals from
+        // agent_thought. Always Recommend (operator-facing) because the
+        // pattern is a *signal* (this ADR keeps coming up; persona X is
+        // frustrated), not a remediation. Routing this through
+        // DraftWorkplan would be premature: the operator (or another
+        // persona via SOP) decides whether the signal warrants a code
+        // change, an ADR update, or a process change.
+        Source::ThoughtPattern => {
+            let pattern = h
+                .evidence
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let count = h
+                .evidence
+                .get("count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let roles_summary = h
+                .evidence
+                .get("mentioning_roles")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            let payload = match pattern {
+                "adr_repetition" => format!(
+                    "Cross-persona signal: {} is referenced in {} recent thoughts by [{}]. Likely an unresolved architectural concern — review the ADR's status and decide whether to (a) ship the implementation, (b) split it into actionable sub-ADRs, or (c) update its Status to Abandoned with a rationale.",
+                    h.scope, count, roles_summary
+                ),
+                "frustration_spike" => format!(
+                    "Frustration spike: {} kind=frustration thoughts in the recent window. Inspect the source persona(s) for a methodology block (missing tool, recurrent error, resource exhaustion) before more code is generated against the same gap.",
+                    count
+                ),
+                other => format!(
+                    "ThoughtPattern '{}' on scope {} (count={}). Inspect recent agent_thought rows for context.",
+                    other, h.scope, count
+                ),
+            };
+            return Some(Action {
+                kind: ActionKind::Recommend,
+                priority,
+                payload,
+                derived_from: h.id.clone(),
+                reason: scored.reason.clone(),
+            });
+        }
+
         // Punch-list items: each unrouted gap recommends the operator
         // route it (task id, draft path, or out-of-scope tag).
         Source::PunchList => {
@@ -520,7 +572,14 @@ pub async fn act(
                     }
                 }
                 ActionKind::Recommend => {
-                    // Recommendations don't enqueue — they print only.
+                    // Recommendations don't enqueue any work — but high-signal
+                    // patterns push a P2 inbox notification so the operator
+                    // sees them on next interaction instead of having to run
+                    // `hex sched improver act` manually. BS-5 ThoughtPattern
+                    // findings at severity=error are the case worth this:
+                    // ≥5 personas circling the same ADR is a real-time
+                    // attention signal, not a passive backlog item.
+                    notify_inbox_for_recommend(ranked, action).await;
                 }
             }
         }
@@ -657,6 +716,172 @@ async fn notify_inbox_for_action(
     println!(
         "  ⬡ loop notify [{}] inbox={} draft={}",
         kind, inbox_ok, draft_path
+    );
+}
+
+/// File-backed dedup so the same Recommend hypothesis doesn't re-spam
+/// the inbox on every daemon tick. Maps hypothesis_id → ISO-8601 ts of
+/// last notification. Re-notify after 24h so persistent patterns
+/// (e.g. an ADR that stays open for days) still surface.
+fn notified_recommends_path() -> Result<std::path::PathBuf> {
+    let home = dirs::home_dir().context("resolve home dir")?;
+    let dir = home.join(".hex/improver");
+    std::fs::create_dir_all(&dir).ok();
+    Ok(dir.join("notified-recommends.json"))
+}
+
+fn load_notified_recommends() -> std::collections::HashMap<String, String> {
+    let Ok(path) = notified_recommends_path() else { return Default::default() };
+    let Ok(content) = std::fs::read_to_string(&path) else { return Default::default() };
+    serde_json::from_str(&content).unwrap_or_default()
+}
+
+fn save_notified_recommends(map: &std::collections::HashMap<String, String>) {
+    let Ok(path) = notified_recommends_path() else { return };
+    if let Ok(pretty) = serde_json::to_string_pretty(map) {
+        let _ = std::fs::write(&path, pretty);
+    }
+}
+
+/// 24-hour re-notify window. Long enough that a daemon ticking every 30s
+/// doesn't spam (≤1 notification per hypothesis per day), short enough
+/// that a still-open ADR after a day re-surfaces in case the operator
+/// missed the first ping.
+const NOTIFY_RECOMMEND_COOLDOWN: chrono::Duration = chrono::Duration::hours(24);
+
+/// Autonomous notify pass for the daemon — runs every tick and pushes
+/// any severity=error Recommend Actions to inbox + events, with dedup.
+/// Public surface so `hex sched daemon` can call it independently of the
+/// score≥80 auto-act gate (which is reserved for high-confidence
+/// remediations; Recommends are signals, not remediations).
+pub async fn notify_high_severity_recommends(ranked: &[ScoredHypothesis]) {
+    let mut map = load_notified_recommends();
+    let now = chrono::Utc::now();
+    let mut dirty = false;
+    for scored in ranked {
+        if !matches!(scored.hypothesis.severity, Severity::Error) {
+            continue;
+        }
+        let Some(action) = derive(scored) else { continue };
+        if !matches!(action.kind, ActionKind::Recommend) {
+            continue;
+        }
+        // Cooldown check.
+        if let Some(prev) = map.get(&action.derived_from) {
+            if let Ok(prev_ts) = chrono::DateTime::parse_from_rfc3339(prev) {
+                if now.signed_duration_since(prev_ts.with_timezone(&chrono::Utc))
+                    < NOTIFY_RECOMMEND_COOLDOWN
+                {
+                    continue;
+                }
+            }
+        }
+        notify_inbox_for_recommend(ranked, &action).await;
+        map.insert(action.derived_from.clone(), now.to_rfc3339());
+        dirty = true;
+    }
+    if dirty {
+        save_notified_recommends(&map);
+    }
+}
+
+/// Inbox/event push for Recommend actions that are urgent enough to
+/// interrupt the operator. Currently fires only on `ThoughtPattern`
+/// findings at severity=error (the BS-5 escalation point).
+///
+/// Distinct from `notify_inbox_for_action`:
+///   - no `draft_path` (Recommends don't produce drafts)
+///   - filter is severity-based, not source-based
+///   - kind tag is the underlying pattern (`adr_repetition`,
+///     `frustration_spike`, …) so an inbox reader can filter
+///
+/// Failures swallowed; the action's payload is also printed to stdout
+/// by the caller, so the operator can still see the recommendation
+/// via `hex sched improver act` even if the inbox/event push fails.
+async fn notify_inbox_for_recommend(ranked: &[ScoredHypothesis], action: &Action) {
+    let Some(scored) = ranked.iter().find(|s| s.hypothesis.id == action.derived_from) else {
+        return;
+    };
+    let h = &scored.hypothesis;
+    if !matches!(h.source, Source::ThoughtPattern) {
+        return;
+    }
+    if !matches!(h.severity, Severity::Error) {
+        return;
+    }
+
+    let pattern = h
+        .evidence
+        .get("pattern")
+        .and_then(|v| v.as_str())
+        .unwrap_or("thought_pattern");
+    let count = h
+        .evidence
+        .get("count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let summary = format!(
+        "ThoughtPattern[{}] severity=error on {} (count={}) — {}",
+        pattern,
+        h.scope,
+        count,
+        action.payload
+    );
+
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    if nexus.ensure_running().await.is_err() {
+        return;
+    }
+    let project_id = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "default".to_string());
+
+    let inbox_body = serde_json::json!({
+        "priority": 2,
+        "kind": format!("thought_pattern:{}", pattern),
+        "payload": summary,
+        "project_id": project_id,
+    });
+    let inbox_ok = nexus
+        .post("/api/hexflo/inbox/notify", &inbox_body)
+        .await
+        .is_ok();
+
+    // Same dual-path as notify_inbox_for_action: also publish to
+    // /api/events so streams without a registered agent still see it.
+    let port = std::env::var("HEX_NEXUS_PORT")
+        .unwrap_or_else(|_| "5555".to_string())
+        .parse::<u16>()
+        .unwrap_or(5555);
+    let event_url = format!("http://127.0.0.1:{}/api/events", port);
+    let session_id = std::env::var("CLAUDE_SESSION_ID")
+        .unwrap_or_else(|_| format!("sched-daemon-{}", std::process::id()));
+    let event_body = serde_json::json!({
+        "session_id": session_id,
+        "event_type": "loop_notification",
+        "input_json": serde_json::to_string(&serde_json::json!({
+            "priority": 2,
+            "kind": format!("thought_pattern:{}", pattern),
+            "summary": summary,
+            "scope": h.scope,
+            "count": count,
+            "inbox_ok": inbox_ok,
+            "source": format!("{:?}", h.source),
+            "score": scored.score,
+        }))
+        .unwrap_or_default(),
+    });
+    let _ = reqwest::Client::new()
+        .post(&event_url)
+        .json(&event_body)
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await;
+
+    println!(
+        "  ⬡ recommend notify [{}] inbox={} scope={}",
+        pattern, inbox_ok, h.scope
     );
 }
 

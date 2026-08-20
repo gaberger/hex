@@ -1,5 +1,5 @@
 //! L2 Adversarial swarm — pre-shadow Candidate review
-//! (ADR-2604261311 L2 / ADR-2604261500 C6).
+//! (ADR-2026-04-26-1311 L2 / ADR-2026-04-26-1500 C6).
 //!
 //! Each [`AdversarialReviewer`] inspects a proposed swap and votes
 //! `Approve` or `Reject(reason)`. The [`AdversarialSwarm`] runs all

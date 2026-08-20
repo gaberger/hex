@@ -11,11 +11,11 @@
 //! The tests assert URL path, HTTP method, body shape, and response
 //! parsing against the SpacetimeDB `/v1/database/<db>/{call,sql}` contract.
 //! They also cover the error-mapping path (HTTP 500 → `StateError::Storage`),
-//! the SQL-escape correctness regression (ADR-2604112000 P5.1 audit), and
+//! the SQL-escape correctness regression (ADR-2026-04-11-2000 P5.1 audit), and
 //! empty-result behavior.
 //!
 //! Workplan: wp-hex-standalone-dispatch P5.3/P5.4
-//! ADR: ADR-2604112000
+//! ADR: ADR-2026-04-11-2000
 //!
 //! Gate command:
 //!   cargo test -p hex-nexus --test hexflo_memory_adapter
@@ -181,7 +181,7 @@ async fn hexflo_memory_retrieve_returns_none_for_empty_result() {
 
 #[tokio::test]
 async fn hexflo_memory_retrieve_escapes_single_quotes_in_key() {
-    // Regression test for the ADR-2604112000 P5.1 audit finding: the
+    // Regression test for the ADR-2026-04-11-2000 P5.1 audit finding: the
     // pre-hardening implementation used unescaped `format!("... WHERE
     // key = '{}'", key)` and broke on keys containing a single quote.
     // The fix doubles embedded single quotes per SQL-standard escape rules.

@@ -2,7 +2,9 @@ pub mod events;
 pub mod live_context;
 pub mod secret_grant;
 pub mod session;
-pub mod state;
+// Relocated to hex-core (ADR-2606071340 P1); re-exported so `crate::ports::state::*`
+// consumers (41 of them) are unchanged.
+pub use hex_core::ports::state;
 pub mod ssh_tunnel;
 pub mod agent_transport;
 pub mod remote_registry;
@@ -14,7 +16,7 @@ pub mod adr_review;
 pub use secret_grant::ISecretGrantPort;
 pub use session::ISessionPort;
 pub use state::IStatePort;
-// Focused sub-traits (ADR-2604050900 P6) — prefer these over IStatePort for narrow dependencies.
+// Focused sub-traits (ADR-2026-04-05-0900 P6) — prefer these over IStatePort for narrow dependencies.
 pub use state::{
     IRlStatePort, IPatternStatePort, IAgentStatePort, IWorkplanStatePort,
     IChatStatePort, ISkillStatePort, IAgentDefStatePort, ISwarmStatePort,

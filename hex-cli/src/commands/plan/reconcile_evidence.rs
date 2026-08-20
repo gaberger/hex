@@ -1,6 +1,6 @@
 //! Evidence-based verification for workplan task reconciliation.
 //!
-//! ADR-2604142200: reconcile must require **positive file evidence** before
+//! ADR-2026-04-14-2201: reconcile must require **positive file evidence** before
 //! promoting any task to `done`.  Two pure-ish functions:
 //!
 //! - `collect_evidence` — gathers filesystem, symbol, and git signals
@@ -43,7 +43,7 @@ pub fn collect_evidence(task: &WorkplanTask, repo_root: &Path, branch: &str) -> 
     collect_evidence_strict(task, repo_root, branch, None)
 }
 
-/// ADR-2604270800 P0.2: workplan-aware variant.
+/// ADR-2026-04-27-0800 P0.2: workplan-aware variant.
 ///
 /// When `require_workplan_id` is `Some(id)`, a commit only counts as evidence
 /// if its message references that workplan id in addition to a task pattern.
@@ -155,6 +155,12 @@ fn extract_declared_symbols(description: &str) -> Vec<String> {
 
 /// Grep for each declared symbol in the existing task files.
 /// Returns `(symbol, file_path)` pairs for every hit.
+///
+/// Uses `grep -w` (word-boundary match) so short symbol names like `Buf`
+/// don't false-match against `WriteBuffer`, `buffer`, etc. This is the
+/// source of the ~70% reconciler false-positive rate noted in the autonomy
+/// audit (memory: project_audit_autonomous_dev_2026_05_12) and ADR-2026-05-14-1135
+/// §Phase 1 #6.
 fn find_symbol_hits(
     symbols: &[String],
     existing_files: &[&Path],
@@ -168,7 +174,7 @@ fn find_symbol_hits(
         for file in existing_files {
             let abs = repo_root.join(file);
             let output = std::process::Command::new("grep")
-                .args(["-l", sym.as_str()])
+                .args(["-wl", sym.as_str()])
                 .arg(&abs)
                 .output();
             if let Ok(out) = output {
@@ -376,7 +382,7 @@ mod tests {
         assert!(matches!(verify(&ev), VerifyResult::Promote));
     }
 
-    /// ADR-2604270800 P0.2 regression: a fresh git repo with one commit whose
+    /// ADR-2026-04-27-0800 P0.2 regression: a fresh git repo with one commit whose
     /// subject contains `(p0.2)` from an UNRELATED workplan must not satisfy
     /// this workplan's P0.2. Reproduces the 2026-04-27 false-match.
     #[test]
@@ -408,7 +414,7 @@ mod tests {
             files: vec!["ci.rs".into()],
             done_command: String::new(),
             created_at: "2026-04-27T07:55:00Z".into(),
-            adr_scope: "ADR-2604270800".into(),
+            adr_scope: "ADR-2026-04-27-0800".into(),
         };
 
         // Loose mode: cross-workplan match incorrectly counts as evidence.
@@ -419,7 +425,7 @@ mod tests {
         );
 
         // Strict mode: same task with workplan_id requirement → no match.
-        let strict = collect_evidence_strict(&task, &tmp, "", Some("wp-adr-doctor-self-fix"));
+        let strict = collect_evidence_strict(&task, &tmp, "", Some("wp-ADR-doctor-self-fix"));
         assert!(
             strict.matching_commits.is_empty(),
             "strict mode must reject commits that don't reference the workplan id; got {:?}",
@@ -451,7 +457,7 @@ mod tests {
             "commit",
             "-q",
             "-m",
-            "feat(p0.2): wp-adr-doctor-self-fix — reconcile evidence rule",
+            "feat(p0.2): wp-ADR-doctor-self-fix — reconcile evidence rule",
         ]);
 
         let task = WorkplanTask {
@@ -460,9 +466,9 @@ mod tests {
             files: vec!["ci.rs".into()],
             done_command: String::new(),
             created_at: "2026-04-27T07:55:00Z".into(),
-            adr_scope: "ADR-2604270800".into(),
+            adr_scope: "ADR-2026-04-27-0800".into(),
         };
-        let strict = collect_evidence_strict(&task, &tmp, "", Some("wp-adr-doctor-self-fix"));
+        let strict = collect_evidence_strict(&task, &tmp, "", Some("wp-ADR-doctor-self-fix"));
         assert!(
             !strict.matching_commits.is_empty(),
             "strict mode should accept commits that reference the workplan id"

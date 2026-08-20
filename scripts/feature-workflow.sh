@@ -28,6 +28,56 @@ log_ok()    { echo -e "${GREEN}[ok]${NC} $*"; }
 log_warn()  { echo -e "${YELLOW}[warn]${NC} $*"; }
 log_err()   { echo -e "${RED}[error]${NC} $*"; }
 
+# Cargo manifest path: respect HEX_FEATURE_CARGO_MANIFEST override for sub-projects
+# (e.g. examples/ebay-clone/backend/Cargo.toml).
+cargo_manifest_path() {
+  if [ -n "${HEX_FEATURE_CARGO_MANIFEST:-}" ]; then
+    echo "$HEX_FEATURE_CARGO_MANIFEST"
+  elif [ -f "$PROJECT_ROOT/Cargo.toml" ]; then
+    echo "$PROJECT_ROOT/Cargo.toml"
+  fi
+}
+
+# Count cargo errors. Returns "0" if cargo unavailable or no manifest.
+# Never fails — caller can rely on the integer in stdout.
+cargo_check_errors() {
+  local manifest
+  manifest=$(cargo_manifest_path)
+  if [ -z "$manifest" ] || ! command -v cargo >/dev/null 2>&1; then
+    echo "0"
+    return
+  fi
+  local output
+  output=$(cargo check --workspace --message-format=short --manifest-path "$manifest" 2>&1 || true)
+  # Prefer cargo's authoritative summary "due to N previous error(s)" — one
+  # short-format line can bundle multiple errors under a single error[Exxxx],
+  # so line-counting under-reports. Fall back to line count if no summary
+  # (e.g. partial compile before frontend error).
+  local count
+  count=$(echo "$output" | grep -oE "due to [0-9]+ previous error" | grep -oE "[0-9]+" | tail -1)
+  if [ -z "$count" ]; then
+    count=$(echo "$output" | grep -cE "error\[E[0-9]+\]" || true)
+  fi
+  echo "$count"
+}
+
+# List source files with cargo errors (sorted unique, repo-relative paths).
+# Excludes files that only have warnings — drift detection cares about errors.
+cargo_check_errored_files() {
+  local manifest
+  manifest=$(cargo_manifest_path)
+  if [ -z "$manifest" ] || ! command -v cargo >/dev/null 2>&1; then
+    return
+  fi
+  local output
+  output=$(cargo check --workspace --message-format=short --manifest-path "$manifest" 2>&1 || true)
+  echo "$output" \
+    | grep -E "error\[E[0-9]+\]" \
+    | grep -oE "[^[:space:]]+\.rs(:[0-9]+)?" \
+    | sed 's/:[0-9]*$//' \
+    | sort -u
+}
+
 #--- setup: Create worktrees from a workplan ---
 cmd_setup() {
   local feature_name="$1"
@@ -188,12 +238,16 @@ cmd_status() {
 cmd_merge() {
   local feature_name="$1"
   local force_merge=false
+  local no_rollback=false
+  local no_cargo_gate=false
 
   # Parse optional flags
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
       --force) force_merge=true ;;
+      --no-rollback) no_rollback=true ;;
+      --no-cargo-gate) no_cargo_gate=true ;;
       *) log_warn "Unknown flag: $1" ;;
     esac
     shift
@@ -258,6 +312,24 @@ for step in wp.get('steps', []):
 
   local merged=0
   local failed=0
+  local rolled_back=0
+
+  # §5.8 post-merge cargo-check gate: capture baseline before any merges.
+  # Detect drift by comparing per-merge error count + which files now have errors.
+  local cargo_gate_active=false
+  local manifest
+  manifest=$(cargo_manifest_path)
+  if [ "$no_cargo_gate" = false ] && [ -n "$manifest" ] && command -v cargo >/dev/null 2>&1; then
+    cargo_gate_active=true
+    log_info "Cargo-check gate active (manifest: ${manifest#$PROJECT_ROOT/})"
+    log_info "Running pre-merge cargo check baseline..."
+  fi
+  local pre_merge_errors
+  pre_merge_errors=$(cargo_check_errors)
+  local baseline_errors=$pre_merge_errors
+  if [ "$cargo_gate_active" = true ]; then
+    log_info "Baseline cargo errors: $baseline_errors"
+  fi
 
   for component in "${merge_order[@]}"; do
     local branch="feat/${feature_name}/${component}"
@@ -278,34 +350,99 @@ for step in wp.get('steps', []):
 
     log_info "Merging $branch ($ahead commits)..."
 
+    local merge_succeeded=false
     if git merge "$branch" --no-ff -m "feat(${feature_name}): merge ${component}"; then
       log_ok "Merged $branch successfully"
-      merged=$((merged + 1))
+      merge_succeeded=true
     else
       log_err "Merge conflict on $branch — aborting merge"
       git merge --abort
-      failed=$((failed + 1))
       log_warn "Attempting rebase of $branch onto main..."
 
       if git rebase main "$branch" && git checkout main && git merge "$branch" --no-ff -m "feat(${feature_name}): merge ${component}"; then
         log_ok "Rebase + merge of $branch succeeded"
-        merged=$((merged + 1))
-        failed=$((failed - 1))
+        merge_succeeded=true
       else
         git rebase --abort 2>/dev/null || true
         git checkout main 2>/dev/null || true
         log_err "Cannot merge $branch — manual resolution needed"
+        failed=$((failed + 1))
+        continue
       fi
+    fi
+
+    # §5.8 gate: run cargo check after a successful merge, detect drift.
+    if [ "$cargo_gate_active" = true ] && [ "$merge_succeeded" = true ]; then
+      log_info "Running post-merge cargo check for $branch..."
+      local post_errors
+      post_errors=$(cargo_check_errors)
+      local delta=$((post_errors - pre_merge_errors))
+
+      if [ "$delta" -le 0 ]; then
+        log_ok "Cargo errors: $pre_merge_errors → $post_errors (no regression from $component)"
+        merged=$((merged + 1))
+        pre_merge_errors=$post_errors
+        continue
+      fi
+
+      # Errors went up. Classify: drift (errors in files NOT touched by this merge)
+      # vs intentional (errors in files THIS merge edited).
+      local merged_files drift_files
+      merged_files=$(git diff --name-only "HEAD~1" "HEAD" 2>/dev/null | grep '\.rs$' | sort -u || true)
+      local current_errored
+      current_errored=$(cargo_check_errored_files)
+      # Drift = errored files NOT in this merge's changeset
+      drift_files=$(comm -23 \
+        <(printf '%s\n' "$current_errored" | sort -u) \
+        <(printf '%s\n' "$merged_files" | sort -u) 2>/dev/null || true)
+
+      log_warn "Cargo errors increased: $pre_merge_errors → $post_errors (delta +$delta) after merging $component"
+      if [ -n "$drift_files" ]; then
+        log_warn "Drift detected — errors in files NOT modified by $component:"
+        echo "$drift_files" | sed 's/^/    /' | head -20
+        if [ "$no_rollback" = false ]; then
+          log_warn "Rolling back $component merge (use --no-rollback to disable)"
+          git reset --hard "HEAD~1"
+          rolled_back=$((rolled_back + 1))
+          failed=$((failed + 1))
+          continue
+        else
+          log_warn "Keeping merge despite drift (--no-rollback set)"
+          merged=$((merged + 1))
+          pre_merge_errors=$post_errors
+        fi
+      else
+        log_info "Errors are in files THIS merge edited — intentional, not drift. Keeping merge."
+        merged=$((merged + 1))
+        pre_merge_errors=$post_errors
+      fi
+    else
+      merged=$((merged + 1))
     fi
   done
 
   echo ""
-  log_info "Merge complete: $merged succeeded, $failed failed"
+  log_info "Merge complete: $merged succeeded, $failed failed, $rolled_back rolled back"
+
+  if [ "$cargo_gate_active" = true ]; then
+    local final_errors
+    final_errors=$(cargo_check_errors)
+    local final_delta=$((final_errors - baseline_errors))
+    if [ "$final_delta" -gt 0 ]; then
+      log_warn "Final cargo error count: $baseline_errors → $final_errors (+$final_delta from baseline)"
+    elif [ "$final_delta" -lt 0 ]; then
+      log_ok "Final cargo error count: $baseline_errors → $final_errors ($final_delta from baseline)"
+    else
+      log_ok "Final cargo error count: $final_errors (unchanged from baseline)"
+    fi
+  fi
 
   if [ "$failed" -eq 0 ]; then
-    # Run full gate suite
-    log_info "Running full gate suite..."
-    bun run check && bun test && bun run lint
+    # Run full gate suite — only if a package.json is present at PROJECT_ROOT
+    if [ -f "$PROJECT_ROOT/package.json" ]; then
+      log_info "Running full gate suite (bun)..."
+      bun run check && bun test && bun run lint
+    fi
     if command -v hex >/dev/null 2>&1; then
       hex analyze .
     fi
@@ -435,7 +572,14 @@ case "${1:-help}" in
     echo "Usage:"
     echo "  $0 setup <feature-name> [--skip-specs]  Create worktrees (blocks without specs)"
     echo "  $0 status <feature-name>    Show worktree and feature status"
-    echo "  $0 merge <feature-name> [--force]  Merge worktrees (warns without validation report)"
+    echo "  $0 merge <feature-name> [--force] [--no-rollback] [--no-cargo-gate]"
+    echo "                              Merge worktrees in dependency order. Runs cargo check"
+    echo "                              between each merge; rolls back merges that introduce"
+    echo "                              errors in files they didn't touch (drift). Use"
+    echo "                              --no-rollback to keep drifted merges; --no-cargo-gate"
+    echo "                              to skip the per-merge check entirely. Set"
+    echo "                              HEX_FEATURE_CARGO_MANIFEST=path/to/Cargo.toml to target"
+    echo "                              a sub-project (e.g. examples/foo/backend/Cargo.toml)."
     echo "  $0 cleanup <feature-name>   Remove worktrees and branches"
     echo "  $0 list                     List all feature worktrees"
     echo "  $0 stale [hours]            Find worktrees with no recent commits (default: 24h)"

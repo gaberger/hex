@@ -44,7 +44,7 @@ pub fn spawn_git_poller(state: SharedState, interval_secs: u64) {
             for (project_id, root_path) in project_list.iter() {
                 let rp = root_path.clone();
                 let status_result = tokio::task::spawn_blocking(move || {
-                    super::status::get_status(std::path::Path::new(&rp))
+                    hex_git::status::get_status(std::path::Path::new(&rp))
                 })
                 .await;
 

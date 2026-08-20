@@ -1,5 +1,5 @@
-//! PromotionJudge — the Layer-3 judge from ADR-2604261311 re-bound to
-//! swap-ticket transitions per substrate ADR-2604261500 C6
+//! PromotionJudge — the Layer-3 judge from ADR-2026-04-26-1311 re-bound to
+//! swap-ticket transitions per substrate ADR-2026-04-26-1500 C6
 //! (wp-substrate-shadow-promotion P4.1).
 //!
 //! On each `tick()` the judge:

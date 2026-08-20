@@ -7,6 +7,7 @@
 import { Component, For, Show, createSignal, createMemo } from "solid-js";
 import { fleetNodes, fleetConnected, getFleetConn } from "../../stores/connection";
 import { addToast } from "../../stores/toast";
+import { uuid } from "../../utils/uuid";
 import { restClient } from "../../services/rest-client";
 
 function healthColor(status: string): string {
@@ -29,11 +30,11 @@ const FleetView: Component = () => {
   const [registering, setRegistering] = createSignal(false);
 
   const totalAgents = createMemo(() =>
-    fleetNodes().reduce((sum: number, n: any) => sum + (n.agent_count ?? n.agents ?? 0), 0)
+    (fleetNodes() ?? []).reduce((sum: number, n: any) => sum + (n.agent_count ?? n.agents ?? 0), 0)
   );
 
   const onlineCount = createMemo(() =>
-    fleetNodes().filter((n: any) => {
+    (fleetNodes() ?? []).filter((n: any) => {
       const s = n.status ?? n.state ?? "";
       return s === "healthy" || s === "active" || s === "online";
     }).length
@@ -48,7 +49,7 @@ const FleetView: Component = () => {
       const conn = getFleetConn();
       if (fleetConnected() && conn?.reducers?.registerNode) {
         // SpacetimeDB reducer: registerNode(id, host, port, username, maxAgents)
-        const nodeId = crypto.randomUUID();
+        const nodeId = uuid();
         conn.reducers.registerNode(nodeId, host, 22, "", 4);
         addToast("success", `Node registered via SpacetimeDB: ${host}`);
       } else {

@@ -1,0 +1,13 @@
+[package]
+name = "hex-git"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+git2 = { version = "0.20", features = ["vendored-libgit2"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"

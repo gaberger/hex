@@ -1,7 +1,7 @@
-# hex-adr-lifecycle — ADR creation and status transition hooks
+# hex-ADR-lifecycle — ADR creation and status transition hooks
 # Enforces ADR template compliance and cross-reference integrity
 
-name: hex-adr-lifecycle
+name: hex-ADR-lifecycle
 type: on-change
 description: >
   Validates ADR documents when they are created or modified. Ensures template
@@ -28,7 +28,7 @@ checks:
         ## Consequences
 
       Validate metadata:
-        - ADR ID must use timestamp format YYMMDDHHMM (e.g. ADR-2603221500)
+        - ADR ID must use timestamp format YYMMDDHHMM (e.g. ADR-2026-03-22-1500)
         - **Status:** line must be present and use bold-label format (not ## Status heading)
         - Status must be "Proposed" for new ADRs
         - **Date:** must be present in YYYY-MM-DD format
@@ -129,4 +129,4 @@ output:
         Fix: {{suggested_fix}}
     {{/each}}
 
-    Run `/hex-adr-create` to create a properly formatted ADR.
+    Run `/hex-ADR-create` to create a properly formatted ADR.

@@ -1,5 +1,5 @@
 /**
- * ActivityPanel.tsx — Live tool-call event timeline (ADR-2604012137).
+ * ActivityPanel.tsx — Live tool-call event timeline (ADR-2026-04-01-2137).
  *
  * Shows PreToolUse+PostToolUse pairs as a collapsible timeline.
  * Loads recent history from GET /api/events, then streams new events

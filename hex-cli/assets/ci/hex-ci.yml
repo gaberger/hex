@@ -1,4 +1,4 @@
-# hex CI enforcement workflow (ADR-2604061100)
+# hex CI enforcement workflow (ADR-2026-04-06-1100)
 # Deployed to target projects via: hex init
 # Runs all hex enforcement gates on every push and pull request.
 #

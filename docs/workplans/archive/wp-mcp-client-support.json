@@ -1,0 +1,115 @@
+{
+  "adr": "ADR-033",
+  "created_at": "2026-05-11T14:30:03.417312103+00:00",
+  "created_by": "hex-coder",
+  "feature": "MCP Client Support for hex-agent",
+  "id": "wp-mcp-client-support",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain and Ports",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-agent/src/domain/mcp.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Define MCP domain types (JsonRpcMessage, McpToolDef, McpServerConfig, McpToolResult)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/ports/mcp_client.rs"
+          ],
+          "id": "P0.2",
+          "layer": "ports",
+          "name": "Define McpClientPort trait interface",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary Adapters",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-agent/src/adapters/secondary/mcp_stdio_client.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement stdio transport (spawn, JSON-RPC, lifecycle)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/adapters/secondary/mcp_config.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Implement MCP config loader (read .claude/settings.json)",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "Usecases and Tool Routing",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-agent/src/usecases/mcp_discovery.rs"
+          ],
+          "id": "P2.1",
+          "layer": "usecases",
+          "name": "Implement MCP tool discovery usecase (connect, list, merge)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/adapters/secondary/tools.rs"
+          ],
+          "id": "P2.2",
+          "layer": "secondary",
+          "name": "Extend ToolExecutorAdapter with MCP routing logic",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P3",
+      "name": "Integration and Testing",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-agent/src/main.rs"
+          ],
+          "id": "P3.1",
+          "layer": "integration",
+          "name": "Wire MCP client into composition root (main.rs)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/tests/mcp_client_test.rs"
+          ],
+          "id": "P3.2",
+          "layer": "integration",
+          "name": "Add integration tests with mock MCP server",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

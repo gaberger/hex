@@ -1,6 +1,6 @@
 # ADR-038: Vite for Development, Axum for Production
 
-**Status:** Accepted
+**Status:** Completed
 **Accepted Date:** 2026-03-21
 ## Date: 2026-03-20
 

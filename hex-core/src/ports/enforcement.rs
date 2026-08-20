@@ -1,4 +1,4 @@
-//! Enforcement port — provider-agnostic validation for hex operations (ADR-2603221959).
+//! Enforcement port — provider-agnostic validation for hex operations (ADR-2026-03-22-1959).
 //!
 //! This port defines the contract for checking whether an operation should
 //! be allowed, warned, or blocked. Implementations live in the domain layer.

@@ -69,7 +69,7 @@ const QualityGatePanel: Component = () => {
 
   // Pick the first active swarm (or use all)
   const activeSwarms = createMemo(() =>
-    swarms().filter((s: any) => (s.status ?? s.state ?? "") === "active")
+    (swarms() ?? []).filter((s: any) => (s.status ?? s.state ?? "") === "active")
   );
 
   async function fetchGates() {
@@ -140,7 +140,7 @@ const QualityGatePanel: Component = () => {
     for (const gate of gates()) {
       const sid = gate.swarm_id;
       if (!map.has(sid)) {
-        const swarm = swarms().find((s: any) => (s.id ?? s.swarm_id ?? "") === sid);
+        const swarm = (swarms() ?? []).find((s: any) => (s.id ?? s.swarm_id ?? "") === sid);
         const name = swarm?.name ?? sid.slice(0, 8);
         const topology = swarm?.topology ?? swarm?.swarm_topology ?? "";
         map.set(sid, {
@@ -166,7 +166,7 @@ const QualityGatePanel: Component = () => {
         </h3>
         <Show when={gates().length > 0}>
           <span class="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400">
-            {gates().filter((g) => g.status === "pass").length}/{gates().length} passing
+            {(gates() ?? []).filter((g) => g.status === "pass").length}/{gates().length} passing
           </span>
         </Show>
       </div>

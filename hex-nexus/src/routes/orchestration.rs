@@ -68,7 +68,7 @@ pub async fn spawn_agent(
     claims: Option<axum::Extension<VerifiedClaims>>,
     Json(body): Json<SpawnRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // ADR-2604051800 P1: Agent spawning requires admin capability
+    // ADR-2026-04-05-1800 P1: Agent spawning requires admin capability
     if let Err(status) = require_capability(
         claims.as_ref().map(|c| &c.0),
         |c| c.is_admin(),
@@ -278,7 +278,7 @@ pub async fn disconnect_agent(
         None => return (StatusCode::BAD_REQUEST, Json(json!({ "error": "missing agentId" }))),
     };
 
-    // Mark agent as completed with endedAt timestamp (ADR-2603311000).
+    // Mark agent as completed with endedAt timestamp (ADR-2026-03-31-1000).
     // Using agent_update_status instead of agent_remove so the session history
     // is preserved for audit — only status + endedAt change.
     if let Some(sp) = state.state_port.as_ref() {
@@ -387,6 +387,46 @@ pub async fn execute_workplan(
 
             (StatusCode::OK, Json(response))
         }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e })),
+        ),
+    }
+}
+
+/// GET /api/workplan/execute/{id}/status — per-execution status poll
+///
+/// Returns the full ExecutionState flattened at the top level so polling
+/// clients (`hex plan execute`'s loop at hex-cli/src/commands/plan/mod.rs:1070)
+/// can read `.status` and `.result` directly. ADR-2026-05-14-1135 §Phase 1 #2.
+pub async fn execute_status(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let exec = match state.workplan_executor.get() {
+        Some(e) => e,
+        None => return no_executor(),
+    };
+
+    match exec.get_by_id(&id).await {
+        Ok(Some(execution)) => {
+            // Flatten ExecutionState fields at the top so clients can read
+            // `.status` directly (matches the CLI poller contract).
+            let value = match serde_json::to_value(&execution) {
+                Ok(v) => v,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": format!("serialize execution: {}", e) })),
+                    );
+                }
+            };
+            (StatusCode::OK, Json(value))
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("execution '{}' not found", id) })),
+        ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e })),

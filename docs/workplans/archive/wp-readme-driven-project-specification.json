@@ -1,0 +1,105 @@
+{
+  "adr": "ADR-055",
+  "created_at": "2026-05-23T21:45:46.809931284+00:00",
+  "created_by": "hex-coder",
+  "feature": "Interactive project interview and README.md as living specification",
+  "id": "wp-readme-driven-project-specification",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Interactive Project Interview on `hex init`",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-core/src/init.rs"
+          ],
+          "id": "P1.1",
+          "layer": "primary",
+          "name": "Add interactive prompts to `hex init` for empty directories",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P2",
+      "name": "README generation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-docs/src/readme_generator.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Create template engine for structured README from interview answers",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P3",
+      "name": "`hex readme sync-adrs` implementation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-docs/src/adr_parser.rs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Implement ADR parser to extract status and title from ADR files",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-docs/src/readme_updater.rs"
+          ],
+          "id": "P3.2",
+          "layer": "usecases",
+          "name": "Implement README section updater for ADR summary table",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P4",
+      "name": "Post-ADR hook implementation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            ".hex/hooks.toml"
+          ],
+          "id": "P4.1",
+          "layer": "usecases",
+          "name": "Add post-hook on `hex adr create` and `hex adr status <id> --set accepted` to trigger README sync",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P5",
+      "name": "Agent context implementation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-agents/src/agent_context.rs"
+          ],
+          "id": "P5.1",
+          "layer": "integration",
+          "name": "Modify agents to read README.md for project specification on startup",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

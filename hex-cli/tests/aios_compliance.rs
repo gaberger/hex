@@ -1,49 +1,35 @@
-/// ADR-2604131500 AIOS Developer Experience — Compliance Smoke Test (P5.2)
-///
-/// Verifies that all 7 ADR sections are wired into the hex CLI:
-///
-///   §1 — `hex brief show`           narrative briefing
-///   §2 — `hex decide resolve`       decision resolution with auto-expiry
-///   §3 — `hex steer direct`         directive classification
-///   §4 — `hex trust show/elevate/reduce/pin/history`
-///   §5 — `hex taste list/set/forget/pin` + prompt injection resilience
-///   §6 — `hex new`                  project intake with trust seeding
-///   §7 — `hex pause/resume/override` emergency controls
-///
-/// Strategy: invoke the compiled binary with `--help` for each subcommand.
-/// Clap exits 0 for `--help` regardless of nexus state, so these tests
-/// are hermetic — no live nexus required.
-///
-/// For commands that *don't* have a subcommand `--help` (top-level like
-/// `hex pause`), we invoke without args and accept either exit-0 (help)
-/// or exit-1 (runtime error from missing nexus), but NOT exit-2 (clap
-/// parse error, meaning the command doesn't exist).
+//! ADR-2026-04-13-1500 AIOS Developer Experience — Compliance Smoke Test (P5.2)
+//!
+//! Verifies that all 7 ADR sections are wired into the hex CLI:
+//!
+//!   §1 — `hex brief show`           narrative briefing
+//!   §2 — `hex decide resolve`       decision resolution with auto-expiry
+//!   §3 — `hex steer direct`         directive classification
+//!   §4 — `hex trust show/elevate/reduce/pin/history`
+//!   §5 — `hex taste list/set/forget/pin` + prompt injection resilience
+//!   §6 — `hex new`                  project intake with trust seeding
+//!   §7 — `hex pause/resume/override` emergency controls
+//!
+//! Strategy: invoke the compiled binary with `--help` for each subcommand.
+//! Clap exits 0 for `--help` regardless of nexus state, so these tests
+//! are hermetic — no live nexus required.
+//!
+//! For commands that *don't* have a subcommand `--help` (top-level like
+//! `hex pause`), we invoke without args and accept either exit-0 (help)
+//! or exit-1 (runtime error from missing nexus), but NOT exit-2 (clap
+//! parse error, meaning the command doesn't exist).
 
 use std::process::Command;
 
 /// Locate the hex binary. Prefer the debug build in target/debug since
 /// integration tests are run against debug builds by default.
 fn hex_bin() -> Command {
-    // `cargo test` sets CARGO_BIN_EXE_hex-cli for [[bin]] targets, but
-    // integration test files don't get that automatically. Use cargo's
-    // manifest dir to find the workspace target directory.
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let workspace_root = std::path::Path::new(manifest_dir)
-        .parent()
-        .expect("hex-cli must be inside workspace");
-    let debug_bin = workspace_root.join("target/debug/hex");
-    let release_bin = workspace_root.join("target/release/hex");
-
-    let bin_path = if debug_bin.exists() {
-        debug_bin
-    } else if release_bin.exists() {
-        release_bin
-    } else {
-        // Fall back to PATH
-        return Command::new("hex");
-    };
-
-    Command::new(bin_path)
+    // CARGO_BIN_EXE_hex IS available for [[bin]] targets in integration
+    // tests — the previous comment was wrong. It points at whichever
+    // profile cargo just built (debug for `cargo test`, release for
+    // `cargo test --release`), which is exactly what we want and which
+    // CI's target-triple build dir handles correctly.
+    Command::new(env!("CARGO_BIN_EXE_hex"))
 }
 
 /// Assert that `hex <args> --help` exits 0 (clap prints help and exits).

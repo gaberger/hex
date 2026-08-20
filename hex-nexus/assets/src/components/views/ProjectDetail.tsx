@@ -171,7 +171,7 @@ const ProjectDetail: Component = () => {
   const projectTasks = createMemo(() => {
     const ids = new Set(projectSwarmIds());
     if (ids.size === 0) return swarmTasks(); // fallback: show all if no project-scoped swarms
-    return swarmTasks().filter((t: any) => ids.has(t.swarm_id ?? t.swarmId ?? ""));
+    return (swarmTasks() ?? []).filter((t: any) => ids.has(t.swarm_id ?? t.swarmId ?? ""));
   });
 
   // Active workplan for this project
@@ -395,7 +395,7 @@ const ProjectDetail: Component = () => {
                     <Show when={adrId()}>
                       <button
                         class="shrink-0 rounded bg-indigo-900/50 px-1.5 py-0.5 font-mono text-xs text-indigo-300 cursor-pointer hover:bg-indigo-800/50 transition-colors"
-                        onClick={() => navigate({ page: "project-adr-detail", projectId: projectId(), adrId: adrId()! })}
+                        onClick={() => navigate({ page: "project-ADR-detail", projectId: projectId(), adrId: adrId()! })}
                         title={`View ${adrId()}`}
                       >
                         {adrId()}

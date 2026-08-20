@@ -2,7 +2,7 @@
 //!
 //! Implements `ISessionPort` by calling the `chat-relay` SpacetimeDB module's
 //! session reducers and SQL queries over HTTP. SpacetimeDB is the single state
-//! authority (ADR-051, ADR-2604020900) — no SQLite fallback.
+//! authority (ADR-051, ADR-2026-04-02-0900) — no SQLite fallback.
 
 use async_trait::async_trait;
 use serde_json::Value;

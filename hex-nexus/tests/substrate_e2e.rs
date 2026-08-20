@@ -1,4 +1,4 @@
-//! Substrate end-to-end (ADR-2604261500 P6, wp-substrate-shadow-promotion P6.1).
+//! Substrate end-to-end (ADR-2026-04-26-1500 P6, wp-substrate-shadow-promotion P6.1).
 //!
 //! Drives a swap through the full circuit with no manual `mark_shadow_green`
 //! and no daemon dispatch:

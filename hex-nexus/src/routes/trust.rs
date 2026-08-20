@@ -1,4 +1,4 @@
-//! REST endpoints for delegation trust management (ADR-2604131500 P1.4).
+//! REST endpoints for delegation trust management (ADR-2026-04-13-1500 P1.4).
 //!
 //! GET   /api/trust     — list trust entries
 //! PATCH /api/trust     — set trust level for a scope

@@ -1,4 +1,4 @@
-//! Improver learn phase (ADR-2604271100 P5).
+//! Improver learn phase (ADR-2026-04-27-1100 P5).
 //!
 //! Closes the loop on top of [`act`]: when an act --apply sweep enqueues
 //! tasks, we snapshot the (action → hypothesis) attribution. On the next

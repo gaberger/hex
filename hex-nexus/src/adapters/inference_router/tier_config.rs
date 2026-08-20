@@ -1,10 +1,10 @@
-//! Tier→model mapping configuration for inference routing (ADR-2604120202 P1.2).
+//! Tier→model mapping configuration for inference routing (ADR-2026-04-12-0202 P1.2).
 //!
 //! Each task tier maps to a model name that the inference router uses to
 //! select the right server.  Defaults are baked in; per-project overrides
 //! come from `.hex/project.json` → `inference.tier_models`.
 
-use crate::remote::transport::{TaskTier, TransportError};
+use crate::domain::transport::{TaskTier, TransportError};
 
 /// Tier→model mapping loaded by the composition root.
 ///

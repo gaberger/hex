@@ -1,4 +1,4 @@
-//! End-to-end integration test for T2 scaffolded dispatch (ADR-2604120202 P5.2).
+//! End-to-end integration test for T2 scaffolded dispatch (ADR-2026-04-12-0202 P5.2).
 //!
 //! Verifies the full ScaffoldedDispatch path with a mock inference port that
 //! fails on the first call (returns code that doesn't compile) and succeeds on
@@ -23,7 +23,7 @@ mod tiered_routing_e2e {
     use hex_nexus::orchestration::scaffolding::{
         CompileChecker, CompileError, ScaffoldConfig, ScaffoldResult, ScaffoldedDispatch,
     };
-    use hex_nexus::remote::transport::TaskTier;
+    use hex_nexus::domain::transport::TaskTier;
 
     // ── Sequenced mock inference port ───────────────────────
 

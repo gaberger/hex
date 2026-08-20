@@ -16,7 +16,7 @@ use log::{debug, error, info, warn};
 
 const LOG_TARGET: &str = "hex::plan::executor";
 
-/// Tiered routing classes (ADR-2604120202). Timeout budgets scale with
+/// Tiered routing classes (ADR-2026-04-12-0202). Timeout budgets scale with
 /// the expected model latency per tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TaskTier {

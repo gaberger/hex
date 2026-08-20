@@ -1,7 +1,7 @@
-//! Discovery surface for the self-improvement loop (ADR-2604271100 P1).
+//! Discovery surface for the self-improvement loop (ADR-2026-04-27-1100 P1).
 //!
 //! Detectors are configured as data in `hex-cli/assets/improver/detectors.toml`
-//! (rules-as-data, ADR-2604142243). Each entry names a `Source`, a shell
+//! (rules-as-data, ADR-2026-04-14-2243). Each entry names a `Source`, a shell
 //! command, and minor parsing knobs. [`discover`] runs every detector,
 //! parses each one's stdout JSON, and emits a [`Hypothesis`] per finding.
 //!
@@ -65,6 +65,13 @@ pub enum Source {
     /// from BuildReadiness which checks "do existing tests pass" — this
     /// one checks "do tests EXIST."
     TestCoverage,
+    /// Thought-pattern detector (BS-5): reads agent_thought via the nexus
+    /// merge API and surfaces patterns like the same ADR being cited by
+    /// multiple personas across multiple thoughts (likely unresolved
+    /// architectural concern) or frustration spikes in a recent window.
+    /// Consumer side of Phase-2 thought memory — pairs with the
+    /// emitter in `hex-nexus::orchestration::org_responder`.
+    ThoughtPattern,
 }
 
 impl Source {
@@ -84,6 +91,7 @@ impl Source {
             LayerCoverage,
             BuildReadiness,
             TestCoverage,
+            ThoughtPattern,
         ]
     }
 }
@@ -324,6 +332,7 @@ fn extract_scope(finding: &Value, source: Source) -> String {
         Source::LayerCoverage => &["layer", "scope"],
         Source::BuildReadiness => &["gate", "scope"],
         Source::TestCoverage => &["source", "scope"],
+        Source::ThoughtPattern => &["scope", "pattern"],
     };
     for key in candidates {
         if let Some(s) = finding.get(*key).and_then(|v| v.as_str()) {
@@ -388,13 +397,13 @@ mod tests {
         let adrs = dir.path().join("docs/adrs");
         fs::create_dir_all(&adrs).expect("mkdir docs/adrs");
         fs::write(
-            adrs.join("ADR-2699999999-broken.md"),
-            "# ADR-2699999999 — broken fixture\n\nStatus: Spaghetti\nDate: 2026-04-27\n",
+            adrs.join("ADR-2026-99-99-9999-broken.md"),
+            "# ADR-2026-99-99-9999 — broken fixture\n\nStatus: Spaghetti\nDate: 2026-04-27\n",
         )
         .expect("write adr fixture");
 
-        let cmd = "[ -f docs/adrs/ADR-2699999999-broken.md ] \
-            && echo '{\"findings\":[{\"adr_id\":\"ADR-2699999999\",\"severity\":\"error\",\"kind\":\"unparseable_status\"}]}' \
+        let cmd = "[ -f docs/adrs/ADR-2026-99-99-9999-broken.md ] \
+            && echo '{\"findings\":[{\"adr_id\":\"ADR-2026-99-99-9999\",\"severity\":\"error\",\"kind\":\"unparseable_status\"}]}' \
             || echo '{\"findings\":[]}'";
         let detector = Detector {
             source: Source::AdrDoctor,
@@ -408,7 +417,7 @@ mod tests {
         assert_eq!(hypotheses.len(), 1, "expected exactly one hypothesis");
         let h = &hypotheses[0];
         assert_eq!(h.source, Source::AdrDoctor);
-        assert_eq!(h.scope, "ADR-2699999999");
+        assert_eq!(h.scope, "ADR-2026-99-99-9999");
         assert_eq!(h.severity, Severity::Error);
         assert_eq!(
             h.evidence.get("kind").and_then(|v| v.as_str()),

@@ -1,0 +1,161 @@
+{
+  "adr": "ADR-021",
+  "created_at": "2026-05-11T14:13:25.277308699+00:00",
+  "created_by": "hex-coder",
+  "feature": "Fix hex init OOM crashes on large codebases via streaming scanner and smart defaults",
+  "id": "wp-init-memory-exhaustion-large-projects",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Core Domain: Ignore Patterns & Validation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/init/ignore_patterns.rs",
+            "hex-nexus/tests/init/ignore_patterns_test.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Add default .hexignore patterns (build artifacts, deps, test outputs)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/init/dependency_validator.rs",
+            "hex-nexus/tests/init/dependency_validator_test.rs"
+          ],
+          "id": "P0.2",
+          "layer": "domain",
+          "name": "Implement dependency integrity validator (agentdb check)",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Streaming Scanner Infrastructure",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/init/streaming_scanner.rs",
+            "hex-nexus/tests/init/streaming_scanner_test.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement streaming filesystem walker with backpressure (async generator pattern)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/init/scanner_security.rs",
+            "hex-nexus/tests/init/scanner_security_test.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Add symlink loop detection and path traversal guards",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/init/progress.rs",
+            "hex-nexus/tests/init/progress_test.rs"
+          ],
+          "id": "P1.3",
+          "layer": "secondary",
+          "name": "Build progress reporter with cancellation support",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "CLI Integration & Modes",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/cli/init_command.rs",
+            "hex-nexus/tests/cli/init_command_test.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Add init command flags (--fast, --large-project, --include)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/cli/project_detection.rs",
+            "hex-nexus/tests/cli/project_detection_test.rs"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Implement auto-detection for large projects (shallow scan threshold)",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P3",
+      "name": "Orchestration & Use Cases",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/init_orchestrator.rs",
+            "hex-nexus/tests/orchestration/init_orchestrator_test.rs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Wire streaming scanner into hex init orchestration flow",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/incremental_index.rs",
+            "hex-nexus/tests/orchestration/incremental_index_test.rs"
+          ],
+          "id": "P3.2",
+          "layer": "usecases",
+          "name": "Implement incremental index storage (.hex/index.db SQLite)",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P4",
+      "name": "Integration & Testing",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/tests/fixtures/large_project_generator.rs",
+            "hex-nexus/tests/integration/init_large_project_test.rs"
+          ],
+          "id": "P4.1",
+          "layer": "integration",
+          "name": "Create synthetic large project test fixtures (100K LOC, build artifacts)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/tests/integration/init_memory_test.rs",
+            "hex-nexus/tests/integration/init_metrics_test.rs"
+          ],
+          "id": "P4.2",
+          "layer": "integration",
+          "name": "Add memory profiling and success metrics validation (heap <2GB, <10s indexing)",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

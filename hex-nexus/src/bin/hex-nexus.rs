@@ -1,6 +1,14 @@
 use hex_nexus::HubConfig;
 use tracing_subscriber::EnvFilter;
 
+// jemalloc global allocator (ADR-2026-06-04-1740). glibc malloc under the arena cap
+// (MALLOC_ARENA_MAX=2) burned ~6 cores in arena-lock contention from serde_json::Value
+// churn across the STDB poll loops. jemalloc's per-thread caches kill the lock storm and
+// bound fragmentation, so the arena cap is no longer needed.
+#[cfg(unix)]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -39,7 +47,7 @@ async fn main() {
         .iter()
         .position(|a| a == "--bind")
         .and_then(|i| args.get(i + 1).cloned())
-        .unwrap_or_else(|| "127.0.0.1".to_string());
+        .unwrap_or_else(|| "0.0.0.0".to_string());
 
     // Note: --daemon flag is accepted but ignored. The hex CLI handles process daemonization
     // by redirecting stdout/stderr to a log file and managing the process lifecycle.

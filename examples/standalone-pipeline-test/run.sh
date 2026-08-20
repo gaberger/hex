@@ -47,7 +47,7 @@ CYAN='\033[0;36m'
 DIM='\033[2m'
 RESET='\033[0m'
 
-# GBNF grammar for code-only output (ADR-2604120202 Phase 2)
+# GBNF grammar for code-only output (ADR-2026-04-12-0202 Phase 2)
 # Forces model to emit ONLY a code block — no prose, no explanation.
 GBNF_CODE_ONLY='root ::= code-line+
 code-line ::= [^\n]* "\n"'
@@ -93,6 +93,35 @@ if ! curl -sf "$OLLAMA_HOST/api/tags" >/dev/null 2>&1; then
   exit 1
 fi
 pass "Ollama reachable"
+
+# Toolchain preflight — rustup installs into ~/.cargo/bin which is rarely on
+# non-login bash's PATH; without this, compile_gate silently reports a model
+# failure when really the toolchain was just missing from $PATH.
+[[ -d "$HOME/.cargo/bin" ]] && export PATH="$HOME/.cargo/bin:$PATH"
+HAS_RUSTC=false; HAS_TSC=false; HAS_GO=false
+command -v rustc >/dev/null 2>&1 && HAS_RUSTC=true
+command -v tsc   >/dev/null 2>&1 && HAS_TSC=true
+command -v go    >/dev/null 2>&1 && HAS_GO=true
+$HAS_RUSTC && pass "rustc available ($(rustc --version | awk '{print $2}'))" || skip "rustc not on PATH — Rust compile gates will be skipped"
+$HAS_TSC   && pass "tsc available"   || skip "tsc not on PATH — TypeScript compile gates will be skipped"
+$HAS_GO    && pass "go available"    || skip "go not on PATH — Go compile gates will be skipped"
+
+# Resolve tier models — if the hardcoded default isn't pulled locally, fall
+# back to the configured ollama provider's model (from inference-servers.json)
+# so the harness self-heals on dev boxes that don't have the bazzite lineup.
+_pulled_models=$(curl -sf "$OLLAMA_HOST/api/tags" 2>/dev/null | jq -r '.models[]?.name' 2>/dev/null)
+_configured_model=$(jq -r '.endpoints[]? | select(.provider=="ollama") | .model' ~/.hex/inference-servers.json 2>/dev/null | head -1)
+resolve_tier_model() {
+  local want="$1" tier="$2"
+  if echo "$_pulled_models" | grep -qx "$want"; then echo "$want"; return; fi
+  if [[ -n "$_configured_model" ]] && echo "$_pulled_models" | grep -qx "$_configured_model"; then
+    skip "$tier: $want not pulled — falling back to configured ${_configured_model}" >&2
+    echo "$_configured_model"; return
+  fi
+  echo "$want"  # nothing better available; let it fail loudly
+}
+T2_MODEL=$(resolve_tier_model "$T2_MODEL" "T2")
+T25_MODEL=$(resolve_tier_model "$T25_MODEL" "T2.5")
 
 # Check SpacetimeDB rl-engine
 STDB_HOST="${HEX_SPACETIMEDB_HOST:-http://127.0.0.1:3033}"
@@ -391,6 +420,12 @@ run_t1() {
 
 # ─── TIER T2: Single function with compile gate ────────────────────
 run_t2() {
+  if ! $HAS_RUSTC; then
+    log "Phase: T2 - Single Function — SKIPPED (rustc not on PATH)"
+    record_skip; record_skip
+    echo ""
+    return 0
+  fi
   log "Phase: T2 - Single Function (model: $T2_MODEL, Best-of-3)"
   echo ""
 
@@ -433,6 +468,12 @@ run_t2() {
 
 # ─── TIER T2.5: Multi-function ──────────────────────────────────────
 run_t25() {
+  if ! $HAS_RUSTC; then
+    log "Phase: T2.5 - Multi-function — SKIPPED (rustc not on PATH)"
+    record_skip
+    echo ""
+    return 0
+  fi
   log "Phase: T2.5 - Multi-function (model: $T25_MODEL, Best-of-5)"
   echo ""
 
@@ -455,6 +496,12 @@ run_t25() {
 
 # ─── TypeScript Tests ───────────────────────────────────────────────
 run_ts() {
+  if ! $HAS_TSC; then
+    log "Phase: TypeScript — SKIPPED (tsc not on PATH)"
+    record_skip; record_skip
+    echo ""
+    return 0
+  fi
   log "Phase: TypeScript (model: $T2_MODEL, Best-of-3)"
   echo ""
 
@@ -501,6 +548,12 @@ run_ts() {
 
 # ─── Go Tests ──────────────────────────────────────────────────────
 run_go() {
+  if ! $HAS_GO; then
+    log "Phase: Go — SKIPPED (go not on PATH)"
+    record_skip; record_skip
+    echo ""
+    return 0
+  fi
   log "Phase: Go (model: $T2_MODEL, Best-of-3)"
   echo ""
 

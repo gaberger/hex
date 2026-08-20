@@ -1,0 +1,71 @@
+{
+  "adr": "ADR-2026-05-21-1400",
+  "created_at": "2026-05-21T17:24:16.862746627+00:00",
+  "created_by": "hex-coder",
+  "feature": "Child reap: zombie elimination via orphan_reaper tick",
+  "id": "wp-child-reap-zombie-elimination",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Extend orphan_reaper to reap local_children zombies",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/agent_manager.rs"
+          ],
+          "id": "P0.1",
+          "layer": "primary",
+          "name": "Add waitpid_dead_children method to AgentManager that calls try_wait() on every LocalAgent in local_children; drops reaped entries from the vec",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/orchestration/orphan_reaper.rs"
+          ],
+          "id": "P0.2",
+          "layer": "primary",
+          "name": "Call AgentManager::waitpid_dead_children from OrphanReaper::tick before scan_hex_agent_processes",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P1",
+      "name": "Emit metric: count_reaped_per_tick to STDB",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/orphan_reaper.rs"
+          ],
+          "id": "P1.1",
+          "layer": "primary",
+          "name": "Emit count_reaped_per_tick metric via state_port hexflo_memory_store in OrphanReaper::tick after waitpid_dead_children returns",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P2",
+      "name": "Integration test: verify zombie reaping within 2 tick cycles",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/tests/child_reap_integration.rs"
+          ],
+          "id": "P2.1",
+          "layer": "integration",
+          "name": "Write integration test that spawns 10 hex-agents that immediately exit; verifies zombie count drops to 0 within 120s (2 × REAP_INTERVAL_SECS)",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

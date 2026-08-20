@@ -31,20 +31,20 @@ const ProjectCard: Component<{
   const [menuOpen, setMenuOpen] = createSignal(false);
 
   const agentCount = createMemo(
-    () => registryAgents().filter((a: any) =>
+    () => (registryAgents() ?? []).filter((a: any) =>
       (a.project ?? a.project_id ?? "") === props.project.id
     ).length
   );
 
   const projectSwarms = createMemo(
-    () => swarms().filter((s: any) =>
+    () => (swarms() ?? []).filter((s: any) =>
       (s.project ?? s.project_id ?? "") === props.project.id
     )
   );
 
   const totalTasks = createMemo(() => {
-    const swarmIds = new Set(projectSwarms().map((s: any) => s.id ?? s.swarm_id));
-    return swarmTasks().filter((t: any) => swarmIds.has(t.swarmId ?? t.swarm_id)).length;
+    const swarmIds = new Set((projectSwarms() ?? []).map((s: any) => s.id ?? s.swarm_id));
+    return (swarmTasks() ?? []).filter((t: any) => swarmIds.has(t.swarmId ?? t.swarm_id)).length;
   });
 
   function handleClick() {

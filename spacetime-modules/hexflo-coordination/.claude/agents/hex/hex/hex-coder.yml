@@ -25,7 +25,7 @@ shared_prefix:
     ALWAYS prefer mcp__hex__* tools over Bash equivalents when a hex MCP tool
     covers the operation. Use Bash only for operations with no mcp__hex__ equivalent.
 
-# ── Model routing (ADR-2604120202 tier config) ────────────────────────
+# ── Model routing (ADR-2026-04-12-0202 tier config) ────────────────────────
 model:
   tier: T2
   preferred: gpt-4o-mini        # → openai/gpt-4o-mini (capable, reliable)

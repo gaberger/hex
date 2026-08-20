@@ -654,7 +654,7 @@ impl ToolExecutorAdapter {
     ) -> ToolResult {
         let mut cmd = Command::new("hex");
 
-        // Split subcommand on '-' for nested commands (e.g. "adr-search" → "adr" "search")
+        // Split subcommand on '-' for nested commands (e.g. "ADR-search" → "adr" "search")
         for part in subcommand.split('-') {
             cmd.arg(part);
         }
@@ -784,8 +784,8 @@ impl ToolExecutorPort for ToolExecutorAdapter {
             "hex_analyze" => self.hex_cli_tool("analyze", &call.input, &["path"]).await,
             "hex_plan" => self.hex_cli_tool("plan", &call.input, &["requirements"]).await,
             "hex_summarize" => self.hex_cli_tool("summarize", &call.input, &["path"]).await,
-            "hex_adr_search" => self.hex_cli_tool("adr-search", &call.input, &["query"]).await,
-            "hex_adr_list" => self.hex_cli_tool("adr-list", &call.input, &[]).await,
+            "hex_adr_search" => self.hex_cli_tool("ADR-search", &call.input, &["query"]).await,
+            "hex_adr_list" => self.hex_cli_tool("ADR-list", &call.input, &[]).await,
             name if name.starts_with("mcp__") => self.execute_mcp_tool(name, call).await,
             unknown => tool_error("unknown", &format!("Unknown tool: {}", unknown)),
         };

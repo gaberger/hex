@@ -210,10 +210,16 @@ impl IAgentCommPort for SpacetimeAgentCommAdapter {
         // If/when agent_messages grows past ~5K rows the right move is a
         // side-table indexing inbound (to_agent, id) pairs so we can push
         // the filter back down to STDB.
+        // Default bumped 5000 → 20000 on 2026-05-29 after the post-recap
+        // diagnosis: agent_messages grew past 5000 rows during the ebay-mvp
+        // scaling test and the newest messages became INVISIBLE to org_responder
+        // (oldest-first LIMIT semantics on STDB). The recap doc listed this as
+        // a "if/when agent_messages grows past ~5K rows" follow-up; we hit
+        // that today when a test ask at id=9421 never got processed.
         let scan_cap: u32 = std::env::var("HEX_AGENT_COMM_SCAN_CAP")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(5000);
+            .unwrap_or(20000);
         let cols = "id, from_agent, to_agent, channel, message, thread_id, timestamp, read_by";
         let scan_q = format!("SELECT {cols} FROM agent_messages LIMIT {scan_cap}");
 

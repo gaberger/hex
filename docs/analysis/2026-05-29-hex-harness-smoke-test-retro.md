@@ -1,0 +1,262 @@
+# 2026-05-29 — Hex Autonomous Harness Smoke Test: Retrospective + Fix Plan
+
+**Test window:** 2026-05-28 12:38 → 2026-05-29 14:15 ET (~26 hours, two sleep cycles)
+**Vehicle:** ebay-clone MVP (32-step workplan, Rust backend + Solid.js frontend)
+**Reframe:** the ebay-mvp was never the goal. The goal was to put real load on hex's autonomous AI harness and see where it bent or broke.
+
+## 1. What the test was actually validating
+
+The hex AIOS thesis: an LLM-driven loop can drive a real software project from workplan to compiling code with minimal operator intervention. The stress test wanted to confirm:
+
+| Invariant the harness MUST hold | How to test under load |
+|---|---|
+| Workplan conductor drives steps autonomously | Run a 32-step workplan, watch it finish without operator dispatch |
+| Org_responder → drafter → twin → executor → commit chain | Count autonomous commits, verify each path stayed alive |
+| Code-quality loop reduces cargo errors without operator | Wire auto_repair to cargo check, watch error count |
+| Plateau detection self-pauses | Run on a task the model can't solve, confirm the loop stops |
+| Iteration cap prevents runaway | Set max=20, confirm it stops at 20 |
+| Path resolution honors project boundaries | Run on a sub-project under `examples/`, verify writes land there |
+| Operator observability | `hex auto-repair status` returns truthful state |
+
+All seven validated. All seven also surfaced bugs along the way.
+
+## 2. Mechanisms confirmed working under load
+
+| Mechanism | Evidence |
+|---|---|
+| 32-step workplan to "complete" | Conductor declared workplan complete at 03:04 ET on 2026-05-29; all 109 file-presence targets met |
+| End-to-end commit chain | 100+ commits authored by `hex-autonomous`, each traceable to action#N + commitment_id |
+| Auto_repair dispatch + draft + commit | 70+ commits driven by auto_repair after the loop shipped |
+| Plateau self-pause | Fired 4 separate times across sessions (workplan_conductor + auto_repair); never spun infinitely |
+| Module-creation branch | First "create" landed at right path after the prefix fix: `examples/ebay-clone/backend/src/adapters/secondary/stdb_client/establish_connection.rs` |
+| Error injection | Verified in agent_messages row id=9527: persona received literal `error[E0432]: unresolved imports …` lines |
+| Operator CLI | `hex auto-repair status/restart` operational; replaces `grep nexus.log + nexus restart` for the operator-friction case |
+
+## 3. Bugs the smoke test surfaced (all fixed)
+
+In commit order:
+
+| # | Commit | Class | What it caught |
+|---|---|---|---|
+| 1 | `cc538b93` | Drafter | Silent tool_plan drops when scan_for_path returned None |
+| 2 | `87271d39` | Drafter | All tools requiring verifiable_path (delegate, cargo_check, memory_search shouldn't) |
+| 3 | `8fbb2bea` | Conductor | Persona-emitted paths not matching brief's MISSING files |
+| 4 | `5a51468d` | Conductor | Create vs. edit path semantics in brief override |
+| 5 | `aefb005b` | Drafter | Zombie commitments looping after terminal stub-write failure |
+| 6 | `760f0457` | Drafter | `[non-path tool]` synthetic-artifact loops |
+| 7 | `95cb33fd` | STDB | `classifier_response_open` reducer missing (P2.1 spec'd but never shipped) |
+| 8 | `0f630d5f` | Drafter | Persona has no workspace-exports context → invents `crate::core::entities` etc. |
+| 9 | `eb2d84a0` | Adapter | `agent_messages` table > 5000 rows → newest entries invisible to org_responder |
+| 10 | `7469e11c` | Drafter | Preserve-verbatim directive overrides CEO "rewrite this file" |
+| 11 | `ea3c1c96` | Drafter | Patch-fidelity gate rejects intentional full-file rewrites |
+| 12 | `5dbd78f5` | **Orchestration** | **No autonomous code-quality loop existed; operator was firing every fix-ask by hand** |
+| 13 | `6e122722` | Auto_repair | Asks lacked the actual compile errors — persona regenerated equivalent broken content |
+| 14 | `8c367dc0` | Auto_repair | When error is "module X missing", no way to create X (added module-creation branch + CLI) |
+| 15 | `cbc39078` | Auto_repair | **Catastrophic**: paths not prefixed with project subdir → entire morning operated on shadow project at `/hex/src/` |
+| 16 | `74842200` | Auto_repair | Cargo error block still leaked bare `src/foo.rs` paths → persona occasionally grabbed them |
+
+The catastrophic find (#15) is the one worth framing for posterity: for ~4 hours the autonomous loop looked like it was working (commits landing, persona responding, twin approving) but every commit was at the wrong path. The cargo error count never moved because nothing it wrote was in the project's compilation unit. Smoke testing exists exactly to surface this class of "looks fine until you check ground truth" failure.
+
+## 4. The codegen ceiling — empirical findings
+
+> **CORRECTION (2026-05-29, post-test-ladder):** The "16-error model ceiling" framing in this section was wrong. A subsequent cold-start `cargo check` produced **18 errors**, not 16. A floor that drifts between runs is not a ceiling — it's regression from inconsistent state. The real root cause is §5.8 (parallel-worktree merge drift), not model reasoning. The error inventory below still describes the *kind* of error that gets stuck; just don't read "16" as a bound. Test ladder also surfaced three additional deficiencies: §5.8 (merge drift), §5.9 (STDB workspace entanglement), §5.10 (scaffolded-artifact validation gap). §7 verdict is downgraded accordingly.
+
+After all 16 bug fixes landed, the autonomous loop drove cargo errors from a 73-error baseline (post-overnight-completion) down to a stable **16-error floor** on the ebay-clone backend. The loop then plateaued: 20 consecutive iterations of asking the persona to fix specific compile errors (with workspace exports injected, replace-mode prompt, and the literal `error[E0432]: …` lines from cargo) failed to reduce the count further.
+
+The 16 remaining errors are:
+
+| File | Error count | Class |
+|---|---|---|
+| `adapters/primary/http_axum/mod.rs` | 4 | Imports referencing phantom submodules the persona can't synthesize from the parent file alone |
+| `adapters/secondary/image_store_fs/mod.rs` | 3 | `argon2 0.5` API mismatch (`Config` was removed in this version) |
+| `core/usecases/images.rs` | 2 | `use core::ports` (missing `crate::` prefix the persona keeps regenerating) |
+| `core/ports/mod.rs` | 2 | Re-export sheet referencing types the persona keeps misnaming |
+| `core/ports/{listing,auction}_repo.rs` | 2 each | `DurationMs`, `AuctionId` paths the persona writes inconsistently |
+| `adapters/secondary/stdb_client/mod.rs` | 2 | References to the `connection` submodule that doesn't exist on disk |
+| `adapters/secondary/password_hasher_argon2/mod.rs` | 2 | Persona invented `PasswordHasherPort` trait location |
+
+These errors share a pattern: the persona at qwen2.5-coder:14b Q4_K_M reliably gets the *intent* right but mis-spells one detail (path prefix, trait location, removed dep) — and a different detail each time. With 20 iterations against the same file, that variance never converges.
+
+**Mid-test attempted intervention**: switch the persona model from `qwen2.5-coder:14b` to `qwen2.5-coder:32b` to test whether the ceiling is model-bound. Set `HEX_RESPONDER_CHAT_MODEL=qwen2.5-coder:32b` env var on the daemon, set `.hex/project.json:inference.tier_models.t2` to 32b, and restarted. **The inference path continued to call 14b anyway.** That's deficiency #1 below — hex provides no working operator path to upgrade the persona model.
+
+## 5. Deficiencies the smoke test surfaced (NOT YET FIXED — these are the next-up work)
+
+### 5.1. Model upgrade path is broken
+**Symptom:** Setting `HEX_RESPONDER_CHAT_MODEL` does nothing observable. The org_responder's startup log line *reports* the new model but every inference/complete call routes through 14b.
+**Hypothesis:** the per-mode model env vars feed the `body.model` field in the LLM HTTP request, but the inference router's "all-cloud-providers-failed → local Ollama fallback" path reads `.hex/project.json:inference.tier_models.t2` instead of preserving the requested model. When openrouter is unreachable (which it is — no key), every request falls back to project.json's t2 model regardless of what was requested.
+**Fix plan (1-2 hours):**
+- Audit `hex-nexus/src/routes/inference.rs` lines ~750-800 (the "all openrouter fallbacks failed" branch) to use the originally-requested model when the request specified one, only falling back to project.json t2 when the request was model-less.
+- Add an integration test that POSTs `/api/inference/complete` with body.model=qwen2.5-coder:32b and asserts the response model field is 32b.
+- Make `org_responder: parallelism …` startup log line a regression check — assert chat_model matches HEX_RESPONDER_CHAT_MODEL env when set.
+
+### 5.2. No per-tool model routing
+**Symptom:** `cargo_check`, `repo_read`, `memory_search` (cheap query tools) all use the same persona model as `code_patch` (heavy synthesis). Right now that's 14b — same model classifying a DM, summarizing a thought, and generating 600 LOC of Rust.
+**Fix plan (3-4 hours):**
+- New `.hex/project.json` block: `inference.tool_models: {code_patch: qwen2.5-coder:32b, classify: qwen3:4b, …}`
+- Plumb the tool name through the org_responder → drafter → inference call chain
+- For the SOP path: at REASON-phase entry, set `body.model = tool_models.get(intent) or chat_model`
+- Default fallback: keep current behavior so nothing breaks when block is absent
+
+### 5.3. No trait-signature grounding (only export grounding)
+**Symptom:** The auto-grounding hook injects `pub struct UserId`, `pub trait UserRepoPort` etc. — but NOT the trait's method signatures. When the persona implements `UserRepoPort for StdbUserRepo`, it has to guess at `async fn get_user(&self, id: &UserId) -> Result<User, RepoError>` and frequently gets the signature wrong (wrong number of args, wrong return type, wrong async-ness).
+**Fix plan (4-6 hours):**
+- Extend `scan_crate_exports_block` to emit full trait declarations (the body lines from `pub trait X { … }` block) when the persona's target file is an adapter implementing that trait
+- Cap injection to ~3KB of trait bodies so prompt budget stays bounded
+- Detect "X impl Y for Z" intent from the CEO ask and target the specific trait's declarations
+
+### 5.4. Stale inbox messages have no TTL
+**Symptom:** After the prefix fix, persona kept processing pre-fix asks for ~15 minutes (commits at wrong path). Once a message lands in agent_messages, there's no way to age it out.
+**Fix plan (2-3 hours):**
+- Extend the existing stale-DM cap in org_responder (currently 1800s) to be a true TTL — and lower the default for autonomous messages (e.g., 600s for nexus-* senders)
+- When a fix ships that obsoletes prior asks, the operator should be able to call `hex inbox drain --before <ts>` to bulk-mark older messages read
+- Add `hex inbox drain` as a first-class CLI verb (not just a hex stdb query)
+
+### 5.5. CLAUDE.md "NEVER save files to root folder" not enforced at executor
+**Symptom:** 56 phantom files landed at workspace root despite CLAUDE.md rule #2. The executor checks for path traversal (`..`) and absolute paths but doesn't consult CLAUDE.md.
+**Fix plan (3-4 hours):**
+- Parse CLAUDE.md at nexus startup for "NEVER save files to … " style hard rules
+- Maintain an allowlist of write-permitted prefixes from project config + workplan
+- Reject file_writes outside the allowlist at the action_executor pre-write check (before twin even)
+- Surface refused writes to operator inbox so they're visible
+
+### 5.6. Auto_repair has no learning state
+**Symptom:** Auto_repair re-dispatched the same file (http_axum/mod.rs) 8+ times across iterations. Each rewrite produced equivalent errors. The loop has no memory of "this file has been asked N times and never improves".
+**Fix plan (2-3 hours):**
+- Per-file `attempts_without_progress` counter in RepairState
+- After N attempts with no error-count reduction for a specific file, blacklist it from the dispatch cycle and surface it to the operator inbox with the message "auto_repair has tried <path> N times, error count never moved; manual fix likely needed"
+- Counter resets when ANY commit reduces the global error count
+
+### 5.7. The "phantom shadow project" failure class needs a regression test
+**Symptom:** For ~4 hours the autonomous loop appeared to be working. The harness has no concept of "is the target file actually contributing to the project under test."
+**Fix plan (2-3 hours):**
+- After every auto_repair tick, run `cargo metadata --format-version=1` once per project and confirm the just-written file appears in the resulting `targets[].src_path` list
+- If the written file is NOT in cargo metadata, flag it as a shadow-write and warn the operator
+- This costs ~50ms per tick and would have caught the prefix bug on tick 1
+
+### 5.8. Parallel-worktree merge drift (NEW — actual root cause of §4)
+**Symptom:** Cold-restart `cargo check` produces 16 then 18 then 17 errors. The "ceiling" isn't a ceiling — it's regression from inconsistent state surviving across merges. Specifically: a port file rewritten in worktree A declares `async fn get_listing_by_id(&self, id: &ListingId) -> Result<Listing, ListingRepoError>` while the adapter impl in worktree B was written against an older signature shape, and both got merged into trunk without a post-merge cargo-check gate. Auto_repair then thrashes — it fixes the adapter to match the port, but a subsequent dispatch fixes the port to match the old adapter, oscillating around the same fault line.
+**Hypothesis:** `feature-workflow.sh merge` runs `git merge --no-ff` per worktree in dependency order but never runs `cargo check` between merges. The first merge that introduces drift survives because the second merge "validates" by merging cleanly at the git level; the type-mismatch only surfaces at the end-of-tree cargo check, by which point the drift has been amplified across multiple files.
+**Fix plan (1-2 hours):**
+- `feature-workflow.sh merge` runs `cargo check --workspace` BETWEEN each `--no-ff` merge
+- If error count increases vs pre-merge baseline, `git reset --hard HEAD~1` and report which adapter introduced the regression
+- Surface to operator with: "merge of `feat/{name}/{adapter}` introduced N new errors; rolled back; persona needs to rebase against current port signatures"
+- This is the highest ROI single fix because it eliminates the drift class entirely, not just one of its symptoms
+
+### 5.9. STDB module workspace entanglement (NEW)
+**Symptom:** `spacetime build` in `spacetime-modules/marketplace/` fails with a workspace conflict + bogus dependency that the persona never declared. Root: the autonomously-generated `Cargo.toml` for the marketplace module is being treated as a member of hex's root workspace, inheriting unrelated dependency resolutions.
+**Hypothesis:** scaffold step never wrote a `[workspace]` block in the new module's Cargo.toml AND never added the module path to the root workspace's `exclude = [...]` list. WASM modules MUST be standalone for `spacetime build` to work.
+**Fix plan (1-2 hours):**
+- `hex init` scaffolding (and any `code_patch` that creates a Cargo.toml under `spacetime-modules/`) writes `[workspace]` as the first block
+- Root `Cargo.toml` gets `exclude = ["spacetime-modules/*", "examples/*/backend"]` so generated projects don't inherit workspace defaults
+- Verify with `cargo metadata --no-deps` returning a single-package result for the module
+- Add to `hex doctor`: walk `spacetime-modules/*/Cargo.toml` and `examples/*/backend/Cargo.toml`, assert each declares `[workspace]`
+
+### 5.11. Auto_repair temporal drift on shared signatures (NEW — actual root cause of ebay's stuck 18 errors)
+**Symptom:** Recharacterizing §4 again. ebay-clone wasn't driven through the worktree workflow — it ran on a single trunk through `workplan_conductor` + `auto_repair`. §5.8 (parallel-worktree merge drift) addresses a real bug class but a *different* one. Ebay's specific failure: auto_repair dispatches a fix for `core/ports/listing_repo.rs`, persona rewrites the trait with signature shape A; next iteration dispatches `adapters/secondary/stdb_client/listings.rs`, persona rewrites it against signature shape B; iteration N+2 dispatches the port again to fix the adapter mismatch, persona oscillates back to A. Same fault line, sequential rewrites, single trunk, oscillation.
+**Hypothesis:** auto_repair has no signature graph — it doesn't know that fixing the adapter requires the port to stay stable. It treats each dispatched file as independent. The persona has no view of the port's "frozen signature for this iteration" so it keeps re-inventing.
+**Fix plan (4-6 hours):**
+- Build a signature graph: parse `pub trait X { … }` declarations, map each trait to its impl files via `impl X for Y`
+- When auto_repair picks the top-K error files, freeze the port signature in the dispatch ask: include the literal port file content as "DO NOT CHANGE — this is the contract" context
+- If the error IS in the port file itself, only dispatch the port (don't dispatch any adapter that impls it that iteration)
+- After the port-only dispatch succeeds, re-dispatch dependent adapters with the new frozen contract
+- This is the "ports → adapters" dependency tier executed serially, by signature graph, at the auto_repair level
+
+### 5.12. No tier-escalation ladder (T2 → T2.5 → T3 Claude) on plateau (NEW)
+**Symptom:** auto_repair plateau handler currently pauses + surfaces to operator inbox. It does not first try escalating to a stronger model — the very thing the tier system was designed for. CLAUDE.md describes T1/T2/T2.5/T3 routing but T3 (Claude frontier) is unreachable from auto_repair: (a) the `ClaudeCodeInferenceAdapter` (which spawns `claude -p --dangerously-skip-permissions`) is built and tested but never injected into composition; (b) `TierModelConfig` has a T3 slot but defaults to `None`; (c) `send_dm` carries no tier hint, so escalation can't be signaled even if the adapter were wired.
+**Fix plan (3-4 hours):**
+- Inject `ClaudeCodeInferenceAdapter` into composition root as the T3 `IInferencePort`
+- Default `tier_models.t3` to `"claude-sonnet-4-6"` when claude CLI is available on PATH (detect at nexus startup)
+- Add `tier_hint` field to the dispatch ask payload; persona's SOP REASON-phase reads it and routes its inference call to the matching tier
+- In auto_repair plateau detection: instead of pause-after-3-no-progress, escalate to T3 for the next K attempts on the same file (configurable, default K=2)
+- If T3 also fails to make progress: THEN pause + surface to operator (the §5.6 endpoint)
+- Per-file plateau counter resets on any global error-count reduction (auto_repair already tracks this at the loop level — extend to per-file)
+
+### 5.13. Full-rewrite prompts cause type-reference drift (NEW — surfaced 2026-05-29 PM)
+**Symptom:** §5.12 first live test took ebay-clone 18 → 43 errors. §5.11 + §5.12 second live test took it 18 → 39 (better but still net-negative). In both tests claude wrote 2-3KB of plausible Rust that referenced identifiers that don't exist anywhere in the codebase: invented type names from `core/domain/`, hallucinated sibling-file references (`ListingRepoPort.rs` as separate file), used async/sync patterns inconsistent with the rest of the project.
+**Hypothesis:** the prompt template for both Phase B persona dispatch and frontier escalation says **"Output the COMPLETE new contents of the file as raw Rust source"**. That's a from-scratch synthesis instruction. The model has no anchor to existing identifiers, so it invents. §5.11 froze port→adapter direction, but the port rewrite itself broke port→domain references because nothing constrained what the new port content could reference.
+**Fix plan (1-2 hours):**
+- Read the CURRENT file content from disk in the dispatch loop (cap at ~8KB; truncate larger files with explicit marker)
+- Inject it into the prompt as a `CURRENT FILE CONTENT (preserve as much as possible)` block BEFORE the errors block
+- Change the imperative from "output the complete new contents" to "output the complete file with the listed errors fixed, preserving every identifier, import, type reference, and structural choice that is not directly causing one of the listed errors"
+- Apply to BOTH Phase B persona prompt AND `run_frontier_escalation` prompt
+- The output format stays the same (full file content); only the imperative + the anchor change
+- This is a small change with large leverage: same model, same plateau condition, but the model is now editing instead of synthesizing
+
+### 5.15. Auto_repair violates ADR-2026-04-15-1430 file-overlap gate (NEW — surfaced 2026-05-30 AM)
+**Symptom:** Run 2 (persona + frontier active simultaneously) showed 4 writes to `core/ports/listing_repo.rs` in ~2 minutes by *both* persona and frontier:
+
+```
+12:42:24 persona writes listing_repo.rs (1119 bytes) → commit 07c490e6
+12:42:34 plateau → frontier escalation starts on listing_repo.rs
+12:42:39 persona writes listing_repo.rs AGAIN (1823 bytes) → commit 029e72ea
+12:44:39 persona writes listing_repo.rs THIRD time (1245 bytes) → commit a1000a3c
+12:44:44 frontier commits its rewrite of listing_repo.rs → commit 62773503
+```
+
+Each write overrode the previous. Errors went 18 → 19 → 50 in 4 ticks (faster divergence than Run 1's claude-only case).
+**Hypothesis:** ADR-2026-04-15-1430 codifies "parallelize by file boundary, serialize by file overlap" — but only enforces it at the *workplan-scheduling* layer (sched daemon picks tasks whose files don't overlap with in-flight tasks). `auto_repair.rs` was written without consulting that ADR; it runs persona dispatch and frontier escalation as independent concurrent paths against the same top-K errored files. The existing `file_cooldowns` map (60s TTL) is shared by both paths but: (a) persona response latency often exceeds 60s, so the same file gets re-dispatched while persona is still processing the first ask; (b) frontier engages BECAUSE persona is failing on those files, so by design it targets the same files persona just got dispatched on.
+**Fix plan (2-3 hours):**
+- New `dispatched_to_persona: HashMap<String, Instant>` with 5-min TTL — set when Phase B `send_dm` succeeds; tracks files the persona was last told about. Cleared on `reset()`.
+- New `frontier_inflight: HashSet<String>` — set BEFORE claude call in `run_frontier_escalation`, cleared on commit (success or failure).
+- Persona dispatch filter excludes files in EITHER `dispatched_to_persona` (within 5-min TTL) OR `frontier_inflight`.
+- Frontier escalation's `to_fire` slice filters out the same.
+- Snapshot endpoint exposes `dispatched_to_persona_count` and `frontier_inflight_count` for operator observability.
+- This won't make the loop converge on dense codebases (the §5.14 multi-file rewrite is the structural fix), but it eliminates persona+frontier collision which roughly doubled the contamination rate in Run 2.
+
+### 5.14. Single-file rewrites cascade — multi-file atomic rewrites needed (NEW — 2026-05-30 PM)
+**Symptom:** Three live tests on ebay-clone proved that even with all of §5.11+§5.12+§5.13+§5.15 active, the loop oscillates around the 18-error baseline but never converges. Each single-file rewrite cascades to its consumers:
+
+```
+Rewrite port P → P's signatures change → adapters A,B,C now break
+Rewrite adapter A → A's signatures change → use case U breaks
+Rewrite U → U's signatures change → tests break
+Loop is always 1-3 fixes ahead and 5-10 breakages behind
+```
+
+Run 3-fixed: 18→17→16→52→18 net zero. The §5.15 file-overlap gate prevented divergence (no doubling) but couldn't enable convergence — single-file edits can't propagate consistent signature changes across the dependency tree in one tick.
+**Hypothesis:** auto_repair dispatches one file at a time. Each dispatch's model only sees ONE file's source + the errors. It can fix that file but has no view of the consumers that will break. Any model — local qwen14b, claude-sonnet, claude-opus — produces the same cascade because the LOOP STRUCTURE forces one-file-at-a-time. This isn't a model capability issue; it's a structural one.
+**Insight from operator (2026-05-30):** hex architecture is inside-out by design (`domain → ports → usecases → adapters`). Multi-file rewrites should respect that ordering — inner layers are CONTRACTS, outer layers must conform. When inner changes, outer must update in the SAME response.
+**Fix plan (3-4 hours):**
+- Extend file classifier to return a layered enum: `FileLayer::{Domain, Ports, Usecases, AdaptersSecondary, AdaptersPrimary, Other}` with numeric ordinals matching inside-out depth.
+- New `discover_cluster(errored_files, project_path) -> Vec<(String, FileLayer)>`: takes top-K errored files and pulls in related files at adjacent layers. Cap at ~50 KB total content.
+- New `build_multi_file_prompt(cluster) -> String`: dumps all cluster files in inside-out order with `<<<FILE: path>>>` / `<<<END FILE>>>` delimiters. Explicitly states "inner = contract; outer must conform; if you change inner, update outer in same response."
+- New `parse_multi_file_response(text) -> HashMap<String, String>`: extracts the delimited per-file outputs. Validates non-empty, looks like Rust.
+- New `run_multi_file_frontier(...) -> usize`: invokes claude ONCE with the full cluster prompt, parses, writes all files atomically, single git commit `fix(frontier multi-file): rewrote cluster of N files via claude -p`.
+- Wire into `run_tick`: when `port_first_mode=true` AND escalating to frontier, use multi-file path. Single-file path stays as fallback when parse fails OR `HEX_DISABLE_MULTI_FILE_FRONTIER=1`.
+- This is the structural fix the convergence ceiling needs. Models that work for codegen (claude, qwen14b) should be able to converge once given the full dependency surface.
+
+### 5.10. Scaffolded artifacts not validated as executable (NEW)
+**Symptom:** Workplan declared 109/109 files complete, including `start.sh`, `docker-compose.yml`, `README.md`. But `start.sh` has placeholder paths (`path/to/binary` style), wrong port, and references `bun` without checking it's installed. The workplan's "done condition" was file-presence, not file-validity.
+**Hypothesis:** `done_condition: "compile + lint + test pass"` in the workplan schema is only checked for Rust source. Shell scripts, compose files, READMEs were file-existence-checked and rubber-stamped.
+**Fix plan (2-3 hours):**
+- Per-file `validators` field in workplan schema: `start.sh` → `bash -n` (syntax) + `shellcheck`; `docker-compose.yml` → `docker compose config -q`; `package.json` → `bun pm pkg get name` or `node -e "require('./package.json')"`
+- Workplan validator agent runs these as part of validation gate, not just `cargo check`
+- Files without a matching validator default to "must contain non-placeholder text" — grep for `path/to`, `TODO:`, `<your-`, `FIXME` and reject
+
+## 6. Net delivery
+
+**Platform fixes shipped this test:** 9 (commits `cc538b93` → `74842200`)
+**New hex CLI surface:** `hex auto-repair status` / `restart`
+**New hex-nexus orchestration module:** `auto_repair.rs` (~400 LOC + tests)
+**Bugs documented but unfixed:** 11 (§5 above — 5 added after test ladder; §5.8 shipped in `d56afec6`)
+**Tested under realistic load:** every dispatch path, every plateau detector, every iteration cap
+
+## 7. Verdict (REVISED 2026-05-29 post-test-ladder)
+
+**The artifact does not work.** Running the test ladder (cargo check, spacetime build, frontend build, start.sh) on the autonomously-built ebay-clone produced failures at every rung. 18 cargo errors in the backend, workspace conflict in the STDB module, placeholder paths in start.sh. The workplan's "32/32 steps · 109/109 files complete" claim was true at the file-presence level and false at every level of actual functionality.
+
+**The harness partially works.** It validated 7 mechanisms end-to-end (workplan conductor, commit chain, auto_repair dispatch, plateau detection, iteration cap, path resolution post-fix, operator CLI). It also surfaced 16 distinct bug classes (§3) all of which were fixed in-test, plus 10 deficiencies (§5) still open. The harness is a real autonomous system, not a tech demo — but the smoke test exposed that its "complete" signal is structurally divorced from "works."
+
+**The single biggest lesson is unchanged:** the harness must verify its own ground truth. Every layer reported success while ground truth was failing — wrong path, wrong types after merge, wrong workspace membership, placeholder scripts. The next round of hardening (§5) is almost entirely about adding ground-truth gates at each layer.
+
+**Prioritized fix order (REVISED 2026-05-29 PM after two live tests):**
+1. **§5.13 targeted-edit prompts** — top of list. Both prior tests failed at the same place: full-rewrite prompts cause type-reference drift. Smallest change with largest leverage. Without it, §5.11+§5.12 net-negative on this project. ~1-2h.
+2. **§5.12 tier-escalation ladder** — SHIPPED `1cd1fc86`. Mechanism validated end-to-end; strategy waits on §5.13.
+3. **§5.11 signature-graph dispatch policy** — SHIPPED `4a7db779`. Mechanism validated; reduces drift class but doesn't close it without §5.13.
+4. **§5.8 post-merge cargo-check gate** — SHIPPED `d56afec6`. Worktree-workflow specific.
+5. **§5.7 shadow-project regression check** — would have caught the prefix bug on tick 1. Independent of §5.13. ~2-3h.
+6. **§5.10 scaffolded-artifact validators** — closes "file exists ≠ file works". Only relevant once code compiles. ~2-3h.
+7. **§5.9 STDB module workspace entanglement** — blocks `spacetime build`. Cheap. ~1-2h.
+8. **§5.6 per-file learning state** — would detect "listing_repo.rs dispatched 6× this session, never improved" and escalate to operator. ~2-3h.
+9. **§5.1 model upgrade path** — partially subsumed by §5.12. Audit T1/T2 swap path after §5.13 lands.
+10. **§5.4 inbox TTL, §5.5 root-folder rule, §5.3 trait-signature grounding (subsumed by §5.11), §5.2 per-tool routing** — quality-of-life and refinement.

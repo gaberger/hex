@@ -1,7 +1,7 @@
 //! `hex inference` — Manage inference providers (Ollama, vLLM, etc.)
 //!
 //! Register, list, and test self-hosted LLM endpoints.
-//! Supports template-based registration for known free-tier providers (ADR-2604052125).
+//! Supports template-based registration for known free-tier providers (ADR-2026-04-05-2125).
 //!
 //! Usage:
 //!   hex inference add groq --key $GROQ_API_KEY          # Template-based (auto-registers all models)
@@ -19,10 +19,10 @@ use colored::Colorize;
 use crate::assets::Assets;
 use crate::nexus_client::NexusClient;
 
-/// Known free-tier provider template names (ADR-2604052125).
-const PROVIDER_TEMPLATES: &[&str] = &["groq", "cerebras", "sambanova", "together", "openrouter", "ollama"];
+/// Known free-tier provider template names (ADR-2026-04-05-2125).
+const PROVIDER_TEMPLATES: &[&str] = &["groq", "cerebras", "sambanova", "together", "openrouter", "ollama", "gemini"];
 
-/// Parsed provider template from YAML (ADR-2604052125).
+/// Parsed provider template from YAML (ADR-2026-04-05-2125).
 #[derive(Debug, serde::Deserialize)]
 struct ProviderTemplate {
     name: String,
@@ -85,7 +85,7 @@ fn load_provider_template(name: &str) -> Option<ProviderTemplate> {
 pub enum InferenceAction {
     /// Register a new inference provider (template name or manual type+URL)
     Add {
-        /// Provider type or template name: groq, cerebras, sambanova, together, openrouter, ollama, vllm, openai-compat
+        /// Provider type or template name: groq, cerebras, sambanova, together, openrouter, ollama, gemini, vllm, openai-compat
         provider_type: String,
         /// Base URL (e.g., http://bazzite.local:11434). Optional for template providers.
         url: Option<String>,
@@ -147,7 +147,7 @@ pub enum InferenceAction {
     },
     /// List pending inference queue tasks
     Queue,
-    /// Show inference cost attribution and provider statistics (ADR-2604052125)
+    /// Show inference cost attribution and provider statistics (ADR-2026-04-05-2125)
     Stats,
     /// Show escalation rates per task-tier and model (P4.2 — escalation tracking)
     EscalationReport {
@@ -184,7 +184,19 @@ pub enum InferenceAction {
         #[arg(long)]
         watch: bool,
     },
-    /// Benchmark a model: code-gen, reasoning, and identity prompts — quality + speed + tier recommendation (ADR-2604131238)
+    /// Show durable per-model usage from inference_log (real traffic, survives restarts)
+    Usage {
+        /// Only count completions newer than this duration (e.g. 1h, 7d, 30m)
+        #[arg(long)]
+        since: Option<String>,
+        /// Filter to models whose name contains this substring
+        #[arg(long)]
+        model: Option<String>,
+        /// Maximum rows to display
+        #[arg(long, default_value_t = 30)]
+        limit: u32,
+    },
+    /// Benchmark a model: code-gen, reasoning, and identity prompts — quality + speed + tier recommendation (ADR-2026-04-13-1238)
     Bench {
         /// Provider ID, model name, or URL (e.g. "bazzite-ollama", "minimax-m2.7:cloud", "http://bazzite:11434")
         target: String,
@@ -246,7 +258,7 @@ async fn write_inference_cache() {
 pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
     match action {
         InferenceAction::Add { provider_type, url, model, key, id, quantization } => {
-            // Check if provider_type is a known template name (ADR-2604052125)
+            // Check if provider_type is a known template name (ADR-2026-04-05-2125)
             if PROVIDER_TEMPLATES.contains(&provider_type.as_str()) && url.is_none() {
                 add_from_template(&provider_type, key.as_deref(), id.as_deref()).await
             } else {
@@ -274,6 +286,9 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
         InferenceAction::EscalationReport { json } => escalation_report(json).await,
         InferenceAction::QReport { tier, task_type, model, sort, limit, format, since, watch } => {
             q_report(tier, task_type, model, &sort, limit, &format, since, watch).await
+        }
+        InferenceAction::Usage { since, model, limit } => {
+            usage_report(since.as_deref(), model.as_deref(), limit).await
         }
         InferenceAction::Bench { target, model, quick, compare, save } => {
             bench_provider(&target, model.as_deref(), quick, compare.as_deref(), save).await
@@ -441,7 +456,7 @@ async fn add_provider(
 
     let models_json = serde_json::to_string(&discovered_models).unwrap_or_else(|_| format!("[\"{}\"]", model_name));
 
-    // Resolve quantization level (ADR-2603271000):
+    // Resolve quantization level (ADR-2026-03-27-1000):
     // 1. Explicit --quantization flag
     // 2. Auto-detect from model name GGUF tag
     // 3. Default: "cloud" for API providers, "q4" for local
@@ -524,7 +539,7 @@ async fn add_provider(
     Ok(())
 }
 
-/// Register a provider from a built-in template (ADR-2604052125).
+/// Register a provider from a built-in template (ADR-2026-04-05-2125).
 ///
 /// Reads the YAML template from embedded assets, resolves the API key from
 /// --key flag or environment variable, and registers all models with correct
@@ -626,12 +641,12 @@ async fn add_from_template(
     Ok(())
 }
 
-/// Discover all free-tier providers by checking env vars (ADR-2604052125).
+/// Discover all free-tier providers by checking env vars (ADR-2026-04-05-2125).
 ///
 /// Probes known free-tier providers (Groq, Cerebras, SambaNova, Together, OpenRouter)
 /// for API keys in environment variables and registers all discovered providers.
 async fn discover_free_tier() -> anyhow::Result<()> {
-    println!("{}", "── Discovering Free-Tier Inference Providers (ADR-2604052125) ──".cyan());
+    println!("{}", "── Discovering Free-Tier Inference Providers (ADR-2026-04-05-2125) ──".cyan());
     println!();
 
     let mut discovered = 0u32;
@@ -707,10 +722,60 @@ async fn discover_free_tier() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Show inference cost attribution and provider statistics (ADR-2604052125).
+/// Show inference cost attribution and provider statistics (ADR-2026-04-05-2125).
+/// `hex inference usage` — durable per-model usage from inference_log.
+async fn usage_report(since: Option<&str>, model: Option<&str>, limit: u32) -> anyhow::Result<()> {
+    let client = NexusClient::from_env();
+    println!("{}", "── Inference Usage (durable — from inference_log) ──".cyan());
+    println!();
+    if client.ensure_running().await.is_err() {
+        println!("{} hex-nexus not running — cannot fetch usage", "✗".red());
+        return Ok(());
+    }
+
+    let mut path = format!("/api/inference/usage?limit={}", limit);
+    if let Some(s) = since {
+        path.push_str(&format!("&since={}", s));
+    }
+    if let Some(m) = model {
+        path.push_str(&format!("&model={}", m.replace('/', "%2F")));
+    }
+
+    match client.get(&path).await {
+        Ok(data) => {
+            let rows = data.get("usage").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            if rows.is_empty() {
+                println!("  No matching completions in inference_log.");
+                return Ok(());
+            }
+            println!(
+                "  {:<28} {:<14} {:>8} {:>10} {:>10} {:>9} {:>9}",
+                "MODEL", "PROVIDER", "REQS", "IN_TOK", "OUT_TOK", "P50(ms)", "P99(ms)"
+            );
+            println!("  {}", "─".repeat(94));
+            for r in &rows {
+                let g = |k: &str| r.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+                let s = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("");
+                println!(
+                    "  {:<28} {:<14} {:>8} {:>10} {:>10} {:>9} {:>9}",
+                    s("model"), s("provider"), g("requests"),
+                    g("input_tokens"), g("output_tokens"), g("p50_ms"), g("p99_ms")
+                );
+            }
+            let total = data.get("total_completions").and_then(|v| v.as_u64()).unwrap_or(0);
+            println!();
+            println!("  {} completions counted (source: inference_log)", total);
+        }
+        Err(_) => {
+            println!("  Usage endpoint not available. Ensure hex-nexus is rebuilt.");
+        }
+    }
+    Ok(())
+}
+
 async fn inference_stats() -> anyhow::Result<()> {
     let client = NexusClient::from_env();
-    println!("{}", "── Inference Cost Attribution (ADR-2604052125) ──".cyan());
+    println!("{}", "── Inference Cost Attribution (ADR-2026-04-05-2125) ──".cyan());
     println!();
 
     if client.ensure_running().await.is_err() {
@@ -1899,7 +1964,7 @@ async fn queue_list() -> anyhow::Result<()> {
     Ok(())
 }
 
-// ── Bench command (ADR-2604131238) ──────────────────────────────────────────
+// ── Bench command (ADR-2026-04-13-1238) ──────────────────────────────────────────
 
 /// Result of a single benchmark prompt.
 #[allow(dead_code)]
@@ -1964,7 +2029,131 @@ async fn bench_chat(
     }
 }
 
-/// Run the identity prompt — measures latency floor and basic responsiveness.
+// Run the identity prompt — measures latency floor and basic responsiveness.
+// ── Persona-task benchmarks (the three shapes hex actually uses) ────────────
+//
+// These mirror what hex-nexus/src/orchestration/org_responder.rs +
+// drafter.rs ask of the model day-to-day. A model that scores well on
+// codegen but poorly here is the wrong default for the responder.
+// Scoring is the same shape as scripts/bench-persona-prompts.py (which
+// remains for ad-hoc / Python-only iteration); production lives here.
+
+/// Detect rambling pre-answer narration ("we are in", "let me think", etc.)
+/// Returns true if the response opens with one of the banned patterns.
+fn has_meta_reasoning(text: &str) -> bool {
+    const BAD: &[&str] = &[
+        "we are in", "the user is", "let me recall", "let me think",
+        "i need to recall", "i'll respond", "i will respond",
+        "first, i note", "key points from", "looking at the",
+    ];
+    let head = text.chars().take(400).collect::<String>().to_lowercase();
+    BAD.iter().any(|b| head.contains(b))
+}
+
+/// Count distinct grounded references (ADR ids, repo paths) in the response.
+fn count_grounded(text: &str) -> usize {
+    let lower = text.to_lowercase();
+    let adr_re = regex::Regex::new(r"adr-\d{4}-\d{2}-\d{2}-\d{4}|adr-\d+").unwrap();
+    let adrs = adr_re.find_iter(&lower).count();
+    const PATHS: &[&str] = &[
+        "docs/specs/", "docs/adrs/", "hex-nexus/src/", "hex-cli/src/",
+        "spacetime-modules/", "hex-nexus/assets/src/", "scripts/",
+    ];
+    let paths: usize = PATHS.iter().filter(|p| lower.contains(*p)).count();
+    adrs + paths
+}
+
+/// chat-mode bench: brief grounded status reply, no meta-reasoning.
+async fn bench_persona_chat(
+    http: &reqwest::Client, url: &str, ptype: &str, model: &str,
+) -> anyhow::Result<BenchResult> {
+    let system = "You are CTO. Answer in 2-3 sentences. Cite a real ADR id (ADR-2026-05-08-2500 form) or repo path (docs/specs/X.md). \
+                  Do NOT begin with: 'We are', 'The user', 'Let me', 'Looking at'. Just answer.";
+    let user = "Status: shipped today, in flight, top concern.";
+    let (response, tokens, wall) = bench_chat(http, url, ptype, model, &format!("{}\n\nUser: {}", system, user)).await?;
+    let word_count = response.split_whitespace().count();
+    let grounded = count_grounded(&response);
+    let checks: Vec<(&str, bool)> = vec![
+        ("non-empty",       !response.trim().is_empty()),
+        ("under 120 words", word_count > 0 && word_count <= 120),
+        ("cites artifact",  grounded >= 1),
+        ("no meta-prelude", !has_meta_reasoning(&response)),
+    ];
+    let passed = checks.iter().filter(|(_, v)| *v).count() as f32;
+    Ok(BenchResult {
+        name: "Persona/chat",
+        quality_score: passed / 4.0,
+        quality_max: 4,
+        quality_details: checks,
+        response, tokens, wall_secs: wall,
+    })
+}
+
+/// commit-mode bench: strict Confirm: format on a single line.
+async fn bench_persona_commit(
+    http: &reqwest::Client, url: &str, ptype: &str, model: &str,
+) -> anyhow::Result<BenchResult> {
+    let system = "You are CTO. Reply with EXACTLY ONE line in the form:\n\
+                  Confirm: I (cto) will <action> by <deadline> — success: <artifact path>\n\
+                  OR the single word: Silent\n\
+                  Examples:\n\
+                  Confirm: I (cto) will write docs/specs/cost-runbook.md by EOD — success: docs/specs/cost-runbook.md\n\
+                  Silent\n\
+                  No preamble. Begin with C or S.";
+    let user = "Write docs/specs/persona-bench-sample.md by EOD.";
+    let (response, tokens, wall) = bench_chat(http, url, ptype, model, &format!("{}\n\nUser: {}", system, user)).await?;
+    let stripped = response.trim();
+    let first_line = stripped.lines().next().unwrap_or("").trim();
+    let is_confirm = first_line.to_lowercase().starts_with("confirm:");
+    let is_silent = stripped.to_lowercase() == "silent" || stripped.to_lowercase() == "silent.";
+    let checks: Vec<(&str, bool)> = vec![
+        ("non-empty",     !stripped.is_empty()),
+        ("Confirm/Silent", is_confirm || is_silent),
+        ("single line",   stripped.lines().count() <= 1),
+        ("cites path",    is_silent || count_grounded(&response) >= 1),
+        ("no meta-prelude", !has_meta_reasoning(&response)),
+    ];
+    let passed = checks.iter().filter(|(_, v)| *v).count() as f32;
+    Ok(BenchResult {
+        name: "Persona/commit",
+        quality_score: passed / 5.0,
+        quality_max: 5,
+        quality_details: checks,
+        response, tokens, wall_secs: wall,
+    })
+}
+
+/// drafter-mode bench: literal file body, no preamble.
+async fn bench_persona_drafter(
+    http: &reqwest::Client, url: &str, ptype: &str, model: &str,
+) -> anyhow::Result<BenchResult> {
+    let system = "Write the body of `docs/specs/persona-bench.md` per the request below. \
+                  Output ONLY the file contents. First character of output is the first character of the file. \
+                  No 'Okay', no 'Sure', no 'Here is', no code fences.";
+    let user = "The file should contain only one line: Hello from the bench.";
+    let (response, tokens, wall) = bench_chat(http, url, ptype, model, &format!("{}\n\nUser: {}", system, user)).await?;
+    let stripped = response.trim();
+    let lower = stripped.to_lowercase();
+    let starts_clean = !["okay", "sure", "here", "i'll", "below", "let me", "i will", "of course"]
+        .iter().any(|p| lower.starts_with(p));
+    let has_exact = lower.contains("hello from the bench");
+    let checks: Vec<(&str, bool)> = vec![
+        ("non-empty",     !stripped.is_empty()),
+        ("no preamble",   starts_clean),
+        ("has target",    has_exact),
+        ("no meta-prelude", !has_meta_reasoning(&response)),
+        ("reasonable size", stripped.len() <= 2048),
+    ];
+    let passed = checks.iter().filter(|(_, v)| *v).count() as f32;
+    Ok(BenchResult {
+        name: "Persona/drafter",
+        quality_score: passed / 5.0,
+        quality_max: 5,
+        quality_details: checks,
+        response, tokens, wall_secs: wall,
+    })
+}
+
 async fn bench_identity(
     http: &reqwest::Client, url: &str, ptype: &str, model: &str,
 ) -> anyhow::Result<BenchResult> {
@@ -2131,7 +2320,7 @@ fn print_bench_results(model: &str, results: &[BenchResult], label: Option<&str>
     // score is computed inline
 }
 
-/// `hex inference bench` — benchmark a model with hex-specific prompts (ADR-2604131238).
+/// `hex inference bench` — benchmark a model with hex-specific prompts (ADR-2026-04-13-1238).
 async fn bench_provider(
     target: &str,
     model_override: Option<&str>,
@@ -2214,10 +2403,31 @@ async fn bench_provider(
             }
     }
 
-    let Some(r) = resolved.filter(|r| !r.url.is_empty()) else {
+    let Some(mut r) = resolved.filter(|r| !r.url.is_empty()) else {
         println!("{} Could not resolve target '{}' — register it first with `hex inference add`", "✗".red(), target);
         return Ok(());
     };
+
+    // Cloud openai-compat providers (e.g. Tenstorrent, vLLM behind a key) store
+    // their API key as a vault reference that only nexus can resolve — and their
+    // base URL often omits `/v1`. Direct CLI calls from bench_chat would send an
+    // empty bearer and mis-detect the endpoint shape. Route these through the
+    // nexus proxy (`{nexus}/v1/chat/completions` with a `hex/<model>` id), which
+    // resolves the vault key and provider type for us. Local Ollama and
+    // OpenRouter-direct targets keep their direct path (measures true latency).
+    let is_cloud_compat = (r.ptype.contains("openai") || r.ptype == "vllm")
+        && !r.url.contains(":11434")
+        && !r.url.contains("openrouter.ai");
+    if is_cloud_compat {
+        if nexus.ensure_running().await.is_ok() {
+            r.url = format!("{}/v1", nexus.url().trim_end_matches('/'));
+            r.ptype = "openai-compat".to_string();
+            r.model = format!("hex/{}", r.model);
+        } else {
+            println!("{} nexus not reachable — cannot bench cloud provider '{}' (vault key needs nexus)", "✗".red(), r.id);
+            return Ok(());
+        }
+    }
 
     println!("{}", format!("── hex inference bench: {} via {} ──", r.model, r.id).cyan());
     println!();
@@ -2250,6 +2460,24 @@ async fn bench_provider(
             // Reasoning
             print!("  {} Running reasoning benchmark...", "→".cyan());
             match bench_reasoning(&http, &url, &ptype, &model).await {
+                Ok(br) => { println!(" {:.1}s", br.wall_secs); results.push(br); }
+                Err(e) => { println!(" {} {}", "✗".red(), e); }
+            }
+
+            // Persona-task benchmarks — the three shapes the responder/drafter
+            // actually use. A model can ace codegen and still ramble on these.
+            print!("  {} Running persona/chat benchmark...", "→".cyan());
+            match bench_persona_chat(&http, &url, &ptype, &model).await {
+                Ok(br) => { println!(" {:.1}s", br.wall_secs); results.push(br); }
+                Err(e) => { println!(" {} {}", "✗".red(), e); }
+            }
+            print!("  {} Running persona/commit benchmark...", "→".cyan());
+            match bench_persona_commit(&http, &url, &ptype, &model).await {
+                Ok(br) => { println!(" {:.1}s", br.wall_secs); results.push(br); }
+                Err(e) => { println!(" {} {}", "✗".red(), e); }
+            }
+            print!("  {} Running persona/drafter benchmark...", "→".cyan());
+            match bench_persona_drafter(&http, &url, &ptype, &model).await {
                 Ok(br) => { println!(" {:.1}s", br.wall_secs); results.push(br); }
                 Err(e) => { println!(" {} {}", "✗".red(), e); }
             }

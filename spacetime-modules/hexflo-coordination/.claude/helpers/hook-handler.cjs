@@ -423,7 +423,7 @@ const handlers = {
     if (session && session.metric) {
       try { session.metric('tasks'); } catch (e) { /* no active session */ }
     }
-    // Extract HEXFLO_TASK:{id} from prompt and mark task in_progress (ADR-2604010000 P4.1)
+    // Extract HEXFLO_TASK:{id} from prompt and mark task in_progress (ADR-2026-04-01-0000 P4.1)
     const hexfloMatch = prompt && prompt.match(/HEXFLO_TASK:([a-f0-9-]+)/);
     if (hexfloMatch) {
       const taskId = hexfloMatch[1];
@@ -458,7 +458,7 @@ const handlers = {
     if (s.activeAgents === 0) s.idleAgents = 0; // reset idle when all done
     writeHexStatus(s); // also pushes to hub via bridge
     hubEvent('agent-complete', { activeAgents: s.activeAgents, completed: s.completedTasks, total: s.tasks });
-    // Capture commit SHA and mark HexFlo task completed (ADR-2604010000 P4.1)
+    // Capture commit SHA and mark HexFlo task completed (ADR-2026-04-01-0000 P4.1)
     try {
       const sessionId = process.env.CLAUDE_SESSION_ID;
       if (sessionId) {
@@ -481,7 +481,7 @@ const handlers = {
         }
       }
     } catch (e) { /* non-fatal */ }
-    // ADR-2604051700 Gate 3: Auto-cleanup worktree on agent completion.
+    // ADR-2026-04-05-1700 Gate 3: Auto-cleanup worktree on agent completion.
     // If this agent was running in a worktree, remove it to prevent orphans.
     try {
       const sessionId = process.env.CLAUDE_SESSION_ID;

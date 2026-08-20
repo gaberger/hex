@@ -1,0 +1,105 @@
+{
+  "id": "t25-csv-parse",
+  "tier": "T2.5",
+  "axis_focus": [
+    "evidence_gated_success",
+    "react_convergence"
+  ],
+  "instruction": "Implement `pub fn parse_csv_line(line: &str) -> Vec<String>` in this file, replacing the stub. Parse ONE CSV line into fields, RFC-4180 style: fields are comma-separated; a field may be wrapped in double quotes, inside which a comma is a literal (not a separator) and a doubled quote \"\" is a literal single quote; empty fields are preserved (e.g. \"a,,c\" -> [\"a\",\"\",\"c\"], and a trailing comma yields a trailing empty field). Examples: parse_csv_line(\"a,b,c\")=[\"a\",\"b\",\"c\"]; parse_csv_line(\"a,\\\"b,c\\\",d\")=[\"a\",\"b,c\",\"d\"]; parse_csv_line(\"\\\"a\\\"\\\"b\\\"\")=[\"a\\\"b\"]. Edit only this file.",
+  "target_file": "bench-sandbox/src/lib.rs",
+  "oracle": {
+    "kind": "cargo_test",
+    "setup_files": {
+      "bench-sandbox/Cargo.toml": "[package]\nname = \"bench-sandbox\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n",
+      "bench-sandbox/src/lib.rs": "pub fn parse_csv_line(_line: &str) -> Vec<String> {\n    Vec::new()\n}\n",
+      "bench-sandbox/tests/csv.rs": "use bench_sandbox::parse_csv_line;\nfn v(xs: &[&str]) -> Vec<String> { xs.iter().map(|s| s.to_string()).collect() }\n#[test] fn plain() { assert_eq!(parse_csv_line(\"a,b,c\"), v(&[\"a\",\"b\",\"c\"])); }\n#[test] fn empty_fields() { assert_eq!(parse_csv_line(\"a,,c\"), v(&[\"a\",\"\",\"c\"])); }\n#[test] fn trailing_empty() { assert_eq!(parse_csv_line(\"a,\"), v(&[\"a\",\"\"])); }\n#[test] fn comma_in_quotes() { assert_eq!(parse_csv_line(\"a,\\\"b,c\\\",d\"), v(&[\"a\",\"b,c\",\"d\"])); }\n#[test] fn escaped_quotes() { assert_eq!(parse_csv_line(\"\\\"a\\\"\\\"b\\\"\"), v(&[\"a\\\"b\"])); }\n#[test] fn quoted_whole() { assert_eq!(parse_csv_line(\"\\\"hello, world\\\"\"), v(&[\"hello, world\"])); }\n"
+    },
+    "command": "cargo test --manifest-path bench-sandbox/Cargo.toml --test csv"
+  },
+  "graph_context_required": false,
+  "arms": [
+    "react",
+    "fast"
+  ],
+  "status": "verified",
+  "_verification": "oracle RED->GREEN confirmed 2026-06-07 (stub fails 6 tests; reference state-machine impl passes 6/6; round-tripped from this JSON). Standalone [workspace] crate. Tests a DIFFERENT skill than t25-rpn-eval (string state-machine + quote-escaping, not stack eval).",
+  "observed_baseline": {
+    "_finding": "react n=5. Ranking REVERSES AGAIN: devstral 5/5 > gemma3 4/5 > qwen 0/5 \u2014 the opposite of rpn (qwen 4/5 > devstral 1/5). qwen (coder) cannot do the quote-escaping state machine; devstral (which lost rpn) aces it. Each of the 3 fixtures has a DIFFERENT winner \u2014 no stable best local model.",
+    "devstral-small-2:24b": {
+      "measured_by": "hex bench agentic (post b6964195)",
+      "date": "2026-06-07",
+      "react": {
+        "valid": true,
+        "pass_rate": "5/5",
+        "samples": 5,
+        "outcomes": [
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "pass"
+        ],
+        "wall_ms_range": [
+          11966,
+          41095
+        ]
+      }
+    },
+    "gemma3:12b": {
+      "measured_by": "hex bench agentic (post b6964195)",
+      "date": "2026-06-07",
+      "react": {
+        "valid": true,
+        "pass_rate": "4/5",
+        "samples": 5,
+        "outcomes": [
+          "pass",
+          "pass",
+          "pass",
+          "pass",
+          "no_edit"
+        ],
+        "wall_ms_range": [
+          63670,
+          308473
+        ]
+      }
+    },
+    "qwen2.5-coder:14b": {
+      "measured_by": "hex bench agentic (post b6964195)",
+      "date": "2026-06-07",
+      "react": {
+        "valid": true,
+        "pass_rate": "0/5",
+        "samples": 5,
+        "outcomes": [
+          "no_edit",
+          "max_steps",
+          "no_edit",
+          "no_edit",
+          "no_edit"
+        ],
+        "wall_ms_range": [
+          8815,
+          117343
+        ]
+      }
+    },
+    "gpt-oss:20b": {
+      "measured_by": "hex bench agentic (post b6964195)",
+      "date": "2026-06-08",
+      "react": {
+        "valid": true,
+        "pass_rate": "0/5",
+        "samples": 5,
+        "outcomes": [
+          "max_steps",
+          "max_steps",
+          "no_edit",
+          "max_steps",
+          "no_edit"
+        ]
+      }
+    }
+  }
+}

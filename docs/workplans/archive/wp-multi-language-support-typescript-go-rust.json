@@ -1,0 +1,173 @@
+{
+  "adr": "ADR-003",
+  "created_at": "2026-05-11T13:59:26.209147659+00:00",
+  "created_by": "hex-coder",
+  "feature": "First-class support for TypeScript, Go, and Rust with build toolchains and tree-sitter grammars",
+  "id": "wp-multi-language-support-typescript-go-rust",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain & Port Interfaces",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/ports/build_port.rs"
+          ],
+          "id": "P0.1",
+          "layer": "ports",
+          "name": "Define IBuildPort interface with language-agnostic build, lint, test operations",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/ports/ast_port.rs"
+          ],
+          "id": "P0.2",
+          "layer": "ports",
+          "name": "Define IASTPort interface for tree-sitter grammar extraction (exports, imports, signatures, types)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/domain/language.rs"
+          ],
+          "id": "P0.3",
+          "layer": "domain",
+          "name": "Add Language enum (TypeScript, Go, Rust) to domain model",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Language-Specific Adapters",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/build/typescript.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement TypeScriptBuildAdapter (tsc --noEmit, esbuild, vitest)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/build/go.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Implement GoBuildAdapter (go build, golangci-lint, go test)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/build/rust.rs"
+          ],
+          "id": "P1.3",
+          "layer": "secondary",
+          "name": "Implement RustBuildAdapter (cargo check/clippy/test)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/ast/typescript.rs"
+          ],
+          "id": "P1.4",
+          "layer": "secondary",
+          "name": "Implement TypeScriptASTAdapter using tree-sitter-typescript",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/ast/go.rs"
+          ],
+          "id": "P1.5",
+          "layer": "secondary",
+          "name": "Implement GoASTAdapter using tree-sitter-go",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/ast/rust.rs"
+          ],
+          "id": "P1.6",
+          "layer": "secondary",
+          "name": "Implement RustASTAdapter using tree-sitter-rust",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "Orchestration & CLI Integration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/build_orchestrator.rs"
+          ],
+          "id": "P2.1",
+          "layer": "usecases",
+          "name": "Update orchestrator to route build/lint/test by Language enum",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/usecases/language_detector.rs"
+          ],
+          "id": "P2.2",
+          "layer": "usecases",
+          "name": "Add language detection logic (tsconfig.json → TS, go.mod → Go, Cargo.toml → Rust)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/cli/build.rs",
+            "hex-nexus/src/cli/check.rs",
+            "hex-nexus/src/cli/test.rs"
+          ],
+          "id": "P2.3",
+          "layer": "primary",
+          "name": "Wire language adapters into CLI build/check/test commands",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P3",
+      "name": "Integration Tests",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/tests/fixtures/typescript_project/tsconfig.json",
+            "hex-nexus/tests/fixtures/go_project/go.mod",
+            "hex-nexus/tests/fixtures/rust_project/Cargo.toml"
+          ],
+          "id": "P3.1",
+          "layer": "integration",
+          "name": "Add integration test fixtures for TypeScript, Go, Rust projects",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/tests/integration/multi_language_test.rs"
+          ],
+          "id": "P3.2",
+          "layer": "integration",
+          "name": "Write end-to-end test for build/lint/test across all three languages",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

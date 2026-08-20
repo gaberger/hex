@@ -76,11 +76,11 @@ pub enum PlanAction {
         #[arg(long, default_value_t = false)]
         update: bool,
         /// Re-verify tasks already marked done and demote them when evidence
-        /// fails. Heals JSONs corrupted by the pre-ADR-2604142200 reconcile
+        /// fails. Heals JSONs corrupted by the pre-ADR-2026-04-14-2201 reconcile
         /// loop. Combine with `--update` to persist demotions.
         #[arg(long, default_value_t = false)]
         audit: bool,
-        /// ADR-2604270800 P0.2: tighter evidence rule. Implies --audit.
+        /// ADR-2026-04-27-0800 P0.2: tighter evidence rule. Implies --audit.
         /// Requires every commit match to also reference workplan_id (not
         /// just task_id), so a `(p0.2)` commit from another workplan can't
         /// satisfy this workplan's P0.2.
@@ -103,7 +103,7 @@ pub enum PlanAction {
     },
     /// Output the canonical workplan JSON schema
     Schema,
-    /// Create a draft workplan from a user prompt (ADR-2604110227).
+    /// Create a draft workplan from a user prompt (ADR-2026-04-11-0227).
     ///
     /// Writes a stub JSON to `docs/workplans/drafts/draft-<timestamp>.json`
     /// containing the original prompt. The hex hook router auto-invokes
@@ -117,12 +117,12 @@ pub enum PlanAction {
         #[arg(long, default_value_t = false)]
         background: bool,
     },
-    /// Manage draft workplans (ADR-2604110227)
+    /// Manage draft workplans (ADR-2026-04-11-0227)
     Drafts {
         #[command(subcommand)]
         action: DraftsAction,
     },
-    /// Validate workplan evidence (ADR-2604142200, wp-enforce-workplan-evidence E3.1).
+    /// Validate workplan evidence (ADR-2026-04-14-2200, wp-enforce-workplan-evidence E3.1).
     ///
     /// Runs `validate_workplan_evidence` on one workplan or on every
     /// `docs/workplans/wp-*.json`. Reports violations (task id + kind +
@@ -183,6 +183,19 @@ pub enum PlanAction {
         /// (`{findings: [{source, kind: "no_test_file"|"empty_test_file"}]}`).
         #[arg(long)]
         json: bool,
+    },
+    /// COO observability baseline — runs 6 deterministic audit queries:
+    /// persona SOP failure rate, workplan drift, cost burn vs MA, STDB
+    /// reducer ticks, twin rejection rate, tool health. Exits 1 if any
+    /// metric exceeds amber threshold (docs/specs/coo-observability-baseline.md).
+    Health,
+    /// Run the in-nexus workplan-steward agent: validate workplan format +
+    /// reconcile status (all steps done → completed). Runs in nexus, records to
+    /// the agent feed, shows in the dashboard.
+    Steward {
+        /// Report without mutating.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -254,58 +267,115 @@ pub(super) struct Step {
 /// A workplan document — supports both legacy (steps) and current (phases/tasks) formats.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(super) struct Workplan {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) title: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) feature: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) language: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) status: String,
     #[serde(default)]
     pub(super) steps: Vec<Step>,
     #[serde(default, deserialize_with = "flexible_phases")]
     pub(super) phases: Vec<Phase>,
-    #[serde(default, alias = "createdAt", alias = "created")]
+    #[serde(default, alias = "createdAt", alias = "created", deserialize_with = "nullable_string")]
     pub(super) created_at: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) adr: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) description: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) priority: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) superseded_by: String,
 }
 
 /// A phase in the current workplan format.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(super) struct Phase {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) id: String,
-    #[serde(default)]
+    // `name` is the canonical field; older drafts used `title` for the
+    // human-readable phase header. Accept both via alias.
+    #[serde(default, alias = "title", deserialize_with = "nullable_string")]
     pub(super) name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "flexible_tasks")]
     pub(super) tasks: Vec<PhaseTask>,
 }
 
 /// A task within a phase.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(super) struct PhaseTask {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) id: String,
-    #[serde(default)]
+    // `name` is canonical; some drafts use `title`. Accept either.
+    #[serde(default, alias = "title", deserialize_with = "nullable_string")]
     pub(super) name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) status: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) layer: String,
-    #[serde(default)]
+    // Tolerate `file` (singular string) in addition to `files` (array).
+    #[serde(default, deserialize_with = "flexible_files")]
     pub(super) files: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) done_command: String,
+}
+
+/// Accept `files: ["a", "b"]` (canonical) or `file: "a"` lifted from a
+/// sibling field. This deserializer only handles the array side; the
+/// `file` -> `files` lift is done via serde alias above when feasible.
+/// Bare string → single-element vec.
+fn flexible_files<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let val = serde_json::Value::deserialize(d)?;
+    match val {
+        serde_json::Value::Null => Ok(Vec::new()),
+        serde_json::Value::String(s) => Ok(vec![s]),
+        serde_json::Value::Array(arr) => arr
+            .into_iter()
+            .map(|v| match v {
+                serde_json::Value::String(s) => Ok(s),
+                serde_json::Value::Null => Ok(String::new()),
+                other => Ok(other.to_string()),
+            })
+            .collect(),
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// Accept tasks as either objects (current schema) or bare strings
+/// (legacy / hand-drafted workplans where a task was written as just a
+/// description). String tasks are lifted to `PhaseTask { name: s,
+/// status: "pending", .. }` so list/reconcile surfaces stop reporting
+/// them as "parse error".
+fn flexible_tasks<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<PhaseTask>, D::Error> {
+    let val = serde_json::Value::deserialize(d)?;
+    let arr = match val {
+        serde_json::Value::Array(a) => a,
+        _ => return Ok(Vec::new()),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for item in arr {
+        match item {
+            serde_json::Value::String(s) => {
+                out.push(PhaseTask {
+                    name: s,
+                    status: "pending".to_string(),
+                    ..Default::default()
+                });
+            }
+            obj @ serde_json::Value::Object(_) => {
+                let task: PhaseTask = serde_json::from_value(obj)
+                    .map_err(serde::de::Error::custom)?;
+                out.push(task);
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
 }
 
 impl Workplan {
@@ -429,7 +499,47 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::Layers { json } => layers_check(json).await,
         PlanAction::Ready { json, no_tests } => ready_check(json, no_tests).await,
         PlanAction::Tests { json } => tests_check(json).await,
+        PlanAction::Health => crate::commands::plan_health::run().await,
+        PlanAction::Steward { dry_run } => steward_sweep(dry_run).await,
     }
+}
+
+/// `hex plan steward` — trigger the in-nexus workplan-steward agent (runs in
+/// nexus, records to the agent feed, shows in the dashboard).
+async fn steward_sweep(dry_run: bool) -> anyhow::Result<()> {
+    use colored::Colorize;
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    nexus.ensure_running().await?;
+    let path = if dry_run {
+        "/api/agent/workplan-steward/sweep?dry_run=true"
+    } else {
+        "/api/agent/workplan-steward/sweep"
+    };
+    println!("{} workplan-steward (in-nexus): validating format + reconciling status …", "\u{2b21}".cyan());
+    let r = nexus.post_long(path, &serde_json::json!({})).await?;
+    let advanced = r.get("advanced").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let issues = r.get("format_issues").and_then(|v| v.as_array());
+    let issue_count = issues.map(|a| a.len()).unwrap_or(0);
+    let scanned = r.get("scanned").and_then(|v| v.as_u64()).unwrap_or(0);
+    let committed = r.get("committed").and_then(|v| v.as_str());
+    println!(
+        "{} {} workplan(s) reconciled→completed, {} format issue(s) (of {} scanned){}",
+        if dry_run { "\u{2192}".dimmed() } else { "\u{2713}".green().bold() },
+        advanced,
+        issue_count,
+        scanned,
+        committed.map(|h| format!(" \u{b7} commit {}", h.yellow())).unwrap_or_default()
+    );
+    if let Some(arr) = issues {
+        for it in arr.iter().take(15).filter_map(|v| v.as_str()) {
+            println!("  {} {}", "format:".yellow(), it);
+        }
+        if arr.len() > 15 {
+            println!("  … ({} total)", arr.len());
+        }
+    }
+    println!("  {} recorded to the agent-runs feed — visible in the dashboard", "\u{2192}".dimmed());
+    Ok(())
 }
 
 /// Test-coverage scan. Walks src/ for non-test source files and emits
@@ -966,7 +1076,7 @@ pub(crate) fn resolve_workplan_path(file: &str) -> anyhow::Result<std::path::Pat
     anyhow::bail!("Workplan not found: {}", file);
 }
 
-/// Execute a workplan — dispatches tasks through tiered inference routing (ADR-2604120202).
+/// Execute a workplan — dispatches tasks through tiered inference routing (ADR-2026-04-12-0202).
 ///
 /// Sends the workplan to hex-nexus for execution. Nexus routes each task through
 /// Path C (headless inference for T1/T2/T2.5) or Path A (spawn agent for T3),
@@ -1129,7 +1239,7 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
 }
 
 /// Distributed workplan execution — creates HexFlo swarm tasks and waits
-/// for remote workers to complete them (ADR-2604121630).
+/// for remote workers to complete them (ADR-2026-04-12-1630).
 ///
 /// Flow: create swarm → create tasks per phase → poll until complete → run gates → next phase
 /// Falls back to local execution if no workers are available.
@@ -2292,83 +2402,6 @@ fn file_has_git_evidence(file: &str, since: &str) -> bool {
 }
 
 /// Check if a task ID appears in recent git commit messages, scoped to a workplan.
-/// Matches patterns like "p1.1", "P1.1", "(p1.1)", "p1.1:" in commit subjects.
-/// When `adr_scope` is non-empty, the commit must ALSO contain the ADR id — this
-/// prevents cross-workplan false positives where generic task IDs like "P1.1"
-/// appear in unrelated commits. When `adr_scope` is empty, falls back to the
-/// legacy unscoped match (for workplans without an ADR link).
-/// Uses --fixed-strings to avoid regex interpretation of dots in task IDs.
-/// Uses a 24h buffer before created_at to account for timezone differences.
-fn task_id_in_git_log(task_id: &str, since: &str, adr_scope: &str) -> bool {
-    if task_id.is_empty() {
-        return false;
-    }
-    // Use 24h before created_at to account for UTC vs local timezone drift.
-    // If no created_at, search last 7 days.
-    let since_arg = if since.is_empty() {
-        "--since=7.days".to_string()
-    } else {
-        // Parse and subtract 1 day for buffer
-        let buffered = since
-            .parse::<chrono::DateTime<chrono::Utc>>()
-            .map(|dt| (dt - chrono::Duration::hours(24)).to_rfc3339())
-            .unwrap_or_else(|_| since.to_string());
-        format!("--since={}", buffered)
-    };
-    let mut args: Vec<String> = vec![
-        "log".to_string(),
-        "--oneline".to_string(),
-        since_arg,
-        "--fixed-strings".to_string(),
-        "-i".to_string(),
-        "--grep".to_string(),
-        task_id.to_string(),
-    ];
-    if !adr_scope.is_empty() {
-        // Require BOTH task_id AND adr_scope to appear — prevents unrelated
-        // commits that happen to share a generic task ID (P1.1, P2.1) from
-        // matching a different workplan.
-        args.push("--all-match".to_string());
-        args.push("--grep".to_string());
-        args.push(adr_scope.to_string());
-    }
-    let output = std::process::Command::new("git").args(&args).output();
-    match output {
-        Ok(out) => !out.stdout.is_empty(),
-        Err(_) => false,
-    }
-}
-
-/// Check if any commit since `since` modified `file` AND mentions `adr_scope` in
-/// its message. This narrows the plain "file was modified" heuristic so a commit
-/// on another workplan that happens to touch the same file doesn't register as
-/// evidence for an unrelated task. When `adr_scope` is empty, falls back to the
-/// legacy unscoped file-modified check.
-fn file_has_scoped_git_evidence(file: &str, since: &str, adr_scope: &str) -> bool {
-    if adr_scope.is_empty() {
-        return file_has_git_evidence(file, since);
-    }
-    if since.is_empty() || file.is_empty() {
-        return false;
-    }
-    let output = std::process::Command::new("git")
-        .args([
-            "log",
-            "--oneline",
-            &format!("--since={}", since),
-            "--fixed-strings",
-            "--grep",
-            adr_scope,
-            "--",
-            file,
-        ])
-        .output();
-    match output {
-        Ok(out) => !out.stdout.is_empty(),
-        Err(_) => false,
-    }
-}
-
 /// Check git evidence for a list of files. Returns a summary string.
 /// - All files modified: "[git: modified]" (green)
 /// - Some files modified: "[git: partial N/M]" (yellow)
@@ -2401,93 +2434,7 @@ fn run_done_command(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
-// Reconcile logic extracted to reconcile.rs (ADR-2604142200).
-
-/// Extract identifiers worth grepping from a done_condition string.
-/// Takes snake_case/camelCase words ≥5 chars and single-quoted strings.
-fn extract_identifiers(condition: &str) -> Vec<String> {
-    let mut ids = Vec::new();
-
-    // Single-quoted strings like 'sonnet', 'prior_errors'
-    let mut in_quote = false;
-    let mut current = String::new();
-    for ch in condition.chars() {
-        if ch == '\'' {
-            if in_quote && !current.is_empty() {
-                ids.push(current.clone());
-                current.clear();
-            }
-            in_quote = !in_quote;
-        } else if in_quote {
-            current.push(ch);
-        }
-    }
-    // Word tokens: snake_case or CamelCase, ≥5 chars, not common prose words
-    let skip = ["cargo", "check", "build", "passes", "returns", "reads", "files", "calls",
-                "found", "added", "output", "result", "using", "value", "field", "never",
-                "always", "every", "should", "where", "which", "other", "after", "first",
-                "then", "from", "with", "into", "that", "this", "have", "does", "when"];
-    for word in condition.split(|c: char| !c.is_alphanumeric() && c != '_') {
-        let w = word.trim();
-        if w.len() >= 5 && (w.contains('_') || w.chars().any(|c| c.is_uppercase()))
-            && !skip.iter().any(|s| w.to_lowercase() == *s) {
-                ids.push(w.to_string());
-            }
-    }
-
-    ids.sort();
-    ids.dedup();
-    ids
-}
-
-/// Grep for each identifier in the project source. Returns true if ≥1 found.
-fn check_identifiers(identifiers: &[String]) -> bool {
-    if identifiers.is_empty() { return false; }
-    for id in identifiers {
-        let output = std::process::Command::new("grep")
-            .args(["-r", "--include=*.rs", "-l", id.as_str(), "hex-cli/src", "hex-nexus/src", "hex-core/src"])
-            .output();
-        if let Ok(out) = output {
-            if !out.stdout.is_empty() {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Run cargo check/build to verify compilation. Returns true if passes.
-fn check_cargo(condition: &str) -> bool {
-    let (cmd, pkg) = if condition.contains("cargo test") {
-        ("test", extract_cargo_pkg(condition))
-    } else if condition.contains("cargo build") {
-        ("build", extract_cargo_pkg(condition))
-    } else {
-        ("check", extract_cargo_pkg(condition))
-    };
-
-    let mut args = vec![cmd];
-    if let Some(pkg) = pkg.as_deref() {
-        args.push("-p");
-        args.push(pkg);
-    }
-
-    std::process::Command::new("cargo")
-        .args(&args)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-fn extract_cargo_pkg(condition: &str) -> Option<String> {
-    // Match "-p hex-cli" or "-p hex-nexus" patterns in condition text
-    if condition.contains("hex-cli") { return Some("hex-cli".to_string()); }
-    if condition.contains("hex-nexus") { return Some("hex-nexus".to_string()); }
-    if condition.contains("hex-core") { return Some("hex-core".to_string()); }
-    None
-}
+// Reconcile logic extracted to reconcile.rs (ADR-2026-04-14-2201).
 
 /// Map adapter path to dependency tier.
 fn infer_tier(adapter: &str) -> u8 {
@@ -2504,7 +2451,7 @@ fn infer_tier(adapter: &str) -> u8 {
     }
 }
 
-// ── ADR-2604110227: Draft workplans ──────────────────────────────────
+// ── ADR-2026-04-11-0227: Draft workplans ──────────────────────────────────
 
 /// Directory where auto-invoked draft workplans are quarantined until
 /// the user approves, edits, or clears them.
@@ -2554,7 +2501,7 @@ fn slug_from_prompt(prompt: &str) -> String {
 async fn reconcile_all(strict: bool, json: bool) -> anyhow::Result<()> {
     use std::path::PathBuf;
 
-    // Evidence-schema cutoff: ADR-2604142200 (Reconcile must verify file
+    // Evidence-schema cutoff: ADR-2026-04-14-2201 (Reconcile must verify file
     // evidence) was accepted 2026-04-14. Workplans whose first git commit
     // predates that date can't reasonably be flagged for missing
     // `evidence.commits` — the field didn't exist when their tasks were
@@ -2723,7 +2670,7 @@ pub async fn draft_plan_silent(prompt: &str) -> anyhow::Result<std::path::PathBu
         "id": draft_id,
         "kind": "workplan-draft",
         "status": "pending-planner",
-        "adr": "ADR-2604271100",
+        "adr": "ADR-2026-04-27-1100",
         "created_at": chrono::Local::now().to_rfc3339(),
         "origin": "improver-auto-act",
         "prompt": trimmed,
@@ -2774,7 +2721,7 @@ async fn draft_plan(prompt_parts: &[String], background: bool) -> anyhow::Result
         "id": draft_id,
         "kind": "workplan-draft",
         "status": "pending-planner",
-        "adr": "ADR-2604110227",
+        "adr": "ADR-2026-04-11-0227",
         "created_at": chrono::Local::now().to_rfc3339(),
         "origin": "auto-invoke",
         "prompt": trimmed,
@@ -2783,7 +2730,7 @@ async fn draft_plan(prompt_parts: &[String], background: bool) -> anyhow::Result
             format!("Or run `hex plan drafts approve {}`", filename),
             format!("Or run `hex plan drafts clear --name {}`", filename.trim_end_matches(".json")),
         ],
-        "notes": "This is a draft created by ADR-2604110227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up."
+        "notes": "This is a draft created by ADR-2026-04-11-0227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up."
     });
 
     let mut file = std::fs::File::create(&path)?;

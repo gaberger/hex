@@ -1,0 +1,147 @@
+{
+  "adr": "ADR-008",
+  "created_at": "2026-05-11T14:04:25.121468294+00:00",
+  "created_by": "hex-coder",
+  "feature": "Restructure hex codebase to follow hexagonal architecture patterns",
+  "id": "wp-dogfooding-hex-hexagonal-architecture",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain Core & Port Interfaces",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "src/core/domain/feedback_loop.rs",
+            "src/core/domain/quality_score.rs",
+            "src/core/domain/task_graph.rs",
+            "src/core/domain/domain_event.rs",
+            "src/core/domain/mod.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Define domain entities and value objects (feedback loops, quality scoring, task graphs, events)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "src/core/ports/ast_port.rs",
+            "src/core/ports/llm_port.rs",
+            "src/core/ports/build_port.rs",
+            "src/core/ports/git_port.rs",
+            "src/core/ports/worktree_port.rs",
+            "src/core/ports/filesystem_port.rs",
+            "src/core/ports/notification_port.rs",
+            "src/core/ports/mod.rs"
+          ],
+          "id": "P0.2",
+          "layer": "ports",
+          "name": "Define port interfaces for AST, LLM, Build, Git, Worktree, FileSystem, Notification",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary Adapters",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "src/adapters/secondary/treesitter.rs",
+            "src/adapters/secondary/mod.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement tree-sitter adapter wrapping external library",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "src/adapters/secondary/git_adapter.rs",
+            "src/adapters/secondary/llm_adapter.rs",
+            "src/adapters/secondary/terminal_notifier.rs",
+            "src/adapters/secondary/webhook_adapter.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Implement Git, LLM providers, terminal notifier, webhook adapters",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "Primary Adapters",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "src/adapters/primary/cli.rs",
+            "src/adapters/primary/agent_api.rs",
+            "src/adapters/primary/http.rs",
+            "src/adapters/primary/mod.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Build CLI, Agent API, and HTTP primary adapters",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P3",
+      "name": "Use Cases",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "src/core/usecases/summarize.rs",
+            "src/core/usecases/generate.rs",
+            "src/core/usecases/quality_gate.rs",
+            "src/core/usecases/mod.rs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Implement use cases consuming domain and ports (summarize, generate, quality gates)",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P4",
+      "name": "Compliance & Enforcement",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            ".github/workflows/lint.yml",
+            ".github/pull_request_template.md",
+            "scripts/check_dependencies.sh"
+          ],
+          "id": "P4.1",
+          "layer": "integration",
+          "name": "Add CI lint rule for no-cross-boundary-imports and PR template checklist",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "tests/integration/self_hosting_test.rs",
+            "tests/integration/mod.rs"
+          ],
+          "id": "P4.2",
+          "layer": "integration",
+          "name": "Validate self-hosting test (L2 summaries, generate adapters, quality gates on hex itself)",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

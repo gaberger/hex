@@ -83,7 +83,7 @@ async fn fetch_from_hub(hub_url: &str) -> Result<HashMap<String, AgentDefinition
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // REST-only implementation
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// NOTE(ADR-2604050900): The agent-definition-registry WASM module has been
+// NOTE(ADR-2026-04-05-0900): The agent-definition-registry WASM module has been
 // deleted. Agent definitions are loaded from local YAML files and synced via
 // config_sync.rs. This adapter uses REST to fetch definitions from hex-hub.
 

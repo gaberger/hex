@@ -6,7 +6,7 @@
  * Global views (inference, fleet) aggregate across projects.
  *
  * Memos (activeProjectId, breadcrumbs) created inside initRouterStore() —
- * must be called from App.tsx after initProjectStore() (ADR-2603231000).
+ * must be called from App.tsx after initProjectStore() (ADR-2026-03-23-1000).
  */
 import { createSignal, createMemo, createRoot, type Accessor } from "solid-js";
 import { projects } from "./projects";
@@ -26,13 +26,19 @@ export type Route =
   | { page: "org-comms" }
   | { page: "team" }
   | { page: "workplans" }
-  // ADR-2605081126 surfaces (merge gate, personas, thoughts)
+  | { page: "missions" }
+  | { page: "mission-detail"; missionId: string }
+  // ADR-2026-05-08-1126 surfaces (merge gate, personas, thoughts)
   | { page: "merge-gate" }
   | { page: "persona-health" }
   | { page: "thoughts" }
   | { page: "resources" }
   | { page: "commitments" }
   | { page: "mission-control" }
+  | { page: "agent-runs" }
+  | { page: "direct-runs" }
+  | { page: "memory" }
+  | { page: "ops-sla" }
   // Project-scoped
   | { page: "project"; projectId: string }
   | { page: "project-agents"; projectId: string }
@@ -41,11 +47,12 @@ export type Route =
   | { page: "project-swarm-detail"; projectId: string; swarmId: string }
   | { page: "project-swarm-task"; projectId: string; swarmId: string; taskId: string }
   | { page: "project-adrs"; projectId: string }
-  | { page: "project-adr-detail"; projectId: string; adrId: string }
+  | { page: "project-ADR-detail"; projectId: string; adrId: string }
   | { page: "project-workplans"; projectId: string }
   | { page: "project-workplan-detail"; projectId: string; workplanId: string }
   | { page: "project-health"; projectId: string }
   | { page: "project-graph"; projectId: string }
+  | { page: "project-knowledge-graph"; projectId: string }
   | { page: "project-files"; projectId: string }
   | { page: "project-file"; projectId: string; filePath: string }
   | { page: "project-chat"; projectId: string; sessionId?: string }
@@ -55,7 +62,7 @@ export type Route =
 // ── State ───────────────────────────────────────────────────────────────────
 
 // Signal is safe at module level — no computation, just a getter/setter pair
-const [route, setRoute] = createSignal<Route>({ page: "brain" });
+const [route, setRoute] = createSignal<Route>({ page: "direct-runs" });
 export { route };
 
 // ── Derived state (assigned inside createRoot by initRouterStore) ───────────
@@ -157,7 +164,7 @@ export function initRouterStore() {
           crumbs.push({ label: "ADRs", icon: "file-text", route: { page: "project-adrs", projectId: pid } });
           break;
 
-        case "project-adr-detail":
+        case "project-ADR-detail":
           crumbs.push({ label: "ADRs", icon: "file-text", route: { page: "project-adrs", projectId: pid } });
           crumbs.push({ label: `ADR-${r.adrId}`, icon: "file-text" });
           break;
@@ -233,7 +240,7 @@ export function navigate(newRoute: Route) {
 function routeToHash(r: Route): string {
   switch (r.page) {
     case "control-plane":
-      return "#/";
+      return "#/control-plane";
     case "inference":
       return "#/inference";
     case "fleet":
@@ -264,6 +271,18 @@ function routeToHash(r: Route): string {
       return "#/commitments";
     case "mission-control":
       return "#/mission-control";
+    case "agent-runs":
+      return "#/agent-runs";
+    case "direct-runs":
+      return "#/direct-runs";
+    case "memory":
+      return "#/memory";
+    case "missions":
+      return "#/missions";
+    case "mission-detail":
+      return `#/missions/${r.missionId}`;
+    case "ops-sla":
+      return "#/ops-sla";
     case "project":
       return `#/project/${r.projectId}`;
     case "project-agents":
@@ -278,7 +297,7 @@ function routeToHash(r: Route): string {
       return `#/project/${r.projectId}/swarms/${r.swarmId}/tasks/${r.taskId}`;
     case "project-adrs":
       return `#/project/${r.projectId}/adrs`;
-    case "project-adr-detail":
+    case "project-ADR-detail":
       return `#/project/${r.projectId}/adrs/${r.adrId}`;
     case "project-workplans":
       return `#/project/${r.projectId}/workplans`;
@@ -288,6 +307,8 @@ function routeToHash(r: Route): string {
       return `#/project/${r.projectId}/health`;
     case "project-graph":
       return `#/project/${r.projectId}/graph`;
+    case "project-knowledge-graph":
+      return `#/project/${r.projectId}/knowledge-graph`;
     case "project-files":
       return `#/project/${r.projectId}/files`;
     case "project-file":
@@ -308,6 +329,19 @@ function routeToHash(r: Route): string {
 function hashToRoute(hash: string): Route {
   const path = hash.replace("#", "") || "/";
   const parts = path.split("/").filter(Boolean);
+  // Fresh load (no hash) lands on Direct Runs — the new evidence-gated monitor,
+  // not the retired Mission Control persona board (2026-06-04 cleanup).
+  if (parts.length === 0) return { page: "direct-runs" };
+  // ADR-2606061359: org-sim surfaces retired — redirect to the Workbench
+  // (single-agent loop). Overrides the legacy per-route handlers below.
+  if ([
+    "mission-control", "org-chart", "org-comms", "team", "missions", "persona-health",
+    "brain", "decisions", "merge-gate", "thoughts", "commitments", "ops-sla",
+  ].includes(parts[0])) {
+    return { page: "direct-runs" };
+  }
+  if (parts[0] === "memory") return { page: "memory" };
+  if (parts[0] === "control-plane") return { page: "control-plane" };
 
   // Global routes
   if (parts[0] === "inference") return { page: "inference" };
@@ -324,7 +358,14 @@ function hashToRoute(hash: string): Route {
   if (parts[0] === "thoughts") return { page: "thoughts" };
   if (parts[0] === "resources") return { page: "resources" };
   if (parts[0] === "commitments") return { page: "commitments" };
-  if (parts[0] === "mission-control" || parts[0] === "mission") return { page: "mission-control" };
+  if (parts[0] === "mission-control") return { page: "mission-control" };
+  if (parts[0] === "agent-runs") return { page: "agent-runs" };
+  if (parts[0] === "direct-runs") return { page: "direct-runs" };
+  if (parts[0] === "missions") {
+    if (parts[1]) return { page: "mission-detail", missionId: decodeURIComponent(parts[1]) };
+    return { page: "missions" };
+  }
+  if (parts[0] === "ops-sla") return { page: "ops-sla" };
 
   // Project-scoped routes: /project/:id/...
   if (parts[0] === "project" && parts[1]) {
@@ -346,7 +387,7 @@ function hashToRoute(hash: string): Route {
         return { page: "project-swarms", projectId };
 
       case "adrs":
-        if (parts[3]) return { page: "project-adr-detail", projectId, adrId: decodeURIComponent(parts[3]) };
+        if (parts[3]) return { page: "project-ADR-detail", projectId, adrId: decodeURIComponent(parts[3]) };
         return { page: "project-adrs", projectId };
 
       case "workplans":
@@ -358,6 +399,9 @@ function hashToRoute(hash: string): Route {
 
       case "graph":
         return { page: "project-graph", projectId };
+
+      case "knowledge-graph":
+        return { page: "project-knowledge-graph", projectId };
 
       case "files":
         if (parts[3]) {
@@ -381,7 +425,7 @@ function hashToRoute(hash: string): Route {
   }
 
   // Default landing — Mission Control is the operator's primary surface
-  // (per ADR-2605091200). Brain remains accessible via the sidebar.
+  // (per ADR-2026-05-09-1200). Brain remains accessible via the sidebar.
   return { page: "mission-control" };
 }
 
