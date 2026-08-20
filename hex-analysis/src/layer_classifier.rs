@@ -137,7 +137,14 @@ fn allowed_targets(layer: HexLayer) -> &'static [HexLayer] {
         HexLayer::Domain => &[],
         HexLayer::Ports => &[HexLayer::Domain],
         HexLayer::Usecases => &[HexLayer::Domain, HexLayer::Ports],
-        HexLayer::AdaptersPrimary => &[HexLayer::Ports],
+        // Primary adapters may drive use cases — see the matching allowance in
+        // hex_core::rules::boundary::check_import. Kept in step with it
+        // deliberately: two tables encoding the same rule that disagree is
+        // worse than either answer, because which one you get depends on which
+        // command you happened to run.
+        HexLayer::AdaptersPrimary => &[HexLayer::Ports, HexLayer::Usecases],
+        // Secondary adapters are NOT granted it: a driven adapter calling back
+        // into usecases inverts the dependency.
         HexLayer::AdaptersSecondary => &[HexLayer::Ports],
         HexLayer::Infrastructure => &[HexLayer::Ports],
         // Special files have no restrictions checked
@@ -182,7 +189,9 @@ pub fn get_violation_rule(from_layer: HexLayer, to_layer: HexLayer) -> Option<&'
 
         // adapters → wrong direction
         (HexLayer::AdaptersPrimary, HexLayer::Domain) => "adapters must not import from domain directly",
-        (HexLayer::AdaptersPrimary, HexLayer::Usecases) => "adapters must not import from usecases",
+        // No (AdaptersPrimary, Usecases) arm: driving a use case is allowed, so
+        // `is_allowed_import` returns before reaching this match. An arm here
+        // would be unreachable and would state the opposite of the rule.
         (HexLayer::AdaptersPrimary, HexLayer::AdaptersSecondary) => "adapters must not import from other adapters",
         (HexLayer::AdaptersPrimary, _) => "adapters must not import from infrastructure",
 
@@ -274,6 +283,34 @@ mod tests {
         assert!(is_allowed_import(HexLayer::Usecases, HexLayer::Domain));
         assert!(is_allowed_import(HexLayer::AdaptersPrimary, HexLayer::Ports));
         assert!(is_allowed_import(HexLayer::AdaptersSecondary, HexLayer::Ports));
+    }
+
+    /// The two rule tables in this workspace — this one and
+    /// hex_core::rules::boundary — must agree that a driving adapter may
+    /// invoke the application layer, and that a driven one may not.
+    #[test]
+    fn primary_adapters_may_drive_usecases_but_secondary_may_not() {
+        assert!(is_allowed_import(
+            HexLayer::AdaptersPrimary,
+            HexLayer::Usecases
+        ));
+        assert!(get_violation_rule(HexLayer::AdaptersPrimary, HexLayer::Usecases).is_none());
+
+        assert!(!is_allowed_import(
+            HexLayer::AdaptersSecondary,
+            HexLayer::Usecases
+        ));
+        assert!(get_violation_rule(HexLayer::AdaptersSecondary, HexLayer::Usecases).is_some());
+    }
+
+    /// The allowance must not widen adapter-to-adapter coupling.
+    #[test]
+    fn adapters_still_cannot_import_each_other() {
+        assert!(get_violation_rule(
+            HexLayer::AdaptersPrimary,
+            HexLayer::AdaptersSecondary
+        )
+        .is_some());
     }
 
     #[test]
