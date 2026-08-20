@@ -164,6 +164,25 @@ pub fn check_import(source: Layer, target: Layer) -> Option<&'static str> {
             if target.is_adapter() && source != target {
                 return Some("adapters must never import other adapters");
             }
+            // A PRIMARY adapter may drive a use case. That is the direction the
+            // pattern exists to express: driving adapters — HTTP handlers, CLI
+            // commands, MCP servers — are the things that invoke the
+            // application layer, and the dependency points inward, which is the
+            // property the hexagon protects.
+            //
+            // Forbidding it only makes sense in codebases that define input
+            // ports for every use case, and then it forbids nothing real: it
+            // buys an interface whose sole implementation is the use case
+            // itself. Meanwhile it fires on correct code, and a rule that fires
+            // on correct code is one people stop reading.
+            //
+            // SECONDARY adapters are deliberately NOT granted this. A driven
+            // adapter reaching back into `usecases` inverts the dependency —
+            // that is the coupling worth failing a build over, and it stays
+            // caught below.
+            if source == Layer::AdapterPrimary && target == Layer::Usecases {
+                return None;
+            }
             if target != Layer::Ports
                 && target != Layer::Domain
                 && target != source
@@ -237,6 +256,30 @@ mod tests {
     #[test]
     fn adapters_cannot_cross_import() {
         assert!(check_import(Layer::AdapterPrimary, Layer::AdapterSecondary).is_some());
+    }
+
+    /// A driving adapter invoking the application layer is the pattern working
+    /// as intended, not a breach. An HTTP handler calling a use case must pass.
+    #[test]
+    fn primary_adapters_may_drive_usecases() {
+        assert!(check_import(Layer::AdapterPrimary, Layer::Usecases).is_none());
+    }
+
+    /// The counterpart, and the reason the allowance is narrow: a DRIVEN
+    /// adapter calling back into `usecases` inverts the dependency. That must
+    /// still fail.
+    #[test]
+    fn secondary_adapters_still_cannot_reach_usecases() {
+        assert!(check_import(Layer::AdapterSecondary, Layer::Usecases).is_some());
+    }
+
+    /// The allowance must not widen anything else: a primary adapter still may
+    /// not import a sibling adapter, which is what actually couples the shell
+    /// to the infrastructure.
+    #[test]
+    fn the_usecase_allowance_does_not_leak_to_adapter_imports() {
+        assert!(check_import(Layer::AdapterPrimary, Layer::AdapterSecondary).is_some());
+        assert!(check_import(Layer::AdapterSecondary, Layer::AdapterPrimary).is_some());
     }
 
     #[test]
