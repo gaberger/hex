@@ -1,0 +1,141 @@
+{
+  "feature": "autonomous-model-bench",
+  "specs": [
+    {
+      "category": "happy-path-discover-bench-persist-notify",
+      "description": "A newly discovered, uncalibrated model is benched, scored, persisted with a recommended tier, and surfaced via a priority inbox notification on a single tick.",
+      "given": "The model-discovery background task is spawned in hex-nexus sched_service.rs and a discovery tick fires (~6h cadence, after the initial interval.tick() delay). GET /api/inference/endpoints (and `hex inference discover --provider ollama|free`) returns at least one ollama/openai_compat model whose endpoint record has no quality_score (uncalibrated) and no model:<name> action with a non-seed Q-value in rl_q_entry for the sched state_key.",
+      "when": "The task diffs discovered models against already-calibrated ones, finds the new model, and runs the bench suite (identity, code-gen, reasoning, persona) against it via the same bench unit-of-work as `hex inference bench` (bench_provider / bench_chat).",
+      "then": "compute_tier() produces an overall quality_score in [0.0,1.0] and a tier in {0,1,2,3}; the model's endpoint record is PATCHed at /api/inference/endpoints/{id} with {quality_score, tier} (calibration persisted); and exactly one inbox notification is emitted (ADR-060 priority-2 style) summarizing the new model name and its recommended tier. The daemon does not crash and the tick returns Ok.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "discovery_surface": "GET /api/inference/endpoints; CLI verb `hex inference discover --provider openrouter|free|ollama`",
+        "calibrated_marker": "endpoint record has quality_score persisted (PATCH /api/inference/endpoints/{id})",
+        "persist_shape": "{ \"quality_score\": f32, \"tier\": u8 }",
+        "tier_mapping": "compute_tier: tier3 if overall>=0.85 && reason_raw>=4; tier2 if overall>=0.65 && code_raw>=7; tier1 if overall>=0.40; else tier0 'Not recommended'",
+        "notification_priority": "ADR-060 priority-2",
+        "task_shape": "tokio::spawn background task in sched_service.rs, interval.tick() initial-delay then loop, mirrors spawn_substrate_autopilot / spawn_promote_orchestrator"
+      }
+    },
+    {
+      "category": "cost-cap-guard-negative",
+      "description": "NEGATIVE: cloud (OpenRouter paid) benching during one discovery cycle must never exceed the configured per-cycle cost cap.",
+      "given": "A per-cycle cost cap (e.g. HEX_MODEL_BENCH_COST_CAP_USD or .hex/project.json) is configured, and the discovery tick finds several new OpenRouter paid models whose combined estimated bench cost would exceed the cap.",
+      "when": "The task iterates the new-model bench queue, preferring free-tier/local models first and accumulating estimated/actual USD spend before each paid cloud bench.",
+      "then": "Once accumulated cloud spend for the cycle would meet or exceed the cap, the task STOPS dispatching further paid cloud benches for that cycle (the remaining paid models are deferred to a future tick), logs the cap-hit at warn level, and total paid spend recorded for the cycle is <= the cap. The daemon does not crash and free/local benches already preferred are unaffected.",
+      "negative_spec": true,
+      "domain_conventions": {
+        "cost_cap_env": "HEX_MODEL_BENCH_COST_CAP_USD (per cycle)",
+        "preference_order": "free-tier and local Ollama benched first; paid OpenRouter last and only under remaining budget",
+        "cap_behavior": "deferred not abandoned — leftover paid models re-evaluated next ~6h tick",
+        "constraint": "CLAUDE.md: cloud benching costs real money — there MUST be a per-cycle cost cap"
+      }
+    },
+    {
+      "category": "out-of-credits-graceful-skip-negative",
+      "description": "NEGATIVE: an account-out-of-credits / HTTP 402 response from a cloud provider must not crash the daemon and must not produce a fabricated calibration.",
+      "given": "A new OpenRouter model is queued for benching but the OpenRouter account is out of credits, so the chat-completions call returns HTTP 402 (Payment Required) or an equivalent error body.",
+      "when": "bench_chat receives the 402 / error response while benching that model.",
+      "then": "The model is skipped (no quality_score/tier PATCH is written for it), the failure is logged at warn level with the provider and reason, the cost accumulator is not incremented for a request that produced no usable output, the discovery tick continues to the next candidate, and the background task returns without panicking or terminating the daemon loop.",
+      "negative_spec": true,
+      "domain_conventions": {
+        "out_of_credits_signal": "HTTP 402 from OpenRouter chat/completions",
+        "no_fabrication": "no PATCH /api/inference/endpoints/{id} for a model that never produced a scored response",
+        "degrade_rule": "CLAUDE.md HARD CONSTRAINT: out-of-credits/gated/unreachable must skip + log, never crash"
+      }
+    },
+    {
+      "category": "gated-or-unreachable-model-skip",
+      "description": "A gated model (403/404/model-not-available) or an unreachable provider endpoint is skipped gracefully and benching proceeds for the rest.",
+      "given": "The discovery list includes one model whose provider endpoint is unreachable (connection refused / timeout) or whose model id is gated (403/404 'model not found' or access-denied), alongside at least one reachable, ungated new model.",
+      "when": "The task attempts to bench the gated/unreachable model.",
+      "then": "That model is skipped with a warn-level log naming the model and the reachability/gating reason, no calibration is persisted for it, and the reachable model is still benched, scored, persisted, and included in the inbox summary. The locally_served_models()-style endpoint fetch returning an unreachable result is treated as 'skip these candidates', never as a daemon-fatal error.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "gated_signals": "HTTP 403/404, provider connection refused, request timeout (mirror TEST_TIMEOUT_SECS pattern)",
+        "endpoints_unreachable": "locally_served_models()/endpoints fetch error => empty/skip, not hard fail (matches existing select_model_for_cycle fallback behavior)",
+        "isolation": "one bad model must not abort the whole cycle"
+      }
+    },
+    {
+      "category": "no-new-models-noop-tick",
+      "description": "A tick where every discovered model is already calibrated performs no benching, spends no money, and emits no notification.",
+      "given": "GET /api/inference/endpoints returns only models that already have a persisted quality_score (all calibrated) and whose model:<name> actions already exist with non-seed Q-values in rl_q_entry for the sched state_key.",
+      "when": "The discovery tick runs and diffs discovered models against calibrated ones.",
+      "then": "The diff is empty, zero bench calls are made, zero USD is spent, no calibration PATCH is issued, and NO inbox notification is emitted (a no-op tick is silent — notifications only fire when there is at least one newly-calibrated model). The task logs a debug/info 'no new models' line and returns Ok, then waits for the next interval.tick().",
+      "negative_spec": false,
+      "domain_conventions": {
+        "noop_definition": "diff(discovered, calibrated) == empty set",
+        "silent_tick": "no priority-2 inbox notification on empty diff",
+        "idempotent_cadence": "next attempt at the next ~6h interval.tick()"
+      }
+    },
+    {
+      "category": "reasoning-model-token-budget-and-field",
+      "description": "Benching a reasoning model uses an 8192-token budget and reads the separate reasoning/thinking field so the model is not scored empty.",
+      "given": "A newly discovered model is a reasoning model (e.g. deepseek-r1, qwen3, nemotron) that spends output budget on chain-of-thought and places its CoT in a separate response field — `reasoning` for OpenRouter, `thinking` for Ollama — leaving `content` empty until it concludes.",
+      "when": "The discovery task benches it via bench_chat: the OpenRouter request sets max_tokens=8192 (Ollama sets options.num_predict=8192), and the response's `content` field comes back empty/truncated.",
+      "then": "The bench MUST fall back to the `reasoning` field (OpenRouter) or `thinking` field (Ollama) for scoring rather than recording an empty non-response; with the 8192 budget the model finishes its thought, earns a real quality_score from the code-gen/reasoning checks, and is persisted with the tier compute_tier derives. A reasoning model is never scored 0 solely because content was empty while reasoning/thinking was populated.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "token_budget": "OpenRouter max_tokens=8192; Ollama options.num_predict=8192",
+        "cot_field": "OpenRouter response choices[0].message.reasoning; Ollama response message.thinking",
+        "fallback_rule": "if content.trim().is_empty() then read reasoning/thinking",
+        "bug_context": "regression just fixed in hex-cli/src/commands/inference.rs::bench_chat — specs must require both the 8192 budget AND the field fallback"
+      }
+    },
+    {
+      "category": "idempotency-already-calibrated-not-rebenched",
+      "description": "A model that was calibrated on a prior tick is not re-benched on subsequent ticks, so repeated ticks do not re-spend on already-scored models.",
+      "given": "On a previous tick model X was benched and persisted (quality_score + tier present on its endpoint record / Q-value seeded for model:X). The discovery list on the current tick still includes X plus one genuinely new model Y.",
+      "when": "The current discovery tick runs and diffs discovered against calibrated.",
+      "then": "Only Y is benched, scored, persisted, and announced; X is excluded from the bench queue (no second bench call, no second PATCH, no duplicate cost for X). The notification summarizes Y only. Re-running the same tick with no new models after Y is calibrated yields the no-op silent tick.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "calibration_state": "persisted quality_score on the endpoint record is the dedupe key; presence => skip rebench",
+        "idempotency_guarantee": "bench-once-per-model until explicit recalibrate; ~6h cadence must not churn paid benches",
+        "relation": "complements the no-new-models-noop-tick spec"
+      }
+    },
+    {
+      "category": "feed-rl-improvement-loop",
+      "description": "A newly calibrated model becomes a selectable candidate in the existing RL improvement loop after benching.",
+      "given": "A new local Ollama model Z has just been benched and its calibration persisted by the discovery task, and a model:Z action is seeded/recorded into rl_q_entry for the sched state_key so it intersects locally_served_models().",
+      "when": "The next run_improvement_cycle runs select_model_for_cycle (ε-greedy over the intersection of rl_q_entry actions and locally-served models).",
+      "then": "model:Z is present in the candidate set (intersection of Q-table actions and endpoints), so it is eligible to be explored (ε) or exploited (argmax) and can accrue real rewards via record_reward_to_rl — i.e. the discovery task hands new models off to the existing RL loop rather than leaving them inert. A newly calibrated cloud-only model that is NOT in locally_served_models() is correctly excluded from the local-cycle candidate set (no fabricated local probe / no accidental paid OR spend).",
+      "negative_spec": false,
+      "domain_conventions": {
+        "rl_state_key": "brain:model:selection (state_key() in sched_service.rs)",
+        "q_table": "SpacetimeDB rl_q_entry keyed by state_key; action form model:<name>",
+        "candidate_intersection": "select_model_for_cycle intersects rl_q_entry actions with locally_served_models() (ollama/openai_compat only)",
+        "cloud_exclusion": "cloud-only models stay out of the local probe loop to avoid fabricated rewards + real OR cents (matches existing select_model_for_cycle guard)"
+      }
+    },
+    {
+      "category": "prefer-free-and-local-before-paid",
+      "description": "Within a cycle, free-tier and local benches are dispatched before any paid cloud bench, so budget is spent only after the no-cost candidates are exhausted.",
+      "given": "A discovery tick finds a mix of new models: local Ollama models, OpenRouter free-tier models, and OpenRouter paid models, with a configured per-cycle cost cap.",
+      "when": "The task orders the bench queue and begins dispatching benches.",
+      "then": "All local and free-tier candidates are benched first (they consume no paid budget), and only after those complete does the task spend remaining budget on paid cloud models in tier-priority order until the cost cap is reached. This ordering holds even when the cap would block all paid candidates — the free/local results are still produced, persisted, and announced.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "preference_order": "local Ollama -> OpenRouter free-tier -> OpenRouter paid (budget-gated)",
+        "constraint": "CLAUDE.md HARD CONSTRAINT: free-tier/local benching is preferred",
+        "interaction": "works together with cost-cap-guard-negative spec"
+      }
+    },
+    {
+      "category": "discovery-provider-unreachable-whole-cycle",
+      "description": "When the discovery surface itself is unreachable, the tick degrades to a no-op without crashing the daemon.",
+      "given": "GET /api/inference/endpoints (or the `hex inference discover` REST equivalent) is unreachable or returns a non-2xx status at the start of the tick (nexus self-loopback churn, provider catalog fetch failure).",
+      "when": "The discovery task tries to enumerate available models for diffing.",
+      "then": "The task logs the fetch failure at warn level, performs no benching, spends no money, emits no notification, and returns without panicking; the loop proceeds to the next interval.tick() and retries on the next cadence. An empty/error endpoints response is treated as 'nothing to discover this tick', identical to the existing locally_served_models() error-tolerant contract.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "fetch_failure_handling": "non-2xx or transport error on endpoints fetch => warn + skip tick, never daemon-fatal",
+        "consistency": "mirrors locally_served_models() Err handling and the in-process inference_complete loopback note (ADR-2026-04-27-0145)",
+        "retry": "next ~6h interval.tick()"
+      }
+    }
+  ]
+}

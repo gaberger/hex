@@ -222,6 +222,76 @@ pub enum InferenceAction {
         #[arg(long, default_value = "What is hex?")]
         prompt: String,
     },
+    /// Manage LoRA idiom-expert training corpora (ADR-2606161300 Phase 0)
+    Corpus {
+        #[command(subcommand)]
+        action: CorpusAction,
+    },
+    /// Manage LoRA idiom-expert adapters (ADR-2606161300 Phase 1)
+    Adapter {
+        #[command(subcommand)]
+        action: AdapterAction,
+    },
+}
+
+/// LoRA adapter registry subcommands (ADR-2606161300 Phase 1).
+#[derive(Subcommand)]
+pub enum AdapterAction {
+    /// Register a trained LoRA adapter against a (base, tier, expert) tuple
+    Register {
+        /// Expert this adapter realizes (e.g. hex-boundaries)
+        #[arg(long)]
+        expert: String,
+        /// Frozen base model the adapter rides on (e.g. qwen2.5-coder:32b)
+        #[arg(long)]
+        base: String,
+        /// Tier served (1, 2, or 25 for T2.5)
+        #[arg(long)]
+        tier: u8,
+        /// Reference to the trained GGUF adapter artifact
+        #[arg(long)]
+        artifact: String,
+        /// Corpus version the adapter was trained on
+        #[arg(long = "corpus-version")]
+        corpus_version: String,
+    },
+    /// List registered adapters (flags enabled / promoted / stale)
+    List,
+    /// Remove an adapter by id (restores the bare base — never weakens a gate)
+    Remove {
+        /// Adapter id (`<expert>:<base>:t<tier>`, from `adapter list`)
+        id: String,
+    },
+    /// Disable an adapter by id without removing it
+    Disable {
+        /// Adapter id (`<expert>:<base>:t<tier>`)
+        id: String,
+    },
+    /// Re-enable a previously disabled adapter by id
+    Enable {
+        /// Adapter id (`<expert>:<base>:t<tier>`)
+        id: String,
+    },
+    /// Bench-gate an adapter: base vs base+adapter acceptance lift (ADR-2606161300 §5)
+    Evaluate {
+        /// Expert/adapter id to evaluate
+        expert: String,
+    },
+}
+
+/// LoRA idiom-expert corpus subcommands (ADR-2606161300 Phase 0).
+#[derive(Subcommand)]
+pub enum CorpusAction {
+    /// Build an expert's corpus from hex's own ADRs/specs/exemplars
+    Build {
+        /// Expert name (e.g. hex-boundaries)
+        expert: String,
+        /// Compute the manifest without writing any files
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// List known experts and their current corpus manifest
+    List,
 }
 
 /// Write the full inference endpoint list to ~/.hex/inference-servers.json.
@@ -294,6 +364,225 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
             bench_provider(&target, model.as_deref(), quick, compare.as_deref(), save).await
         }
         InferenceAction::GpuCheck { model, prompt } => gpu_check(&model, &prompt).await,
+        InferenceAction::Corpus { action } => match action {
+            CorpusAction::Build { expert, dry_run } => corpus_build_cmd(&expert, dry_run).await,
+            CorpusAction::List => corpus_list_cmd().await,
+        },
+        InferenceAction::Adapter { action } => match action {
+            AdapterAction::Register { expert, base, tier, artifact, corpus_version } => {
+                adapter_register_cmd(&expert, &base, tier, &artifact, &corpus_version).await
+            }
+            AdapterAction::List => adapter_list_cmd().await,
+            AdapterAction::Remove { id } => adapter_remove_cmd(&id).await,
+            AdapterAction::Disable { id } => adapter_set_enabled_cmd(&id, false).await,
+            AdapterAction::Enable { id } => adapter_set_enabled_cmd(&id, true).await,
+            AdapterAction::Evaluate { expert } => adapter_evaluate_cmd(&expert).await,
+        },
+    }
+}
+
+/// `hex inference adapter register ...` — register a trained LoRA adapter.
+async fn adapter_register_cmd(
+    expert: &str,
+    base: &str,
+    tier: u8,
+    artifact: &str,
+    corpus_version: &str,
+) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+    let body = serde_json::json!({
+        "expert": expert,
+        "base_model": base,
+        "tier": tier,
+        "artifact_ref": artifact,
+        "corpus_version": corpus_version,
+    });
+    let resp = nexus.post("/api/inference/adapters", &body).await?;
+    if let Some(err) = resp.get("error").and_then(|v| v.as_str()) {
+        println!("  {} register failed: {}", "✗".red(), err);
+        anyhow::bail!("register failed: {err}");
+    }
+    let id = resp.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+    println!("  {} Registered adapter {}", "✓".green(), id.bold());
+    Ok(())
+}
+
+/// `hex inference adapter list` — show registered adapters with their flags.
+async fn adapter_list_cmd() -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+    let resp = nexus.get("/api/inference/adapters").await?;
+    let adapters = resp.get("adapters").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+    println!();
+    println!("  {}", "── LoRA adapters ──".cyan());
+    if adapters.is_empty() {
+        println!("  {}", "(none registered)".dimmed());
+        println!();
+        return Ok(());
+    }
+    for a in &adapters {
+        let id = a.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+        let enabled = a.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+        let promoted = a.get("promoted").and_then(|v| v.as_bool()).unwrap_or(false);
+        let stale = a.get("stale").and_then(|v| v.as_bool()).unwrap_or(false);
+        let dot = if enabled { "●".green() } else { "○".yellow() };
+        let mut flags: Vec<String> = Vec::new();
+        if promoted { flags.push("promoted".green().to_string()); }
+        if stale { flags.push("STALE".red().to_string()); }
+        if !enabled { flags.push("disabled".dimmed().to_string()); }
+        let suffix = if flags.is_empty() { String::new() } else { format!("  [{}]", flags.join(", ")) };
+        println!("  {} {}{}", dot, id, suffix);
+    }
+    println!();
+    Ok(())
+}
+
+/// `hex inference adapter remove <id>`.
+async fn adapter_remove_cmd(id: &str) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+    let resp = nexus.delete(&format!("/api/inference/adapters/{id}")).await?;
+    if resp.get("removed").and_then(|v| v.as_bool()).unwrap_or(false) {
+        println!("  {} Removed adapter {} (bare base restored)", "✓".green(), id);
+    } else {
+        println!("  {} No such adapter: {}", "!".yellow(), id);
+    }
+    Ok(())
+}
+
+/// `hex inference adapter disable|enable <id>`.
+async fn adapter_set_enabled_cmd(id: &str, enabled: bool) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+    let body = serde_json::json!({ "enabled": enabled });
+    let resp = nexus.patch(&format!("/api/inference/adapters/{id}"), &body).await?;
+    if resp.get("error").is_some() {
+        println!("  {} No such adapter: {}", "!".yellow(), id);
+    } else {
+        let verb = if enabled { "Enabled" } else { "Disabled" };
+        println!("  {} {} adapter {}", "✓".green(), verb, id);
+    }
+    Ok(())
+}
+
+/// `hex inference adapter evaluate <expert>` — bench-gate base vs base+adapter.
+async fn adapter_evaluate_cmd(expert: &str) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+    println!("  {} Evaluating '{}' (base vs base+adapter)…", "⬡".cyan(), expert);
+    let body = serde_json::json!({ "expert": expert });
+    let resp = nexus
+        .post_long(&format!("/api/inference/adapters/{expert}/evaluate"), &body)
+        .await?;
+    if let Some(err) = resp.get("error").and_then(|v| v.as_str()) {
+        println!("  {} evaluate failed: {}", "✗".red(), err);
+        anyhow::bail!("evaluate failed: {err}");
+    }
+    print_adapter_verdict(&resp);
+    Ok(())
+}
+
+/// Pretty-print the bench-gate verdict returned by the evaluate endpoint.
+fn print_adapter_verdict(v: &serde_json::Value) {
+    let base = v.get("acceptance_base").and_then(|x| x.as_f64()).unwrap_or(0.0);
+    let adapter = v.get("acceptance_adapter").and_then(|x| x.as_f64()).unwrap_or(0.0);
+    let promoted = v.get("promoted").and_then(|x| x.as_bool()).unwrap_or(false);
+    let reason = v.get("reason").and_then(|x| x.as_str()).unwrap_or("");
+
+    println!();
+    println!("  {}", "── bench-gate verdict ──".cyan());
+    println!("  Acceptance (base):     {:.2}", base);
+    println!("  Acceptance (adapter):  {:.2}", adapter);
+    if let Some(q) = v.get("quality_delta").and_then(|x| x.as_f64()) {
+        println!("  Codegen quality delta: {:+.2}", q);
+    }
+    if let Some(t) = v.get("throughput_delta_pct").and_then(|x| x.as_f64()) {
+        println!("  Throughput delta:      {:+.1}%", t);
+    }
+    if promoted {
+        println!("  {} {}", "PROMOTED".green().bold(), reason.dimmed());
+    } else {
+        println!("  {} {}", "NOT promoted".yellow(), reason.dimmed());
+    }
+    println!();
+}
+
+/// `hex inference corpus build <expert> [--dry-run]` — extract an auditable LoRA
+/// training corpus from hex's own ADRs/specs/exemplars (ADR-2606161300 §2).
+async fn corpus_build_cmd(expert: &str, dry_run: bool) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    let body = serde_json::json!({ "expert": expert, "dry_run": dry_run });
+    // Augmentation may issue tier-model calls — use the long-timeout client.
+    let manifest = nexus.post_long("/api/inference/corpus/build", &body).await?;
+    if let Some(err) = manifest.get("error").and_then(|v| v.as_str()) {
+        println!("  {} corpus build failed: {}", "✗".red(), err);
+        anyhow::bail!("corpus build failed: {err}");
+    }
+    print_corpus_manifest(&manifest, dry_run);
+    Ok(())
+}
+
+/// `hex inference corpus list` — known experts + their current manifest.
+async fn corpus_list_cmd() -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    let resp = nexus.get("/api/inference/corpus/list").await?;
+    let experts = resp.get("experts").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+    println!();
+    println!("  {}", "── LoRA idiom experts ──".cyan());
+    for e in &experts {
+        let name = e.get("expert").and_then(|v| v.as_str()).unwrap_or("?");
+        let manifest = e.get("manifest");
+        let built = manifest.map(|m| !m.is_null()).unwrap_or(false);
+        if built {
+            let count = manifest
+                .and_then(|m| m.get("record_count"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let hash = manifest
+                .and_then(|m| m.get("content_hash"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            println!("  {} {:<18} {} records · hash {}", "●".green(), name, count, hash.dimmed());
+        } else {
+            println!("  {} {:<18} {}", "○".yellow(), name, "not built".dimmed());
+        }
+    }
+    println!();
+    Ok(())
+}
+
+/// Pretty-print a CorpusManifest JSON returned by the nexus build endpoint.
+fn print_corpus_manifest(m: &serde_json::Value, dry_run: bool) {
+    let expert = m.get("expert").and_then(|v| v.as_str()).unwrap_or("?");
+    let version = m.get("corpus_version").and_then(|v| v.as_str()).unwrap_or("?");
+    let count = m.get("record_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let hash = m.get("content_hash").and_then(|v| v.as_str()).unwrap_or("?");
+
+    println!();
+    println!("  {}", format!("── corpus: {expert} ──").cyan());
+    if dry_run {
+        println!("  {}", "(dry-run — nothing written)".dimmed());
+    }
+    println!("  Records:        {count}");
+    println!("  Corpus version: {version}");
+    println!("  Content hash:   {hash}");
+    if let Some(globs) = m.get("source_globs").and_then(|v| v.as_array()) {
+        println!("  Source globs:");
+        for g in globs {
+            if let Some(s) = g.as_str() {
+                println!("    • {}", s.dimmed());
+            }
+        }
+    }
+    if !dry_run {
+        println!("  {}", format!("Written to .hex/corpus/{expert}/").dimmed());
     }
 }
 
@@ -2001,13 +2290,26 @@ async fn bench_chat(
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,
+            // Reasoning models (Nemotron, DeepSeek-R1, qwen3) spend output budget on
+            // chain-of-thought before emitting the final answer. Without a generous
+            // cap they hit finish_reason=length mid-thought and return empty content,
+            // scoring 0 despite being correct. 8192 leaves room to finish.
+            "max_tokens": 8192,
         });
         let resp = http.post(&chat_url)
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&body)
             .send().await?;
         let d: serde_json::Value = resp.json().await?;
-        let content = d["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
+        let msg = &d["choices"][0]["message"];
+        let mut content = msg["content"].as_str().unwrap_or("").to_string();
+        // Reasoning models stream CoT into a separate `reasoning` field and only
+        // fill `content` once they conclude. If content is empty (truncated or the
+        // provider splits the fields), fall back to reasoning so a responsive model
+        // isn't scored as a non-response.
+        if content.trim().is_empty() {
+            content = msg["reasoning"].as_str().unwrap_or("").to_string();
+        }
         let tokens = d["usage"]["completion_tokens"].as_u64().unwrap_or(content.len() as u64 / 4);
         let wall = start.elapsed().as_secs_f64();
         Ok((content, tokens, wall))
@@ -2018,11 +2320,21 @@ async fn bench_chat(
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": false,
-            "options": {"temperature": 0.2},
+            // Ollama defaults num_predict to 128 — far too short for a reasoning
+            // model, which burns that budget on chain-of-thought and returns an
+            // empty/truncated answer (scoring 0). Mirror the OpenRouter cap.
+            "options": {"temperature": 0.2, "num_predict": 8192},
         });
         let resp = http.post(&chat_url).json(&body).send().await?;
         let d: serde_json::Value = resp.json().await?;
-        let content = d["message"]["content"].as_str().unwrap_or("").to_string();
+        let msg = &d["message"];
+        let mut content = msg["content"].as_str().unwrap_or("").to_string();
+        // Reasoning models served via Ollama (qwen3, deepseek-r1) emit CoT into a
+        // separate `thinking` field when think-mode is on. If the answer content
+        // is empty, fall back to thinking so a responsive model isn't scored empty.
+        if content.trim().is_empty() {
+            content = msg["thinking"].as_str().unwrap_or("").to_string();
+        }
         let tokens = d["eval_count"].as_u64().unwrap_or(content.len() as u64 / 4);
         let wall = start.elapsed().as_secs_f64();
         Ok((content, tokens, wall))
@@ -2425,6 +2737,28 @@ async fn bench_provider(
             r.model = format!("hex/{}", r.model);
         } else {
             println!("{} nexus not reachable — cannot bench cloud provider '{}' (vault key needs nexus)", "✗".red(), r.id);
+            return Ok(());
+        }
+    }
+
+    // OpenRouter targets keep the direct path (to measure true latency), but
+    // bench_chat reads OPENROUTER_API_KEY from the process env — and hex stores
+    // it in the STDB vault, not env. Without this the Bearer header is empty and
+    // every request fails auth, scoring the model 0. Hydrate env from the vault.
+    if (r.ptype == "openrouter" || r.url.contains("openrouter.ai"))
+        && std::env::var("OPENROUTER_API_KEY").map(|v| v.trim().is_empty()).unwrap_or(true)
+    {
+        if nexus.ensure_running().await.is_ok() {
+            if let Ok(resp) = nexus.get("/api/secrets/vault/OPENROUTER_API_KEY").await {
+                if let Some(k) = resp.get("value").and_then(|v| v.as_str()) {
+                    if !k.trim().is_empty() {
+                        std::env::set_var("OPENROUTER_API_KEY", k);
+                    }
+                }
+            }
+        }
+        if std::env::var("OPENROUTER_API_KEY").map(|v| v.trim().is_empty()).unwrap_or(true) {
+            println!("{} OPENROUTER_API_KEY not in env or vault — bench will fail auth. Set it with `hex secrets set OPENROUTER_API_KEY <key>`", "✗".red());
             return Ok(());
         }
     }

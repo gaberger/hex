@@ -1,0 +1,5 @@
+# Runtime data — chat history, etc. Not source, rebuilt/appended at runtime.
+.data/
+
+# Root .gitignore already covers node_modules/ repo-wide, listed here for clarity.
+node_modules/

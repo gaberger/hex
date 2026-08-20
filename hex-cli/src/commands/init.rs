@@ -130,6 +130,13 @@ pub async fn run(args: InitArgs) -> Result<()> {
         create_scaffold(&target)?;
     }
 
+    // ── 6a. git init + initial commit ─────────────────────────────
+    // Every example under hex/examples/ is its own git repo; scaffolded projects
+    // weren't, so `hex swarm build`'s post-gate auto-commit (adversarial.rs) and
+    // `hex do run`'s evidence-gated commits had nowhere to land. Non-fatal: a
+    // missing git binary or an already-initialized repo just skips silently.
+    let git_committed = ensure_git_initialized_and_committed(&target, &project_name);
+
     // ── 7. Pull embedded templates from hex-nexus (skills, agents, hooks) ──
     let nexus_result = pull_templates_from_nexus(&target, &project_name).await;
 
@@ -149,6 +156,9 @@ pub async fn run(args: InitArgs) -> Result<()> {
     println!("  {} docs/adrs/", "\u{2713}".green());
     if args.scaffold {
         println!("  {} src/ (hexagonal layers)", "\u{2713}".green());
+    }
+    if git_committed {
+        println!("  {} git init + initial commit", "\u{2713}".green());
     }
 
     match &nexus_result {
@@ -486,28 +496,33 @@ fn create_adr_rules_toml(target: &Path) -> Result<()> {
 # - [rules]           read by `hex enforce check-file` (forbidden path patterns)
 # - [[hex_layer_rules]] read by `hex enforce check-file` (layer boundary rules)
 # - [[adr_rules]]     read by `hex analyze` (ADR compliance violation patterns)
+#
+# path_pattern is an unanchored substring match (see hex_core::rules::boundary),
+# so these match regardless of language or package-name nesting under src/ —
+# e.g. "/domain/" matches both "src/domain/foo.ts" and "src/mypkg/core/domain/foo.py",
+# while the trailing slash avoids false positives like "src/domainxyz/foo.py".
 
 [rules]
 forbidden_paths = ["node_modules", ".git", "dist", ".env", "target"]
 
 [[hex_layer_rules]]
-path_pattern = "src/adapters/primary"
+path_pattern = "/adapters/primary/"
 layer = "adapters/primary"
 
 [[hex_layer_rules]]
-path_pattern = "src/adapters/secondary"
+path_pattern = "/adapters/secondary/"
 layer = "adapters/secondary"
 
 [[hex_layer_rules]]
-path_pattern = "src/domain"
+path_pattern = "/domain/"
 layer = "domain"
 
 [[hex_layer_rules]]
-path_pattern = "src/ports"
+path_pattern = "/ports/"
 layer = "ports"
 
 [[hex_layer_rules]]
-path_pattern = "src/usecases"
+path_pattern = "/usecases/"
 layer = "usecases"
 
 # Example ADR compliance rule (uncomment and customize):
@@ -534,6 +549,63 @@ fn create_dir_if_missing(path: &Path) -> Result<()> {
             .with_context(|| format!("Failed to create directory: {}", path.display()))?;
     }
     Ok(())
+}
+
+/// Git-init the scaffolded project (if not already a repo) and make an initial
+/// commit, so every hex-managed project starts under version control — matching the
+/// convention of every example in hex/examples/. Uses the commit-local factory
+/// identity (ADR-2606071323 §4: attributable, never masquerades as the operator).
+/// Returns true iff a commit was actually made. Entirely non-fatal: a missing git
+/// binary, an already-initialized repo, or nothing to commit are all silent no-ops —
+/// scaffolding itself already succeeded by the time this runs.
+fn ensure_git_initialized_and_committed(target: &Path, project_name: &str) -> bool {
+    if !target.join(".git").exists() {
+        match std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(target)
+            .output()
+        {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => {
+                tracing::warn!(
+                    stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+                    "git init failed (non-fatal)"
+                );
+                return false;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "git not found — skipping git init (non-fatal)");
+                return false;
+            }
+        }
+    }
+
+    let add = std::process::Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(target)
+        .output();
+    if !matches!(&add, Ok(out) if out.status.success()) {
+        return false;
+    }
+
+    let msg = format!(
+        "Initial hex scaffold for {project_name}\n\nCo-Authored-By: hex-factory <noreply@hex.local>"
+    );
+    match std::process::Command::new("git")
+        .args([
+            "-c", "user.name=hex-factory",
+            "-c", "user.email=factory@hex.local",
+            "commit", "-q", "-m", &msg,
+        ])
+        .current_dir(target)
+        .output()
+    {
+        Ok(out) => out.status.success(), // false covers "nothing to commit" — fine, non-fatal
+        Err(e) => {
+            tracing::warn!(error = %e, "git not found — skipping initial commit (non-fatal)");
+            false
+        }
+    }
 }
 
 /// Lightweight init for `hex dev` — creates `.hex/project.json` and registers

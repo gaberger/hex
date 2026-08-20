@@ -550,6 +550,16 @@ pub async fn inference_complete(
                 model.clone()
             };
         }
+        // LoRA idiom-expert attachment (ADR-2606161300 Phase 1). If an enabled adapter
+        // is registered for this local base, swap to the derived base+adapter model.
+        // This changes ONLY which weights generate the draft — every correctness gate
+        // (analyze/specs/compile) is downstream and untouched. Absent/disabled/unbuilt
+        // → leaves ep.model as the bare base. Best-effort, never errors.
+        if let Some(lora_model) =
+            crate::lora_attach::resolve_serving_model(&ep.provider, &ep.model, &ep.url).await
+        {
+            ep.model = lora_model;
+        }
         // Resolve secret key reference to actual value from vault.
         // Hard 3s timeout — a slow SpacetimeDB must not stall the handler indefinitely.
         // Fail immediately on miss or timeout: passing the unresolved ref string as a
@@ -1195,6 +1205,332 @@ pub async fn queue_pending(
             Json(json!({ "error": e.to_string() })),
         ),
     }
+}
+
+// ── LoRA idiom-expert corpus (ADR-2606161300 Phase 0) ───────────────────────
+
+/// Resolve the tier model used for corpus augmentation. Cheap T1 by default;
+/// overridable so a box without qwen3 can point at whatever it serves.
+fn resolve_lora_augment_model() -> String {
+    // 1. env (highest precedence)
+    if let Ok(m) = std::env::var("HEX_LORA_AUGMENT_MODEL") {
+        if !m.trim().is_empty() {
+            return m;
+        }
+    }
+    // 2. .hex/project.json → inference.lora.augment_model
+    let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
+        .or_else(|_| std::env::var("HEX_PROJECT_DIR"))
+        .unwrap_or_else(|_| ".".to_string());
+    let project_json = std::path::Path::new(&project_dir).join(".hex/project.json");
+    if let Ok(content) = std::fs::read_to_string(&project_json) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(m) = v["inference"]["lora"]["augment_model"].as_str() {
+                if !m.trim().is_empty() {
+                    return m.to_string();
+                }
+            }
+        }
+    }
+    // 3. default: fast local T1
+    "qwen3:4b".to_string()
+}
+
+/// Resolve the registered local Ollama base URL (empty string if none registered).
+/// Used for model-driven corpus augmentation and adapter eval — both measure/generate
+/// against local Ollama, since `state.inference_port` is only wired in standalone mode.
+async fn resolve_ollama_url(state: &SharedState) -> String {
+    match &state.inference_stdb {
+        Some(stdb) => stdb
+            .list_providers()
+            .await
+            .ok()
+            .and_then(|ps| {
+                ps.into_iter()
+                    .find(|p| p.provider_type == "ollama" && !p.base_url.is_empty())
+                    .map(|p| p.base_url)
+            })
+            .unwrap_or_default(),
+        None => String::new(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CorpusBuildRequest {
+    pub expert: String,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+/// POST /api/inference/corpus/build {expert, dry_run} — extract an auditable training
+/// corpus for one idiom expert from hex's own ADRs/specs/exemplars (ADR-2606161300 §2).
+///
+/// Returns the [`hex_core::corpus::CorpusManifest`]. On `dry_run`, nothing is written.
+pub async fn corpus_build(
+    State(state): State<SharedState>,
+    Json(body): Json<CorpusBuildRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let ollama_url = resolve_ollama_url(&state).await;
+    let cfg = crate::corpus_build::CorpusBuildConfig {
+        repo_root: crate::corpus_build::resolve_repo_root(),
+        qa_count: crate::state_config::resolve_lora_corpus_qa_count(),
+        dry_run: body.dry_run,
+        augment_model: resolve_lora_augment_model(),
+        ollama_url: if ollama_url.is_empty() { None } else { Some(ollama_url) },
+    };
+    match crate::corpus_build::build_corpus(&body.expert, &cfg).await {
+        Ok(m) => (
+            StatusCode::OK,
+            Json(json!({
+                "expert": m.expert,
+                "corpus_version": m.corpus_version,
+                "source_globs": m.source_globs,
+                "record_count": m.record_count,
+                "content_hash": m.content_hash,
+                "dry_run": body.dry_run,
+            })),
+        ),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))),
+    }
+}
+
+/// GET /api/inference/corpus/list — list known experts + their current manifest
+/// (or `null` when not yet built).
+pub async fn corpus_list() -> (StatusCode, Json<serde_json::Value>) {
+    let repo_root = crate::corpus_build::resolve_repo_root();
+    let experts: Vec<serde_json::Value> = hex_core::corpus::default_knowledge_units()
+        .into_iter()
+        .map(|unit| {
+            let manifest_path = repo_root
+                .join(".hex/corpus")
+                .join(&unit.expert)
+                .join("manifest.json");
+            let manifest = std::fs::read_to_string(&manifest_path)
+                .ok()
+                .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok());
+            json!({
+                "expert": unit.expert,
+                "source_globs": unit.source_globs,
+                "manifest": manifest,
+            })
+        })
+        .collect();
+    (StatusCode::OK, Json(json!({ "experts": experts })))
+}
+
+// ── LoRA adapter registry (ADR-2606161300 Phase 1) ──────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AdapterRegisterRequest {
+    pub expert: String,
+    pub base_model: String,
+    pub tier: u8,
+    pub artifact_ref: String,
+    pub corpus_version: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Render an [`AdapterRecord`] to JSON, including its id and computed `stale` flag.
+fn adapter_to_json(r: &hex_core::corpus::AdapterRecord, fresh_hash: Option<&str>) -> serde_json::Value {
+    // Stale = registered corpus_version differs from a freshly-built manifest hash
+    // for the expert (spec corpus-version-staleness-trigger). Unknown freshness
+    // (couldn't rebuild) → not flagged stale, to avoid false alarms.
+    let stale = fresh_hash.map(|h| h != r.corpus_version).unwrap_or(false);
+    json!({
+        "id": crate::lora_registry::record_id(r),
+        "expert": r.expert,
+        "base_model": r.base_model,
+        "tier": r.tier,
+        "artifact_ref": r.artifact_ref,
+        "corpus_version": r.corpus_version,
+        "enabled": r.enabled,
+        "promoted": r.promoted,
+        "stale": stale,
+    })
+}
+
+/// POST /api/inference/adapters — register (or update) a LoRA adapter record.
+pub async fn adapter_register(
+    Json(body): Json<AdapterRegisterRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let record = hex_core::corpus::AdapterRecord {
+        expert: body.expert,
+        base_model: body.base_model,
+        tier: body.tier,
+        artifact_ref: body.artifact_ref,
+        corpus_version: body.corpus_version,
+        enabled: body.enabled,
+        promoted: false,
+    };
+    let id = crate::lora_registry::record_id(&record);
+    match crate::lora_registry::AdapterStore::from_env().register(record) {
+        Ok(()) => (StatusCode::OK, Json(json!({ "id": id, "registered": true }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+    }
+}
+
+/// GET /api/inference/adapters — list adapters, flagging stale ones.
+pub async fn adapter_list() -> (StatusCode, Json<serde_json::Value>) {
+    let store = crate::lora_registry::AdapterStore::from_env();
+    let records = store.list();
+
+    // Freshly recompute each distinct expert's corpus hash once (deterministic,
+    // model-free) to evaluate staleness without re-hashing per record.
+    let cfg = crate::corpus_build::CorpusBuildConfig {
+        repo_root: crate::corpus_build::resolve_repo_root(),
+        qa_count: crate::state_config::resolve_lora_corpus_qa_count(),
+        dry_run: true,
+        augment_model: String::new(),
+        // Staleness must be a deterministic function of the source, so no model.
+        ollama_url: None,
+    };
+    let mut fresh: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for r in &records {
+        if !fresh.contains_key(&r.expert) {
+            if let Ok(h) = crate::corpus_build::current_corpus_hash(&r.expert, &cfg).await {
+                fresh.insert(r.expert.clone(), h);
+            }
+        }
+    }
+
+    let adapters: Vec<serde_json::Value> = records
+        .iter()
+        .map(|r| adapter_to_json(r, fresh.get(&r.expert).map(String::as_str)))
+        .collect();
+    (StatusCode::OK, Json(json!({ "adapters": adapters })))
+}
+
+/// DELETE /api/inference/adapters/{id} — remove an adapter (restores bare base).
+pub async fn adapter_remove(Path(id): Path<String>) -> (StatusCode, Json<serde_json::Value>) {
+    match crate::lora_registry::AdapterStore::from_env().remove(&id) {
+        Ok(true) => (StatusCode::OK, Json(json!({ "removed": true, "id": id }))),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(json!({ "error": "no such adapter", "id": id }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AdapterPatchRequest {
+    pub enabled: bool,
+}
+
+/// PATCH /api/inference/adapters/{id} {enabled} — enable/disable an adapter.
+pub async fn adapter_patch(
+    Path(id): Path<String>,
+    Json(body): Json<AdapterPatchRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match crate::lora_registry::AdapterStore::from_env().set_enabled(&id, body.enabled) {
+        Ok(true) => (StatusCode::OK, Json(json!({ "id": id, "enabled": body.enabled }))),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(json!({ "error": "no such adapter", "id": id }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+    }
+}
+
+/// POST /api/inference/adapters/{expert}/evaluate — bench-gate an adapter.
+///
+/// Runs the Phase-1 acceptance proxy on the bare base and on base+adapter, then applies
+/// the BLOCKING promotion gate (ADR-2606161300 §5, spec `bench-gate-acceptance-lift-blocking`):
+/// promote ONLY on first-draft acceptance lift with no quality/throughput regression.
+/// Requests resource-governor admission first and DEFERS (never OOMs) under pressure.
+/// The verdict — not the training loss — decides, and it is recorded as a lesson.
+pub async fn adapter_evaluate(
+    State(state): State<SharedState>,
+    Path(expert): Path<String>,
+    Json(_body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    // 1. Resolve the registered adapter for this expert.
+    let store = crate::lora_registry::AdapterStore::from_env();
+    let Some(record) = store.list().into_iter().find(|r| r.expert == expert) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("no registered adapter for expert '{expert}'") })),
+        );
+    };
+    let id = crate::lora_registry::record_id(&record);
+
+    // 2. Resource-governor admission BEFORE any heavy dispatch (spec
+    //    resource-governor-training-admission-negative). Footprint is overridable so
+    //    an already-loaded model isn't double-counted.
+    let footprint = std::env::var("HEX_LORA_EVAL_FOOTPRINT_MB")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(4000);
+    if let Err(reason) = crate::lora_eval::admit_local_job(footprint, 1000, 512) {
+        tracing::warn!(expert = %expert, %reason, "LoRA eval deferred by resource governor");
+        return (StatusCode::OK, Json(json!({ "deferred": true, "reason": reason })));
+    }
+
+    // 3. Resolve the local Ollama URL and ensure the derived base+adapter model exists.
+    //    The eval compares two local Ollama models directly (the bench gate's authority
+    //    rests on real measurement), so it needs a registered Ollama provider.
+    let ollama_url = resolve_ollama_url(&state).await;
+    if ollama_url.is_empty() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "no local Ollama provider registered — cannot evaluate" })),
+        );
+    }
+    let Some(derived) =
+        crate::lora_attach::resolve_serving_model("ollama", &record.base_model, &ollama_url).await
+    else {
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "error": "adapter could not be attached (Ollama create failed) — not promoted",
+                "promoted": false
+            })),
+        );
+    };
+
+    // 4. Measure bare base vs base+adapter, both directly against Ollama.
+    let base = match crate::lora_eval::measure_model(&ollama_url, &record.base_model).await {
+        Ok(m) => m,
+        Err(e) => return (StatusCode::OK, Json(json!({ "error": e, "promoted": false }))),
+    };
+    let adapter = match crate::lora_eval::measure_model(&ollama_url, &derived).await {
+        Ok(m) => m,
+        Err(e) => return (StatusCode::OK, Json(json!({ "error": e, "promoted": false }))),
+    };
+
+    // 5. BLOCKING promotion gate (pure).
+    let verdict = crate::lora_eval::decide_promotion(
+        &base,
+        &adapter,
+        crate::lora_eval::DEFAULT_QUALITY_TOLERANCE,
+        crate::lora_eval::DEFAULT_THROUGHPUT_BUDGET_PCT,
+    );
+
+    // 6. Persist the promoted flag; absence of lift leaves it registered-not-default.
+    if let Err(e) = store.set_promoted(&id, verdict.promoted) {
+        tracing::warn!(%id, error = %e, "failed to persist promotion flag");
+    }
+
+    let result = json!({
+        "expert": expert,
+        "id": id,
+        "acceptance_base": base.acceptance,
+        "acceptance_adapter": adapter.acceptance,
+        "quality_delta": adapter.quality - base.quality,
+        "throughput_delta_pct": if base.tok_per_sec > 0.0 {
+            (adapter.tok_per_sec - base.tok_per_sec) / base.tok_per_sec * 100.0
+        } else { 0.0 },
+        "promoted": verdict.promoted,
+        "reason": verdict.reason,
+        "gate": "phase1-acceptance-proxy (production verdict: agentic bench suite ADR-2606071734)",
+    });
+
+    // 7. Record the verdict as a lesson (queryable by personas in SOP GROUND).
+    if let Some(ref port) = state.state_port {
+        let key = format!("lesson:hex-lora-{expert}");
+        let _ = port.hexflo_memory_store(&key, &result.to_string(), "global").await;
+    }
+
+    (StatusCode::OK, Json(result))
 }
 
 /// PATCH /api/inference/queue/{id} — claim, complete, or fail an inference_task in STDB.

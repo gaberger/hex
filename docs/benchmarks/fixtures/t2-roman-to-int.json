@@ -1,0 +1,27 @@
+{
+  "id": "t2-roman-to-int",
+  "tier": "T2",
+  "axis_focus": [
+    "evidence_gated_success",
+    "react_convergence"
+  ],
+  "instruction": "Implement `pub fn roman_to_int(s: &str) -> i64` in the target file, replacing the stub. It converts a valid Roman numeral string to its integer value, honouring subtractive notation (IV=4, IX=9, XL=40, XC=90, CD=400, CM=900). Symbol values: I=1, V=5, X=10, L=50, C=100, D=500, M=1000. Examples: roman_to_int(\"III\")=3, roman_to_int(\"IV\")=4, roman_to_int(\"IX\")=9, roman_to_int(\"LVIII\")=58, roman_to_int(\"MCMXCIV\")=1994. Edit only this file.",
+  "target_file": "bench-sandbox/src/lib.rs",
+  "oracle": {
+    "kind": "cargo_test",
+    "setup_files": {
+      "bench-sandbox/Cargo.toml": "[package]\nname = \"bench-sandbox\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n",
+      "bench-sandbox/src/lib.rs": "pub fn roman_to_int(_s: &str) -> i64 { 0 }\n",
+      "bench-sandbox/tests/roman.rs": "use bench_sandbox::roman_to_int;\n#[test] fn iii() { assert_eq!(roman_to_int(\"III\"), 3); }\n#[test] fn iv() { assert_eq!(roman_to_int(\"IV\"), 4); }\n#[test] fn ix() { assert_eq!(roman_to_int(\"IX\"), 9); }\n#[test] fn lviii() { assert_eq!(roman_to_int(\"LVIII\"), 58); }\n#[test] fn mcmxciv() { assert_eq!(roman_to_int(\"MCMXCIV\"), 1994); }\n"
+    },
+    "command": "cargo test --manifest-path bench-sandbox/Cargo.toml --test roman"
+  },
+  "graph_context_required": false,
+  "arms": [
+    "react",
+    "fast"
+  ],
+  "status": "verified",
+  "_verification": "oracle RED→GREEN confirmed 2026-06-30 (stub fails, reference impl passes all tests). Standalone [workspace] crate; command uses --manifest-path so it never collides with the hex workspace.",
+  "observed_baseline": {}
+}

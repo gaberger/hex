@@ -1,0 +1,135 @@
+{
+  "adr": "ADR-2607140850",
+  "created_at": "2026-07-14T12:59:21.280604838+00:00",
+  "created_by": "human",
+  "description": "Daily sched_service tick that discovers new HuggingFace models, checks real hardware feasibility, auto-benches local-feasible candidates, and surfaces non-local candidates via hex inbox for human approval before any paid API call. See docs/specs/hf-model-researcher.json for behavioral specs.",
+  "feature": "hf-model-researcher",
+  "id": "wp-hf-model-researcher",
+  "phases": [
+    {
+      "description": "Add discovered_model table to spacetime-modules/hexflo-coordination/src/lib.rs: id, repo, discovered_at, quant_sizes, local_feasible, bench_result, review_status -- following the module's existing table patterns (swarms/tasks/agents/memory).",
+      "gate": {
+        "blocking": true,
+        "command": "cd spacetime-modules/hexflo-coordination && cargo check",
+        "type": "build"
+      },
+      "id": "P1",
+      "name": "discovered_model SpacetimeDB table",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [],
+          "description": "New SpacetimeDB table recording model id/repo, discovery date, smallest known quant size, local-feasibility verdict, bench result (if auto-tested), and review status (if surfaced). Follow the existing swarms/tasks/agents/memory table patterns in this same file.",
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs"
+          ],
+          "id": "P1.1",
+          "layer": "domain",
+          "name": "Add discovered_model table",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "description": "Given a HuggingFace model repo, resolve its smallest available GGUF quantization file size and compare against this box's real capacity (16GB GPU / 30GB RAM). Never trust headline parameter count -- per project memory project_qwen_next_hardware_ceiling and the GLM-5.2 investigation this session, always check actual quant file sizes.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo test -p hex-nexus hardware_feasibility",
+        "type": "test"
+      },
+      "id": "P2",
+      "name": "Hardware-feasibility resolver",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1"
+          ],
+          "description": "Function taking a model repo identifier, resolving its smallest known GGUF quant file size, and returning a feasibility verdict against this box's 16GB GPU / 30GB RAM capacity. Unit test against at least one known-infeasible case (e.g. a 700B+ MoE model) and one known-feasible case.",
+          "files": [
+            "hex-nexus/src/sched_service.rs"
+          ],
+          "id": "P2.1",
+          "layer": "secondary",
+          "name": "Add hardware-feasibility resolver function",
+          "status": "done",
+          "strategy_hint": "inference"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "description": "Add a daily HF_RESEARCH_INTERVAL_SECS=86400 tick to hex-nexus/src/sched_service.rs following the existing run_improvement_cycle/IMPROVEMENT_INTERVAL_SECS pattern. Fetches HuggingFace's public models API via the EXISTING WebFetchPort (hex-core/src/ports/web.rs, FetchOptions{format: FetchFormat::Raw}) -- do not create a new port or adapter. Dedups against discovered_model before inserting.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check -p hex-nexus",
+        "type": "build"
+      },
+      "id": "P3",
+      "name": "Daily discovery tick",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P1.1",
+            "P2.1"
+          ],
+          "description": "New tick function + HF_RESEARCH_INTERVAL_SECS constant in sched_service.rs, calling the existing WebFetchPort with FetchFormat::Raw against HuggingFace's public models API. Dedup against discovered_model rows already present.",
+          "evidence": {
+            "files_found": [
+              "hex-nexus/src/sched_service.rs"
+            ],
+            "matching_commits": [
+              "96e2ebf0e1b674e2ddb6a887c5c3b2aee2d73ffd primary(p3.1): wp-hf-model-researcher — Add daily HF discovery tick",
+              "20c641cd5f8d4b9c28292eb54e2bf38e814b305d feat(p3.1): hex-nexus: rename user-facing brain strings in route handlers, error responses, and log lines that surface to the dashboard or REST clients. Internal HexFlo coordination keys/paths stay (separate ADR)."
+            ],
+            "symbols_matched": []
+          },
+          "files": [
+            "hex-nexus/src/sched_service.rs"
+          ],
+          "id": "P3.1",
+          "layer": "primary",
+          "name": "Add daily HF discovery tick",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "description": "Wire the two branches: local-feasible candidates auto-pull via the same path as `hex inference add ollama --model <name>` and auto-run via the existing `hex bench agentic` / `hex inference bench` commands, no approval gate. Non-local-feasible candidates (needs paid cloud API or exceeds local hardware) are logged to discovered_model and surfaced via the existing hex inbox notify mechanism (hex-nexus/src/coordination/inbox.rs) for human approval. Never auto-test a paid/cloud candidate.",
+      "gate": {
+        "blocking": true,
+        "command": "cargo check --workspace",
+        "type": "build"
+      },
+      "id": "P4",
+      "name": "Wire feasibility branches",
+      "tasks": [
+        {
+          "agent": "hex-coder",
+          "deps": [
+            "P3.1"
+          ],
+          "description": "Local-feasible: auto-pull + auto-bench, no approval gate (free, local-only). Non-local-feasible: log to discovered_model + hex inbox notify, never auto-call a paid provider. Unit test confirms a non-local-feasible candidate never triggers a network call to a paid provider.",
+          "files": [
+            "hex-nexus/src/sched_service.rs",
+            "hex-nexus/src/coordination/inbox.rs"
+          ],
+          "id": "P4.1",
+          "layer": "primary",
+          "name": "Wire local-feasible and non-local branches",
+          "status": "done",
+          "strategy_hint": "codegen"
+        }
+      ],
+      "tier": 2
+    }
+  ],
+  "priority": "normal",
+  "specs": "docs/specs/hf-model-researcher.json",
+  "status": "done"
+}
