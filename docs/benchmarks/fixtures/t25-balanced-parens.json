@@ -1,0 +1,27 @@
+{
+  "id": "t25-balanced-parens",
+  "tier": "T2.5",
+  "axis_focus": [
+    "evidence_gated_success",
+    "react_convergence"
+  ],
+  "instruction": "Implement `pub fn is_balanced(s: &str) -> bool` in the target file, replacing the stub. It returns true iff every bracket in `s` is correctly matched and nested across the three bracket kinds `()`, `[]`, `{}`. Non-bracket characters are ignored. The empty string is balanced. Examples: is_balanced(\"()\")=true, is_balanced(\"()[]{}\")=true, is_balanced(\"{[]}\")=true, is_balanced(\"(]\")=false, is_balanced(\"([)]\")=false, is_balanced(\"(\")=false. Edit only this file.",
+  "target_file": "bench-sandbox/src/lib.rs",
+  "oracle": {
+    "kind": "cargo_test",
+    "setup_files": {
+      "bench-sandbox/Cargo.toml": "[package]\nname = \"bench-sandbox\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n",
+      "bench-sandbox/src/lib.rs": "pub fn is_balanced(_s: &str) -> bool { false }\n",
+      "bench-sandbox/tests/bal.rs": "use bench_sandbox::is_balanced;\n#[test] fn simple() { assert!(is_balanced(\"()\")); }\n#[test] fn mixed() { assert!(is_balanced(\"()[]{}\")); }\n#[test] fn nested() { assert!(is_balanced(\"{[]}\")); }\n#[test] fn empty() { assert!(is_balanced(\"\")); }\n#[test] fn wrong() { assert!(!is_balanced(\"(]\")); }\n#[test] fn interleaved() { assert!(!is_balanced(\"([)]\")); }\n#[test] fn unclosed() { assert!(!is_balanced(\"(\")); }\n"
+    },
+    "command": "cargo test --manifest-path bench-sandbox/Cargo.toml --test bal"
+  },
+  "graph_context_required": false,
+  "arms": [
+    "react",
+    "fast"
+  ],
+  "status": "verified",
+  "_verification": "oracle RED→GREEN confirmed 2026-06-30 (stub fails, reference impl passes all tests). Standalone [workspace] crate; command uses --manifest-path so it never collides with the hex workspace.",
+  "observed_baseline": {}
+}

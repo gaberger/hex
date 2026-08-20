@@ -1,0 +1,6 @@
+# Bundled toolchain artifacts — large, environment-specific, never committed.
+.venv/
+llama.cpp/
+*.gguf
+.requirements.core.txt
+__pycache__/

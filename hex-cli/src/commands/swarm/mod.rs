@@ -111,6 +111,14 @@ pub enum SwarmAction {
         /// After building, run the adversarial review+fix pass (full harness).
         #[arg(long)]
         review: bool,
+        /// Per-call timeout in seconds for the diverge/red-team/synthesize claude -p
+        /// calls (the build phase scales proportionally, 4x this value).
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+        /// Max attempts per claude -p call before giving up (handles transient
+        /// inference-latency timeouts, e.g. the synthesize step).
+        #[arg(long, default_value_t = 3)]
+        retries: u32,
     },
 }
 
@@ -146,7 +154,7 @@ pub async fn run(action: SwarmAction) -> anyhow::Result<()> {
         SwarmAction::Cleanup { stale_hours, apply, .. } => cleanup(stale_hours, apply).await,
         SwarmAction::Run { tasks, concurrency, out } => run_workers(&tasks, concurrency, out.as_deref()).await,
         SwarmAction::Review { target, gate } => run_adversarial_review(&target, &gate).await,
-        SwarmAction::Build { challenge, target, gate, designs, review } => run_cooperative_build(&challenge, &target, &gate, designs, review).await,
+        SwarmAction::Build { challenge, target, gate, designs, review, timeout, retries } => run_cooperative_build(&challenge, &target, &gate, designs, review, timeout, retries).await,
     }
 }
 
@@ -760,6 +768,8 @@ async fn run_cooperative_build(
     gate: &str,
     designs: usize,
     review: bool,
+    timeout: u64,
+    retries: u32,
 ) -> anyhow::Result<()> {
     let repo_root = std::env::current_dir()?;
     println!(
@@ -770,7 +780,7 @@ async fn run_cooperative_build(
         challenge
     );
     println!("  diverge → red-team → synthesize → build{}", if review { " → review → fix" } else { "" });
-    let b = hex_exec::adversarial::run_build(challenge, target, gate, designs, &repo_root).await;
+    let b = hex_exec::adversarial::run_build(challenge, target, gate, designs, &repo_root, timeout, retries).await;
     println!(
         "{} {} designs → {} critiques → spec {}ch → build {}",
         "✓".green().bold(),

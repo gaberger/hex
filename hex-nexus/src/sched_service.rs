@@ -75,6 +75,564 @@ fn state_key() -> String {
     "brain:model:selection".to_string()
 }
 
+// ─── Hardware-feasibility resolver (ADR-2607140850 P2) ─────────────────────
+//
+// Given a HuggingFace model repo, resolve its smallest known GGUF quant file
+// size and judge feasibility against this box's real capacity -- never the
+// headline parameter count. Per the ADR's Drivers: GLM-5.2 advertises a huge
+// headline size but even the community's most aggressive quant needs ~227GB,
+// and qwen3-coder-next OOMs on this box despite looking feasible on paper
+// (project memory `project_qwen_next_hardware_ceiling`). This function is the
+// resolver P3's daily discovery tick will call per newly-discovered repo; P3
+// wires the live HuggingFace lookup (WebFetchPort, FetchFormat::Raw) that
+// populates the quant-size data this function currently seeds from known
+// investigations. The output shape mirors `DiscoveredModel` in
+// spacetime-modules/hexflo-coordination/src/lib.rs (smallest_quant_label,
+// smallest_quant_bytes, local_feasible) so P3/P4 can pass it straight into
+// `discovered_model_record` with no reshaping.
+
+/// This box's real local-inference capacity (ADR-2607140850): 16GB GPU VRAM +
+/// 30GB system RAM. llama.cpp can offload GGUF layers across both, so
+/// feasibility is judged against the combined total, not GPU VRAM alone.
+const HW_GPU_VRAM_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+const HW_SYSTEM_RAM_BYTES: u64 = 30 * 1024 * 1024 * 1024;
+const HW_TOTAL_CAPACITY_BYTES: u64 = HW_GPU_VRAM_BYTES + HW_SYSTEM_RAM_BYTES;
+
+/// Hardware-feasibility verdict for one HuggingFace model repo.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HardwareFeasibility {
+    pub smallest_quant_label: String,
+    pub smallest_quant_bytes: u64,
+    pub local_feasible: bool,
+}
+
+/// Seed table of smallest-known-GGUF-quant sizes, captured by hand during the
+/// investigations that motivated ADR-2607140850. Approximate and illustrative
+/// pending P3's live HuggingFace lookup -- this is the resolver's only data
+/// source until that tick lands, so unknown repos correctly resolve to `None`
+/// rather than a guessed verdict.
+fn known_smallest_quant(repo: &str) -> Option<(&'static str, u64)> {
+    match repo {
+        // 700B+ MoE: even the most aggressive community quant lands far
+        // beyond any single consumer box's GPU+RAM -- known-infeasible case.
+        "zai-org/GLM-5.2" => Some(("IQ1_S", 227 * 1024 * 1024 * 1024)),
+        // Small instruct model with a widely-available low-bit GGUF quant
+        // that fits well inside a 16GB GPU -- known-feasible case.
+        "Qwen/Qwen2.5-3B-Instruct-GGUF" => Some(("Q4_K_M", 2 * 1024 * 1024 * 1024)),
+        _ => None,
+    }
+}
+
+/// Resolve `repo`'s smallest known GGUF quant size and compare it to this
+/// box's real 16GB GPU / 30GB RAM capacity. Returns `None` when no quant size
+/// is on record for `repo` yet (nothing to judge feasibility against).
+pub fn resolve_hardware_feasibility(repo: &str) -> Option<HardwareFeasibility> {
+    let (label, bytes) = known_smallest_quant(repo)?;
+    Some(HardwareFeasibility {
+        smallest_quant_label: label.to_string(),
+        smallest_quant_bytes: bytes,
+        local_feasible: bytes <= HW_TOTAL_CAPACITY_BYTES,
+    })
+}
+
+// ─── Daily HuggingFace discovery tick (ADR-2607140850 P3) ──────────────────
+//
+// Fetches HuggingFace's public models API once a day via the existing
+// `WebFetchPort` (hex-core/src/ports/web.rs) with `FetchFormat::Raw` -- the
+// ADR explicitly rejected a bespoke discovery port/adapter in favor of this
+// one. New repos are hardware-feasibility-checked via P2's
+// `resolve_hardware_feasibility` and recorded into `discovered_model`; P4
+// wires the local-feasible-vs-surface-for-review branches on top of the rows
+// this tick writes.
+
+/// Interval between HuggingFace discovery ticks (24 hours) -- the
+/// operator-confirmed daily cadence (ADR-2607140850): model releases don't
+/// warrant tighter polling, and HuggingFace's public API has no SLA for this
+/// use pattern.
+pub const HF_RESEARCH_INTERVAL_SECS: u64 = 86400;
+
+/// HuggingFace's public models-listing REST API, newest-first so the daily
+/// tick sees new releases promptly. Capped to a page size the dedup pass can
+/// process in one cycle.
+const HF_MODELS_API_URL: &str =
+    "https://huggingface.co/api/models?sort=createdAt&direction=-1&limit=50";
+
+/// Minimal reqwest-backed `WebFetchPort` implementation. No concrete adapter
+/// for this port exists anywhere in the workspace yet -- hex-core stays
+/// dependency-free per its own module doc, so it can't host one -- and this
+/// is the smallest impl that lets the daily tick call the port the way the
+/// ADR prescribes, rather than bypassing it with an ad hoc reqwest call the
+/// way this file's other external calls (STDB, Ollama) already do.
+struct HttpWebFetch {
+    http: reqwest::Client,
+}
+
+impl HttpWebFetch {
+    fn new() -> Self {
+        Self { http: reqwest::Client::new() }
+    }
+}
+
+#[async_trait::async_trait]
+impl hex_core::ports::web::WebFetchPort for HttpWebFetch {
+    async fn fetch(
+        &self,
+        url: &hex_core::domain::web::Url,
+        opts: hex_core::domain::web::FetchOptions,
+    ) -> Result<hex_core::domain::web::FetchedPage, hex_core::ports::web::WebError> {
+        use hex_core::ports::web::WebError;
+
+        let resp = self.http.get(url).timeout(opts.timeout).send().await.map_err(|e| {
+            if e.is_timeout() {
+                WebError::Timeout
+            } else {
+                WebError::ProviderError(e.to_string())
+            }
+        })?;
+        let status = resp.status();
+        if status.as_u16() == 429 {
+            return Err(WebError::RateLimited);
+        }
+        if !status.is_success() {
+            return Err(WebError::ProviderError(format!("HTTP {}", status)));
+        }
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let bytes = resp.bytes().await.map_err(|e| WebError::ProviderError(e.to_string()))?;
+        let truncated = &bytes[..bytes.len().min(opts.max_bytes)];
+        let text = String::from_utf8_lossy(truncated).into_owned();
+        Ok(hex_core::domain::web::FetchedPage {
+            url: url.clone(),
+            status: status.as_u16(),
+            content_type,
+            text,
+            markdown: None,
+            fetched_at: std::time::SystemTime::now(),
+        })
+    }
+}
+
+/// One HuggingFace model repo entry from the public models-listing API.
+/// Only the field the tick actually needs is deserialized -- the real
+/// response carries many more (tags, pipeline_tag, siblings, …) this phase
+/// doesn't use yet. Accepts both `id` and the older `modelId` key so a
+/// HuggingFace response-shape change doesn't immediately break parsing (see
+/// ADR-2607140850's "no SLA" risk note).
+#[derive(Debug, Clone, serde::Deserialize)]
+struct HfModelListing {
+    #[serde(alias = "modelId")]
+    id: String,
+}
+
+/// Parse the raw HuggingFace models-API response body into repo ids.
+fn parse_hf_model_repos(raw: &str) -> Result<Vec<String>, String> {
+    let listings: Vec<HfModelListing> =
+        serde_json::from_str(raw).map_err(|e| format!("HF response parse error: {}", e))?;
+    Ok(listings.into_iter().map(|l| l.id).collect())
+}
+
+/// Repos already present in the `discovered_model` table (the ADR's
+/// dedup-known-models behavior) -- fetched once per cycle so the tick can
+/// filter the day's listing in memory instead of one SQL round-trip per repo.
+async fn known_discovered_repos(
+    stdb_host: &str,
+    database: &str,
+) -> Result<std::collections::HashSet<String>, String> {
+    let url = format!("{}/v1/database/{}/sql", stdb_host, database);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("client error: {}", e))?;
+    let resp = client
+        .post(&url)
+        .header("content-type", "text/plain")
+        .body("SELECT repo FROM discovered_model")
+        .send()
+        .await
+        .map_err(|e| format!("STDB SQL error: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("STDB SQL returned {}", resp.status()));
+    }
+    let parsed: Vec<serde_json::Value> =
+        resp.json().await.map_err(|e| format!("STDB SQL parse: {}", e))?;
+    let rows = parsed
+        .into_iter()
+        .next()
+        .and_then(|v| v.get("rows").cloned())
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    Ok(rows
+        .iter()
+        .filter_map(|r| r.as_array()?.first()?.as_str().map(String::from))
+        .collect())
+}
+
+/// Record a newly-discovered repo into `discovered_model` via the reducer,
+/// which itself no-ops on an already-known repo -- belt-and-suspenders dedup
+/// alongside the in-memory filter in `run_hf_discovery_tick`. `feasibility`
+/// of `None` (P2's resolver has no data for this repo yet) is recorded as
+/// `local_feasible = false`: unknown quant size must never default to
+/// auto-pull/bench, only to the surfaced-for-review branch P4 wires.
+async fn record_discovered_model(
+    stdb_host: &str,
+    database: &str,
+    repo: &str,
+    feasibility: Option<&HardwareFeasibility>,
+) -> Result<(), String> {
+    let (label, bytes, local_feasible) = match feasibility {
+        Some(f) => (f.smallest_quant_label.clone(), f.smallest_quant_bytes, f.local_feasible),
+        None => (String::new(), 0u64, false),
+    };
+    let url = format!("{}/v1/database/{}/call/discovered_model_record", stdb_host, database);
+    let payload = json!([
+        repo,
+        chrono::Utc::now().to_rfc3339(),
+        label,
+        bytes,
+        local_feasible,
+    ]);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("client error: {}", e))?;
+    let resp = client
+        .post(&url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("discovered_model_record call error: {}", e))?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("discovered_model_record returned {}", resp.status()))
+    }
+}
+
+/// Outcome of one daily discovery cycle, for the caller (`spawn_hf_discovery`)
+/// to log.
+#[derive(Debug, Default)]
+pub struct HfDiscoveryReport {
+    pub fetched: usize,
+    pub newly_discovered: usize,
+    pub skipped_known: usize,
+}
+
+// ─── Feasibility branch wiring (ADR-2607140850 P4) ─────────────────────────
+//
+// Branches each newly-discovered candidate on its `resolve_hardware_feasibility`
+// (P2) verdict: local-feasible candidates are auto-pulled and auto-benched
+// with no approval gate (free, local-only); everything else is only ever
+// logged to `discovered_model` and surfaced via hex inbox for human review --
+// never auto-tested, per the ADR's "never-autonomous-spend" negative spec.
+
+/// Outcome of dispatching one discovered candidate through its feasibility
+/// action.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CandidateOutcome {
+    /// Local-feasible: auto-pulled and auto-benched; carries the bench result.
+    Benched(String),
+    /// Non-local-feasible: never tested, only surfaced for human review.
+    Surfaced,
+}
+
+/// Auto-pulls and auto-benches a local-feasible candidate. Implemented as a
+/// trait (mirroring this file's `WebFetchPort` DI for the P3 discovery tick)
+/// so `dispatch_candidate` can be unit-tested with a fake that panics if
+/// called -- the property this phase's tests exist to nail down is "a
+/// non-local-feasible candidate never reaches this trait's implementation".
+#[async_trait::async_trait]
+pub trait CandidateTester: Send + Sync {
+    async fn pull_and_bench(&self, repo: &str) -> Result<String, String>;
+}
+
+/// Derive an Ollama model tag from a HuggingFace repo id (e.g.
+/// "Qwen/Qwen2.5-3B-Instruct-GGUF" -> "qwen2.5-3b-instruct-gguf"). A
+/// heuristic, illustrative pending a real HF-repo -> Ollama-tag mapping --
+/// out of scope for this phase, which wires the branches, not the mapping.
+fn ollama_model_tag(repo: &str) -> String {
+    repo.rsplit('/').next().unwrap_or(repo).to_lowercase()
+}
+
+/// Real `CandidateTester`. Shells out to the same production commands an
+/// operator runs by hand -- `hex inference add ollama --model <name>`, then
+/// `hex inference bench ollama --model <name>` -- the ADR explicitly
+/// rejected a bespoke test harness in favor of reusing hex's existing test
+/// path (same self-invocation pattern as `research/architecture_analyst.rs`
+/// and `routes/monitor.rs`). Both subprocesses only ever talk to a local
+/// Ollama daemon and this box's own hex-nexus REST API -- never a
+/// paid/metered provider.
+pub struct HexCliCandidateTester;
+
+#[async_trait::async_trait]
+impl CandidateTester for HexCliCandidateTester {
+    async fn pull_and_bench(&self, repo: &str) -> Result<String, String> {
+        let model = ollama_model_tag(repo);
+
+        let add = tokio::process::Command::new("hex")
+            .args(["inference", "add", "ollama", "--model", &model])
+            .output()
+            .await
+            .map_err(|e| format!("hex inference add spawn error: {}", e))?;
+        if !add.status.success() {
+            return Err(format!(
+                "hex inference add failed: {}",
+                String::from_utf8_lossy(&add.stderr)
+            ));
+        }
+
+        let bench = tokio::process::Command::new("hex")
+            .args(["inference", "bench", "ollama", "--model", &model, "--quick", "--save"])
+            .output()
+            .await
+            .map_err(|e| format!("hex inference bench spawn error: {}", e))?;
+        if !bench.status.success() {
+            return Err(format!(
+                "hex inference bench failed: {}",
+                String::from_utf8_lossy(&bench.stderr)
+            ));
+        }
+
+        Ok(String::from_utf8_lossy(&bench.stdout).trim().to_string())
+    }
+}
+
+/// Action to take for a discovered candidate, decided purely from its
+/// hardware-feasibility verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeasibilityAction {
+    /// Local-feasible: auto-pull + auto-bench, no approval gate.
+    AutoPullAndBench,
+    /// Non-local-feasible: never auto-tested, only logged + surfaced.
+    SurfaceForReview,
+}
+
+/// Branch on a candidate's hardware-feasibility verdict. `None` (no
+/// quant-size data on record yet) collapses to `SurfaceForReview` -- matches
+/// `record_discovered_model`'s existing rule that unknown quant size must
+/// never default to auto-pull/bench.
+pub fn decide_feasibility_action(feasibility: Option<&HardwareFeasibility>) -> FeasibilityAction {
+    match feasibility {
+        Some(f) if f.local_feasible => FeasibilityAction::AutoPullAndBench,
+        _ => FeasibilityAction::SurfaceForReview,
+    }
+}
+
+/// Dispatch one candidate through its feasibility action. This is the single
+/// choke point the ADR's "never-autonomous-spend" negative spec depends on:
+/// `tester.pull_and_bench` -- the only call in this module that can reach a
+/// real inference provider -- is invoked on the `AutoPullAndBench` arm only.
+pub async fn dispatch_candidate(
+    tester: &dyn CandidateTester,
+    action: FeasibilityAction,
+    repo: &str,
+) -> Result<CandidateOutcome, String> {
+    match action {
+        FeasibilityAction::AutoPullAndBench => {
+            let bench_result = tester.pull_and_bench(repo).await?;
+            Ok(CandidateOutcome::Benched(bench_result))
+        }
+        FeasibilityAction::SurfaceForReview => Ok(CandidateOutcome::Surfaced),
+    }
+}
+
+/// Record a bench result for a local-feasible candidate that was auto-tested
+/// (`discovered_model_set_bench_result` reducer).
+async fn record_bench_result(
+    stdb_host: &str,
+    database: &str,
+    repo: &str,
+    bench_result: &str,
+) -> Result<(), String> {
+    let url =
+        format!("{}/v1/database/{}/call/discovered_model_set_bench_result", stdb_host, database);
+    let payload = json!([repo, bench_result, chrono::Utc::now().to_rfc3339()]);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("client error: {}", e))?;
+    let resp = client
+        .post(&url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("discovered_model_set_bench_result call error: {}", e))?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("discovered_model_set_bench_result returned {}", resp.status()))
+    }
+}
+
+/// Record the review status for a non-local-feasible candidate surfaced via
+/// hex inbox (`discovered_model_set_review_status` reducer).
+async fn record_review_status(
+    stdb_host: &str,
+    database: &str,
+    repo: &str,
+    review_status: &str,
+) -> Result<(), String> {
+    let url = format!(
+        "{}/v1/database/{}/call/discovered_model_set_review_status",
+        stdb_host, database
+    );
+    let payload = json!([repo, review_status, chrono::Utc::now().to_rfc3339()]);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("client error: {}", e))?;
+    let resp = client
+        .post(&url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("discovered_model_set_review_status call error: {}", e))?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("discovered_model_set_review_status returned {}", resp.status()))
+    }
+}
+
+/// Handle one newly-recorded candidate: dispatch it through its feasibility
+/// action, then persist the outcome -- bench result for an auto-tested
+/// local-feasible candidate, or review status + hex inbox notification for a
+/// surfaced non-local-feasible one. Errors are logged and swallowed, same
+/// soft-fail posture as the rest of the daily tick.
+async fn handle_candidate(
+    stdb_host: &str,
+    database: &str,
+    repo: &str,
+    feasibility: Option<&HardwareFeasibility>,
+    tester: &dyn CandidateTester,
+    hexflo: Option<&crate::coordination::HexFlo>,
+) {
+    let action = decide_feasibility_action(feasibility);
+    match dispatch_candidate(tester, action, repo).await {
+        Ok(CandidateOutcome::Benched(bench_result)) => {
+            if let Err(e) = record_bench_result(stdb_host, database, repo, &bench_result).await {
+                tracing::warn!(repo = %repo, error = %e, "hf_discovery: failed to record bench result");
+            }
+        }
+        Ok(CandidateOutcome::Surfaced) => {
+            let (label, bytes) = feasibility
+                .map(|f| (f.smallest_quant_label.clone(), f.smallest_quant_bytes))
+                .unwrap_or_default();
+            match hexflo {
+                Some(hexflo) => {
+                    if let Err(e) =
+                        hexflo.inbox_notify_model_candidate(repo, &label, bytes).await
+                    {
+                        tracing::warn!(repo = %repo, error = %e, "hf_discovery: failed to notify inbox");
+                    }
+                }
+                None => {
+                    tracing::warn!(repo = %repo, "hf_discovery: hexflo unavailable, candidate not surfaced to inbox");
+                }
+            }
+            if let Err(e) = record_review_status(stdb_host, database, repo, "pending").await {
+                tracing::warn!(repo = %repo, error = %e, "hf_discovery: failed to record review status");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(repo = %repo, error = %e, "hf_discovery: candidate dispatch failed");
+        }
+    }
+}
+
+/// Runs one HuggingFace discovery cycle: fetch the public models API via
+/// `web_fetch` (the existing `WebFetchPort`, `FetchFormat::Raw` per the ADR),
+/// dedup against `discovered_model`, and record every genuinely new repo with
+/// its hardware-feasibility verdict (P2's `resolve_hardware_feasibility`).
+///
+/// Soft-fails per ADR-2607140850 ("hf-api-failure-is-soft-fail"): any error
+/// fetching or parsing HuggingFace's response is returned to the caller to
+/// log-and-skip for the day, never panics, and never blocks the other
+/// sched_service ticks.
+pub async fn run_hf_discovery_tick(
+    web_fetch: &dyn hex_core::ports::web::WebFetchPort,
+    stdb_host: &str,
+    database: &str,
+    candidate_tester: &dyn CandidateTester,
+    hexflo: Option<&crate::coordination::HexFlo>,
+) -> Result<HfDiscoveryReport, String> {
+    let opts = hex_core::domain::web::FetchOptions {
+        format: hex_core::domain::web::FetchFormat::Raw,
+        ..Default::default()
+    };
+    let page = web_fetch
+        .fetch(&HF_MODELS_API_URL.to_string(), opts)
+        .await
+        .map_err(|e| format!("HF discovery fetch failed: {}", e))?;
+
+    let repos = parse_hf_model_repos(&page.text)?;
+    let known = known_discovered_repos(stdb_host, database).await?;
+
+    let mut report = HfDiscoveryReport { fetched: repos.len(), ..Default::default() };
+    for repo in repos {
+        if known.contains(&repo) {
+            report.skipped_known += 1;
+            continue;
+        }
+        let feasibility = resolve_hardware_feasibility(&repo);
+        match record_discovered_model(stdb_host, database, &repo, feasibility.as_ref()).await {
+            Ok(()) => {
+                report.newly_discovered += 1;
+                handle_candidate(
+                    stdb_host,
+                    database,
+                    &repo,
+                    feasibility.as_ref(),
+                    candidate_tester,
+                    hexflo,
+                )
+                .await;
+            }
+            Err(e) => tracing::warn!(repo = %repo, error = %e, "hf_discovery: failed to record candidate"),
+        }
+    }
+    Ok(report)
+}
+
+/// Spawns the daily HF discovery tick (ADR-2607140850 P3). Runs independently
+/// of the other sched_service loops; a failed cycle is logged and skipped,
+/// never crashes the process or blocks `run_improvement_cycle` / the
+/// substrate ticks.
+fn spawn_hf_discovery(state: SharedState) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(HF_RESEARCH_INTERVAL_SECS));
+        interval.tick().await; // initial delay -- first fetch one interval after startup
+
+        let web_fetch = HttpWebFetch::new();
+        let candidate_tester = HexCliCandidateTester;
+        let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
+            .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+        let database = hex_core::stdb_database_for_module("hexflo-coordination").to_string();
+
+        loop {
+            let hexflo = state.hexflo.as_deref();
+            match run_hf_discovery_tick(&web_fetch, &stdb_host, &database, &candidate_tester, hexflo)
+                .await
+            {
+                Ok(report) => {
+                    tracing::info!(
+                        fetched = report.fetched,
+                        new = report.newly_discovered,
+                        known = report.skipped_known,
+                        "hf_discovery: daily tick complete"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("hf_discovery: daily tick failed (soft-fail, skipping today): {}", e);
+                }
+            }
+            interval.tick().await;
+        }
+    });
+}
+
 /// Spawns the sched self-improvement service.
 ///
 /// This runs as a background task that:
@@ -108,6 +666,11 @@ pub fn spawn(state: SharedState) {
     // gates auto-propose behind operator opt-in. No-op when inference
     // port or swap_ticket port aren't wired.
     spawn_substrate_autopilot(state.clone());
+
+    // Daily HuggingFace model-discovery tick (ADR-2607140850 P3/P4). Needs
+    // `state` for `state.hexflo` -- P4's non-local-feasible branch surfaces
+    // candidates via the existing hex inbox mechanism (`HexFlo::inbox_notify_model_candidate`).
+    spawn_hf_discovery(state.clone());
 
     tokio::spawn(async move {
         // ADR-2026-04-24-1820: seed Q-values before the loop starts so RL has priors.
@@ -482,13 +1045,39 @@ async fn locally_served_models() -> Result<std::collections::HashSet<String>, St
     let endpoints = raw.as_array()
         .or_else(|| raw.get("endpoints").and_then(|v| v.as_array()))
         .ok_or_else(|| "endpoints response neither array nor {endpoints:[...]}".to_string())?;
-    Ok(endpoints.iter()
-        .filter(|e| matches!(
-            e.get("provider").and_then(|v| v.as_str()),
-            Some("ollama") | Some("openai_compat")
-        ))
-        .filter_map(|e| e.get("model").and_then(|v| v.as_str()).map(String::from))
-        .collect())
+    let mut served = std::collections::HashSet::new();
+    for e in endpoints.iter() {
+        let provider = e.get("provider").and_then(|v| v.as_str());
+        if !matches!(provider, Some("ollama") | Some("openai_compat")) {
+            continue;
+        }
+        // The registered `model` field is only the provider's *representative*
+        // model (e.g. an Ollama provider lists one of its installed models).
+        // Without enumerating the full set, the RL cycle's Q-table intersection
+        // sees a single model, never matches, and dead-ends to the env fallback.
+        if let Some(m) = e.get("model").and_then(|v| v.as_str()) {
+            served.insert(m.to_string());
+        }
+        // For Ollama, enumerate every locally-installed model via /api/tags so
+        // the cycle can actually explore the full local fleet.
+        if provider == Some("ollama") {
+            if let Some(base) = e.get("url").and_then(|v| v.as_str()) {
+                let tags_url = format!("{}/api/tags", base.trim_end_matches('/'));
+                if let Ok(r) = client.get(&tags_url).send().await {
+                    if let Ok(body) = r.json::<serde_json::Value>().await {
+                        if let Some(models) = body.get("models").and_then(|v| v.as_array()) {
+                            for m in models {
+                                if let Some(name) = m.get("name").and_then(|v| v.as_str()) {
+                                    served.insert(name.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(served)
 }
 
 /// Pick a model action for the next improvement cycle.
@@ -546,7 +1135,20 @@ async fn select_model_for_cycle(
     }).collect();
 
     if candidates.is_empty() {
-        return Err("no local model candidates intersect rl_q_entry".into());
+        // Bootstrap: the Q-table has no rows yet for any locally-served model
+        // (fresh table, or rewards only ever landed on the env-fallback model).
+        // Rather than dead-end to the env default forever, explore a real local
+        // model so record_reward seeds its row and the loop self-heals. Skip
+        // tiny utility models that aren't real codegen candidates.
+        let mut bootstrap: Vec<&String> = local_models.iter()
+            .filter(|m| !m.starts_with("nemotron-mini"))
+            .collect();
+        bootstrap.sort();
+        if bootstrap.is_empty() {
+            return Err("no local model candidates intersect rl_q_entry".into());
+        }
+        let idx = rand::thread_rng().gen_range(0..bootstrap.len());
+        return Ok((bootstrap[idx].clone(), "bootstrap"));
     }
 
     let explore = rand::thread_rng().gen_bool(SCHED_EPSILON);
@@ -641,5 +1243,187 @@ async fn seed_rl_q_values(state_key: &str) -> Result<u32, String> {
         Ok(1)
     } else {
         Err(format!("seed RL returned {}", response.status()))
+    }
+}
+
+#[cfg(test)]
+mod hardware_feasibility_tests {
+    use super::*;
+
+    #[test]
+    fn hardware_feasibility_flags_700b_moe_as_infeasible() {
+        let verdict = resolve_hardware_feasibility("zai-org/GLM-5.2")
+            .expect("known repo must resolve");
+        assert!(!verdict.local_feasible);
+        assert!(verdict.smallest_quant_bytes > HW_TOTAL_CAPACITY_BYTES);
+    }
+
+    #[test]
+    fn hardware_feasibility_flags_small_quant_as_feasible() {
+        let verdict = resolve_hardware_feasibility("Qwen/Qwen2.5-3B-Instruct-GGUF")
+            .expect("known repo must resolve");
+        assert!(verdict.local_feasible);
+        assert!(verdict.smallest_quant_bytes <= HW_TOTAL_CAPACITY_BYTES);
+    }
+
+    #[test]
+    fn hardware_feasibility_returns_none_for_unknown_repo() {
+        assert_eq!(resolve_hardware_feasibility("some-org/never-researched"), None);
+    }
+}
+
+#[cfg(test)]
+mod hf_discovery_tests {
+    use super::*;
+
+    #[test]
+    fn hf_research_interval_is_one_day() {
+        assert_eq!(HF_RESEARCH_INTERVAL_SECS, 86400);
+    }
+
+    #[test]
+    fn parse_hf_model_repos_extracts_ids() {
+        let raw = r#"[{"id":"org/model-a"},{"id":"org/model-b"}]"#;
+        let repos = parse_hf_model_repos(raw).expect("valid JSON must parse");
+        assert_eq!(repos, vec!["org/model-a".to_string(), "org/model-b".to_string()]);
+    }
+
+    #[test]
+    fn parse_hf_model_repos_accepts_model_id_alias() {
+        // HuggingFace's API has used both `id` and `modelId` for this field
+        // across versions/endpoints -- accept either so a response-shape
+        // change doesn't immediately break the daily tick.
+        let raw = r#"[{"modelId":"org/legacy-field-name"}]"#;
+        let repos = parse_hf_model_repos(raw).expect("valid JSON must parse");
+        assert_eq!(repos, vec!["org/legacy-field-name".to_string()]);
+    }
+
+    #[test]
+    fn parse_hf_model_repos_errors_on_malformed_json() {
+        assert!(parse_hf_model_repos("not json").is_err());
+    }
+
+    #[test]
+    fn parse_hf_model_repos_handles_empty_listing() {
+        let repos = parse_hf_model_repos("[]").expect("empty array is valid");
+        assert!(repos.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod feasibility_branch_tests {
+    use super::*;
+
+    /// A `CandidateTester` that panics if `pull_and_bench` is ever invoked --
+    /// the negative-spec guard (ADR-2607140850 "never-autonomous-spend").
+    /// `hex inference add`/`hex inference bench` are the only calls in this
+    /// module that can reach a real inference provider, so a non-local-feasible
+    /// candidate reaching this tester is exactly the failure this phase must
+    /// prevent.
+    struct PanicOnCallTester;
+
+    #[async_trait::async_trait]
+    impl CandidateTester for PanicOnCallTester {
+        async fn pull_and_bench(&self, _repo: &str) -> Result<String, String> {
+            panic!("pull_and_bench must never be called for a non-local-feasible candidate");
+        }
+    }
+
+    /// A `CandidateTester` that records the call and returns a canned result,
+    /// for asserting the local-feasible branch *does* dispatch to it.
+    struct RecordingTester {
+        called_with: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl RecordingTester {
+        fn new() -> Self {
+            Self { called_with: std::sync::Mutex::new(Vec::new()) }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl CandidateTester for RecordingTester {
+        async fn pull_and_bench(&self, repo: &str) -> Result<String, String> {
+            self.called_with.lock().unwrap().push(repo.to_string());
+            Ok(r#"{"quality_score":0.8}"#.to_string())
+        }
+    }
+
+    #[test]
+    fn decide_feasibility_action_local_feasible_auto_pulls_and_benches() {
+        let feasibility = HardwareFeasibility {
+            smallest_quant_label: "Q4_K_M".to_string(),
+            smallest_quant_bytes: 2 * 1024 * 1024 * 1024,
+            local_feasible: true,
+        };
+        assert_eq!(
+            decide_feasibility_action(Some(&feasibility)),
+            FeasibilityAction::AutoPullAndBench
+        );
+    }
+
+    #[test]
+    fn decide_feasibility_action_non_local_feasible_surfaces_for_review() {
+        let feasibility = HardwareFeasibility {
+            smallest_quant_label: "IQ1_S".to_string(),
+            smallest_quant_bytes: 227 * 1024 * 1024 * 1024,
+            local_feasible: false,
+        };
+        assert_eq!(
+            decide_feasibility_action(Some(&feasibility)),
+            FeasibilityAction::SurfaceForReview
+        );
+    }
+
+    #[test]
+    fn decide_feasibility_action_unknown_quant_surfaces_for_review() {
+        // No quant-size data on record yet (P2's resolver returned None) must
+        // never default to auto-pull/bench -- same rule as
+        // `record_discovered_model`'s local_feasible=false-on-None fallback.
+        assert_eq!(decide_feasibility_action(None), FeasibilityAction::SurfaceForReview);
+    }
+
+    #[tokio::test]
+    async fn non_local_feasible_candidate_never_triggers_pull_and_bench() {
+        let feasibility = HardwareFeasibility {
+            smallest_quant_label: "IQ1_S".to_string(),
+            smallest_quant_bytes: 227 * 1024 * 1024 * 1024,
+            local_feasible: false,
+        };
+        let action = decide_feasibility_action(Some(&feasibility));
+
+        // If dispatch_candidate ever routed a non-local-feasible candidate to
+        // pull_and_bench, this would panic -- pull_and_bench is the only
+        // call path in this module that can reach a paid/metered provider.
+        let outcome = dispatch_candidate(&PanicOnCallTester, action, "zai-org/GLM-5.2")
+            .await
+            .expect("surfacing a non-feasible candidate must not error");
+        assert_eq!(outcome, CandidateOutcome::Surfaced);
+    }
+
+    #[tokio::test]
+    async fn local_feasible_candidate_does_dispatch_to_pull_and_bench() {
+        let feasibility = HardwareFeasibility {
+            smallest_quant_label: "Q4_K_M".to_string(),
+            smallest_quant_bytes: 2 * 1024 * 1024 * 1024,
+            local_feasible: true,
+        };
+        let action = decide_feasibility_action(Some(&feasibility));
+        let tester = RecordingTester::new();
+
+        let outcome =
+            dispatch_candidate(&tester, action, "Qwen/Qwen2.5-3B-Instruct-GGUF").await.unwrap();
+
+        assert!(matches!(outcome, CandidateOutcome::Benched(_)));
+        assert_eq!(
+            tester.called_with.lock().unwrap().as_slice(),
+            ["Qwen/Qwen2.5-3B-Instruct-GGUF"]
+        );
+    }
+
+    #[test]
+    fn ollama_model_tag_takes_last_path_segment_lowercased() {
+        assert_eq!(ollama_model_tag("Qwen/Qwen2.5-3B-Instruct-GGUF"), "qwen2.5-3b-instruct-gguf");
+        assert_eq!(ollama_model_tag("standalone-model"), "standalone-model");
     }
 }

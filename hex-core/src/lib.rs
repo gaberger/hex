@@ -14,6 +14,7 @@
 //! ```
 
 pub mod composition;
+pub mod corpus;
 pub mod domain;
 pub mod inference_q;
 pub mod inference_task;
