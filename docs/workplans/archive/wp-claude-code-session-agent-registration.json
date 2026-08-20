@@ -1,0 +1,80 @@
+{
+  "adr": "ADR-048",
+  "created_at": "2026-05-23T19:27:29.933678098+00:00",
+  "created_by": "hex-coder",
+  "feature": "Automatic agent registration for Claude Code sessions",
+  "id": "wp-claude-code-session-agent-registration",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain/Ports Work",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/routes/orchestration.rs"
+          ],
+          "id": "P0.1",
+          "layer": "ports",
+          "name": "Extend connect_agent to accept metadata fields",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/routes/orchestration.rs"
+          ],
+          "id": "P0.2",
+          "layer": "ports",
+          "name": "Add disconnect_agent handler",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary Adapters",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Register POST /api/agents/disconnect route",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P3",
+      "name": "UseCases",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            ".claude/helpers/agent-register.cjs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Create agent-register.cjs hook helper",
+          "status": "pending"
+        },
+        {
+          "files": [
+            ".claude/settings.json"
+          ],
+          "id": "P3.2",
+          "layer": "usecases",
+          "name": "Wire agent-register.cjs into SessionStart and SessionEnd hooks",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

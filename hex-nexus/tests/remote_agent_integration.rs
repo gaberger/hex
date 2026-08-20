@@ -11,7 +11,7 @@ use hex_nexus::adapters::ssh_tunnel::SshTunnelAdapter;
 use hex_nexus::adapters::remote_registry::RemoteRegistryAdapter;
 use hex_nexus::ports::ssh_tunnel::ISshTunnelPort;
 use hex_nexus::ports::remote_registry::IRemoteRegistryPort;
-use hex_nexus::remote::transport::*;
+use hex_nexus::domain::transport::*;
 use uuid::Uuid;
 
 const BAZZITE_HOST: &str = "bazzite.local";
@@ -165,7 +165,7 @@ async fn test_registry_agent_lifecycle() {
 
 // ── Full Stack Smoke Test ────────────────────────────
 
-// ── SpacetimeDB Sync Tests (ADR-2604050900) ─────────────
+// ── SpacetimeDB Sync Tests (ADR-2026-04-05-0900) ─────────────
 
 /// Verify that registering a remote agent via the adapter also writes
 /// a row to the SpacetimeDB `remote_agent` table (fire-and-forget sync).

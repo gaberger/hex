@@ -1,4 +1,4 @@
-//! End-to-end tests for Docker sandbox agent coordination (ADR-2603282000).
+//! End-to-end tests for Docker sandbox agent coordination (ADR-2026-03-28-2000).
 //!
 //! Tier 1 — no external dependencies (always run in CI):
 //!   Logic tests for worktree gate, SpawnConfig encoding, and docker-unavailable fallback.
@@ -246,7 +246,7 @@ fn docker_spawn_container_starts() {
 }
 
 /// Two agents bind-mounted to different worktrees cannot see each other's files.
-/// This is the core isolation invariant of ADR-2603282000.
+/// This is the core isolation invariant of ADR-2026-03-28-2000.
 #[test]
 #[ignore = "requires Docker daemon and hex-agent:latest image"]
 fn two_agents_have_isolated_filesystems() {

@@ -11,11 +11,11 @@ import {
   swarmAgents,
   agentHeartbeats,
   registryAgents,
-  getHexfloConn,
 } from "../../stores/connection";
 import { navigate, route } from "../../stores/router";
 import { addToast } from "../../stores/toast";
 import QualityGatePanel from "../fleet/QualityGatePanel";
+import { restClient } from "../../services/rest-client";
 
 function relativeTime(timestamp: string | undefined): string {
   if (!timestamp) return "--";
@@ -76,19 +76,19 @@ const SwarmDetail: Component = () => {
   const swarmId = () => (route() as any).swarmId ?? "";
 
   const swarm = createMemo(() =>
-    swarms().find(
+    (swarms() ?? []).find(
       (s: any) => (s.id ?? s.swarm_id ?? "") === swarmId(),
     ),
   );
 
   const tasks = createMemo(() =>
-    swarmTasks().filter(
+    (swarmTasks() ?? []).filter(
       (t: any) => (t.swarm_id ?? t.swarmId ?? "") === swarmId(),
     ),
   );
 
   const agents = createMemo(() =>
-    swarmAgents().filter(
+    (swarmAgents() ?? []).filter(
       (a: any) => (a.swarm_id ?? a.swarmId ?? "") === swarmId(),
     ),
   );
@@ -108,14 +108,14 @@ const SwarmDetail: Component = () => {
   function agentName(agentId: string): string {
     if (!agentId) return "--";
     const a =
-      swarmAgents().find(
+      (swarmAgents() ?? []).find(
         (ag: any) => (ag.id ?? ag.agent_id ?? "") === agentId,
       );
     return a?.name ?? a?.agent_name ?? agentId.slice(0, 8);
   }
 
   function getHeartbeat(agentId: string): any {
-    return agentHeartbeats().find(
+    return (agentHeartbeats() ?? []).find(
       (h: any) => (h.agent_id ?? "") === agentId,
     );
   }
@@ -231,8 +231,8 @@ const SwarmDetail: Component = () => {
                       const result = task.result ?? "";
                       const assignedAgent = () => {
                         if (!assignee) return null;
-                        return registryAgents().find((a: any) => (a.agent_id ?? a.id ?? "") === assignee)
-                          ?? swarmAgents().find((a: any) => (a.id ?? a.agent_id ?? "") === assignee);
+                        return (registryAgents() ?? []).find((a: any) => (a.agent_id ?? a.id ?? "") === assignee)
+                          ?? (swarmAgents() ?? []).find((a: any) => (a.id ?? a.agent_id ?? "") === assignee);
                       };
                       const worktreePath = () => assignedAgent()?.worktree_path ?? assignedAgent()?.worktree ?? "";
                       const commitHash = () => {
@@ -377,11 +377,15 @@ const TaskCreateForm: Component<{ swarmId: string }> = (props) => {
     e.preventDefault();
     const t = title().trim();
     if (!t) return;
-    const conn = getHexfloConn();
-    if (!conn) { addToast("error", "SpacetimeDB not connected"); return; }
     setSubmitting(true);
     try {
-      conn.reducers.taskCreate(crypto.randomUUID(), props.swarmId, t, new Date().toISOString());
+      // Create via the nexus REST gateway (server-side, persisted, awaited) —
+      // the direct-WS reducer write didn't land (anonymous browser writes don't
+      // persist; ADR-2606061359 — writes go through the gateway).
+      await restClient.post(`/api/swarms/${encodeURIComponent(props.swarmId)}/tasks`, {
+        title: t,
+        dependsOn: "",
+      });
       addToast("success", `Task created: ${t}`);
       setTitle("");
     } catch (err: any) {

@@ -1,0 +1,194 @@
+# Improver discovery rule table — ADR-2026-04-27-1100 P1.1
+#
+# Detectors-as-data per ADR-2026-04-14-2243 (rules-as-data, not control flow).
+# One entry per `Source` variant in
+# hex-cli/src/commands/sched/improver/discover.rs.
+#
+# Contract for each `cmd`:
+#   - runs as a subprocess (sh -c) with cwd = repo root
+#   - emits JSON on stdout
+#   - either a top-level `findings` array, or a top-level array, or an
+#     object addressable via `findings_pointer` (RFC 6901)
+#   - each finding becomes a Hypothesis tagged with this entry's `source`
+#   - non-zero exit codes are tolerated by default (diagnostic tools commonly
+#     signal "findings present" via exit code); set `allow_nonzero_exit = false`
+#     when zero-exit is a hard contract.
+#
+# Scope-field discovery is per-source — see `extract_scope` in discover.rs.
+
+[[detector]]
+source = "adr_doctor"
+cmd = "hex adr doctor --json"
+description = "ADR registry self-consistency (ADR-2026-04-27-0800)"
+
+[[detector]]
+source = "reconcile_strict"
+cmd = "hex plan reconcile --all --strict --json"
+description = "Workplan declared state diverging from git evidence (ADR-2026-04-14-2200)"
+
+[[detector]]
+source = "git_drift"
+cmd = "hex worktree list --stale --json"
+description = "Worktrees and branches out of sync with main"
+
+[[detector]]
+source = "inbox_stale"
+cmd = "hex inbox list --stale --json"
+description = "Inbox notifications past their P1/P2 SLA (ADR-060)"
+
+[[detector]]
+source = "adr_lifecycle"
+cmd = "hex adr status --json"
+description = "Stale Proposed / unlinked Superseded / abandoned ADRs (ADR-012)"
+
+[[detector]]
+source = "escalation_report"
+cmd = "hex inference escalation-report --json"
+description = "Tiers escalating repeatedly to the frontier (ADR-2026-04-12-0202)"
+
+[[detector]]
+source = "punch_list"
+cmd = "hex insight punch-list --json"
+description = "Self-acknowledged punch-list items in agent transcripts"
+
+[[detector]]
+source = "q_starvation"
+cmd = "hex sched improver scores --starvation"
+description = "Improver action templates that ran enough times (≥3 samples) to be statistically meaningful but produced non-positive mean reward — i.e. the action runs but doesn't resolve its target hypothesis. Indicates a broken (source, action_kind) mapping in act::derive that needs operator review."
+allow_nonzero_exit = true
+
+[[detector]]
+source = "workplan_integrity"
+cmd = "hex plan integrity --json"
+description = "Workplan files with missing required structural fields (title, phase title, task id/title). Catches destructive action-quality issues — particularly aggressive `reconcile --update` that strips fields while clearing its target hypothesis. Reward attribution alone can't see this; the detector surfaces the corruption as a hypothesis so the brain can react."
+allow_nonzero_exit = true
+
+[[detector]]
+source = "layer_coverage"
+cmd = "hex plan layers --json"
+description = "Canonical hexagonal-architecture layers missing in the current project (use cases, primary adapters, composition root). Surfaces structural gaps so target apps can be developed from skeleton to complete via improver-driven drafts."
+allow_nonzero_exit = true
+
+[[detector]]
+source = "build_readiness"
+cmd = "hex plan ready --json"
+description = "Typecheck AND test-suite failures in the current project. Closes the gap between 'structural layers exist' and 'code in them actually works.' Tests are included so failing test runs (vitest/cargo test) surface as findings — a green typecheck with red tests is exactly the silent-failure mode this loop must catch. Cost: one `npm test` / `cargo test` per tick; if your test suite is too slow for every-tick polling, gate it via `cmd = ... --no-tests` and add a separate longer-period detector."
+allow_nonzero_exit = true
+
+[[detector]]
+source = "test_coverage"
+cmd = "hex plan tests --json"
+description = "Source files lacking sibling test files (or test files with zero test cases). Drives a test-generation swarm: each finding becomes a draft for the tester agent to consume. Coverage gaps that operators wouldn't notice in a code review surface here."
+allow_nonzero_exit = true
+
+[[detector]]
+source = "thought_pattern"
+cmd = "hex sched improver thought-patterns --json"
+description = "BS-5: cross-persona patterns in agent_thought — same ADR cited by ≥2 personas across ≥3 recent thoughts (likely unresolved architectural concern), or kind=frustration spikes (resource/methodology block). Closes the consumer side of Phase-2 thought memory. Pairs with the emitter in hex-nexus::orchestration::org_responder (commit 7671f7d3)."
+allow_nonzero_exit = true
+
+# ─── Aspirational detectors (gated until enum + CLI surface land) ────
+#
+# Entries below reference `Source` variants and CLI flags that haven't
+# shipped yet (`rl_loop_health`, the ADR-2026-04-27-1200 architectural-health
+# detectors, `hex substrate telemetry`, `hex analyze --boundary-violations`,
+# etc.). Loading them today crashes `hex sched improver discover` on
+# TOML parse before the 7 working detectors above ever run, which gates
+# the self-improvement loop entirely. Re-enable each row as its enum
+# variant + CLI flag land — DO NOT just add the variant; the detector
+# still needs the underlying command to produce JSON findings.
+#
+# Tracked by ADR-2026-04-27-1100 (rl_loop_health) and ADR-2026-04-27-1200
+# (architectural-health detectors).
+
+# [[detector]]
+# source = "rl_loop_health"
+# cmd = "hex sched scores --json --window=24h"
+# description = "RL self-improvement loops with flatlined reward variance, periodic timeouts, or selection skew."
+# allow_nonzero_exit = true
+
+# ── Architectural-health detectors (ADR-2026-04-27-1200) — pending ──
+#
+# A. Static design
+#
+# [[detector]]
+# source = "domain_leak"
+# cmd = "hex analyze . --boundary-violations --json"
+# description = "Domain types referenced from adapters without going through a port."
+# allow_nonzero_exit = true
+#
+# [[detector]]
+# source = "port_cohesion"
+# cmd = "hex analyze . --port-cohesion --json"
+# description = "Ports with >7 methods or mixed-concern method clusters."
+# allow_nonzero_exit = true
+#
+# [[detector]]
+# source = "adapter_orphan"
+# cmd = "hex analyze . --orphan-adapters --json"
+# description = "Adapter implements a port but is not registered in composition root."
+# allow_nonzero_exit = true
+#
+# [[detector]]
+# source = "port_orphan"
+# cmd = "hex analyze . --orphan-ports --json"
+# description = "Port with no adapter implementing it."
+# allow_nonzero_exit = true
+#
+# [[detector]]
+# source = "adapter_duplication"
+# cmd = "hex analyze . --adapter-duplication --json"
+# description = "Two adapters sharing >60% logic."
+# allow_nonzero_exit = true
+#
+# [[detector]]
+# source = "god_domain_type"
+# cmd = "hex analyze . --god-types --json"
+# description = "Domain type with >300 LOC or >10 public methods."
+# allow_nonzero_exit = true
+#
+# B. Operational efficiency (substrate PortTelemetry rollup)
+#
+# [[detector]]
+# source = "port_latency_drift"
+# cmd = "hex substrate telemetry --port-latency --window=7d --json"
+# description = "p99 latency through a port rose >25% week-over-week."
+# allow_nonzero_exit = true
+#
+# [[detector]]
+# source = "adapter_skew"
+# cmd = "hex substrate telemetry --adapter-skew --json"
+# description = "Same port, two adapters with >2x latency or success-rate variance."
+# allow_nonzero_exit = true
+#
+# [[detector]]
+# source = "port_traffic_concentration"
+# cmd = "hex substrate telemetry --traffic-concentration --json"
+# description = "One port handles >70% of total traffic."
+# allow_nonzero_exit = true
+#
+# [[detector]]
+# source = "adapter_unused"
+# cmd = "hex substrate telemetry --adapter-idle --window=7d --json"
+# description = "Adapter wired but zero calls in 7 days."
+# allow_nonzero_exit = true
+#
+# C. Composition coherence
+#
+# [[detector]]
+# source = "composition_drift"
+# cmd = "hex analyze . --composition-churn --window=30d --json"
+# description = "Composition-root churn rate exceeds ADR acceptance rate over 30 days."
+# allow_nonzero_exit = true
+#
+# [[detector]]
+# source = "substrate_swap_starvation"
+# cmd = "hex substrate swaps --since=30d --json"
+# description = "Zero swap_ticket entries promoted in 30 days."
+# allow_nonzero_exit = true
+#
+# [[detector]]
+# source = "dead_layer"
+# cmd = "hex analyze . --dead-layers --json"
+# description = "An entire layer dir with no inbound edges from primary adapters."
+# allow_nonzero_exit = true

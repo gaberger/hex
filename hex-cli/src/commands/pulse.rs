@@ -1,4 +1,4 @@
-//! Multi-project pulse command (ADR-2604131500 P6.1).
+//! Multi-project pulse command (ADR-2026-04-13-1500 P6.1).
 //!
 //! `hex pulse` — one-glance status across all registered projects.
 //! Shows state (blocked/decision/active/complete/idle), agents, and pending decisions.

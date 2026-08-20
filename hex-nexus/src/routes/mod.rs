@@ -1,27 +1,34 @@
 pub mod adrs;
+pub mod agent_run;
 pub mod agents;
 pub mod browse;
 pub mod files;
 pub mod stdb;
 pub mod analysis;
 pub mod chat;
+pub mod brain_chat;
+pub mod pools;
 pub mod commands;
 pub mod coordination;
 pub mod decisions;
 pub mod fleet;
 pub mod git;
+pub mod graph;
 pub mod hex_agents;
 pub mod hexflo;
 pub mod inference;
 pub mod metrics;
+pub mod monitor;
 pub mod orchestration;
 pub mod projects;
 pub mod push;
 pub mod quality;
 pub mod query;
+pub mod research;
 pub mod rl;
 pub mod secrets;
 pub mod sessions;
+pub mod swaps;
 pub mod swarms;
 pub mod neural_lab;
 pub mod test_sessions;
@@ -43,9 +50,20 @@ pub mod steer;
 pub mod classifier;
 pub mod taste;
 pub mod trust;
-pub mod workplan;
+pub mod org_chart;
+pub mod stdb_registry;
+pub mod org_comms;
+pub mod sop;
+pub mod dead_letter;
+pub mod worker_pool;
+pub mod liveness;
+pub mod merge_gate;
+pub mod mission_control;
+pub mod resources;
+pub mod observability;
+// pub mod workplan; // removed stub module
 
-use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
+use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit, http::StatusCode};
 use axum::response::{IntoResponse, Redirect};
 use tower_http::cors::{CorsLayer, AllowOrigin};
 use http::{HeaderValue, Method};
@@ -53,6 +71,45 @@ use serde_json::json;
 use utoipa::OpenApi;
 use crate::state::SharedState;
 use crate::middleware::agent_guard::agent_guard;
+
+/// POST /api/direct/execute — minimal "cut the pipeline" executor
+/// (ADR-2026-06-04-1740 Path A). Body: {instruction, file, evidence, model?, max_attempts?}.
+/// Runs one agent → one evidence-gated edit → commit. No SOP/persona pipeline.
+async fn direct_execute(
+    Json(task): Json<crate::direct_exec::DirectTask>,
+) -> Json<crate::direct_exec::DirectResult> {
+    Json(crate::direct_exec::execute_direct(task).await)
+}
+
+/// GET /api/direct/runs — the monitor for the new execution model: every direct
+/// run (task, evidence verdict, commit, duration) newest-first, plus a summary.
+/// Replaces persona/swarm/commitment liveness as the thing to actually watch.
+async fn direct_runs() -> Json<serde_json::Value> {
+    Json(json!({
+        "summary": crate::direct_exec::runs_summary(),
+        "runs": crate::direct_exec::runs_snapshot(),
+    }))
+}
+
+/// POST /api/agent/adr-steward/sweep — run the in-nexus adr-steward agent: advance
+/// Accepted ADRs hex has confirmed implemented (Implementation-Present) to Completed.
+/// `?dry_run=true` reports candidates without mutating. Records to the agent-runs feed.
+async fn adr_steward_sweep(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<crate::orchestration::adr_steward::StewardResult> {
+    let dry = q.get("dry_run").map(|v| v == "true" || v == "1").unwrap_or(false);
+    Json(crate::orchestration::adr_steward::run_lifecycle_sweep(dry).await)
+}
+
+/// POST /api/agent/workplan-steward/sweep — run the in-nexus workplan-steward
+/// agent: validate workplan format + reconcile status (all steps done → completed).
+/// `?dry_run=true` reports without mutating. Records to the agent-runs feed.
+async fn workplan_steward_sweep(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<crate::orchestration::workplan_steward::WorkplanStewardResult> {
+    let dry = q.get("dry_run").map(|v| v == "true" || v == "1").unwrap_or(false);
+    Json(crate::orchestration::workplan_steward::run_reconcile_sweep(dry).await)
+}
 use crate::middleware::auth::auth_layer;
 use crate::middleware::capability_auth::capability_auth;
 use crate::middleware::deprecation::deprecation_layer;
@@ -131,6 +188,25 @@ async fn get_version() -> Json<serde_json::Value> {
     }))
 }
 
+/// GET /api/auto-repair/status — return the auto_repair loop's current state.
+/// Surfaced 2026-05-29 PM so the operator can see what the loop is doing
+/// without grepping nexus.log.
+async fn auto_repair_status() -> Json<serde_json::Value> {
+    let snap = crate::orchestration::auto_repair::snapshot();
+    Json(serde_json::to_value(snap).unwrap_or_else(|_| json!({"error": "serialize_failed"})))
+}
+
+/// POST /api/auto-repair/restart — reset the auto_repair loop state so
+/// it re-engages without a full nexus restart. The next tick fires
+/// fresh: iterations=0, no_progress=0, cooldowns cleared. Useful after
+/// the loop self-pauses on a plateau and the operator has shipped a
+/// targeted fix (e.g. created missing modules, downgraded a problem
+/// dep) and wants to re-run.
+async fn auto_repair_restart() -> Json<serde_json::Value> {
+    crate::orchestration::auto_repair::reset();
+    Json(json!({"ok": true, "status": "loop state reset; next tick fires fresh"}))
+}
+
 /// GET /api/health — lightweight health check for hooks and CLI.
 /// Returns nexus status and SpacetimeDB connectivity.
 async fn get_health(
@@ -194,10 +270,37 @@ async fn workplan_files() -> Json<serde_json::Value> {
                         })
                         .unwrap_or(0);
 
+                    // The schema-required ADR linkage is the singular `adr` field
+                    // (pattern ^ADR-\d+). `related_adrs` is a legacy array some
+                    // older workplans carry. Return both, but normalize `adrs`
+                    // as a flat array merging both — that's what the Missions
+                    // view consumes.
+                    let mut adrs: Vec<String> = Vec::new();
+                    if let Some(a) = parsed.get("adr").and_then(|v| v.as_str()) {
+                        if !a.is_empty() {
+                            adrs.push(a.to_string());
+                        }
+                    }
+                    if let Some(arr) = parsed.get("related_adrs").and_then(|v| v.as_array()) {
+                        for v in arr {
+                            if let Some(s) = v.as_str() {
+                                if !s.is_empty() && !adrs.contains(&s.to_string()) {
+                                    adrs.push(s.to_string());
+                                }
+                            }
+                        }
+                    }
+                    let title_or_feature = parsed.get("title").and_then(|v| v.as_str())
+                        .or_else(|| parsed.get("feature").and_then(|v| v.as_str()))
+                        .unwrap_or("");
                     workplans.push(json!({
                         "file": filename,
                         "id": parsed.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                        "title": parsed.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+                        "title": title_or_feature,
+                        "feature": parsed.get("feature").and_then(|v| v.as_str()).unwrap_or(""),
+                        "adr": parsed.get("adr").and_then(|v| v.as_str()).unwrap_or(""),
+                        "adrs": adrs,
+                        "status": parsed.get("status").and_then(|v| v.as_str()).unwrap_or(""),
                         "priority": parsed.get("priority").and_then(|v| v.as_str()).unwrap_or(""),
                         "created_at": parsed.get("created_at").and_then(|v| v.as_str()).unwrap_or(""),
                         "phases": phase_count,
@@ -229,6 +332,64 @@ async fn workplan_files() -> Json<serde_json::Value> {
     }
 
     Json(json!({ "ok": false, "count": 0, "workplans": [], "error": "docs/workplans/ not found" }))
+}
+
+/// GET /api/workplans/{id_or_file} — return the full JSON of one workplan file on disk.
+/// Accepts either the `id` field or the filename (with or without .json extension).
+/// Used by the Missions dashboard view for drill-in detail.
+async fn workplan_file_detail(
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let roots = [
+        std::env::current_dir().ok(),
+        std::env::var("HEX_PROJECT_ROOT").ok().map(std::path::PathBuf::from),
+    ];
+
+    // Strip .json suffix if caller included it; we'll re-add as needed.
+    let bare = name.trim_end_matches(".json");
+
+    for root in roots.iter().flatten() {
+        let dir = root.join("docs/workplans");
+        if !dir.is_dir() {
+            continue;
+        }
+
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let filename = entry.file_name().to_string_lossy().to_string();
+            let filename_bare = filename.trim_end_matches(".json").to_string();
+
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let id_match = parsed
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s == bare)
+                        .unwrap_or(false);
+                    if id_match || filename_bare == bare {
+                        return (StatusCode::OK, Json(json!({
+                            "ok": true,
+                            "file": filename,
+                            "workplan": parsed,
+                        })));
+                    }
+                }
+            }
+        }
+    }
+
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({ "ok": false, "error": format!("workplan '{}' not found on disk", name) })),
+    )
 }
 
 /// GET /api/projects/{id}/workplans — list workplan files from a project's docs/workplans/ directory.
@@ -437,6 +598,16 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/assets/{*path}", get(serve_static))
         .route("/api/version", get(get_version))
         .route("/api/health", get(get_health))
+        .route("/api/auto-repair/status", get(auto_repair_status))
+        .route("/api/auto-repair/restart", post(auto_repair_restart))
+        // Knowledge graph (hex-graph engine)
+        .route("/api/graph/build", post(graph::build_graph)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/graph/query", post(graph::query_graph))
+        .route("/api/graph/path", post(graph::path_graph))
+        .route("/api/graph/explain", post(graph::explain_graph))
+        .route("/api/graph/context", post(graph::context_graph))
+        .route("/api/graph/summary", post(graph::summary_graph))
         // Project management
         .route("/api/projects", get(projects::list_projects))
         .route("/api/projects/register", post(projects::register)
@@ -453,14 +624,21 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
         .route("/api/event", post(push::push_event)
             .layer(DefaultBodyLimit::max(EVENT_BODY_LIMIT)))
-        // Tool-call event log (ADR-2604012137) — SQLite + WebSocket broadcast
+        // Tool-call event log (ADR-2026-04-01-2137, ADR-2026-04-02-0900) — in-memory ring buffer + WebSocket broadcast.
         .route("/api/events", post(events::post_event).get(events::list_events))
-        // Paginated briefing (ADR-2604131500 P1.1)
+        // Paginated briefing (ADR-2026-04-13-1500 P1.1)
         .route("/api/briefing", get(briefing::get_briefing))
-        // AGENTIC SCHED (ADR-2604102200) — must register BEFORE {project_id} routes
+        // AGENTIC SCHED (ADR-2026-04-10-2200) — must register BEFORE {project_id} routes
         .route("/api/sched/status", get(sched::status))
+        .route("/api/sched/improver/status", get(sched::improver_status))
         .route("/api/sched/test", post(sched::test))
-        // AIOS Experience (ADR-2604131500) — pulse, steer, taste, trust
+        // wp-sched-queue-history P1.2 — handler existed in sched.rs but was
+        // never registered. Wired here so `hex sched queue history` and the
+        // sched_daemon_terminal_state.rs tests have an endpoint to call.
+        .route("/api/sched/queue/history", get(sched::queue_history))
+        // Idle-research swarm dashboard surface (wp-idle-research-swarm P5.2)
+        .route("/api/research/sweeps", get(research::list_sweeps))
+        // AIOS Experience (ADR-2026-04-13-1500) — pulse, steer, taste, trust
         .route("/api/pulse", get(pulse::get_pulse))
         .route("/api/steer", post(steer::handle_steer))
         .route("/api/classifier/rules", get(classifier::list_classifier_rules))
@@ -470,6 +648,51 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/trust", get(trust::get_trust).post(trust::set_trust))
         .route("/api/trust/history", get(trust::get_trust_history))
         .route("/api/trust/{scope}/pin", patch(trust::pin_trust))
+        // Org chart — hierarchical agent visualization
+        .route("/api/org/chart", get(org_chart::get_org_chart))
+        .route("/api/org/personas", get(org_chart::get_persona_status))
+        .route("/api/org/agent/start", post(org_chart::start_agent))
+        // Org comms — hierarchical message routing
+        .route("/api/org/send-message", post(org_comms::send_message))
+        .route("/api/org/messages", get(org_comms::list_messages))
+        .route("/api/org/conversation/{id}", get(org_comms::get_conversation))
+        .route("/api/ops-sla", get(org_comms::ops_sla))
+        // SOP run telemetry (2026-05-18 — closes the IC-responder-gap follow-on)
+        .route("/api/org/sop/active", get(sop::list_active))
+        .route("/api/org/sop/recent", get(sop::list_recent))
+        .route("/api/org/sop/runs", get(sop::list_all))
+        // Dead-letter quarantine surface (ADR-2026-05-19-0900 P2.3) — operator-
+        // visible audit of brain-tasks that exceeded their retry budget.
+        .route("/api/dead-letter", get(dead_letter::list))
+        .route("/api/dead-letter/{id}/replay", post(dead_letter::replay))
+        // Worker-pool consumer-availability gate (ADR-2026-05-19-0900 §1 + P3.4)
+        .route("/api/worker-pool/check", get(worker_pool::check))
+        // Self-heartbeat endpoint used by hex-agent (when launched with
+        // HEX_WORKER_PROCESS_ID env var). Closes the gap where supervisor_tick
+        // reaped still-alive workers because nobody was refreshing their row.
+        .route("/api/worker-process/{id}/heartbeat", post(worker_pool::process_heartbeat))
+        // End-to-end liveness probe (ADR-2026-05-19-0900 P5.2)
+        .route("/api/liveness", get(liveness::get_liveness))
+        // ── ADR-2026-05-08-1126 dashboard surfaces ──────────────────────────
+        .route("/api/merge/requests", get(merge_gate::list_merge_requests))
+        .route("/api/merge/approve", post(merge_gate::approve_merge_request))
+        .route("/api/merge/reject", post(merge_gate::reject_merge_request))
+        .route("/api/merge/personas", get(merge_gate::list_personas))
+        .route("/api/merge/thoughts", get(merge_gate::list_thoughts))
+        .route("/api/merge/persona-events/{role}", get(merge_gate::list_persona_events))
+        // ── ADR-2026-05-08-2200 resource supervisor ─────────────────────────
+        .route("/api/resources", get(resources::list_processes))
+        .route("/api/resources/anomalies", get(resources::list_anomalies))
+        .route("/api/resources/anomalies/ack", post(resources::ack_anomaly))
+        .route("/api/commitments", get(resources::list_commitments))
+        .route("/api/commitments/satisfy", post(resources::satisfy_commitment))
+        .route("/api/commitments/abandon", post(resources::abandon_commitment))
+        .route("/api/mission-control", get(mission_control::get_mission_control))
+        // ── ADR-2026-05-17-2030 SOP pipeline redesign (P6.2) ────────────────
+        // Silent-drop counter — drives the 48h acceptance gate.
+        .route("/api/observability/silent-drops", get(observability::silent_drops))
+        // SpacetimeDB registry — database identities
+        .route("/api/stdb/registry", get(stdb_registry::get_registry))
         // Per-project queries (browser reads)
         .route("/api/{project_id}/health", get(query::get_health))
         .route("/api/{project_id}/tokens/overview", get(query::get_tokens_overview))
@@ -486,13 +709,15 @@ pub fn build_router(state: SharedState) -> Router {
         // STATELESS COMPUTE — these routes stay (filesystem + process mgmt)
         // ═══════════════════════════════════════════════════════════
 
+        // Monitor snapshot (observability)
+        .route("/api/monitor", get(monitor::get_monitor_snapshot))
         // Architecture analysis (ADR-034) — on-demand, native tree-sitter
         .route("/api/analyze", get(analysis::analyze_current_project)
             .post(analysis::analyze_path)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/{project_id}/analyze", get(analysis::analyze_project))
         // ADR compliance (ADR-045) — check code against accepted ADRs
-        .route("/api/analyze/adr-compliance", post(analysis::analyze_adr_compliance)
+        .route("/api/analyze/ADR-compliance", post(analysis::analyze_adr_compliance)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         // ADR number reservation (atomic next-number for multi-agent coordination)
         .route("/api/adr/reserve", post(adr_reserve_number))
@@ -507,6 +732,38 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/{project_id}/commands", get(commands::list_commands))
         // Decisions (browser → hub → WS)
         .route("/api/{project_id}/decisions/{decision_id}", post(decisions::handle_decision))
+        // Brain-dashboard decisions aggregator (wp-brain-dashboard M1):
+        // GET → list everything that needs operator decision
+        // POST /api/decisions/{id} (resolve_decision) is registered later.
+        .route("/api/decisions", get(decisions::list_decisions))
+        .route("/api/decisions/blocked-task/resolve", post(decisions::resolve_blocked_task))
+        .route("/api/decisions/preview", get(decisions::preview_decision))
+        .route("/api/decisions/adr/resolve", post(decisions::resolve_adr))
+        // Brain-dashboard chat dispatch (wp-brain-dashboard M3):
+        // POST { role, message } → loads YAML persona → calls inference → returns content.
+        .route("/api/brain/chat", post(brain_chat::dispatch_brain_chat))
+        // Brain-dashboard broadcast: POST { message, roles? } → fans out to all
+        // (or specified) personas in parallel → array of responses.
+        .route("/api/brain/broadcast", post(brain_chat::dispatch_brain_broadcast))
+        // Pending dispatches enqueued by @<role> mentions in chat replies.
+        .route("/api/brain/dispatches", get(brain_chat::list_brain_dispatches))
+        .route("/api/brain/dispatches/{id}/promote", post(brain_chat::promote_brain_dispatch))
+        .route("/api/brain/dispatches/{id}", get(brain_chat::get_brain_dispatch))
+        // Convert an agent reply into a workplan draft (one-click in dashboard).
+        .route("/api/brain/messages/to-workplan", post(brain_chat::message_to_workplan))
+        // STDB-supervisor pool surface (wp-stdb-supervisor P4 + P5)
+        .route("/api/pools", get(pools::list_pools).post(pools::create_pool))
+        .route("/api/pools/{id}", delete(pools::delete_pool))
+        .route("/api/pools/{id}/paused", patch(pools::set_paused))
+        // Supervisor activity log — drives the Brain dashboard activity feed.
+        .route("/api/supervisor/events", get(pools::list_supervisor_events))
+        // STDB-backed chat threads (stored as hexflo memory keys "chat:thread:<id>").
+        .route("/api/brain/threads", get(brain_chat::list_threads).post(brain_chat::create_thread))
+        .route("/api/brain/threads/by-key/{key}", post(brain_chat::get_or_create_thread_by_key))
+        .route("/api/brain/threads/{id}",
+            get(brain_chat::get_thread).delete(brain_chat::delete_thread))
+        .route("/api/brain/threads/{id}/messages",
+            post(brain_chat::append_thread_message))
         // ═══════════════════════════════════════════════════════════
         // DEPRECATED STATE ROUTES — migrate to SpacetimeDB subscriptions
         // These routes add X-Deprecated headers via deprecation_layer.
@@ -517,10 +774,20 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/stdb/hydrate", post(stdb::hydrate)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/stdb/health", get(stdb::health))
+        .route("/api/stdb/restart", post(stdb::restart_stdb))
 
         // Swarm + HexFlo routes — guarded: only registered agents can mutate
         .route("/api/swarms", post(swarms::create_swarm)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        // Substrate swap-tickets (ADR-2026-04-26-1500 P5).
+        .route("/api/swaps", get(swaps::list_swaps))
+        .route("/api/swaps/propose", post(swaps::propose_swap))
+        .route("/api/swaps/dry-run", post(swaps::dry_run_swap))
+        .route("/api/swaps/secret/propose", post(swaps::propose_secret_swap))
+        .route("/api/swaps/secret/dry-run", post(swaps::dry_run_secret_swap))
+        .route("/api/swaps/{id}/samples", get(swaps::list_samples))
+        // Substrate operator health snapshot.
+        .route("/api/substrate/status", get(swaps::substrate_status))
         .route("/api/swarms/active", get(swarms::list_active_swarms))
         .route("/api/swarms/failed", get(swarms::list_failed_swarms))
         .route("/api/swarms/all", get(swarms::list_all_swarms))
@@ -620,9 +887,9 @@ pub fn build_router(state: SharedState) -> Router {
         // Workplan execution
         .route("/api/workplan/execute", post(orchestration::execute_workplan)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
-        // Path B (P1.1): poll terminal-state for a specific execution id.
-        // MUST come before /api/workplan/{id} to avoid the {id} catch-all matching "execute".
-        .route("/api/workplan/execute/{id}/status", get(workplan::get_execution_status))
+        // Per-execution status poll — must precede /api/workplan/{id} so axum's
+        // matcher doesn't capture "execute" as an id (ADR-2026-05-14-1135 Phase 1 #2).
+        .route("/api/workplan/execute/{id}/status", get(orchestration::execute_status))
         .route("/api/workplan/status", get(orchestration::workplan_status))
         .route("/api/workplan/fail", post(orchestration::fail_workplan))
         .route("/api/workplan/pause", post(orchestration::pause_workplan))
@@ -639,17 +906,18 @@ pub fn build_router(state: SharedState) -> Router {
         // Environment API (P5a)
         .route("/api/environments", post(orchestration::create_environment))
         .route("/api/environments", get(orchestration::list_environments))
-        // Context engineering (ADR-2603312100) — hot-reload context caches
+        // Context engineering (ADR-2026-03-31-2100) — hot-reload context caches
         .route("/api/context/reload", post(context::reload_context))
         // MCP tool registry — serves config/mcp-tools.json for dashboard discovery
         .route("/api/tools", get(tools_registry))
         // Workplan file definitions — reads docs/workplans/*.json from disk
         .route("/api/workplans", get(workplan_files))
+        .route("/api/workplans/{name}", get(workplan_file_detail))
         // Project-scoped workplan files (dashboard passes ?root= as fallback)
         .route("/api/projects/{id}/workplans", get(project_workplan_files))
         .route("/api/projects/{id}/report", get(projects::project_report))
         .route("/api/projects/{id}/swarms", get(projects::project_swarms))
-        // Architecture fingerprint (ADR-2603301200)
+        // Architecture fingerprint (ADR-2026-03-30-1200)
         .route("/api/projects/{id}/fingerprint", post(fingerprint::generate_fingerprint)
             .get(fingerprint::get_fingerprint))
         .route("/api/projects/{id}/fingerprint/text", get(fingerprint::get_fingerprint_text))
@@ -687,23 +955,42 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/inference/endpoints/{id}", delete(secrets::remove_inference)
             .patch(secrets::calibrate_inference))
         .route("/api/inference/health", post(secrets::check_inference_health))
+        // Periodic calibration — probes via the in-process pipeline so vault
+        // secrets resolve, then PATCHes quality_score (wp-inference-calibrate-endpoint).
+        .route("/api/inference/calibrate/{id}", post(inference::calibrate_endpoint))
+        .route("/api/inference/calibrate-all", post(inference::calibrate_all))
+        // Direct executor (ADR-2026-06-04-1740 Path A): task → one agent → evidence → commit
+        .route("/api/direct/execute", post(direct_execute))
+        .route("/api/direct/runs", get(direct_runs))
+        .route("/api/agent/adr-steward/sweep", post(adr_steward_sweep))
+        .route("/api/agent/workplan-steward/sweep", post(workplan_steward_sweep))
         // Synchronous inference completion (hex-agent HTTP bridge)
         .route("/api/inference/complete", post(inference::inference_complete)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
-        // Path B task dispatch queue (ADR-2604010000 P2.2 + P2.3)
+        // Simple-agent loop — flat LLM-driven typed-tool dispatch, no persona.
+        // POST /api/agent/run {intent, max_iterations?, max_tokens?, model?}
+        .route("/api/agent/run", post(agent_run::run)
+            .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
+        // Path B task dispatch queue (ADR-2026-04-01-0000 P2.2 + P2.3)
         .route("/api/inference/queue", post(inference::inference_queue)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
         .route("/api/inference/queue/pending", get(inference::queue_pending))
         .route("/api/inference/queue/{id}", patch(inference::queue_update))
-        // Rate limit state + cost attribution (ADR-2604052125)
+        // Rate limit state + cost attribution (ADR-2026-04-05-2125)
         .route("/api/inference/rate-state", get(inference::rate_state))
         .route("/api/inference/stats", get(inference::inference_stats_endpoint))
         .route("/api/inference/q-report", get(inference::q_report))
+        .route("/api/inference/usage", get(inference::usage_report))
         // SSE streaming chat endpoint (hex chat TUI — wp-cli-chat-tui)
         .route("/api/inference/chat/stream", post(inference::inference_stream))
         // OpenAI-compatible proxy (opencode first-class — feat-hex-opencode-first-class)
         .route("/v1/models", get(inference::openai_models))
         .route("/v1/chat/completions", post(inference::openai_chat_completions))
+        // Anthropic-compatible gateway (ADR-2026-07-10-1000 follow-on): point
+        // ANTHROPIC_BASE_URL=http://localhost:5555 to run Claude Code / any
+        // Anthropic-format agent on hex's tiered, local-first routing.
+        .route("/v1/messages", post(inference::anthropic_messages))
+        .route("/v1/messages/count_tokens", post(inference::anthropic_count_tokens))
         // ═══════════════════════════════════════════════════════════
         // HEXFLO COORDINATION — write routes stay, reads via SpacetimeDB
         // ═══════════════════════════════════════════════════════════
@@ -758,7 +1045,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/hexflo/memory/{key}", get(hexflo::memory_retrieve)
             .delete(hexflo::memory_delete))
         .route("/api/hexflo/cleanup", post(hexflo::cleanup))
-        // Enforcement rules (ADR-2603221959 P5)
+        // Enforcement rules (ADR-2026-03-22-1959 P5)
         .route("/api/hexflo/enforcement-rules", get(hexflo::enforcement_rules_list)
             .post(hexflo::enforcement_rules_upsert)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
@@ -800,7 +1087,7 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/command-sessions/{session_id}/search", get(command_sessions::search_session));
 
-    // Session persistence (ADR-036 / ADR-042 P2.5) — SpacetimeDB primary, SQLite fallback
+    // Session persistence (ADR-036 / ADR-042 P2.5) — SpacetimeDB.
     let router = router
         .route("/api/sessions", post(sessions::create_session)
             .get(sessions::list_sessions)

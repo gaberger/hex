@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test: evidence-guard (ADR-2604141400 §1 P1) correctly flips a silent-
+# Smoke test: evidence-guard (ADR-2026-04-14-1400 §1 P1) correctly flips a silent-
 # drain workplan to `failed` with a "no git evidence" marker in the result.
 #
 # What this proves end-to-end:

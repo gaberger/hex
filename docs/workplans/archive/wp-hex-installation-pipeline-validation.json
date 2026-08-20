@@ -1,0 +1,80 @@
+{
+  "adr": "ADR-067",
+  "created_at": "2026-05-23T18:30:14.406622283+00:00",
+  "created_by": "hex-coder",
+  "feature": "Add CLI commands for installation and pipeline validation in hex.",
+  "id": "wp-hex-installation-pipeline-validation",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Add `hex doctor` command to hex-cli",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-cli/src/commands/doctor.rs"
+          ],
+          "id": "P1.1",
+          "layer": "cli",
+          "name": "Implement `hex doctor` command",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P2",
+      "name": "Add `hex validate pipeline` command",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-cli/src/commands/validate/pipeline.rs"
+          ],
+          "id": "P2.1",
+          "layer": "cli",
+          "name": "Implement `hex validate pipeline` command",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P3",
+      "name": "Integrate scaffold-validator into `hex init`",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-cli/src/commands/init.rs",
+            "scaffold-validator/src/main.rs"
+          ],
+          "id": "P3.1",
+          "layer": "cli",
+          "name": "Modify hex-init to run scaffold validation post-scaffold",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P4",
+      "name": "Add `--parallel` flag for pipeline",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-cli/src/commands/validate/pipeline.rs"
+          ],
+          "id": "P4.1",
+          "layer": "cli",
+          "name": "Implement parallel execution in `hex validate pipeline`",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

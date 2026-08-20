@@ -1,0 +1,3264 @@
+/**
+ * Brain.tsx — wp-brain-dashboard, full three-pane layout.
+ *
+ * Page layout:
+ *   ┌─────────────────────────────────────────────────────────┐
+ *   │  TEAM rail │  CENTER (Kanban + Decisions + Swarms +    │
+ *   │  (left)    │           Health)         │  CHAT (right) │
+ *   └─────────────────────────────────────────────────────────┘
+ *   │  EVENT FEED (collapsible bottom strip)                 │
+ *   └─────────────────────────────────────────────────────────┘
+ *
+ * Status of each pane:
+ *   - TeamRail        : live (groups 25 personas by category, online dots from /api/hex-agents)
+ *   - KanbanLanes     : live (projects /api/swarms/active tasks into 4 lanes)
+ *   - DecisionsPanel  : live (reuses /api/decisions from M1)
+ *   - SwarmsPanel     : live (/api/swarms/active)
+ *   - HealthPanel     : live (/api/health + /api/sched/improver/status)
+ *   - ChatPanel       : input shell only — full WebSocket dispatch lands in M3
+ *   - EventFeed       : static placeholder — STDB subscription wiring lands later
+ */
+import { Component, For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { restClient } from "../../services/rest-client";
+import MarkdownContent from "../chat/MarkdownContent";
+import { navigate } from "../../stores/router";
+
+// ── Persona registry (mirrors hex-cli/assets/agents/hex/hex/) ────────────────
+// Categories match the org-chart in the operator briefing. Order intentional.
+
+interface Persona {
+  name: string;
+  category: "PRODUCT" | "ENGINEERING" | "QUALITY" | "DESIGN" | "OPS";
+  color: string; // tailwind text-color class
+  /** One-line summary, shown on hover in the team rail. */
+  tagline: string;
+  /** Two-to-three sentence description — shown when the persona is selected. */
+  description: string;
+  /** When the operator should invoke this agent vs. its siblings. */
+  whenToUse: string;
+}
+
+// Roster mirrors hex-cli/assets/agents/hex/hex/<name>.yml. Descriptions
+// distilled from each YAML's `description:` field plus the operator briefing
+// so the user can see the pipeline ordering at a glance:
+//   PRODUCT:   dependency-analyst → pm-agent → behavioral-spec-writer → planner → feature-developer
+//   ENG:       feature-developer → swarm-coordinator → (hex-coder | hex-tester | hex-fixer | hex-documenter | hex-ux | rust-refactorer) → integrator
+//   QUALITY:   hex-reviewer (in-loop) → adversarial-red + adversarial-blue → validation-judge → ADR-reviewer + dead-code-analyzer + scaffold-validator
+//   DESIGN:    cli-designer + ux-designer (read-only critique)
+//   OPS:       dev-tracker (resume) + status-monitor (live)
+const PERSONAS: Persona[] = [
+  // ── PRODUCT — what to build, why, in what order ────────────────────────
+  { name: "dependency-analyst",    category: "PRODUCT",     color: "text-cyan-400",
+    tagline: "Tech-stack picker — runs BEFORE planner",
+    description: "Analyzes problem requirements to recommend optimal language/library combinations and cross-language communication patterns per adapter boundary.",
+    whenToUse: "When you're starting fresh and don't know which language/library/runtime fits each component. Output feeds the planner." },
+  { name: "pm-agent",              category: "PRODUCT",     color: "text-purple-400",
+    tagline: "ADR-vs-workplan classifier",
+    description: "Decides whether a request introduces an architectural commitment (new port, adapter, external dependency, persistence backend, trust tier) → ADR-first, or is tactical → workplan-only.",
+    whenToUse: "Default entry point for any new request. Don't pre-decide ADR-or-workplan; let pm-agent classify and route." },
+  { name: "behavioral-spec-writer",category: "PRODUCT",     color: "text-green-400",
+    tagline: "User-facing specs BEFORE code",
+    description: "Writes BehavioralSpec[] from a problem statement using domain knowledge. Specs describe user-facing behavior only — no function names, no internal state.",
+    whenToUse: "Before any feature codegen. The specs become validation-judge's independent oracle that catches 'tests mirror the bug' failures." },
+  { name: "planner",               category: "PRODUCT",     color: "text-blue-400",
+    tagline: "Decomposes into adapter-bounded task graph",
+    description: "Breaks high-level requirements into a dependency-ordered workplan. One task = one adapter boundary = one git worktree. Max 8 parallel.",
+    whenToUse: "After pm-agent classifies as workplan-only/both. Writes docs/workplans/wp-<slug>.json the swarm-coordinator can dispatch." },
+  { name: "feature-developer",     category: "PRODUCT",     color: "text-purple-400",
+    tagline: "Top-level 7-phase lifecycle orchestrator",
+    description: "Drives SPECS → PLAN → WORKTREES → CODE → VALIDATE → INTEGRATE → FINALIZE end-to-end. Coordinates spec-writer, planner, swarm, judge, integrator.",
+    whenToUse: "When you have a feature concept and want the full pipeline run for you. The 'do the whole thing' button." },
+
+  // ── ENGINEERING — does the work ────────────────────────────────────────
+  { name: "swarm-coordinator",     category: "ENGINEERING", color: "text-cyan-400",
+    tagline: "Parallel-agent dispatcher",
+    description: "Initializes HexFlo swarm, assigns workplan tasks to hex-coder agents in parallel worktrees, monitors heartbeats, reassigns on failure, triggers integration.",
+    whenToUse: "When the planner's workplan is ready and you want it executed in parallel. Usually invoked by feature-developer." },
+  { name: "hex-coder",             category: "ENGINEERING", color: "text-green-400",
+    tagline: "Polyglot TDD code-gen in ONE adapter",
+    description: "Generates production code within a single hexagonal adapter boundary. TS/Go/Rust. TDD red-green-refactor + per-language compile/lint/test feedback loop. Worktree-isolated.",
+    whenToUse: "The default IC for adapter implementation. Never crosses adapter boundaries — one task per invocation." },
+  { name: "hex-tester",            category: "ENGINEERING", color: "text-green-400",
+    tagline: "London-school unit tests for ONE file",
+    description: "Generates unit tests via local Ollama. Mocks via deps pattern (NEVER mock.module() per ADR-014). Covers happy + error + edge cases for every public method.",
+    whenToUse: "When hex-coder needs test scaffolding, or when you want to add tests to existing code without rewriting." },
+  { name: "hex-fixer",             category: "ENGINEERING", color: "text-orange-400",
+    tagline: "Surgical compile/lint/test error fixes",
+    description: "Targeted fixes only — no refactoring, no surrounding cleanup. Escalates to Sonnet after 3 failed attempts.",
+    whenToUse: "When hex-coder's feedback loop hits max iterations and escalates, or when CI is red and you want it green fast." },
+  { name: "hex-documenter",        category: "ENGINEERING", color: "text-yellow-400",
+    tagline: "Doc-comment generator (read-only on API)",
+    description: "Adds JSDoc/TSDoc/rustdoc/godoc to one file or module. Never alters function signatures or public API.",
+    whenToUse: "When public symbols lack docs. Bounded to doc comments — won't add code." },
+  { name: "hex-ux",                category: "ENGINEERING", color: "text-pink-400",
+    tagline: "Primary-adapter UI micro-fixes",
+    description: "Applies a11y / contrast / loading-empty-error states inside ONE primary adapter. Bounded to src/adapters/primary/ — never crosses boundaries.",
+    whenToUse: "After @ux-designer produces a UXDesignReport — hex-ux applies it. Distinct from ux-designer (read-only critique)." },
+  { name: "rust-refactorer",       category: "ENGINEERING", color: "text-orange-400",
+    tagline: "Autonomous Rust refactoring (worktree)",
+    description: "Surgical Rust refactors with worktree isolation. Preserves public API. Runs cargo check + clippy + test after every change.",
+    whenToUse: "Rust-specific cleanup. Module splits, extract-function refactors. Not for cross-language work." },
+  { name: "integrator",            category: "ENGINEERING", color: "text-yellow-400",
+    tagline: "Worktree merge captain",
+    description: "Merges feature worktrees back to main in dependency order (domain → ports → secondary → primary → usecases → integration). Uses hex worktree merge, never raw git checkout. Resolves conflicts; runs full suite.",
+    whenToUse: "After all hex-coder agents finish their adapter tasks. Closes the feature lifecycle." },
+
+  // ── QUALITY — says ship-or-don't ───────────────────────────────────────
+  { name: "hex-reviewer",          category: "QUALITY",     color: "text-cyan-400",
+    tagline: "Fast in-loop quality gut-check",
+    description: "Local Ollama. Boundary check + pattern review + anti-pattern flags. Not a pre-merge gate — for in-development pair-review feedback.",
+    whenToUse: "Quick 'look this over before I commit'. Cheaper and faster than the adversarial duo." },
+  { name: "adversarial-red",       category: "QUALITY",     color: "text-red-400",
+    tagline: "Security/hex-boundary skeptic (Anthropic)",
+    description: "provider_lock: anthropic. Hunts hex-rule violations, leaked secrets, autonomy escapes, supply-chain drift, config trust issues. Refuses to run if blue is on the same provider — same provider = shared blindspots.",
+    whenToUse: "Pre-merge audit, post-feature work, post-migration. Always paired with @adversarial-blue." },
+  { name: "adversarial-blue",      category: "QUALITY",     color: "text-blue-400",
+    tagline: "Correctness/UX skeptic (OpenAI/local)",
+    description: "provider_lock: openai_or_local. Hunts test-mirror-bug, error-message lies, sign-convention reversals, spec drift. Distinct training biases from red — catches what red misses.",
+    whenToUse: "Always paired with @adversarial-red. The two reports go to validation-judge for arbitration." },
+  { name: "validation-judge",      category: "QUALITY",     color: "text-red-400",
+    tagline: "Final PASS/FAIL verdict + arbitrates red+blue",
+    description: "Behavioral specs + property tests (fast-check, not example-based) + smoke + sign-convention + boundary check. PASS at score ≥80, else FAIL with specific fixes. Phase 6a arbitrates red + blue (verifies provider divergence).",
+    whenToUse: "Last gate before merge. After both adversaries report. Blocks deployment on FAIL." },
+  { name: "ADR-reviewer",          category: "QUALITY",     color: "text-yellow-400",
+    tagline: "ADR structural + drift validator",
+    description: "Validates ADR completeness (Status/Context/Decision/Consequences/Alternatives), legitimate status transitions, cross-references. Flags code that contradicts accepted ADRs.",
+    whenToUse: "After writing an ADR or before merging code that touches architectural surfaces." },
+  { name: "dead-code-analyzer",    category: "QUALITY",     color: "text-orange-400",
+    tagline: "Orphan + unused-export hunter",
+    description: "Workspace-wide tree-sitter L1 dependency graph. Orphaned adapter → CRITICAL, unused public export → MEDIUM, cross-adapter import → CRITICAL.",
+    whenToUse: "After deletions/refactors to verify nothing dangling. Periodic hygiene." },
+  { name: "scaffold-validator",    category: "QUALITY",     color: "text-yellow-400",
+    tagline: "'Is this app actually runnable?'",
+    description: "Checks README + start script + .env.example AND actually runs the dev command. PASS only when the app starts.",
+    whenToUse: "After /hex-scaffold or any new project generation. Closes the 'compiles but doesn't work' gap." },
+
+  // ── DESIGN — read-only critique ────────────────────────────────────────
+  { name: "cli-designer",          category: "DESIGN",      color: "text-cyan-400",
+    tagline: "CLI surface design reviewer (no code-write)",
+    description: "Critiques hex --help ergonomics, flag conventions (kebab-case, --json, --dry-run), alias hierarchies, error-message shape. Emits CLIDesignReport.",
+    whenToUse: "Before adding a new CLI command, or to audit existing surfaces. Pair with @hex-coder to apply the report." },
+  { name: "ux-designer",           category: "DESIGN",      color: "text-pink-400",
+    tagline: "Solid+Tailwind dashboard reviewer (no code-write)",
+    description: "Visual hierarchy + WCAG 2.1 AA + state-flow (loading/empty/error all three) + real-time pacing ≥500ms. Cites Nielsen heuristics. Emits UXDesignReport.",
+    whenToUse: "Before adding a new dashboard surface, or for a11y/contrast audits. Pair with @hex-ux to apply." },
+
+  // ── OPS — keeps the lights on ──────────────────────────────────────────
+  { name: "dev-tracker",           category: "OPS",         color: "text-blue-400",
+    tagline: "Session-resume reconciler",
+    description: "Reconciles HexFlo task state against git history. Surfaces in-progress / blocked / next tasks. Spawns agents for ready work when asked.",
+    whenToUse: "First thing on session start: 'where did we leave off?'" },
+  { name: "status-monitor",        category: "OPS",         color: "text-blue-400",
+    tagline: "Passive event-bus observer",
+    description: "Subscribes to STDB events, formats progress, flags anomalies (heartbeat stale >45s, score drop >10%, token usage >80%). Read-only.",
+    whenToUse: "Long-running multi-agent sessions. Side-channel 'keep an eye on the swarm'." },
+];
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+interface SwarmTask { id: string; title: string; status: string; agentId?: string; agent_id?: string; }
+interface Swarm {
+  id: string;
+  name?: string;
+  status?: string;
+  tasks?: SwarmTask[];
+  projectId?: string;
+  project_id?: string;
+}
+interface ProjectInfo { id: string; name: string; rootPath?: string; status?: string; }
+interface DecisionInFlight {
+  dispatchId: string;
+  role: string;
+  status: string;
+}
+interface DecisionItem {
+  id: string; kind: string;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+  title: string; reason: string; ageSeconds: number;
+  suggestedAction: string; link: string | null;
+  inFlight?: DecisionInFlight;
+}
+interface DecisionsResponse { items: DecisionItem[]; total: number; bySeverity: Record<string, number>; }
+interface ImproverStatus { score?: number; mean_reward?: number; meanReward?: number; topHypothesis?: string; deadLetter?: number; }
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function severityClass(s: string): string {
+  switch (s) {
+    case "CRITICAL": return "bg-red-900/40 text-red-300 border-red-700";
+    case "HIGH":     return "bg-orange-900/40 text-orange-300 border-orange-700";
+    case "MEDIUM":   return "bg-yellow-900/30 text-yellow-300 border-yellow-700";
+    default:         return "bg-gray-800 text-gray-400 border-gray-700";
+  }
+}
+
+function ageShort(seconds: number): string {
+  if (!seconds || seconds <= 0) return "—";
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
+type LaneName = "Backlog" | "Ready" | "Doing" | "Done";
+function lane(status: string): LaneName {
+  switch (status) {
+    case "in_progress": case "assigned": return "Doing";
+    case "completed": case "done":       return "Done";
+    case "blocked":                       return "Backlog";
+    default:                              return "Ready";
+  }
+}
+
+// Map a target lane back to a task `status` value the API understands.
+function laneToStatus(lane: LaneName): string {
+  switch (lane) {
+    case "Backlog": return "blocked";
+    case "Ready":   return "pending";
+    case "Doing":   return "in_progress";
+    case "Done":    return "completed";
+  }
+}
+
+// Which lane→lane transitions can the operator drag manually? Agent-owned
+// lanes (Doing claim, Done complete) are read-only — letting humans drag
+// to "Done" makes the board lie about what shipped.
+function canDrag(from: LaneName, to: LaneName): boolean {
+  if (from === to) return false;
+  // Operator decisions: park in backlog or pull back to ready
+  if (to === "Backlog") return true;
+  if (from === "Backlog" && to === "Ready") return true;
+  // Done → Backlog allowed via the rule above (re-open as blocked).
+  // Everything else (Ready→Doing, Doing→Done, Done→Ready, Done→Doing) is agent-owned.
+  return false;
+}
+
+function dragRejectReason(from: LaneName, to: LaneName): string {
+  if (from === to) return "";
+  if (from === "Ready" && to === "Doing") return "Doing is agent-owned — workers claim it via `hex task assign` or @swarm-coordinator dispatch.";
+  if (to === "Done") return "Done is agent-owned — only the worker can mark a task complete (it requires a result artifact).";
+  if (from === "Done") return "Re-opening completed work is rare. If you need it back in flight, drag it to Backlog (blocked) and ask an agent to re-claim.";
+  return "Not a valid manual transition.";
+}
+
+// ── Subcomponents ────────────────────────────────────────────────────────────
+
+const TeamRail: Component<{
+  onlineNames: () => Set<string>;
+  onSelect: (name: string) => void;
+  selected: () => string | null;
+  /** Pool status keyed by role name. Drives the dot color + count badge. */
+  poolByRole: () => Map<string, PoolStatus>;
+  onScale: (role: string, count: number) => void;
+}> = (props) => {
+  const grouped = createMemo(() => {
+    const cats: Record<string, Persona[]> = { PRODUCT: [], ENGINEERING: [], QUALITY: [], DESIGN: [], OPS: [] };
+    for (const p of PERSONAS) cats[p.category].push(p);
+    return cats;
+  });
+
+  // Pool indicator: dot color + optional count badge.
+  //   red       → crash-loop (operator action needed)
+  //   green     → desired>0 and alive>=desired (healthy)
+  //   yellow⚡  → desired>0 but alive<desired (spawning/transient)
+  //   amber     → paused (operator-stopped)
+  //   green-soft→ online via @-mention dispatch (chat path, no pool)
+  //   gray      → idle placeholder (default — nothing to worry about)
+  const indicator = (p: Persona): { dot: string; badge: string | null; tip: string } => {
+    const pool = props.poolByRole().get(p.name);
+    const onlineFromChat = props.onlineNames().has(p.name);
+    if (pool?.inCrashLoop) {
+      return {
+        dot: "bg-red-500",
+        badge: `${pool.aliveCount}/${pool.desiredCount}`,
+        tip: `crash-loop · ${pool.exitedCount} exits — clear the flag in the supervisor panel`,
+      };
+    }
+    if (pool && pool.desiredCount > 0) {
+      const healthy = pool.aliveCount >= pool.desiredCount;
+      return {
+        dot: pool.paused ? "bg-yellow-500" : (healthy ? "bg-green-500" : "bg-yellow-400 animate-pulse"),
+        badge: `${pool.aliveCount}/${pool.desiredCount}`,
+        tip: pool.paused ? "paused" : (healthy ? "active" : "spawning"),
+      };
+    }
+    if (onlineFromChat) {
+      return { dot: "bg-green-600", badge: null, tip: "online (chat dispatch)" };
+    }
+    return { dot: "bg-gray-700", badge: null, tip: "idle — click + to scale up" };
+  };
+
+  return (
+    <aside class="w-72 border-r border-gray-800 bg-gray-950 overflow-y-auto px-3 py-4">
+      <h2 class="text-[11px] font-bold uppercase tracking-wider text-gray-300 mb-3 px-1">Team</h2>
+      <p class="text-[10px] text-gray-400 px-1 mb-3 leading-relaxed">
+        Click a persona to chat. Dot color = pool state · hover for <span class="text-cyan-400 font-mono">+</span>/<span class="text-cyan-400 font-mono">−</span>.
+      </p>
+      <For each={Object.entries(grouped())}>
+        {([cat, members]) => (
+          <div class="mb-5">
+            <div class="flex items-center justify-between px-1 mb-1.5">
+              <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400">{cat}</span>
+              <span class="text-[10px] text-gray-400">{members.length}</span>
+            </div>
+            <ul class="space-y-0.5">
+              <For each={members}>
+                {(p) => {
+                  const ind = createMemo(() => indicator(p));
+                  const pool = createMemo(() => props.poolByRole().get(p.name));
+                  return (
+                    <li
+                      onClick={() => props.onSelect(p.name)}
+                      title={`${p.tagline}\n${ind().tip}`}
+                      classList={{
+                        "group flex items-start gap-2 px-2 py-1 rounded cursor-pointer text-xs transition": true,
+                        "bg-gray-900 ring-1 ring-cyan-700/50": props.selected() === p.name,
+                        "hover:bg-gray-900": props.selected() !== p.name,
+                      }}
+                    >
+                      <span class={`h-1.5 w-1.5 rounded-full flex-shrink-0 mt-1.5 ${ind().dot}`} />
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-1.5">
+                          <span class={`${p.color} truncate`}>{p.name}</span>
+                          <Show when={ind().badge}>
+                            <span class="text-[9px] font-mono text-gray-400">{ind().badge}</span>
+                          </Show>
+                        </div>
+                        <div class="text-[10px] text-gray-400 truncate">{p.tagline}</div>
+                      </div>
+                      {/* Hover-reveal scale buttons. + always present; − only when desired>0. */}
+                      <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
+                        <Show when={pool() && pool()!.desiredCount > 0}>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); props.onScale(p.name, Math.max(0, pool()!.desiredCount - 1)); }}
+                            class="text-[11px] text-gray-400 hover:text-cyan-400 px-1"
+                            title="Scale down by 1"
+                          >−</button>
+                        </Show>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); props.onScale(p.name, (pool()?.desiredCount ?? 0) + 1); }}
+                          class="text-[11px] text-gray-400 hover:text-cyan-400 px-1"
+                          title="Scale up by 1"
+                        >+</button>
+                      </div>
+                    </li>
+                  );
+                }}
+              </For>
+            </ul>
+          </div>
+        )}
+      </For>
+    </aside>
+  );
+};
+
+const KanbanLanes: Component<{
+  swarms: () => Swarm[];
+  onSendToChat: (text: string, role?: string) => void;
+  /** Called after a successful drag-drop transition so the parent can refetch. */
+  onTaskMoved?: () => void;
+}> = (props) => {
+  // Track the dragged task + its source lane so drops can validate the
+  // transition and PATCH the right id.
+  const [dragging, setDragging] = createSignal<{ taskId: string; from: LaneName } | null>(null);
+  const [dragOverLane, setDragOverLane] = createSignal<LaneName | null>(null);
+  const [rejectMsg, setRejectMsg] = createSignal<string>("");
+  let rejectTimer: number | undefined;
+
+  const showReject = (msg: string) => {
+    setRejectMsg(msg);
+    if (rejectTimer !== undefined) window.clearTimeout(rejectTimer);
+    rejectTimer = window.setTimeout(() => setRejectMsg(""), 4000);
+  };
+
+  const handleDrop = async (toLane: LaneName) => {
+    const d = dragging();
+    setDragging(null);
+    setDragOverLane(null);
+    if (!d) return;
+    if (!canDrag(d.from, toLane)) {
+      showReject(dragRejectReason(d.from, toLane));
+      return;
+    }
+    // PATCH /api/hexflo/tasks/{id} with the new status.
+    try {
+      await restClient.patch(`/api/hexflo/tasks/${d.taskId}`, {
+        task_id: d.taskId,
+        status: laneToStatus(toLane),
+      });
+      props.onTaskMoved?.();
+    } catch (e) {
+      showReject(`move failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const tasksByLane = createMemo(() => {
+    const lanes: Record<string, SwarmTask[]> = { Backlog: [], Ready: [], Doing: [], Done: [] };
+    for (const s of props.swarms()) {
+      for (const t of s.tasks || []) {
+        const l = lane(t.status || "");
+        if (lanes[l].length < 8) lanes[l].push(t);
+      }
+    }
+    return lanes;
+  });
+
+  // Try to extract a role from the task title — many are "hex-coder: ..." or
+  // a JSON object {"role":"X","description":"..."}. Falls back to swarm-coordinator.
+  const taskRole = (t: SwarmTask): string => {
+    try {
+      const obj = JSON.parse(t.title);
+      if (obj && typeof obj.role === "string") return obj.role;
+    } catch { /* not JSON */ }
+    const m = t.title.match(/^([\w-]+):\s/);
+    if (m && PERSONAS.find((p) => p.name === m[1])) return m[1];
+    return "swarm-coordinator";
+  };
+
+  const taskTitle = (t: SwarmTask): string => {
+    try {
+      const obj = JSON.parse(t.title);
+      return obj.description || obj.title || t.title;
+    } catch { return t.title; }
+  };
+
+  const taskClick = (t: SwarmTask) => {
+    const role = taskRole(t);
+    const status = t.status || "?";
+    const title = taskTitle(t);
+    const prompt = status === "completed" || status === "done"
+      ? `@${role} can you summarize what you did for: ${title}`
+      : `@${role} status check: ${title}\n\n(currently ${status})`;
+    props.onSendToChat(prompt, role);
+  };
+
+  // ▶ Dispatch — fires an explicit "execute this" message to chat. The
+  // existing @-mention enqueue + dedup pipeline picks it up and creates an
+  // inference_task for a worker. Operator no longer wonders "what do I do
+  // with this Ready task" — one click → it's queued.
+  //
+  // IDEMPOTENT: once dispatched, the task id is added to dispatchedIds
+  // (persisted to localStorage so a refresh doesn't reset the lock).
+  // Button changes to a disabled "queued" pill on subsequent renders so
+  // the operator can't accidentally double-fire. The dedup at the @-mention
+  // enqueue point (already_in_flight in brain_chat.rs) is the server-side
+  // belt-and-braces; this UI lock is the suspenders.
+  const DISPATCHED_KEY = "hex-brain-kanban-dispatched-v1";
+  const loadDispatched = (): Set<string> => {
+    try {
+      const raw = localStorage.getItem(DISPATCHED_KEY);
+      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch { return new Set(); }
+  };
+  const [dispatchedIds, setDispatchedIds] = createSignal<Set<string>>(loadDispatched());
+  const persistDispatched = (s: Set<string>) => {
+    try { localStorage.setItem(DISPATCHED_KEY, JSON.stringify([...s].slice(-200))); } catch { /* quota */ }
+  };
+  const dispatchTask = async (t: SwarmTask, evt: MouseEvent) => {
+    evt.stopPropagation();
+    if (dispatchedIds().has(t.id)) return; // idempotent guard
+    const role = taskRole(t);
+    const title = taskTitle(t);
+    const prompt = `@${role} Please execute: ${title}`;
+    props.onSendToChat(prompt, role);
+    // Also flip the swarm_task itself to in_progress so it leaves the Ready
+    // lane visually. Without this, the task sat in Ready forever even after
+    // the operator dispatched it (Kanban swarm_tasks live in a different
+    // queue than inference_tasks; click only fired the chat path before).
+    try {
+      await restClient.patch(`/api/hexflo/tasks/${t.id}`, {
+        task_id: t.id,
+        status: "in_progress",
+      });
+      props.onTaskMoved?.();
+    } catch { /* best-effort — chat dispatch already fired */ }
+    setDispatchedIds((prev) => {
+      const next = new Set(prev);
+      next.add(t.id);
+      persistDispatched(next);
+      return next;
+    });
+  };
+
+  // ✗ Abandon — PATCH the task to status="failed" so it leaves the Ready
+  // lane. Different from drag-to-Backlog (blocked) — failed is "we're not
+  // doing this", blocked is "we'd do it but something's stopping us".
+  const abandonTask = async (t: SwarmTask, evt: MouseEvent) => {
+    evt.stopPropagation();
+    const title = taskTitle(t);
+    if (!confirm(`Abandon task "${title.slice(0, 60)}"? It moves to Done lane as failed.`)) return;
+    try {
+      await restClient.patch(`/api/hexflo/tasks/${t.id}`, { task_id: t.id, status: "failed" });
+      props.onTaskMoved?.();
+    } catch (e) {
+      alert(`abandon failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  return (
+    <section class="bg-gray-900/50 border border-gray-800 rounded-lg p-3 mb-4">
+      <div class="flex items-center justify-between mb-1 px-1">
+        <h3 class="text-xs font-bold uppercase tracking-wider text-gray-400">Kanban</h3>
+        <span class="flex items-center gap-2">
+          <Show when={rejectMsg()}>
+            <span class="text-[10px] text-yellow-400" role="alert">⚠ {rejectMsg()}</span>
+          </Show>
+          {/* Mass-abandon all unassigned Ready tasks. Most operators have
+              hundreds of stale brain-task:* rows from old test runs that no
+              worker will ever claim. One click → all marked failed → Ready
+              lane drains to actionable items only. Confirms first. */}
+          <Show when={tasksByLane()["Ready"].length >= 5}>
+            <button
+              type="button"
+              class="text-[10px] px-2 py-0.5 rounded bg-gray-800 hover:bg-red-900 text-gray-400 hover:text-red-200"
+              title={`Abandon all unassigned Ready tasks (${tasksByLane()["Ready"].filter((t) => !(t.agentId || t.agent_id)).length} shown). Useful for clearing stale brain-task:* rows from old test runs.`}
+              onClick={async () => {
+                const stale = tasksByLane()["Ready"].filter((t) => !(t.agentId || t.agent_id));
+                if (stale.length === 0) return;
+                if (!confirm(`Abandon ${stale.length} unassigned Ready task${stale.length === 1 ? "" : "s"}? They'll move to Done as failed. This is non-recoverable.`)) return;
+                let ok = 0;
+                for (const t of stale) {
+                  try {
+                    await restClient.patch(`/api/hexflo/tasks/${t.id}`, { task_id: t.id, status: "failed" });
+                    ok++;
+                  } catch { /* keep going */ }
+                }
+                showReject(`Abandoned ${ok}/${stale.length} stale tasks`);
+                props.onTaskMoved?.();
+              }}
+            >
+              Clear stale ↘
+            </button>
+          </Show>
+        </span>
+      </div>
+      <p class="text-[10px] text-gray-400 px-1 mb-2">
+        These are <code class="text-gray-300">swarm_task</code> rows from the workplan executor — separate pipeline from brain-chat dispatches.
+        Pending+unassigned older than 24h auto-drain to failed (server-side daemon).
+        Hover Ready/Backlog → <span class="text-cyan-400">▶</span> dispatches · <span class="text-red-400">✗</span> abandons · drag to move · ● assigned · ○ unclaimed
+      </p>
+      <div class="grid grid-cols-4 gap-2">
+        <For each={["Backlog", "Ready", "Doing", "Done"] as LaneName[]}>
+          {(laneName) => {
+            const isValidDrop = () => {
+              const d = dragging();
+              return d ? canDrag(d.from, laneName) : false;
+            };
+            const isDragOver = () => dragOverLane() === laneName;
+            return (
+              <div
+                onDragOver={(e) => {
+                  if (!dragging()) return;
+                  e.preventDefault();
+                  setDragOverLane(laneName);
+                  e.dataTransfer!.dropEffect = isValidDrop() ? "move" : "none";
+                }}
+                onDragLeave={() => { if (dragOverLane() === laneName) setDragOverLane(null); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  handleDrop(laneName);
+                }}
+                class="bg-gray-950 border border-gray-800 rounded p-2 min-h-[120px] transition"
+                classList={{
+                  "ring-2 ring-cyan-600 border-cyan-700": isDragOver() && isValidDrop(),
+                  "ring-2 ring-red-700/50 border-red-800/50": isDragOver() && !isValidDrop(),
+                  "opacity-60": dragging() != null && !isValidDrop() && dragging()?.from !== laneName,
+                }}
+              >
+                <div class="flex items-center justify-between mb-1.5">
+                  <span class="text-[10px] font-bold uppercase tracking-wider text-gray-300">
+                    {laneName}
+                    <Show when={dragging() && !canDrag(dragging()!.from, laneName) && dragging()!.from !== laneName}>
+                      <span class="text-gray-600 ml-1" title="agent-owned — drag rejected">🔒</span>
+                    </Show>
+                  </span>
+                  <span class="text-[10px] text-gray-400">{tasksByLane()[laneName].length}</span>
+                </div>
+                <ul class="space-y-1">
+                  <For each={tasksByLane()[laneName]}>
+                    {(t) => {
+                      const agentId = t.agentId || t.agent_id || "";
+                      const dot = agentId ? "●" : "○";
+                      const role = taskRole(t);
+                      return (
+                        <li
+                          draggable={true}
+                          onDragStart={(e) => {
+                            setDragging({ taskId: t.id, from: laneName });
+                            e.dataTransfer!.effectAllowed = "move";
+                          }}
+                          onDragEnd={() => { setDragging(null); setDragOverLane(null); }}
+                          onClick={() => taskClick(t)}
+                          class="text-[11px] text-gray-200 bg-gray-900 border border-gray-800 rounded px-2 py-1 cursor-grab active:cursor-grabbing hover:border-cyan-700 hover:bg-gray-800 transition group flex items-center gap-1"
+                          classList={{ "opacity-50": dragging()?.taskId === t.id }}
+                          title={`${t.title}\nRole: ${role}\n\nClick to chat · Drag to move · Buttons on hover for direct actions`}
+                        >
+                          <span class="text-gray-400 shrink-0">{dot}</span>
+                          <span class="group-hover:text-gray-100 truncate flex-1">
+                            {t.title.slice(0, 26)}{t.title.length > 26 ? "…" : ""}
+                          </span>
+                          {/* Inline actions for Ready/Backlog tasks — Dispatch
+                              fires the worker pipeline; Abandon kills the
+                              task. Hidden on agent-owned lanes (Doing/Done)
+                              where workers control the lifecycle. */}
+                          <Show when={laneName === "Ready" || laneName === "Backlog"}>
+                            <span
+                              class="flex gap-0.5 transition shrink-0"
+                              classList={{
+                                "opacity-0 group-hover:opacity-100": !dispatchedIds().has(t.id),
+                                "opacity-100": dispatchedIds().has(t.id),
+                              }}
+                            >
+                              <Show
+                                when={!dispatchedIds().has(t.id)}
+                                fallback={
+                                  <span
+                                    class="text-[9px] px-1 py-0 rounded bg-gray-800 text-gray-500 italic cursor-not-allowed"
+                                    title="Already dispatched — server-side dedup will reject re-enqueue. Refresh after the worker completes if you need to re-run."
+                                  >queued</span>
+                                }
+                              >
+                                <button
+                                  type="button"
+                                  onClick={(e) => dispatchTask(t, e)}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  class="text-[9px] px-1 py-0 rounded bg-cyan-900 hover:bg-cyan-700 text-cyan-100"
+                                  title={`Dispatch this task to @${role} via chat`}
+                                >▶</button>
+                              </Show>
+                              <button
+                                type="button"
+                                onClick={(e) => abandonTask(t, e)}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                class="text-[9px] px-1 py-0 rounded bg-gray-800 hover:bg-red-900 text-gray-400 hover:text-red-200"
+                                title="Abandon this task"
+                              >✗</button>
+                            </span>
+                          </Show>
+                        </li>
+                      );
+                    }}
+                  </For>
+                  <Show when={tasksByLane()[laneName].length === 0}>
+                    <li class="text-[10px] text-gray-300 italic px-2 py-2">empty</li>
+                  </Show>
+                </ul>
+              </div>
+            );
+          }}
+        </For>
+      </div>
+    </section>
+  );
+};
+
+// Short, conversational prompts. The agent already has the project context
+// + grounded facts injected, so we don't need to repeat the long reason text
+// here — that's just visual noise in the chat history.
+function decisionAction(item: DecisionItem): { role: string; prompt: string } {
+  // Trim the title so the chat bubble is readable
+  const t = item.title.length > 80 ? item.title.slice(0, 77) + "…" : item.title;
+  switch (item.kind) {
+    case "blocked_task":
+      return { role: "pm-agent", prompt: `@pm-agent help me unblock: ${t}` };
+    case "proposed_adr": {
+      const adrName = item.title.replace(/^ADR aging in Proposed: /, "");
+      return { role: "ADR-reviewer", prompt: `@ADR-reviewer should ${adrName} be accepted, superseded, or closed?` };
+    }
+    case "persona_bypass":
+      return { role: "pm-agent", prompt: `@pm-agent ${t}` };
+    case "priority_inbox":
+      return { role: "pm-agent", prompt: `@pm-agent inbox: ${t}` };
+    default:
+      return { role: "pm-agent", prompt: `@pm-agent decision: ${t}` };
+  }
+}
+
+/// Derive a stable thread key for a Decision item so clicking the same
+/// card later opens the SAME conversation. Uses the decision id which is
+/// already stable per-subject:
+///   blocked:wp-foo:P1.1  →  decision-wp-foo-p1-1
+///   adr:ADR-047-...      →  decision-adr-047-...
+function decisionThreadKey(decisionId: string): string {
+  return `decision-${decisionId}`
+    .toLowerCase()
+    .replace(/[:.\s]/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 180);
+}
+
+interface PreviewState {
+  id: string;
+  kind: string;
+  path: string;
+  markdown: string;
+  truncated: boolean;
+  bytes: number;
+}
+
+const DecisionsPanel: Component<{
+  data: () => DecisionsResponse | null;
+  onSendToChat: (text: string, role?: string, opts?: { autoSend?: boolean; threadKey?: string }) => void;
+  onResolved?: () => void;
+}> = (props) => {
+  const [preview, setPreview] = createSignal<PreviewState | null>(null);
+  const [previewLoading, setPreviewLoading] = createSignal(false);
+  const openPreview = async (item: DecisionItem) => {
+    setPreviewLoading(true);
+    try {
+      const resp = await restClient.get<PreviewState>(
+        `/api/decisions/preview?id=${encodeURIComponent(item.id)}`,
+      );
+      setPreview(resp);
+    } catch (e) {
+      alert(`preview failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+  const sendPreviewToPipeline = (item: DecisionItem) => {
+    const a = decisionAction(item);
+    setPreview(null);
+    props.onSendToChat(a.prompt, a.role, { threadKey: decisionThreadKey(item.id) });
+  };
+  const resolveBlocked = async (id: string, action: "unblock" | "complete" | "abandon", evt: MouseEvent) => {
+    evt.stopPropagation();
+    if (action === "complete" && !confirm("Mark this task DONE? Only do this if work is actually completed.")) return;
+    if (action === "abandon" && !confirm("Abandon this task? It won't be re-attempted.")) return;
+    try {
+      await restClient.post(`/api/decisions/blocked-task/resolve`, { id, action });
+      props.onResolved?.();
+    } catch (e) {
+      alert(`resolve failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+  const resolveAdr = async (id: string, action: "accept" | "reject" | "abandon", evt: MouseEvent) => {
+    evt.stopPropagation();
+    if (action === "accept" && !confirm("Accept this ADR? Status will flip to 'Accepted'.")) return;
+    if (action === "reject" && !confirm("Reject this ADR?")) return;
+    if (action === "abandon" && !confirm("Abandon this ADR?")) return;
+    try {
+      await restClient.post(`/api/decisions/adr/resolve`, { id, action });
+      props.onResolved?.();
+    } catch (e) {
+      alert(`adr resolve failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+  // Expanded shows all decisions; collapsed shows top 5. Toggle in-place
+  // (no navigation) so the operator stays in Brain.
+  const [expanded, setExpanded] = createSignal(false);
+  const visible = createMemo(() => {
+    const items = props.data()?.items || [];
+    return expanded() ? items : items.slice(0, 5);
+  });
+  return (
+    <section class="bg-gray-900/50 border border-gray-800 rounded-lg p-3 mb-4">
+      <div class="flex items-center justify-between mb-1 px-1">
+        <h3 class="text-xs font-bold uppercase tracking-wider text-gray-400">Decisions Needed</h3>
+        <Show when={props.data()}>
+          {(d) => (
+            <div class="flex gap-1.5">
+              <For each={["CRITICAL", "HIGH", "MEDIUM"]}>
+                {(s) => (
+                  <Show when={(d().bySeverity[s] || 0) > 0}>
+                    <span class={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${severityClass(s)}`}>
+                      {d().bySeverity[s]} {s[0]}
+                    </span>
+                  </Show>
+                )}
+              </For>
+            </div>
+          )}
+        </Show>
+      </div>
+      <p class="text-[10px] text-gray-400 px-1 mb-2">
+        Click a card to ask an agent about it · the chat input pre-fills with the right @-mention.
+      </p>
+      <Show
+        when={(props.data()?.items || []).length > 0}
+        fallback={
+          <div class="text-center text-gray-300 text-xs py-3">
+            ✓ caught up — no decisions pending
+          </div>
+        }
+      >
+        <ul
+          class="space-y-1"
+          classList={{ "max-h-[420px] overflow-y-auto pr-1": expanded() }}
+        >
+          <For each={visible()}>
+            {(item) => (
+              <li
+                onClick={() => {
+                  // In-flight: don't preview, just ask for status (different
+                  // intent than reviewing the ADR/task itself).
+                  if (item.inFlight) {
+                    props.onSendToChat(
+                      `Status of dispatch ${item.inFlight.dispatchId.slice(0, 8)} (@${item.inFlight.role})?`,
+                      item.inFlight.role,
+                      { threadKey: decisionThreadKey(item.id) },
+                    );
+                    return;
+                  }
+                  // Otherwise: open the markdown preview modal first so the
+                  // operator sees the underlying ADR/task content before
+                  // committing to a chat dispatch.
+                  openPreview(item);
+                }}
+                class="flex items-start gap-2 text-xs px-2 py-1.5 rounded cursor-pointer hover:bg-gray-800/50 transition group"
+                classList={{ "opacity-60": !!item.inFlight }}
+                title={item.inFlight
+                  ? `In flight: @${item.inFlight.role} (${item.inFlight.status}, dispatch ${item.inFlight.dispatchId.slice(0, 8)}). Click to ask for status.`
+                  : `Click to ask @${decisionAction(item).role} about this decision`}
+              >
+                <span class={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${severityClass(item.severity)} flex-shrink-0`}>
+                  {item.severity[0]}
+                </span>
+                <span class="text-gray-200 truncate flex-1" title={item.title}>{item.title}</span>
+                <Show when={item.inFlight}>
+                  {(inf) => (
+                    <span
+                      class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-cyan-900/60 text-cyan-200 border border-cyan-700 flex-shrink-0 animate-pulse"
+                      title={`Dispatch ${inf().dispatchId} status: ${inf().status}`}
+                    >
+                      🔄 {inf().status === "PendingReview" ? "review" : inf().status.toLowerCase()} · @{inf().role}
+                    </span>
+                  )}
+                </Show>
+                <span class="text-[10px] text-gray-400 flex-shrink-0">{ageShort(item.ageSeconds)}</span>
+                <Show when={item.kind === "blocked_task"}>
+                  <span class="flex gap-1 opacity-50 group-hover:opacity-100 transition flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={(e) => resolveBlocked(item.id, "unblock", e)}
+                      class="text-[9px] px-1.5 py-0.5 rounded bg-cyan-900 hover:bg-cyan-800 text-cyan-200"
+                      title="Clear blocked_reason and re-queue this task"
+                    >Unblock</button>
+                    <button
+                      type="button"
+                      onClick={(e) => resolveBlocked(item.id, "complete", e)}
+                      class="text-[9px] px-1.5 py-0.5 rounded bg-green-900 hover:bg-green-800 text-green-200"
+                      title="Mark task done — operator confirms work is finished"
+                    >Done</button>
+                    <button
+                      type="button"
+                      onClick={(e) => resolveBlocked(item.id, "abandon", e)}
+                      class="text-[9px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-red-900 text-gray-400 hover:text-red-200"
+                      title="Abandon — not going to do this"
+                    >×</button>
+                  </span>
+                </Show>
+                <Show when={item.kind === "proposed_adr"}>
+                  <span class="flex gap-1 opacity-50 group-hover:opacity-100 transition flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={(e) => resolveAdr(item.id, "accept", e)}
+                      class="text-[9px] px-1.5 py-0.5 rounded bg-green-900 hover:bg-green-800 text-green-200"
+                      title="Flip ADR Status to Accepted"
+                    >Accept</button>
+                    <button
+                      type="button"
+                      onClick={(e) => resolveAdr(item.id, "reject", e)}
+                      class="text-[9px] px-1.5 py-0.5 rounded bg-red-900 hover:bg-red-800 text-red-200"
+                      title="Flip ADR Status to Rejected"
+                    >Reject</button>
+                    <button
+                      type="button"
+                      onClick={(e) => resolveAdr(item.id, "abandon", e)}
+                      class="text-[9px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400"
+                      title="Flip ADR Status to Abandoned"
+                    >×</button>
+                  </span>
+                </Show>
+                <span class="text-cyan-400 text-[12px] opacity-0 group-hover:opacity-100 transition">→</span>
+              </li>
+            )}
+          </For>
+        </ul>
+        <Show when={(props.data()?.items.length || 0) > 5}>
+          <button
+            onClick={() => setExpanded(!expanded())}
+            class="w-full text-[11px] text-cyan-400 hover:text-cyan-300 hover:bg-gray-800/50 text-center py-1.5 mt-1 rounded transition"
+          >
+            <Show when={expanded()} fallback={<>show all {props.data()?.total} ↓</>}>
+              collapse to top 5 ↑
+            </Show>
+          </button>
+        </Show>
+      </Show>
+      {/* Markdown preview modal — opens on decision click. Renders the
+          underlying ADR or workplan markdown, with action buttons that
+          (a) send the existing decision-action prompt into chat (with
+          per-decision threadKey), or (b) accept/reject the decision
+          directly via the resolve endpoints (for ADRs only). */}
+      <Show when={preview()}>
+        {(p) => (
+          <div
+            class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6"
+            onClick={(e) => { if (e.currentTarget === e.target) setPreview(null); }}
+          >
+            <div class="bg-gray-950 border border-gray-700 rounded-lg max-w-4xl w-full max-h-[85vh] flex flex-col shadow-2xl">
+              <header class="px-4 py-3 border-b border-gray-800 flex items-center gap-3">
+                <span class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-gray-700 text-gray-300">
+                  {p().kind}
+                </span>
+                <span class="text-xs text-gray-200 font-mono truncate flex-1" title={p().path}>
+                  {p().path}
+                </span>
+                <span class="text-[10px] text-gray-400 font-mono">{p().bytes}B</span>
+                <button
+                  type="button"
+                  onClick={() => setPreview(null)}
+                  class="text-gray-400 hover:text-gray-200 text-lg leading-none px-1"
+                  title="Close"
+                >×</button>
+              </header>
+              <div class="overflow-y-auto px-4 py-3 flex-1 prose prose-invert prose-sm max-w-none">
+                <MarkdownContent content={p().markdown} />
+                <Show when={p().truncated}>
+                  <p class="text-[10px] text-yellow-400 italic mt-2">
+                    Truncated to 64KB. Open the file directly for full content.
+                  </p>
+                </Show>
+              </div>
+              <footer class="px-4 py-3 border-t border-gray-800 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  class="px-3 py-1.5 rounded bg-cyan-700 hover:bg-cyan-600 text-white text-xs font-semibold"
+                  onClick={() => {
+                    const matching = (props.data()?.items ?? []).find((it) => it.id === p().id);
+                    if (matching) sendPreviewToPipeline(matching);
+                    else setPreview(null);
+                  }}
+                  title="Pre-fill chat with the standard decision question for this subject"
+                >→ Send to chat / pipeline</button>
+                <Show when={p().kind === "adr"}>
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 rounded bg-green-800 hover:bg-green-700 text-green-100 text-xs"
+                    onClick={async () => {
+                      if (!confirm("Accept this ADR? Status flips to Accepted.")) return;
+                      try {
+                        await restClient.post(`/api/decisions/adr/resolve`, {
+                          id: p().id, action: "accept",
+                        });
+                        setPreview(null);
+                        props.onResolved?.();
+                      } catch (e) {
+                        alert(`accept failed: ${e instanceof Error ? e.message : String(e)}`);
+                      }
+                    }}
+                  >Accept</button>
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 rounded bg-red-900 hover:bg-red-800 text-red-100 text-xs"
+                    onClick={async () => {
+                      if (!confirm("Reject this ADR?")) return;
+                      try {
+                        await restClient.post(`/api/decisions/adr/resolve`, {
+                          id: p().id, action: "reject",
+                        });
+                        setPreview(null);
+                        props.onResolved?.();
+                      } catch (e) {
+                        alert(`reject failed: ${e instanceof Error ? e.message : String(e)}`);
+                      }
+                    }}
+                  >Reject</button>
+                </Show>
+                <span class="ml-auto flex gap-2">
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs"
+                    onClick={() => setPreview(null)}
+                  >Close</button>
+                </span>
+              </footer>
+            </div>
+          </div>
+        )}
+      </Show>
+      <Show when={previewLoading()}>
+        <div class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center text-gray-300 text-sm">
+          Loading preview…
+        </div>
+      </Show>
+    </section>
+  );
+};
+
+const SwarmsPanel: Component<{
+  swarms: () => Swarm[];
+  projectName: (id: string) => string;
+}> = (props) => (
+  <section class="bg-gray-900/50 border border-gray-800 rounded-lg p-3 mb-4">
+    <h3 class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 px-1">Swarms</h3>
+    <Show
+      when={props.swarms().length > 0}
+      fallback={<div class="text-xs text-gray-400 italic">no active swarms</div>}
+    >
+      <ul class="space-y-2">
+        <For each={props.swarms().slice(0, 6)}>
+          {(s) => {
+            const tasks = s.tasks || [];
+            const completed = tasks.filter((t) => t.status === "completed").length;
+            const failed = tasks.filter((t) => t.status === "failed").length;
+            const inProgress = tasks.filter(
+              (t) => t.status === "in_progress" || t.status === "assigned",
+            );
+            const pending = tasks.filter((t) => t.status === "pending");
+            // Surface what this swarm is doing right now: pick the
+            // first in-progress task; if none, the next pending; else done.
+            const focus = inProgress[0] || pending[0] || tasks[tasks.length - 1];
+            // Distinct agents working any task in this swarm.
+            const assigned = Array.from(
+              new Set(
+                tasks
+                  .map((t) => (t.agentId || t.agent_id || "").toString())
+                  .filter((a) => a && a !== "null"),
+              ),
+            );
+            // Try to map agent IDs back to a known persona — best-effort, since
+            // STDB stores UUIDs rather than role names. Fallback shows count.
+            const focusTitle = focus?.title?.replace(/\s+/g, " ").trim() || "(no tasks)";
+            const swarmProjectId = s.projectId || s.project_id || "";
+            const handleSwarmClick = (e: MouseEvent) => {
+              e.stopPropagation(); // Prevent event bubbling
+              // Global swarms (no projectId) use a synthetic "__global__" project ID
+              // so they can still use the project-swarm-detail route
+              const pid = swarmProjectId || "__global__";
+              console.log("Swarm clicked:", { swarmId: s.id, projectId: pid });
+              const newRoute = { page: "project-swarm-detail" as const, projectId: pid, swarmId: s.id };
+              console.log("Navigating to:", newRoute);
+              navigate(newRoute);
+              console.log("Navigate called, current hash:", window.location.hash);
+            };
+            return (
+              <li
+                class="text-xs bg-gray-950 border border-gray-800 rounded p-2 hover:border-gray-700 cursor-pointer transition-colors"
+                title={`Swarm: ${s.id}\nStatus: ${s.status || "active"}\nClick to view details`}
+                onClick={handleSwarmClick}
+              >
+                <div class="flex items-center gap-2 mb-1">
+                  <span
+                    class={`h-1.5 w-1.5 rounded-full flex-shrink-0 ${
+                      failed > 0 ? "bg-red-500" : inProgress.length > 0 ? "bg-green-500" : "bg-gray-600"
+                    }`}
+                  />
+                  <span class="text-gray-200 font-medium truncate flex-1">{s.name || s.id.slice(0, 12)}</span>
+                  {(() => {
+                    const pid = (s.projectId || s.project_id || "").toString();
+                    return pid ? (
+                      <span
+                        class="text-[10px] text-cyan-500 bg-cyan-900/20 px-1.5 py-0 rounded border border-cyan-900 flex-shrink-0"
+                        title={`Project: ${props.projectName(pid)}`}
+                      >
+                        {props.projectName(pid)}
+                      </span>
+                    ) : (
+                      <span class="text-[10px] text-gray-300 flex-shrink-0" title="No project — global swarm">global</span>
+                    );
+                  })()}
+                  <span class="text-[10px] text-gray-300 flex-shrink-0 font-mono">
+                    {completed}/{tasks.length}
+                    {failed > 0 ? <span class="text-red-400 ml-1">· {failed} fail</span> : null}
+                  </span>
+                </div>
+                <div class="text-[11px] text-gray-400 truncate pl-3.5" title={focusTitle}>
+                  <span class="text-gray-400">→</span> {focusTitle.slice(0, 80)}
+                </div>
+                <div class="text-[10px] text-gray-400 pl-3.5 mt-0.5 flex gap-2">
+                  <Show
+                    when={assigned.length > 0}
+                    fallback={<span>unassigned</span>}
+                  >
+                    <span>
+                      agent{assigned.length > 1 ? "s" : ""}:{" "}
+                      <span class="text-gray-300 font-mono">
+                        {assigned.slice(0, 2).map((a) => a.slice(0, 8)).join(", ")}
+                        {assigned.length > 2 ? ` +${assigned.length - 2}` : ""}
+                      </span>
+                    </span>
+                  </Show>
+                  <Show when={pending.length > 0}>
+                    <span class="text-gray-300">· {pending.length} pending</span>
+                  </Show>
+                </div>
+              </li>
+            );
+          }}
+        </For>
+      </ul>
+    </Show>
+  </section>
+);
+
+interface PoolStatus {
+  id: string;
+  role: string;
+  desiredCount: number;
+  aliveCount: number;
+  exitedCount: number;
+  restartStrategy: string;
+  paused: boolean;
+  inCrashLoop: boolean;
+}
+
+interface SupervisorEvent {
+  id: number;
+  ts: string;
+  kind: string;
+  poolId: string;
+  workerId: string;
+  payload: string;
+  handled: boolean;
+}
+
+/// Extract 8-char hex dispatch ids referenced in a chat bubble's text.
+/// Format: backtick-wrapped 8-char hex like `cedaffc6` (or `cedaffc6` after
+/// "dispatch", "task"). Conservative — must be 8 hex chars surrounded by
+/// non-alphanumeric or backticks. Returns deduped ordered ids.
+function extractDispatchIds(text: string): string[] {
+  if (!text) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  // Pattern 1: backtick-wrapped 8-hex
+  const re1 = /`([0-9a-f]{8})`/gi;
+  // Pattern 2: "dispatch <8-hex>" or "task <8-hex>" (lower)
+  const re2 = /(?:dispatch|task)\s+([0-9a-f]{8})\b/gi;
+  for (const re of [re1, re2]) {
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const id = m[1].toLowerCase();
+      if (!seen.has(id)) {
+        seen.add(id);
+        out.push(id);
+      }
+    }
+  }
+  return out;
+}
+
+/// Detect (action, adrId) pairs in an agent reply. Returns one entry per
+/// distinct ADR mentioned alongside an unambiguous verdict ("accept it",
+/// "recommend: accept", "should be rejected", "should be abandoned"). Used
+/// to render inline Accept/Reject buttons on chat bubbles so the operator
+/// can act on the verdict without scrolling to the Decisions panel.
+///
+/// Conservative — same negation-aware matcher as the server-side
+/// auto-resolver. False positives would let a bad click flip ADR state
+/// permanently.
+function detectAdrVerdicts(text: string): Array<{ adrId: string; action: "accept" | "reject" | "abandon" }> {
+  if (!text) return [];
+  // Extract ADR ids (preserve case for the slug part).
+  const lower = text.toLowerCase();
+  const adrIds: string[] = [];
+  const seen = new Set<string>();
+  for (const tok of text.split(/[\s,;:`"'()?]+/)) {
+    const cleaned = tok.replace(/[.,:!?]+$/g, "").replace(/\.md$/i, "");
+    if (cleaned.length <= 4) continue;
+    if (!cleaned.toLowerCase().startsWith("adr-")) continue;
+    // Skip placeholder-redacted ids — some upstream layers replace 10-digit
+    // ADR numbers (mistaken for phone numbers) with literal "[PHONE]" or
+    // "[PHONE-NUMBER]". Backend falls back to slug-glob, but the pill is
+    // safer to skip when the displayed id is unresolvable client-side.
+    if (cleaned.toUpperCase().includes("[PHONE]")
+      || cleaned.toUpperCase().includes("[PHONE-NUMBER]")
+      || cleaned.toUpperCase().includes("[REDACTED]")) continue;
+    const norm = `ADR-${cleaned.slice(4)}`;
+    if (!seen.has(norm)) {
+      seen.add(norm);
+      adrIds.push(norm);
+    }
+  }
+  if (adrIds.length === 0) return [];
+
+  // Verdict detection — check each line for accept/reject/abandon patterns,
+  // skipping lines with negation prefixes ("not ready to accept" etc.) and
+  // suppressors ("keep status", "would be premature", "remain in proposed").
+  const accept = ["recommend: accept", "should be accepted", "remain accepted",
+    "stays accepted", "accept it", "approve as is", "ratify", "ready to accept",
+    "good to accept", "ready to be accepted"];
+  const reject = ["recommend: reject", "should be rejected", "reject it", "decline"];
+  const abandon = ["recommend: abandon", "should be abandoned", "abandon it",
+    "should be closed", "should be deprecated", "should be superseded"];
+  const negationPrefixes = [" not ", " n't ", " but not ", " isn't ",
+    " wasn't ", " doesn't ", " don't ", " no ", " never "];
+
+  const hitOnce = (arr: string[]) => {
+    let count = 0;
+    let inCode = false;
+    for (const line of lower.split("\n")) {
+      const t = line.trim();
+      if (t.startsWith("```")) { inCode = !inCode; continue; }
+      if (inCode) continue;
+      if (t.startsWith("> ")) continue;
+      if (t.includes("would be premature") || t.includes("not ready to")
+        || t.includes("not yet ready") || t.includes("keep status")
+        || t.includes("keep as proposed") || t.includes("remain in proposed")) continue;
+      for (const p of arr) {
+        // Walk occurrences and check the char immediately before each
+        // for a negation prefix.
+        let idx = -1;
+        while ((idx = t.indexOf(p, idx + 1)) !== -1) {
+          const before = " " + t.slice(0, idx);
+          if (!negationPrefixes.some((np) => before.endsWith(np))) {
+            count++;
+          }
+        }
+      }
+    }
+    return count;
+  };
+
+  const acceptHits = hitOnce(accept);
+  const rejectHits = hitOnce(reject);
+  const abandonHits = hitOnce(abandon);
+
+  let action: "accept" | "reject" | "abandon" | null = null;
+  if (acceptHits > 0 && rejectHits === 0 && abandonHits === 0) action = "accept";
+  else if (rejectHits > 0 && acceptHits === 0 && abandonHits === 0) action = "reject";
+  else if (abandonHits > 0 && acceptHits === 0 && rejectHits === 0) action = "abandon";
+  if (!action) return [];
+  return adrIds.map((adrId) => ({ adrId, action: action! }));
+}
+
+interface DispatchSource {
+  id: string;
+  role: string;
+  phase: string;
+  prompt: string;
+  status: string;
+  agentId: string;
+  threadId?: string;
+  workplanId: string;
+  result: string;
+  error: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/// Heuristic: should this agent reply offer a "Convert to workplan" button?
+/// Matches phrasing the agent typically uses when recommending workplan
+/// creation (ADR-reviewer especially: "Phases X-Y should be tracked in a
+/// workplan"). False positives are cheap (operator just doesn't click);
+/// false negatives lose the affordance, so we cast a wide net.
+function shouldOfferWorkplanButton(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  const triggers = [
+    "create or update a workplan",
+    "create a workplan",
+    "should be tracked",
+    "follow-up workplan",
+    "open a workplan",
+    "open workplan",
+    "track in a workplan",
+    "tracked as a workplan",
+    "as workplan tasks",
+    "workplan to track",
+  ];
+  return triggers.some((t) => lower.includes(t));
+}
+
+interface BrainDispatch {
+  id: string;
+  role: string;
+  prompt: string;
+  status: string;
+  agentId?: string;
+  threadId?: string;
+  createdAt: string;
+  updatedAt?: string;
+  result?: string;
+  error?: string;
+}
+
+const BrainDispatchesPanel: Component<{
+  dispatches: () => BrainDispatch[];
+  counts: () => { pending: number; inProgress: number; completed: number };
+  onPromote: (id: string) => void;
+  onSendToChat: (text: string, role?: string, opts?: { autoSend?: boolean; threadKey?: string }) => void;
+}> = (props) => {
+  const visible = () => props.dispatches().slice(0, 12);
+  // Tick every 2s so the elapsed-time field on InProgress rows updates live.
+  const [tickCounter, setTickCounter] = createSignal(0);
+  let tickHandle: number | undefined;
+  onMount(() => { tickHandle = window.setInterval(() => setTickCounter((c) => c + 1), 2000); });
+  onCleanup(() => { if (tickHandle !== undefined) window.clearInterval(tickHandle); });
+  const elapsed = (since: string): string => {
+    tickCounter(); // reactivity tracker
+    const start = Date.parse(since);
+    if (Number.isNaN(start)) return "?";
+    const secs = Math.max(0, Math.floor((Date.now() - start) / 1000));
+    if (secs < 60) return `${secs}s`;
+    if (secs < 3600) return `${Math.floor(secs / 60)}m${secs % 60}s`;
+    return `${Math.floor(secs / 3600)}h${Math.floor((secs % 3600) / 60)}m`;
+  };
+  // Open the thread that a dispatch's progress is being streamed into.
+  // workplan_id format from the backend: "brain-chat:<thread-id>[:auto-followup]".
+  // The streamer + reconciler post messages to chat:thread:<thread-id>.
+  const watchDispatch = async (d: BrainDispatch) => {
+    const tid = d.threadId && d.threadId !== "global" ? d.threadId : null;
+    if (!tid) {
+      alert("This dispatch has no thread (was enqueued from the global scope). Progress streams to the BrainProgressStreamer log only.");
+      return;
+    }
+    try {
+      // get-or-create the thread, then notify ChatPanel to switch.
+      const resp = await restClient.post<{ id: string }>(
+        `/api/brain/threads/by-key/${encodeURIComponent(tid)}`,
+        { title: `dispatch ${d.id.slice(0, 8)}` },
+      );
+      if (resp?.id) {
+        localStorage.setItem("hex-brain-chat-active-thread-v2", resp.id);
+        window.dispatchEvent(new CustomEvent("hex-brain-thread-switch", {
+          detail: { threadId: resp.id },
+        }));
+      }
+    } catch (e) {
+      alert(`failed to open thread: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+  const statusColor = (s: string): string => {
+    if (s === "Pending") return "text-yellow-400 bg-yellow-900/30";
+    if (s === "PendingReview") return "text-amber-400 bg-amber-900/40 border border-amber-700";
+    if (s === "InProgress") return "text-cyan-300 bg-cyan-900/30 animate-pulse";
+    if (s === "Completed") return "text-green-400 bg-green-900/30";
+    if (s === "Failed") return "text-red-400 bg-red-900/30";
+    return "text-gray-400 bg-gray-800";
+  };
+  return (
+    <section class="mb-4 border border-gray-800 rounded bg-gray-950">
+      <header class="px-3 py-2 border-b border-gray-800 flex items-center gap-2">
+        <span class="text-[10px] font-bold uppercase tracking-wider text-gray-300">Brain Dispatches</span>
+        <span class="text-[10px] text-gray-400">
+          {props.counts().pending} pending · {props.counts().inProgress} running · {props.counts().completed} done
+        </span>
+        <span class="ml-auto text-[10px] text-gray-500 italic">@&lt;role&gt; mentions in chat enqueue real worker tasks · Watch ↗ jumps to live progress</span>
+      </header>
+      <Show when={visible().length > 0} fallback={
+        <div class="px-3 py-4 text-[11px] italic text-gray-500">
+          No dispatches yet. Use @&lt;role&gt; in chat to enqueue work.
+        </div>
+      }>
+        <ul class="divide-y divide-gray-900">
+          <For each={visible()}>
+            {(d) => (
+              <li class="px-3 py-2 flex items-start gap-2 text-[11px]">
+                <span class={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${statusColor(d.status)}`}>
+                  {d.status === "PendingReview" ? "review" : d.status.toLowerCase()}
+                </span>
+                <span class="shrink-0 text-purple-300 font-mono">@{d.role}</span>
+                <span class="flex-1 text-gray-200 truncate" title={d.prompt}>
+                  {d.prompt.length > 90 ? d.prompt.slice(0, 87) + "…" : d.prompt}
+                </span>
+                <span class="shrink-0 text-gray-500 font-mono text-[10px]">
+                  {new Date(d.createdAt).toLocaleTimeString().slice(0, 8)}
+                </span>
+                {/* InProgress: live elapsed counter + Watch button to jump
+                    to the streaming thread. Operator no longer wonders
+                    "is anything happening" — the counter ticks every 2s
+                    and Watch swaps the chat into the thread where ▶ claimed
+                    / ⏱ heartbeats / · tool calls are landing. */}
+                <Show when={d.status === "InProgress"}>
+                  <span
+                    class="shrink-0 text-cyan-300 font-mono text-[10px] animate-pulse"
+                    title={`Running for ${elapsed(d.updatedAt || d.createdAt)} since claim. Click Watch to see live progress.`}
+                  >
+                    {elapsed(d.updatedAt || d.createdAt)}
+                  </span>
+                  <button
+                    type="button"
+                    class="shrink-0 px-2 py-0.5 rounded bg-cyan-900 hover:bg-cyan-800 text-cyan-100 text-[10px] font-semibold"
+                    onClick={() => watchDispatch(d)}
+                    title="Open the chat thread where this worker's progress is being streamed live (▶ claimed → · tool calls → ✓ finished)."
+                  >
+                    Watch ↗
+                  </button>
+                </Show>
+                <Show when={d.status === "PendingReview"}>
+                  <button
+                    type="button"
+                    class="shrink-0 px-2 py-0.5 rounded bg-amber-700 hover:bg-amber-600 text-white text-[10px] font-semibold"
+                    onClick={() => props.onPromote(d.id)}
+                    title="Approve and let a worker claim this dispatch"
+                  >
+                    Approve
+                  </button>
+                </Show>
+                <Show when={d.status === "Completed" && d.result}>
+                  <button
+                    type="button"
+                    class="shrink-0 px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px]"
+                    onClick={() => {
+                      // PRE-FILL ONLY — never auto-send. Sending the result
+                      // back as a "user" message used to trigger fresh chat
+                      // recursion (the result text contained @-mentions that
+                      // the parser dispatched again). Operator clicks send
+                      // explicitly if they want to follow up; otherwise this
+                      // is just a read-only paste they can copy from.
+                      props.onSendToChat(`Result from @${d.role} dispatch ${d.id.slice(0, 8)}:\n\n${d.result}`, d.role, { autoSend: false });
+                    }}
+                    title="Pre-fill chat input with the result (does not auto-send)"
+                  >
+                    View
+                  </button>
+                </Show>
+                <Show when={d.status === "Failed" && d.error}>
+                  <span class="shrink-0 text-red-400 text-[10px] truncate max-w-[200px]" title={d.error}>
+                    {d.error}
+                  </span>
+                </Show>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+    </section>
+  );
+};
+
+const SupervisorPanel: Component = () => {
+  const [pools, setPools] = createSignal<PoolStatus[]>([]);
+  const [loading, setLoading] = createSignal(true);
+
+  const refresh = async () => {
+    try {
+      const resp = await restClient.get<{ pools: PoolStatus[] }>("/api/pools");
+      setPools(resp.pools || []);
+    } catch { /* nexus may be down or table not present */ }
+    setLoading(false);
+  };
+
+  let pollHandle: number | undefined;
+  onMount(() => {
+    refresh();
+    pollHandle = window.setInterval(refresh, 10000);
+  });
+  onCleanup(() => { if (pollHandle !== undefined) window.clearInterval(pollHandle); });
+
+  const setPoolPaused = async (id: string, paused: boolean) => {
+    try {
+      await restClient.patch(`/api/pools/${id}/paused`, { paused });
+      refresh();
+    } catch { /* surface in toast later */ }
+  };
+
+  // Scale a pool: read existing config, post back with new desired_count.
+  // Bumps to 1 when first activating from idle.
+  const scalePool = async (p: PoolStatus, count: number) => {
+    try {
+      await restClient.post("/api/pools", {
+        id: p.id,
+        role: p.role,
+        desired_count: count,
+        restart_strategy: p.restartStrategy,
+        max_restarts: 5,
+        max_restart_window_secs: 60,
+        paused: false,
+        owner_agent_id: "operator",
+      });
+      refresh();
+    } catch { /* surface in toast later */ }
+  };
+
+  // Split into three buckets: ACTIVE (desired>0 OR running), CRASH (any
+  // in_crash_loop), IDLE (the auto-seeded placeholders the operator hasn't
+  // touched). Each gets its own visual treatment so 24 idle placeholders
+  // don't drown out the 1-2 pools the operator actually cares about.
+  const active = createMemo(() => pools().filter((p) => p.desiredCount > 0 && !p.inCrashLoop));
+  const crashed = createMemo(() => pools().filter((p) => p.inCrashLoop));
+  const idle = createMemo(() => pools().filter((p) => p.desiredCount === 0 && !p.inCrashLoop));
+
+  return (
+    <section class="bg-gray-900/50 border border-gray-800 rounded-lg p-3 mb-4">
+      <div class="flex items-center justify-between mb-2 px-1">
+        <h3 class="text-xs font-bold uppercase tracking-wider text-gray-400">Worker Pools</h3>
+        <span class="text-[10px] text-gray-400">
+          <span class="text-green-400">{active().length} active</span>
+          <span class="mx-1.5 text-gray-700">·</span>
+          <span class="text-red-400">{crashed().length} crash</span>
+          <span class="mx-1.5 text-gray-700">·</span>
+          <span class="text-gray-500">{idle().length} idle</span>
+        </span>
+      </div>
+
+      <Show when={loading()}>
+        <div class="text-center text-gray-400 text-xs py-3">loading…</div>
+      </Show>
+
+      {/* CRASH section — surface first because it needs operator action. */}
+      <Show when={crashed().length > 0}>
+        <div class="mb-3">
+          <div class="text-[10px] font-bold uppercase tracking-wider text-red-400 mb-1 px-1">⚠ Crash-looped</div>
+          <ul class="space-y-1">
+            <For each={crashed()}>
+              {(p) => (
+                <li class="grid grid-cols-[3rem_1fr_auto_auto] items-center gap-3 text-xs px-2 py-1.5 rounded bg-red-950/20 border border-red-900/40">
+                  <span class="font-mono font-bold text-right text-red-400">{p.aliveCount}/{p.desiredCount}</span>
+                  <span class="text-gray-100 truncate min-w-0" title={`${p.id}\nrole: ${p.role}\nexited: ${p.exitedCount}`}>
+                    {p.id}
+                    <span class="text-red-400/70 ml-2">· {p.exitedCount} exits</span>
+                  </span>
+                  <button
+                    onClick={async () => {
+                      await restClient.patch(`/api/pools/${p.id}/paused`, { paused: false });
+                      await restClient.patch(`/api/pools/${p.id}/paused`, { paused: true });
+                      refresh();
+                    }}
+                    class="text-[10px] text-red-300 hover:text-red-200 underline"
+                    title="Clear crash-loop flag (resumes briefly to clear, then re-pauses)"
+                  >
+                    clear flag
+                  </button>
+                  <button
+                    onClick={() => setPoolPaused(p.id, false)}
+                    class="text-[10px] text-cyan-400 hover:text-cyan-300 underline"
+                    title="Resume — clears crash flag and restarts spawning"
+                  >
+                    resume
+                  </button>
+                </li>
+              )}
+            </For>
+          </ul>
+        </div>
+      </Show>
+
+      {/* ACTIVE section — pools the operator has explicitly scaled up. */}
+      <Show when={active().length > 0}>
+        <div class="mb-3">
+          <div class="text-[10px] font-bold uppercase tracking-wider text-green-400 mb-1 px-1">Active</div>
+          <ul class="space-y-1">
+            <For each={active()}>
+              {(p) => {
+                const healthy = p.aliveCount >= p.desiredCount;
+                return (
+                  <li class="grid grid-cols-[3rem_1fr_auto_auto_auto] items-center gap-3 text-xs px-2 py-1.5 rounded bg-gray-950 border border-gray-800">
+                    <span class={`font-mono font-bold text-right ${healthy ? "text-green-400" : "text-yellow-400"}`}>
+                      {p.aliveCount}/{p.desiredCount}
+                    </span>
+                    <span class="text-gray-200 truncate min-w-0" title={`${p.id}\nrole: ${p.role}\nstrategy: ${p.restartStrategy}\nexits: ${p.exitedCount}`}>
+                      {p.id}
+                      <span class="text-gray-500 ml-2">· {p.role}</span>
+                    </span>
+                    <Show when={p.paused}>
+                      <span class="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-yellow-900/30 text-yellow-300 border-yellow-700">paused</span>
+                    </Show>
+                    <button
+                      onClick={() => scalePool(p, Math.max(0, p.desiredCount - 1))}
+                      class="text-[11px] text-gray-400 hover:text-cyan-400 px-1"
+                      title="Scale down by 1"
+                    >
+                      −
+                    </button>
+                    <button
+                      onClick={() => scalePool(p, p.desiredCount + 1)}
+                      class="text-[11px] text-gray-400 hover:text-cyan-400 px-1"
+                      title="Scale up by 1"
+                    >
+                      +
+                    </button>
+                  </li>
+                );
+              }}
+            </For>
+          </ul>
+        </div>
+      </Show>
+
+      {/* IDLE section — collapsed by default. Click to expand and scale up. */}
+      <Show when={idle().length > 0}>
+        <details class="text-xs">
+          <summary class="cursor-pointer text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 px-1 hover:text-gray-200">
+            ▸ Available roles ({idle().length}) — click to scale up
+          </summary>
+          <div class="grid grid-cols-3 gap-1 mt-2">
+            <For each={idle()}>
+              {(p) => (
+                <button
+                  onClick={() => scalePool(p, 1)}
+                  class="text-[10px] text-left px-2 py-1 rounded border border-gray-800 bg-gray-950 hover:border-cyan-700 hover:bg-gray-900 transition group"
+                  title={`Scale ${p.role} to 1 worker`}
+                >
+                  <span class="text-gray-300 group-hover:text-cyan-300 truncate block">{p.role}</span>
+                </button>
+              )}
+            </For>
+          </div>
+        </details>
+      </Show>
+
+      <Show when={!loading() && pools().length === 0}>
+        <div class="text-center text-gray-300 text-xs py-3">
+          no pools defined — <code class="text-cyan-400">hex pool create</code>
+        </div>
+      </Show>
+    </section>
+  );
+};
+
+const VersionPanel: Component = () => {
+  const [commits, setCommits] = createSignal<any[]>([]);
+  const [version, setVersion] = createSignal<string>("");
+
+  onMount(async () => {
+    try {
+      const health = await restClient.get("/api/health");
+      setVersion(health.version || "unknown");
+
+      const log = await restClient.get("/api/git/log?limit=5");
+      setCommits(log.commits || []);
+    } catch (err) {
+      console.error("Failed to fetch version info:", err);
+    }
+  });
+
+  return (
+    <section class="bg-gray-900/50 border border-gray-800 rounded-lg p-3 mb-4">
+      <h3 class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 px-1">Version</h3>
+      <div class="space-y-2">
+        <div class="flex items-center gap-2 text-xs">
+          <span class="text-gray-400">hex</span>
+          <span class="font-mono text-green-400">{version()}</span>
+        </div>
+        <Show when={commits().length > 0}>
+          <div class="border-t border-gray-800 pt-2 space-y-1.5">
+            <For each={commits()}>
+              {(commit) => (
+                <div class="text-[10px]">
+                  <div class="flex items-center gap-2">
+                    <span class="font-mono text-cyan-400" title={commit.hash}>
+                      {(commit.hash || "").slice(0, 7)}
+                    </span>
+                    <span class="text-gray-400 text-[9px]">
+                      {(() => {
+                        const date = new Date(commit.timestamp || commit.date);
+                        const now = Date.now();
+                        const diff = now - date.getTime();
+                        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+                        if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+                        return `${Math.floor(diff / 86400000)}d ago`;
+                      })()}
+                    </span>
+                  </div>
+                  <div class="text-gray-300 truncate pl-0 mt-0.5" title={commit.message}>
+                    {(commit.message || "").split('\n')[0].slice(0, 60)}
+                  </div>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+    </section>
+  );
+};
+
+const HealthPanel: Component<{ improver: () => ImproverStatus | null; swarmCount: () => number }> = (props) => (
+  <section class="bg-gray-900/50 border border-gray-800 rounded-lg p-3">
+    <h3 class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 px-1">Health</h3>
+    <dl class="grid grid-cols-2 gap-y-1.5 gap-x-4 text-xs">
+      <dt class="text-gray-300">Homeostasis</dt>
+      <dd class="text-gray-200 font-mono text-right">
+        {props.improver()?.score ?? "—"}
+        <Show when={props.improver()?.score !== undefined && (props.improver()?.score ?? 0) > 50}>
+          <span class="text-green-400 ml-1">↗</span>
+        </Show>
+      </dd>
+      <dt class="text-gray-300">Q-reward</dt>
+      <dd class="text-gray-200 font-mono text-right">
+        {(() => {
+          const r = props.improver()?.mean_reward ?? props.improver()?.meanReward;
+          return r === undefined ? "—" : (r >= 0 ? "+" : "") + r.toFixed(3);
+        })()}
+      </dd>
+      <dt class="text-gray-300">Active swarms</dt>
+      <dd class="text-gray-200 font-mono text-right">{props.swarmCount()}</dd>
+      <dt class="text-gray-300">Dead-letter</dt>
+      <dd class="text-gray-200 font-mono text-right">{props.improver()?.deadLetter ?? "—"}</dd>
+    </dl>
+  </section>
+);
+
+interface ChatMessageMeta {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  costUsd?: number;
+  contextWindow?: number;
+}
+interface ChatMessage extends ChatMessageMeta {
+  from: "you" | string; // "you" or persona name
+  text: string;
+  ts: string;
+  model?: string;
+  pending?: boolean;
+  error?: boolean;
+  /** Recipient role when this is an agent-to-agent reply (the agent the
+   *  reply is addressed to, NOT the operator). Renders as a "→ @<role>"
+   *  pill so the operator can see at a glance whether a message was for
+   *  them or for another agent in the dispatch chain. */
+  replyTo?: string;
+  /** Depth of nesting in the dispatch chain. 0 = top-level reply to the
+   *  operator. 1+ = recursive child. Drives the indent + the "agent-to-agent"
+   *  visual styling. */
+  childDepth?: number;
+  /** Performance.now() timestamp at dispatch start; used to render elapsed seconds in pending bubbles. */
+  startedAt?: number;
+}
+
+// Parse "@<role> <message>" — returns { role, message } or null if no @-mention.
+function parseAtMention(text: string): { role: string; message: string } | null {
+  const m = text.match(/^@([\w-]+)\s+([\s\S]+)$/);
+  if (!m) return null;
+  return { role: m[1], message: m[2].trim() };
+}
+
+// Resolve a broadcast target like "all", "product", "engineering" to a list
+// of persona names. Returns null if it's not a broadcast keyword.
+function resolveBroadcastTarget(token: string): string[] | null {
+  const t = token.toLowerCase();
+  if (t === "all" || t === "team") return PERSONAS.map((p) => p.name);
+  const categoryMap: Record<string, "PRODUCT" | "ENGINEERING" | "QUALITY" | "DESIGN" | "OPS"> = {
+    product: "PRODUCT",
+    engineering: "ENGINEERING",
+    eng: "ENGINEERING",
+    quality: "QUALITY",
+    qa: "QUALITY",
+    design: "DESIGN",
+    ops: "OPS",
+  };
+  const cat = categoryMap[t];
+  if (!cat) return null;
+  return PERSONAS.filter((p) => p.category === cat).map((p) => p.name);
+}
+
+// Chat threads are now persisted to STDB via /api/brain/threads (each thread
+// is a hexflo_memory entry under key "chat:thread:<uuid>"). The "active
+// thread id" lives in localStorage so a refresh resumes the same conversation;
+// the messages themselves are loaded from the server.
+const ACTIVE_THREAD_KEY = "hex-brain-chat-active-thread-v2";
+
+const WELCOME: ChatMessage = {
+  from: "system",
+  text: "Type @<role> <message> to talk to one agent. Follow-ups without @ continue with the same agent. Broadcast with @all, @product, @engineering, @quality, @design, @ops. Threads persist in SpacetimeDB — open from any browser/machine.",
+  ts: new Date().toISOString(),
+};
+
+interface ThreadSummary {
+  id: string;
+  title: string;
+  projectId?: string;
+  createdAt: string;
+  lastActiveAt: string;
+  messageCount?: number;
+}
+
+// localStorage key for the chat-panel width — separate from history so a
+// user can clear chat without losing their layout.
+const CHAT_WIDTH_KEY = "hex-brain-chat-width-v1";
+const CHAT_WIDTH_MIN = 280;
+const CHAT_WIDTH_MAX = 900;
+const CHAT_WIDTH_DEFAULT = 384;
+
+const ChatPanel: Component<{
+  selectedAgent: () => string | null;
+  onAgentChange: (name: string | null) => void;
+  /** Active project ID — passed to /api/brain/chat so the persona's system
+      prompt is prefixed with PROJECT CONTEXT (name + rootPath). Empty string
+      or "__global__" means no project scoping. */
+  projectId: () => string;
+  /** Display name of the active project for the chat header. */
+  projectName: () => string;
+  /** Externally-driven input value — lets DecisionsPanel / KanbanLanes
+      pre-fill the textarea with a click-to-ask prompt. */
+  externalInput: () => string;
+  setExternalInput: (text: string) => void;
+  /** Bumped by Brain when a card click should auto-send the prefilled input
+      instead of waiting for Cmd+Enter. */
+  autoSendBump: () => number;
+}> = (props) => {
+  // Resizable width — drag the left edge of the chat pane to resize. Persists
+  // to localStorage so the choice survives refresh.
+  const [width, setWidth] = createSignal<number>(
+    (() => {
+      const raw = localStorage.getItem(CHAT_WIDTH_KEY);
+      const n = raw ? parseInt(raw, 10) : NaN;
+      return Number.isFinite(n) && n >= CHAT_WIDTH_MIN && n <= CHAT_WIDTH_MAX
+        ? n
+        : CHAT_WIDTH_DEFAULT;
+    })(),
+  );
+  const [resizing, setResizing] = createSignal(false);
+
+  // Mouse-driven resize — listeners attach on mousedown and detach on mouseup.
+  // Computes new width from window.innerWidth - mouseX so the drag tracks the
+  // RIGHT panel's left edge regardless of left-rail / center-content widths.
+  const handleResizeMouseDown = (e: MouseEvent) => {
+    e.preventDefault();
+    setResizing(true);
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.min(
+        CHAT_WIDTH_MAX,
+        Math.max(CHAT_WIDTH_MIN, window.innerWidth - ev.clientX),
+      );
+      setWidth(next);
+    };
+    const onUp = () => {
+      setResizing(false);
+      try { localStorage.setItem(CHAT_WIDTH_KEY, String(width())); } catch { /* quota */ }
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  // Input is externally drivable — Brain owns the signal so other panels
+  // can pre-fill it on card click. Local input read/write goes through props.
+  const input = props.externalInput;
+  const setInput = props.setExternalInput;
+  const [history, setHistory] = createSignal<ChatMessage[]>([WELCOME]);
+  // Source-modal state — when a chat bubble references a dispatch id and
+  // the operator clicks "→ source", we fetch the dispatch's full record
+  // (prompt + result + agent + thread) and render it inline. Stops the
+  // operator from having to dig via `curl` or `spacetime sql` to find
+  // out what the worker actually saw.
+  const [sourceDispatch, setSourceDispatch] = createSignal<DispatchSource | null>(null);
+  const [sourceLoading, setSourceLoading] = createSignal(false);
+  const openSource = async (id: string) => {
+    setSourceLoading(true);
+    try {
+      const resp = await restClient.get<DispatchSource>(`/api/brain/dispatches/${encodeURIComponent(id)}`);
+      setSourceDispatch(resp);
+    } catch (e) {
+      alert(`source lookup failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSourceLoading(false);
+    }
+  };
+  // Active thread id — persisted in localStorage so a refresh resumes the
+  // same conversation. Messages themselves live in STDB.
+  const [activeThreadId, setActiveThreadId] = createSignal<string | null>(
+    localStorage.getItem(ACTIVE_THREAD_KEY),
+  );
+  const [threads, setThreads] = createSignal<ThreadSummary[]>([]);
+  const [showThreads, setShowThreads] = createSignal(false);
+
+  // Ensure a thread exists. Returns the thread id; creates one lazily on
+  // first message so empty browsing doesn't pollute STDB with empty threads.
+  const ensureThread = async (): Promise<string> => {
+    const existing = activeThreadId();
+    if (existing) return existing;
+    const resp = await restClient.post<{ id: string }>("/api/brain/threads", {
+      title: "new thread",
+      project_id: props.projectId() || undefined,
+    });
+    setActiveThreadId(resp.id);
+    localStorage.setItem(ACTIVE_THREAD_KEY, resp.id);
+    refreshThreads();
+    return resp.id;
+  };
+
+  // Append one message to STDB without blocking the UI. Errors are swallowed
+  // (the user already sees the message in their local history).
+  const persistMessage = async (msg: ChatMessage) => {
+    if (msg.pending) return;
+    try {
+      const tid = await ensureThread();
+      await restClient.post(`/api/brain/threads/${tid}/messages`, {
+        message: {
+          from: msg.from,
+          text: msg.text,
+          ts: msg.ts,
+          model: msg.model,
+          error: msg.error,
+        },
+      });
+    } catch { /* surface later if it becomes a recurring issue */ }
+  };
+
+  const refreshThreads = async () => {
+    try {
+      const resp = await restClient.get<{ threads: ThreadSummary[] }>("/api/brain/threads");
+      setThreads(resp.threads || []);
+    } catch { /* nexus may be down */ }
+  };
+
+  const loadThread = async (id: string) => {
+    try {
+      const resp = await restClient.get<{ messages?: ChatMessage[] }>(`/api/brain/threads/${id}`);
+      const msgs = resp.messages || [];
+      setHistory(msgs.length > 0 ? msgs : [WELCOME]);
+      setActiveThreadId(id);
+      localStorage.setItem(ACTIVE_THREAD_KEY, id);
+      setShowThreads(false);
+    } catch { /* thread missing — clear and start fresh */ }
+  };
+
+  const newThread = async () => {
+    const resp = await restClient.post<{ id: string }>("/api/brain/threads", {
+      title: "new thread",
+      project_id: props.projectId() || undefined,
+    });
+    setActiveThreadId(resp.id);
+    localStorage.setItem(ACTIVE_THREAD_KEY, resp.id);
+    setHistory([WELCOME]);
+    refreshThreads();
+    setShowThreads(false);
+  };
+
+  // On mount: if we have an active thread id, load its messages from STDB.
+  // Always refresh the threads list so the picker has data.
+  // Also listens for "hex-brain-thread-switch" custom events so per-decision
+  // clicks switch the chat panel into the relevant subject thread live.
+  onMount(() => {
+    refreshThreads();
+    const tid = activeThreadId();
+    if (tid) loadThread(tid);
+    const onSwitch = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail as { threadId?: string } | undefined;
+      if (detail?.threadId) loadThread(detail.threadId);
+    };
+    window.addEventListener("hex-brain-thread-switch", onSwitch);
+    onCleanup(() => window.removeEventListener("hex-brain-thread-switch", onSwitch));
+  });
+  const [showSuggestions, setShowSuggestions] = createSignal(false);
+  const [suggestionQuery, setSuggestionQuery] = createSignal("");
+  const [tick, setTick] = createSignal(0);
+  // Active agent — driven by props (so TeamRail clicks stay in sync) but
+  // also writable from inside the chat (parsing @-mention, clear button).
+  const currentAgent = props.selectedAgent;
+  const setCurrentAgent = (name: string | null) => props.onAgentChange(name);
+  // Look up the persona record for description display.
+  const currentPersona = createMemo(() => {
+    const name = currentAgent();
+    return name ? PERSONAS.find((p) => p.name === name) ?? null : null;
+  });
+
+  // Tick once per second so any pending bubbles re-render their elapsed counter.
+  // Cheap — only affects the chat pane.
+  let tickHandle: number | undefined;
+  onMount(() => { tickHandle = window.setInterval(() => setTick((t) => t + 1), 1000); });
+  onCleanup(() => { if (tickHandle !== undefined) window.clearInterval(tickHandle); });
+
+  // Synthetic "broadcast persona" entries for autocomplete only — they aren't
+  // real agents. Keep this list in sync with resolveBroadcastTarget keywords.
+  const BROADCAST_TOKENS: { name: string; category: string; color: string; tagline: string }[] = [
+    { name: "all",         category: "BROADCAST", color: "text-fuchsia-400", tagline: "all 25 personas in parallel" },
+    { name: "product",     category: "BROADCAST", color: "text-purple-400",  tagline: "5 PRODUCT agents (planning + specs)" },
+    { name: "engineering", category: "BROADCAST", color: "text-green-400",   tagline: "8 ENGINEERING agents (codegen)" },
+    { name: "quality",     category: "BROADCAST", color: "text-red-400",     tagline: "7 QUALITY agents (review + judge)" },
+    { name: "design",      category: "BROADCAST", color: "text-pink-400",    tagline: "2 DESIGN agents (CLI + UX critique)" },
+    { name: "ops",         category: "BROADCAST", color: "text-blue-400",    tagline: "2 OPS agents (resume + monitor)" },
+  ];
+
+  // Filter personas for @-mention autocomplete. Includes broadcast tokens at top.
+  const suggestions = createMemo(() => {
+    const q = suggestionQuery().toLowerCase();
+    const broadcasts = BROADCAST_TOKENS.filter((b) => b.name.toLowerCase().startsWith(q));
+    const personas = PERSONAS.filter((p) => p.name.toLowerCase().startsWith(q));
+    return [...broadcasts, ...personas].slice(0, 10);
+  });
+
+  const handleInput = (val: string) => {
+    setInput(val);
+    // Show suggestions while the user is mid-@-mention (cursor right after @<chars>).
+    const m = val.match(/(?:^|\s)@([\w-]*)$/);
+    if (m) {
+      setSuggestionQuery(m[1]);
+      setShowSuggestions(true);
+    } else {
+      setShowSuggestions(false);
+    }
+  };
+
+  const completeSuggestion = (name: string) => {
+    const cur = input();
+    const replaced = cur.replace(/(?:^|\s)@([\w-]*)$/, (m, _q, _o, _s) => {
+      // Preserve the leading whitespace if any.
+      const leadingSpace = m.startsWith(" ") || m.startsWith("\n") ? m[0] : "";
+      return `${leadingSpace}@${name} `;
+    });
+    setInput(replaced);
+    setShowSuggestions(false);
+  };
+
+  // When the auto-send token bumps, dispatch the current input. Skip the
+  // first effect run on mount — only react to subsequent bumps.
+  let lastBump = props.autoSendBump();
+  createEffect(() => {
+    const b = props.autoSendBump();
+    if (b !== lastBump) {
+      lastBump = b;
+      // Defer one tick so the input signal value lands before send.
+      queueMicrotask(() => handleSend());
+    }
+  });
+
+  // Auto-scroll the messages container to the bottom when new messages land.
+  // Smart behavior: only auto-scroll if the user is already near the bottom
+  // (within 80px). If they've scrolled up to read history, don't yank them
+  // back — they're reading on purpose.
+  let scrollContainer: HTMLDivElement | undefined;
+  let stickToBottom = true;
+  const onScroll = () => {
+    if (!scrollContainer) return;
+    const distanceFromBottom = scrollContainer.scrollHeight
+      - scrollContainer.scrollTop
+      - scrollContainer.clientHeight;
+    stickToBottom = distanceFromBottom < 80;
+  };
+  createEffect(() => {
+    history();  // re-run whenever messages change
+    if (!scrollContainer || !stickToBottom) return;
+    queueMicrotask(() => {
+      if (scrollContainer) scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    });
+  });
+
+  const handleSend = async () => {
+    const text = input().trim();
+    if (!text) return;
+    const ts = new Date().toISOString();
+
+    // Resolve target agent:
+    //   1. @all / @product / @engineering / @quality / @design / @ops → broadcast
+    //   2. Explicit @<role> → single dispatch, switches currentAgent
+    //   3. No @-mention but currentAgent is set → continue with that agent
+    //   4. Neither → instructional error
+    const parsed = parseAtMention(text);
+    let targetRole: string | null = null;
+    let messageBody = text;
+    let broadcastTargets: string[] | null = null;
+    if (parsed) {
+      const broadcast = resolveBroadcastTarget(parsed.role);
+      if (broadcast) {
+        broadcastTargets = broadcast;
+        messageBody = parsed.message;
+      } else {
+        targetRole = parsed.role;
+        messageBody = parsed.message;
+        setCurrentAgent(parsed.role);
+      }
+    } else if (currentAgent()) {
+      targetRole = currentAgent();
+    }
+
+    const userMsg: ChatMessage = { from: "you", text, ts };
+    setHistory((h) => [...h, userMsg]);
+    setInput("");
+    setShowSuggestions(false);
+    // CRITICAL: await thread creation + user-message persist BEFORE the
+    // chat dispatch. Without this, brain_chat fires with thread_id=undefined
+    // (or with stale thread state) and short replies like "yes" / "do it"
+    // can't find the agent's prior reply to confirm. Also makes activeThreadId
+    // populated for the dispatch below.
+    await persistMessage(userMsg);
+
+    // Resolve project context to send to the backend. Empty string means
+    // "no scope"; backend falls back to nexus cwd for context-free dispatch.
+    const projectId = props.projectId() || "";
+
+    // Broadcast path — fan out, render each response as its own bubble.
+    if (broadcastTargets) {
+      const groupId = Math.random().toString(36).slice(2);
+      const startedAt = performance.now();
+      // Single pending bubble representing the in-flight broadcast; replaced
+      // with N bubbles when responses land.
+      setHistory((h) => [
+        ...h,
+        {
+          from: "broadcast",
+          text: `dispatching to ${broadcastTargets!.length} personas...`,
+          ts: new Date().toISOString(),
+          pending: true,
+          model: groupId,
+          startedAt,
+        },
+      ]);
+      try {
+        const resp = await restClient.post<{
+          message: string;
+          responses: { role: string; model?: string; content?: string; error?: string }[];
+          total: number;
+        }>("/api/brain/broadcast", {
+          message: messageBody,
+          roles: broadcastTargets,
+          project_id: projectId || undefined,
+        });
+        const bubbles: ChatMessage[] = resp.responses.map((r) => ({
+          from: r.role,
+          text: r.error ? `error: ${r.error}` : (r.content || "(empty response)"),
+          ts: new Date().toISOString(),
+          model: r.model,
+          error: !!r.error,
+        }));
+        // Replace the pending bubble with N new bubbles, one per response.
+        setHistory((h) => {
+          const idx = h.findIndex((m) => m.pending && m.model === groupId);
+          if (idx === -1) return h;
+          const before = h.slice(0, idx);
+          const after = h.slice(idx + 1);
+          return [...before, ...bubbles, ...after];
+        });
+        // Persist each one to STDB. Done sequentially with await; user already
+        // sees the bubbles, so latency is tolerable.
+        for (const b of bubbles) await persistMessage(b);
+      } catch (e) {
+        const err = e instanceof Error ? e.message : String(e);
+        setHistory((h) => h.map((m) =>
+          m.pending && m.model === groupId
+            ? { from: "broadcast", text: `broadcast failed: ${err}`, ts: new Date().toISOString(), error: true }
+            : m,
+        ));
+      }
+      return;
+    }
+
+    if (!targetRole) {
+      setHistory((h) => [
+        ...h,
+        {
+          from: "system",
+          text: "Start your message with @<role> — e.g. `@pm-agent ...`. After that, follow-up messages without @ continue with the same agent.",
+          ts: new Date().toISOString(),
+          error: true,
+        },
+      ]);
+      return;
+    }
+
+    // Optimistic pending bubble. Track startedAt so the bubble can show
+    // elapsed seconds — local Ollama can take 30-60s on first generation.
+    const pendingId = Math.random().toString(36).slice(2);
+    const startedAt = performance.now();
+    setHistory((h) => [
+      ...h,
+      { from: targetRole!, text: "thinking...", ts: new Date().toISOString(), pending: true, model: pendingId, startedAt },
+    ]);
+
+    try {
+      interface ChildResp {
+        role: string;
+        model?: string;
+        content?: string;
+        error?: unknown;
+        children?: ChildResp[];
+        inputTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+        costUsd?: number;
+        contextWindow?: number;
+      }
+      type ChatResp = {
+        role: string;
+        model: string;
+        content: string;
+        children?: ChildResp[];
+        inputTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+        costUsd?: number;
+        contextWindow?: number;
+      };
+      // Ensure thread exists (defense-in-depth — persistMessage above
+      // should have created it, but if that failed the dispatch must
+      // still have a thread to load history from for short-confirmation
+      // rewrites).
+      const tid = await ensureThread();
+      const resp = await restClient.post<ChatResp>("/api/brain/chat", {
+        role: targetRole,
+        message: messageBody,
+        project_id: projectId || undefined,
+        thread_id: tid,
+      });
+      const finalMsg: ChatMessage = {
+        from: resp.role,
+        text: resp.content || "(empty response)",
+        ts: new Date().toISOString(),
+        model: resp.model,
+        inputTokens: resp.inputTokens,
+        outputTokens: resp.outputTokens,
+        totalTokens: resp.totalTokens,
+        costUsd: resp.costUsd,
+        contextWindow: resp.contextWindow,
+      };
+      // Replace the pending bubble with the real response.
+      setHistory((h) => h.map((m) =>
+        m.pending && m.model === pendingId ? finalMsg : m,
+      ));
+      persistMessage(finalMsg);
+
+      // Recursively flatten children into the chat history. Each child is
+      // an auto-dispatch from a parent's @<role> mention. Operator was
+      // confused about who-said-what-to-whom — bubble now carries the
+      // PARENT role as `replyTo` and a `childDepth` so the renderer can
+      // surface a clear "→ @<parent-role>" pill, distinguishing
+      // operator-addressed replies from agent-to-agent ones.
+      const renderChildren = (children: ChildResp[] | undefined, depth: number, parentRole: string) => {
+        for (const c of children ?? []) {
+          const text = typeof c.content === "string" && c.content.length > 0
+            ? c.content
+            : (c.error ? `error: ${typeof c.error === "string" ? c.error : JSON.stringify(c.error)}` : "(empty response)");
+          const childMsg: ChatMessage = {
+            from: c.role,
+            text,
+            ts: new Date().toISOString(),
+            model: typeof c.model === "string" ? c.model : undefined,
+            replyTo: parentRole,
+            childDepth: depth,
+            inputTokens: c.inputTokens,
+            outputTokens: c.outputTokens,
+            totalTokens: c.totalTokens,
+            costUsd: c.costUsd,
+            contextWindow: c.contextWindow,
+          };
+          setHistory((h) => [...h, childMsg]);
+          persistMessage(childMsg);
+          renderChildren(c.children, depth + 1, c.role);
+        }
+      };
+      renderChildren(resp.children, 1, resp.role);
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      setHistory((h) => h.map((m) =>
+        m.pending && m.model === pendingId
+          ? { from: targetRole!, text: `dispatch failed: ${err}`, ts: new Date().toISOString(), error: true }
+          : m,
+      ));
+    }
+  };
+
+  const personaColor = (name: string): string => {
+    const p = PERSONAS.find((x) => x.name === name);
+    return p?.color ?? "text-gray-300";
+  };
+
+  return (
+    <aside
+      class="border-l border-gray-800 bg-gray-950 flex flex-col relative shrink-0"
+      style={{ width: `${width()}px` }}
+    >
+      {/* Resize handle — 6px wide grab strip on the LEFT edge. Wider than the
+          1px border so it's actually grabbable, with a hover/active highlight.
+          Positioned -3px to overlap the border so the cursor changes earlier. */}
+      <div
+        onMouseDown={handleResizeMouseDown}
+        class="absolute left-0 top-0 bottom-0 w-1.5 -ml-0.5 cursor-col-resize z-20 group"
+        title="Drag to resize chat (280–900px)"
+      >
+        <div
+          class="h-full w-px mx-auto bg-gray-800 group-hover:bg-cyan-600 transition-colors"
+          classList={{ "!bg-cyan-500": resizing() }}
+        />
+      </div>
+      <header class="px-3 py-2 border-b border-gray-800 relative">
+        <div class="flex items-center justify-between mb-1">
+          <button
+            onClick={() => { setShowThreads(!showThreads()); refreshThreads(); }}
+            class="text-[11px] font-bold uppercase tracking-wider text-gray-300 hover:text-gray-300 flex items-center gap-1.5"
+            title="Click to switch thread"
+          >
+            <span>Chat</span>
+            <span class="text-[10px] text-gray-300 font-normal normal-case tracking-normal">
+              ▾ {threads().length} thread{threads().length === 1 ? "" : "s"}
+            </span>
+          </button>
+          <div class="flex items-center gap-2 text-[10px] text-gray-400">
+            <span title="Stored in SpacetimeDB · accessible from any browser/machine">
+              ☁ {history().filter((m) => !m.pending).length}
+            </span>
+            <button
+              onClick={newThread}
+              class="text-gray-300 hover:text-cyan-400 underline"
+              title="Start a fresh thread"
+            >
+              new
+            </button>
+          </div>
+        </div>
+        <Show when={showThreads()}>
+          <ul class="absolute top-full left-0 right-0 mt-0 bg-gray-900 border border-gray-700 rounded-b shadow-xl max-h-72 overflow-y-auto z-30">
+            <Show when={threads().length === 0}>
+              <li class="px-3 py-2 text-[11px] text-gray-400 italic">no threads yet</li>
+            </Show>
+            <For each={threads()}>
+              {(t) => {
+                const active = t.id === activeThreadId();
+                return (
+                  <li
+                    class={`px-3 py-1.5 text-xs cursor-pointer flex items-center justify-between gap-2 ${
+                      active ? "bg-gray-800 border-l-2 border-cyan-500" : "hover:bg-gray-800"
+                    }`}
+                    onClick={() => loadThread(t.id)}
+                  >
+                    <div class="flex-1 min-w-0">
+                      <div class="text-gray-200 truncate">{t.title || t.id.slice(0, 8)}</div>
+                      <div class="text-[10px] text-gray-400">
+                        {t.messageCount ?? 0} msg · {new Date(t.lastActiveAt).toLocaleString()}
+                      </div>
+                    </div>
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (!confirm("Delete this thread?")) return;
+                        await fetch(`/api/brain/threads/${t.id}`, { method: "DELETE" });
+                        if (active) {
+                          setActiveThreadId(null);
+                          localStorage.removeItem(ACTIVE_THREAD_KEY);
+                          setHistory([WELCOME]);
+                        }
+                        refreshThreads();
+                      }}
+                      class="text-[10px] text-gray-300 hover:text-red-400"
+                      title="Delete thread"
+                    >
+                      ✕
+                    </button>
+                  </li>
+                );
+              }}
+            </For>
+          </ul>
+        </Show>
+        <div
+          class="text-[10px] flex items-center gap-1.5"
+          title="All chat dispatches inject this project's PROJECT CONTEXT (name + rootPath) into the persona's system prompt. Change via the project picker in the top bar."
+        >
+          <Show
+            when={props.projectId() && props.projectId() !== "__global__"}
+            fallback={
+              <>
+                <span class="text-gray-300">⌖</span>
+                <span class="text-gray-400">no project scope · responses are generic</span>
+              </>
+            }
+          >
+            <span class="text-cyan-500">⌖</span>
+            <span class="text-gray-300">scoped to</span>
+            <span class="text-cyan-400 font-medium">{props.projectName()}</span>
+          </Show>
+        </div>
+      </header>
+      <div
+        ref={scrollContainer}
+        onScroll={onScroll}
+        class="flex-1 overflow-y-auto px-3 py-3 space-y-3"
+      >
+        <For each={history()}>
+          {(msg) => (
+            <div
+              class="text-xs"
+              classList={{
+                "pl-3 border-l border-cyan-900/40": (msg.childDepth ?? 0) === 1,
+                "pl-6 border-l-2 border-purple-900/40": (msg.childDepth ?? 0) >= 2,
+              }}
+            >
+              <div class="text-[10px] mb-0.5 flex items-center gap-2 flex-wrap">
+                <span class={msg.from === "you" ? "text-gray-400" : personaColor(msg.from)}>
+                  {msg.from === "you" ? "you" : `@${msg.from}`}
+                </span>
+                {/* Recipient pill — when this message is an agent-to-agent
+                    reply (childDepth >= 1 AND replyTo set), render an
+                    explicit "→ @<role>" pill so the operator can tell at a
+                    glance who the message is FOR. Without this, every
+                    agent-to-agent reply looks like a reply to the operator. */}
+                <Show when={msg.replyTo && msg.from !== "you"}>
+                  <span
+                    class="text-[9px] px-1.5 py-0.5 rounded bg-cyan-900/60 text-cyan-200 border border-cyan-800"
+                    title={`Agent-to-agent reply: @${msg.from} → @${msg.replyTo}. NOT addressed to you.`}
+                  >
+                    → @{msg.replyTo}
+                  </span>
+                </Show>
+                <Show when={msg.from !== "you" && (msg.childDepth ?? 0) === 0}>
+                  <span
+                    class="text-[9px] px-1.5 py-0.5 rounded bg-gray-800/60 text-gray-300 border border-gray-700"
+                    title="Top-level reply addressed to you (the operator)."
+                  >
+                    → you
+                  </span>
+                </Show>
+                <span class="text-gray-400">· {new Date(msg.ts).toLocaleTimeString()}</span>
+                <Show when={msg.model && !msg.pending}>
+                  <span class="text-[9px] text-gray-300 ml-auto truncate max-w-[160px]" title={msg.model}>
+                    {msg.model}
+                  </span>
+                </Show>
+                {/* "→ source" button — surfaces when the bubble's text
+                    references one or more dispatch ids (e.g. "dispatch
+                    cedaffc6" or `cedaffc6`). One click opens a modal with
+                    the FULL prompt + result + agent + thread for that
+                    dispatch — operator no longer has to scroll back or
+                    curl the API to find out what the worker actually saw. */}
+                <For each={extractDispatchIds(msg.text)}>
+                  {(did) => (
+                    <button
+                      type="button"
+                      class="text-[9px] px-1.5 py-0.5 rounded bg-purple-900 hover:bg-purple-800 text-purple-200 ml-1 font-mono"
+                      title={`Show full source for dispatch ${did} — original prompt + worker result + thread context`}
+                      onClick={(e) => { e.stopPropagation(); openSource(did); }}
+                    >→ source {did}</button>
+                  )}
+                </For>
+                {/* Inline verdict buttons — when an agent reply contains
+                    a clear "Accept it" / "Reject" verdict on a named ADR,
+                    render a one-click Accept/Reject pill so the operator
+                    doesn't have to scroll to the Decisions panel. The
+                    server-side auto-resolver may have already fired (and
+                    in that case the resolve will return 404 / no-op
+                    quietly) — these buttons are belt-and-suspenders for
+                    cases where the detector missed. */}
+                <Show when={msg.from !== "you" && !msg.pending}>
+                  <For each={detectAdrVerdicts(msg.text)}>
+                    {(v) => (
+                      <button
+                        type="button"
+                        class={`text-[9px] px-1.5 py-0.5 rounded ml-1 font-semibold ${
+                          v.action === "accept" ? "bg-green-800 hover:bg-green-700 text-green-100"
+                          : v.action === "reject" ? "bg-red-900 hover:bg-red-800 text-red-100"
+                          : "bg-gray-800 hover:bg-gray-700 text-gray-300"
+                        }`}
+                        title={`One-click ${v.action} for ${v.adrId} — flips the ADR's Status field. Confirms first.`}
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const verb = v.action === "accept" ? "Accept" :
+                                       v.action === "reject" ? "Reject" : "Abandon";
+                          if (!confirm(`${verb} ${v.adrId}? This flips the Status line in the ADR file.`)) return;
+                          try {
+                            await restClient.post(`/api/decisions/adr/resolve`, {
+                              id: `adr:${v.adrId}`,
+                              action: v.action,
+                              note: `Inline chat-bubble ${v.action} on @${msg.from}'s verdict`,
+                            });
+                            alert(`✓ ${v.adrId} → ${verb}ed. Decisions panel will drop it on next refresh.`);
+                          } catch (err) {
+                            const msg = err instanceof Error ? err.message : String(err);
+                            // 404 is the expected response when the ADR is
+                            // already in the target state (auto-resolver
+                            // beat us to it). Treat as success.
+                            if (msg.includes("404") || msg.toLowerCase().includes("no 'status: proposed'")) {
+                              alert(`${v.adrId} is already in the target state — no action needed.`);
+                            } else {
+                              alert(`${verb.toLowerCase()} failed: ${msg}`);
+                            }
+                          }
+                        }}
+                      >
+                        {v.action === "accept" ? "✓ Accept" : v.action === "reject" ? "✗ Reject" : "⊘ Abandon"} {v.adrId.replace(/^ADR-/, "")}
+                      </button>
+                    )}
+                  </For>
+                </Show>
+                {/* "Convert to workplan" button — surfaces only on agent
+                    replies whose text contains workplan-creation language
+                    ("create or update a workplan", "should be tracked",
+                    "follow-up workplan", etc.). One click writes a draft
+                    JSON to docs/workplans/drafts/ that the planner /
+                    feature-dev workflow can pick up. */}
+                <Show when={!msg.pending && msg.from !== "you" && shouldOfferWorkplanButton(msg.text)}>
+                  <button
+                    type="button"
+                    class="text-[9px] px-1.5 py-0.5 rounded bg-cyan-900 hover:bg-cyan-800 text-cyan-200 ml-1"
+                    title="Create a workplan draft from this reply"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      const titleSeed = msg.text.slice(0, 80).replace(/\n/g, " ");
+                      const title = prompt("Workplan title:", `From @${msg.from}: ${titleSeed}…`);
+                      if (!title) return;
+                      try {
+                        const resp = await restClient.post<{ ok: boolean; draftId: string; path: string }>(
+                          "/api/brain/messages/to-workplan",
+                          { title, prompt: msg.text, source_role: msg.from },
+                        );
+                        alert(`Draft created:\n${resp.path}\n\nRun /hex-feature-dev to expand it.`);
+                      } catch (err) {
+                        alert(`Draft failed: ${err instanceof Error ? err.message : String(err)}`);
+                      }
+                    }}
+                  >📋 →workplan</button>
+                </Show>
+              </div>
+              {/* Token / cost / context-window meter — shown only on
+                  agent responses that have usage data. Layout: small
+                  pill row + a thin context-window progress bar. Cost
+                  defaults to $0.00 for self-hosted models so the bar
+                  still renders consistently. */}
+              <Show when={!msg.pending && msg.from !== "you" && (msg.totalTokens ?? 0) > 0}>
+                {(() => {
+                  const total = msg.totalTokens ?? 0;
+                  const ctx = msg.contextWindow ?? 0;
+                  const pct = ctx > 0 ? Math.min(100, (total / ctx) * 100) : 0;
+                  const cost = msg.costUsd ?? 0;
+                  const costStr = cost === 0 ? "$0" : cost < 0.001 ? "<$0.001" : `$${cost.toFixed(cost < 0.01 ? 4 : 3)}`;
+                  const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n.toString();
+                  const pctClass = pct > 80 ? "bg-red-500" : pct > 50 ? "bg-yellow-500" : "bg-cyan-700";
+                  return (
+                    <div class="text-[9px] text-gray-400 mb-1 flex items-center gap-2">
+                      <span title="input tokens">↓{fmt(msg.inputTokens ?? 0)}</span>
+                      <span title="output tokens">↑{fmt(msg.outputTokens ?? 0)}</span>
+                      <span class="text-gray-500">·</span>
+                      <span title="cost (estimated for non-OpenRouter providers)">{costStr}</span>
+                      <Show when={ctx > 0}>
+                        <span class="text-gray-500">·</span>
+                        <span title={`${total.toLocaleString()} / ${ctx.toLocaleString()} tokens`}>
+                          {pct < 1 ? "<1" : pct.toFixed(0)}% ctx
+                        </span>
+                        <span class="flex-1 h-1 bg-gray-800 rounded overflow-hidden max-w-[80px]">
+                          <span class={`block h-full ${pctClass}`} style={{ width: `${pct}%` }}></span>
+                        </span>
+                      </Show>
+                    </div>
+                  );
+                })()}
+              </Show>
+              <Show
+                when={msg.pending && msg.startedAt}
+                fallback={
+                  // Render agent responses as markdown — they emit ##
+                  // headings, tables, code blocks, lists. "You" messages
+                  // and errors stay as plain text to preserve @-mention
+                  // syntax / show errors literally.
+                  msg.from === "you" || msg.error || msg.from === "system" ? (
+                    <div
+                      class={`leading-relaxed whitespace-pre-wrap ${
+                        msg.error ? "text-red-400" : "text-gray-300"
+                      }`}
+                    >
+                      {msg.text}
+                    </div>
+                  ) : (
+                    <MarkdownContent content={msg.text} />
+                  )
+                }
+              >
+                {(() => {
+                  // Reference tick() so this re-runs each second.
+                  tick();
+                  const elapsed = Math.floor((performance.now() - msg.startedAt!) / 1000);
+                  const hint = msg.from === "broadcast"
+                    ? "cloud parallel — slowest of N determines wait"
+                    : "cloud frontier ~2-10s · local Ollama 30-60s";
+                  return (
+                    <div class="leading-relaxed text-gray-300 italic">
+                      thinking... ({elapsed}s — {hint})
+                    </div>
+                  );
+                })()}
+              </Show>
+            </div>
+          )}
+        </For>
+      </div>
+      {/* Persona description card — only shown on a fresh/empty thread.
+          Once the conversation has actual exchanges (any non-system messages),
+          this disappears so the chat doesn't get re-cluttered after every reply. */}
+      <Show when={currentPersona() && history().filter((m) => m.from !== "system").length === 0}>
+        {(p) => (
+          <div class="border-t border-gray-800 px-3 py-2 bg-gray-900/40">
+            <div class="flex items-start justify-between gap-2 mb-1">
+              <span class={`text-xs font-semibold ${p().color}`}>@{p().name}</span>
+              <button
+                onClick={() => setCurrentAgent(null)}
+                class="text-[10px] text-gray-400 hover:text-gray-200 underline shrink-0"
+              >
+                clear
+              </button>
+            </div>
+            <p class="text-[11px] text-gray-200 leading-relaxed mb-1">{p().description}</p>
+            <p class="text-[10px] text-gray-400 leading-relaxed">
+              <span class="text-gray-300 font-semibold uppercase tracking-wider">when to use</span> · {p().whenToUse}
+            </p>
+          </div>
+        )}
+      </Show>
+      <footer class="border-t border-gray-800 p-2 relative">
+        <Show when={showSuggestions() && suggestions().length > 0}>
+          <ul class="absolute bottom-full left-2 right-2 mb-1 bg-gray-900 border border-gray-700 rounded shadow-xl max-h-48 overflow-y-auto z-10">
+            <For each={suggestions()}>
+              {(p) => (
+                <li
+                  class="px-2 py-1 text-xs hover:bg-gray-800 cursor-pointer flex items-center gap-2"
+                  onClick={() => completeSuggestion(p.name)}
+                >
+                  <span class="text-[10px] text-gray-400 w-16">{p.category}</span>
+                  <span class={p.color}>{p.name}</span>
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
+        <textarea
+          value={input()}
+          onInput={(e) => handleInput(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              handleSend();
+            } else if (e.key === "Escape") {
+              setShowSuggestions(false);
+            }
+          }}
+          placeholder={currentAgent() ? `reply to @${currentAgent()}...` : "@pm-agent classify..."}
+          rows={3}
+          class="w-full bg-gray-900 border border-gray-800 rounded px-2 py-1.5 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-700 resize-none"
+        />
+        <div class="flex items-center justify-between mt-1.5">
+          <span class="text-[10px] text-gray-400">
+            {currentAgent() ? "Cmd+Enter to send · @ to switch agent" : "@ to mention · Cmd+Enter to send"}
+          </span>
+          <button
+            onClick={handleSend}
+            disabled={!input().trim()}
+            class="px-2 py-1 text-[11px] font-medium bg-cyan-900/30 text-cyan-300 border border-cyan-700 rounded hover:bg-cyan-900/50 transition disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            Send
+          </button>
+        </div>
+      </footer>
+      {/* Source modal — shown when operator clicks any "→ source <id>"
+          button. Renders the dispatch's full prompt (so "Please do the
+          following three things:" with no list reveals itself as
+          truncated-at-source) + the worker's result + agent + thread.
+          Backdrop click dismisses; explicit Close + Reuse-prompt buttons. */}
+      <Show when={sourceDispatch()}>
+        {(d) => (
+          <div
+            class="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-6"
+            onClick={(e) => { if (e.currentTarget === e.target) setSourceDispatch(null); }}
+          >
+            <div class="bg-gray-950 border border-gray-700 rounded-lg max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl">
+              <header class="px-4 py-3 border-b border-gray-800 flex items-center gap-3">
+                <span class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-purple-700 text-purple-300 bg-purple-900/40">
+                  source
+                </span>
+                <span class="text-xs text-gray-200 font-mono">{d().id.slice(0, 12)}…</span>
+                <span class="text-[10px] text-gray-400">@{d().role}</span>
+                <span class={`text-[10px] px-1.5 py-0.5 rounded ${
+                  d().status === "Completed" ? "bg-green-900 text-green-300"
+                  : d().status === "InProgress" ? "bg-cyan-900 text-cyan-300 animate-pulse"
+                  : d().status === "Failed" ? "bg-red-900 text-red-300"
+                  : "bg-gray-800 text-gray-300"
+                }`}>{d().status}</span>
+                <button
+                  type="button"
+                  onClick={() => setSourceDispatch(null)}
+                  class="ml-auto text-gray-400 hover:text-gray-200 text-lg leading-none px-1"
+                  title="Close"
+                >×</button>
+              </header>
+              <div class="overflow-y-auto px-4 py-3 flex-1 text-xs">
+                <div class="mb-3">
+                  <div class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Prompt the worker received</div>
+                  <pre class="bg-gray-900 border border-gray-800 rounded p-3 text-gray-200 whitespace-pre-wrap font-mono text-[11px]">{d().prompt || "(empty prompt)"}</pre>
+                  <Show when={!d().prompt || d().prompt.trim().length < 30}>
+                    <div class="text-[10px] text-yellow-400 italic mt-1">
+                      ⚠ Prompt is empty or extremely short — likely truncated at the source. Re-issue with the full task list.
+                    </div>
+                  </Show>
+                </div>
+                <Show when={d().result}>
+                  <div class="mb-3">
+                    <div class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Worker result</div>
+                    <pre class="bg-gray-900 border border-gray-800 rounded p-3 text-gray-200 whitespace-pre-wrap font-mono text-[11px]">{d().result}</pre>
+                  </div>
+                </Show>
+                <Show when={d().error}>
+                  <div class="mb-3">
+                    <div class="text-[10px] font-bold uppercase tracking-wider text-red-400 mb-1">Worker error</div>
+                    <pre class="bg-red-900/20 border border-red-800 rounded p-3 text-red-200 whitespace-pre-wrap font-mono text-[11px]">{d().error}</pre>
+                  </div>
+                </Show>
+                <div class="grid grid-cols-2 gap-3 text-[10px] text-gray-400 mt-3">
+                  <div>agent: <span class="font-mono text-gray-300">{d().agentId || "—"}</span></div>
+                  <div>thread: <span class="font-mono text-gray-300">{d().threadId || "—"}</span></div>
+                  <div>workplan: <span class="font-mono text-gray-300">{d().workplanId}</span></div>
+                  <div>created: <span class="font-mono text-gray-300">{d().createdAt}</span></div>
+                </div>
+              </div>
+              <footer class="px-4 py-3 border-t border-gray-800 flex items-center gap-2">
+                <button
+                  type="button"
+                  class="px-3 py-1.5 rounded bg-cyan-900 hover:bg-cyan-700 text-cyan-100 text-xs font-semibold"
+                  onClick={() => {
+                    setInput(d().prompt);
+                    setSourceDispatch(null);
+                  }}
+                  title="Pre-fill the chat input with this prompt so you can edit and re-dispatch"
+                >Re-use prompt</button>
+                <Show when={d().threadId}>
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 rounded bg-purple-900 hover:bg-purple-700 text-purple-100 text-xs"
+                    onClick={async () => {
+                      const tid = d().threadId!;
+                      try {
+                        const resp = await restClient.post<{ id: string }>(
+                          `/api/brain/threads/by-key/${encodeURIComponent(tid)}`,
+                          { title: `dispatch ${d().id.slice(0, 8)}` },
+                        );
+                        if (resp?.id) {
+                          localStorage.setItem(ACTIVE_THREAD_KEY, resp.id);
+                          window.dispatchEvent(new CustomEvent("hex-brain-thread-switch", {
+                            detail: { threadId: resp.id },
+                          }));
+                          setSourceDispatch(null);
+                        }
+                      } catch { /* ignore */ }
+                    }}
+                    title="Switch the chat panel to this dispatch's thread"
+                  >Open thread ↗</button>
+                </Show>
+                <span class="ml-auto">
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs"
+                    onClick={() => setSourceDispatch(null)}
+                  >Close</button>
+                </span>
+              </footer>
+            </div>
+          </div>
+        )}
+      </Show>
+      <Show when={sourceLoading()}>
+        <div class="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center text-gray-300 text-sm">
+          Loading dispatch source…
+        </div>
+      </Show>
+    </aside>
+  );
+};
+
+// Synthesized high-signal event — derived by diffing successive polls of
+// state we already fetch (swarms/tasks, decisions, agents). No new backend
+// endpoint required — events are computed at the moment a poll lands.
+interface DerivedEvent {
+  ts: number;
+  time: string;
+  icon: string;
+  color: string;
+  source: string;
+  text: string;
+}
+
+// Module-level event buffer + diff state. Survives component remounts within
+// a session; resets on full page reload.
+const eventBuffer: DerivedEvent[] = [];
+let prevTaskStatus: Map<string, string> = new Map();
+let prevSwarmIds: Set<string> = new Set();
+let prevDecisionTotal = -1;
+let prevAgentOnlineCount = -1;
+// Pool deltas — alive_count / paused / in_crash_loop transitions.
+const prevPoolState: Map<string, { alive: number; desired: number; paused: boolean; crash: boolean }> = new Map();
+// Supervisor event log — last seen ID so we don't re-emit events on every poll.
+let lastSupervisorEventId = 0;
+
+function pushEvent(e: DerivedEvent) {
+  eventBuffer.push(e);
+  if (eventBuffer.length > 40) eventBuffer.splice(0, eventBuffer.length - 40);
+}
+
+function deriveEvents(args: {
+  swarms: Swarm[];
+  decisions: DecisionsResponse | null;
+  agents: { name?: string; status?: string }[];
+  pools?: PoolStatus[];
+  supervisorEvents?: SupervisorEvent[];
+}) {
+  const now = performance.now();
+  const time = new Date().toLocaleTimeString().slice(0, 8);
+
+  // 0a. Supervisor events — these are the actual spawn/exit/crash signals
+  //     emitted by the STDB supervisor. Most user-visible "what's happening"
+  //     surface; emit one row per kind.
+  for (const ev of args.supervisorEvents ?? []) {
+    if (ev.id <= lastSupervisorEventId) continue;
+    lastSupervisorEventId = Math.max(lastSupervisorEventId, ev.id);
+    const evTime = ev.ts ? new Date().toLocaleTimeString().slice(0, 8) : time;
+    let icon = "•", color = "text-blue-400", text = ev.kind;
+    if (ev.kind === "spawn_request") {
+      icon = "↑"; color = "text-green-400";
+      text = `spawn ${ev.poolId}`;
+    } else if (ev.kind === "process_exited") {
+      icon = "↓"; color = "text-orange-400";
+      const reason = (() => { try { return JSON.parse(ev.payload).reason ?? ""; } catch { return ""; } })();
+      text = reason ? `exit ${ev.poolId} (${reason})` : `exit ${ev.poolId}`;
+    } else if (ev.kind === "crash_loop") {
+      icon = "✗"; color = "text-red-400";
+      text = `crash-loop: ${ev.poolId}`;
+    } else if (ev.kind === "tick") {
+      // Skip noisy tick events — they fire every 10s.
+      continue;
+    }
+    pushEvent({ ts: now, time: evTime, icon, color, source: "super", text });
+  }
+
+  // 0b. Pool state transitions (alive count / paused / in_crash_loop)
+  for (const p of args.pools ?? []) {
+    const prev = prevPoolState.get(p.id);
+    const cur = {
+      alive: p.aliveCount, desired: p.desiredCount,
+      paused: p.paused, crash: p.inCrashLoop,
+    };
+    if (prev) {
+      if (prev.alive !== cur.alive) {
+        const delta = cur.alive - prev.alive;
+        pushEvent({
+          ts: now, time,
+          icon: delta > 0 ? "↑" : "↓",
+          color: delta > 0 ? "text-green-400" : "text-orange-400",
+          source: "pool",
+          text: `${p.id} ${prev.alive}→${cur.alive}/${cur.desired}`,
+        });
+      }
+      if (!prev.crash && cur.crash) {
+        pushEvent({ ts: now, time, icon: "✗", color: "text-red-400",
+          source: "pool", text: `${p.id} entered CRASH LOOP` });
+      } else if (prev.crash && !cur.crash) {
+        pushEvent({ ts: now, time, icon: "✓", color: "text-green-400",
+          source: "pool", text: `${p.id} recovered` });
+      }
+      if (prev.paused !== cur.paused) {
+        pushEvent({ ts: now, time, icon: cur.paused ? "⏸" : "▶",
+          color: "text-yellow-400", source: "pool",
+          text: `${p.id} ${cur.paused ? "paused" : "resumed"}` });
+      }
+    }
+    prevPoolState.set(p.id, cur);
+  }
+
+  // 1. Task status transitions
+  const currentTaskStatus = new Map<string, string>();
+  const currentTaskMeta = new Map<string, string>();
+  for (const s of args.swarms) {
+    for (const t of (s.tasks || [])) {
+      currentTaskStatus.set(t.id, t.status || "");
+      currentTaskMeta.set(t.id, t.title);
+    }
+  }
+  for (const [tid, status] of currentTaskStatus) {
+    const prev = prevTaskStatus.get(tid);
+    if (!prev) continue;
+    if (prev !== status) {
+      const title = currentTaskMeta.get(tid) || tid.slice(0, 8);
+      const titleShort = title.length > 60 ? title.slice(0, 57) + "…" : title;
+      let icon = "→", color = "text-cyan-400";
+      if (status === "completed" || status === "done") { icon = "✓"; color = "text-green-400"; }
+      else if (status === "failed") { icon = "✗"; color = "text-red-400"; }
+      else if (status === "blocked") { icon = "⛔"; color = "text-yellow-400"; }
+      else if (status === "in_progress") { icon = "▶"; color = "text-cyan-400"; }
+      pushEvent({
+        ts: now, time, icon, color,
+        source: "task",
+        text: `${prev}→${status}: ${titleShort}`,
+      });
+    }
+  }
+  prevTaskStatus = currentTaskStatus;
+
+  // 2. New swarms
+  const currentSwarmIds = new Set(args.swarms.map((s) => s.id));
+  if (prevSwarmIds.size > 0) {
+    for (const sid of currentSwarmIds) {
+      if (!prevSwarmIds.has(sid)) {
+        const sw = args.swarms.find((s) => s.id === sid);
+        pushEvent({
+          ts: now, time, icon: "+", color: "text-purple-400",
+          source: "swarm",
+          text: `new: ${sw?.name || sid.slice(0, 12)}`,
+        });
+      }
+    }
+  }
+  prevSwarmIds = currentSwarmIds;
+
+  // 3. Decisions delta
+  if (args.decisions) {
+    const total = args.decisions.total;
+    if (prevDecisionTotal >= 0 && total !== prevDecisionTotal) {
+      const delta = total - prevDecisionTotal;
+      pushEvent({
+        ts: now, time,
+        icon: delta > 0 ? "△" : "▽",
+        color: delta > 0 ? "text-yellow-400" : "text-green-400",
+        source: "decisions",
+        text: `${delta > 0 ? "+" : ""}${delta} (now ${total})`,
+      });
+    }
+    prevDecisionTotal = total;
+  }
+
+  // 4. Agent online count change
+  const onlineCount = args.agents.filter(
+    (a) => a.status === "online" || a.status === "active",
+  ).length;
+  if (prevAgentOnlineCount >= 0 && onlineCount !== prevAgentOnlineCount) {
+    const delta = onlineCount - prevAgentOnlineCount;
+    pushEvent({
+      ts: now, time,
+      icon: delta > 0 ? "●" : "○",
+      color: delta > 0 ? "text-green-400" : "text-orange-400",
+      source: "agents",
+      text: `${delta > 0 ? "+" : ""}${delta} online (now ${onlineCount})`,
+    });
+  }
+  prevAgentOnlineCount = onlineCount;
+}
+
+const EventFeed: Component<{
+  swarms: () => Swarm[];
+  decisions: () => DecisionsResponse | null;
+  agents: () => { name?: string; status?: string }[];
+  pools: () => PoolStatus[];
+  supervisorEvents: () => SupervisorEvent[];
+}> = (props) => {
+  const [, forceRender] = createSignal(0);
+
+  // Recompute events whenever any of our inputs change.
+  createEffect(() => {
+    deriveEvents({
+      swarms: props.swarms(),
+      decisions: props.decisions(),
+      agents: props.agents(),
+      pools: props.pools(),
+      supervisorEvents: props.supervisorEvents(),
+    });
+    forceRender((n) => n + 1);
+  });
+
+  const reversed = () => [...eventBuffer].slice(-15).reverse();
+
+  return (
+    <footer class="border-t border-gray-800 bg-gray-950 px-4 py-1.5 flex items-center gap-3 text-[11px] overflow-x-auto whitespace-nowrap shrink-0">
+      <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400 shrink-0">Activity</span>
+      <Show
+        when={reversed().length > 0}
+        fallback={<span class="italic text-gray-500">watching for state changes…</span>}
+      >
+        <For each={reversed()}>
+          {(e) => (
+            <span class="shrink-0">
+              <span class="text-gray-500">{e.time}</span>
+              <span class={`ml-1 ${e.color}`}>{e.icon}</span>
+              <span class="ml-1 text-gray-400">{e.source}</span>
+              <span class="ml-1 text-gray-200">{e.text}</span>
+              <span class="text-gray-700 mx-2">·</span>
+            </span>
+          )}
+        </For>
+      </Show>
+    </footer>
+  );
+};
+
+// ── Main page ────────────────────────────────────────────────────────────────
+
+const PROJECT_FILTER_KEY = "hex-brain-project-filter-v1";
+
+const Brain: Component = () => {
+  const [swarmsAll, setSwarmsAll] = createSignal<Swarm[]>([]);
+  const [decisions, setDecisions] = createSignal<DecisionsResponse | null>(null);
+  const [improver, setImprover] = createSignal<ImproverStatus | null>(null);
+  const [agents, setAgents] = createSignal<{ name?: string; capabilities?: { role?: string } }[]>([]);
+  const [projects, setProjects] = createSignal<ProjectInfo[]>([]);
+  const [pools, setPools] = createSignal<PoolStatus[]>([]);
+  const [supervisorEvents, setSupervisorEvents] = createSignal<SupervisorEvent[]>([]);
+  const [dispatches, setDispatches] = createSignal<BrainDispatch[]>([]);
+  const [dispatchCounts, setDispatchCounts] = createSignal({ pending: 0, inProgress: 0, completed: 0 });
+  const promoteDispatch = async (id: string) => {
+    try {
+      await restClient.post(`/api/brain/dispatches/${id}/promote`, {});
+      // Optimistic flip — refresh on next poll will overwrite if reducer rejected.
+      setDispatches((all) => all.map((d) => d.id === id ? { ...d, status: "Pending" } : d));
+    } catch { /* surfaces in next poll */ }
+  };
+  // Keyed lookup so TeamRail can read each persona's pool by role name.
+  const poolByRole = createMemo(() => {
+    const m = new Map<string, PoolStatus>();
+    for (const p of pools()) m.set(p.role, p);
+    return m;
+  });
+  const scalePool = async (role: string, count: number) => {
+    const existing = pools().find((p) => p.role === role);
+    if (!existing) return;
+    try {
+      await restClient.post("/api/pools", {
+        id: existing.id,
+        role: existing.role,
+        desired_count: count,
+        restart_strategy: existing.restartStrategy,
+        max_restarts: 5,
+        max_restart_window_secs: 60,
+        paused: false,
+        owner_agent_id: "operator",
+      });
+      // Optimistic local update; refresh() will reconcile.
+      setPools((all) => all.map((p) =>
+        p.id === existing.id ? { ...p, desiredCount: count, paused: false, inCrashLoop: false } : p,
+      ));
+    } catch { /* surface in toast later */ }
+  };
+  // Lifted chat input — DecisionsPanel and KanbanLanes write to it on card
+  // click (prefill an @-mention + question), ChatPanel reads and sends.
+  const [chatInput, setChatInput] = createSignal("");
+  // Auto-send token: when bumped, ChatPanel's effect detects it and dispatches
+  // the current input. Used for click-to-ask flow from cards (one-click answer).
+  const [autoSendBump, setAutoSendBump] = createSignal(0);
+  // Helper for cards to dispatch to chat. Default is auto-send (one-click).
+  // Operator can still edit and re-send by typing; the card flow is for
+  // common questions where editing is unnecessary.
+  const sendToChat = async (text: string, role?: string, opts?: { autoSend?: boolean; threadKey?: string }) => {
+    // Per-subject threading: if the caller supplied a stable threadKey
+    // (e.g. from clicking a Decision card), open/resume that thread first
+    // so the conversation lives in one place per subject. ChatPanel reads
+    // activeThreadId from its own scope; we set it via the shared
+    // localStorage + a custom event the panel listens for. Simplest path:
+    // POST to /api/brain/threads/by-key/<key> to ensure the thread exists,
+    // then write the resolved id to localStorage + dispatch a 'storage'
+    // event so the panel re-reads it.
+    if (opts?.threadKey) {
+      try {
+        const resp = await restClient.post<{ id: string }>(
+          `/api/brain/threads/by-key/${encodeURIComponent(opts.threadKey)}`,
+          { title: `decision: ${opts.threadKey.replace(/^decision-/, "")}` },
+        );
+        if (resp?.id) {
+          localStorage.setItem("hex-brain-chat-active-thread-v2", resp.id);
+          // Notify ChatPanel — it owns activeThreadId and reads from
+          // localStorage on mount; we dispatch a custom event for live
+          // runtime switching.
+          window.dispatchEvent(new CustomEvent("hex-brain-thread-switch", {
+            detail: { threadId: resp.id },
+          }));
+        }
+      } catch { /* fallthrough to plain send */ }
+    }
+    setChatInput(text);
+    if (role) setSelectedAgent(role);
+    if (opts?.autoSend !== false) {
+      setAutoSendBump((n) => n + 1);
+    } else {
+      queueMicrotask(() => {
+        const ta = document.querySelector("aside textarea") as HTMLTextAreaElement | null;
+        if (ta) {
+          ta.focus();
+          ta.setSelectionRange(text.length, text.length);
+        }
+      });
+    }
+  };
+  // Project filter — "" means "all projects". Persists in localStorage.
+  const [projectFilter, setProjectFilter] = createSignal<string>(
+    localStorage.getItem(PROJECT_FILTER_KEY) ?? "",
+  );
+  createEffect(() => {
+    try { localStorage.setItem(PROJECT_FILTER_KEY, projectFilter()); } catch { /* quota */ }
+  });
+  // Lookup helpers
+  const projectName = (id: string): string => {
+    if (!id) return "global";
+    const p = projects().find((p) => p.id === id);
+    return p?.name ?? id.slice(0, 8);
+  };
+  // Filtered swarms — when projectFilter is "" show everything; "__global__"
+  // shows only swarms with no project; else only swarms whose projectId matches.
+  const swarms = createMemo(() => {
+    const f = projectFilter();
+    if (!f) return swarmsAll();
+    if (f === "__global__") {
+      return swarmsAll().filter((s) => !(s.projectId || s.project_id));
+    }
+    return swarmsAll().filter((s) => (s.projectId || s.project_id || "") === f);
+  });
+  // Selected agent — Brain owns this so TeamRail (left) and ChatPanel (right)
+  // share state. Click a persona in the rail → chat opens with that agent
+  // pre-selected. @-mention in the chat or click a different persona → updates.
+  const [selectedAgent, setSelectedAgent] = createSignal<string | null>(null);
+
+  const onlineNames = createMemo(() => {
+    const set = new Set<string>();
+    for (const a of agents()) {
+      const role = a.capabilities?.role;
+      if (role) set.add(role);
+      if (a.name) {
+        // names are like "pm-agent-bazzite.lan" — extract the role prefix
+        for (const p of PERSONAS) {
+          if (a.name.startsWith(p.name)) { set.add(p.name); break; }
+        }
+      }
+    }
+    return set;
+  });
+
+  const refresh = async () => {
+    try {
+      const s = await restClient.get<Swarm[]>("/api/swarms/active");
+      setSwarmsAll(Array.isArray(s) ? s : []);
+    } catch { /* nexus may be down */ }
+    try {
+      const p = await restClient.get<{ projects: ProjectInfo[] }>("/api/projects");
+      setProjects(p?.projects ?? []);
+    } catch { /* projects endpoint may not exist */ }
+    try {
+      const pp = await restClient.get<{ pools: PoolStatus[] }>("/api/pools");
+      setPools(pp?.pools ?? []);
+    } catch { /* pools table may not exist on first STDB sync */ }
+    try {
+      const se = await restClient.get<{ events: SupervisorEvent[] }>("/api/supervisor/events?limit=40");
+      setSupervisorEvents(se?.events ?? []);
+    } catch { /* supervisor_event table may not exist yet */ }
+    try {
+      const dd = await restClient.get<{ dispatches: BrainDispatch[]; pending: number; inProgress: number; completed: number }>("/api/brain/dispatches");
+      setDispatches(dd?.dispatches ?? []);
+      setDispatchCounts({
+        pending: dd?.pending ?? 0,
+        inProgress: dd?.inProgress ?? 0,
+        completed: dd?.completed ?? 0,
+      });
+    } catch { /* inference_task may be uninitialized */ }
+    try {
+      // Project-scoped decisions when a filter is active. The aggregator
+      // walks <projectRootPath>/docs/workplans + docs/adrs instead of cwd.
+      const f = projectFilter();
+      const url = f && f !== "__global__"
+        ? `/api/decisions?project=${encodeURIComponent(f)}`
+        : "/api/decisions";
+      const d = await restClient.get<DecisionsResponse>(url);
+      setDecisions(d);
+    } catch { /* ignore */ }
+    try {
+      const i = await restClient.get<{ agents: any[] }>("/api/hex-agents");
+      setAgents(i.agents || []);
+    } catch { /* ignore */ }
+    // improver status — best-effort, not all setups expose this REST surface.
+    try {
+      const im = await restClient.get<ImproverStatus>("/api/sched/improver/status");
+      setImprover(im);
+    } catch { /* improver not exposed via REST in all builds */ }
+  };
+
+  let pollHandle: number | undefined;
+  onMount(() => {
+    refresh();
+    pollHandle = window.setInterval(refresh, 15000);
+  });
+  onCleanup(() => { if (pollHandle !== undefined) window.clearInterval(pollHandle); });
+  // Re-fetch when the project filter changes (decisions endpoint takes the
+  // project as a query param). createEffect tracks projectFilter() automatically.
+  createEffect(() => {
+    projectFilter();
+    refresh();
+  });
+
+  return (
+    <div class="flex flex-col h-screen bg-gray-950 text-gray-100">
+      {/* Top bar */}
+      <header class="px-4 py-2 border-b border-gray-800 flex items-center gap-3 shrink-0">
+        <h1 class="text-sm font-bold tracking-wide text-gray-200">HEX BRAIN</h1>
+        <span class="text-[11px] text-gray-300">
+          {PERSONAS.length} personas · {swarms().length} active swarms · {decisions()?.total ?? 0} decisions
+        </span>
+        <button
+          onClick={() => navigate({ page: "org-chart" })}
+          class="text-[10px] px-2 py-1 bg-purple-900 hover:bg-purple-800 border border-purple-600 rounded text-purple-100 transition-colors"
+          title="View persona role hierarchy (static definitions, not live agents)"
+        >
+          Role Hierarchy
+        </button>
+        <button
+          onClick={() => navigate({ page: "org-comms" })}
+          class="text-[10px] px-2 py-1 bg-blue-900 hover:bg-blue-800 border border-blue-600 rounded text-blue-100 transition-colors"
+          title="View communication flow through the organization"
+        >
+          Communication Flow
+        </button>
+        <button
+          onClick={() => navigate({ page: "team" })}
+          class="text-[10px] px-2 py-1 bg-cyan-900 hover:bg-cyan-800 border border-cyan-600 rounded text-cyan-100 transition-colors"
+          title="Interactive dashboard to talk to your team"
+        >
+          Team Dashboard
+        </button>
+        {/* Project filter — scopes Kanban + Swarms to one project. Decisions
+            currently come from cwd's docs/workplans so they're already
+            scoped server-side. */}
+        <label class="ml-auto flex items-center gap-1.5 text-[10px] text-gray-300">
+          <span class="uppercase tracking-wider">Project:</span>
+          <select
+            value={projectFilter()}
+            onChange={(e) => setProjectFilter(e.currentTarget.value)}
+            class="bg-gray-900 border border-gray-800 rounded px-1.5 py-0.5 text-[11px] text-gray-200 focus:outline-none focus:border-cyan-700"
+          >
+            <option value="">all projects ({swarmsAll().length})</option>
+            <For each={projects()}>
+              {(p) => {
+                const count = swarmsAll().filter(
+                  (s) => (s.projectId || s.project_id || "") === p.id,
+                ).length;
+                return <option value={p.id}>{p.name} ({count})</option>;
+              }}
+            </For>
+            {(() => {
+              const globals = swarmsAll().filter(
+                (s) => !(s.projectId || s.project_id),
+              ).length;
+              return globals > 0 ? <option value="__global__">global ({globals})</option> : null;
+            })()}
+          </select>
+        </label>
+        <span class="text-[10px] text-gray-400">refresh: 15s</span>
+      </header>
+
+      {/* Three-pane main */}
+      <main class="flex flex-1 overflow-hidden">
+        <TeamRail
+          onlineNames={onlineNames}
+          onSelect={setSelectedAgent}
+          selected={selectedAgent}
+          poolByRole={poolByRole}
+          onScale={scalePool}
+        />
+
+        <div class="flex-1 overflow-y-auto px-4 py-4">
+          {/* Decisions placed at the top of the center stack — it's the
+              priority lane (human-in-loop bottlenecks). Kanban next for
+              flow visibility. Swarms + Health below as supplementary. */}
+          <DecisionsPanel data={decisions} onSendToChat={sendToChat} onResolved={refresh} />
+          <BrainDispatchesPanel
+            dispatches={dispatches}
+            counts={dispatchCounts}
+            onPromote={promoteDispatch}
+            onSendToChat={sendToChat}
+          />
+          <KanbanLanes swarms={swarms} onSendToChat={sendToChat} onTaskMoved={refresh} />
+          <div class="grid grid-cols-2 gap-4">
+            <SwarmsPanel swarms={swarms} projectName={projectName} />
+            <VersionPanel />
+          </div>
+          <HealthPanel improver={improver} swarmCount={() => swarmsAll().length} />
+        </div>
+
+        <ChatPanel
+          selectedAgent={selectedAgent}
+          onAgentChange={setSelectedAgent}
+          projectId={projectFilter}
+          projectName={() => projectName(projectFilter())}
+          externalInput={chatInput}
+          setExternalInput={setChatInput}
+          autoSendBump={autoSendBump}
+        />
+      </main>
+
+      <EventFeed swarms={swarms} decisions={decisions} agents={agents} pools={pools} supervisorEvents={supervisorEvents} />
+    </div>
+  );
+};
+
+export default Brain;

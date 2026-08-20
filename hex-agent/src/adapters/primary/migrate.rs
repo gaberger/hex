@@ -1,6 +1,6 @@
 //! Migration CLI — reads .claude/settings.json hooks, .claude/skills/*.md,
 //! and .claude/agents/*.yml and imports them into hex-hub's state backend
-//! via IStatePort (works with both SpacetimeDB and SQLite).
+//! via IStatePort (SpacetimeDB).
 
 use std::path::Path;
 

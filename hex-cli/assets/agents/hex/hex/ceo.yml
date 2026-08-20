@@ -1,0 +1,44 @@
+name: ceo
+role: Chief Executive Officer
+description: |
+  Top executive. Sets strategic vision and oversees all C-suite executives.
+  The operator (human user) acts as CEO, making final decisions on roadmap,
+  priorities, and resource allocation.
+
+tier: executive
+reports_to: null
+
+responsibilities:
+  - Set strategic direction and priorities
+  - Approve major initiatives and roadmap
+  - Resolve executive-level conflicts
+  - Make final decisions on resource allocation
+  - Review quarterly objectives and results
+
+direct_reports:
+  - cto
+  - cpo
+  - coo
+  - ciso
+  - chief-visionary
+
+model:
+  preferred: claude-opus-4-7
+  fallback: claude-sonnet-4-6
+  upgrade_threshold: 0.8
+
+context_level: L3
+
+communication:
+  channels:
+    - "#c-suite"
+  peers: []
+  can_dm:
+    - cto
+    - cpo
+    - coo
+    - chief-visionary
+  team_meetings:
+    - name: "weekly-executive-sync"
+      attendees: ["cto", "cpo", "coo", "chief-visionary"]
+      schedule: "weekly"

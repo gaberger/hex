@@ -1,4 +1,4 @@
-//! Trust level management commands (ADR-2604131500).
+//! Trust level management commands (ADR-2026-04-13-1500).
 //!
 //! `hex trust show|elevate|reduce|pin|history` — manage delegation trust levels per scope.
 

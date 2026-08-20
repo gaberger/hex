@@ -1,0 +1,508 @@
+//! Supervisor-event subscriber (wp-stdb-supervisor P3).
+//!
+//! Polls the STDB `supervisor_event` table for unhandled rows and acts on
+//! them. The supervisor's brain (the `supervisor_tick` scheduled reducer)
+//! emits `spawn_request` / `crash_loop` rows; this subscriber turns those
+//! decisions into actual side-effects (process spawns, inbox alerts,
+//! worker_process row registration).
+//!
+//! Why poll instead of a real STDB subscription: the IStatePort surface
+//! exposes `query_table` and `call_reducer` but not push-style row
+//! subscriptions. Polling at 5s is plenty — the supervisor tick itself
+//! runs at 10s, so polling at half that catches every event within one
+//! cycle of latency.
+//!
+//! Idempotency: each event row is marked `handled=true` once acted on.
+//! If the subscriber crashes mid-handler, the event stays unhandled and
+//! gets retried on next poll.
+
+use std::time::Duration;
+use tokio::task::JoinHandle;
+use tokio::time;
+use tracing::{debug, info, warn};
+
+use crate::state::SharedState;
+
+const POLL_INTERVAL_SECS: u64 = 5;
+
+pub struct SupervisorSubscriber {
+    state: SharedState,
+}
+
+impl SupervisorSubscriber {
+    pub fn spawn(state: SharedState) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            Self { state }.run().await;
+        })
+    }
+
+    async fn run(self) {
+        let mut interval = time::interval(Duration::from_secs(POLL_INTERVAL_SECS));
+        info!("supervisor subscriber started (poll interval {}s)", POLL_INTERVAL_SECS);
+
+        // Startup reconciliation (P3.4): any worker_process row with empty
+        // exited_at at this point is an orphan — the watchdog tokio task
+        // that was tracking it died with the previous nexus process. Mark
+        // them all exited so the supervisor's alive_count is honest from
+        // the first tick. On a clean restart, all in-flight hex-agents
+        // are either dead or orphaned to init anyway — assume dead.
+        if let Some(port) = &self.state.state_port {
+            match port.worker_process_orphans().await {
+                Ok(ids) if !ids.is_empty() => {
+                    info!("supervisor: reconciling {} orphaned worker_process rows from prior nexus", ids.len());
+                    for id in ids {
+                        if let Err(e) = port.worker_process_record_exit(&id, "orphaned").await {
+                            warn!("orphan reconcile for {}: {}", id, e);
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => warn!("orphan reconcile query failed: {}", e),
+            }
+        }
+
+        // ADR-2606071340 P0 / ADR-2606061359: the single-agent epoch does NOT
+        // auto-seed the multi-agent persona/pool roster. The embedded-YAML
+        // auto-seed created worker_pool_intent rows (claimed desired=0/paused,
+        // but actually seeded desired=1/unpaused) which the supervisor then
+        // spawned — 659 hex-agent processes flooded the machine (2026-06-07), a
+        // live repro of the org-sim fragility the single-agent pivot retired.
+        // HEX_SEED_PAUSED did not prevent it. The supervisor MECHANISM below
+        // (orphan reconcile, spawn_request handling, crash-loop) still runs;
+        // only the org-sim roster auto-seed is gated. Opt back into the
+        // multi-agent roster explicitly with HEX_SUPERVISOR_AUTOSEED=1.
+        if std::env::var("HEX_SUPERVISOR_AUTOSEED").as_deref() == Ok("1") {
+            // Auto-seed pool placeholders from the embedded persona YAML registry.
+            if let Some(port) = &self.state.state_port {
+                if let Err(e) = self.seed_persona_pools(port.as_ref()).await {
+                    warn!("auto-seed persona pools skipped: {}", e);
+                }
+            }
+            // Auto-seed persona_prompt rows (ADR-2026-05-23-0900 Phase 3).
+            if let Err(e) = self.seed_persona_prompts().await {
+                warn!("auto-seed persona_prompt skipped: {}", e);
+            }
+        } else {
+            info!(
+                "supervisor: org-sim roster auto-seed DISABLED (single-agent epoch); \
+                 supervision mechanism active. Set HEX_SUPERVISOR_AUTOSEED=1 to enable the multi-agent roster."
+            );
+        }
+
+        loop {
+            interval.tick().await;
+            if let Err(e) = self.tick().await {
+                warn!("supervisor subscriber tick error: {}", e);
+            }
+            // Per ADR-2026-05-23-0900 §Phase 4 — refresh the in-process
+            // persona_prompt cache so applied STDB rows are visible to
+            // org_responder/sop_executor within one supervisor-tick period.
+            // Non-fatal on transport / parse error: the cache keeps its
+            // prior contents and the seed fallback covers fresh roles.
+            if let Err(e) = self.refresh_persona_prompt_cache().await {
+                debug!("persona_prompt cache refresh skipped: {}", e);
+            }
+        }
+    }
+
+    /// Pull every row from `persona_prompt` via STDB SQL and update the
+    /// in-process cache used by `persona_prompt_seeds::active_*_or_seed`.
+    /// Best-effort — failures leave the cache as-is.
+    async fn refresh_persona_prompt_cache(&self) -> Result<(), String> {
+        use crate::orchestration::persona_prompt_seeds::{
+            refresh_active_prompts, ActivePersonaPrompt,
+        };
+        let stdb_host = std::env::var("HEX_STDB_HOST")
+            .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+        let hex_db = std::env::var("HEX_STDB_HEXFLO_DB")
+            .unwrap_or_else(|_| "hex".to_string());
+        let url = format!("{}/v1/database/{}/sql", stdb_host, hex_db);
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+            .map_err(|e| format!("http client: {}", e))?;
+        let res = http
+            .post(&url)
+            .header("Content-Type", "text/plain")
+            .body("SELECT role, classify_body, reason_body FROM persona_prompt")
+            .send()
+            .await
+            .map_err(|e| format!("sql: {}", e))?;
+        if !res.status().is_success() {
+            return Err(format!("sql status {}", res.status()));
+        }
+        // STDB SQL returns rows as JSON. Shape varies by client; the v1
+        // response is an array with one object per result-set, each having
+        // a `rows` array of column-tuple arrays.
+        let body: serde_json::Value = res
+            .json()
+            .await
+            .map_err(|e| format!("json parse: {}", e))?;
+        let mut out = Vec::new();
+        // Support both shapes: top-level array of result-sets (newer
+        // STDB) and a bare `{rows: [...]}` (legacy). We don't gate on
+        // shape; either way we just walk all `rows` arrays we find.
+        let collect_from = |rows: &serde_json::Value, out: &mut Vec<ActivePersonaPrompt>| {
+            if let Some(arr) = rows.as_array() {
+                for row in arr {
+                    let cols = match row.as_array() {
+                        Some(c) => c,
+                        None => continue,
+                    };
+                    if cols.len() < 3 { continue; }
+                    let role = cols[0].as_str().unwrap_or("").to_string();
+                    let classify_body = cols[1].as_str().unwrap_or("").to_string();
+                    let reason_body = cols[2].as_str().unwrap_or("").to_string();
+                    if !role.is_empty() {
+                        out.push(ActivePersonaPrompt { role, classify_body, reason_body });
+                    }
+                }
+            }
+        };
+        if let Some(arr) = body.as_array() {
+            for rs in arr {
+                if let Some(rows) = rs.get("rows") {
+                    collect_from(rows, &mut out);
+                }
+            }
+        } else if let Some(rows) = body.get("rows") {
+            collect_from(rows, &mut out);
+        }
+        refresh_active_prompts(out);
+        Ok(())
+    }
+
+    /// Walk every persona YAML embedded via rust-embed and create a
+    /// worker_pool_intent row with desired=1, paused=false for each one whose
+    /// pool id (`{role}-default`) doesn't already exist. The supervisor
+    /// brings them up automatically on the next tick. Operator can still
+    /// scale to 0 (`hex pool scale <id> 0`) or pause (`hex pool pause`)
+    /// to disable any individual persona.
+    ///
+    /// Set HEX_SEED_PAUSED=1 to keep the old paused-by-default behavior
+    /// (useful when bringing up nexus on a low-resource host).
+    async fn seed_persona_pools(
+        &self,
+        port: &dyn crate::ports::state::IStatePort,
+    ) -> Result<(), String> {
+        // Existing pool ids — skip these.
+        let existing: std::collections::HashSet<String> = port
+            .pool_status_all()
+            .await
+            .map_err(|e| format!("pool_status_all: {}", e))?
+            .into_iter()
+            .map(|t| t.0)
+            .collect();
+
+        let mut roles: Vec<String> = crate::templates::AgentTemplates::iter()
+            .filter_map(|p| {
+                let s = p.as_ref();
+                let prefix = "agents/hex/hex/";
+                if !s.starts_with(prefix) || !s.ends_with(".yml") { return None; }
+                let stem = &s[prefix.len()..s.len() - 4];
+                if stem == "adversarial-reviewer" { return None; } // deprecated stub
+                Some(stem.to_string())
+            })
+            .collect();
+        roles.sort();
+        roles.dedup();
+
+        let seed_paused = std::env::var("HEX_SEED_PAUSED").as_deref() == Ok("1");
+        let (seed_desired, seed_paused_flag) = if seed_paused { (0, true) } else { (1, false) };
+
+        let mut seeded = 0;
+        for role in &roles {
+            let pool_id = format!("{}-default", role);
+            if existing.contains(&pool_id) { continue; }
+            if let Err(e) = port
+                .pool_create(&pool_id, role, seed_desired, "permanent", 5, 60, seed_paused_flag, "system-seed")
+                .await
+            {
+                warn!("seed pool '{}' skipped: {}", pool_id, e);
+                continue;
+            }
+            seeded += 1;
+        }
+        if seeded > 0 {
+            info!(
+                "supervisor: seeded {} pool placeholders from persona YAMLs (desired={}, paused={})",
+                seeded, seed_desired, seed_paused_flag
+            );
+        }
+        Ok(())
+    }
+
+    /// Per ADR-2026-05-23-0900 §Phase 3 — seed the `persona_prompt` STDB
+    /// table at cold start with the byte-current bodies from the in-process
+    /// `persona_prompt_seeds` module. Idempotent (the STDB reducer no-ops
+    /// when bodies are byte-equal). Best-effort: any HTTP / STDB failure
+    /// is logged at warn and ignored — the in-process seed body remains
+    /// the authoritative fallback path.
+    async fn seed_persona_prompts(&self) -> Result<(), String> {
+        use crate::orchestration::persona_prompt_seeds::{
+            classify_seed, reason_seed, SEEDED_ROLES,
+        };
+
+        let stdb_host = std::env::var("HEX_STDB_HOST")
+            .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+        let hex_db = std::env::var("HEX_STDB_HEXFLO_DB")
+            .unwrap_or_else(|_| "hex".to_string());
+        let url = format!("{}/v1/database/{}/call/seed_persona_prompt", stdb_host, hex_db);
+
+        let http = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => return Err(format!("http client init: {}", e)),
+        };
+
+        // Role title source: match the existing reason_seed match arm. This
+        // duplicates the small table in persona_prompt_seeds (which is
+        // private to that module's `reason_seed` body); keeping it local
+        // here avoids exporting another helper for the same tiny mapping.
+        fn role_title(role: &str) -> &'static str {
+            match role {
+                "cto" => "Chief Technology Officer",
+                "cpo" => "Chief Product Officer",
+                "coo" => "Chief Operating Officer",
+                "ciso" => "Chief Information Security Officer",
+                "chief-visionary" => "Chief Visionary",
+                "chief-architect" => "Chief Architect",
+                "engineering-lead" => "Engineering Lead",
+                "product-lead" => "Product Lead",
+                "sre-lead" => "SRE Lead",
+                _ => "Executive",
+            }
+        }
+
+        // The reducer stores ONE reason_body per role. Seed with the
+        // representative `code_question` intent — the most common intent
+        // hit by the SOP path historically (per 2026-05-21 logs analyzed
+        // in the v1 ADR Context). A future ADR can extend the schema to
+        // store per-intent variants when an improver needs them.
+        const SEED_REASON_INTENT: &str = "code_question";
+
+        // Model defaults match the 2026-05-22 routing fix in
+        // hex-cli/assets/agents/hex/hex/hex-coder.yml — local Ollama for
+        // T2/T2.5, sonnet for frontier upgrade.
+        const MODEL_PREFERRED: &str = "qwen2.5-coder:14b";
+        const MODEL_UPGRADE_TO: &str = "claude-sonnet-4-6";
+
+        let mut seeded = 0usize;
+        let mut failed = 0usize;
+        for role in SEEDED_ROLES {
+            let title = role_title(role);
+            let classify_body = classify_seed(role, title);
+            let reason_body = reason_seed(role, SEED_REASON_INTENT);
+            let payload = serde_json::json!([
+                role,
+                classify_body,
+                reason_body,
+                MODEL_PREFERRED,
+                MODEL_UPGRADE_TO,
+            ]);
+            match http.post(&url).json(&payload).send().await {
+                Ok(r) if r.status().is_success() => {
+                    seeded += 1;
+                }
+                Ok(r) => {
+                    failed += 1;
+                    debug!(
+                        role = %role,
+                        status = %r.status(),
+                        "seed_persona_prompt non-2xx"
+                    );
+                }
+                Err(e) => {
+                    failed += 1;
+                    debug!(role = %role, error = %e, "seed_persona_prompt transport error");
+                }
+            }
+        }
+        if seeded > 0 || failed > 0 {
+            info!(
+                "supervisor: persona_prompt cold-start seed — {} ok, {} skipped/failed",
+                seeded, failed
+            );
+        }
+        Ok(())
+    }
+
+    async fn tick(&self) -> Result<(), String> {
+        let port = match &self.state.state_port {
+            Some(p) => p,
+            None => return Ok(()), // STDB not configured — nothing to do
+        };
+
+        // Query unhandled events. Cap to 50 per tick to avoid runaway
+        // processing if a backlog accumulates.
+        let mut events = port
+            .supervisor_event_unhandled()
+            .await
+            .map_err(|e| format!("supervisor_event_unhandled: {}", e))?;
+        events.truncate(50);
+        if events.is_empty() {
+            return Ok(());
+        }
+        info!("supervisor subscriber: processing {} unhandled events", events.len());
+
+        for (id, kind, pool_id, payload) in events {
+            match kind.as_str() {
+                "spawn_request" => {
+                    if let Err(e) = self.handle_spawn_request(&pool_id, &payload).await {
+                        warn!("spawn_request handler failed for pool {}: {}", pool_id, e);
+                        continue; // leave unhandled; supervisor_tick will re-emit if still needed
+                    }
+                }
+                "crash_loop" => {
+                    if let Err(e) = self.handle_crash_loop(&pool_id, &payload).await {
+                        warn!("crash_loop handler failed for pool {}: {}", pool_id, e);
+                    }
+                }
+                other => {
+                    debug!("supervisor subscriber: ignoring event kind '{}'", other);
+                }
+            }
+
+            // Mark handled regardless of side-effect outcome — we don't want a
+            // permanently-failing handler to spin forever. crash_loop alerts are
+            // re-emitted on subsequent ticks anyway if the pool is still in_crash_loop.
+            if let Err(e) = port.supervisor_event_mark_handled(id, "nexus-supervisor").await {
+                warn!("failed to mark event {} as handled: {}", id, e);
+            }
+        }
+        Ok(())
+    }
+
+    /// Spawn a worker for the requested role and register a worker_process row.
+    async fn handle_spawn_request(&self, pool_id: &str, payload: &str) -> Result<(), String> {
+        let mgr = self
+            .state
+            .agent_manager
+            .as_ref()
+            .ok_or("agent_manager not initialized")?;
+        let port = self
+            .state
+            .state_port
+            .as_ref()
+            .ok_or("state_port not initialized")?;
+
+        // Parse payload JSON for the role (the supervisor_tick emits it as
+        // `{"role":"hex-coder","needed":N,"alive":N,"desired":N}`). If parse
+        // fails, fall back to looking up the pool's role via SQL.
+        let role: String = serde_json::from_str::<serde_json::Value>(payload)
+            .ok()
+            .and_then(|v| v.get("role").and_then(|r| r.as_str()).map(|s| s.to_string()))
+            .unwrap_or_default();
+
+        let role = if role.is_empty() {
+            port.worker_pool_role(pool_id)
+                .await
+                .map_err(|e| format!("worker_pool_role: {}", e))?
+                .ok_or_else(|| format!("pool '{}' not found and payload had no role", pool_id))?
+        } else {
+            role
+        };
+
+        let project_dir = std::env::current_dir()
+            .map_err(|e| format!("cwd: {}", e))?;
+        let hub_url = std::env::var("HEX_NEXUS_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:5555".to_string());
+
+        info!(
+            "supervisor: spawning hex-agent for pool '{}' (role={})",
+            pool_id, role
+        );
+        // CRITICAL: use the process_id RETURNED BY spawn_local_agent — that
+        // same UUID is passed to the child via HEX_WORKER_PROCESS_ID env, and
+        // hex-agent heartbeats /api/worker-process/{that-uuid}/heartbeat.
+        // Registering the worker_process row under a DIFFERENT fresh UUID
+        // (the prior behaviour) caused every heartbeat to hit a non-existent
+        // row → row stayed stale → supervisor reaped → respawned. Observed
+        // 2026-05-21: 572 rows for ceo-default alone, 5.7-core CPU burn.
+        let (pid, process_id) = mgr
+            .spawn_local_agent(&hub_url, &project_dir, Some(&role))
+            .await
+            .map_err(|e| format!("spawn_local_agent: {}", e))?;
+        let host = gethostname::gethostname().to_string_lossy().to_string();
+        if let Err(e) = port
+            .worker_process_register(&process_id, pool_id, &role, &host, pid as i64)
+            .await
+        {
+            warn!(
+                "spawn succeeded (pid {}) but worker_process_register failed: {} — supervisor will respawn",
+                pid, e
+            );
+            return Ok(());
+        }
+
+        // P3.2 — exit watchdog. Polls /proc/<pid> every 2s; when the process
+        // is gone, calls worker_process_record_exit so the supervisor's
+        // alive_count is honest. Without this, ghost workers (exited
+        // hex-agent processes whose row still says alive) prevent the
+        // supervisor from spawning replacements.
+        let port = std::sync::Arc::clone(port);
+        let pid_u = pid;
+        let pid_path = format!("/proc/{}", pid_u);
+        let process_id_clone = process_id.clone();
+        let pool_id_clone = pool_id.to_string();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+            loop {
+                interval.tick().await;
+                if !std::path::Path::new(&pid_path).exists() {
+                    // Process is gone. Without exit-status (Linux drops it after parent's
+                    // SIGCHLD handler), we report "unknown" by default. agent_manager's
+                    // wait()-based path can override this with the real status if it
+                    // beats us to the punch (idempotent reducer).
+                    let exit_reason = "unknown";
+                    if let Err(e) = port
+                        .worker_process_record_exit(&process_id_clone, exit_reason)
+                        .await
+                    {
+                        warn!("worker_process_record_exit({}) failed: {}", process_id_clone, e);
+                    } else {
+                        info!(
+                            "supervisor: worker {} (pid {}) of pool {} exited",
+                            process_id_clone, pid_u, pool_id_clone
+                        );
+                    }
+                    break;
+                }
+            }
+        });
+        Ok(())
+    }
+
+    /// Surface a crash-loop as an operator priority-2 inbox notification (ADR-060).
+    async fn handle_crash_loop(&self, pool_id: &str, payload: &str) -> Result<(), String> {
+        let port = self
+            .state
+            .state_port
+            .as_ref()
+            .ok_or("state_port not initialized")?;
+
+        let msg = format!(
+            "Supervisor: pool '{}' entered CRASH LOOP and is paused. {}",
+            pool_id, payload
+        );
+        warn!("{}", msg);
+
+        // Notify all agents in the project — this is a global concern.
+        // Project_id "*" is the supervisor's own scope; nexus consumers
+        // surface ALL priority-2 inbox entries on the next operator poll.
+        if let Err(e) = port
+            .inbox_notify_all(
+                "*",
+                2, // priority 2 = override per ADR-060
+                "supervisor_crash_loop",
+                &msg,
+            )
+            .await
+        {
+            return Err(format!("inbox_notify_all: {}", e));
+        }
+        Ok(())
+    }
+}

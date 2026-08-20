@@ -1,0 +1,23 @@
+{
+  "id": "wp-test-arch-scan",
+  "phases": [
+    {
+      "id": "P1",
+      "tasks": [
+        {
+          "evidence": [
+            "hex analyze . --json | head -5"
+          ],
+          "files": [],
+          "id": "P1.1",
+          "status": "done",
+          "strategy_hint": "shell",
+          "title": "Run hex analyze and save report to docs/analysis/scan-$(date +%Y%m%d).json"
+        }
+      ],
+      "title": "Run analysis"
+    }
+  ],
+  "timeout_s": 300,
+  "title": "Test Architecture Scan"
+}

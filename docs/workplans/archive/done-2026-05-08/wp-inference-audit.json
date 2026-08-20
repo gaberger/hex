@@ -1,0 +1,82 @@
+{
+  "adr": "ADR-2026-04-05-2125",
+  "description": "Audit all registered inference models, track token usage, and calculate cost attribution across providers",
+  "id": "wp-inference-audit",
+  "phases": [
+    {
+      "id": "P1",
+      "tasks": [
+        {
+          "cmd": "hex inference list",
+          "evidence": "providers listed with status",
+          "id": "P1.1",
+          "status": "done",
+          "title": "List all registered inference providers"
+        },
+        {
+          "cmd": "hex inference test --all",
+          "evidence": "connectivity results",
+          "id": "P1.2",
+          "status": "done",
+          "title": "Test connectivity to each provider"
+        }
+      ],
+      "title": "Audit registered models"
+    },
+    {
+      "id": "P2",
+      "tasks": [
+        {
+          "cmd": "hex inference q-report",
+          "evidence": "token counts per model",
+          "id": "P2.1",
+          "status": "done",
+          "title": "Query inference q-report for token usage"
+        },
+        {
+          "cmd": "hex inference stats",
+          "evidence": "cost summary",
+          "id": "P2.2",
+          "status": "done",
+          "title": "Show inference stats"
+        }
+      ],
+      "title": "Token usage tracking"
+    },
+    {
+      "id": "P3",
+      "tasks": [
+        {
+          "cmd": "hex validate",
+          "evidence": "inference provider status",
+          "id": "P3.1",
+          "status": "done",
+          "title": "Run hex validate to check inference health"
+        }
+      ],
+      "title": "Provider health check"
+    },
+    {
+      "id": "P4",
+      "tasks": [
+        {
+          "cmd": "hex inference stats",
+          "evidence": "cost breakdown by provider",
+          "id": "P4.1",
+          "status": "done",
+          "title": "Generate cost attribution report"
+        },
+        {
+          "cmd": "hex inference escalation-report",
+          "evidence": "tier escalation rates",
+          "id": "P4.2",
+          "status": "done",
+          "title": "Show escalation report"
+        }
+      ],
+      "title": "Cost analysis"
+    }
+  ],
+  "priority": "high",
+  "title": "Inference Audit — Models, Tokens & Cost"
+}

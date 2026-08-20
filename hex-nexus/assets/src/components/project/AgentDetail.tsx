@@ -62,31 +62,31 @@ const AgentDetail: Component = () => {
   const agent = createMemo(() => {
     const id = agentId();
     return (
-      swarmAgents().find(
+      (swarmAgents() ?? []).find(
         (a: any) => (a.id ?? a.agent_id ?? "") === id,
       ) ??
-      registryAgents().find(
+      (registryAgents() ?? []).find(
         (a: any) => (a.id ?? a.agent_id ?? "") === id,
       )
     );
   });
 
   const heartbeat = createMemo(() =>
-    agentHeartbeats().find(
+    (agentHeartbeats() ?? []).find(
       (h: any) => (h.agent_id ?? "") === agentId(),
     ),
   );
 
   // Tasks assigned to this agent
   const assignedTasks = createMemo(() =>
-    swarmTasks().filter(
+    (swarmTasks() ?? []).filter(
       (t: any) => (t.assigned_to ?? t.agent_id ?? "") === agentId(),
     ),
   );
 
   // Resolve swarm name for a task
   function swarmName(swarmId: string): string {
-    const s = swarms().find(
+    const s = (swarms() ?? []).find(
       (sw: any) => (sw.id ?? sw.swarm_id ?? "") === swarmId,
     );
     return s?.name ?? swarmId;

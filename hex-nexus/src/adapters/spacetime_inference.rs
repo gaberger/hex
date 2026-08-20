@@ -236,7 +236,7 @@ impl SpacetimeInferenceClient {
                         healthy: cols.get(9).and_then(|v| v.as_u64()).unwrap_or(0) as u8,
                         last_health_check: str_col(cols, 10),
                         avg_latency_ms: u64_col(cols, 11),
-                        // Columns 12-14 added in ADR-2603271000; graceful fallback for existing rows
+                        // Columns 12-14 added in ADR-2026-03-27-1000; graceful fallback for existing rows
                         quantization_level: if cols.len() > 12 {
                             let s = str_col(cols, 12);
                             if s.is_empty() { default_quant.to_string() } else { s }

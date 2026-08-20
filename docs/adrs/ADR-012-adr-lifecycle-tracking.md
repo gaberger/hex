@@ -1,6 +1,6 @@
 # ADR-012: ADR Lifecycle Tracking
 
-**Status:** Accepted
+**Status:** Completed
 ## Date
 
 2026-03-17
@@ -39,7 +39,7 @@ The `ADRAdapter` parses markdown files matching `docs/adrs/ADR-*.md`. It extract
 - **Linked features**: `feat/<name>` references found in the body
 - **Linked worktrees**: `worktree: <branch>` references found in the body
 
-Both `## Status: Accepted` and `**Status:** Accepted` formats are supported because existing ADRs use both conventions.
+Both `## Status: Accepted` and `**Status:** Accepted
 
 ### AgentDB Integration
 
@@ -90,6 +90,6 @@ This surfaces forgotten proposals so the team can either promote them to accepte
 
 ## Alternatives Considered
 
-1. **adr-tools (Nat Pryce)** -- A well-known shell script toolkit for ADR management. Rejected because it has no programmatic API, no search capability, and no integration with the hex port system.
+1. **ADR-tools (Nat Pryce)** -- A well-known shell script toolkit for ADR management. Rejected because it has no programmatic API, no search capability, and no integration with the hex port system.
 2. **Manual markdown + grep** -- Status quo. Rejected because it provides no abandoned detection, no agent-queryable interface, and no indexing.
 3. **GitHub Issues as ADR tracker** -- Rejected because it introduces an external dependency (GitHub API) and separates the ADR content from the codebase. ADRs should live next to the code they govern.

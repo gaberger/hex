@@ -1,0 +1,80 @@
+{
+  "adr": "ADR-029",
+  "created_at": "2026-05-11T14:25:16.231206452+00:00",
+  "created_by": "hex-coder",
+  "feature": "Haiku preflight checks and automatic context compaction",
+  "id": "wp-haiku-preflight-and-auto-compaction",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain & Ports - Preflight interface",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/ports/preflight.rs"
+          ],
+          "id": "P0.1",
+          "layer": "ports",
+          "name": "Add PreflightPort trait with check_quota and is_new_topic methods",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary Adapter - Haiku preflight implementation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/haiku_preflight.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement HaikuPreflightAdapter with quota check and topic detection",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "Usecases - ConversationLoop integration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/conversation_loop.rs"
+          ],
+          "id": "P2.1",
+          "layer": "usecases",
+          "name": "Modify ConversationLoop to accept PreflightPort and add topic detection + auto-compaction logic",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P3",
+      "name": "CLI & Integration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/main.rs",
+            "hex-nexus/src/cli/args.rs"
+          ],
+          "id": "P3.1",
+          "layer": "primary",
+          "name": "Add --no-preflight and --compact-threshold CLI flags and wire preflight adapter in composition root",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

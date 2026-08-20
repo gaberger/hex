@@ -11,6 +11,7 @@
  */
 import { createSignal } from "solid-js";
 import { createProjectChatTransport } from '../services/project-chat-ws';
+import { uuid } from '../utils/uuid';
 
 export interface ChatMessage {
   id: string;
@@ -23,7 +24,7 @@ export interface ChatMessage {
 }
 
 function makeId(): string {
-  return crypto.randomUUID();
+  return uuid();
 }
 
 export function createProjectChat(projectId: string) {

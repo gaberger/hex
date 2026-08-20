@@ -152,11 +152,11 @@ const commands: Command[] = [
     }),
   },
   {
-    id: "analysis.adr-compliance",
+    id: "analysis.ADR-compliance",
     label: "Run ADR Compliance Check",
     category: "analysis",
     action: tracked("ADR Compliance Check", "analysis", async () => {
-      const data = await restClient.post<any>("/api/analyze/adr-compliance", { path: "." });
+      const data = await restClient.post<any>("/api/analyze/ADR-compliance", { path: "." });
       const msg = `${data.compliant_count ?? "?"}/${data.total_count ?? "?"} compliant`;
       addToast("success", `ADR compliance: ${msg}`);
       return msg;
@@ -205,7 +205,7 @@ const commands: Command[] = [
     action: tracked("Retrieve Memory", "memory", async () => {
       const key = prompt("Key to retrieve:");
       if (!key) return;
-      const entry = hexfloMemory().find((m: any) => m.key === key);
+      const entry = (hexfloMemory() ?? []).find((m: any) => m.key === key);
       if (entry) {
         const val = String(entry.value ?? "").slice(0, 100);
         addToast("success", `${key} = ${val}`);

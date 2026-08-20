@@ -6,12 +6,25 @@
  *
  * All reactive primitives (signals + useTable effects) are created inside
  * initConnectionStore() which must be called from App.tsx before any other
- * store initialization (ADR-2603231000).
+ * store initialization (ADR-2026-03-23-1000).
  *
  * Usage:
  *   import { swarms, tasks, agents, connected } from "../stores/connection";
  *   // In a component:  <For each={swarms()}>{(s) => ...}</For>
  */
+
+// Suppress SpacetimeDB SDK's internal "send was called before connect" errors
+// These occur when the SDK tries to send logs during disconnect - safe to ignore
+if (typeof window !== 'undefined') {
+  const originalError = console.error;
+  console.error = (...args: any[]) => {
+    const msg = args[0]?.toString() || '';
+    if (msg.includes('send was called before connect')) {
+      return; // Suppress this specific SDK internal error
+    }
+    originalError.apply(console, args);
+  };
+}
 import {
   createSignal,
   createRoot,
@@ -25,7 +38,7 @@ import {
 import {
   DbConnection as InferenceGatewayDbConnection,
 } from "../spacetimedb/inference-gateway/index";
-// ADR-2604050900: fleet-state module deleted; compute_node absorbed into hexflo-coordination
+// ADR-2026-04-05-0900: fleet-state module deleted; compute_node absorbed into hexflo-coordination
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -33,14 +46,44 @@ import {
 
 /** Resolve SpacetimeDB URI: localStorage override > window.location fallback. */
 function resolveSpacetimeDbUri(): string {
-  const stored = localStorage.getItem("hex-stdb-uri");
-  if (stored) return stored;
+  const override = localStorage.getItem("stdb_uri_override");
+  if (override) {
+    console.log(`[stdb] Using localStorage override: ${override}`);
+    return override;
+  }
+
+  // Use window.location to construct WebSocket URL dynamically
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${window.location.hostname}:3033`;
+  const host = window.location.hostname;
+  const port = 3033;
+  const uri = `${proto}//${host}:${port}`;
+  console.log(`[stdb] Connecting to SpacetimeDB at ${uri}`);
+  return uri;
 }
 
 const SPACETIMEDB_URI = resolveSpacetimeDbUri();
 const TOKEN_KEY_PREFIX = "stdb_token_";
+
+// ---------------------------------------------------------------------------
+// Row shape exports (consumed by derived memos — e.g. inbox unread counts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Runtime shape of an `agent_inbox` row as delivered by the SpacetimeDB client.
+ * Field names are snake_case to match the wire column names used by existing
+ * consumers (InboxPanel, App.tsx memos). Timestamps are ISO strings; an empty
+ * or null `acknowledged_at` indicates the notification is unread.
+ */
+export interface AgentInboxRow {
+  id: number | bigint;
+  agent_id: string;
+  priority: number;
+  kind: string;
+  payload: string;
+  created_at: string;
+  acknowledged_at: string | null;
+  expired_at: string | null;
+}
 
 // ---------------------------------------------------------------------------
 // Connection state signals — assigned inside createRoot by initConnectionStore
@@ -61,7 +104,7 @@ let setInferenceConn: (v: any | null) => void = () => {};
 let inferenceConnected: Accessor<boolean> = () => false;
 let setInferenceConnected: (v: boolean) => void = () => {};
 
-// fleet-state — retired (ADR-2604050900), compute_node now in hexflo-coordination
+// fleet-state — retired (ADR-2026-04-05-0900), compute_node now in hexflo-coordination
 let fleetConnected: Accessor<boolean> = () => false;
 
 // ---------------------------------------------------------------------------
@@ -79,14 +122,14 @@ let skillRegistry: Accessor<any[]> = () => [];
 let agentDefinitions: Accessor<any[]> = () => [];
 let registryAgents: Accessor<any[]> = () => [];
 let agentHeartbeats: Accessor<any[]> = () => [];
-let agentInbox: Accessor<any[]> = () => [];
+let agentInbox: Accessor<AgentInboxRow[]> = () => [];
 let remoteAgents: Accessor<any[]> = () => [];
 
 // inference-gateway tables
 let inferenceProviders: Accessor<any[]> = () => [];
 let inferenceRequests: Accessor<any[]> = () => [];
 
-// fleet/compute_node — now served from hexflo-coordination (ADR-2604050900)
+// fleet/compute_node — now served from hexflo-coordination (ADR-2026-04-05-0900)
 let fleetNodes: Accessor<any[]> = () => [];
 
 // Aggregated connection status
@@ -121,6 +164,7 @@ function connectModule(opts: ConnectOpts) {
   let retryCount = 0;
 
   function attempt() {
+    console.log(`[stdb:${opts.module}] attempting connection to ${SPACETIMEDB_URI}/${opts.module}`);
     try {
       // SpacetimeDB SDK v2.0: DbConnection.builder() returns DbConnectionBuilder
       // Chain: .withUri() → .withDatabaseName() → .withToken() → .onConnect() → .build()
@@ -128,6 +172,8 @@ function connectModule(opts: ConnectOpts) {
         .withUri(SPACETIMEDB_URI)
         .withDatabaseName(opts.module)
         .onConnect((ctx: any, _identity: any, token: string) => {
+          console.log(`[stdb:${opts.module}] onConnect callback fired`);
+
           localStorage.setItem(tokenKey, token);
           retryCount = 0;
 
@@ -139,6 +185,7 @@ function connectModule(opts: ConnectOpts) {
                 console.log(`[stdb:${opts.module}] subscription applied (${opts.subscribeQueries.length} queries)`);
                 opts.setConn(ctx);
                 opts.setConnected(true);
+                console.log(`[stdb:${opts.module}] connection status set to true`);
               })
               .onError((_errCtx: any, err: Error) => {
                 console.error(`[stdb:${opts.module}] subscription error:`, err);
@@ -151,13 +198,17 @@ function connectModule(opts: ConnectOpts) {
             opts.setConnected(true);
           }
         })
-        .onDisconnect((_ctx: any, _error?: Error) => {
+        .onDisconnect((_ctx: any, error?: Error) => {
+          console.warn(`[stdb:${opts.module}] disconnected:`, error);
+          // Set disconnected state immediately to prevent send() calls
           opts.setConnected(false);
           opts.setConn(null);
-          scheduleRetry();
+          // Use setTimeout to avoid issues during disconnect handler
+          setTimeout(() => scheduleRetry(), 0);
         })
         .onConnectError((_ctx: any, err: Error) => {
           console.error(`[stdb:${opts.module}] connect error:`, err);
+          console.error(`[stdb:${opts.module}] error details:`, err.message, err.stack);
           // Clear stale token on auth failure and retry without it
           if (savedToken && retryCount === 0) {
             console.warn(`[stdb:${opts.module}] clearing stale token and retrying...`);
@@ -212,7 +263,7 @@ export function initConnectionStore() {
     const [_hexfloConnected, _setHexfloConnected] = createSignal(false);
     const [_inferenceConn, _setInferenceConn] = createSignal<any | null>(null);
     const [_inferenceConnected, _setInferenceConnected] = createSignal(false);
-    // ADR-2604050900: fleet-state retired; fleetConnected mirrors hexfloConnected
+    // ADR-2026-04-05-0900: fleet-state retired; fleetConnected mirrors hexfloConnected
 
     // Assign to module-level variables
     hexfloConn = _hexfloConn;
@@ -237,14 +288,14 @@ export function initConnectionStore() {
     agentDefinitions = useTable(() => _hexfloConn()?.db.agent_definition as SpacetimeDBTableHandle<any> | undefined);
     registryAgents = useTable(() => _hexfloConn()?.db.hex_agent as SpacetimeDBTableHandle<any> | undefined);
     agentHeartbeats = () => []; // Heartbeat data inline on hex_agent.lastHeartbeat (ADR-058)
-    agentInbox = useTable(() => _hexfloConn()?.db.agent_inbox as SpacetimeDBTableHandle<any> | undefined);
+    agentInbox = useTable(() => _hexfloConn()?.db.agent_inbox as SpacetimeDBTableHandle<AgentInboxRow> | undefined);
     remoteAgents = useTable(() => _hexfloConn()?.db.remote_agent as SpacetimeDBTableHandle<any> | undefined);
 
     // inference-gateway tables
     inferenceProviders = useTable(() => _inferenceConn()?.db.inference_provider as SpacetimeDBTableHandle<any> | undefined);
     inferenceRequests = useTable(() => _inferenceConn()?.db.inference_request as SpacetimeDBTableHandle<any> | undefined);
 
-    // fleet/compute_node — now served from hexflo-coordination (ADR-2604050900)
+    // fleet/compute_node — now served from hexflo-coordination (ADR-2026-04-05-0900)
     fleetNodes = useTable(() => _hexfloConn()?.db.compute_node as SpacetimeDBTableHandle<any> | undefined);
 
     // Aggregated connection status
@@ -263,20 +314,12 @@ export function initConnections() {
   if (_connectionsInitialized) return;
   _connectionsInitialized = true;
 
-  // Clear stale tokens after module schema changes (e.g., spacetime publish --clear-database).
-  // The SDK caches tokens in localStorage; stale tokens cause DataView deserialization crashes.
-  // TODO: Replace with schema version check once SDK supports it.
-  const SCHEMA_VERSION = "10"; // Bump when re-publishing any module with --clear-database
-  if (localStorage.getItem("stdb_schema_version") !== SCHEMA_VERSION) {
-    Object.keys(localStorage)
-      .filter((k) => k.startsWith(TOKEN_KEY_PREFIX))
-      .forEach((k) => localStorage.removeItem(k));
-    localStorage.setItem("stdb_schema_version", SCHEMA_VERSION);
-    console.log("[stdb] Cleared stale tokens after schema version change");
+  if (!SPACETIMEDB_URI) {
+    console.warn("[stdb] No SpacetimeDB URI - connections disabled");
+    return;
   }
 
-  // hexflo-coordination: swarms, tasks, agents, memory
-  // Database name is "hex" (ADR-2603231500: hexflo-coordination publishes to "hex" for backward compat)
+  // hexflo-coordination (main coordination database)
   connectModule({
     module: "hex",
     builder: HexfloDbConnection,
@@ -293,12 +336,12 @@ export function initConnections() {
       "SELECT * FROM agent_definition",
       "SELECT * FROM hex_agent",
       "SELECT * FROM agent_inbox",
-      "SELECT * FROM compute_node",
       "SELECT * FROM remote_agent",
+      "SELECT * FROM compute_node",
     ],
   });
 
-  // inference-gateway: providers, requests
+  // inference-gateway
   connectModule({
     module: "inference-gateway",
     builder: InferenceGatewayDbConnection,
@@ -309,10 +352,6 @@ export function initConnections() {
       "SELECT * FROM inference_request",
     ],
   });
-
-  // ADR-2604050900: fleet-state module deleted; compute_node now in hexflo-coordination
-  // fleetConnected mirrors hexfloConnected since the data comes from the same connection
-  fleetConnected = hexfloConnected;
 }
 
 // ---------------------------------------------------------------------------
@@ -325,5 +364,5 @@ export function getHexfloConn() { return hexfloConn(); }
 export function getAgentRegistryConn() { return hexfloConn(); }
 /** Get the inference-gateway connection for calling reducers. */
 export function getInferenceConn() { return inferenceConn(); }
-/** Get the fleet/compute_node connection (now served from hexflo-coordination — ADR-2604050900). */
+/** Get the fleet/compute_node connection (now served from hexflo-coordination — ADR-2026-04-05-0900). */
 export function getFleetConn() { return hexfloConn(); }

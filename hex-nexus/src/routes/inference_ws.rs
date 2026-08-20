@@ -10,7 +10,7 @@ use crate::state::SharedState;
 
 /// WebSocket endpoint for real-time inference task push.
 /// Agents connect here to receive InferenceTaskPush messages without polling.
-/// ADR-2604011200
+/// ADR-2026-04-01-1200
 pub async fn ws_inference_handler(
     ws: WebSocketUpgrade,
     State(state): State<SharedState>,

@@ -77,7 +77,7 @@ impl BootstrapValidator {
         // Check models (quick existence check, don't wait for loading)
         model_checks.push(("qwen3:4b (T1)".to_string(), self.model_exists("qwen3:4b")));
         model_checks.push(("qwen2.5-coder:32b (T2)".to_string(), self.model_exists("qwen2.5-coder:32b")));
-        model_checks.push(("devstral-small-2:24b (T2.5)".to_string(), self.model_exists("devstral-small-2:24b")));
+        model_checks.push(("gemma4:latest (T2.5)".to_string(), self.model_exists("gemma4:latest")));
 
         // Check config
         let config_exists = Path::new(".hex/project.json").exists();

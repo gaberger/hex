@@ -240,7 +240,7 @@ pub async fn analyze_project_text(
 
 // ── ADR Compliance (ADR-045) ────────────────────────────
 
-/// POST /api/analyze/adr-compliance — check ADR compliance for a directory.
+/// POST /api/analyze/ADR-compliance — check ADR compliance for a directory.
 pub async fn analyze_adr_compliance(
     Json(body): Json<AnalyzeRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
@@ -276,7 +276,7 @@ pub async fn analyze_adr_compliance(
     })))
 }
 
-/// GET /api/{project_id}/analyze/adr-compliance — check ADR compliance for a registered project.
+/// GET /api/{project_id}/analyze/ADR-compliance — check ADR compliance for a registered project.
 /// Results are persisted to SpacetimeDB via HexFlo memory so remote agents
 /// and the dashboard can read compliance state.
 pub async fn analyze_project_adr_compliance(
@@ -336,7 +336,7 @@ pub async fn analyze_project_adr_compliance(
 
     // Persist to SpacetimeDB via HexFlo memory so remote agents can read it
     if let Some(ref hexflo) = state.hexflo {
-        let key = format!("adr-compliance:{}", project_id);
+        let key = format!("ADR-compliance:{}", project_id);
         let value = serde_json::to_string(&response_data).unwrap_or_default();
         if let Err(e) = hexflo.memory_store(&key, &value, Some("compliance")).await {
             tracing::warn!("Failed to persist ADR compliance to SpacetimeDB: {}", e);
@@ -346,7 +346,7 @@ pub async fn analyze_project_adr_compliance(
     // Broadcast via WebSocket so dashboard updates in real-time
     let _ = state.ws_tx.send(crate::state::WsEnvelope {
         topic: format!("project:{}:compliance", project_id),
-        event: "adr-compliance-checked".to_string(),
+        event: "ADR-compliance-checked".to_string(),
         data: response_data.clone(),
     });
 

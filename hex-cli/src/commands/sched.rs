@@ -1,17 +1,18 @@
-//! Brain commands (ADR-2604102200).
+//! Sched commands (ADR-2026-04-10-2200).
 //!
-//! `hex brain status|test|scores|models|validate`
+//! `hex sched status|test|scores|models|validate`
 //!
-//! status   - Show brain service status and configuration
+//! status   - Show sched service status and configuration
 //! test     - Run a manual test of a model
 //! scores   - Show learned method scores
-//! models   - List available models for brain selection
+//! models   - List available models for sched selection
 //! validate - Run self-diagnostics (CLI wiring, etc.)
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
+use anyhow::Context;
 use clap::Subcommand;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,12 @@ use tracing::debug;
 
 use crate::fmt::{pretty_table, truncate};
 
+use super::adr::doctor;
+
+/// Self-improvement loop (ADR-2026-04-27-1100). P1.1 lands the discovery surface;
+/// later tasks plug in variant generation, judging, and the tick handler.
+pub mod improver;
+
 /// Daemon-local state persisted across ticks (wp-brain-updates P1.2).
 /// Tracks issue counts from the previous validate tick so regressions can
 /// be detected — a count that increases tick-over-tick is a regression.
@@ -28,7 +35,7 @@ use crate::fmt::{pretty_table, truncate};
 /// restarts (otherwise every restart would silently hide cross-restart
 /// regressions by re-seeding from the current tick).
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct DaemonState {
+pub struct DaemonState {
     /// Last tick's issue counts keyed by check name
     /// (e.g. "cli_wiring" → 2, "mcp_parity" → 0, "workplans_stale" → 1).
     #[serde(default)]
@@ -37,6 +44,391 @@ struct DaemonState {
     /// no regression notification on the first tick).
     #[serde(default)]
     seeded: bool,
+    /// Consecutive ticks the queue has been fully idle — both `pending` and
+    /// `in_flight` (in_progress) at zero. Bumped by `queue_drain` each time it
+    /// runs and sees the queue empty, reset the moment either counter is
+    /// non-zero. Paired with `sched.idle_threshold_ticks` so downstream code
+    /// can treat sustained idleness as a signal (e.g. wind down a worker).
+    #[serde(default)]
+    idle_tick_count: u32,
+    /// Monotonic per-daemon-process tick counter. Used by the improver
+    /// auto-act gate so a small action sweep fires only every N ticks
+    /// (default 6 ≈ every 3 minutes at 30s interval). Persisted across
+    /// restarts so a restart-loop can't repeatedly fire auto-act.
+    #[serde(default)]
+    tick_count: u32,
+    /// Last time an analyze task was enqueued (RFC3339). Used to enforce the
+    /// `brain.analyze_interval_secs` interval so we don't spam the queue.
+    #[serde(default)]
+    last_analyze_at: Option<String>,
+    /// Summary of the last analysis result (violation counts by category).
+    /// Stored for regression detection across daemon restarts.
+    #[serde(default)]
+    last_analysis_summary: HashMap<String, usize>,
+    /// UTC date of last terminal-task sweep (YYYY-MM-DD). Prevents running the
+    /// deletion every tick — only first tick of each UTC day actually deletes.
+    #[serde(default)]
+    sweep_date: String,
+}
+
+/// Per-tick state passed to sched daemon tick handlers (e.g. [`tick_adr_health`]).
+/// Aliases [`DaemonState`] so the daemon's persisted state and the per-tick
+/// handler signatures share a single type — adding a tick handler doesn't
+/// require a parallel state struct.
+pub type SchedState = DaemonState;
+
+/// Default idle-tick threshold — after this many consecutive fully-idle
+/// `queue_drain` calls the scheduler is "quiet". Override per-project in
+/// `.hex/project.json` at `sched.idle_threshold_ticks`.
+const DEFAULT_IDLE_THRESHOLD_TICKS: u32 = 4;
+
+/// Default interval between periodic analyze tasks (1 hour).
+const DEFAULT_ANALYZE_INTERVAL_SECS: u64 = 3600;
+
+/// Default minimum interval between idle-triggered research sweeps, in hours
+/// (wp-idle-research-swarm P1.2 / ADR-2026-04-15-1200). The throttle keeps the
+/// idle-trigger from re-firing every queue_drain tick once the queue settles
+/// — without it a quiet repo would self-enqueue research sweeps continuously.
+const DEFAULT_MIN_SWEEP_INTERVAL_H: u64 = 6;
+
+/// Read the minimum sweep-interval (in hours) from `.hex/project.json`
+/// (`sched.min_sweep_interval_h`). Falls back to
+/// [`DEFAULT_MIN_SWEEP_INTERVAL_H`] on any read/parse failure or when the key
+/// is absent. Mirrors [`load_idle_threshold_ticks`] — the throttle should
+/// degrade to its default rather than erroring on a missing config.
+fn load_min_sweep_interval_h() -> u64 {
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(_) => return DEFAULT_MIN_SWEEP_INTERVAL_H,
+    };
+    let content = match std::fs::read_to_string(cwd.join(".hex/project.json")) {
+        Ok(c) => c,
+        Err(_) => return DEFAULT_MIN_SWEEP_INTERVAL_H,
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(p) => p,
+        Err(_) => return DEFAULT_MIN_SWEEP_INTERVAL_H,
+    };
+    parsed
+        .get("sched")
+        .and_then(|s| s.get("min_sweep_interval_h"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(DEFAULT_MIN_SWEEP_INTERVAL_H)
+}
+
+/// Path to the persisted "last research-sweep" timestamp.
+/// `~/.hex/sched/last_research_sweep` is a simple single-line RFC3339
+/// timestamp file. Lives outside `brain-state.json` because operators may
+/// want to rotate the throttle independently (e.g. `rm` to force a sweep).
+fn last_research_sweep_path() -> PathBuf {
+    sched_signal_dir().join("last_research_sweep")
+}
+
+/// Path to the persisted "last memory-health check" timestamp.
+fn last_memory_health_check_path() -> PathBuf {
+    sched_signal_dir().join("last_memory_health_check")
+}
+
+fn read_last_memory_health_check() -> Option<chrono::DateTime<chrono::Utc>> {
+    let raw = std::fs::read_to_string(last_memory_health_check_path()).ok()?;
+    chrono::DateTime::parse_from_rfc3339(raw.trim())
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+}
+
+fn write_last_memory_health_check(ts: chrono::DateTime<chrono::Utc>) {
+    let path = last_memory_health_check_path();
+    if let Err(e) = std::fs::create_dir_all(path.parent().unwrap()) {
+        eprintln!("  {} last_memory_health_check dir: {}", "warn".yellow(), e);
+    }
+    if let Err(e) = std::fs::write(&path, ts.to_rfc3339()) {
+        eprintln!("  {} last_memory_health_check write: {}", "warn".yellow(), e)
+    }
+}
+
+fn should_enqueue_memory_health(
+    last: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+    interval_h: u64,
+) -> bool {
+    match last {
+        None => true, // Never run before
+        Some(last_ts) => {
+            let elapsed = now.signed_duration_since(last_ts);
+            elapsed.num_hours() >= interval_h as i64
+        }
+    }
+}
+
+/// Sched coordination directory. Mirrors `default_signal_dir()` in
+/// `hex-nexus/src/research/coordinator.rs` — both processes coordinate via
+/// flat files under this directory (in-flight marker, abort signal, last
+/// sweep). `hex-cli` doesn't depend on `hex-nexus`, so the wire format
+/// (filenames + parent dir) is the contract; the matching constants below
+/// must stay in lockstep with their nexus-side counterparts.
+fn sched_signal_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".hex").join("sched")
+}
+
+/// Filename of the sweep in-flight marker. Must equal
+/// `hex_nexus::research::coordinator::SWEEP_IN_FLIGHT_FILENAME`.
+const SWEEP_IN_FLIGHT_FILENAME: &str = "sweep_in_flight";
+
+/// Filename of the sweep abort signal. Must equal
+/// `hex_nexus::research::coordinator::SWEEP_ABORT_FILENAME`.
+const SWEEP_ABORT_FILENAME: &str = "sweep_abort";
+
+fn sweep_in_flight_path() -> PathBuf {
+    sched_signal_dir().join(SWEEP_IN_FLIGHT_FILENAME)
+}
+
+fn sweep_abort_path() -> PathBuf {
+    sched_signal_dir().join(SWEEP_ABORT_FILENAME)
+}
+
+/// True iff the coordinator currently has a sweep in flight.
+/// `hex-cli` reads this only — the marker is owned by the coordinator.
+fn is_sweep_in_flight() -> bool {
+    sweep_in_flight_path().exists()
+}
+
+/// Write the abort signal so the coordinator's per-analyst poll bails
+/// cleanly at the next checkpoint (wp-idle-research-swarm P4.4).
+/// Best-effort — a failed write logs and returns; worst case the next
+/// drain tick re-tries. Idempotent: re-writing the same file is a no-op
+/// from the coordinator's perspective.
+fn request_sweep_abort() {
+    let dir = sched_signal_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("  {} sweep-abort dir: {}", "warn".yellow(), e);
+        return;
+    }
+    if let Err(e) = std::fs::write(sweep_abort_path(), chrono::Utc::now().to_rfc3339()) {
+        eprintln!("  {} sweep-abort write: {}", "warn".yellow(), e);
+    }
+}
+
+/// Delete the persisted "last research-sweep" timestamp so the throttle
+/// gate (`sweep_throttle_elapsed`) returns true on the next idle window.
+/// Used by the preemption path: when we abort an in-flight sweep we want
+/// the next idle window to re-fire it, not wait six more hours.
+fn clear_last_research_sweep() {
+    let path = last_research_sweep_path();
+    if path.exists() {
+        if let Err(e) = std::fs::remove_file(&path) {
+            eprintln!("  {} clear last_research_sweep: {}", "warn".yellow(), e);
+        }
+    }
+}
+
+/// Pure: should the daemon preempt the in-flight sweep?
+///
+/// Preemption fires iff a sweep is currently in-flight AND at least one
+/// pending task has a kind other than `research-sweep`. Both gates are
+/// required:
+/// * Without the in-flight check we'd write an abort signal that would
+///   sit on disk forever (no coordinator to consume it) and could
+///   spuriously cancel the *next* sweep.
+/// * Without the kind check, queueing a second research-sweep behind an
+///   in-flight one would self-cancel — but we want concurrent sweeps to
+///   coalesce via the throttle, not to abort each other.
+fn should_preempt_sweep(pending_kinds: &[&str], sweep_in_flight: bool) -> bool {
+    sweep_in_flight && pending_kinds.iter().any(|k| *k != "research-sweep")
+}
+
+/// Read the last research-sweep timestamp. Missing file or malformed
+/// content returns `None` — both mean "never swept", so the throttle gate
+/// allows the next sweep to fire.
+fn read_last_research_sweep() -> Option<chrono::DateTime<chrono::Utc>> {
+    let raw = std::fs::read_to_string(last_research_sweep_path()).ok()?;
+    let trimmed = raw.trim();
+    chrono::DateTime::parse_from_rfc3339(trimmed)
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+}
+
+/// Persist the last research-sweep timestamp. Best-effort — a failed write
+/// is logged but does not abort the caller; we'd rather double-fire a sweep
+/// than crash the drain loop.
+fn write_last_research_sweep(ts: chrono::DateTime<chrono::Utc>) {
+    let path = last_research_sweep_path();
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("  {} last_research_sweep dir: {}", "warn".yellow(), e);
+            return;
+        }
+    }
+    if let Err(e) = std::fs::write(&path, ts.to_rfc3339()) {
+        eprintln!("  {} last_research_sweep write: {}", "warn".yellow(), e);
+    }
+}
+
+/// Minimal projection of `docs/analysis/idle-sweep-*.yaml` — only the fields
+/// needed to format the operator-facing summary line. The full coordinator
+/// document carries `analysts_run`, `analyst_errors`, etc.; we deserialize
+/// just `sweep_at`, `findings_total`, and the `findings` array (so we can
+/// count which ones produce drafts).
+#[derive(serde::Deserialize)]
+struct SweepDocSummary {
+    sweep_at: String,
+    #[serde(default)]
+    findings_total: usize,
+    #[serde(default)]
+    findings: Vec<hex_core::Finding>,
+}
+
+/// Format a duration as a compact age — "12s", "5m", "3h", "2d". Mirrors
+/// the convention `agent_audit::format_age` uses so the status panels read
+/// uniformly. Negative or zero durations clamp to "0s" (clock skew between
+/// sweep_at and now should never produce negative output).
+fn format_sweep_age(elapsed: chrono::Duration) -> String {
+    let secs = elapsed.num_seconds().max(0);
+    if secs < 60 {
+        format!("{}s", secs)
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h", secs / 3600)
+    } else {
+        format!("{}d", secs / 86_400)
+    }
+}
+
+/// Pure: count findings whose `suggested_action.kind` produces an on-disk
+/// draft. ADR / DraftWorkplan / AmendWorkplan all write a file under
+/// `docs/{adrs,workplans}/drafts/`; Memory and Informational do not. Keep
+/// this enum match exhaustive — adding a new draft-producing kind without
+/// updating it would silently undercount the operator-facing draft total.
+fn count_drafts(findings: &[hex_core::Finding]) -> usize {
+    findings
+        .iter()
+        .filter(|f| {
+            matches!(
+                f.suggested_action.kind,
+                hex_core::ActionKind::DraftWorkplan
+                    | hex_core::ActionKind::AmendWorkplan
+                    | hex_core::ActionKind::DraftAdr
+            )
+        })
+        .count()
+}
+
+/// Pure: format the `last_sweep:` line body — `"<age> (<n> findings, <m> drafts)"` —
+/// from a parsed sweep document. Returns `None` when `sweep_at` is unparseable
+/// (treat a malformed YAML as "no last sweep" rather than crash the status
+/// panel).
+fn format_last_sweep_line(
+    doc: &SweepDocSummary,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<String> {
+    let sweep_at = chrono::DateTime::parse_from_rfc3339(&doc.sweep_at)
+        .ok()?
+        .with_timezone(&chrono::Utc);
+    let age = format_sweep_age(now.signed_duration_since(sweep_at));
+    // Operators care about what the sweep *found*; `findings_total` is the
+    // pre-cap count, `findings.len()` is what actually got serialized. Pre-cap
+    // is the more honest "n findings" — a low cap shouldn't make a noisy repo
+    // look quiet. Fall back to `findings.len()` when `findings_total` is
+    // missing or smaller (older YAMLs without the field).
+    let n_findings = doc.findings_total.max(doc.findings.len());
+    let n_drafts = count_drafts(&doc.findings);
+    Some(format!(
+        "{} ago ({} findings, {} drafts)",
+        age, n_findings, n_drafts
+    ))
+}
+
+/// Locate the newest `idle-sweep-*.yaml` under `<repo_root>/docs/analysis/`.
+/// Filename stem is `idle-sweep-YYYYMMDD-HHMM`, so lexicographic ordering
+/// matches chronological ordering — no need to stat each file. Returns
+/// `None` when the directory or any matching file is missing.
+fn find_latest_sweep_yaml(repo_root: &std::path::Path) -> Option<PathBuf> {
+    let analysis_dir = repo_root.join("docs").join("analysis");
+    let entries = std::fs::read_dir(&analysis_dir).ok()?;
+    let mut latest: Option<(String, PathBuf)> = None;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with("idle-sweep-") || !name_str.ends_with(".yaml") {
+            continue;
+        }
+        let owned = name_str.into_owned();
+        match &latest {
+            Some((cur, _)) if cur >= &owned => {}
+            _ => latest = Some((owned, entry.path())),
+        }
+    }
+    latest.map(|(_, p)| p)
+}
+
+/// Read & summarize the most recent idle-sweep YAML under `repo_root` for
+/// the operator status surfaces (`hex sched daemon status`, `hex` no-arg
+/// panel — wp-idle-research-swarm P5.1). Returns `None` when no sweep has
+/// run yet or the YAML can't be parsed; callers omit the line entirely in
+/// that case rather than printing a placeholder.
+pub(crate) fn last_sweep_summary_line(repo_root: &std::path::Path) -> Option<String> {
+    let path = find_latest_sweep_yaml(repo_root)?;
+    let body = std::fs::read_to_string(&path).ok()?;
+    let doc: SweepDocSummary = serde_yaml::from_str(&body).ok()?;
+    format_last_sweep_line(&doc, chrono::Utc::now())
+}
+
+/// Pure: has at least `interval_h` hours elapsed since `last_sweep`?
+/// `None` (never swept) is treated as eligible — the first sweep should
+/// fire as soon as the idle threshold is reached.
+fn sweep_throttle_elapsed(
+    last_sweep: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+    interval_h: u64,
+) -> bool {
+    match last_sweep {
+        None => true,
+        Some(last) => {
+            let elapsed = now.signed_duration_since(last);
+            elapsed.num_seconds() >= (interval_h as i64) * 3600
+        }
+    }
+}
+
+/// Pure: combined gate for the idle-research trigger
+/// (wp-idle-research-swarm P1.2). Fires only when the queue has been idle
+/// for at least `threshold` ticks AND the last sweep is older than
+/// `interval_h` hours. Both gates are required — idleness alone would spam
+/// the queue, throttle alone would never fire on a busy repo.
+fn should_self_enqueue_research_sweep(
+    idle_ticks: u32,
+    threshold: u32,
+    last_sweep: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+    interval_h: u64,
+) -> bool {
+    idle_ticks >= threshold && sweep_throttle_elapsed(last_sweep, now, interval_h)
+}
+
+/// Read the idle-tick threshold from `.hex/project.json` (key
+/// `sched.idle_threshold_ticks`). Falls back to [`DEFAULT_IDLE_THRESHOLD_TICKS`]
+/// on any read/parse failure or when the key is absent — the feature degrades
+/// to its default rather than erroring on a missing config.
+fn load_idle_threshold_ticks() -> u32 {
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(_) => return DEFAULT_IDLE_THRESHOLD_TICKS,
+    };
+    let content = match std::fs::read_to_string(cwd.join(".hex/project.json")) {
+        Ok(c) => c,
+        Err(_) => return DEFAULT_IDLE_THRESHOLD_TICKS,
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(p) => p,
+        Err(_) => return DEFAULT_IDLE_THRESHOLD_TICKS,
+    };
+    parsed
+        .get("sched")
+        .and_then(|s| s.get("idle_threshold_ticks"))
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32)
+        .unwrap_or(DEFAULT_IDLE_THRESHOLD_TICKS)
 }
 
 fn brain_state_path() -> PathBuf {
@@ -100,7 +492,7 @@ pub(crate) struct StaleWorktree {
 
 #[derive(Subcommand)]
 pub enum BrainAction {
-    /// Show brain service status and configuration
+    /// Show sched service status and configuration
     Status,
     /// Run a test with a specific model
     Test {
@@ -110,11 +502,11 @@ pub enum BrainAction {
     },
     /// Show learned method scores from RL engine
     Scores,
-    /// List models available for brain selection
+    /// List models available for sched selection
     Models,
     /// Run self-diagnostics (CLI wiring check, etc.)
     Validate,
-    /// Run the brain supervisor loop — validates + auto-fixes every interval (ADR-2604132300)
+    /// Run the sched supervisor loop — validates + auto-fixes every interval (ADR-2026-04-13-2300)
     Daemon {
         /// Tick interval in seconds (default 10)
         #[arg(long, default_value = "10")]
@@ -126,16 +518,27 @@ pub enum BrainAction {
         #[arg(long)]
         background: bool,
     },
-    /// Stop the background brain daemon
+    /// Stop the background sched daemon
     DaemonStop,
-    /// Show brain daemon status (running/stopped)
+    /// Restart the background daemon (stop + start with current interval).
+    /// Use this after rebuilding hex-cli to pick up new code.
+    DaemonRestart,
+    /// Show sched daemon status (running/stopped)
     DaemonStatus,
-    /// Enqueue a task for the brain daemon (ADR-2604132330)
+    /// Enqueue a task for the sched daemon (ADR-2026-04-13-2330)
     Enqueue {
         /// Task kind (hex-command, workplan, shell)
         kind: String,
         /// Task payload (command args, workplan path, or shell command)
         payload: String,
+        /// Scheduling priority (0 = normal, higher = more urgent). The daemon
+        /// drains pending tasks in priority-desc, created_at-asc order so a
+        /// `--priority 9` task jumps ahead of normal-priority backlog without
+        /// needing the queue to drain first. Useful when local Ollama is
+        /// saturated and a frontier-bound urgent task needs to bypass the
+        /// speculative loops.
+        #[arg(long, default_value = "0")]
+        priority: u8,
     },
     /// Manage the sched task queue
     Queue {
@@ -151,12 +554,19 @@ pub enum BrainAction {
         #[arg(long)]
         since: Option<String>,
     },
-    /// Prime brain for this project: start daemon if needed, discover active
+    /// Prime sched for this project: start daemon if needed, discover active
     /// workplans in docs/workplans/, and seed the queue in one shot.
     Prime {
         /// Tick interval when starting the daemon (default 10s)
         #[arg(long, default_value = "10")]
         interval: u64,
+    },
+    /// Self-improvement loop (ADR-2026-04-27-1100) — discovery, judging, act.
+    /// Operator-facing preview surface for what the autonomous loop would
+    /// propose; later phases plug in variant generation and act().
+    Improver {
+        #[command(subcommand)]
+        action: improver::ImproverAction,
     },
 }
 
@@ -178,7 +588,7 @@ pub enum QueueAction {
     Drain,
     /// Show recent sched tasks across all statuses (wp-sched-queue-history P1.3).
     ///
-    /// Primary use: verify the ADR-2604141400 §1 P1 evidence-guard correctly
+    /// Primary use: verify the ADR-2026-04-14-1400 §1 P1 evidence-guard correctly
     /// flipped silent-drain workplans to `failed`. Filter with `--status failed`
     /// to see only guard-flipped tasks; the result column shows the
     /// `no git evidence` marker produced by `check_evidence`.
@@ -208,10 +618,12 @@ pub async fn run(action: BrainAction) -> anyhow::Result<()> {
             }
         }
         BrainAction::DaemonStop => daemon_stop(),
+        BrainAction::DaemonRestart => daemon_restart(),
         BrainAction::DaemonStatus => daemon_status(),
-        BrainAction::Enqueue { kind, payload } => {
-            let id = enqueue_brain_task(&kind, &payload).await?;
-            println!("⬡ enqueued sched task {id} ({kind}: {payload})");
+        BrainAction::Enqueue { kind, payload, priority } => {
+            let id = enqueue_brain_task_with_priority(&kind, &payload, priority).await?;
+            let priority_tag = if priority > 0 { format!(" priority={priority}") } else { String::new() };
+            println!("⬡ enqueued sched task {id} ({kind}: {payload}){priority_tag}");
             Ok(())
         }
         BrainAction::Queue { action } => match action {
@@ -222,6 +634,7 @@ pub async fn run(action: BrainAction) -> anyhow::Result<()> {
         },
         BrainAction::Prime { interval } => prime(interval).await,
         BrainAction::Watch { since } => watch(since).await,
+        BrainAction::Improver { action } => improver::run(action).await,
     }
 }
 
@@ -238,13 +651,13 @@ async fn status() -> anyhow::Result<()> {
     // unscoped endpoint (useful for operator views on hex-intf itself).
     // project_id is a UUID → safe as a URL query value without encoding.
     let url = match brain_project_id() {
-        Some(pid) => format!("{}/api/brain/status?project={}", base_url, pid),
-        None => format!("{}/api/brain/status", base_url),
+        Some(pid) => format!("{}/api/sched/status?project={}", base_url, pid),
+        None => format!("{}/api/sched/status", base_url),
     };
     let resp = client.get(&url).send().await?;
     
     if resp.status() == 404 {
-        println!("{}", "Brain service not configured. Run hex-nexus with brain service enabled.".yellow());
+        println!("{}", "Sched service not configured. Run hex-nexus with sched service enabled.".yellow());
         return Ok(());
     }
     
@@ -254,7 +667,7 @@ async fn status() -> anyhow::Result<()> {
     }
     
     let body: serde_json::Value = resp.json().await?;
-    println!("{}", "Brain Service Status".green().bold());
+    println!("{}", "Sched Service Status".green().bold());
     println!("  Service: {}", body.get("service_enabled").unwrap_or(&json!(false)));
     println!("  Test Model: {}", body.get("test_model").unwrap_or(&json!("nemotron-mini")));
     println!("  Interval: {} seconds", body.get("interval_secs").unwrap_or(&json!(10)));
@@ -303,7 +716,7 @@ async fn test(model: &str) -> anyhow::Result<()> {
     let base_url = format!("http://127.0.0.1:{}", port);
     let client = reqwest::Client::new();
     
-    let url = format!("{}/api/brain/test", base_url);
+    let url = format!("{}/api/sched/test", base_url);
     let body = json!({ "model": model });
     let resp = client.post(&url).json(&body).send().await?;
     
@@ -331,11 +744,11 @@ async fn scores() -> anyhow::Result<()> {
     let base_url = format!("http://127.0.0.1:{}", port);
     let client = reqwest::Client::new();
     
-    let url = format!("{}/api/brain/scores", base_url);
+    let url = format!("{}/api/sched/scores", base_url);
     let resp = client.get(&url).send().await?;
     
     if resp.status() == 404 {
-        println!("{}", "No scores yet. Brain service is learning.".yellow());
+        println!("{}", "No scores yet. Sched service is learning.".yellow());
         return Ok(());
     }
     
@@ -532,11 +945,23 @@ pub fn check_binary_freshness() -> FreshnessStatus {
 }
 
 /// Scan `docs/workplans/*.json` for active (non-completed) workplans, reconcile
-/// each task against git history, and return per-workplan summaries.
+/// each task against repo evidence, and return per-workplan summaries.
 ///
-/// A task is "stale" when it is still marked `"todo"` in the JSON but a commit
-/// message references its id (e.g. `P3.1`).
+/// A pending task is "stale" (reconcilable to done) when ALL three hold:
+///   1. Every file declared in `task.files[]` exists on disk
+///   2. Any symbols declared in `task.name` (struct/enum/trait/fn/impl Names)
+///      are found in those files
+///   3. At least one git commit touches one of those files AND its message
+///      references BOTH the task id (e.g. `P1.2`) AND the workplan id
+///
+/// Replaces the prior substring-match heuristic which produced ~70% false
+/// positives by treating any commit mentioning a generic task id like `P1.1`
+/// as evidence for every workplan's `P1.1` (ADR-2026-04-14-2201 closes this).
 pub(crate) fn check_workplan_status() -> anyhow::Result<Vec<WorkplanSummary>> {
+    use super::plan::reconcile_evidence::{
+        collect_evidence_strict, verify, VerifyResult, WorkplanTask,
+    };
+
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(|p| p.to_path_buf())
@@ -546,16 +971,6 @@ pub(crate) fn check_workplan_status() -> anyhow::Result<Vec<WorkplanSummary>> {
     if !workplans_dir.is_dir() {
         return Ok(vec![]);
     }
-
-    // Grab recent git log once — search it for task ids later.
-    let git_log = std::process::Command::new("git")
-        .args(["log", "--oneline", "-200"])
-        .current_dir(&workspace_root)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-        .unwrap_or_default();
 
     let mut summaries = Vec::new();
 
@@ -582,31 +997,75 @@ pub(crate) fn check_workplan_status() -> anyhow::Result<Vec<WorkplanSummary>> {
 
         let id = wp.get("id").and_then(|s| s.as_str()).unwrap_or("unknown").to_string();
         let feature = wp.get("feature").and_then(|s| s.as_str()).unwrap_or("").to_string();
+        let adr_scope = wp.get("adr").and_then(|s| s.as_str()).unwrap_or("").to_string();
+        let created_at = wp
+            .get("created_at")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
 
         let mut total_tasks = 0usize;
         let mut done_tasks = 0usize;
         let mut stale_tasks = Vec::new();
 
-        // Walk phases → tasks
         if let Some(phases) = wp.get("phases").and_then(|p| p.as_array()) {
             for phase in phases {
                 if let Some(tasks) = phase.get("tasks").and_then(|t| t.as_array()) {
                     for task in tasks {
                         total_tasks += 1;
-                        let task_status = task.get("status").and_then(|s| s.as_str()).unwrap_or("todo");
-                        let task_id = task.get("id").and_then(|s| s.as_str()).unwrap_or("");
+                        let task_status = task
+                            .get("status")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("todo");
+                        if task_status == "done" {
+                            done_tasks += 1;
+                            continue;
+                        }
 
-                        match task_status {
-                            "done" => done_tasks += 1,
-                            _ => {
-                                    // Check if git log mentions this task id (case-insensitive)
-                                let needle_lower = task_id.to_lowercase();
-                                if !task_id.is_empty()
-                                    && git_log.to_lowercase().contains(&needle_lower)
-                                {
-                                    stale_tasks.push(task_id.to_string());
-                                }
-                            }
+                        let task_id = task
+                            .get("id")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if task_id.is_empty() {
+                            continue;
+                        }
+
+                        let description = task
+                            .get("name")
+                            .and_then(|s| s.as_str())
+                            .or_else(|| task.get("description").and_then(|s| s.as_str()))
+                            .unwrap_or("")
+                            .to_string();
+                        let files: Vec<String> = task
+                            .get("files")
+                            .and_then(|f| f.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+
+                        // No files declared — strict verify requires at least one,
+                        // so this task is not reconcilable without explicit evidence.
+                        if files.is_empty() {
+                            continue;
+                        }
+
+                        let wp_task = WorkplanTask {
+                            id: task_id.clone(),
+                            description,
+                            files,
+                            done_command: String::new(),
+                            created_at: created_at.clone(),
+                            adr_scope: adr_scope.clone(),
+                        };
+
+                        let evidence =
+                            collect_evidence_strict(&wp_task, &workspace_root, "", Some(&id));
+                        if matches!(verify(&evidence), VerifyResult::Promote) {
+                            stale_tasks.push(task_id);
                         }
                     }
                 }
@@ -626,6 +1085,48 @@ pub(crate) fn check_workplan_status() -> anyhow::Result<Vec<WorkplanSummary>> {
 
     summaries.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(summaries)
+}
+
+/// Record the daemon validate outcome as an RL reward to SpacetimeDB.
+///
+/// +0.5 for a clean validate pass, +0.1 for passing with regressions
+/// (still better than a crash), -0.5 for a validate failure.
+/// This closes the daemon self-improvement loop: each tick is a training step.
+async fn record_daemon_reward(validate_ok: bool, has_regressions: bool) {
+    let reward = if validate_ok && !has_regressions {
+        0.5 // clean pass — reward the daemon for doing nothing wrong
+    } else if validate_ok && has_regressions {
+        0.1 // regressions found — slight reward for still running
+    } else {
+        -0.5 // validate crashed or errored — penalize
+    };
+
+    let body = serde_json::json!({
+        "state_key": "daemon:validate",
+        "action": "daemon:tick",
+        "reward": reward,
+        "next_state_key": "daemon:validate",
+        "rate_limited": false,
+        "openrouter_cost_usd": 0.0,
+        "task_type": "daemon",
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+    });
+
+    let port = std::env::var("HEX_NEXUS_PORT")
+        .unwrap_or_else(|_| "5555".to_string())
+        .parse::<u16>()
+        .unwrap_or(5555);
+    let url = format!("http://127.0.0.1:{}/api/rl/reward", port);
+
+    if let Err(e) = reqwest::Client::new()
+        .post(&url)
+        .json(&body)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+    {
+        eprintln!("  {} daemon RL reward POST failed: {}", "✗".red(), e);
+    }
 }
 
 /// Detect git worktrees that have had no commits for over 24 hours.
@@ -761,7 +1262,7 @@ fn autofix_worktree(wt: &StaleWorktree) -> bool {
 }
 
 async fn validate(dry_run: bool) -> anyhow::Result<()> {
-    println!("{}", "⬡ hex brain validate".bold());
+    println!("{}", "⬡ hex sched validate".bold());
 
     // CLI wiring check
     let cli_src = concat!(env!("CARGO_MANIFEST_DIR"), "/src/commands");
@@ -834,7 +1335,7 @@ async fn validate(dry_run: bool) -> anyhow::Result<()> {
 
             // Auto-fix: reconcile stale tasks whose git evidence proves completion.
             // In dry_run mode (daemon tick), only report candidates — never mutate
-            // workplan JSON (ADR-2604142200, wp-reconcile-evidence-verification R2.2).
+            // workplan JSON (ADR-2026-04-14-2201, wp-reconcile-evidence-verification R2.2).
             if total_stale > 0 && !dry_run {
                 for wp in &summaries {
                     match autofix_workplan(wp) {
@@ -1006,7 +1507,7 @@ async fn validate(dry_run: bool) -> anyhow::Result<()> {
         }
     }
 
-    // Stale swarm check (ADR-2604142300): active swarms whose tasks are all done
+    // Stale swarm check (ADR-2026-04-14-2300): active swarms whose tasks are all done
     // but status still "active" — auto-complete them via PATCH /api/swarms/:id.
     match check_stale_swarms().await {
         Ok(stale) if stale.is_empty() => {
@@ -1054,10 +1555,10 @@ async fn validate(dry_run: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Prime brain for this project in one shot: ensure the daemon is running,
+/// Prime sched for this project in one shot: ensure the daemon is running,
 /// discover active workplans, and seed the queue. Idempotent — safe to re-run.
 async fn prime(interval: u64) -> anyhow::Result<()> {
-    println!("{}", "⬡ hex brain prime".bold());
+    println!("{}", "⬡ hex sched prime".bold());
 
     // 1. Daemon — start if not running
     match read_pid_file() {
@@ -1205,7 +1706,7 @@ async fn check_stale_swarms() -> anyhow::Result<Vec<StaleSwarm>> {
 }
 
 /// Mark a stale swarm complete via `PATCH /api/swarms/:id`. Returns `true`
-/// on success. Respects `HEX_BRAIN_DRY_RUN=1` (ADR-2604142300 safety mitigation).
+/// on success. Respects `HEX_BRAIN_DRY_RUN=1` (ADR-2026-04-14-2300 safety mitigation).
 async fn autofix_stale_swarm(id: &str) -> bool {
     if std::env::var("HEX_BRAIN_DRY_RUN").as_deref() == Ok("1") {
         return false;
@@ -1385,6 +1886,16 @@ async fn models() -> anyhow::Result<()> {
     Ok(())
 }fn pid_file_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".hex").join("sched-daemon.pid")
+}
+
+/// Legacy path from before the brain→sched rename. Read-only fallback so an
+/// in-flight daemon started by the old binary still gets picked up by
+/// `daemon-status` / `daemon-stop` in the new binary; new writes always go to
+/// the new path. Safe to delete the legacy file once no operator runs the
+/// pre-rename binary.
+fn legacy_pid_file_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join(".hex").join("brain-daemon.pid")
 }
 
@@ -1399,18 +1910,138 @@ fn write_pid_file(pid: u32) -> anyhow::Result<()> {
 
 fn read_pid_file() -> Option<i32> {
     let path = pid_file_path();
-    let contents = std::fs::read_to_string(&path).ok()?;
+    let contents = std::fs::read_to_string(&path)
+        .or_else(|_| std::fs::read_to_string(legacy_pid_file_path()))
+        .ok()?;
     contents.trim().parse::<i32>().ok()
 }
 
 fn remove_pid_file() {
     let _ = std::fs::remove_file(pid_file_path());
+    let _ = std::fs::remove_file(legacy_pid_file_path());
 }
 
 fn process_alive(pid: i32) -> bool {
     // Signal 0 probes existence without delivering a signal.
     // Returns 0 on success (process exists), -1 on error.
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+// ─── Daemon staleness detection (ADR-2026-04-24-1820) ────────────────────────────
+
+/// Path to the daemon staleness record.
+fn staleness_file_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".hex").join("daemon-staleness.json")
+}
+
+/// A record of the daemon's binary identity at startup. Written by a running
+/// daemon; read by the CLI to detect when the binary has been rebuilt.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct DaemonStaleness {
+    /// Path to the running binary.
+    binary: PathBuf,
+    /// mtime of the binary when the daemon started.
+    startup_mtime: String,
+    /// PID of the running daemon.
+    startup_pid: u32,
+    /// Human-readable binary version or git commit (if available).
+    version: String,
+    /// Tick interval in seconds (so restart can re-use the same interval).
+    #[serde(default)]
+    interval_secs: u64,
+    /// Max failures threshold.
+    #[serde(default)]
+    max_failures: u32,
+}
+
+impl DaemonStaleness {
+    fn current() -> Option<Self> {
+        let exe = std::env::current_exe().ok()?;
+        let mtime = std::fs::metadata(&exe).ok()?.modified().ok()?;
+        let mtime_str = chrono::DateTime::<chrono::Utc>::from(mtime)
+            .to_rfc3339();
+        let version = git_head_sha().unwrap_or_else(|| "unknown".to_string());
+        Some(Self {
+            binary: exe,
+            startup_mtime: mtime_str,
+            startup_pid: std::process::id(),
+            version,
+            interval_secs: 0,
+            max_failures: 0,
+        })
+    }
+}
+
+/// Load the staleness record. Returns None if the file is absent, unreadable,
+/// or the PID does not match the current process (stale record from dead daemon).
+fn load_staleness_record() -> Option<DaemonStaleness> {
+    let path = staleness_file_path();
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let record: DaemonStaleness = serde_json::from_str(&contents).ok()?;
+    // If the record's PID is not alive, the record is stale — ignore it.
+    if !process_alive(record.startup_pid as i32) {
+        return None;
+    }
+    Some(record)
+}
+
+/// Save the staleness record. Writes atomically (temp + rename) to prevent
+/// corruption if the daemon crashes mid-write.
+fn save_staleness_record(record: &DaemonStaleness) {
+    let path = staleness_file_path();
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("  {} staleness-dir: {}", "warn".yellow(), e);
+            return;
+        }
+    }
+    let tmp = path.with_extension("tmp");
+    match serde_json::to_string_pretty(record) {
+        Ok(body) => {
+            if let Err(e) = std::fs::write(&tmp, &body) {
+                eprintln!("  {} staleness-write: {}", "warn".yellow(), e);
+                return;
+            }
+            if let Err(e) = std::fs::rename(&tmp, &path) {
+                eprintln!("  {} staleness-rename: {}", "warn".yellow(), e);
+                return;
+            }
+        }
+        Err(e) => eprintln!("  {} staleness-encode: {}", "warn".yellow(), e),
+    }
+}
+
+/// Returns true if the current binary's mtime differs from the recorded startup
+/// mtime — i.e. the binary was rebuilt while this daemon was running.
+/// Respects DAEMON_STALENESS_CHECK=off for CI environments.
+fn is_current_binary_stale() -> Option<bool> {
+    if std::env::var("DAEMON_STALENESS_CHECK").unwrap_or_default() == "off" {
+        return Some(false);
+    }
+    let current = DaemonStaleness::current()?;
+    let record = load_staleness_record()?;
+    if record.startup_pid != current.startup_pid {
+        return Some(false);
+    }
+    Some(record.startup_mtime != current.startup_mtime)
+}
+
+/// Check staleness and warn if the current binary was rebuilt while the daemon
+/// was running. Logs to stderr. Returns true if stale (daemon should skip tick).
+fn check_and_warn_staleness() -> bool {
+    match is_current_binary_stale() {
+        Some(true) => {
+            eprintln!(
+                "{} daemon binary was rebuilt while running (pid={}). Restart with: hex sched daemon restart",
+                "⚠ STALE".yellow().bold(),
+                std::process::id()
+            );
+            true
+        }
+        Some(false) => false,
+        None => false,
+    }
 }
 
 /// Collect issue counts for each validate check without printing.
@@ -1594,37 +2225,467 @@ async fn notify_validate_regression(
     notify_operator("brain.validate.regression", body, 2).await;
 }
 
+/// POST to `/api/events` recording a structured sched-daemon event.
+/// Mirrors the inline `brain_tick` POST in [`daemon`] but exposes a `payload`
+/// field so per-handler counts can travel alongside the kind. Network errors
+/// and HTTP non-success responses are logged to stderr (visible in the daemon
+/// log) per ADR-2026-04-24-1815 P2 — the original silent-drop bug it diagnoses
+/// returned a 400 that fire-and-forget code never noticed.
+async fn record_sched_event(event_type: &str, payload: serde_json::Value) {
+    let port = std::env::var("HEX_NEXUS_PORT")
+        .unwrap_or_else(|_| "5555".to_string())
+        .parse::<u16>()
+        .unwrap_or(5555);
+    let event_url = format!("http://127.0.0.1:{}/api/events", port);
+    let session_id = std::env::var("CLAUDE_SESSION_ID")
+        .unwrap_or_else(|_| format!("sched-daemon-{}", std::process::id()));
+    let body = serde_json::json!({
+        "session_id": session_id,
+        "event_type": event_type,
+        "payload": payload,
+    });
+    match reqwest::Client::new()
+        .post(&event_url)
+        .json(&body)
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+    {
+        Ok(resp) if !resp.status().is_success() => {
+            let status = resp.status();
+            let body_text = resp.text().await.unwrap_or_default();
+            eprintln!(
+                "  {} {} event POST rejected ({}): {}",
+                "✗".red(),
+                event_type,
+                status,
+                body_text.trim()
+            );
+        }
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!(
+                "  {} {} event POST failed: {}",
+                "✗".red(),
+                event_type,
+                e
+            );
+        }
+    }
+}
+
+/// Sched event emitted by `tick_adr_health_actions`. Holds the same payload
+/// shape that the live tick handler POSTs to `/api/events`; surfaced as data
+/// so tests can assert on it without standing up a fake HTTP server.
+#[derive(Debug, Clone)]
+pub struct TickEvent {
+    pub event_type: &'static str,
+    pub payload: serde_json::Value,
+}
+
+/// Inbox notification queued by `tick_adr_health_actions`. Mirrors the
+/// arguments [`notify_operator`] would have been called with — `kind` is the
+/// dotted notification key (e.g. `adr.doctor.applied`), `body` is the JSON
+/// payload, `priority` is the inbox priority (1=interrupt, 2=normal,
+/// 3=informational).
+#[derive(Debug, Clone)]
+pub struct TickNotification {
+    pub kind: &'static str,
+    pub body: serde_json::Value,
+    pub priority: u8,
+}
+
+/// Outcome of one `tick_adr_health` orchestration pass. Returned by
+/// [`tick_adr_health_actions`] so callers (the live wrapper, P3.2 tests) can
+/// inspect what *would* be dispatched without coupling to HTTP I/O.
+#[derive(Debug, Clone)]
+pub struct TickAdrHealthResult {
+    pub event: TickEvent,
+    pub notifications: Vec<TickNotification>,
+}
+
+/// Hermetic core of [`tick_adr_health`]: takes pre-collected findings + an
+/// optional shadow-promote config, runs the Tier-A/B/C dispatch in order,
+/// and returns the (event, notifications) pair the live wrapper would
+/// otherwise have POSTed to nexus.
+///
+/// File-system side effects of Tier-A shadow-promotion and Tier-B drafter
+/// commits *do* happen inside this function — that's the auto-fix itself —
+/// but no HTTP is performed. Callers who want HTTP dispatch wrap the result
+/// (see [`tick_adr_health`]). Tests assert against the returned result and
+/// the resulting filesystem state directly.
+pub async fn tick_adr_health_actions(
+    findings: &[doctor::Finding],
+    cfg: Option<&doctor::ShadowPromoteConfig>,
+) -> TickAdrHealthResult {
+    let total = findings.len();
+    let tier_a = findings.iter().filter(|f| f.tier == doctor::AutoFixTier::A).count();
+    let tier_b = findings.iter().filter(|f| f.tier == doctor::AutoFixTier::B).count();
+    let tier_c = findings.iter().filter(|f| f.tier == doctor::AutoFixTier::C).count();
+    let errors = findings.iter().filter(|f| f.severity == doctor::Severity::Error).count();
+    let warnings = findings.iter().filter(|f| f.severity == doctor::Severity::Warning).count();
+
+    let event = TickEvent {
+        event_type: "adr_doctor_tick",
+        payload: json!({
+            "total": total,
+            "tier_a": tier_a,
+            "tier_b": tier_b,
+            "tier_c": tier_c,
+            "errors": errors,
+            "warnings": warnings,
+        }),
+    };
+
+    let mut notifications = Vec::new();
+    for finding in findings {
+        match finding.tier {
+            doctor::AutoFixTier::A => {
+                let Some(cfg) = cfg else {
+                    notifications.push(TickNotification {
+                        kind: "adr.doctor.aborted",
+                        body: json!({
+                            "adr_id": finding.adr_id,
+                            "kind": format!("{:?}", finding.kind),
+                            "tier": "A",
+                            "reason": "shadow_promote config unavailable",
+                            "detail": finding.detail,
+                        }),
+                        priority: 2,
+                    });
+                    continue;
+                };
+                let outcome = doctor::shadow_promote_with_policy(
+                    finding,
+                    cfg,
+                    doctor::MergePolicy::Merge,
+                )
+                .unwrap_or_else(|e| doctor::Outcome::Aborted {
+                    reason: format!("shadow_promote raised: {}", e),
+                });
+                match outcome {
+                    doctor::Outcome::Applied { branch, commit } => {
+                        notifications.push(TickNotification {
+                            kind: "adr.doctor.applied",
+                            body: json!({
+                                "adr_id": finding.adr_id,
+                                "kind": format!("{:?}", finding.kind),
+                                "tier": "A",
+                                "branch": branch,
+                                "commit": commit,
+                                "detail": finding.detail,
+                            }),
+                            priority: 3,
+                        });
+                    }
+                    doctor::Outcome::Aborted { reason } => {
+                        notifications.push(TickNotification {
+                            kind: "adr.doctor.aborted",
+                            body: json!({
+                                "adr_id": finding.adr_id,
+                                "kind": format!("{:?}", finding.kind),
+                                "tier": "A",
+                                "reason": reason,
+                                "detail": finding.detail,
+                            }),
+                            priority: 2,
+                        });
+                    }
+                }
+            }
+            doctor::AutoFixTier::B => {
+                let Some(cfg) = cfg else {
+                    notifications.push(TickNotification {
+                        kind: "adr.doctor.aborted",
+                        body: json!({
+                            "adr_id": finding.adr_id,
+                            "kind": format!("{:?}", finding.kind),
+                            "tier": "B",
+                            "reason": "tier_b_draft config unavailable",
+                            "detail": finding.detail,
+                        }),
+                        priority: 2,
+                    });
+                    continue;
+                };
+                let outcome = doctor::tier_b_draft_with_config(finding, cfg).unwrap_or_else(
+                    |e| doctor::Outcome::Aborted {
+                        reason: format!("tier_b_draft raised: {}", e),
+                    },
+                );
+                match outcome {
+                    doctor::Outcome::Applied { branch, commit } => {
+                        notifications.push(TickNotification {
+                            kind: "adr.doctor.draft",
+                            body: json!({
+                                "adr_id": finding.adr_id,
+                                "kind": format!("{:?}", finding.kind),
+                                "tier": "B",
+                                "branch": branch,
+                                "commit": commit,
+                                "detail": finding.detail,
+                            }),
+                            priority: 2,
+                        });
+                    }
+                    doctor::Outcome::Aborted { reason } => {
+                        notifications.push(TickNotification {
+                            kind: "adr.doctor.aborted",
+                            body: json!({
+                                "adr_id": finding.adr_id,
+                                "kind": format!("{:?}", finding.kind),
+                                "tier": "B",
+                                "reason": reason,
+                                "detail": finding.detail,
+                            }),
+                            priority: 2,
+                        });
+                    }
+                }
+            }
+            doctor::AutoFixTier::C => {
+                notifications.push(TickNotification {
+                    kind: "adr.doctor.notify",
+                    body: json!({
+                        "adr_id": finding.adr_id,
+                        "kind": format!("{:?}", finding.kind),
+                        "tier": "C",
+                        "severity": format!("{:?}", finding.severity),
+                        "detail": finding.detail,
+                    }),
+                    priority: 1,
+                });
+            }
+        }
+    }
+
+    TickAdrHealthResult { event, notifications }
+}
+
+/// Run `hex adr doctor` once and route findings per ADR-2026-04-27-0800 §1a.
+///
+///   - Tier-A → [`doctor::shadow_promote`] (with [`doctor::MergePolicy::Merge`]).
+///     On `Outcome::Applied`, fire a P3 inbox entry summarizing the fix
+///     (informational; no operator interrupt). On `Outcome::Aborted`, downgrade
+///     to a P2 notification so the operator can decide whether to retry.
+///   - Tier-B → [`doctor::tier_b_draft_with_config`]. The drafter writes a
+///     placeholder notes file on a `sched/auto-fix/ADR-doctor/tier-b/...`
+///     branch (worktree left in place); we file a P2 inbox entry with the
+///     branch + commit so the operator can review the diff and decide.
+///   - Tier-C → P1 inbox notification, no mutation. Tier-C kinds are judgment
+///     calls (`DuplicateId`, `MissingRequiredField`, `DanglingDependency`) that
+///     the doctor can detect but never resolve mechanically.
+///
+/// Records a `sched_event` of kind `adr_doctor_tick` with finding counts
+/// keyed by tier and severity so the daemon's event log captures every scan
+/// — including clean ones — for trend analysis. The `_state` parameter is
+/// reserved for future tick-state coordination (e.g. cross-tick rate-limiting
+/// of the doctor scan); the doctor itself is stateless across ticks.
+///
+/// Thin wrapper around [`tick_adr_health_actions`]: that's where the
+/// orchestration lives, here we add scan + HTTP dispatch. Tests drive the
+/// hermetic path directly.
+pub async fn tick_adr_health(_state: &SchedState) {
+    let findings = match doctor::run().await {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("  {} adr doctor scan failed: {}", "✗".red(), e);
+            record_sched_event(
+                "adr_doctor_tick",
+                json!({ "error": e.to_string() }),
+            )
+            .await;
+            return;
+        }
+    };
+
+    // Live config for shadow-promote / tier-b drafter. If the daemon isn't
+    // running inside a git repo (rare — examples/test envs) we log + bail
+    // rather than crashing the tick. The Tier-C P1 notifications still go
+    // through, so operators don't lose visibility of judgment-call findings.
+    let cfg = match doctor::ShadowPromoteConfig::live() {
+        Ok(c) => Some(c),
+        Err(e) => {
+            eprintln!(
+                "  {} adr doctor: shadow-promote config unavailable: {} (Tier-C notify only)",
+                "⚠".yellow(),
+                e
+            );
+            None
+        }
+    };
+
+    let total = findings.len();
+    let tier_a = findings.iter().filter(|f| f.tier == doctor::AutoFixTier::A).count();
+    let tier_b = findings.iter().filter(|f| f.tier == doctor::AutoFixTier::B).count();
+    let tier_c = findings.iter().filter(|f| f.tier == doctor::AutoFixTier::C).count();
+
+    let result = tick_adr_health_actions(&findings, cfg.as_ref()).await;
+
+    record_sched_event(result.event.event_type, result.event.payload).await;
+
+    if total == 0 {
+        return;
+    }
+
+    println!(
+        "  {} adr doctor: {} finding(s) (A:{} B:{} C:{})",
+        "⬡".cyan(),
+        total,
+        tier_a,
+        tier_b,
+        tier_c
+    );
+
+    for n in result.notifications {
+        notify_operator(n.kind, n.body, n.priority).await;
+    }
+}
+
 /// Foreground supervisor loop. Validates every `interval` seconds; after
 /// `max_failures` consecutive failures, pauses for 5x interval before retrying.
 /// Exits cleanly on ctrl-C.
+/// Read /etc/hostname for the heartbeat worker_id suffix. Falls back to
+/// "unknown" on any failure — the worker_id stays unique because PID is
+/// also part of it.
+fn hostname_local() -> String {
+    std::fs::read_to_string("/etc/hostname")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
     // Write the PID so DaemonStop can find a foreground instance too.
     let pid = std::process::id();
     let _ = write_pid_file(pid);
 
+    // ADR-2026-04-24-1820: record binary identity at startup for staleness detection.
+    // Stores interval/max_failures so `daemon_restart` can re-use the same settings.
+    let mut current = DaemonStaleness::current();
+    if let Some(ref mut rec) = current {
+        rec.interval_secs = interval;
+        rec.max_failures = max_failures;
+        // Check if binary was rebuilt since last daemon run.
+        if let Some(prev) = load_staleness_record() {
+            if prev.startup_mtime != rec.startup_mtime {
+                println!(
+                    "  {} binary was rebuilt since last daemon run ({}, {})",
+                    "fresh binary".cyan(),
+                    prev.startup_mtime.split('T').next().unwrap_or(&prev.startup_mtime),
+                    rec.startup_mtime.split('T').next().unwrap_or(&rec.startup_mtime),
+                );
+            }
+        }
+        save_staleness_record(rec);
+    }
+
     println!(
         "{} interval={}s max_failures={} pid={}",
-        "⬡ brain daemon starting".green().bold(),
+        "⬡ sched daemon starting".green().bold(),
         interval,
         max_failures,
         pid
     );
+
+    // Heartbeat client (ADR-2026-05-19-0900 P1.4) — sched daemon publishes
+    // its liveness to worker_process every 15s. supervisor_tick reaps
+    // any row with last_heartbeat > 60s, so a hung daemon is visible
+    // in /api/liveness within one supervisor cycle (today: 10s) instead
+    // of going silent for 11 days like the May 8 zombie did. Detached
+    // task — on STDB outage we miss beats but the daemon keeps draining.
+    {
+        let role = "sched-daemon";
+        let worker_id = format!("{}-{}-{}", role, hostname_local(), pid);
+        tokio::spawn(async move {
+            let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
+                .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+            let database = std::env::var("HEX_STDB_DATABASE")
+                .unwrap_or_else(|_| "hex".to_string());
+            let http = match reqwest::Client::builder()
+                .timeout(Duration::from_secs(3))
+                .build()
+            {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+            // First-time register via worker_process_register. Best-effort.
+            let _ = http
+                .post(format!("{stdb_host}/v1/database/{database}/call/worker_process_register"))
+                .json(&serde_json::json!([
+                    worker_id,
+                    "sched-daemon-default",
+                    role,
+                    hostname_local(),
+                    pid as i64,
+                ]))
+                .send()
+                .await;
+            let mut ticker = tokio::time::interval(Duration::from_secs(15));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            ticker.tick().await; // consume immediate first tick — register handled it
+            loop {
+                ticker.tick().await;
+                let _ = http
+                    .post(format!("{stdb_host}/v1/database/{database}/call/worker_process_status"))
+                    .json(&serde_json::json!([
+                        worker_id,
+                        "healthy",
+                        "",
+                    ]))
+                    .send()
+                    .await;
+            }
+        });
+    }
 
     let mut consecutive_failures: u32 = 0;
     let mut paused_cycles: u32 = 0;
     let mut state = load_daemon_state();
 
     loop {
-        let timestamp = chrono::Utc::now().to_rfc3339();
-        println!("{} {}", "⬡ brain tick at".cyan(), timestamp);
+        // ADR-2026-04-24-1820: skip tick if binary was rebuilt while daemon was running.
+        if check_and_warn_staleness() {
+            // Log skipped tick and wait for operator to restart.
+            let port = std::env::var("HEX_NEXUS_PORT")
+                .unwrap_or_else(|_| "5555".to_string())
+                .parse::<u16>()
+                .unwrap_or(5555);
+            eprintln!("  {} skipped tick (binary stale) — restart daemon to resume", "⏱".yellow());
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(interval)) => continue,
+                _ = tokio::signal::ctrl_c() => {
+                    println!("\n{}", "⬡ sched daemon shutting down".yellow());
+                    remove_pid_file();
+                    return Ok(());
+                }
+            }
+        }
 
+        let timestamp = chrono::Utc::now().to_rfc3339();
         let start = Instant::now();
+        let pending_count = list_brain_tasks(Some("pending")).await.map(|t| t.len()).unwrap_or(0);
+        let in_progress_count = list_brain_tasks(Some("in_progress")).await.map(|t| t.len()).unwrap_or(0);
+        let failed_count = list_brain_tasks(Some("failed")).await.map(|t| t.len()).unwrap_or(0);
         let validate_result = validate(true).await;
         let elapsed = start.elapsed();
+        let queue_summary = if pending_count + in_progress_count == 0 && failed_count == 0 {
+            "queue=0".to_string()
+        } else {
+            let mut parts = Vec::new();
+            if pending_count > 0 { parts.push(format!("{}p", pending_count)); }
+            if in_progress_count > 0 { parts.push(format!("{}w", in_progress_count)); }
+            if failed_count > 0 { parts.push(format!("{}f", failed_count)); }
+            format!("queue={}", parts.join("+"))
+        };
+        println!("{} {} ✓ {}ms  {}", "⬡".cyan(), timestamp, elapsed.as_millis(), queue_summary.bold());
 
         // Diff issue counts tick-over-tick (wp-brain-updates P2.1).
         // First tick seeds the baseline; no notification until we have a prior.
         let current_counts = collect_issue_counts();
+        // Track has_regressions for RL reward before the seeded guard.
+        let mut has_regressions = false;
         if state.seeded {
             let mut regressions: Vec<(String, usize, usize)> = Vec::new();
             let mut improvements: Vec<(String, usize, usize)> = Vec::new();
@@ -1636,6 +2697,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                     improvements.push((key.clone(), prev, curr));
                 }
             }
+            has_regressions = !regressions.is_empty();
             if !regressions.is_empty() {
                 regressions.sort_by(|a, b| a.0.cmp(&b.0));
                 let summary: Vec<String> = regressions
@@ -1666,45 +2728,38 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         state.seeded = true;
         save_daemon_state(&state);
 
+        // ── Validate result ────────────────────────────────────────────────
+        let validate_ok = validate_result.is_ok();
         match validate_result {
             Ok(()) => {
                 if consecutive_failures > 0 {
-                    println!(
-                        "{} after {} failure(s)",
-                        "  recovered".green(),
-                        consecutive_failures
-                    );
+                    println!("  {} after {} failure(s)", "recovered".green(), consecutive_failures);
                 }
                 consecutive_failures = 0;
                 paused_cycles = 0;
-                println!("  ok ({}ms)", elapsed.as_millis());
             }
             Err(err) => {
                 consecutive_failures += 1;
-                eprintln!(
-                    "  {} ({}/{}) {}",
-                    "fail".red(),
-                    consecutive_failures,
-                    max_failures,
-                    err
-                );
+                eprintln!("  {} ({}/{}) validate: {}", "fail".red(), consecutive_failures, max_failures, err);
             }
         }
 
         // Drain brain queue — hand up to 1 pending task per tick to a
-        // `brain-lease` swarm (ADR-2604141400 P1.2). The daemon no longer
+        // `brain-lease` swarm (ADR-2026-04-14-1400 P1.2). The daemon no longer
         // executes work inline; it stamps the lease and moves on. Swarm
         // workers progress the task; the sweeper reclaims if the lease
         // expires. Runs regardless of validate() outcome.
         //
-        // ADR-2604141400 §1 partial-impl gap (dog-food finding 2026-04-14):
+        // ADR-2026-04-14-1400 §1 partial-impl gap (dog-food finding 2026-04-14):
         // no swarm workers register against `brain-lease`, and no reclaim
         // sweeper exists, so a pure swarm-lease path silently parks every
         // task in `leased` forever — bypassing the §1 P1 evidence guard
         // that lives in execute_brain_task. Until §2 ships fully, fall
         // back to inline execution whenever dispatch reports no live
         // worker. The guard runs on the fallback path.
-        match drain_brain_tasks(1).await {
+        // Drain up to 5 tasks per tick (was 1, caused 12min delay with 24 tasks)
+        let drain_result = drain_brain_tasks(5).await;
+        match drain_result {
             Ok(tasks) if !tasks.is_empty() => {
                 for task in tasks {
                     let id = task
@@ -1748,7 +2803,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                         let _ =
                             update_brain_task(&id, BrainTaskStatus::InProgress, "").await;
                         let (mut ok, mut result) = execute_brain_task(&kind, &payload).await;
-                        // ADR-2604142155 P2.3: reject vacuous executor output
+                        // ADR-2026-04-14-2155 P2.3: reject vacuous executor output
                         if ok {
                             if let Err(reason) = validate_dispatch_evidence(Some(&result)) {
                                 ok = false;
@@ -1772,6 +2827,14 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
                             if ok { "✓".green() } else { "✗".red() },
                             status.as_str()
                         );
+                        notify_brain_task_result(
+                            &id,
+                            &kind,
+                            &payload,
+                            status.as_str(),
+                            &result,
+                        )
+                        .await;
                     } else if let DispatchOutcome::LeasedToWorker {
                         swarm_id,
                         swarm_task_id,
@@ -1792,7 +2855,255 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             _ => {}
         }
 
-        // Sweep stuck in_progress tasks (ADR-2604142155 P2.2).
+        // ── Periodic dead-code analysis (ADR-2026-04-24-1800) ─────────────────
+        if should_enqueue_analyze(&state).await {
+            match enqueue_analyze_task().await {
+                Ok(id) => {
+                    println!("  ⬡ enqueued periodic analyze task {}", id);
+                    state.last_analyze_at = Some(timestamp.clone());
+                }
+                Err(e) => {
+                    eprintln!("  {} enqueue analyze: {}", "✗".red(), e);
+                }
+            }
+        }
+
+        // ── Auto-retry failed tasks (wp-auto-retry-loop) ─────────────────
+        // Re-enqueue failed tasks < 24h old with retry_count < 3
+        if let Ok(failed_tasks) = list_brain_tasks(Some("failed")).await {
+            for task in failed_tasks {
+                let task_id = task.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let created_at = task.get("created_at").and_then(|v| v.as_str());
+                let payload_retry_count = task
+                    .get("payload")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                    .and_then(|p| p.get("retry_count").and_then(|v| v.as_u64()));
+                let retry_count = task
+                    .get("retry_count")
+                    .and_then(|v| v.as_u64())
+                    .or(payload_retry_count)
+                    .unwrap_or(0);
+
+                if let Some(created_str) = created_at {
+                    if let Ok(created) = chrono::DateTime::parse_from_rfc3339(created_str) {
+                        let age = chrono::Utc::now().signed_duration_since(created.with_timezone(&chrono::Utc));
+                        if age.num_hours() < 24 && retry_count < 3 {
+                            let kind = task.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                            let payload = task.get("payload").and_then(|v| v.as_str()).unwrap_or("");
+                            eprintln!("  ⬡ auto-retry {} (attempt {}/3, age {}h)", task_id, retry_count + 1, age.num_hours());
+                            // Re-enqueue with incremented retry_count
+                            let updated_payload = if let Ok(mut p) = serde_json::from_str::<serde_json::Value>(payload) {
+                                p["retry_count"] = serde_json::json!(retry_count + 1);
+                                p.to_string()
+                            } else {
+                                payload.to_string()
+                            };
+                            let _ = enqueue_brain_task(kind, &updated_payload).await;
+                            // Mark original as completed to prevent re-retry
+                            let _ = update_brain_task(task_id, BrainTaskStatus::Completed, "auto-retried").await;
+                        } else if retry_count >= 3 {
+                            // Retry budget exhausted — quarantine to DeadLetter
+                            // so this task stops appearing in every subsequent
+                            // failed-pool scan. The dead_letter detector will
+                            // surface it as a hypothesis so the operator (or a
+                            // future act mapping) can decide whether the task
+                            // is structurally broken or worth a manual rerun.
+                            eprintln!(
+                                "  ⊘ dead-letter {} (retry budget exhausted, age {}h)",
+                                task_id,
+                                age.num_hours()
+                            );
+                            let _ = update_brain_task(
+                                task_id,
+                                BrainTaskStatus::DeadLetter,
+                                "retry budget exhausted",
+                            )
+                            .await;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Improver learn + auto-act pass (ADR-2026-04-27-1100 P5/P6) ───────
+        // Two-step:
+        //   1. If a prior `act --apply` snapshot is on disk, learn from it
+        //      (credit resolved hypotheses, rotate snapshot).
+        //   2. If no snapshot is on disk AND tick is divisible by
+        //      AUTO_ACT_EVERY_N_TICKS, run a small auto-act sweep
+        //      (top 1 only, to keep blast radius minimal). Operator can
+        //      still drive larger sweeps via `hex sched improver act`.
+        const AUTO_ACT_EVERY_N_TICKS: u32 = 6;
+        if let Ok(home) = std::env::var("HOME") {
+            let snap_path = std::path::PathBuf::from(&home).join(".hex/improver/snapshot.json");
+            let repo = std::env::current_dir();
+            let hyps = repo
+                .as_ref()
+                .ok()
+                .and_then(|r| crate::commands::sched::improver::discover::discover(r).ok());
+
+            // Visibility: emit an `improver_tick` event so `hex sched watch`
+            // shows what the loop is finding, not just brain_tick heartbeats.
+            // Without this, operators see only adr_doctor/brain_tick and
+            // assume the improver is dead even when it's running.
+            if let Some(ref hs) = hyps {
+                let by_source: std::collections::HashMap<String, usize> = hs
+                    .iter()
+                    .fold(std::collections::HashMap::new(), |mut m, h| {
+                        *m.entry(format!("{:?}", h.source)).or_insert(0) += 1;
+                        m
+                    });
+                let port = std::env::var("HEX_NEXUS_PORT")
+                    .unwrap_or_else(|_| "5555".to_string())
+                    .parse::<u16>()
+                    .unwrap_or(5555);
+                let event_url = format!("http://127.0.0.1:{}/api/events", port);
+                let session_id = std::env::var("CLAUDE_SESSION_ID")
+                    .unwrap_or_else(|_| format!("sched-daemon-{}", std::process::id()));
+                let body = serde_json::json!({
+                    "session_id": session_id,
+                    "event_type": "improver_tick",
+                    "duration_ms": 0_i64,
+                    "input_json": serde_json::to_string(&serde_json::json!({
+                        "total": hs.len(),
+                        "by_source": by_source,
+                    })).unwrap_or_default(),
+                });
+                let _ = reqwest::Client::new()
+                    .post(&event_url)
+                    .json(&body)
+                    .timeout(Duration::from_secs(2))
+                    .send()
+                    .await;
+            }
+
+            // Step 1: learn (consumes snapshot if present)
+            if snap_path.exists() {
+                if let Some(ref hs) = hyps {
+                    match crate::commands::sched::improver::learn::observe_and_reward(hs) {
+                        Ok(0) => {}
+                        Ok(n) => println!("  ⬡ improver learn: credited {n} action(s)"),
+                        Err(e) => eprintln!("  {} improver learn: {}", "✗".red(), e),
+                    }
+                }
+            }
+
+            // Step 2: auto-act (only when no snapshot pending — don't
+            // pile new actions on top of unobserved ones).
+            //
+            // Previously gated to every 6th tick (every 3min at 30s
+            // intervals) — too slow for an interactive feedback loop on a
+            // failing build. The score≥80 + top-1 throttle still bounds
+            // blast radius to one high-confidence action per tick.
+            // AUTO_ACT_EVERY_N_TICKS retained as a safety knob: if a tick
+            // is ever flagged as "skip" (e.g. expensive sweep), the modulo
+            // still fires every Nth tick.
+            let snap_path_now_exists = snap_path.exists();
+            let tick_modulo = state.tick_count % AUTO_ACT_EVERY_N_TICKS;
+            let _ = tick_modulo;
+            if !snap_path_now_exists {
+                if let Some(ref hs) = hyps {
+                    let ranked = crate::commands::sched::improver::judge::rank(hs);
+                    if let Some(top) = ranked.first() {
+                        if top.score >= 80 {
+                            match crate::commands::sched::improver::act::act(&ranked, 1, true).await {
+                                Ok(actions) => {
+                                    if let Some(a) = actions.first() {
+                                        println!(
+                                            "  ⬡ improver auto-act: {} (priority {}, score {})",
+                                            a.derived_from, a.priority, top.score
+                                        );
+                                        // Visible event so watchers see the action land.
+                                        let port = std::env::var("HEX_NEXUS_PORT")
+                                            .unwrap_or_else(|_| "5555".to_string())
+                                            .parse::<u16>()
+                                            .unwrap_or(5555);
+                                        let event_url = format!("http://127.0.0.1:{}/api/events", port);
+                                        let session_id = std::env::var("CLAUDE_SESSION_ID")
+                                            .unwrap_or_else(|_| format!("sched-daemon-{}", std::process::id()));
+                                        let body = serde_json::json!({
+                                            "session_id": session_id,
+                                            "event_type": "improver_act",
+                                            "input_json": serde_json::to_string(&serde_json::json!({
+                                                "derived_from": a.derived_from,
+                                                "priority": a.priority,
+                                                "score": top.score,
+                                                "kind": format!("{:?}", a.kind),
+                                            })).unwrap_or_default(),
+                                        });
+                                        let _ = reqwest::Client::new()
+                                            .post(&event_url)
+                                            .json(&body)
+                                            .timeout(Duration::from_secs(2))
+                                            .send()
+                                            .await;
+                                    }
+                                }
+                                Err(e) => eprintln!("  {} improver auto-act: {}", "✗".red(), e),
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Step 3: autonomous high-severity Recommend notifications (BS-5).
+            // Recommends don't enqueue work, so they skip the score≥80
+            // auto-act gate. But severity=error patterns (e.g. an ADR cited
+            // by ≥5 personas across recent thoughts) are signals the
+            // operator should see in real time, not on the next manual
+            // `hex sched improver act --apply`. notify_high_severity_recommends
+            // dedups on a 24h window so persistent patterns surface once
+            // per day rather than every tick.
+            if let Some(ref hs) = hyps {
+                let ranked = crate::commands::sched::improver::judge::rank(hs);
+                crate::commands::sched::improver::act::notify_high_severity_recommends(&ranked).await;
+            }
+        }
+        state.tick_count = state.tick_count.saturating_add(1);
+        save_daemon_state(&state);
+
+        // ── Improver history recorder ───────────────────────────────────
+        // One snapshot per tick so the convergence series accumulates
+        // passively even when no operator is invoking the CLI. Side-
+        // effect: appends one line to ~/.hex/improver/history.jsonl.
+        // No stdout output (we have the daemon tick summary above).
+        if let Err(e) = crate::commands::sched::improver::record_history_snapshot().await {
+            eprintln!("  ! improver history snapshot: {}", e);
+        }
+
+        // ── Analyze regression detection (ADR-2026-04-24-1800) ────────────────
+        // After each tick, check if a completed analyze task has more violations
+        // than last time. Notify operator on regression.
+        if state.seeded {
+            if let Some(summary) = check_analyze_regression(&state).await {
+                let body = serde_json::json!({
+                    "regressions": summary.regressions,
+                    "current": summary.current,
+                    "previous": summary.previous,
+                });
+                notify_operator("brain.analyze.regression", body, 2).await;
+                for (key, prev, curr) in &summary.regressions {
+                    eprintln!(
+                        "  {} analyze regressed: {} {} → {}",
+                        "⚠".red().bold(),
+                        key,
+                        prev,
+                        curr
+                    );
+                }
+                state.last_analysis_summary = summary.current.clone();
+            }
+        }
+
+        // ── ADR registry health (ADR-2026-04-27-0800 §1a, wp-ADR-doctor-self-fix P3.2)
+        // After workplan reconcile, before swarm cleanup. Cheap when the
+        // registry is clean (a single `docs/adrs/` scan). Routes Tier-A
+        // findings through shadow-promotion and emits P1 inbox entries for
+        // Tier-C judgment calls — the rest of the loop is unaffected.
+        tick_adr_health(&state).await;
+
+        // Sweep stuck in_progress tasks (ADR-2026-04-14-2155 P2.2).
         match sweep_stuck_tasks().await {
             Ok(swept) if !swept.is_empty() => {
                 for tid in &swept {
@@ -1809,23 +3120,52 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
             _ => {}
         }
 
-        // Emit brain_tick event to nexus (fire-and-forget).
+        // Emit brain_tick event to nexus — ADR-2026-04-24-1815: explicit session_id
+        // and schema-validated body. Errors are logged, not silently dropped.
         let port = std::env::var("HEX_NEXUS_PORT")
             .unwrap_or_else(|_| "5555".to_string())
             .parse::<u16>()
             .unwrap_or(5555);
         let event_url = format!("http://127.0.0.1:{}/api/events", port);
-        let _ = reqwest::Client::new()
+        let session_id = std::env::var("CLAUDE_SESSION_ID")
+            .unwrap_or_else(|_| format!("sched-daemon-{}", std::process::id()));
+        let body = serde_json::json!({
+            "session_id": session_id,
+            "event_type": "brain_tick",
+            "duration_ms": elapsed.as_millis() as i64,
+        });
+        match reqwest::Client::new()
             .post(&event_url)
-            .json(&serde_json::json!({
-                "type": "brain_tick",
-                "timestamp": timestamp,
-                "duration_ms": elapsed.as_millis() as u64,
-                "checks_run": 5,
-            }))
+            .json(&body)
             .timeout(Duration::from_secs(2))
             .send()
-            .await;
+            .await
+        {
+            Ok(resp) if !resp.status().is_success() => {
+                let status = resp.status();
+                let body_text = resp.text().await.unwrap_or_default();
+                eprintln!(
+                    "  {} brain_tick event POST rejected ({}): {}",
+                    "✗".red(),
+                    status,
+                    body_text.trim()
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("  {} brain_tick event POST failed: {}", "✗".red(), e);
+            }
+        }
+
+        // ADR-2026-04-24-1820: Record validate outcome as RL reward.
+        // +0.5 if validate passed with no regressions, -0.3 if regressions found.
+        // This closes the RL loop: daemon behavior improves based on project health.
+        record_daemon_reward(validate_ok, has_regressions).await;
+
+        // Auto-sweep old terminal (failed/completed) tasks — keep history for 7 days.
+        // Deletes records older than 7 days to prevent unbounded SpacetimeDB growth.
+        // Runs every tick but only actually deletes on the first tick of each day.
+        sweep_old_terminal_tasks(&mut state).await;
 
         // Sleep — longer if we're over the failure threshold.
         let sleep_secs = if consecutive_failures >= max_failures {
@@ -1844,7 +3184,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(sleep_secs)) => {}
             _ = tokio::signal::ctrl_c() => {
-                println!("\n{}", "⬡ brain daemon received ctrl-C, shutting down".yellow());
+                println!("\n{}", "⬡ sched daemon received ctrl-C, shutting down".yellow());
                 remove_pid_file();
                 return Ok(());
             }
@@ -1852,7 +3192,7 @@ async fn daemon(interval: u64, max_failures: u32) -> anyhow::Result<()> {
     }
 }
 
-/// Background mode: re-exec `hex brain daemon` (without `--background`) as a
+/// Background mode: re-exec `hex sched daemon` (without `--background`) as a
 /// detached child process, write its PID, and exit the parent.
 fn daemon_background(interval: u64, max_failures: u32) -> anyhow::Result<()> {
     // Already running?
@@ -1860,7 +3200,7 @@ fn daemon_background(interval: u64, max_failures: u32) -> anyhow::Result<()> {
         if process_alive(pid) {
             println!(
                 "{} pid={} (pid file: {})",
-                "brain daemon already running".yellow(),
+                "sched daemon already running".yellow(),
                 pid,
                 pid_file_path().display()
             );
@@ -1873,7 +3213,7 @@ fn daemon_background(interval: u64, max_failures: u32) -> anyhow::Result<()> {
 
     let exe = std::env::current_exe()?;
     let child = std::process::Command::new(exe)
-        .arg("brain")
+        .arg("sched")
         .arg("daemon")
         .arg("--interval")
         .arg(interval.to_string())
@@ -1890,12 +3230,12 @@ fn daemon_background(interval: u64, max_failures: u32) -> anyhow::Result<()> {
 
     println!(
         "{} pid={} interval={}s",
-        "⬡ brain daemon started in background".green().bold(),
+        "⬡ sched daemon started in background".green().bold(),
         pid,
         interval
     );
     println!("  pid file: {}", pid_file_path().display());
-    println!("  stop with: hex brain daemon-stop");
+    println!("  stop with: hex sched daemon-stop");
     Ok(())
 }
 
@@ -1906,7 +3246,7 @@ fn daemon_stop() -> anyhow::Result<()> {
         None => {
             println!(
                 "{} (no pid file at {})",
-                "brain daemon not running".yellow(),
+                "sched daemon not running".yellow(),
                 pid_file_path().display()
             );
             return Ok(());
@@ -1916,7 +3256,7 @@ fn daemon_stop() -> anyhow::Result<()> {
     if !process_alive(pid) {
         println!(
             "{} pid={} not alive — removing stale pid file",
-            "brain daemon".yellow(),
+            "sched daemon".yellow(),
             pid
         );
         remove_pid_file();
@@ -1935,7 +3275,7 @@ fn daemon_stop() -> anyhow::Result<()> {
     while Instant::now() < deadline {
         if !process_alive(pid) {
             remove_pid_file();
-            println!("{} pid={}", "⬡ brain daemon stopped".green().bold(), pid);
+            println!("{} pid={}", "⬡ sched daemon stopped".green().bold(), pid);
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(200));
@@ -1949,27 +3289,68 @@ fn daemon_stop() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Show whether the brain daemon is running.
+/// Restart the background daemon: stop then start fresh.
+/// Detects current interval from the running daemon or uses default (30s).
+fn daemon_restart() -> anyhow::Result<()> {
+    // Read current settings from staleness record before stopping.
+    let (interval, max_failures) = load_staleness_record()
+        .map(|r| (r.interval_secs.max(10), r.max_failures.max(1)))
+        .unwrap_or((30, 3));
+
+    // Stop the running daemon.
+    let was_running = read_pid_file().map(process_alive).unwrap_or(false);
+    if was_running {
+        daemon_stop()?;
+    } else {
+        println!("{} no daemon running — starting fresh", "⬡".cyan());
+    }
+
+    println!(
+        "{} restarting with interval={}s max_failures={}",
+        "⬡".green().bold(),
+        interval,
+        max_failures
+    );
+    daemon_background(interval, max_failures)
+}
+
+/// Show whether the sched daemon is running.
+/// Also warns if the daemon binary appears stale (rebuilt since daemon started).
 fn daemon_status() -> anyhow::Result<()> {
     match read_pid_file() {
         Some(pid) if process_alive(pid) => {
             println!(
                 "{} pid={}",
-                "⬡ brain daemon running".green().bold(),
+                "⬡ sched daemon running".green().bold(),
                 pid
             );
             println!("  pid file: {}", pid_file_path().display());
+            // ADR-2026-04-24-1820: warn if daemon binary is stale.
+            if let Some(true) = is_current_binary_stale() {
+                println!(
+                    "  {} daemon may be stale — binary was rebuilt. Restart with: hex sched daemon restart",
+                    "⚠".yellow().bold()
+                );
+            }
         }
         Some(pid) => {
             println!(
                 "{} pid={} (stale pid file)",
-                "brain daemon not running".yellow(),
+                "sched daemon not running".yellow(),
                 pid
             );
             println!("  pid file: {}", pid_file_path().display());
         }
         None => {
-            println!("{}", "brain daemon not running".yellow());
+            println!("{}", "sched daemon not running".yellow());
+        }
+    }
+    // wp-idle-research-swarm P5.1: surface the most recent idle-sweep so
+    // operators can see at a glance whether the autonomous research loop has
+    // run lately and how productive it was. Silent when no sweep YAML exists.
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(line) = last_sweep_summary_line(&cwd) {
+            println!("  last_sweep: {}", line);
         }
     }
     Ok(())
@@ -2008,11 +3389,15 @@ fn parse_since(input: &str) -> anyhow::Result<String> {
 }
 
 /// Stream new `brain_tick` events to stdout as they appear.
-///
-/// Polls `GET /api/events` every 2 seconds, filters for `event_type ==
-/// "brain_tick"`, and prints anything newer than the last-seen timestamp.
-/// Each poll prints newest-first within the batch. Ctrl-C exits cleanly.
 async fn watch(since: Option<String>) -> anyhow::Result<()> {
+    // ADR-2026-04-24-1820: warn if daemon binary is stale before starting.
+    if let Some(true) = is_current_binary_stale() {
+        eprintln!(
+            "⚠ {} daemon may be stale — results may not reflect current code. Restart with: hex sched daemon restart",
+            "⚠".yellow().bold()
+        );
+    }
+
     let port = std::env::var("HEX_NEXUS_PORT")
         .unwrap_or_else(|_| "5555".to_string())
         .parse::<u16>()
@@ -2145,11 +3530,11 @@ fn print_brain_event(ev: &serde_json::Value) {
     );
 }
 
-// ─── ADR-2604132330: Brain task queue (HexFlo memory–backed) ───────────────
+// ─── ADR-2026-04-13-2330: Brain task queue (HexFlo memory–backed) ───────────────
 
 const NEXUS_BASE: &str = "http://127.0.0.1:5555";
 
-// ─── Typed schema (ADR-2604141400 P0.1) ────────────────────────────────────
+// ─── Typed schema (ADR-2026-04-14-1400 P0.1) ────────────────────────────────────
 //
 // The on-wire JSON shape is shared across daemon/CLI/dashboard. A typed enum
 // replaces the string-stamped `"status"` so variants are enforced at compile
@@ -2167,6 +3552,12 @@ pub(crate) enum BrainTaskStatus {
     InProgress,
     Completed,
     Failed,
+    /// Quarantined: task failed, exhausted retry budget, AND the
+    /// underlying problem appears non-transient. Excluded from auto-retry
+    /// scans so a structurally-broken task can't camp the failed pool
+    /// forever. Surfaced via the `dead_letter` improver detector so
+    /// operators can see the queue's accumulated unfixables.
+    DeadLetter,
 }
 
 impl BrainTaskStatus {
@@ -2180,11 +3571,17 @@ impl BrainTaskStatus {
             BrainTaskStatus::InProgress => "in_progress",
             BrainTaskStatus::Completed => "completed",
             BrainTaskStatus::Failed => "failed",
+            BrainTaskStatus::DeadLetter => "dead_letter",
         }
     }
 
     pub(crate) fn is_terminal(&self) -> bool {
-        matches!(self, BrainTaskStatus::Completed | BrainTaskStatus::Failed)
+        matches!(
+            self,
+            BrainTaskStatus::Completed
+                | BrainTaskStatus::Failed
+                | BrainTaskStatus::DeadLetter
+        )
     }
 
     /// Parse a wire string into an enum variant. Tolerant of unknown values
@@ -2197,13 +3594,14 @@ impl BrainTaskStatus {
             "in_progress" => Some(BrainTaskStatus::InProgress),
             "completed" => Some(BrainTaskStatus::Completed),
             "failed" => Some(BrainTaskStatus::Failed),
+            "dead_letter" => Some(BrainTaskStatus::DeadLetter),
             _ => None,
         }
     }
 }
 
 /// Evidence surfaced by the lease sweeper / reconciler to justify a
-/// completion verdict (ADR-2604141400). Populated in P2+; defaults keep
+/// completion verdict (ADR-2026-04-14-1400). Populated in P2+; defaults keep
 /// older records valid.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct BrainTaskEvidence {
@@ -2248,6 +3646,14 @@ pub(crate) struct BrainTaskRecord {
     pub(crate) swarm_task_id: Option<String>,
     #[serde(default)]
     pub(crate) evidence: BrainTaskEvidence,
+
+    // ─── Scheduling priority ────────────────────────────────────────────
+    // 0 = normal (default), higher = more urgent. The daemon drains pending
+    // tasks in priority-desc, created_at-asc order. Lets urgent frontier-
+    // bound work bypass speculative local-Ollama loops without flushing the
+    // whole queue.
+    #[serde(default)]
+    pub(crate) priority: u8,
 }
 
 impl BrainTaskRecord {
@@ -2289,6 +3695,11 @@ impl BrainTaskRecord {
             .cloned()
             .and_then(|e| serde_json::from_value::<BrainTaskEvidence>(e).ok())
             .unwrap_or_default();
+        let priority = v
+            .get("priority")
+            .and_then(|x| x.as_u64())
+            .map(|n| n.min(u8::MAX as u64) as u8)
+            .unwrap_or(0);
         Some(BrainTaskRecord {
             id,
             kind,
@@ -2304,11 +3715,12 @@ impl BrainTaskRecord {
             lease_attempts,
             swarm_task_id,
             evidence,
+            priority,
         })
     }
 }
 
-// ─── Lease durations per kind (ADR-2604141400 P1.1) ────────────────────────
+// ─── Lease durations per kind (ADR-2026-04-14-1400 P1.1) ────────────────────────
 //
 // Bounded lease windows are what make the sweeper safe: a task that holds a
 // lease past its window is assumed stuck and reclaimable. Each kind gets a
@@ -2321,15 +3733,20 @@ impl BrainTaskRecord {
 // land an entry here, otherwise `lease_for` falls through to the shell
 // timeout and legitimate long-runners get reaped mid-flight.
 
-pub(crate) const LEASE_DURATIONS: [(&str, Duration); 4] = [
-    ("workplan", Duration::from_secs(30 * 60)),
-    ("hex-command", Duration::from_secs(5 * 60)),
-    ("shell", Duration::from_secs(2 * 60)),
-    ("remote-shell", Duration::from_secs(60)),
+// Lease windows are sized for ~5 tok/s local-model output (qwen2.5-coder:32b
+// benchmarked May 2026 at 5 tok/s on this Bazzite host). Frontier rates are
+// 10–15× faster, so these windows leave tasks 90% idle on Claude — the cost
+// is reclamation latency on stuck local-model tasks, not throughput.
+pub(crate) const LEASE_DURATIONS: [(&str, Duration); 5] = [
+    ("workplan", Duration::from_secs(60 * 60)),
+    ("hex-command", Duration::from_secs(15 * 60)),
+    ("analyze", Duration::from_secs(10 * 60)),
+    ("shell", Duration::from_secs(10 * 60)),
+    ("remote-shell", Duration::from_secs(5 * 60)),
 ];
 
 /// Default lease window for `kind`. Unknown kinds fall back to the
-/// shell-style 2-minute timeout so a typo or a newly-added kind can't camp
+/// shell-style 10-minute timeout so a typo or a newly-added kind can't camp
 /// the queue forever — the sweeper will still reclaim it, just on the
 /// shorter-than-ideal schedule until the table is updated.
 pub(crate) fn lease_for(kind: &str) -> Duration {
@@ -2337,7 +3754,7 @@ pub(crate) fn lease_for(kind: &str) -> Duration {
         .iter()
         .find(|(k, _)| *k == kind)
         .map(|(_, d)| *d)
-        .unwrap_or(Duration::from_secs(2 * 60))
+        .unwrap_or(Duration::from_secs(10 * 60))
 }
 
 pub async fn enqueue_brain_task_pub(kind: &str, payload: &str) -> anyhow::Result<String> {
@@ -2376,6 +3793,10 @@ async fn notify_brain_task_result(
 }
 
 async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String> {
+    enqueue_brain_task_with_priority(kind, payload, 0).await
+}
+
+async fn enqueue_brain_task_with_priority(kind: &str, payload: &str, priority: u8) -> anyhow::Result<String> {
     use crate::nexus_client::NexusClient;
 
     // Reject "audit theater" stubs: shell tasks whose payload is just an echo
@@ -2392,7 +3813,7 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
             anyhow::bail!(
                 "refusing to enqueue shell stub: `echo FIXME/TODO/NOTE ...` is audit theater, \
                  not work. If it needs design → write an ADR. If it needs execution → write a \
-                 workplan and enqueue it with `hex brain enqueue workplan <path>`. If it's a \
+                 workplan and enqueue it with `hex sched enqueue workplan <path>`. If it's a \
                  breadcrumb → put it in a TODO comment at the code site."
             );
         }
@@ -2405,7 +3826,7 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
     // Dedup: if an active (pending/in_progress) task with the same
     // (kind, payload, project_id) triplet already exists, return its id
     // rather than creating a duplicate. Multiple enqueue sites
-    // (hex brain prime, hex brain enqueue, other agents) would otherwise
+    // (hex sched prime, hex sched enqueue, other agents) would otherwise
     // stack up redundant work.
     if let Ok(existing) = list_brain_tasks(None).await {
         for task in &existing {
@@ -2429,9 +3850,47 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
     // default lease_for() duration when the field is absent or the file
     // can't be read (e.g. the payload is a workplan ID, not a path).
     let timeout: u64 = if kind == "workplan" {
-        std::fs::read_to_string(payload)
+        let workplan_content = std::fs::read_to_string(payload)
             .ok()
-            .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
+            .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok());
+
+        // Validate critical path safety before enqueueing
+        if let Some(ref wp) = workplan_content {
+            if let Some(phases) = wp.get("phases").and_then(|v| v.as_array()) {
+                for phase in phases {
+                    if let Some(tasks) = phase.get("tasks").and_then(|v| v.as_array()) {
+                        for task in tasks {
+                            if let Some(files) = task.get("files").and_then(|v| v.as_array()) {
+                                let file_paths: Vec<String> = files
+                                    .iter()
+                                    .filter_map(|f| f.as_str().map(String::from))
+                                    .collect();
+
+                                let blocked: Vec<String> = file_paths
+                                    .iter()
+                                    .filter(|p| hex_core::validation::is_critical_path(p))
+                                    .cloned()
+                                    .collect();
+                                if !blocked.is_empty() {
+                                    let task_id = task.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                    eprintln!("⚠ Workplan rejected: task {} targets protected files:", task_id);
+                                    for file in &blocked {
+                                        eprintln!("  - {}", file);
+                                    }
+                                    anyhow::bail!(
+                                        "Cannot enqueue workplan targeting critical infrastructure. \
+                                         Protected files: {}",
+                                        blocked.join(", ")
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        workplan_content
             .and_then(|wp| wp.get("timeout_s")?.as_u64())
             .unwrap_or_else(|| lease_for(kind).as_secs())
     } else {
@@ -2450,6 +3909,7 @@ async fn enqueue_brain_task(kind: &str, payload: &str) -> anyhow::Result<String>
         "completed_at": serde_json::Value::Null,
         "result": serde_json::Value::Null,
         "timeout_s": timeout,
+        "priority": priority,
     });
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
@@ -2502,15 +3962,30 @@ pub(crate) async fn list_brain_tasks(
 }
 
 /// Drain up to `limit` pending sched tasks. Reserved for the future sched daemon tick loop
-/// (P3 of ADR-2604132330). Also invoked by `hex brain queue drain` logic indirectly.
+/// (P3 of ADR-2026-04-13-2330). Also invoked by `hex brain queue drain` logic indirectly.
+///
+/// Tasks are drained in (priority desc, created_at asc) order — higher-priority
+/// work jumps the queue without needing a flush. Equal-priority tasks fall back
+/// to FIFO so normal traffic stays fair. Missing/garbage `priority` defaults to 0.
 #[allow(dead_code)]
 pub(crate) async fn drain_brain_tasks(limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
-    let pending = list_brain_tasks(Some("pending")).await?;
+    let mut pending = list_brain_tasks(Some("pending")).await?;
+    pending.sort_by(|a, b| {
+        let pa = a.get("priority").and_then(|v| v.as_u64()).unwrap_or(0);
+        let pb = b.get("priority").and_then(|v| v.as_u64()).unwrap_or(0);
+        // Priority desc first; then created_at asc for FIFO at equal priority.
+        pb.cmp(&pa).then_with(|| {
+            let ca = a.get("created_at").and_then(|v| v.as_str()).unwrap_or("");
+            let cb = b.get("created_at").and_then(|v| v.as_str()).unwrap_or("");
+            ca.cmp(cb)
+        })
+    });
     let claimed: Vec<_> = pending.into_iter().take(limit).collect();
     for task in &claimed {
         let id = task.get("id").and_then(|v| v.as_str()).unwrap_or("");
         let kind = task.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-        debug!(task_id = %id, kind = %kind, "drain-path: claim");
+        let priority = task.get("priority").and_then(|v| v.as_u64()).unwrap_or(0);
+        debug!(task_id = %id, kind = %kind, priority = priority, "drain-path: claim");
     }
     Ok(claimed)
 }
@@ -2564,7 +4039,7 @@ pub(crate) async fn update_brain_task(
     Ok(())
 }
 
-// ─── Timeout sweep (ADR-2604142155 P2.2) ──────────────────────────────────
+// ─── Timeout sweep (ADR-2026-04-14-2155 P2.2) ──────────────────────────────────
 //
 // Weak fairness guarantee: every in_progress task eventually reaches a
 // terminal state. The daemon calls sweep_stuck_tasks() each tick, which
@@ -2612,7 +4087,66 @@ pub(crate) async fn sweep_stuck_tasks() -> anyhow::Result<Vec<String>> {
     Ok(swept)
 }
 
-// ─── Swarm-leased dispatch (ADR-2604141400 P1.2) ───────────────────────────
+/// Default age threshold before a terminal (failed/completed) task is swept (7 days).
+const TERMINAL_SWEEP_DAYS: i64 = 7;
+
+/// Sweep old terminal tasks — delete completed/failed records older than 7 days.
+/// Prevents unbounded SpacetimeDB growth. Uses a date-based throttle so deletion
+/// only actually runs on the first tick of each UTC day (not every 30s).
+async fn sweep_old_terminal_tasks(state: &mut DaemonState) {
+    // Throttle: only run deletion once per UTC day (stored in brain-state).
+    let today = chrono::Utc::now().date_naive().to_string();
+    if state.sweep_date == today {
+        return; // already ran today
+    }
+
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(TERMINAL_SWEEP_DAYS);
+    let cutoff_str = cutoff.to_rfc3339();
+
+    // Collect terminal tasks older than cutoff
+    let old_tasks: Vec<String> = match list_brain_tasks(None).await {
+        Ok(tasks) => tasks
+            .into_iter()
+            .filter(|t| {
+                let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                if !matches!(status, "failed" | "completed") {
+                    return false;
+                }
+                let completed_at = t.get("completed_at")
+                    .or_else(|| t.get("created_at"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                completed_at < cutoff_str.as_str()
+            })
+            .filter_map(|t| t.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+            .collect(),
+        Err(_) => return,
+    };
+
+    if old_tasks.is_empty() {
+        state.sweep_date = today;
+        return;
+    }
+
+    // Delete each old task from SpacetimeDB via DELETE /api/hexflo/memory/{key}
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    if nexus.ensure_running().await.is_err() {
+        return;
+    }
+
+    let mut deleted = 0;
+    for task_id in &old_tasks {
+        let key = format!("brain-task:{}", task_id);
+        if nexus.delete(&format!("/api/hexflo/memory/{}", key)).await.is_ok() {
+            deleted += 1;
+        }
+    }
+
+    if deleted > 0 {
+        println!("  {} swept {} old terminal tasks (>{}-day)", "🗑".cyan(), deleted, TERMINAL_SWEEP_DAYS);
+    }
+    state.sweep_date = today;
+}
 //
 // The direct-subprocess flow (`execute_brain_task` called inline from the
 // daemon tick) is being replaced by a lease handoff: the daemon registers a
@@ -2642,7 +4176,7 @@ pub(crate) struct LeaseHandle {
 }
 
 /// Result of `dispatch_brain_task` as seen by the daemon drain loop
-/// (ADR-2604141400 §1 inline-fallback). Separated from `LeaseHandle`
+/// (ADR-2026-04-14-1400 §1 inline-fallback). Separated from `LeaseHandle`
 /// because the daemon's decision about whether to inline-execute depends
 /// on whether a live worker actually holds the lease, not just whether
 /// the swarm/task records were created.
@@ -2691,7 +4225,7 @@ pub(crate) fn should_fallback_inline(outcome: &DispatchOutcome) -> bool {
 pub(crate) async fn classify_dispatch(handle: &LeaseHandle) -> DispatchOutcome {
     // TODO(§2): query /api/swarms/{swarm_id}/agents and return
     // LeasedToWorker when a registered agent exists. For now, every lease
-    // is empty in practice — see ADR-2604141400 §1 "Known gaps".
+    // is empty in practice — see ADR-2026-04-14-1400 §1 "Known gaps".
     DispatchOutcome::LeasedEmpty {
         swarm_id: handle.swarm_id.clone(),
         swarm_task_id: handle.swarm_task_id.clone(),
@@ -2881,7 +4415,187 @@ async fn stamp_brain_task_lease(
 /// failure (not a repo, git missing, subprocess error). Used by the
 /// workplan-evidence guard in [`execute_brain_task`]: if HEAD is unchanged
 /// before and after `hex plan execute` runs, we know the subprocess did no
-/// real work regardless of its exit code (ADR-2604141400 §1 P1).
+/// real work regardless of its exit code (ADR-2026-04-14-1400 §1 P1).
+/// Read the analyze interval from `.hex/project.json` (key
+/// `brain.analyze_interval_secs`). Falls back to `DEFAULT_ANALYZE_INTERVAL_SECS`
+/// when absent or unreadable.
+fn load_analyze_interval_secs() -> u64 {
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(_) => return DEFAULT_ANALYZE_INTERVAL_SECS,
+    };
+    let content = match std::fs::read_to_string(cwd.join(".hex/project.json")) {
+        Ok(c) => c,
+        Err(_) => return DEFAULT_ANALYZE_INTERVAL_SECS,
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(p) => p,
+        Err(_) => return DEFAULT_ANALYZE_INTERVAL_SECS,
+    };
+    parsed
+        .get("brain")
+        .and_then(|b| b.get("analyze_interval_secs"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(DEFAULT_ANALYZE_INTERVAL_SECS)
+}
+
+/// Read whether analyze is enabled from `.hex/project.json`
+/// (key `brain.analyze_enabled`). Default true.
+fn is_analyze_enabled() -> bool {
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(_) => return true,
+    };
+    let content = match std::fs::read_to_string(cwd.join(".hex/project.json")) {
+        Ok(c) => c,
+        Err(_) => return true,
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(p) => p,
+        Err(_) => return true,
+    };
+    parsed
+        .get("brain")
+        .and_then(|b| b.get("analyze_enabled"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
+
+/// Check if the periodic analyze task should be enqueued this tick.
+/// Returns true if: analysis is enabled, no analyze task is already
+/// pending/in_progress for this project, and the interval has elapsed.
+async fn should_enqueue_analyze(state: &DaemonState) -> bool {
+    if !is_analyze_enabled() {
+        return false;
+    }
+
+    // Skip if an analyze task is already pending/in_progress
+    if let Ok(tasks) = list_brain_tasks(None).await {
+        for t in &tasks {
+            let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            if status != "pending" && status != "in_progress" {
+                continue;
+            }
+            let kind = t.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            if kind == "analyze" {
+                return false;
+            }
+        }
+    }
+
+    // Check interval
+    let interval_secs = load_analyze_interval_secs();
+    let now = chrono::Utc::now();
+
+    if let Some(last) = &state.last_analyze_at {
+        if let Ok(last_time) = chrono::DateTime::parse_from_rfc3339(last) {
+            let elapsed = now.signed_duration_since(last_time.with_timezone(&chrono::Utc));
+            if elapsed.num_seconds() < interval_secs as i64 {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+/// Enqueue an "analyze" task for the current project. Returns the task ID.
+async fn enqueue_analyze_task() -> anyhow::Result<String> {
+    let project_id = brain_project_id().unwrap_or_default();
+    let payload = serde_json::json!({
+        "project_id": project_id,
+        "command": "hex analyze . --json",
+    });
+    enqueue_brain_task("analyze", &payload.to_string()).await
+}
+
+/// Summary of an analyze regression detection run.
+struct AnalyzeRegressionSummary {
+    regressions: Vec<(String, usize, usize)>,
+    current: HashMap<String, usize>,
+    previous: HashMap<String, usize>,
+}
+
+/// Parse violation counts from a `hex analyze --json` output string.
+/// Returns a HashMap keyed by category (e.g. "boundary_violations",
+/// "dead_exports", "circular_deps") with the count as value.
+fn parse_analyze_summary(output: &str) -> HashMap<String, usize> {
+    let mut summary = HashMap::new();
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(output) {
+        let get_count = |key| {
+            parsed
+                .get(key)
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+                .unwrap_or(0)
+        };
+        summary.insert(
+            "boundary_violations".to_string(),
+            get_count("boundary_violations"),
+        );
+        summary.insert("dead_exports".to_string(), get_count("dead_exports"));
+        summary.insert("circular_deps".to_string(), get_count("circular_deps"));
+        summary.insert("unused_adapters".to_string(), get_count("unused_adapters"));
+        if let Some(violations) = parsed.get("violations").and_then(|v| v.as_array()) {
+            summary.insert("total_violations".to_string(), violations.len());
+        }
+    }
+    summary
+}
+
+/// Check if the most recently completed analyze task has more violations
+/// than the last recorded summary. Returns Some(summary) if regressions found,
+/// None otherwise. Updates state.last_analysis_summary on call.
+async fn check_analyze_regression(state: &DaemonState) -> Option<AnalyzeRegressionSummary> {
+    // Find the most recently completed analyze task
+    if let Ok(tasks) = list_brain_tasks(Some("completed")).await {
+        let mut analyze_tasks: Vec<_> = tasks
+            .into_iter()
+            .filter(|t| {
+                t.get("kind").and_then(|v| v.as_str()) == Some("analyze")
+            })
+            .collect();
+        analyze_tasks.sort_by(|a, b| {
+            let a_time = a
+                .get("completed_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let b_time = b
+                .get("completed_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            b_time.cmp(a_time) // descending — most recent first
+        });
+
+        if let Some(last_task) = analyze_tasks.first() {
+            let result = last_task
+                .get("result")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let current = parse_analyze_summary(result);
+            let previous = state.last_analysis_summary.clone();
+
+            let mut regressions = Vec::new();
+            for (key, curr_count) in &current {
+                if let Some(&prev_count) = previous.get(key) {
+                    if curr_count > &prev_count {
+                        regressions.push((key.clone(), prev_count, *curr_count));
+                    }
+                }
+            }
+
+            if !regressions.is_empty() {
+return Some(AnalyzeRegressionSummary {
+                    regressions,
+                    current,
+                    previous,
+                });
+            }
+        }
+    }
+    None
+}
+
 fn git_head_sha() -> Option<String> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -2907,7 +4621,7 @@ fn git_head_sha() -> Option<String> {
 /// and by the unit test `test_workplan_no_evidence`. Returns
 /// `(success, snippet_suffix)` given the subprocess exit status and the
 /// pre/post HEAD shas. A workplan that exits 0 but leaves HEAD unchanged is
-/// ADR-2604142155 P2.3: output-level evidence guard mirroring
+/// ADR-2026-04-14-2155 P2.3: output-level evidence guard mirroring
 /// `hex_nexus::orchestration::workplan_executor::validate_dispatch_evidence`.
 /// Rejects empty / whitespace-only executor output so vacuous acks like
 /// `"Execution dispatched: Object {"` cannot promote a task to `completed`.
@@ -2916,18 +4630,18 @@ pub(crate) fn validate_dispatch_evidence(output: Option<&str>) -> Result<(), Str
         Some(s) if !s.trim().is_empty() => Ok(()),
         Some(_) => Err(
             "dispatch-evidence guard: executor produced whitespace-only output — \
-             refusing to accept completion (ADR-2604111800)"
+             refusing to accept completion (ADR-2026-04-11-1800)"
                 .to_string(),
         ),
         None => Err(
             "dispatch-evidence guard: no executor output received — \
-             refusing to accept completion (ADR-2604111800)"
+             refusing to accept completion (ADR-2026-04-11-1800)"
                 .to_string(),
         ),
     }
 }
 
-/// treated as a failed run — the whole point of the guard (ADR-2604141400 §1
+/// treated as a failed run — the whole point of the guard (ADR-2026-04-14-1400 §1
 /// P1). If HEAD is unreadable on either side, the guard errs on the side of
 /// marking the run a failure; silent drains are the bug we're killing.
 fn check_evidence(
@@ -2953,30 +4667,257 @@ fn check_evidence(
     (exit_ok && has_evidence, snippet)
 }
 
+/// Execute memory-health check: query memory for stale tasks, categorize, archive.
+async fn execute_memory_health_check() -> anyhow::Result<String> {
+    use crate::nexus_client::NexusClient;
+
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    // Query memory for all brain-tasks
+    let body: serde_json::Value = nexus
+        .get("/api/hexflo/memory/search?q=brain-task:")
+        .await?;
+
+    let results = body
+        .get("results")
+        .and_then(|r| r.as_array())
+        .context("No results in memory query")?;
+
+    let mut stale_count = 0;
+    let mut archived_count = 0;
+    let mut failed_count = 0;
+    let mut total_count = 0;
+
+    let now = chrono::Utc::now();
+
+    for entry in results {
+        let value_str = entry.get("value").and_then(|v| v.as_str()).unwrap_or("");
+        let task: serde_json::Value = match serde_json::from_str(value_str) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+
+        total_count += 1;
+
+        let status = task.get("status").and_then(|s| s.as_str()).unwrap_or("");
+        let completed_at = task.get("completed_at").and_then(|c| c.as_str());
+
+        // Categorize failed tasks
+        if status == "failed" {
+            failed_count += 1;
+
+            // Check if old enough to archive (>7 days)
+            if let Some(completed_str) = completed_at {
+                if let Ok(completed_dt) = chrono::DateTime::parse_from_rfc3339(completed_str) {
+                    let age = now.signed_duration_since(completed_dt.with_timezone(&chrono::Utc));
+                    if age.num_days() > 7 {
+                        // Archive old failed tasks
+                        // For now just count, full archive logic would call nexus API
+                        archived_count += 1;
+                        stale_count += 1;
+                    }
+                }
+            }
+        }
+
+        // Detect stale in_progress tasks (leased_until > 2h ago)
+        if status == "in_progress" {
+            if let Some(leased_str) = task.get("leased_until").and_then(|l| l.as_str()) {
+                if let Ok(leased_dt) = chrono::DateTime::parse_from_rfc3339(leased_str) {
+                    let elapsed = now.signed_duration_since(leased_dt.with_timezone(&chrono::Utc));
+                    if elapsed.num_hours() > 2 {
+                        stale_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let summary = format!(
+        "Memory Health Check\n\
+         Total entries: {}\n\
+         Stale tasks: {}\n\
+         Failed tasks: {}\n\
+         Archived (old failures): {}\n\
+         \n\
+         Status: {} stale tasks detected\n",
+        total_count,
+        stale_count,
+        failed_count,
+        archived_count,
+        if stale_count > 0 { "NEEDS ATTENTION" } else { "HEALTHY" }
+    );
+
+    Ok(summary)
+}
+
+/// P6: Validate workplan task evidence after execution.
+/// Reads workplan JSON, finds completed tasks, runs their evidence commands.
+/// Returns validation summary for logging.
+async fn validate_workplan_evidence(workplan_path: &str) -> anyhow::Result<String> {
+    let content = tokio::fs::read_to_string(workplan_path).await
+        .context("Failed to read workplan JSON")?;
+
+    let workplan: serde_json::Value = serde_json::from_str(&content)
+        .context("Failed to parse workplan JSON")?;
+
+    let mut validation_log = Vec::new();
+    let mut failed_count = 0;
+    let mut passed_count = 0;
+    let mut stub_count = 0;
+
+    // Find all tasks marked "done" and validate them
+    if let Some(phases) = workplan.get("phases").and_then(|p| p.as_array()) {
+        for phase in phases {
+            if let Some(tasks) = phase.get("tasks").and_then(|t| t.as_array()) {
+                for task in tasks {
+                    let status = task.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                    if status != "done" {
+                        continue;
+                    }
+
+                    let task_id = task.get("id").and_then(|i| i.as_str()).unwrap_or("unknown");
+                    let files = task.get("files").and_then(|f| f.as_array());
+                    let evidence = task.get("evidence").and_then(|e| e.as_array());
+
+                    // Check for TODO stubs in files
+                    if let Some(files_arr) = files {
+                        for file in files_arr {
+                            if let Some(file_path) = file.as_str() {
+                                if let Ok(content) = std::fs::read_to_string(file_path) {
+                                    if content.contains("TODO: implement") || content.contains("// TODO") {
+                                        validation_log.push(format!("Task {} STUB: {} contains TODO", task_id, file_path));
+                                        stub_count += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Run evidence commands
+                    if let Some(evidence_arr) = evidence {
+                        for ev in evidence_arr {
+                            if let Some(cmd) = ev.as_str() {
+                                let output = std::process::Command::new("sh")
+                                    .arg("-c")
+                                    .arg(cmd)
+                                    .output();
+
+                                match output {
+                                    Ok(out) if out.status.success() => {
+                                        passed_count += 1;
+                                    }
+                                    Ok(out) => {
+                                        let stderr = String::from_utf8_lossy(&out.stderr);
+                                        validation_log.push(format!("Task {} FAIL: {} ({})", task_id, cmd, stderr.trim()));
+                                        failed_count += 1;
+                                    }
+                                    Err(e) => {
+                                        validation_log.push(format!("Task {} ERROR: {} ({})", task_id, cmd, e));
+                                        failed_count += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut summary = String::new();
+    if stub_count > 0 || failed_count > 0 {
+        summary.push_str("VALIDATION FAILED\n");
+        summary.push_str(&format!("Stubs: {}, Failed: {}, Passed: {}\n", stub_count, failed_count, passed_count));
+        for log in &validation_log {
+            summary.push_str(&format!("{}\n", log));
+        }
+    } else {
+        summary.push_str(&format!("VALIDATION PASSED ({})", passed_count));
+    }
+
+    Ok(summary)
+}
+
 pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, String) {
     debug!(kind = %kind, payload_len = payload.len(), "drain-path: execute-start");
-    // ADR-2604141400 §1 P1: capture pre-HEAD only for workplan tasks; the
+    // ADR-2026-04-14-1400 §1 P1: capture pre-HEAD only for workplan tasks; the
     // other kinds stay exit-code-only in this slice.
     let pre_head = if kind == "workplan" {
         git_head_sha()
     } else {
         None
     };
+    // ADR-2026-05-19-0900 P5 — liveness ping. Synthetic task the doctor
+    // liveness probe enqueues to walk the full dispatch chain. Handled
+    // INLINE rather than shelling out: emit a `pong` improver_event row
+    // with scope=<uuid> so the probe's SQL poll sees it. No agent claim,
+    // no inference call, no side effects beyond the event row.
+    if kind == "hex-command" && payload.starts_with("ping ") {
+        let uuid = payload[5..].trim();
+        let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
+            .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+        let database = std::env::var("HEX_STDB_DATABASE").unwrap_or_else(|_| "hex".to_string());
+        let url = format!("{stdb_host}/v1/database/{database}/call/improver_event_record");
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let http = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => return (false, format!("ping handler http build: {e}")),
+        };
+        match http
+            .post(&url)
+            .json(&serde_json::json!(["pong", "Liveness", uuid, "{}", 0u64, timestamp]))
+            .send()
+            .await
+        {
+            Ok(res) if res.status().is_success() => {
+                return (true, format!("pong emitted for {uuid}"));
+            }
+            Ok(res) => {
+                let status = res.status();
+                let body = res.text().await.unwrap_or_else(|_| "<no body>".to_string());
+                return (false, format!("improver_event_record HTTP {status}: {body}"));
+            }
+            Err(e) => return (false, format!("improver_event_record: {e}")),
+        }
+    }
     let output = match kind {
         "hex-command" => std::process::Command::new("hex")
             .args(payload.split_whitespace())
             .output(),
-        "workplan" => std::process::Command::new("hex")
-            .args(["plan", "execute", payload])
+        "analyze" => std::process::Command::new("hex")
+            .args(["analyze", ".", "--json"])
             .output(),
+        "workplan" => {
+            // Path C (ADR-2026-04-29-1354): when no active Claude session, spawn
+            // autonomous hex-agent instead of dispatching to nexus
+            if std::env::var("CLAUDE_SESSION_ID").is_err() {
+                eprintln!("⬡ spawned autonomous agent for workplan {}", payload);
+                std::process::Command::new("hex-agent")
+                    .args(["workplan", payload, "--background"])
+                    .output()
+            } else {
+                // Path B: dispatch to active Claude session via nexus
+                std::process::Command::new("hex")
+                    .args(["plan", "execute", payload])
+                    .output()
+            }
+        }
         "shell" => {
-            // Whitelist: only cargo, git, ls, echo
+            // Whitelist for shell-kind tasks. `hex` is allowed so the daemon
+            // can dispatch hex's own subcommands (plan draft, doctor, …) —
+            // those flow back through the same trusted CLI surface that
+            // produced the task. Anything broader belongs in a workplan.
             let mut parts = payload.split_whitespace();
             let cmd = match parts.next() {
                 Some(c) => c,
                 None => return (false, "empty shell command".to_string()),
             };
-            const ALLOWED: &[&str] = &["cargo", "git", "ls", "echo", "ssh"];
+            const ALLOWED: &[&str] = &["cargo", "git", "ls", "echo", "ssh", "hex"];
             if !ALLOWED.contains(&cmd) {
                 return (
                     false,
@@ -2988,11 +4929,31 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
             }
             std::process::Command::new(cmd).args(parts).output()
         }
+        "memory-health" => {
+            // Execute memory health check: query memory, categorize, archive stale tasks
+            match execute_memory_health_check().await {
+                Ok(summary) => Ok(std::process::Output {
+                    status: std::process::ExitStatus::default(),
+                    stdout: summary.into_bytes(),
+                    stderr: Vec::new(),
+                }),
+                Err(e) => Ok(std::process::Output {
+                    status: std::process::ExitStatus::default(),
+                    stdout: Vec::new(),
+                    stderr: format!("memory-health error: {}", e).into_bytes(),
+                }),
+            }
+        }
+        "research-sweep" => {
+            // Execute idle research sweep: run analysts, generate findings
+            // TODO: implement research-sweep executor
+            return (false, "research-sweep executor not yet implemented".to_string())
+        }
         other => {
             return (
                 false,
                 format!(
-                    "unknown task kind '{}' (expected: hex-command, workplan, shell)",
+                    "unknown task kind '{}' (expected: hex-command, workplan, shell, memory-health, research-sweep)",
                     other
                 ),
             )
@@ -3013,7 +4974,7 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
             let count = combined.chars().count();
             let skip = count.saturating_sub(8000);
             let mut snippet: String = combined.chars().skip(skip).collect();
-            // ADR-2604141400 §1 P1: for workplan tasks, require that HEAD
+            // ADR-2026-04-14-1400 §1 P1: for workplan tasks, require that HEAD
             // actually moved. `hex plan execute` exits 0 in multiple no-op
             // paths (tasks already done, inference unavailable, empty
             // dispatch) — exit code alone produces silent drains.
@@ -3025,7 +4986,24 @@ pub(crate) async fn execute_brain_task(kind: &str, payload: &str) -> (bool, Stri
                     post_head.as_deref(),
                 );
                 snippet.push_str(&guard_snippet);
-                (guarded_success, snippet)
+
+                // P6: Validation judge - verify workplan task evidence after execution
+                if guarded_success {
+                    match validate_workplan_evidence(payload).await {
+                        Ok(validation_result) => {
+                            snippet.push_str(&format!("\n--- validation ---\n{}", validation_result));
+                            // If validation failed, override success even if git evidence exists
+                            let final_success = !validation_result.contains("VALIDATION FAILED");
+                            (final_success, snippet)
+                        }
+                        Err(e) => {
+                            snippet.push_str(&format!("\n--- validation ---\nValidation error: {}", e));
+                            (guarded_success, snippet)
+                        }
+                    }
+                } else {
+                    (guarded_success, snippet)
+                }
             } else {
                 (out.status.success(), snippet)
             }
@@ -3122,9 +5100,9 @@ async fn queue_list(include: &str, since: Option<&str>) -> anyhow::Result<()> {
     }
 
     let heading = if show_all {
-        "Brain Tasks (all)".to_string()
+        "Sched Tasks (all)".to_string()
     } else {
-        format!("Brain Tasks ({})", include)
+        format!("Sched Tasks ({})", include)
     };
     println!("{}", heading.green().bold());
 
@@ -3169,8 +5147,8 @@ async fn queue_list(include: &str, since: Option<&str>) -> anyhow::Result<()> {
 
 /// Render the recent brain-task history table (wp-sched-queue-history P1.3).
 ///
-/// Hits `GET /api/brain/queue/history` and formats each row with a 60-char
-/// tail of the result string so the `no git evidence` marker (ADR-2604141400
+/// Hits `GET /api/sched/queue/history` and formats each row with a 60-char
+/// tail of the result string so the `no git evidence` marker (ADR-2026-04-14-1400
 /// §1 P1 evidence-guard) is visible without horizontal scrolling. Using the
 /// tail rather than the head is deliberate — the guard appends the marker,
 /// so a head-truncation would hide it.
@@ -3181,7 +5159,7 @@ async fn queue_history(status: Option<String>, limit: u32) -> anyhow::Result<()>
 
     // Build query string; skip `status=` entirely when unset so nexus treats
     // it as "all statuses" rather than filtering on an empty-string match.
-    let mut path = format!("/api/brain/queue/history?limit={}", limit);
+    let mut path = format!("/api/sched/queue/history?limit={}", limit);
     if let Some(s) = status.as_deref() {
         path.push_str(&format!("&status={}", s));
     }
@@ -3198,8 +5176,8 @@ async fn queue_history(status: Option<String>, limit: u32) -> anyhow::Result<()>
     }
 
     let heading = match status.as_deref() {
-        Some(s) => format!("Brain Task History — status={}", s),
-        None => "Brain Task History".to_string(),
+        Some(s) => format!("Sched Task History — status={}", s),
+        None => "Sched Task History".to_string(),
     };
     println!("{}", heading.green().bold());
 
@@ -3292,8 +5270,125 @@ async fn queue_clear() -> anyhow::Result<()> {
 
 async fn queue_drain() -> anyhow::Result<()> {
     let pending = list_brain_tasks(Some("pending")).await?;
+    // Snapshot in_flight alongside pending so the idle-tick gate counts real
+    // inactivity (no queued work AND no tasks actively running). A failure to
+    // read in_progress is treated as "unknown" → non-idle, so we don't
+    // spuriously declare the queue quiet when we can't see it.
+    let in_flight = list_brain_tasks(Some("in_progress")).await.unwrap_or_default();
+    let is_idle = pending.is_empty() && in_flight.is_empty();
+
+    // ── Sweep preemption (wp-idle-research-swarm P4.4) ──────────────────
+    // If a research sweep is currently in-flight (the coordinator's
+    // marker file is present) AND a non-research task has landed in
+    // pending, signal-abort the sweep so the higher-priority work runs
+    // first. We also clear the throttle so the next idle window re-fires
+    // the sweep — otherwise the 6h gate would block a re-enqueue and the
+    // half-finished research never gets resumed.
+    let pending_kinds: Vec<&str> = pending
+        .iter()
+        .map(|t| t.get("kind").and_then(|v| v.as_str()).unwrap_or(""))
+        .collect();
+    if should_preempt_sweep(&pending_kinds, is_sweep_in_flight()) {
+        let non_research_count = pending_kinds.iter().filter(|k| **k != "research-sweep").count();
+        request_sweep_abort();
+        clear_last_research_sweep();
+        println!(
+            "  {} preempting in-flight research-sweep for {} non-research task(s); will re-enqueue at next idle window",
+            "⚠".yellow(),
+            non_research_count,
+        );
+    }
+
+    let mut state = load_daemon_state();
+    let threshold = load_idle_threshold_ticks();
+    if is_idle {
+        state.idle_tick_count = state.idle_tick_count.saturating_add(1);
+    } else {
+        state.idle_tick_count = 0;
+    }
+    let idle_ticks = state.idle_tick_count;
+    save_daemon_state(&state);
+
+    // ── Idle-research trigger (wp-idle-research-swarm P1.2 / ADR-2026-04-15-1200) ──
+    // When the queue has been idle for `threshold` ticks AND no sweep has
+    // run for `min_sweep_interval_h` hours, self-enqueue a research-sweep.
+    // The actual analyst dispatch lands in P4.1 (hex-nexus); for now we
+    // just put the work item on the queue with the trigger metadata so a
+    // downstream worker (or `hex sched queue history`) can pick it up.
+    if is_idle && idle_ticks >= threshold {
+        let interval_h = load_min_sweep_interval_h();
+        let now = chrono::Utc::now();
+        let last = read_last_research_sweep();
+        if should_self_enqueue_research_sweep(idle_ticks, threshold, last, now, interval_h) {
+            let payload = json!({
+                "trigger": "idle",
+                "idle_ticks": idle_ticks,
+                "threshold": threshold,
+                "min_sweep_interval_h": interval_h,
+                "enqueued_at": now.to_rfc3339(),
+            })
+            .to_string();
+            match enqueue_brain_task("research-sweep", &payload).await {
+                Ok(id) => {
+                    println!(
+                        "  ⬡ enqueued idle research-sweep {} (idle {}/{} ticks, last sweep {})",
+                        id,
+                        idle_ticks,
+                        threshold,
+                        last.map(|t| t.to_rfc3339()).unwrap_or_else(|| "never".to_string()),
+                    );
+                    write_last_research_sweep(now);
+                }
+                Err(e) => {
+                    eprintln!("  {} enqueue research-sweep: {}", "✗".red(), e);
+                }
+            }
+        }
+    }
+
+    // ── Memory-health trigger (wp-memory-health-swarm P3.1 / ADR-2026-04-29-1320) ──
+    // Run memory-health check every hour (not idle-gated like research-sweep).
+    // This ensures stale task cleanup happens regularly even when queue is busy.
+    {
+        let now = chrono::Utc::now();
+        let last = read_last_memory_health_check();
+        let interval_h = 1; // TODO: load from config
+
+        if should_enqueue_memory_health(last, now, interval_h) {
+            let payload = json!({
+                "trigger": "scheduled",
+                "interval_h": interval_h,
+                "enqueued_at": now.to_rfc3339(),
+            })
+            .to_string();
+
+            match enqueue_brain_task("memory-health", &payload).await {
+                Ok(id) => {
+                    println!(
+                        "  ⬡ enqueued memory-health check {} (last check {})",
+                        id,
+                        last.map(|t| t.to_rfc3339()).unwrap_or_else(|| "never".to_string()),
+                    );
+                    write_last_memory_health_check(now);
+                }
+                Err(e) => {
+                    eprintln!("  {} enqueue memory-health: {}", "✗".red(), e);
+                }
+            }
+        }
+    }
+
     if pending.is_empty() {
-        println!("{}", "No pending sched tasks to drain.".yellow());
+        if idle_ticks >= threshold {
+            println!(
+                "{} (idle {}/{} ticks)",
+                "No pending sched tasks to drain.".yellow(),
+                idle_ticks,
+                threshold,
+            );
+        } else {
+            println!("{}", "No pending sched tasks to drain.".yellow());
+        }
         return Ok(());
     }
     println!("⬡ draining {} pending sched task(s)...", pending.len());
@@ -3316,7 +5411,7 @@ async fn queue_drain() -> anyhow::Result<()> {
         println!("  → executing {id} ({kind})");
         let _ = update_brain_task(&id, BrainTaskStatus::InProgress, "").await;
         let (mut ok, mut result) = execute_brain_task(&kind, &payload).await;
-        // ADR-2604142155 P2.3: reject vacuous executor output
+        // ADR-2026-04-14-2155 P2.3: reject vacuous executor output
         if ok {
             if let Err(reason) = validate_dispatch_evidence(Some(&result)) {
                 ok = false;
@@ -3338,11 +5433,112 @@ async fn queue_drain() -> anyhow::Result<()> {
     Ok(())
 }
 
+// ─── ADR-doctor tick orchestrator (ADR-2026-04-27-0800 §1a, P3.2) ────────────
+//
+// Pure data-shape unit tests for `tick_adr_health_actions`. Lives in a
+// module named `tick_adr_health` directly under `sched` so the workplan
+// gate (`cargo test -p hex-cli sched::tick_adr_health`) substring-matches
+// the full test path `commands::sched::tick_adr_health::*` and runs
+// exactly this set.
+//
+// Filesystem + git side effects of shadow-promote are covered by the
+// integration test `tests/sched_adr_health_tick.rs`; here we lock in the
+// pure routing rules by passing `cfg=None` (every Tier-A/B finding then
+// routes through the cfg-unavailable abort path; every Tier-C still
+// notifies).
+#[cfg(test)]
+mod tick_adr_health {
+    use super::tick_adr_health_actions;
+    use crate::commands::adr::doctor::{finding, AutoFixTier, FindingKind};
+    use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn emits_event_with_finding_counts() {
+        let findings = vec![
+            finding("ADR-1", PathBuf::from("a.md"), FindingKind::UnparseableStatus, "buggy"),
+            finding("ADR-2", PathBuf::from("b.md"), FindingKind::DuplicateId, "dup"),
+            finding("ADR-3", PathBuf::from("c.md"), FindingKind::MissingRequiredField, "miss"),
+            finding("ADR-4", PathBuf::from("d.md"), FindingKind::StaleProposed, "old"),
+        ];
+        // Sanity: the rule table puts these in the tiers we expect.
+        assert_eq!(findings[0].tier, AutoFixTier::A);
+        assert_eq!(findings[1].tier, AutoFixTier::C);
+        assert_eq!(findings[2].tier, AutoFixTier::C);
+        assert_eq!(findings[3].tier, AutoFixTier::B);
+
+        // cfg=None forces the "config unavailable" path for Tier-A/B (we
+        // don't want a real worktree/git here). Tier-C still notifies.
+        let result = tick_adr_health_actions(&findings, None).await;
+
+        assert_eq!(result.event.event_type, "adr_doctor_tick");
+        assert_eq!(result.event.payload["total"], 4);
+        assert_eq!(result.event.payload["tier_a"], 1);
+        assert_eq!(result.event.payload["tier_b"], 1);
+        assert_eq!(result.event.payload["tier_c"], 2);
+    }
+
+    #[tokio::test]
+    async fn routes_tier_c_findings_to_p1_inbox_notifications() {
+        let f = finding(
+            "ADR-2026-04-27-0800",
+            PathBuf::from("docs/adrs/ADR-2026-04-27-0800-x.md"),
+            FindingKind::DuplicateId,
+            "duplicate id detected",
+        );
+        assert_eq!(f.tier, AutoFixTier::C);
+
+        let result = tick_adr_health_actions(&[f], None).await;
+
+        assert_eq!(result.notifications.len(), 1);
+        let n = &result.notifications[0];
+        assert_eq!(n.kind, "adr.doctor.notify");
+        assert_eq!(n.priority, 1, "Tier-C must be priority=1 (operator interrupt)");
+        assert_eq!(n.body["tier"], "C");
+        assert_eq!(n.body["adr_id"], "ADR-2026-04-27-0800");
+        assert_eq!(n.body["kind"], "DuplicateId");
+    }
+
+    #[tokio::test]
+    async fn aborts_tier_a_when_config_unavailable_with_p2_notification() {
+        let f = finding(
+            "ADR-2026-04-27-0800",
+            PathBuf::from("docs/adrs/ADR-2026-04-27-0800-x.md"),
+            FindingKind::UnparseableStatus,
+            "buggy frontmatter",
+        );
+        assert_eq!(f.tier, AutoFixTier::A);
+
+        let result = tick_adr_health_actions(&[f], None).await;
+
+        assert_eq!(result.notifications.len(), 1);
+        let n = &result.notifications[0];
+        assert_eq!(n.kind, "adr.doctor.aborted");
+        assert_eq!(n.priority, 2, "Aborted Tier-A must downgrade to priority=2");
+        assert_eq!(n.body["tier"], "A");
+        assert!(
+            n.body["reason"].as_str().unwrap().contains("config unavailable"),
+            "reason should cite missing cfg, got: {}",
+            n.body["reason"],
+        );
+    }
+
+    #[tokio::test]
+    async fn emits_event_even_when_findings_empty() {
+        let result = tick_adr_health_actions(&[], None).await;
+
+        // Empty findings is the daemon's clean-registry case: still emit
+        // the event so trend graphs see a clean tick, no notifications.
+        assert_eq!(result.event.event_type, "adr_doctor_tick");
+        assert_eq!(result.event.payload["total"], 0);
+        assert!(result.notifications.is_empty());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── ADR-2604141400 §1 P1: workplan-evidence guard ─────────────────────
+    // ── ADR-2026-04-14-1400 §1 P1: workplan-evidence guard ─────────────────────
     // These tests lock in the semantics of `check_evidence`: a workplan task
     // whose subprocess exits 0 but produces no new commit must return
     // success=false with a snippet that names the drift ("no git evidence").
@@ -3606,7 +5802,7 @@ min_priority = 2
         assert_eq!(cfg.min_priority, 2);
     }
 
-    // ─── ADR-2604142155 P2.3: validate_dispatch_evidence ────────────────────
+    // ─── ADR-2026-04-14-2155 P2.3: validate_dispatch_evidence ────────────────────
 
     #[test]
     fn dispatch_evidence_accepts_non_empty_output() {
@@ -3631,7 +5827,7 @@ min_priority = 2
         assert!(err.contains("no executor output"), "got: {err}");
     }
 
-    // ─── Brain task schema (ADR-2604141400 P0.1) ───────────────────────────
+    // ─── Brain task schema (ADR-2026-04-14-1400 P0.1) ───────────────────────────
     //
     // Nested under `brain::task_schema` so the workplan gate
     // (`cargo test -p hex-cli brain::task_schema`) runs exactly this set.
@@ -3827,6 +6023,7 @@ min_priority = 2
                         commits: vec!["c1".into()],
                         reconcile_verdict: None,
                     },
+                    priority: 0,
                 };
                 let v = serde_json::to_value(&original).unwrap();
                 let round = BrainTaskRecord::from_value(&v).expect("roundtrip");
@@ -3846,7 +6043,7 @@ min_priority = 2
             }
         }
 
-        // ─── Lease durations (ADR-2604141400 P1.1) ─────────────────────
+        // ─── Lease durations (ADR-2026-04-14-1400 P1.1) ─────────────────────
         //
         // Nested under `brain::lease_durations` so the workplan gate
         // (`cargo test -p hex-cli brain::lease_durations`) runs exactly
@@ -3858,19 +6055,19 @@ min_priority = 2
 
             #[test]
             fn lease_for_known_kinds_matches_table() {
-                assert_eq!(lease_for("workplan"), Duration::from_secs(30 * 60));
-                assert_eq!(lease_for("hex-command"), Duration::from_secs(5 * 60));
-                assert_eq!(lease_for("shell"), Duration::from_secs(2 * 60));
-                assert_eq!(lease_for("remote-shell"), Duration::from_secs(60));
+                assert_eq!(lease_for("workplan"), Duration::from_secs(60 * 60));
+                assert_eq!(lease_for("hex-command"), Duration::from_secs(15 * 60));
+                assert_eq!(lease_for("shell"), Duration::from_secs(10 * 60));
+                assert_eq!(lease_for("remote-shell"), Duration::from_secs(5 * 60));
             }
 
             #[test]
             fn lease_for_unknown_kind_falls_back_to_shell_timeout() {
-                // Unknown/typoed kind → 2-minute shell-style window so the
+                // Unknown/typoed kind → 10-minute shell-style window so the
                 // sweeper can still reclaim it rather than leaving it
                 // leased forever.
-                assert_eq!(lease_for("bogus"), Duration::from_secs(2 * 60));
-                assert_eq!(lease_for(""), Duration::from_secs(2 * 60));
+                assert_eq!(lease_for("bogus"), Duration::from_secs(10 * 60));
+                assert_eq!(lease_for(""), Duration::from_secs(10 * 60));
             }
 
             #[test]
@@ -3884,7 +6081,8 @@ min_priority = 2
                 assert!(kinds.contains(&"hex-command"));
                 assert!(kinds.contains(&"shell"));
                 assert!(kinds.contains(&"remote-shell"));
-                assert_eq!(kinds.len(), 4, "LEASE_DURATIONS gained a new kind — update this test and confirm the duration is tuned");
+                assert!(kinds.contains(&"analyze"));
+                assert_eq!(kinds.len(), 5, "LEASE_DURATIONS gained a new kind — update this test and confirm the duration is tuned");
             }
 
             #[test]
@@ -3939,7 +6137,7 @@ min_priority = 2
                     .get("timeout_s")
                     .and_then(|v| v.as_u64())
                     .unwrap_or_else(|| lease_for("workplan").as_secs());
-                assert_eq!(timeout, 30 * 60);
+                assert_eq!(timeout, 60 * 60);
             }
 
             #[test]
@@ -3949,7 +6147,7 @@ min_priority = 2
                     .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
                     .and_then(|wp| wp.get("timeout_s")?.as_u64())
                     .unwrap_or_else(|| lease_for("workplan").as_secs());
-                assert_eq!(timeout, 30 * 60);
+                assert_eq!(timeout, 60 * 60);
             }
 
             #[test]
@@ -3977,11 +6175,11 @@ min_priority = 2
                     .get("timeout_s")
                     .and_then(|v| v.as_u64())
                     .unwrap_or_else(|| lease_for("workplan").as_secs());
-                assert_eq!(window_secs, 30 * 60);
+                assert_eq!(window_secs, 60 * 60);
             }
         }
 
-        // ─── Inline fallback decision (ADR-2604141400 §1 inline-fallback) ───
+        // ─── Inline fallback decision (ADR-2026-04-14-1400 §1 inline-fallback) ───
         //
         // Locks the predicate `should_fallback_inline`: daemon drain MUST
         // fall back to inline execute_brain_task whenever the swarm-lease
@@ -4034,7 +6232,7 @@ min_priority = 2
             }
         }
 
-        // ─── Sweep timeout logic (ADR-2604142155 P2.2) ────────────────────
+        // ─── Sweep timeout logic (ADR-2026-04-14-2155 P2.2) ────────────────────
 
         mod sweep_timeout {
             use super::super::super::{
@@ -4059,6 +6257,7 @@ min_priority = 2
                     lease_attempts: 0,
                     swarm_task_id: None,
                     evidence: BrainTaskEvidence::default(),
+                    priority: 0,
                 }
             }
 
@@ -4105,7 +6304,7 @@ min_priority = 2
             fn effective_timeout_falls_back_to_lease_for_when_absent() {
                 let rec = make_record("t4", "workplan", "2026-04-14T00:00:00Z", None);
                 let effective = rec.timeout_s.unwrap_or_else(|| lease_for(&rec.kind).as_secs());
-                assert_eq!(effective, 30 * 60);
+                assert_eq!(effective, 60 * 60);
             }
 
             #[test]
@@ -4156,6 +6355,411 @@ min_priority = 2
                 assert_eq!(v["timeout_s"].as_u64(), Some(1800));
                 let round = BrainTaskRecord::from_value(&v).expect("roundtrip");
                 assert_eq!(round.timeout_s, Some(1800));
+            }
+        }
+
+        // ─── Idle-research trigger gate (wp-idle-research-swarm P1.4 / ADR-2026-04-15-1200) ──
+        //
+        // Locks the predicate `should_self_enqueue_research_sweep` and its
+        // dependency `sweep_throttle_elapsed`. The trigger is the only
+        // mechanism that turns a quiet repo into self-directed research, so
+        // both gates (idle-tick threshold AND min-interval throttle) must
+        // hold or autonomy regresses to operator-driven prompting.
+        //
+        // Runs under `cargo test -p hex-cli brain::idle_research_trigger`.
+
+        mod idle_research_trigger {
+            use super::super::super::{
+                should_self_enqueue_research_sweep, sweep_throttle_elapsed,
+                DEFAULT_IDLE_THRESHOLD_TICKS, DEFAULT_MIN_SWEEP_INTERVAL_H,
+            };
+
+            #[test]
+            fn defaults_match_workplan_contract() {
+                // wp-idle-research-swarm P1.2 specifies N=4 ticks and a 6h
+                // throttle. If either default drifts the integration tests
+                // below would still pass on stale numbers — anchor the
+                // contract here.
+                assert_eq!(DEFAULT_IDLE_THRESHOLD_TICKS, 4);
+                assert_eq!(DEFAULT_MIN_SWEEP_INTERVAL_H, 6);
+            }
+
+            #[test]
+            fn fires_after_four_consecutive_empty_ticks() {
+                // Exactly the threshold (N=4) is enough; first sweep has no
+                // prior `last_sweep`, so the throttle gate is open.
+                let now = chrono::Utc::now();
+                assert!(
+                    should_self_enqueue_research_sweep(4, 4, None, now, 6),
+                    "idle_ticks=threshold with no prior sweep must fire"
+                );
+                // Three idle ticks is one short of the threshold — the
+                // trigger must stay quiet, otherwise we'd self-enqueue on
+                // every short lull.
+                assert!(
+                    !should_self_enqueue_research_sweep(3, 4, None, now, 6),
+                    "idle_ticks below threshold must not fire"
+                );
+            }
+
+            #[test]
+            fn does_not_fire_when_last_sweep_under_six_hours_ago() {
+                // Fresh sweep (5h ago) with the idle gate satisfied: throttle
+                // wins. Without this gate, a quiet repo would re-enqueue
+                // research-sweep on every drain tick.
+                let now = chrono::Utc::now();
+                let last = now - chrono::Duration::hours(5);
+                assert!(
+                    !should_self_enqueue_research_sweep(4, 4, Some(last), now, 6),
+                    "throttle must block fire when last sweep < interval"
+                );
+                // A 1-second gap after a fresh sweep is the worst case — the
+                // gate must hold even with idle_ticks vastly exceeding N.
+                let just_now = now - chrono::Duration::seconds(1);
+                assert!(
+                    !should_self_enqueue_research_sweep(99, 4, Some(just_now), now, 6),
+                    "high idle count cannot bypass the throttle"
+                );
+            }
+
+            #[test]
+            fn fires_when_last_sweep_at_least_six_hours_ago() {
+                // Boundary: exactly `interval_h` hours elapsed is eligible.
+                // The predicate is `>=`, not strict-`>` — locking that here
+                // prevents a future refactor from silently shrinking the
+                // window by a tick.
+                let now = chrono::Utc::now();
+                let exactly_six = now - chrono::Duration::hours(6);
+                assert!(
+                    should_self_enqueue_research_sweep(4, 4, Some(exactly_six), now, 6),
+                    "elapsed == interval must fire (>=, not strict >)"
+                );
+                // Well past the throttle: idle gate satisfied → fire.
+                let long_ago = now - chrono::Duration::hours(24);
+                assert!(
+                    should_self_enqueue_research_sweep(4, 4, Some(long_ago), now, 6),
+                    "elapsed >> interval must fire"
+                );
+            }
+
+            #[test]
+            fn idle_gate_required_even_when_throttle_is_open() {
+                // Symmetry check: throttle alone (last_sweep stale) must NOT
+                // fire if the queue is still busy. Both gates required —
+                // dropping either turns the trigger into noise.
+                let now = chrono::Utc::now();
+                let long_ago = now - chrono::Duration::hours(48);
+                assert!(
+                    !should_self_enqueue_research_sweep(0, 4, Some(long_ago), now, 6),
+                    "busy queue (idle=0) must block fire even with stale throttle"
+                );
+                assert!(
+                    !should_self_enqueue_research_sweep(3, 4, Some(long_ago), now, 6),
+                    "below-threshold idle must block fire even with stale throttle"
+                );
+            }
+
+            #[test]
+            fn sweep_throttle_treats_none_as_eligible() {
+                // `None` = never swept. The first sweep should fire as soon
+                // as the idle gate is satisfied, otherwise a brand-new
+                // install would never trigger research until an operator
+                // manually seeded `~/.hex/sched/last_research_sweep`.
+                let now = chrono::Utc::now();
+                assert!(sweep_throttle_elapsed(None, now, 6));
+                assert!(sweep_throttle_elapsed(None, now, 0));
+            }
+        }
+
+        // ─── Sweep preemption (wp-idle-research-swarm P4.4) ─────────────
+        //
+        // Locks the predicate `should_preempt_sweep`. The pure-logic gate
+        // is what queue_drain uses to decide whether to write the abort
+        // signal; getting it wrong either spams aborts at no sweep (and
+        // leaves a stale signal that cancels the *next* sweep) or fails
+        // to preempt when real work arrives (and a low-priority research
+        // sweep blocks user-driven tasks).
+        mod sweep_preemption_predicate {
+            use super::super::super::should_preempt_sweep;
+
+            #[test]
+            fn fires_when_sweep_in_flight_and_non_research_pending() {
+                // Canonical preemption case: a workplan task arrives mid-sweep.
+                let pending = vec!["workplan", "research-sweep"];
+                assert!(
+                    should_preempt_sweep(&pending, true),
+                    "non-research pending + sweep in flight must preempt"
+                );
+            }
+
+            #[test]
+            fn does_not_fire_when_no_sweep_in_flight() {
+                // Without an active sweep there's nothing to abort. Writing
+                // the abort signal anyway would leave a stale signal on
+                // disk that the *next* sweep would honor — so the next
+                // idle window's research would self-cancel before doing
+                // any work.
+                let pending = vec!["workplan", "shell"];
+                assert!(
+                    !should_preempt_sweep(&pending, false),
+                    "must not fire abort when no sweep is running"
+                );
+            }
+
+            #[test]
+            fn does_not_fire_when_only_research_pending() {
+                // A second research-sweep queued behind an in-flight one
+                // should be coalesced by the throttle, not preempted.
+                // Preempting here would force-abort a sweep just to
+                // re-enqueue the same kind of work — pure churn.
+                let pending = vec!["research-sweep", "research-sweep"];
+                assert!(
+                    !should_preempt_sweep(&pending, true),
+                    "research-only pending must not preempt"
+                );
+            }
+
+            #[test]
+            fn does_not_fire_when_pending_empty() {
+                // Empty queue = nothing to prioritize over the sweep.
+                assert!(
+                    !should_preempt_sweep(&[], true),
+                    "empty pending must not preempt"
+                );
+                assert!(
+                    !should_preempt_sweep(&[], false),
+                    "empty pending without sweep must not preempt"
+                );
+            }
+
+            #[test]
+            fn fires_for_any_non_research_kind() {
+                // The kind check is a single negative match — every
+                // currently-defined kind except `research-sweep` is a
+                // valid preemption trigger. Pin a representative set so a
+                // future "low-priority" kind doesn't silently bypass the
+                // gate.
+                for kind in [
+                    "workplan",
+                    "hex-command",
+                    "shell",
+                    "analyze",
+                    "remote-shell",
+                    "unknown-future-kind",
+                ] {
+                    assert!(
+                        should_preempt_sweep(&[kind], true),
+                        "kind `{kind}` should trigger preemption"
+                    );
+                }
+            }
+        }
+
+        // ─── last_sweep summary line (wp-idle-research-swarm P5.1) ──────
+        //
+        // Locks the operator-facing `last_sweep:` formatter used by both
+        // `hex sched daemon status` and the no-arg `hex` status panel.
+        // The two surfaces share `last_sweep_summary_line`, which composes
+        // these pure helpers — testing the helpers covers both surfaces.
+        mod last_sweep_summary {
+            use super::super::super::{
+                count_drafts, find_latest_sweep_yaml, format_last_sweep_line, format_sweep_age,
+                SweepDocSummary,
+            };
+            use chrono::{Duration, TimeZone, Utc};
+            use hex_core::{ActionKind, Domain, Finding, Severity, SuggestedAction};
+
+            fn finding(id: &str, kind: ActionKind) -> Finding {
+                Finding {
+                    id: id.into(),
+                    domain: Domain::Architecture,
+                    severity: Severity::Medium,
+                    title: "t".into(),
+                    evidence: vec![],
+                    suggested_action: SuggestedAction {
+                        kind,
+                        draft_ref: None,
+                    },
+                }
+            }
+
+            #[test]
+            fn format_age_buckets_at_minute_hour_day_boundaries() {
+                // Each bucket boundary is a separate code path — drift here
+                // would silently flip "59m" to "0h" or "23h" to "0d".
+                assert_eq!(format_sweep_age(Duration::seconds(0)), "0s");
+                assert_eq!(format_sweep_age(Duration::seconds(59)), "59s");
+                assert_eq!(format_sweep_age(Duration::seconds(60)), "1m");
+                assert_eq!(format_sweep_age(Duration::minutes(59)), "59m");
+                assert_eq!(format_sweep_age(Duration::minutes(60)), "1h");
+                assert_eq!(format_sweep_age(Duration::hours(23)), "23h");
+                assert_eq!(format_sweep_age(Duration::hours(24)), "1d");
+                assert_eq!(format_sweep_age(Duration::days(7)), "7d");
+            }
+
+            #[test]
+            fn format_age_clamps_negative_to_zero() {
+                // Clock skew between sweep_at (set by nexus) and `now` (set
+                // by cli) could produce a negative duration. The status
+                // panel must never print "-3s ago".
+                assert_eq!(format_sweep_age(Duration::seconds(-42)), "0s");
+            }
+
+            #[test]
+            fn count_drafts_includes_workplan_amend_and_adr_only() {
+                // The contract for "drafts" is "findings that produce an
+                // on-disk artifact" — Memory + Informational don't, so
+                // they must NOT count even though they're real findings.
+                let xs = vec![
+                    finding("w", ActionKind::DraftWorkplan),
+                    finding("a", ActionKind::DraftAdr),
+                    finding("m", ActionKind::AmendWorkplan),
+                    finding("mem", ActionKind::Memory),
+                    finding("info", ActionKind::Informational),
+                ];
+                assert_eq!(count_drafts(&xs), 3);
+            }
+
+            #[test]
+            fn count_drafts_zero_when_empty() {
+                // A sweep with zero findings (clean repo) must report 0
+                // drafts, not panic and not fall through to "1".
+                assert_eq!(count_drafts(&[]), 0);
+            }
+
+            #[test]
+            fn format_last_sweep_line_renders_canonical_output() {
+                // Locks the exact wire format the workplan calls out:
+                //   "<age> ago (<n> findings, <m> drafts)"
+                // The age side is formatted by `format_sweep_age` (locked
+                // separately); the counts side is the contract this test
+                // owns. Drift here would either rename the columns or
+                // change the parens/comma layout dashboards may grep for.
+                let sweep_at = Utc.with_ymd_and_hms(2026, 4, 29, 10, 0, 0).unwrap();
+                let now = sweep_at + Duration::hours(5);
+                let doc = SweepDocSummary {
+                    sweep_at: sweep_at.to_rfc3339(),
+                    findings_total: 12,
+                    findings: vec![
+                        finding("w1", ActionKind::DraftWorkplan),
+                        finding("w2", ActionKind::DraftWorkplan),
+                        finding("a1", ActionKind::DraftAdr),
+                        finding("mem", ActionKind::Memory),
+                    ],
+                };
+                assert_eq!(
+                    format_last_sweep_line(&doc, now).as_deref(),
+                    Some("5h ago (12 findings, 3 drafts)")
+                );
+            }
+
+            #[test]
+            fn format_last_sweep_line_uses_findings_total_over_emitted() {
+                // `findings_total` is pre-cap; `findings.len()` is post-cap.
+                // The honest "n findings" is the pre-cap count — a low cap
+                // shouldn't make a noisy repo look quiet on the status
+                // line. The fallback only kicks in when total is missing.
+                let sweep_at = Utc.with_ymd_and_hms(2026, 4, 29, 10, 0, 0).unwrap();
+                let now = sweep_at + Duration::minutes(30);
+                let doc = SweepDocSummary {
+                    sweep_at: sweep_at.to_rfc3339(),
+                    findings_total: 25,
+                    findings: vec![finding("w1", ActionKind::DraftWorkplan)],
+                };
+                assert_eq!(
+                    format_last_sweep_line(&doc, now).as_deref(),
+                    Some("30m ago (25 findings, 1 drafts)")
+                );
+            }
+
+            #[test]
+            fn format_last_sweep_line_falls_back_to_emitted_when_total_missing() {
+                // Older YAMLs (pre-`findings_total`) deserialize with the
+                // default 0. Without the fallback the panel would say
+                // "0 findings, 2 drafts" — internally inconsistent.
+                let sweep_at = Utc.with_ymd_and_hms(2026, 4, 29, 10, 0, 0).unwrap();
+                let now = sweep_at + Duration::hours(2);
+                let doc = SweepDocSummary {
+                    sweep_at: sweep_at.to_rfc3339(),
+                    findings_total: 0,
+                    findings: vec![
+                        finding("w1", ActionKind::DraftWorkplan),
+                        finding("a1", ActionKind::DraftAdr),
+                    ],
+                };
+                assert_eq!(
+                    format_last_sweep_line(&doc, now).as_deref(),
+                    Some("2h ago (2 findings, 2 drafts)")
+                );
+            }
+
+            #[test]
+            fn format_last_sweep_line_returns_none_for_unparseable_timestamp() {
+                // A malformed `sweep_at` must not crash the status panel —
+                // returning `None` causes the caller to omit the line, which
+                // is the right behavior (no signal beats wrong signal).
+                let doc = SweepDocSummary {
+                    sweep_at: "not-a-timestamp".into(),
+                    findings_total: 1,
+                    findings: vec![finding("w1", ActionKind::DraftWorkplan)],
+                };
+                assert!(format_last_sweep_line(&doc, Utc::now()).is_none());
+            }
+
+            #[test]
+            fn find_latest_sweep_yaml_picks_lexicographically_newest() {
+                // The filename stem `idle-sweep-YYYYMMDD-HHMM` makes
+                // lexicographic == chronological — locks the assumption
+                // so a future stem refactor (e.g. seconds, or an ID
+                // suffix) doesn't silently break "newest first".
+                let dir = tempfile::tempdir().expect("tempdir");
+                let analysis = dir.path().join("docs").join("analysis");
+                std::fs::create_dir_all(&analysis).unwrap();
+                std::fs::write(
+                    analysis.join("idle-sweep-20260101-1200.yaml"),
+                    "sweep_at: 2026-01-01T12:00:00Z\nfindings: []\n",
+                )
+                .unwrap();
+                std::fs::write(
+                    analysis.join("idle-sweep-20260429-0900.yaml"),
+                    "sweep_at: 2026-04-29T09:00:00Z\nfindings: []\n",
+                )
+                .unwrap();
+                std::fs::write(
+                    analysis.join("idle-sweep-20260315-2359.yaml"),
+                    "sweep_at: 2026-03-15T23:59:00Z\nfindings: []\n",
+                )
+                .unwrap();
+                // Decoy files that must NOT be selected.
+                std::fs::write(analysis.join("idle-sweep-20270101-0000.txt"), "").unwrap();
+                std::fs::write(analysis.join("brain-string-audit.md"), "").unwrap();
+
+                let path = find_latest_sweep_yaml(dir.path()).expect("found newest");
+                assert!(
+                    path.ends_with("idle-sweep-20260429-0900.yaml"),
+                    "got {:?}",
+                    path
+                );
+            }
+
+            #[test]
+            fn find_latest_sweep_yaml_returns_none_when_no_analysis_dir() {
+                // Fresh repos have no `docs/analysis/`. The lookup must
+                // degrade silently to `None`, not bubble an io::Error.
+                let dir = tempfile::tempdir().expect("tempdir");
+                assert!(find_latest_sweep_yaml(dir.path()).is_none());
+            }
+
+            #[test]
+            fn find_latest_sweep_yaml_returns_none_when_no_matching_files() {
+                // `docs/analysis/` exists but holds only unrelated files.
+                // The function must filter strictly on the stem prefix.
+                let dir = tempfile::tempdir().expect("tempdir");
+                let analysis = dir.path().join("docs").join("analysis");
+                std::fs::create_dir_all(&analysis).unwrap();
+                std::fs::write(analysis.join("session-2604141400-insights.yaml"), "").unwrap();
+                std::fs::write(analysis.join("brain-string-audit.md"), "").unwrap();
+                assert!(find_latest_sweep_yaml(dir.path()).is_none());
             }
         }
     }

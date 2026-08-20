@@ -1,4 +1,4 @@
-//! Integration test: full task lifecycle via SpacetimeDB (ADR-2603300100 P5.1).
+//! Integration test: full task lifecycle via SpacetimeDB (ADR-2026-03-30-0100 P5.1).
 //!
 //! Tests the end-to-end flow:
 //!   1. Create swarm + task via hex-nexus REST (TaskPayload JSON encoded title)

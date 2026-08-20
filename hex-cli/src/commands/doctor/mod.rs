@@ -1,10 +1,13 @@
 //! Installation and pipeline validation command.
 //!
 //! `hex doctor` — verifies hex installation and project health
-//! `hex doctor composition` — probes composition prerequisites (standalone vs Claude-integrated)
+//! `hex doctor composition` — probes composition prerequisites (SpacetimeDB,
+//!     hex-nexus, Ollama, claude binary, CLAUDE_SESSION_ID) to determine
+//!     whether the standalone or Claude-integrated variant will be selected.
 //! `hex validate pipeline` — runs full build pipeline (build → test → analyze → validate)
 
 pub mod composition;
+pub mod liveness;
 
 use colored::Colorize;
 

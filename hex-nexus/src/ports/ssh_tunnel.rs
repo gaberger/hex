@@ -1,7 +1,7 @@
 //! Port for SSH tunnel lifecycle management (ADR-040).
 
 use async_trait::async_trait;
-use crate::remote::transport::{
+use crate::domain::transport::{
     SshTunnelConfig, TunnelHandle, TunnelHealth, TunnelInfo, TransportError,
 };
 

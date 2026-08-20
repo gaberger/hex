@@ -1,6 +1,6 @@
 //! Ollama inference adapter — the first concrete `IInferencePort`
 //! implementation in hex-nexus and the reference provider for standalone mode
-//! (ADR-2604112000).
+//! (ADR-2026-04-11-2000).
 //!
 //! The adapter talks to an Ollama HTTP server (default
 //! `http://localhost:11434`) via three endpoints:
@@ -120,7 +120,7 @@ struct GenerateRequest<'a> {
     system: Option<&'a str>,
     stream: bool,
     /// GBNF grammar constraint — passed through to llama.cpp via Ollama's
-    /// `options.grammar` field (ADR-2604120202 Phase 2).
+    /// `options.grammar` field (ADR-2026-04-12-0202 Phase 2).
     #[serde(skip_serializing_if = "Option::is_none")]
     grammar: Option<&'a str>,
 }

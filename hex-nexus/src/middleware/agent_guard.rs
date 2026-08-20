@@ -1,9 +1,9 @@
 //! Agent guard middleware — enforces that HexFlo/swarm endpoints are called
 //! only by registered hex-agents.
 //!
-//! Checks for `X-Hex-Agent-Id` header and verifies the agent exists in the
-//! state backend (SpacetimeDB or SQLite). Only applies to mutating requests
-//! on guarded path prefixes (/api/swarms, /api/hexflo).
+//! Checks for `X-Hex-Agent-Id` header and verifies the agent exists in
+//! SpacetimeDB. Only applies to mutating requests on guarded path prefixes
+//! (/api/swarms, /api/hexflo).
 
 use axum::{
     extract::State,

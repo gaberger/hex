@@ -34,7 +34,7 @@ function saveDismissed(ids: Set<string>) {
 
 const ProjectOverview: Component = () => {
   // Map shared projects to ProjectInfo shape
-  const projects = () => sharedProjects().map((p): ProjectInfo => ({
+  const projects = () => (sharedProjects() ?? []).map((p): ProjectInfo => ({
     id: p.id,
     name: p.name,
     path: p.path,

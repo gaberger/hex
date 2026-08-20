@@ -1,4 +1,4 @@
-// Pre-existing clippy lints — tracked for cleanup in ADR-2603222050
+// Pre-existing clippy lints — tracked for cleanup in ADR-2026-03-22-2050
 #![allow(
     clippy::literal_string_with_formatting_args,
     clippy::too_many_arguments,
@@ -15,7 +15,10 @@
 pub use hex_core;
 
 pub mod adapters;
-pub mod analysis;
+// Extracted to its own crate (ADR-2606071340 P1). Re-exported as `analysis`
+// so existing `crate::analysis::*` consumers keep working unchanged.
+pub use hex_analysis as analysis;
+pub mod build_banner;
 pub mod composition;
 pub mod composition_root;
 pub mod complexity;
@@ -29,15 +32,22 @@ pub mod daemon;
 pub mod git;
 pub mod embed;
 pub mod middleware;
+pub mod domain;
 pub mod orchestration;
 pub mod ports;
+pub use hex_exec::tools;
 pub mod remote;
+pub mod research;
 pub mod routes;
 pub mod state;
 pub mod usecases;
 pub mod state_config;
 pub mod spacetime_bindings;
 pub mod config_sync;
+pub use hex_exec::compress;
+pub use hex_exec::direct_exec;
+pub use hex_exec::direct_react;
+pub use hex_exec::direct_workspace;
 pub mod spacetime_launcher;
 pub mod templates;
 pub mod sched_service;
@@ -70,7 +80,7 @@ impl Default for HubConfig {
     fn default() -> Self {
         Self {
             port: DEFAULT_PORT,
-            bind: "127.0.0.1".to_string(),
+            bind: "0.0.0.0".to_string(),
             token: None,
             is_daemon: false,
             no_agent: false,
@@ -110,11 +120,109 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             app_state.agent_manager = Some(agent_mgr);
             app_state.state_port = Some(state_port);
 
-            // Wire inference port for Path C headless dispatch (ADR-2604120202 P5.1).
+            // Substrate swap-ticket port (ADR-2026-04-26-1500). Construct a
+            // second SpacetimeStateAdapter pointed at the same STDB —
+            // SpacetimeStateAdapter impls both IStatePort and
+            // ISwapTicketStatePort independently. Two HTTP clients, one
+            // backend; cheap and keeps the port abstractions orthogonal.
+            {
+                use crate::adapters::spacetime_state::{SpacetimeConfig, SpacetimeStateAdapter};
+                let cfg = state_config::resolve_config();
+                let stdb_cfg = SpacetimeConfig {
+                    host: cfg.host.clone(),
+                    database: cfg.database.clone(),
+                    auth_token: cfg.auth_token.clone(),
+                };
+                app_state.swap_ticket_port = Some(Arc::new(SpacetimeStateAdapter::new(stdb_cfg)));
+            }
+
+            // Wire inference port for Path C headless dispatch (ADR-2026-04-12-0202 P5.1).
             // In standalone mode, this is OllamaInferenceAdapter pointed at OLLAMA_HOST.
             if !orchestration::is_claude_code_session() {
                 app_state.inference_port = Some(composition::standalone::default_inference_adapter());
                 tracing::info!("Path C inference port wired (standalone Ollama)");
+            }
+
+            // Substrate runtime composition + shadow router for the
+            // inference port (ADR-2026-04-26-1500). Built only when both an
+            // inference port and a swap_ticket_port are available — the
+            // substrate is opt-in for now, consumers route through it
+            // instead of calling inference_port.complete() directly.
+            if let (Some(inference_port), Some(swap_port)) = (
+                app_state.inference_port.clone(),
+                app_state.swap_ticket_port.clone(),
+            ) {
+                use hex_core::composition::{
+                    AdapterId, InMemoryComposition, PortId, PortRegistry,
+                };
+                use std::any::Any;
+                let mut reg = PortRegistry::new();
+                reg.bind(
+                    PortId::new("inference"),
+                    AdapterId::new("default-inference"),
+                    Arc::new(()) as Arc<dyn Any + Send + Sync>,
+                );
+                let project_id = std::env::var("HEX_PROJECT_ID").unwrap_or_else(|_| "default".into());
+                let comp = Arc::new(adapters::spacetime_composition::SpacetimeRuntimeComposition::new(
+                    InMemoryComposition::new(reg),
+                    swap_port.clone(),
+                    project_id,
+                ));
+                let router =
+                    Arc::new(orchestration::shadow_router::ShadowRouter::new(
+                        comp.clone(),
+                        swap_port,
+                    ));
+                router
+                    .register_handle(AdapterId::new("default-inference"), inference_port)
+                    .await;
+                app_state.inference_runtime_composition = Some(comp);
+                app_state.inference_shadow_router = Some(router);
+                tracing::info!(
+                    "Substrate inference shadow_router wired (adapter id: default-inference)"
+                );
+            }
+
+            // Substrate SECRET port wiring (ADR-2026-04-26-1500 P10 +
+            // ADR-2026-04-26-2100 cookbook). Bind EnvSecretAdapter as the
+            // default-secret live binding. Operator can shadow-test
+            // alternative ISecretPort impls (vault, OS keychain) against
+            // it via the same hex substrate swap-inference flow once
+            // those impls land. Optional prefix from HEX_SECRET_PREFIX
+            // env so operators can isolate substrate-managed secrets
+            // from incidentally-set env vars.
+            if let Some(swap_port) = app_state.swap_ticket_port.clone() {
+                use hex_core::composition::{
+                    AdapterId, InMemoryComposition, PortId, PortRegistry,
+                };
+                use std::any::Any;
+                let prefix = std::env::var("HEX_SECRET_PREFIX").unwrap_or_default();
+                let env_secret: Arc<dyn hex_core::ports::secret::ISecretPort> =
+                    Arc::new(adapters::env_secret::EnvSecretAdapter::with_prefix(prefix));
+                let mut reg = PortRegistry::new();
+                reg.bind(
+                    PortId::new("secret"),
+                    AdapterId::new("default-secret"),
+                    Arc::new(()) as Arc<dyn Any + Send + Sync>,
+                );
+                let project_id = std::env::var("HEX_PROJECT_ID").unwrap_or_else(|_| "default".into());
+                let comp = Arc::new(adapters::spacetime_composition::SpacetimeRuntimeComposition::new(
+                    InMemoryComposition::new(reg),
+                    swap_port.clone(),
+                    project_id,
+                ));
+                let router = Arc::new(orchestration::secret_shadow_router::SecretShadowRouter::new(
+                    comp.clone(),
+                    swap_port,
+                ));
+                router
+                    .register_handle(AdapterId::new("default-secret"), env_secret)
+                    .await;
+                app_state.secret_runtime_composition = Some(comp);
+                app_state.secret_shadow_router = Some(router);
+                tracing::info!(
+                    "Substrate secret shadow_router wired (adapter id: default-secret)"
+                );
             }
 
             tracing::info!("IStatePort wired — agent_manager + state_port ready");
@@ -171,13 +279,16 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 .ok().flatten()
                 .or_else(|| std::env::var("OPENROUTER_API_KEY").ok());
 
-            if anthropic_key.is_some() {
+            if let Some(ref k) = anthropic_key {
                 tracing::info!("ANTHROPIC_API_KEY resolved from vault");
-                app_state.anthropic_api_key = anthropic_key;
+                // Re-export so SOP executor + other in-process modules can pick it up.
+                std::env::set_var("ANTHROPIC_API_KEY", k);
+                app_state.anthropic_api_key = anthropic_key.clone();
             }
-            if openrouter_key.is_some() {
+            if let Some(ref k) = openrouter_key {
                 tracing::info!("OPENROUTER_API_KEY resolved from vault");
-                app_state.openrouter_api_key = openrouter_key;
+                std::env::set_var("OPENROUTER_API_KEY", k);
+                app_state.openrouter_api_key = openrouter_key.clone();
             }
 
             app_state.spacetime_secrets = Some(Arc::new(client));
@@ -198,6 +309,8 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             .unwrap_or_else(|_| hex_core::stdb_database_for_module("inference-gateway").to_string());
         let chat_db = std::env::var("HEX_CHAT_STDB_DATABASE")
             .unwrap_or_else(|_| hex_core::stdb_database_for_module("chat-relay").to_string());
+        let agent_comm_db = std::env::var("HEX_AGENT_COMM_STDB_DATABASE")
+            .unwrap_or_else(|_| hex_core::stdb_database_for_module("agent-comms").to_string());
 
         let inference_client =
             adapters::spacetime_inference::SpacetimeInferenceClient::new(
@@ -205,7 +318,9 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 inference_db,
             );
         let chat_client =
-            adapters::spacetime_chat::SpacetimeChatClient::new(stdb_host, chat_db);
+            adapters::spacetime_chat::SpacetimeChatClient::new(stdb_host.clone(), chat_db.clone());
+        let agent_comm_client =
+            adapters::spacetime_agent_comm::SpacetimeAgentCommAdapter::new(stdb_host, agent_comm_db);
 
         // Push resolved API keys into inference-gateway's private `inference_api_key` table.
         // This is required for `execute_inference` to include auth headers — the table is
@@ -238,9 +353,225 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
 
         app_state.inference_stdb = Some(Arc::new(inference_client));
         app_state.chat_stdb = Some(Arc::new(chat_client));
-        tracing::info!("SpacetimeDB inference-gateway + chat-relay clients initialized");
+        app_state.agent_comm_stdb = Some(Arc::new(agent_comm_client));
+        tracing::info!("SpacetimeDB inference-gateway + chat-relay + agent-comms clients initialized");
 
-        // P4: Background stale-model prune pass (ADR-2603311000).
+        // Initialise repo grounding (ADR catalog + dashboard URLs) before
+        // the responder spawns. This prevents personas from fabricating
+        // "I sent it to your secure channel" non-answers.
+        {
+            let repo_root = std::env::var("HEX_REPO_ROOT")
+                .ok()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| {
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                });
+            crate::orchestration::repo_grounding::init(&repo_root);
+            if let Some(facts) = crate::orchestration::repo_grounding::facts() {
+                tracing::info!(
+                    adr_count = facts.adrs.len(),
+                    repo_root = %facts.repo_root.display(),
+                    "repo_grounding initialised"
+                );
+            }
+        }
+
+        // ADR-2026-05-08-1126 P4 — integrator subscriber drives merge-team voting:
+        // polls merge_request rows, dispatches validation-judge (cargo check),
+        // tallies via the STDB reducer, runs `hex worktree merge` on approved.
+        // Disabled with HEX_DISABLE_INTEGRATOR_SUBSCRIBER=1.
+        {
+            let stdb_host_for_integrator = std::env::var("HEX_SPACETIMEDB_HOST")
+                .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+            let hex_db_for_integrator = std::env::var("HEX_STDB_DATABASE").unwrap_or_else(|_| {
+                hex_core::stdb_database_for_module("hexflo-coordination").to_string()
+            });
+            crate::orchestration::integrator_subscriber::spawn(
+                stdb_host_for_integrator.clone(),
+                hex_db_for_integrator.clone(),
+            );
+
+            // ADR-[PHONE] — /proc monitor: samples CPU/mem every 15s; the STDB-side resource_supervisor_tick (60s)
+            // emits resource_anomaly rows the operator sees in /resources.
+            if std::env::var("HEX_DISABLE_RESOURCE_OBSERVER").is_err() {
+                crate::orchestration::resource_observer::spawn(
+                    stdb_host_for_integrator.clone(),
+                    hex_db_for_integrator.clone(),
+                );
+            }
+
+            // Cost watchdog: polls cost_meter every N mins, escalates if burn exceeds threshold.
+            // Disabled with HEX_DISABLE_COST_WATCHDOG=1.
+            if std::env::var("HEX_DISABLE_COST_WATCHDOG").is_err() {
+                let stdb_host_cost = stdb_host_for_integrator.clone();
+                let hex_db_cost = hex_db_for_integrator.clone();
+                tokio::spawn(async move {
+                    crate::orchestration::cost_watchdog::run(stdb_host_cost, hex_db_cost).await;
+                });
+                tracing::info!("cost_watchdog spawned — monitoring inference burn rate");
+            }
+
+            // ADR → workplan auto-bridge (closes the self-managing loop)
+            crate::orchestration::workplan_auto_emitter::spawn(
+                stdb_host_for_integrator.clone(),
+                hex_db_for_integrator.clone(),
+            );
+
+            // Top-down workplan driver — owns docs/workplans/feat-*.json and
+            // dispatches the next dep-satisfied incomplete step every tick
+            // until the whole workplan is complete or the conductor escalates
+            // a stall to engineering-lead. Surfaced 2026-05-28 during the
+            // ebay-mvp scaling test: gap_dispatcher fires on gap:* keys with
+            // a 30-min/6-hr cadence and pool_autopause kills idle pools, so
+            // a 32-step workplan got one tool plan and went silent.
+            {
+                let conductor_repo_root = std::env::var("HEX_REPO_ROOT")
+                    .ok()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| {
+                        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    });
+                crate::orchestration::workplan_conductor::spawn(conductor_repo_root.clone());
+                crate::orchestration::auto_repair::spawn(conductor_repo_root);
+            }
+
+            // Auto-seed merge-team default policy + persona pools.
+            // STDB schema-change semantics on republish wipe row data,
+            // so we re-init on every nexus startup. Reducers are idempotent —
+            // existing rows are skipped, operator customizations preserved.
+            //
+            // Disabled via HEX_DISABLE_AUTO_INIT=1 if you want to bring up
+            // an empty system for testing.
+            if std::env::var("HEX_DISABLE_AUTO_INIT").is_err() {
+                let host_init = stdb_host_for_integrator.clone();
+                let db_init = hex_db_for_integrator.clone();
+                tokio::spawn(async move {
+                    // Wait for STDB to finish accepting writes after publish.
+                    tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+                    let client = match reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(10))
+                        .build()
+                    {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "auto-init: client build failed");
+                            return;
+                        }
+                    };
+                    for reducer in &[
+                        "merge_team_init",
+                        "persona_init",
+                        "resource_supervisor_init",
+                        "supervisor_init",
+                        "commitment_init",
+                        // claim_persona_turn has no init — it's per-thread on demand
+                    ] {
+                        let url = format!("{}/v1/database/{}/call/{}", host_init, db_init, reducer);
+                        match client.post(&url).json(&serde_json::json!([])).send().await {
+                            Ok(r) if r.status().is_success() => {
+                                tracing::info!(reducer, "auto-init: seeded");
+                            }
+                            Ok(r) => tracing::debug!(reducer, status = %r.status(), "auto-init: non-success"),
+                            Err(e) => tracing::debug!(reducer, error = %e, "auto-init: transport error"),
+                        }
+                    }
+
+                    // Seed worker_pool_intent rows for the 31 canonical persona
+                    // pools. Without this the supervisor sees 0 pools at every
+                    // tick and never spawns hex-agent workers — surfaced
+                    // 2026-05-28 during the ebay-mvp scaling test, where one
+                    // nexus-internal org_responder loop was doing the entire
+                    // build because no IC processes existed. STDB
+                    // schema-change-on-publish wipes the table, so we
+                    // re-emit on every restart; worker_pool_intent_set is
+                    // idempotent (UPSERT semantics).
+                    //
+                    // Disabled via HEX_DISABLE_POOL_SEED=1 for forensic runs.
+                    if std::env::var("HEX_DISABLE_POOL_SEED").is_err() {
+                        // Lean fleet (2026-05-28 refactor) — 5 core personas
+                        // instead of 31. Each absorbs the responsibilities of
+                        // related specialists; org_responder + persona_prompt
+                        // still drive the per-role prompts/models, but the
+                        // process pool shrinks from 31 → 5.
+                        //
+                        // Mapping:
+                        //   hex-coder        ← hex-coder, hex-fixer, rust-refactorer
+                        //   hex-tester       ← hex-tester, behavioral-spec-writer,
+                        //                       validation-judge, scaffold-validator
+                        //   hex-reviewer     ← hex-reviewer, ADR-reviewer,
+                        //                       adversarial-red/blue, dead-code-analyzer
+                        //   integrator       ← integrator, hex-documenter,
+                        //                       sre-engineer, sre-lead, platform-engineer
+                        //   engineering-lead ← all execs + leads (CTO/CPO/COO/CISO/
+                        //                       chief-visionary/chief-architect/ceo/
+                        //                       product-lead, etc.)
+                        //
+                        // Surfaced 2026-05-28 ebay-mvp scaling test: 26 of 31
+                        // personas processed zero work over a 6-hour run; the
+                        // long tail consumed process slots, autopause cycles,
+                        // and orphan_reaper attention for nothing. Specialist
+                        // persona prompts are preserved as templates; the
+                        // conductor routes onto the 5 lean roles via
+                        // workplan_conductor::route_step_to_persona.
+                        const POOL_ROLES: &[&str] = &[
+                            "hex-coder",
+                            "hex-tester",
+                            "hex-reviewer",
+                            "integrator",
+                            "engineering-lead",
+                        ];
+                        let owner = format!("nexus-{}", std::process::id());
+                        let mut seeded = 0;
+                        let mut skipped = 0;
+                        // ADR-2606071340 P0: the single-agent epoch does NOT auto-seed
+                        // the worker-pool roster — these desired=1 rows make the
+                        // supervisor spawn a hex-agent fleet (659 procs flooded the
+                        // machine 2026-06-07). Gated off by default; opt in explicitly
+                        // with HEX_SUPERVISOR_AUTOSEED=1. (Mirrors the supervisor_subscriber gate.)
+                        let autoseed = std::env::var("HEX_SUPERVISOR_AUTOSEED").as_deref() == Ok("1");
+                        for role in POOL_ROLES.iter().filter(|_| autoseed) {
+                            let id = format!("{}-default", role);
+                            let url = format!(
+                                "{}/v1/database/{}/call/worker_pool_intent_set",
+                                host_init, db_init
+                            );
+                            // Signature: (id, role, desired_count, restart_strategy,
+                            //             max_restarts, max_restart_window_secs,
+                            //             paused, owner_agent_id)
+                            let body = serde_json::json!([
+                                id,
+                                *role,
+                                1u32,
+                                "permanent",
+                                5u32,
+                                60u32,
+                                false,
+                                owner,
+                            ]);
+                            match client.post(&url).json(&body).send().await {
+                                Ok(r) if r.status().is_success() => seeded += 1,
+                                Ok(r) => {
+                                    tracing::debug!(role = *role, status = %r.status(), "pool_seed: non-success");
+                                    skipped += 1;
+                                }
+                                Err(e) => {
+                                    tracing::debug!(role = *role, error = %e, "pool_seed: transport error");
+                                    skipped += 1;
+                                }
+                            }
+                        }
+                        tracing::info!(
+                            seeded,
+                            skipped,
+                            total = POOL_ROLES.len(),
+                            "auto-init: worker_pool_intent rows seeded"
+                        );
+                    }
+                });
+            }
+        }
+
+        // P4: Background stale-model prune pass (ADR-2026-03-31-1000).
         // Test each registered OpenRouter provider with a minimal prompt.
         // Providers returning empty content are removed — they are placeholder
         // model IDs that don't exist yet (e.g. gpt-5.x, grok-4.x) and would
@@ -406,6 +737,9 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                             result.total_ok,
                             result.total_ok + result.total_failed + result.total_skipped
                         );
+                        // Now that hexflo-coordination (and its agent_run table) is
+                        // published, restore the Agent Runs feed from the prior process.
+                        crate::direct_exec::hydrate_from_stdb().await;
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -444,7 +778,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
     }
 
     // Initialize session persistence (ADR-036 / ADR-042 P2.5)
-    // Try SpacetimeDB first (chat-relay module), fall back to SQLite
+    // SpacetimeDB chat-relay module — no fallback.
     {
         let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
             .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
@@ -471,7 +805,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             );
         }
     }
-    // Tool-call event log uses in-memory ring buffer (ADR-2604020900) — initialized in AppState::new().
+    // Tool-call event log uses in-memory ring buffer (ADR-2026-04-02-0900) — initialized in AppState::new().
 
     // P9.5: Wire live context adapter (composition root) — must be set before
     // WorkplanExecutor is created so enrich_prompt can call it.
@@ -484,7 +818,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
 
     if state.agent_manager.is_some() {
         // Pass inference_tx so workplan executor's inference_task_create broadcasts
-        // to /ws/inference subscribers (ADR-2604011200 P2.T3 + P3.T1).
+        // to /ws/inference subscribers (ADR-2026-04-01-1200 P2.T3 + P3.T1).
         if let Ok(state_port) = state_config::create_default_state_backend_with_inference(
             state.inference_tx.clone(),
         ) {
@@ -512,11 +846,97 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         cleanup::CleanupService::spawn(cleanup_state);
     }
 
-    // Background sched self-improvement service (ADR-2604102200):
+    // STDB-supervisor subscriber (wp-stdb-supervisor P3): polls
+    // supervisor_event for unhandled spawn_request / crash_loop rows and
+    // turns them into actual hex-agent process spawns + priority-2 inbox
+    // alerts. The supervisor's "brain" lives in the scheduled reducer
+    // inside the hexflo-coordination WASM module; this subscriber is the
+    // hands.
+    // ADR-2606071340 P0: the worker-pool supervisor is DORMANT in the single-agent
+    // epoch. The single agent runs in-process (hex-exec); there is no pool fleet to
+    // supervise, and running this subscriber drains the STDB spawn_request backlog
+    // into a hex-agent process flood (659+ procs observed 2026-06-07). The "brain"
+    // (scheduled reducer in the WASM module) may still emit events, but with no
+    // subscriber polling them they never become process spawns. Opt back into the
+    // multi-agent worker-pool supervisor with HEX_SUPERVISOR_AUTOSEED=1.
+    if std::env::var("HEX_SUPERVISOR_AUTOSEED").as_deref() == Ok("1") {
+        let sup_state = state.clone();
+        orchestration::supervisor_subscriber::SupervisorSubscriber::spawn(sup_state);
+    } else {
+        tracing::info!(
+            "supervisor subscriber DORMANT (single-agent epoch); set HEX_SUPERVISOR_AUTOSEED=1 to enable the multi-agent worker-pool supervisor"
+        );
+    }
+
+    // Brain-dispatch auto-reconciler: every 15s, walks Completed
+    // brain-chat:* inference_task rows and flips matching workplan tasks
+    // to "done" if their prompt referenced wp-X PY.Z. Closes the loop
+    // between chat-driven dispatch and the Decisions Needed panel — work
+    // that gets done stops appearing in the operator's todo.
+    {
+        let reconciler_state = state.clone();
+        orchestration::brain_dispatch_reconciler::BrainDispatchReconciler::spawn(reconciler_state);
+    }
+
+    // Brain progress streamer: posts mid-flight heartbeat updates from
+    // in-flight brain-chat dispatches into their originating threads so
+    // the operator sees ⏱ progress lines instead of silence between
+    // enqueue and final result.
+    {
+        let streamer_state = state.clone();
+        orchestration::brain_progress_streamer::BrainProgressStreamer::spawn(streamer_state);
+    }
+
+    // Background sched self-improvement service (ADR-2026-04-10-2200):
     // Tests local models periodically, records outcomes to RL engine.
     {
         let sched_state = state.clone();
         sched_service::spawn(sched_state);
+    }
+
+    // Heartbeat client (ADR-2026-05-19-0900 P1.4) — nexus self-registers as
+    // a worker_process row + beats every 15s. supervisor_tick reaps any
+    // row whose last_heartbeat is > 60s old, so a missed nexus equals a
+    // visible row drop in /api/liveness rather than a silent "still
+    // running" state. No corresponding deregister — the supervisor's
+    // stale-heartbeat reaper is the shutdown path.
+    {
+        let _heartbeat_handle = orchestration::heartbeat_client::HeartbeatClient::spawn(
+            "nexus-server",
+            "nexus-default",
+        );
+    }
+
+    // Zombie sweeper (ADR-2026-05-19-0900 P3.3) — walks /proc every 60s
+    // looking for [hex-agent]/<defunct> rows whose ppid drifted to init.
+    // Surfaces them as audit rows so the operator (or a future systemd
+    // service) can reap. Cheap, non-blocking.
+    {
+        let sweeper_state = state.clone();
+        orchestration::zombie_sweeper::ZombieSweeper::spawn(sweeper_state);
+    }
+
+    // GC for live-but-unregistered hex-agent processes. Companion to
+    // the zombie sweeper above. Walks /proc every 60s; any hex-agent
+    // daemon not claimed by a `worker_process` row in status
+    // {healthy,degraded,starting} gets SIGTERM'd; if it survives the
+    // next sweep, SIGKILL. Catches the "nexus restart orphans every
+    // live worker" pattern observed 2026-05-21 (94 hex-agent procs
+    // vs 32 worker_process rows after one restart cycle).
+    {
+        let reaper_state = state.clone();
+        orchestration::orphan_reaper::OrphanReaper::spawn(reaper_state);
+    }
+
+    // Scale-to-zero: pause all worker_pool_intent rows when no work
+    // is queued, unpause on first activity signal. Drops idle nexus
+    // CPU from ~400% (30 persona pools × 13 nexus subscribers fan-out)
+    // to ~30%. Resume is automatic on next operator brief.
+    // Disable via HEX_DISABLE_POOL_AUTOPAUSE=1. Threshold via
+    // HEX_POOL_IDLE_AFTER_SECS=N (default 300).
+    {
+        let autopause_state = state.clone();
+        orchestration::pool_autopause::PoolAutoPause::spawn(autopause_state);
     }
 
     // Background task: evict completed commands older than 1 hour (every 60s)
@@ -655,8 +1075,8 @@ pub async fn start_server(config: HubConfig) {
         if let Some(ref agent_mgr) = _state.agent_manager {
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             let hub_url = format!("http://127.0.0.1:{}", config.port);
-            match agent_mgr.spawn_local_agent(&hub_url, &cwd).await {
-                Ok(pid) => {
+            match agent_mgr.spawn_local_agent(&hub_url, &cwd, None).await {
+                Ok((pid, _process_id)) => {
                     tracing::info!(
                         pid = pid,
                         project = %cwd.display(),

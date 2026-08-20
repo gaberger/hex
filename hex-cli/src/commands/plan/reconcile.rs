@@ -1,6 +1,6 @@
 //! Workplan reconciliation with evidence-gated mutation.
 //!
-//! ADR-2604142200 requires **positive file evidence** before marking tasks done.
+//! ADR-2026-04-14-2200 requires **positive file evidence** before marking tasks done.
 //! The `mutate` parameter (default: `false`) controls whether reconcile writes
 //! changes back to workplan JSON. Callers must opt in to mutation explicitly.
 //!
@@ -57,6 +57,7 @@ pub(crate) async fn run(
     file: &str,
     mutate: bool,
     audit: bool,
+    strict: bool,
     dry_run: bool,
     why_task: Option<&str>,
     force_task: Option<&str>,
@@ -137,7 +138,12 @@ pub(crate) async fn run(
             created_at: workplan.created_at.clone(),
             adr_scope: workplan.adr.clone(),
         };
-        let evidence = reconcile_evidence::collect_evidence(&wp_task, &repo_root, "");
+        let evidence = reconcile_evidence::collect_evidence_strict(
+            &wp_task,
+            &repo_root,
+            "",
+            if strict { Some(workplan.id.as_str()) } else { None },
+        );
         let verdict = reconcile_evidence::verify(&evidence);
 
         let (is_done, icon, result_text) = match &verdict {

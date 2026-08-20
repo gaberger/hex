@@ -1,4 +1,4 @@
-//! Sched API routes (ADR-2604102200).
+//! Sched API routes (ADR-2026-04-10-2200).
 //!
 //! GET  /api/sched/status - Service status
 //! POST /api/sched/test  - Run a test
@@ -24,7 +24,7 @@ use crate::sched_service;
 use crate::state::SharedState;
 
 /// Kinds of task the sched queue can carry. Serialized as kebab-case so
-/// `RemoteShell` becomes `"remote-shell"` on the wire (ADR-2604141200).
+/// `RemoteShell` becomes `"remote-shell"` on the wire (ADR-2026-04-14-1200).
 ///
 /// Payload shape varies by kind:
 /// - `HexCommand` — raw `hex <subcommand>` string
@@ -32,7 +32,7 @@ use crate::state::SharedState;
 /// - `Shell`      — local shell command (sandboxed, rejects `echo FIXME` stubs)
 /// - `RemoteShell` — JSON-encoded [`RemoteShellPayload`] `{host, command}`;
 ///   the agent on `host` polls `/api/sched/queue?kind=remote-shell&host=<host>`
-///   and executes against its local whitelist (ADR-2604141200 P3).
+///   and executes against its local whitelist (ADR-2026-04-14-1200 P3).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum TaskKind {
@@ -202,12 +202,94 @@ pub async fn status(
     })
 }
 
+/// GET /api/sched/improver/status — feeds the dashboard Health panel.
+///
+/// Returns four operator-readable health signals:
+///   score        — homeostasis composite (0-100, higher = healthier).
+///                  Computed from sched queue depth + recent task success rate.
+///   meanReward   — average RL reward across recent improvement cycles.
+///                  Read from sched_service's recent outcomes.
+///   deadLetter   — count of inference_task rows in Failed status.
+///                  Hint: needs operator attention if > 0.
+///   activeTasks  — sum of Pending + InProgress inference_tasks.
+///
+/// All fields are best-effort; failures degrade to null (which the
+/// dashboard renders as "—").
+pub async fn improver_status(
+    State(state): State<SharedState>,
+) -> Json<serde_json::Value> {
+    let port = match state.state_port.as_ref() {
+        Some(p) => p.clone(),
+        None => {
+            return Json(serde_json::json!({
+                "score": null, "meanReward": null,
+                "deadLetter": null, "activeTasks": 0,
+            }));
+        }
+    };
+
+    // Pull all inference_task rows once; bucket by status.
+    let (active, completed, failed) = match port.inference_task_list_all().await {
+        Ok(rows) => {
+            let mut a = 0u32; let mut c = 0u32; let mut f = 0u32;
+            for r in &rows {
+                match r.status.as_str() {
+                    "Pending" | "PendingReview" | "InProgress" => a += 1,
+                    "Completed" => c += 1,
+                    "Failed" => f += 1,
+                    _ => {}
+                }
+            }
+            (a, c, f)
+        }
+        Err(_) => (0u32, 0u32, 0u32),
+    };
+
+    // Recent improvement reward — last entry from sched_service writes via
+    // hexflo memory key prefix "sched:cycle:". Average up to 20 most recent.
+    let mean_reward: Option<f64> = match port.hexflo_memory_search("sched:cycle:").await {
+        Ok(entries) => {
+            let mut rewards: Vec<f64> = entries
+                .iter()
+                .filter_map(|(_k, v)| {
+                    let parsed: serde_json::Value = serde_json::from_str(v).ok()?;
+                    parsed.get("reward").and_then(|x| x.as_f64())
+                })
+                .collect();
+            if rewards.is_empty() { None }
+            else {
+                rewards.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+                rewards.truncate(20);
+                Some(rewards.iter().sum::<f64>() / rewards.len() as f64)
+            }
+        }
+        Err(_) => None,
+    };
+
+    // Homeostasis composite (0-100). Penalize active backlog + failures,
+    // reward high success ratio. Single-shot heuristic; tune later.
+    let total = active + completed + failed;
+    let score: Option<f64> = if total == 0 { None } else {
+        let success_ratio = completed as f64 / total as f64;
+        let backlog_penalty = (active as f64).min(20.0) * 1.5; // cap at 30
+        let failure_penalty = (failed as f64).min(20.0) * 2.5; // cap at 50
+        Some(((success_ratio * 100.0) - backlog_penalty - failure_penalty).max(0.0).min(100.0))
+    };
+
+    Json(serde_json::json!({
+        "score": score.map(|s| (s * 10.0).round() / 10.0),
+        "meanReward": mean_reward.map(|r| (r * 1000.0).round() / 1000.0),
+        "deadLetter": failed,
+        "activeTasks": active,
+    }))
+}
+
 pub async fn test(
     State(state): State<SharedState>,
     Json(_req): Json<SchedTestRequest>,
 ) -> Json<SchedTestResponse> {
     // Run a test cycle synchronously
-    let result = match sched_service::run_improvement_cycle(&state).await {
+    let result = match sched_service::run_improvement_cycle(&state, None).await {
         Ok(outcome) => SchedTestResponse {
             outcome: outcome.outcome,
             reward: outcome.reward,
@@ -244,7 +326,7 @@ pub struct SchedTaskSummary {
     /// First 80 chars of the task payload (command, workplan path, etc.).
     pub payload_truncated: String,
     /// First 300 chars of the recorded result. Contains the
-    /// `no git evidence` marker when the evidence-guard (ADR-2604141400 §1 P1)
+    /// `no git evidence` marker when the evidence-guard (ADR-2026-04-14-1400 §1 P1)
     /// flipped a vacuous exit-0 drain to failed — this is the primary signal
     /// operators hunt for in history output.
     pub result_truncated: String,
@@ -255,7 +337,7 @@ pub struct SchedTaskSummary {
     /// has not yet completed or the timestamp is unparseable.
     pub completed_at_us: i64,
     /// Workplan timeout in seconds plumbed through the enqueue payload
-    /// (ADR-2604142155 P2.1). Used by the daemon's `sweep_stuck_tasks()` to
+    /// (ADR-2026-04-14-2155 P2.1). Used by the daemon's `sweep_stuck_tasks()` to
     /// auto-fail tasks that exceed `timeout_s + 30s` grace. `None` when the
     /// stored record predates P2.1 — sweep falls back to the kind-default
     /// lease window.
@@ -307,7 +389,7 @@ fn summarize_task(task: &serde_json::Value) -> SchedTaskSummary {
 ///
 /// Returns a paginated, reverse-chronological list of sched-queue tasks. Primary
 /// consumer is `hex sched queue history`, which operators use to verify the
-/// evidence-guard (ADR-2604141400 §1 P1) correctly flips silent-drain workplans
+/// evidence-guard (ADR-2026-04-14-1400 §1 P1) correctly flips silent-drain workplans
 /// to `failed`. Without this surface, the guard shipped but was invisible.
 ///
 /// Parameters:
@@ -316,8 +398,7 @@ fn summarize_task(task: &serde_json::Value) -> SchedTaskSummary {
 /// - `limit`  — max rows to return. Clamped to [1, 200]; default 20.
 ///
 /// Sort: newest first by `created_at_us`. Reads from `hexflo_memory` via
-/// `hexflo_memory_search("brain-task:")`, so both SQLite and SpacetimeDB-backed
-/// state adapters are transparently supported.
+/// `hexflo_memory_search("brain-task:")` — backed by SpacetimeDB.
 pub async fn queue_history(
     State(state): State<SharedState>,
     Query(params): Query<HashMap<String, String>>,
@@ -445,7 +526,7 @@ mod tests {
 
     #[test]
     fn summarize_task_surfaces_no_git_evidence_marker() {
-        // The guard (ADR-2604141400 §1 P1) writes "no git evidence" into
+        // The guard (ADR-2026-04-14-1400 §1 P1) writes "no git evidence" into
         // `result` on silent-drain failures. That marker MUST survive the
         // 300-char truncation for short result strings — this is the primary
         // operator signal the history endpoint exists to expose.
@@ -468,7 +549,7 @@ mod tests {
         assert_eq!(rfc3339_to_us(""), 0);
     }
 
-    // ── ADR-2604142155 P2.1: timeout_s surfaced through history ─────────
+    // ── ADR-2026-04-14-2155 P2.1: timeout_s surfaced through history ─────────
     // Operators rely on `hex sched queue history` to verify the daemon's
     // sweeper armed itself with the workplan's declared timeout. If the
     // field is dropped at the projection layer the sweep diagnostics are

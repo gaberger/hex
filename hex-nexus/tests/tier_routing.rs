@@ -1,4 +1,4 @@
-//! Unit tests for tiered inference routing (ADR-2604120202 P1.4).
+//! Unit tests for tiered inference routing (ADR-2026-04-12-0202 P1.4).
 //!
 //! Three layers of coverage:
 //!   1. `TierModelConfig::model_for_tier` — pure function, no async
@@ -18,7 +18,7 @@ use hex_nexus::orchestration::workplan_executor::{WorkplanTask, classify_task_ti
 use hex_nexus::ports::agent_transport::IAgentTransportPort;
 use hex_nexus::ports::inference_router::IInferenceRouterPort;
 use hex_nexus::ports::remote_registry::IRemoteRegistryPort;
-use hex_nexus::remote::transport::{
+use hex_nexus::domain::transport::{
     AgentMessage, CodeGenRequest, InferenceProvider, InferenceServer, InferenceServerStatus,
     RemoteAgent, RemoteAgentStatus, TaskTier, TransportError,
 };
@@ -135,11 +135,11 @@ fn default_tier_config_maps_t2_to_qwen25_coder() {
 }
 
 #[test]
-fn default_tier_config_maps_t2_5_to_devstral() {
+fn default_tier_config_maps_t2_5_to_gemma4() {
     let config = TierModelConfig::default();
     assert_eq!(
         config.model_for_tier(TaskTier::T2_5).unwrap(),
-        "devstral-small-2:24b"
+        "gemma4:latest"
     );
 }
 
@@ -284,7 +284,9 @@ fn task_with(layer: Option<&str>, agent: Option<&str>, deps: Vec<&str>, tier: Op
         secret_keys: vec![],
         done_condition: None,
         done_command: None,
+        strategy_hint: None,
         tier,
+        status: String::new(),
     }
 }
 

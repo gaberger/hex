@@ -1,9 +1,27 @@
 {
+  "autonomous": {
+    "enabled": true,
+    "max_concurrent_agents": 3,
+    "rollback_on_failure": true
+  },
   "inference": {
     "tier_models": {
-      "t1": "local-codellama",
-      "t2": "local-gemma4",
-      "t2_5": "local-llama3"
-    }
+      "t1": "qwen3:4b",
+      "t2": "gemma4-12b",
+      "t2.5": "devstral-small-2:24b"
+    },
+    "timeout_secs": 600,
+    "sop_via_router": true,
+    "react_model": "devstral-small-2:24b",
+    "react_models": [
+      "devstral-small-2:24b",
+      "claude-code"
+    ]
+  },
+  "auto_repair": {
+    "enabled": false,
+    "project_path": "examples/ebay-clone/backend",
+    "max_iterations": 20,
+    "top_k_files": 3
   }
 }

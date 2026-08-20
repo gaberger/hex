@@ -93,23 +93,23 @@ const AgentList: Component = () => {
 
   // Find swarms belonging to this project
   const projectSwarms = createMemo(() =>
-    swarms().filter((s: any) => entityBelongsToProject(s, projectId())),
+    (swarms() ?? []).filter((s: any) => entityBelongsToProject(s, projectId())),
   );
 
   const projectSwarmIds = createMemo(() =>
-    new Set(projectSwarms().map((s: any) => s.id ?? s.swarm_id ?? "")),
+    new Set((projectSwarms() ?? []).map((s: any) => s.id ?? s.swarm_id ?? "")),
   );
 
   // Agents from swarms belonging to this project
   const projectSwarmAgentList = createMemo(() =>
-    swarmAgents().filter((a: any) =>
+    (swarmAgents() ?? []).filter((a: any) =>
       projectSwarmIds().has(a.swarm_id ?? a.swarmId ?? ""),
     ),
   );
 
   // Global registry agents tied to this project
   const projectRegistryAgents = createMemo(() =>
-    registryAgents().filter((a: any) => entityBelongsToProject(a, projectId())),
+    (registryAgents() ?? []).filter((a: any) => entityBelongsToProject(a, projectId())),
   );
 
   // Merge, deduplicate, and compute live status
@@ -160,7 +160,7 @@ const AgentList: Component = () => {
   const totalCount = createMemo(() => allAgents().length);
 
   function taskCount(agentId: string): number {
-    return swarmTasks().filter(
+    return (swarmTasks() ?? []).filter(
       (t: any) => (t.assigned_to ?? t.agent_id ?? "") === agentId,
     ).length;
   }

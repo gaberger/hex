@@ -3,11 +3,110 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::adapters::build::BuildAdapter;
 use crate::orchestration::agent_manager::SpawnConfig;
 use crate::orchestration::scaffolding::{ScaffoldedDispatch, ShellCompileChecker, ScaffoldResult};
-use crate::ports::state::{IStatePort, WorkplanTaskUpdate};
-use crate::remote::transport::TaskTier;
+use hex_core::ports::build::IBuildPort;
+use crate::ports::state::{
+    IStatePort, WorkplanEventInput, WorkplanEventKind, WorkplanTaskUpdate,
+};
+use crate::domain::transport::TaskTier;
 use crate::state::{AgentInstruction, InstructionType, SharedState};
+
+/// In-process shadow store for workplan transition events
+/// (ADR-2026-04-27-1000 §2 — v2 shadow mode).
+///
+/// Until the STDB `workplan_event` reducer (wp-workplan-state-model-v2 P1.1)
+/// is wired, this module is the source of truth callers query for the event
+/// stream. The executor mirrors every emit into both the state-port (which
+/// becomes a real STDB write once the reducer lands) and this in-process
+/// vector, so tests and the projection rebuild can read the sequence without
+/// a live STDB. Once the reducer is in place this stays as a same-process
+/// fast-path / observability tap; callers preferring durable history should
+/// read via `IWorkplanStatePort::workplan_events_for`.
+pub mod workplan_event_shadow {
+    use crate::ports::state::WorkplanEventInput;
+    use std::sync::OnceLock;
+    use tokio::sync::Mutex;
+
+    static STORE: OnceLock<Mutex<Vec<WorkplanEventInput>>> = OnceLock::new();
+
+    fn store() -> &'static Mutex<Vec<WorkplanEventInput>> {
+        STORE.get_or_init(|| Mutex::new(Vec::new()))
+    }
+
+    /// Append an event. Always succeeds; the lock is uncontended in the
+    /// hot path because event emission is one-per-transition.
+    pub async fn append(input: WorkplanEventInput) {
+        store().lock().await.push(input);
+    }
+
+    /// All events for a given workplan, in insert order.
+    pub async fn for_workplan(workplan_id: &str) -> Vec<WorkplanEventInput> {
+        store()
+            .lock()
+            .await
+            .iter()
+            .filter(|e| e.workplan_id == workplan_id)
+            .cloned()
+            .collect()
+    }
+
+    /// All events for a (workplan_id, task_id) pair, in insert order.
+    pub async fn for_task(
+        workplan_id: &str,
+        task_id: &str,
+    ) -> Vec<WorkplanEventInput> {
+        store()
+            .lock()
+            .await
+            .iter()
+            .filter(|e| e.workplan_id == workplan_id && e.task_id == task_id)
+            .cloned()
+            .collect()
+    }
+
+    /// Drop all events. Test-only helper — production callers must use the
+    /// projector to derive views, not mutate the log.
+    pub async fn clear() {
+        store().lock().await.clear();
+    }
+}
+
+/// Emit a workplan event through the shadow store and the state port.
+///
+/// Both writes are best-effort: the shadow store is in-memory and cannot
+/// fail; the state port may legitimately return Err while the STDB reducer
+/// is not yet wired (P1.1 in-flight). Errors from the state-port path are
+/// logged at debug, never propagated, because emission must not block
+/// dispatch progress.
+pub async fn emit_workplan_event(
+    state_port: &dyn IStatePort,
+    workplan_id: &str,
+    task_id: &str,
+    kind: WorkplanEventKind,
+    actor: &str,
+    payload: serde_json::Value,
+) {
+    let input = WorkplanEventInput {
+        workplan_id: workplan_id.to_string(),
+        task_id: task_id.to_string(),
+        kind,
+        occurred_at: chrono::Utc::now().to_rfc3339(),
+        actor: actor.to_string(),
+        payload,
+    };
+    workplan_event_shadow::append(input.clone()).await;
+    if let Err(e) = state_port.workplan_event_append(input).await {
+        tracing::debug!(
+            workplan_id,
+            task_id,
+            ?kind,
+            error = %e,
+            "workplan_event_append: state port returned err — shadow store still recorded"
+        );
+    }
+}
 
 /// Find the most recently active Claude Code agent ID by reading
 /// ~/.hex/sessions/agent-*.json and returning the agentId from the
@@ -42,7 +141,7 @@ fn find_active_cc_agent_id() -> Option<String> {
     best.map(|(_, id)| id)
 }
 
-// ── Dispatch-evidence guard (ADR-2604111800) ──────────
+// ── Dispatch-evidence guard (ADR-2026-04-11-1800) ──────────
 //
 // Rejects vacuous completions — where an agent (or mock) produced no
 // meaningful output yet the executor would naively mark the task "done".
@@ -64,12 +163,12 @@ pub fn validate_dispatch_evidence(output: Option<&str>) -> Result<(), String> {
         Some(s) if !s.trim().is_empty() => Ok(()),
         Some(_) => Err(
             "dispatch-evidence guard: agent produced whitespace-only output — \
-             refusing to mark task as completed (ADR-2604111800)"
+             refusing to mark task as completed (ADR-2026-04-11-1800)"
                 .to_string(),
         ),
         None => Err(
             "dispatch-evidence guard: no dispatch output received — \
-             refusing to mark task as completed (ADR-2604111800)"
+             refusing to mark task as completed (ADR-2026-04-11-1800)"
                 .to_string(),
         ),
     }
@@ -159,7 +258,7 @@ impl ExecutionStatus {
     }
 }
 
-/// ADR-2604102100: Actions returned by steering checks.
+/// ADR-2026-04-10-2100: Actions returned by steering checks.
 #[derive(Debug, Clone)]
 pub enum SteeringAction {
     /// Continue execution normally.
@@ -199,7 +298,7 @@ pub struct Workplan {
     #[serde(default)]
     pub adr: String,
     /// Schema: `specs` — path to behavioral spec file.
-    /// ADR-2604051700: If non-empty, file MUST exist before execution starts.
+    /// ADR-2026-04-05-1700: If non-empty, file MUST exist before execution starts.
     #[serde(default)]
     pub specs: String,
     /// LLMs commonly generate `steps` at the top level instead of `phases`.
@@ -269,36 +368,66 @@ pub struct WorkplanTask {
     pub files: Vec<String>,
     /// Model override for this task.
     pub model: Option<String>,
+    /// Strategy hint (CLAUDE.md tier routing): `scaffold`/`transform`/`script`
+    /// → T1, `codegen` → T2, `inference` → T2.5. Until now this was documented
+    /// but never read by `classify_task_tier` — honored as of the routing fix.
+    #[serde(alias = "strategyHint", alias = "strategy_hint", default)]
+    pub strategy_hint: Option<String>,
     /// Working directory override. Defaults to ".".
     #[serde(alias = "projectDir", alias = "project_dir")]
     pub project_dir: Option<String>,
     /// Secret key names to inject into the agent process (ADR-026).
     #[serde(alias = "secretKeys", alias = "secret_keys", default)]
     pub secret_keys: Vec<String>,
-    /// Human-readable description of what "done" means (ADR-2604061100).
+    /// Human-readable description of what "done" means (ADR-2026-04-06-1100).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub done_condition: Option<String>,
-    /// Machine-runnable shell command that verifies done_condition (ADR-2604061100).
+    /// Machine-runnable shell command that verifies done_condition (ADR-2026-04-06-1100).
     /// Exits 0 = condition met; non-zero = step fails.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub done_command: Option<String>,
-    /// Explicit task tier override (ADR-2604120202). When set in the workplan
+    /// Explicit task tier override (ADR-2026-04-12-0202). When set in the workplan
     /// JSON, bypasses the automatic classifier. Values: "T1", "T2", "T2.5", "T3".
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tier: Option<crate::remote::transport::TaskTier>,
+    pub tier: Option<crate::domain::transport::TaskTier>,
+    /// Task completion status — read from the workplan JSON so the dispatch loop
+    /// can skip tasks that `hex plan reconcile --update` already marked done.
+    /// Accepts canonical `"completed"`, legacy `"done"` (what reconcile.rs writes),
+    /// plus the rest of the TaskStatus lifecycle. Default is empty for backward
+    /// compat with workplans that omit the field entirely.
+    #[serde(default)]
+    pub status: String,
 }
 
-/// Classify a workplan task into an inference routing tier (ADR-2604120202 P1.3).
+/// Classify a workplan task into an inference routing tier (ADR-2026-04-12-0202 P1.3).
 ///
 /// Priority: explicit `tier` field > agent role heuristic > layer + deps heuristic.
 /// Conservative: false negatives (T3 classified as T2) are cheap (scaffolding
 /// retries), false positives (T1 classified as T3) waste frontier budget.
-pub fn classify_task_tier(task: &WorkplanTask) -> crate::remote::transport::TaskTier {
-    use crate::remote::transport::TaskTier;
+pub fn classify_task_tier(task: &WorkplanTask) -> crate::domain::transport::TaskTier {
+    use crate::domain::transport::TaskTier;
 
     // Explicit tier in workplan takes precedence
     if let Some(tier) = task.tier {
         return tier;
+    }
+
+    // strategy_hint (CLAUDE.md tier routing) — was documented but never honored.
+    // scaffold/transform/script → T1, codegen → T2, inference → T2.5.
+    match task.strategy_hint.as_deref() {
+        Some("scaffold") | Some("transform") | Some("script") => return TaskTier::T1,
+        Some("codegen") => return TaskTier::T2,
+        Some("inference") => return TaskTier::T2_5,
+        _ => {}
+    }
+
+    // UI/frontend DESIGN heuristic (lesson:tier-routing-for-ui, 2026-05-31):
+    // styling/layout/visual work needs a reasoning model — standard T2 codegen
+    // produces rough/unstyled output. Detect by file extension or design intent
+    // and route to T2.5. Checked before the generic role/layer default so a
+    // `hex-coder` building a Tailwind grid doesn't fall through to T2.
+    if task_is_ui_design(task) {
+        return TaskTier::T2_5;
     }
 
     // Planner/reviewer agents → T2 (structured output, not heavy codegen)
@@ -323,7 +452,28 @@ pub fn classify_task_tier(task: &WorkplanTask) -> crate::remote::transport::Task
     }
 }
 
-// ── File Scope Tracking (ADR-2604131800 P5.1) ────────
+/// True when a task is front-end DESIGN work (visual/layout/styling), which
+/// needs a reasoning-tier model rather than standard codegen. Detected by the
+/// files it touches (.tsx/.jsx/.vue/.svelte/.css/.scss) or design keywords in
+/// its name/description.
+fn task_is_ui_design(task: &WorkplanTask) -> bool {
+    const UI_EXT: [&str; 7] = [".tsx", ".jsx", ".vue", ".svelte", ".css", ".scss", ".html"];
+    if task
+        .files
+        .iter()
+        .any(|f| UI_EXT.iter().any(|e| f.to_ascii_lowercase().ends_with(e)))
+    {
+        return true;
+    }
+    let hay = format!("{} {}", task.name, task.description).to_ascii_lowercase();
+    const UI_KW: [&str; 9] = [
+        "tailwind", "css", "stylesheet", " ui ", "frontend", "layout", "grid of",
+        "component", "responsive",
+    ];
+    UI_KW.iter().any(|k| hay.contains(k))
+}
+
+// ── File Scope Tracking (ADR-2026-04-13-1800 P5.1) ────────
 //
 // Prevents parallel agents from editing the same files within a phase.
 // Tasks are partitioned into sequential batches where no two tasks in the
@@ -418,6 +568,29 @@ fn compute_file_scope_batches(tasks: &[WorkplanTask]) -> Vec<Vec<usize>> {
     batches
 }
 
+/// Build the `git commit -m "..."` line embedded in the agent prompt.
+///
+/// When `workplan.id` is non-empty the subject becomes
+/// `{layer}({task_id_lower}): {workplan_id} — {name}` so commits are
+/// locatable via `git log --grep wp-...`. Falls back to the legacy
+/// `{layer}({task_id_lower}): {name}` form when the workplan has no id
+/// (freshly-drafted unnamed plans, ad-hoc executions).
+fn build_commit_command(task: &WorkplanTask, workplan: &Workplan) -> String {
+    let layer = task.layer.as_deref().unwrap_or("feat");
+    let task_id_lower = task.id.to_lowercase();
+    if !workplan.id.is_empty() {
+        format!(
+            "git commit -m \"{layer}({task_id_lower}): {} — {}\"",
+            workplan.id, task.name
+        )
+    } else {
+        format!(
+            "git commit -m \"{layer}({task_id_lower}): {}\"",
+            task.name
+        )
+    }
+}
+
 // ── Workplan Executor ──────────────────────────────────
 
 pub struct WorkplanExecutor {
@@ -487,7 +660,7 @@ impl WorkplanExecutor {
             return Err("Workplan has no phases".to_string());
         }
 
-        // ADR-2604051700 Gate 1: Spec-file-exists pre-flight check.
+        // ADR-2026-04-05-1700 Gate 1: Spec-file-exists pre-flight check.
         // If the workplan references a behavioral spec, it MUST exist before execution.
         if !workplan.specs.is_empty() {
             let spec_path = std::path::Path::new(&workplan.specs);
@@ -502,13 +675,13 @@ impl WorkplanExecutor {
         }
 
         // Pre-flight: warn loudly if specs field is absent.
-        // specs-first pipeline (ADR-2604051700) requires behavioral specs before execution.
+        // specs-first pipeline (ADR-2026-04-05-1700) requires behavioral specs before execution.
         if workplan.specs.is_empty() {
             tracing::warn!(
                 workplan_id = %workplan.id,
                 "Workplan has no 'specs' field — specs-first pipeline requires a behavioral \
                  spec before execution. Add: \"specs\": \"docs/specs/<feature>.json\" \
-                 (ADR-2604051700)."
+                 (ADR-2026-04-05-1700)."
             );
         }
 
@@ -594,17 +767,51 @@ impl WorkplanExecutor {
         execution_id: String,
         workplan: Workplan,
     ) {
-        // ADR-2604010000 P3.1: Initialize a HexFlo swarm for this workplan execution.
-        // The swarm_id tracks all per-task HexFlo tasks created in P3.2.
-        // Use the workplan id as the swarm name; fall back to execution_id if empty.
-        let swarm_name = if !workplan.id.is_empty() {
+        // Detect project language at workplan start (ADR-018).
+        // This enables language-specific compile gates and agent prompt injection.
+        let build_adapter = BuildAdapter::new();
+        let project_root = std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .to_string_lossy()
+            .to_string();
+        let project_language = build_adapter
+            .detect_toolchain(&project_root)
+            .map(|t| t.language.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        let compile_command = build_adapter
+            .detect_toolchain(&project_root)
+            .map(|t| t.compile_cmd.clone())
+            .unwrap_or_else(|| "cargo check".to_string());
+
+        tracing::info!(
+            execution_id = %execution_id,
+            language = %project_language,
+            compile_cmd = %compile_command,
+            "Detected project language for workplan execution"
+        );
+
+        // ADR-2026-04-01-0000 P3.1 + 2026-04-27 fix: initialize a HexFlo swarm for this
+        // workplan execution. Two earlier bugs combined to break this entirely:
+        //
+        //   (a) swarm_init used a fresh UUID as swarm_id while per-task
+        //       swarm_task_create at line ~1010 used workplan.id — the swarm
+        //       was registered under one key and looked up under another.
+        //   (b) swarm_init's owner was the literal "workplan-executor", so per
+        //       ADR-2026-03-24-1900 (one-agent-one-active-swarm) the second execution
+        //       was rejected with "Agent ... already owns an active swarm".
+        //
+        // Fix: swarm_id is workplan.id (or execution_id when empty) so init and
+        // task_create agree. Owner is suffixed with execution_id so each run is
+        // a distinct owner and the singleton constraint never trips.
+        let swarm_id = if !workplan.id.is_empty() {
             workplan.id.clone()
         } else {
             execution_id.clone()
         };
-        let swarm_id = Uuid::new_v4().to_string();
+        let swarm_name = swarm_id.clone();
+        let owner = format!("workplan-executor:{}", execution_id);
         match state_port
-            .swarm_init(&swarm_id, &swarm_name, "hex-pipeline", "", "workplan-executor")
+            .swarm_init(&swarm_id, &swarm_name, "hex-pipeline", "", &owner)
             .await
         {
             Ok(()) => {
@@ -639,7 +846,7 @@ impl WorkplanExecutor {
                 }
             }
 
-            // ADR-2604100000: Add phase heartbeat for observability
+            // ADR-2026-04-10-0000: Add phase heartbeat for observability
             let phase_start = chrono::Utc::now().to_rfc3339();
             tracing::info!(
                 execution_id = %execution_id,
@@ -656,14 +863,27 @@ impl WorkplanExecutor {
             for task in &phase.tasks {
                 let task_id = if !task.id.is_empty() { task.id.clone() } else { task.name.clone() };
                 let _ = state_port.workplan_update_task(WorkplanTaskUpdate {
-                    task_id,
+                    task_id: task_id.clone(),
                     status: "running".to_string(),
                     agent_id: None,
                     result: None,
                 }).await;
+                // ADR-2026-04-27-1000 v2 shadow mode: every transition that
+                // mutates v1 JSON also appends to the v2 event log.
+                emit_workplan_event(
+                    state_port.as_ref(),
+                    &workplan.id,
+                    &task_id,
+                    WorkplanEventKind::Dispatched,
+                    "executor",
+                    serde_json::json!({
+                        "phase": phase.name,
+                        "agent_id": serde_json::Value::Null,
+                    }),
+                ).await;
             }
 
-            // ADR-2604051700 Gate 2: Pre-deletion consumer scan before phase execution.
+            // ADR-2026-04-05-1700 Gate 2: Pre-deletion consumer scan before phase execution.
             let consumer_warnings = Self::run_consumer_scan(phase).await;
             if !consumer_warnings.is_empty() {
                 if let Ok(Some(mut exec)) = Self::load_execution(state_port.as_ref(), &execution_id).await {
@@ -684,7 +904,7 @@ impl WorkplanExecutor {
                 );
             }
 
-            match Self::execute_phase(&state_port, &shared_state, &workplan, phase).await {
+            match Self::execute_phase(&state_port, &shared_state, &workplan, phase, &project_language, &compile_command).await {
                 Ok(result) => {
                     all_agent_ids.extend(result.agent_ids.clone());
 
@@ -735,7 +955,7 @@ impl WorkplanExecutor {
                         }
                     }
 
-                    // ADR-2604102100: Check for steering instructions after phase completes
+                    // ADR-2026-04-10-2100: Check for steering instructions after phase completes
                     let steering = Self::check_steering(&shared_state, &execution_id).await;
                     match steering {
                         SteeringAction::Pause => {
@@ -767,7 +987,7 @@ impl WorkplanExecutor {
         }
 
         Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Completed, None).await.ok();
-        // P5.2: Store full execution record in memory ledger (ADR-2604010000)
+        // P5.2: Store full execution record in memory ledger (ADR-2026-04-01-0000)
         let exec_key = format!("workplan:{}:execution:{}", workplan.id, execution_id);
         let exec_val = serde_json::json!({
             "workplan_id": workplan.id,
@@ -785,19 +1005,21 @@ impl WorkplanExecutor {
         shared_state: &SharedState,
         workplan: &Workplan,
         phase: &WorkplanPhase,
+        project_language: &str,
+        compile_command: &str,
     ) -> Result<PhaseResult, String> {
         // P3: Pre-flight check — verify AgentManager is wired and state port is responsive
         // before committing to spawning any agents. Fail fast with a clear message rather
         // than spawning N agents that will all hit the same infrastructure problem.
         //
-        // ADR-2604112000 P2.2: use the structured `MissingComposition` enum so the
+        // ADR-2026-04-11-2000 P2.2: use the structured `MissingComposition` enum so the
         // error names exactly which prerequisite is absent and carries an operator
         // remediation hint. The executor's phase error path is stringly-typed today
         // (`Result<PhaseResult, String>`), so we stringify — but the typed variant
         // is preserved in `to_string()` + `.remediation()`.
         if shared_state.agent_manager.is_none() {
             let diag = crate::orchestration::errors::MissingComposition::IncompletePortWiring {
-                details: "AgentManager not wired at composition root (ADR-2604112000 P2)".to_string(),
+                details: "AgentManager not wired at composition root (ADR-2026-04-11-2000 P2)".to_string(),
             };
             tracing::warn!(
                 phase = %phase.name,
@@ -833,7 +1055,7 @@ impl WorkplanExecutor {
         let mut errors = Vec::new();
         let mut completed_task_ids = Vec::new();
 
-        // ADR-2604131800 P5.1: Partition tasks into file-scope-safe batches.
+        // ADR-2026-04-13-1800 P5.1: Partition tasks into file-scope-safe batches.
         // Tasks sharing file paths are placed in later batches and dispatched
         // only after conflicting tasks in earlier batches complete.
         let scope_batches = compute_file_scope_batches(&phase.tasks);
@@ -851,9 +1073,27 @@ impl WorkplanExecutor {
 
         for &task_idx in batch {
             let task = &phase.tasks[task_idx];
-            // ADR-2604100000: Task heartbeat for observability
+            // ADR-2026-04-10-0000: Task heartbeat for observability
             let task_id = if !task.id.is_empty() { task.id.clone() } else { task.name.clone() };
             let task_name = task.name.clone();
+
+            // Skip tasks that reconcile already marked done. Re-dispatching a
+            // done task re-runs codegen, regenerates the same files (zero diff),
+            // and trips the post-phase compile gate when the prior fix-up commit
+            // isn't replayed — burning Claude tokens for no progress. Accept both
+            // "completed" (canonical TaskStatus) and "done" (what reconcile.rs
+            // writes today) so existing on-disk workplans skip correctly without
+            // a re-reconcile pass.
+            if matches!(task.status.as_str(), "completed" | "done") {
+                tracing::info!(
+                    task_id = %task_id,
+                    task_name = %task_name,
+                    status = %task.status,
+                    "Task SKIP — already done per workplan status (reconcile evidence)"
+                );
+                continue;
+            }
+
             let task_start = chrono::Utc::now().to_rfc3339();
             tracing::info!(
                 task_id = %task_id,
@@ -863,7 +1103,7 @@ impl WorkplanExecutor {
             );
 
             // Create a HexFlo task for this workplan task so the SubagentStop hook
-            // can mark it complete when the spawned agent finishes (ADR-2604010000 P3.2).
+            // can mark it complete when the spawned agent finishes (ADR-2026-04-01-0000 P3.2).
             let hexflo_task_id = {
                 let hft_id = Uuid::new_v4().to_string();
                 let title = format!("{}: {}", task.id, task.name);
@@ -903,6 +1143,23 @@ impl WorkplanExecutor {
                 if !hexflo_task_id.is_empty() {
                     p.push_str(&format!("HEXFLO_TASK:{}\n", hexflo_task_id));
                 }
+
+                // Inject project language context so agent knows what language to write.
+                // This prevents agents from generating Rust code in TypeScript files, etc.
+                p.push_str(&format!("PROJECT_LANGUAGE:{}\n\n", project_language));
+                match project_language {
+                    "rust" => {
+                        p.push_str("IMPORTANT: This is a Rust project. Write Rust code with proper syntax (fn, impl, etc.).\n\n");
+                    }
+                    "typescript" => {
+                        p.push_str("IMPORTANT: This is a TypeScript project. Write TypeScript code with proper syntax (interface, class, export, etc.). Use .ts file extensions. Do NOT write Rust code.\n\n");
+                    }
+                    "go" => {
+                        p.push_str("IMPORTANT: This is a Go project. Write Go code with proper syntax (func, type, package, etc.).\n\n");
+                    }
+                    _ => {}
+                }
+
                 // P6.1: Inject role-specific preamble so spawned agents know their
                 // role, core responsibilities, and behavioural constraints before
                 // reading the task body. Delegates to build_role_preamble() in mod.rs.
@@ -935,12 +1192,8 @@ impl WorkplanExecutor {
                 } else {
                     p.push_str("git add -p\n");
                 }
-                let layer = task.layer.as_deref().unwrap_or("feat");
-                let task_id_lower = task.id.to_lowercase();
-                p.push_str(&format!(
-                    "git commit -m \"{layer}({task_id_lower}): {}\"\n",
-                    task.name
-                ));
+                p.push_str(&build_commit_command(task, workplan));
+                p.push('\n');
                 p.push_str("```\n");
                 p
             };
@@ -985,26 +1238,49 @@ impl WorkplanExecutor {
             let agent_mgr = shared_state.agent_manager.clone();
             let workplan_id = workplan.id.clone();
 
-            // ADR-2604120202 P5.1: Classify task tier for routing
+            // ADR-2026-04-12-0202 P5.1: Classify task tier for routing
             let task_tier = classify_task_tier(task);
 
-            // ADR-2604180001 P2: Tier-specific timeout guards
-            let timeout_secs = match task_tier {
-                TaskTier::T1 => 30u64,
-                TaskTier::T2 => 120u64,
-                TaskTier::T2_5 => 300u64,
-                TaskTier::T3 => 600u64,
+            // ADR-2026-04-18-0001 P2: Tier-specific timeout guards.
+            // ADR-2026-05-14-1135 §Phase 1 #5: adaptive — `cargo check --workspace`
+            // alone exceeds 90s on this codebase, so the original T2=120s left
+            // ~30s for inference + writeback, causing routine codegen timeouts.
+            //
+            // 2026-05-22 retune: T2=600s, T2.5=600s. Best-of-N with a compile
+            // gate on a hex-nexus-sized codebase routinely runs 250–400s end
+            // to end; the prior T2=240s default tripped on wp-sop-pipeline-
+            // redesign-phase-1 P1.2 (a small ports trait) when N candidates
+            // had to be evaluated against `cargo check -p hex-nexus`. Path B
+            // (Claude Code subprocess) adds another ~30s of cold-start. 600s
+            // leaves headroom for 2-3 best-of-N iterations under realistic
+            // load. Operator override via HEX_TASK_TIMEOUT_T{1,2,2_5,3}_SECS.
+            let timeout_secs = {
+                let env_override = |key: &str| -> Option<u64> {
+                    std::env::var(key).ok().and_then(|v| v.parse::<u64>().ok())
+                };
+                match task_tier {
+                    TaskTier::T1   => env_override("HEX_TASK_TIMEOUT_T1_SECS").unwrap_or(60),
+                    TaskTier::T2   => env_override("HEX_TASK_TIMEOUT_T2_SECS").unwrap_or(600),
+                    TaskTier::T2_5 => env_override("HEX_TASK_TIMEOUT_T2_5_SECS").unwrap_or(600),
+                    TaskTier::T3   => env_override("HEX_TASK_TIMEOUT_T3_SECS").unwrap_or(900),
+                }
             };
 
             // Path C: headless inference dispatch for T1/T2/T2.5 in standalone mode.
             // Routes directly through the inference adapter (local or remote Ollama)
             // without spawning an agent process. Faster and cheaper than Path A.
             let inference_port = shared_state.inference_port.clone();
+            // Substrate opt-in (ADR-2026-04-26-1801 P2). When the substrate's
+            // inference shadow_router is wired, route Path C dispatch
+            // through it — with no swap in flight, the router delegates
+            // straight to the live binding (which IS this same
+            // inference_port), so behaviour is identical.
+            let inference_router_substrate = shared_state.inference_shadow_router.clone();
             let use_path_c = !crate::orchestration::is_claude_code_session()
                 && task_tier != TaskTier::T3
                 && inference_port.is_some();
 
-            // ADR-2604010000 P3B.2: Route to Path B (inference queue) when running inside
+            // ADR-2026-04-01-0000 P3B.2: Route to Path B (inference queue) when running inside
             // a Claude Code session (CLAUDECODE=1 in nexus env). Path A (spawn hex-agent)
             // is used otherwise. Pre-extract fields before config is moved into the closure.
             let use_path_b = crate::orchestration::is_claude_code_session();
@@ -1013,16 +1289,34 @@ impl WorkplanExecutor {
             let path_b_model = config.model.clone().unwrap_or_default();
             let path_b_prompt = config.prompt.clone().unwrap_or_default();
             let path_b_phase_name = phase.name.clone();
-            // ADR-2604061100: capture done_command for post-completion verification
+            // ADR-2026-04-06-1100: capture done_command for post-completion verification
             let task_done_command = task.done_command.clone();
             let task_done_condition = task.done_condition.clone();
+            // ADR-2026-04-27-0800 P0.1: capture for the file-evidence gate.
+            let task_files_for_evidence = task.files.clone();
+            let task_project_dir = task.project_dir.clone();
+            // Clone compile_command for the async move block
+            let task_compile_command = compile_command.to_string();
 
             handles.push(tokio::spawn(async move {
                 let spawn_result = if use_path_c {
-                    // Path C (ADR-2604120202 P5.1): headless inference dispatch.
+                    // Path C (ADR-2026-04-12-0202 P5.1): headless inference dispatch.
                     // Route prompt directly through inference adapter → compile gate.
                     // No agent process spawned — faster and works with remote Ollama.
-                    let inference = inference_port.unwrap(); // safe: use_path_c checks is_some()
+                    let inference_raw = inference_port.unwrap(); // safe: use_path_c checks is_some()
+                    // Substrate opt-in: wrap inference handle so .complete()
+                    // calls flow through ShadowRouter when wired. Falls
+                    // back to the raw adapter when substrate is absent.
+                    let inference: std::sync::Arc<dyn hex_core::ports::inference::IInferencePort> =
+                        match inference_router_substrate.as_ref() {
+                            Some(router) => std::sync::Arc::new(
+                                crate::orchestration::shadow_router::ShadowRouterInferenceAdapter::new(
+                                    router.clone(),
+                                    inference_raw,
+                                ),
+                            ),
+                            None => inference_raw,
+                        };
                     let grammar = crate::orchestration::grammars::grammar_for_role(
                         config.agent_name.as_deref().unwrap_or("hex-coder"),
                     ).map(String::from);
@@ -1053,20 +1347,29 @@ impl WorkplanExecutor {
                         "Path C: headless inference dispatch (scaffolded)"
                     );
 
-                    // ADR-2604120202 P5.1: Wrap inference in ScaffoldedDispatch for
+                    // ADR-2026-04-12-0202 P5.1: Wrap inference in ScaffoldedDispatch for
                     // T1/T2/T2.5 tasks. The scaffolding layer adds Best-of-N generation,
                     // compile-gate validation, and error-feedback retries — transparent
                     // to the executor. T3 tasks never reach Path C (filtered above).
+                    // Use language-specific compile command detected at workplan start.
                     let compile_checker = Box::new(ShellCompileChecker {
-                        command: "cargo check".to_string(),
+                        command: task_compile_command.clone(),
                     });
                     let scaffolded = ScaffoldedDispatch::new(
                         inference.clone(),
                         compile_checker,
                     );
 
-                    match scaffolded.dispatch(&req, task_tier).await {
-                        Ok(ScaffoldResult::Success { response, attempt, total_attempts }) => {
+                    // ADR-2026-04-24-1700: Graceful timeout for local models.
+                    // Local Ollama can be slow (especially first call after idle).
+                    // Use 5min timeout for Path C scaffolded dispatch.
+                    let dispatch_result = tokio::time::timeout(
+                        std::time::Duration::from_secs(300),
+                        scaffolded.dispatch(&req, task_tier),
+                    ).await;
+
+                    match dispatch_result {
+                        Ok(Ok(ScaffoldResult::Success { response, attempt, total_attempts })) => {
                             tracing::info!(
                                 task_id = %task_id,
                                 tokens = response.output_tokens,
@@ -1094,7 +1397,7 @@ impl WorkplanExecutor {
                                 role: Some("hex-coder".to_string()),
                             })
                         }
-                        Ok(ScaffoldResult::CompileGateFailed { total_attempts, best_error }) => {
+                        Ok(Ok(ScaffoldResult::CompileGateFailed { total_attempts, best_error })) => {
                             tracing::warn!(
                                 task_id = %task_id,
                                 total_attempts,
@@ -1106,7 +1409,22 @@ impl WorkplanExecutor {
                                 best_error.chars().take(200).collect::<String>()
                             ))
                         }
-                        Err(e) => Err(format!("Path C inference failed: {}", e)),
+                        Ok(Err(e)) => Err(format!("Path C inference failed: {}", e)),
+                        Err(_elapsed) => {
+                            // ADR-2026-04-24-1700: Timeout handling for slow local models.
+                            // Return a clear error instead of hanging indefinitely.
+                            tracing::error!(
+                                task_id = %task_id,
+                                tier = %task_tier,
+                                timeout_secs = 300,
+                                "Path C: inference timeout after 5 minutes"
+                            );
+                            Err(format!(
+                                "Path C timeout: inference for task '{}' exceeded 5 minute timeout. \
+                                Consider using a faster model or check Ollama availability.",
+                                task_id
+                            ))
+                        }
                     }
                 } else if use_path_b {
                     // Path B: store queue entry in HexFlo memory, broadcast inbox
@@ -1131,17 +1449,47 @@ impl WorkplanExecutor {
                         "workplan_id": workplan_id,
                         "summary": format!("Task queued: {}", task_label),
                     }).to_string();
-                    // Target the active CC agent directly (most recent session heartbeat).
-                    // Fall back to broadcast if no session found.
-                    if let Some(cc_agent_id) = find_active_cc_agent_id() {
+                    // Target an online worker — prefer the hex_agent registry (real-time
+                    // truth) over file-based session heartbeats (can be stale, leading
+                    // to the "phantom UUID" lookup miss documented in ADR-2026-05-14-1135
+                    // §Phase 1 #4). File fallback only kicks in for Path B sessions
+                    // running outside the registry (legacy Claude Code wrapper).
+                    let registry_target: Option<String> = match sp.hex_agent_list().await {
+                        Ok(agents) => agents
+                            .iter()
+                            .filter(|a| {
+                                let status_ok = a.get("status")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s == "online" || s == "active")
+                                    .unwrap_or(false);
+                                let role_match = a.get("role")
+                                    .and_then(|v| v.as_str())
+                                    .map(|r| r == "hex-coder" || r.starts_with("hex-"))
+                                    .unwrap_or(false);
+                                status_ok && role_match
+                            })
+                            // Most recently heartbeated wins (string compare on RFC3339 ts).
+                            .max_by(|a, b| {
+                                let ah = a.get("last_heartbeat").and_then(|v| v.as_str()).unwrap_or("");
+                                let bh = b.get("last_heartbeat").and_then(|v| v.as_str()).unwrap_or("");
+                                ah.cmp(bh)
+                            })
+                            .and_then(|a| a.get("id").and_then(|v| v.as_str()).map(String::from)),
+                        Err(_) => None,
+                    };
+
+                    if let Some(agent_id) = registry_target {
+                        let _ = sp.inbox_notify(&agent_id, 2, "inference-queue", &payload).await;
+                        tracing::info!(queue_id = %queue_id, task_id = %task_id, agent_id = %agent_id, source = "hex_agent_registry", "Path B: task enqueued, inbox notified");
+                    } else if let Some(cc_agent_id) = find_active_cc_agent_id() {
                         let _ = sp.inbox_notify(&cc_agent_id, 2, "inference-queue", &payload).await;
-                        tracing::info!(queue_id = %queue_id, task_id = %task_id, cc_agent = %cc_agent_id, "Path B: task enqueued, inbox notified");
+                        tracing::info!(queue_id = %queue_id, task_id = %task_id, cc_agent = %cc_agent_id, source = "session_file", "Path B: task enqueued, inbox notified");
                     } else {
                         let _ = sp.inbox_notify_all("", 2, "inference-queue", &payload).await;
-                        tracing::info!(queue_id = %queue_id, task_id = %task_id, "Path B: task enqueued, broadcast notification (no session found)");
+                        tracing::info!(queue_id = %queue_id, task_id = %task_id, source = "broadcast", "Path B: task enqueued, no registered or session-tracked agent — broadcast");
                     }
                     // Poll STDB inference_task for completion (2s interval, faster than 5s memory poll)
-                    // Timeout is tier-specific (ADR-2604180001 P2): T1=30s, T2=120s, T2.5=300s, T3=600s
+                    // Timeout is tier-specific (ADR-2026-04-18-0001 P2): T1=30s, T2=120s, T2.5=300s, T3=600s
                     tracing::info!(
                         queue_id = %queue_id,
                         task_id = %task_id,
@@ -1158,7 +1506,7 @@ impl WorkplanExecutor {
                         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                         elapsed_secs += 2;
 
-                        // Emit heartbeat every 30 seconds for stall detection (ADR-2604180001 P3)
+                        // Emit heartbeat every 30 seconds for stall detection (ADR-2026-04-18-0001 P3)
                         if elapsed_secs - last_heartbeat >= heartbeat_interval {
                             tracing::info!(
                                 queue_id = %queue_id,
@@ -1216,7 +1564,7 @@ impl WorkplanExecutor {
                                 tier = ?task_tier,
                                 timeout_secs = timeout_secs,
                                 elapsed_secs = elapsed_secs,
-                                "Inference task timeout — killing stalled process (ADR-2604180001)"
+                                "Inference task timeout — killing stalled process (ADR-2026-04-18-0001)"
                             );
                             let _ = sp.inference_task_fail(&queue_id, "executor timeout", &now).await;
                             break Err(format!("inference task {} timed out after {}s (tier: {:?})", queue_id, timeout_secs, task_tier));
@@ -1229,9 +1577,35 @@ impl WorkplanExecutor {
                 };
                 match spawn_result {
                     Ok(agent) => {
-                        // ADR-2604061100: verify done_command before marking completed
+                        // ADR-2026-04-27-1000 v2 shadow mode: agent has stopped successfully.
+                        emit_workplan_event(
+                            sp.as_ref(),
+                            &workplan_id,
+                            &task_id,
+                            WorkplanEventKind::AgentStopped,
+                            "executor",
+                            serde_json::json!({
+                                "agent_id": agent.id,
+                                "exit_code": 0,
+                            }),
+                        ).await;
+
+                        // ADR-2026-04-06-1100: verify done_command before marking completed
                         if let Some(ref cmd) = task_done_command {
                             let gate = Self::run_gate(cmd, &task_id).await;
+                            // Always emit GateRun — the gate ran regardless of outcome.
+                            emit_workplan_event(
+                                sp.as_ref(),
+                                &workplan_id,
+                                &task_id,
+                                WorkplanEventKind::GateRun,
+                                "executor",
+                                serde_json::json!({
+                                    "command": cmd,
+                                    "passed": gate.passed,
+                                    "output_excerpt": gate.output.chars().take(500).collect::<String>(),
+                                }),
+                            ).await;
                             if !gate.passed {
                                 let condition_text = task_done_condition
                                     .as_deref()
@@ -1251,6 +1625,66 @@ impl WorkplanExecutor {
                                 ));
                             }
                         }
+
+                        // ADR-2026-04-27-0800 P0.1: file-evidence gate. The agent claiming completion
+                        // is not enough — verify files exist OR a commit references the task.
+                        // Without this, an agent that exits 0 doing nothing is marked done.
+                        let evidence_project_dir = task_project_dir
+                            .clone()
+                            .unwrap_or_else(|| {
+                                std::env::current_dir()
+                                    .map(|p| p.to_string_lossy().to_string())
+                                    .unwrap_or_else(|_| ".".to_string())
+                            });
+                        let evidence_result = Self::check_evidence_gate(
+                            &task_id,
+                            &workplan_id,
+                            &task_files_for_evidence,
+                            &evidence_project_dir,
+                            &task_start,
+                        ).await;
+                        // Emit EvidenceChecked for both success and failure — the
+                        // projector needs the negative signal to know the gate ran.
+                        emit_workplan_event(
+                            sp.as_ref(),
+                            &workplan_id,
+                            &task_id,
+                            WorkplanEventKind::EvidenceChecked,
+                            "executor",
+                            match &evidence_result {
+                                Ok(()) => serde_json::json!({
+                                    "passed": true,
+                                    "files": task_files_for_evidence,
+                                }),
+                                Err(reason) => serde_json::json!({
+                                    "passed": false,
+                                    "reason": reason,
+                                    "files": task_files_for_evidence,
+                                }),
+                            },
+                        ).await;
+                        if let Err(reason) = evidence_result {
+                            let _ = sp.workplan_update_task(WorkplanTaskUpdate {
+                                task_id: task_id.clone(),
+                                status: "failed".to_string(),
+                                agent_id: Some(agent.id.clone()),
+                                result: Some(format!("evidence_gate_failed: {}", reason)),
+                            }).await;
+                            // ADR-060: P1 inbox notification — don't let evidence failures
+                            // sit silent. The operator should see this immediately.
+                            let payload = serde_json::json!({
+                                "title": "workplan_executor: task failed evidence gate",
+                                "task_id": task_id,
+                                "workplan_id": workplan_id,
+                                "reason": reason,
+                            }).to_string();
+                            let _ = sp.inbox_notify_all("", 1, "evidence_gate_failed", &payload).await;
+                            return Err(format!(
+                                "Task '{}': evidence gate failed\n  reason: {}",
+                                task_label, reason
+                            ));
+                        }
+
                         let _ = sp.workplan_update_task(WorkplanTaskUpdate {
                             task_id: task_id.clone(),
                             status: "completed".to_string(),
@@ -1258,7 +1692,7 @@ impl WorkplanExecutor {
                             result: None,
                         }).await;
 
-                        // ADR-2604100000: Task completion heartbeat
+                        // ADR-2026-04-10-0000: Task completion heartbeat
                         let task_end = chrono::Utc::now().to_rfc3339();
                         tracing::info!(
                             task_id = %task_id,
@@ -1267,7 +1701,7 @@ impl WorkplanExecutor {
                             "Task COMPLETE"
                         );
 
-                        // P5.1: Store task outcome in memory ledger (ADR-2604010000)
+                        // P5.1: Store task outcome in memory ledger (ADR-2026-04-01-0000)
                         let outcome_key = format!("workplan:{}:task:{}:outcome", workplan_id, task_id);
                         let outcome_val = serde_json::json!({
                             "task_id": task_id,
@@ -1280,13 +1714,27 @@ impl WorkplanExecutor {
                         Ok((task_id, agent.id))
                     }
                     Err(e) => {
+                        // ADR-2026-04-27-1000 v2 shadow mode: agent failed to start /
+                        // exited non-zero — record AgentStopped with the error.
+                        emit_workplan_event(
+                            sp.as_ref(),
+                            &workplan_id,
+                            &task_id,
+                            WorkplanEventKind::AgentStopped,
+                            "executor",
+                            serde_json::json!({
+                                "agent_id": serde_json::Value::Null,
+                                "exit_code": 1,
+                                "error": e,
+                            }),
+                        ).await;
                         let _ = sp.workplan_update_task(WorkplanTaskUpdate {
                             task_id: task_id.clone(),
                             status: "failed".to_string(),
                             agent_id: None,
                             result: Some(e.clone()),
                         }).await;
-                        // P5.1: Store task failure in memory ledger (ADR-2604010000)
+                        // P5.1: Store task failure in memory ledger (ADR-2026-04-01-0000)
                         let outcome_key = format!("workplan:{}:task:{}:outcome", workplan_id, task_id);
                         let outcome_val = serde_json::json!({
                             "task_id": task_id,
@@ -1427,6 +1875,21 @@ impl WorkplanExecutor {
         let already_completed = exec.completed_task_ids.clone();
 
         tokio::spawn(async move {
+            // Detect project language at resume (same as at workplan start).
+            let build_adapter = BuildAdapter::new();
+            let project_root = std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .to_string_lossy()
+                .to_string();
+            let project_language = build_adapter
+                .detect_toolchain(&project_root)
+                .map(|t| t.language.clone())
+                .unwrap_or_else(|| "unknown".to_string());
+            let compile_command = build_adapter
+                .detect_toolchain(&project_root)
+                .map(|t| t.compile_cmd.clone())
+                .unwrap_or_else(|| "cargo check".to_string());
+
             // Find the phase to resume from and continue
             let mut found = false;
             for phase in &workplan.phases {
@@ -1479,7 +1942,7 @@ impl WorkplanExecutor {
                     phase
                 };
 
-                match Self::execute_phase(&state_port, &shared_state, &workplan, phase_to_run).await {
+                match Self::execute_phase(&state_port, &shared_state, &workplan, phase_to_run, &project_language, &compile_command).await {
                     Ok(result) if result.status == "failed" => {
                         Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Failed, Some(&result.errors)).await.ok();
                         return;
@@ -1566,7 +2029,90 @@ impl WorkplanExecutor {
         }
     }
 
-    /// ADR-2604051700 Gate 2: Pre-deletion consumer scan.
+    /// ADR-2026-04-27-0800 P0.1 / ADR-2026-04-14-2200 actual: file-evidence gate.
+    /// Before marking a task `completed`, verify the agent actually produced the
+    /// listed files OR a commit since dispatch references the task. Returns
+    /// `Ok(())` on green, `Err(reason)` on red. An empty `task_files` list with
+    /// no commit since dispatch is treated as red — the agent did nothing.
+    async fn check_evidence_gate(
+        task_id: &str,
+        workplan_id: &str,
+        task_files: &[String],
+        project_dir: &str,
+        dispatch_start_rfc3339: &str,
+    ) -> Result<(), String> {
+        let mut missing_files: Vec<String> = Vec::new();
+        let mut found_files: Vec<String> = Vec::new();
+        for f in task_files {
+            // Treat trailing "/" entries (directories) as required-to-exist.
+            let p = std::path::Path::new(project_dir).join(f);
+            if p.exists() {
+                found_files.push(f.clone());
+            } else {
+                missing_files.push(f.clone());
+            }
+        }
+
+        // Look for a commit since dispatch_start that references this task or workplan.
+        let task_id_lc = task_id.to_lowercase();
+        let workplan_id_lc = workplan_id.to_lowercase();
+        let since_arg = format!("--since={}", dispatch_start_rfc3339);
+        let log_out = tokio::process::Command::new("git")
+            .args([
+                "log",
+                &since_arg,
+                "--pretty=format:%H%n%s%n%b%n--END--",
+            ])
+            .current_dir(project_dir)
+            .output()
+            .await;
+
+        let mut commit_match: Option<String> = None;
+        if let Ok(out) = log_out {
+            if out.status.success() {
+                let text = String::from_utf8_lossy(&out.stdout).to_string().to_lowercase();
+                for entry in text.split("--end--") {
+                    let entry_trim = entry.trim();
+                    if entry_trim.is_empty() {
+                        continue;
+                    }
+                    if (!task_id_lc.is_empty() && entry_trim.contains(&task_id_lc))
+                        || (!workplan_id_lc.is_empty() && entry_trim.contains(&workplan_id_lc))
+                    {
+                        let first_line = entry_trim.lines().next().unwrap_or("").to_string();
+                        commit_match = Some(first_line);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Decision: green if (every listed file exists) OR (a referencing commit exists since dispatch).
+        // Red if neither — that's the "agent exited without doing anything" case the executor was missing.
+        let files_complete = !task_files.is_empty() && missing_files.is_empty();
+        if files_complete || commit_match.is_some() {
+            return Ok(());
+        }
+        let reason = if task_files.is_empty() {
+            format!(
+                "no_evidence: task lists no files and no commit since {} mentions task {} or workplan {}",
+                dispatch_start_rfc3339, task_id, workplan_id
+            )
+        } else {
+            format!(
+                "no_file_evidence: missing {} of {} listed files ({}); no commit since {} mentions task {} or workplan {}",
+                missing_files.len(),
+                task_files.len(),
+                missing_files.join(", "),
+                dispatch_start_rfc3339,
+                task_id,
+                workplan_id
+            )
+        };
+        Err(reason)
+    }
+
+    /// ADR-2026-04-05-1700 Gate 2: Pre-deletion consumer scan.
     /// Before a phase that deletes files/modules, grep the workspace for references.
     /// Returns a list of files that reference the deleted artifacts.
     async fn run_consumer_scan(phase: &WorkplanPhase) -> Vec<String> {
@@ -1634,7 +2180,7 @@ impl WorkplanExecutor {
         warnings
     }
 
-    /// ADR-2604102100: Poll for pending steering instructions for a given agent.
+    /// ADR-2026-04-10-2100: Poll for pending steering instructions for a given agent.
     /// Returns Some(instruction) if pending, None if nothing pending.
     /// The instruction is CONSUMED (removed) when polled — one-time use.
     pub async fn poll_steering_instructions(
@@ -1645,7 +2191,7 @@ impl WorkplanExecutor {
         instructions.remove(agent_id)
     }
 
-    /// ADR-2604102100: Check for steering instructions and react.
+    /// ADR-2026-04-10-2100: Check for steering instructions and react.
     /// Returns true if execution should continue, false if it should stop/pause.
     pub async fn check_steering(
         shared_state: &SharedState,
@@ -1809,6 +2355,31 @@ mod workplan_schema_tests {
     }
 
     #[test]
+    fn routing_honors_strategy_hint_and_ui_design() {
+        use crate::domain::transport::TaskTier;
+        // strategy_hint=inference → T2.5 (was silently ignored before the fix)
+        let t: WorkplanTask =
+            serde_json::from_str(r#"{"id":"a","name":"x","strategy_hint":"inference"}"#).unwrap();
+        assert!(matches!(classify_task_tier(&t), TaskTier::T2_5));
+        // a hex-coder building a .tsx is UI design → T2.5, not the old T2 default
+        let ui: WorkplanTask = serde_json::from_str(
+            r#"{"id":"b","name":"grid","agent":"hex-coder","layer":"primary","files":["src/pages/Home.tsx"]}"#,
+        )
+        .unwrap();
+        assert!(matches!(classify_task_tier(&ui), TaskTier::T2_5), "UI/.tsx → T2.5");
+        // scaffold strategy → T1
+        let s: WorkplanTask =
+            serde_json::from_str(r#"{"id":"d","name":"y","strategy_hint":"scaffold"}"#).unwrap();
+        assert!(matches!(classify_task_tier(&s), TaskTier::T1));
+        // a plain Rust domain task is unaffected → stays T2
+        let dom: WorkplanTask = serde_json::from_str(
+            r#"{"id":"c","name":"value type","layer":"domain","files":["src/money.rs"]}"#,
+        )
+        .unwrap();
+        assert!(matches!(classify_task_tier(&dom), TaskTier::T2));
+    }
+
+    #[test]
     fn workplan_rejects_duplicate_name_and_title() {
         // serde's `alias` treats both spellings as the same logical field,
         // so a JSON object containing both `name` AND `title` is a duplicate
@@ -1841,6 +2412,153 @@ mod workplan_schema_tests {
         let j = r#"{"phases":[{"id":"P1","name":"phase","tasks":[{"id":"P1.1","title":"a-task"}]}]}"#;
         let wp: Workplan = serde_json::from_str(j).expect("title-only task must deserialize");
         assert_eq!(wp.phases[0].tasks[0].name, "a-task");
+    }
+}
+
+#[cfg(test)]
+mod commit_subject_tests {
+    //! Lock the commit-subject format the executor injects into agent prompts.
+    //! Without `workplan.id` in the subject, `git log --grep wp-foo` can't
+    //! locate the commits a workplan produced. Pin both the workplan-id-present
+    //! case and the empty-id fallback so neither path silently regresses.
+    use super::*;
+
+    fn fixture_task() -> WorkplanTask {
+        let j = r#"{"id":"P1.1","name":"do the thing","layer":"primary"}"#;
+        serde_json::from_str(j).expect("fixture task must deserialize")
+    }
+
+    fn workplan_with_id(id: &str) -> Workplan {
+        let j = format!(r#"{{"id":"{}","phases":[]}}"#, id);
+        serde_json::from_str(&j).expect("fixture workplan must deserialize")
+    }
+
+    #[test]
+    fn subject_includes_workplan_id() {
+        let task = fixture_task();
+        let workplan = workplan_with_id("wp-foo");
+        let line = build_commit_command(&task, &workplan);
+        assert!(line.contains("(p1.1)"), "missing lowercased task id in: {line}");
+        assert!(line.contains("wp-foo"), "missing workplan id in: {line}");
+    }
+
+    #[test]
+    fn subject_omits_workplan_id_when_empty() {
+        let task = fixture_task();
+        let workplan = workplan_with_id("");
+        let line = build_commit_command(&task, &workplan);
+        assert!(line.contains("(p1.1)"), "missing lowercased task id in: {line}");
+        // Fallback path uses the legacy `layer(id): name` form — no em-dash separator
+        // and no `wp-` substring should leak through.
+        assert!(!line.contains(" — "), "fallback must not include em-dash separator: {line}");
+        assert!(!line.contains("wp-"), "fallback must not embed any workplan id: {line}");
+    }
+}
+
+#[cfg(test)]
+mod evidence_gate_tests {
+    //! ADR-2026-04-27-0800 P0.1 regression tests for `check_evidence_gate`.
+    //! Reproduces the 2026-04-27 false-done scenario: an agent exits 0
+    //! without creating the listed files and without committing — the gate
+    //! must reject (`Err(reason)`), not pass.
+    use super::*;
+
+    fn mktemp() -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "hex-evidence-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git failed");
+    }
+
+    #[tokio::test]
+    async fn rejects_when_agent_did_nothing() {
+        let dir = mktemp();
+        git(&dir, &["init", "-q"]);
+        git(&dir, &["config", "user.email", "t@t"]);
+        git(&dir, &["config", "user.name", "t"]);
+        std::fs::write(dir.join("seed.txt"), "x").unwrap();
+        git(&dir, &["add", "seed.txt"]);
+        git(&dir, &["commit", "-q", "-m", "seed"]);
+
+        let dispatch_start = chrono::Utc::now().to_rfc3339();
+        let result = WorkplanExecutor::check_evidence_gate(
+            "P0.1",
+            "wp-ADR-doctor-self-fix",
+            &["src/foo.rs".to_string()],
+            dir.to_str().unwrap(),
+            &dispatch_start,
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "evidence gate must fail when no files exist and no commit references the task"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn passes_when_files_exist() {
+        let dir = mktemp();
+        git(&dir, &["init", "-q"]);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/foo.rs"), "// real").unwrap();
+
+        let dispatch_start = chrono::Utc::now().to_rfc3339();
+        let result = WorkplanExecutor::check_evidence_gate(
+            "P0.1",
+            "wp-x",
+            &["src/foo.rs".to_string()],
+            dir.to_str().unwrap(),
+            &dispatch_start,
+        )
+        .await;
+        assert!(result.is_ok(), "should pass when listed files exist on disk");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn passes_when_commit_since_dispatch_references_task() {
+        let dir = mktemp();
+        git(&dir, &["init", "-q"]);
+        git(&dir, &["config", "user.email", "t@t"]);
+        git(&dir, &["config", "user.name", "t"]);
+        std::fs::write(dir.join("seed.txt"), "x").unwrap();
+        git(&dir, &["add", "seed.txt"]);
+        git(&dir, &["commit", "-q", "-m", "seed"]);
+
+        // Capture dispatch start, then commit something that references the task id.
+        let dispatch_start = chrono::Utc::now().to_rfc3339();
+        // Sleep briefly so --since filter doesn't drop the commit by 1-second resolution.
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        std::fs::write(dir.join("seed.txt"), "y").unwrap();
+        git(&dir, &["add", "seed.txt"]);
+        git(&dir, &["commit", "-q", "-m", "feat(p0.1): wp-x evidence gate"]);
+
+        let result = WorkplanExecutor::check_evidence_gate(
+            "P0.1",
+            "wp-x",
+            &[], // no files listed — falls back to commit check
+            dir.to_str().unwrap(),
+            &dispatch_start,
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "should pass when a commit since dispatch mentions the task"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

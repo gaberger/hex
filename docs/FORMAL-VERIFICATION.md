@@ -17,8 +17,8 @@ The sched daemon's task lifecycle is modeled with two configs:
 
 | Config | Spec | Result |
 |---|---|---|
-| `sched_daemon_buggy.cfg` | `DispatchVacuous` reachable, no `WF(TimeoutSweep)` | TLC finds a 3-state counterexample violating `HandleInvariant`: `pending → Claim → claimed → DispatchVacuous → in_progress (handle=FALSE)` |
-| `sched_daemon_fixed.cfg` | `NextFixed` removes `DispatchVacuous`, adds `EvidenceRequired` invariant + WF on `TimeoutSweep` | 14 states checked, all safety + liveness properties hold (`TerminalReachable`, `BoundedTermination`) |
+| `sched_daemon_buggy.cfg` | `SpecBuggy`: `DispatchVacuous` reachable, no `WF(TimeoutSweep)` | TLC reports a `TerminalReachable` liveness counterexample: `pending → Claim → claimed → DispatchVacuous → in_progress (handle=FALSE) → Tick × (TimeoutTicks+GraceTicks) → stuttering` — task stuck forever, no sweep is forced. (`HandleInvariant` is also violated by this trace; it's checked separately under `SpecFixed`.) |
+| `sched_daemon_fixed.cfg` | `SpecFixed`: `NextFixed` removes `DispatchVacuous`, adds `EvidenceRequired` invariant + WF on `TimeoutSweep` | 14 states checked, all safety + liveness properties hold (`TerminalReachable`, `BoundedTermination`) |
 
 The model maps 1:1 to the Rust implementation:
 
@@ -43,6 +43,12 @@ java -cp ~/.local/share/tla/tla2tools.jar tlc2.TLC \
   -config docs/algebra/sched_daemon_fixed.cfg \
   -workers auto \
   docs/algebra/sched_daemon.tla
+
+# reproduce the current-daemon liveness counterexample (P0.2)
+java -cp ~/.local/share/tla/tla2tools.jar tlc2.TLC \
+  -config docs/algebra/sched_daemon_buggy.cfg \
+  -workers auto \
+  docs/algebra/sched_daemon.tla
 ```
 
 ## When to add a new module
@@ -51,5 +57,5 @@ Any daemon, queue, reconciler, or state machine with three or more states and at
 
 ## References
 
-- [ADR-2604111229 — Algebraic formalization of process flow](adrs/ADR-2604111229-algebraic-formalization-of-process-flow.md)
-- [ADR-2604142155 — Sched daemon stuck in_progress](adrs/ADR-2604142155-sched-daemon-stuck-in-progress.md)
+- [ADR-2026-04-11-1229 — Algebraic formalization of process flow](adrs/ADR-2026-04-11-1229-algebraic-formalization-of-process-flow.md)
+- [ADR-2026-04-14-2155 — Sched daemon stuck in_progress](adrs/ADR-2026-04-14-2155-sched-daemon-stuck-in-progress.md)

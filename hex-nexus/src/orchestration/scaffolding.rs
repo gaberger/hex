@@ -1,5 +1,5 @@
 //! Scaffolded dispatch — Best-of-N with compile gate + error-feedback retry
-//! (ADR-2604120202 Phase 2, tasks P3.1 and P3.2).
+//! (ADR-2026-04-12-0202 Phase 2, tasks P3.1 and P3.2).
 //!
 //! Wraps an `IInferencePort` to generate multiple completions, validate each
 //! against a compile gate, and retry with error feedback on failure. The
@@ -12,7 +12,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use hex_core::ports::inference::{InferenceError, InferenceRequest, InferenceResponse};
 
-use crate::remote::transport::TaskTier;
+use crate::domain::transport::TaskTier;
 
 /// Result of a scaffolded dispatch attempt.
 #[derive(Debug)]
@@ -94,9 +94,15 @@ impl CompileChecker for ShellCompileChecker {
         let parts: Vec<&str> = self.command.split_whitespace().collect();
         let (cmd, args) = parts.split_first().unwrap_or((&"cargo", &[]));
 
-        let output = tokio::process::Command::new(cmd)
-            .args(args)
-            .arg(&tmp_path)
+        // Some commands accept file arguments (rustc, gcc, clang, etc.),
+        // but cargo check, tsc --noEmit, go build don't.
+        let accepts_file_arg = matches!(*cmd, "rustc" | "gcc" | "clang" | "cc" | "c++" | "g++" | "javac");
+        let mut cmd_builder = tokio::process::Command::new(cmd);
+        cmd_builder.args(args);
+        if accepts_file_arg {
+            cmd_builder.arg(&tmp_path);
+        }
+        let output = cmd_builder
             .output()
             .await
             .map_err(|e| CompileError {

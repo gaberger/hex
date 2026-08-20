@@ -3,271 +3,232 @@
 </p>
 
 <p align="center">
-  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.75+-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-edition%202021-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
-  <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-182-bc8cff?style=flat-square" alt="ADRs"></a>
-  <a href="#status"><img src="https://img.shields.io/badge/Release-Alpha-bc8cff?style=flat-square" alt="Alpha"></a>
+  <a href="docs/adrs/INDEX.md"><img src="https://img.shields.io/badge/ADRs-255-bc8cff?style=flat-square" alt="ADRs"></a>
+  <a href="#what-hex-can-do-today"><img src="https://img.shields.io/badge/Release-Alpha-bc8cff?style=flat-square" alt="Alpha"></a>
 </p>
 
 <p align="center">
-  <strong>A Rust runtime that routes coding-agent tasks to the cheapest model that can pass a compile gate,
-  enforces hexagonal boundaries at commit time, and reconciles agent work against git evidence.</strong>
+  <strong>An AI Operating System built on hexagonal architecture.</strong><br>
+  A single evidence-gated agent loop for bounded work — and a cooperative+adversarial agent harness
+  that designs and hardens whole systems. Hybrid inference: local models first, a
+  <code>claude -p</code> frontier path for the hard parts.
+</p>
+
+<p align="center">
+  <a href="ARCHITECTURE.md">Architecture</a> ·
+  <a href="docs/adrs/INDEX.md">ADR ledger</a> ·
+  <a href="docs/benchmarks/">Benchmarks</a>
 </p>
 
 ---
 
+> **Status (2026-06, alpha).** hex is a working substrate with a real, measured execution model: an
+> evidence-gated agent loop for bounded work, and a [cooperative+adversarial harness](#the-agentic-harness)
+> that designs and hardens whole systems — exercised on three real systems built from one-line specs.
+> The full capability runs on frontier inference; strictly-local on commodity hardware has a measured
+> ceiling. What follows is what hex does today — every claim here is checkable against the source, the
+> [ADR ledger](docs/adrs/INDEX.md), or `docs/benchmarks/`.
+
 ## What hex is
 
-hex is a local-first runtime for AI coding agents. It sits between an agent (Claude Code, or a local Ollama model in standalone mode) and your codebase, and does three concrete things:
+hex is a microkernel-based **AI Operating System (AIOS)** built on **hexagonal architecture**
+(Ports & Adapters). It installs *into* a target project to orchestrate AI-driven development:
+**agents are the users, developers are the sysadmins.** Hooks, skills, agents, and settings are
+instantiated into the target project; `examples/` holds sample targets.
 
-1. **Classifies every task into a tier and routes it to a model of matching size.** A prompt's `strategy_hint` (`scaffold` / `codegen` / `inference`) and structural heuristics pick T1 (4B), T2 (32B), T2.5 (24B), or T3 (frontier). See `hex-cli/src/commands/hook.rs::classify_work_intent`.
+The current design is **one strong agent loop fed by tools, code-graph context, and memory** —
+*not* a simulated organization of many agents (that earlier `org-sim` epoch was
+[retired](#epochs); see [ARCHITECTURE.md](ARCHITECTURE.md)). The differentiator is the **quality of
+context** assembled for that single loop — code-graph relevance plus ranked lessons — and a
+structure that turns frontier models into a disciplined, gated, architecturally-aware pipeline.
 
-2. **Wraps model output in a compile gate.** For T1/T2/T2.5 it generates best-of-N completions and only accepts a candidate that passes `cargo check` or `tsc --noEmit`. Compiler errors from failed candidates are fed back into the next attempt. See `hex-nexus/src/remote/transport.rs`.
+## The execution model
 
-3. **Validates hexagonal architecture on every commit.** `hex analyze` parses TypeScript and Rust with tree-sitter, classifies each file into a layer (`domain` / `ports` / `adapters` / `usecases`), and fails if a cross-layer import violates the dependency direction. See `hex-cli/src/commands/analyze.rs`.
+The canonical path is `hex do` → an evidence-gated **ReAct loop** (reason → act → observe →
+repeat) over a curated, guarded toolset (read/verify tools + a terminal `propose_edit`; no
+arbitrary shell). The whole loop lives in the **`hex-exec`** crate.
 
-Work is tracked as a **workplan JSON** (phases, tasks, adapter boundaries, gates). Completion is not self-reported — the reconciler walks `git log` and requires non-empty `evidence.commits[]` before a task is considered done (`hex plan reconcile`).
-
----
-
-## Why it exists
-
-AI agents write code that compiles locally and fails at integration. They violate layering boundaries that aren't enforced by the build. They report "done" on work they didn't do. And cloud inference pricing doesn't scale when you run many agents.
-
-hex addresses these with mechanical checks, not promises:
-
-| Failure mode | hex response |
-|---|---|
-| Agent writes non-compiling code | Best-of-N + compile gate (cannot be accepted without passing `cargo check`/`tsc --noEmit`) |
-| Agent violates layer boundaries | Tree-sitter import scan blocks commits with cross-adapter imports |
-| Agent self-reports false completion | Reconciler requires git commits touching the task's files |
-| Frontier API cost per task | Tier classifier routes boilerplate to local 4B/32B models; escalates only on failure |
-| Two agents edit the same file | HexFlo worktree-per-adapter + CAS task claims |
-
----
-
-## Getting hex into your project
-
-hex is **designed to drop into existing projects** with zero breaking changes:
-
-```bash
-# 1. Add hex-core as a dependency
-cargo add hex-core
-
-# 2. Bootstrap the runtime (one command)
-hex bootstrap --profile dev
-
-# 3. Start using hex commands
-hex analyze .           # Check architecture boundaries
-hex plan draft "add auth"  # Create workplan stub
-hex plan execute <plan>    # Run autonomous feature work
+```
+task + graph context + ranked lessons + windowed file
+  → reason → read/verify tools → propose_edit → run evidence command
+  → commit IFF it exits 0   (else revert; the gate is the sole authority on what commits)
 ```
 
-**No configuration required.** hex reads your workspace structure and starts enforcing rules immediately. The bootstrap command handles all infrastructure (SpacetimeDB, Ollama models, GPU setup).
+What's actually wired (all shipped + validated — see the ADR ledger and the cited source):
 
-**Tested on:** macOS (Intel/ARM), Linux (x86_64, GPU), Docker. **Setup time:** ~2 minutes start-to-ready (vs. 45 minutes manual setup).
+- **The evidence gate is the only thing that authorizes a commit** — vacuous passes are detected and
+  rejected (`hex-exec/src/direct_exec.rs::evidence_is_vacuous`), failed edits reverted atomically. No
+  "it compiles" theater. (ADR-2026-05-19-0720, ADR-2026-06-04-1740.)
+- **Per-run worktree isolation** — autonomous runs execute in a dedicated `hex/auto/<id>` worktree off
+  the operator's branch under a distinct `hex-factory` identity, hard-guarded against the operator's
+  tree, merged back via `hex worktree merge` (`hex-exec/src/direct_workspace.rs`, ADR-2606071323).
+- **Evidence-gated best-of-N across complementary models** — `hex do` iterates an ordered candidate
+  list (`.hex/project.json → inference.react_models`, default `[devstral-small-2:24b, claude-code]`)
+  and commits the first to pass the gate. The gate, not a classifier, picks the winner — a mis-route
+  only costs latency (`react_execute_best_of_n`, ADR-2606072044).
+- **`claude -p` frontier fallback** — when local models fail, a `claude-code` candidate delegates the
+  whole task to the operator's logged-in Claude CLI (`claude_execute` in `direct_react.rs`): no API
+  key, no VRAM ceiling. Local runs free/fast; Claude recovers the hard ones.
+- **Benchmark-driven model choice** — `hex bench agentic` runs fixtures through the *real* loop in
+  isolated worktrees and scores per-model pass-rates (`docs/benchmarks/`, ADR-2606071734).
+- **Memory-aware resource governor** — `hex-exec/src/resource_governor.rs` gates admission by available
+  memory so best-of-N and the swarm don't oversubscribe the box.
+- **Self-deploy** — `hex dev deploy` builds, installs, and restarts in one command (ADR-2606071702).
+- **Hex-native frontier swarm** — `hex swarm run` fans a task list out to parallel `claude -p` workers
+  under a semaphore-bounded supervisor. hex orchestrates its own agents.
 
----
+With `CLAUDE_SESSION_ID` unset, nexus drives the loop itself via an Ollama/OpenAI-compatible adapter —
+no Claude CLI needed (ADR-2026-04-11-2000). `hex doctor composition` diagnoses the active variant.
+
+## The agentic harness
+
+The single loop above is for *bounded* work. For whole systems, hex has a **cooperative+adversarial
+harness** — multiple `claude -p` agents that disagree, attack each other's work, and resolve against
+a ground-truth gate (`hex-exec/src/adversarial.rs`). Two composable verbs:
+
+- **`hex swarm build '<challenge>' --target <dir> --gate '<test>'`** — *cooperative design*: N agents
+  propose divergent designs (durability-first, concurrency-first, …) → each is red-teamed → a lead
+  synthesizes one spec → a build agent implements until the gate passes.
+- **`hex swarm review <path> --gate '<test>'`** — *adversarial hardening*: parallel reviewers hunt
+  bugs by failure-class lens → each finding is skeptically verified (default-refute) → confirmed bugs
+  are fixed under the gate.
+- `--review` chains them: `hex swarm build … --review` runs the full design → harden pipeline.
+
+What keeps it disciplined: **a ground-truth test gate is the only authority**, the verifier defaults
+to *refuting* findings (so plausible-but-wrong bugs die before any edit), and every artifact is
+independently re-verified (`cargo test` / `tsc`) — not taken on the agents' word.
+
+**Exercised** — from one-line challenges, the harness built three real systems (now under `examples/`),
+and the adversarial pass found bugs the builds' *own passing tests* missed. The bug counts are recorded
+in [ADR-2606081916](docs/adrs/ADR-2606081916-hex-native-adversarial-review-harness.md):
+
+| System (built from a one-line spec) | LOC | Adversarial review found |
+|---|---|---|
+| Concurrent durable job queue (WAL, crash-recovery) — `examples/jobqueue-clean` | ~2900 | **6 real bugs** (incl. silent WAL data-loss) |
+| Thread-safe LRU + TTL cache — `examples/lru-clean` | ~1300 | **1 real bug** (exception-safety) |
+| Token-bucket rate limiter — `examples/ratelimiter-clean` | ~550 | **0** (clean by design) |
+
+The 6 / 1 / 0 spread is the signature of a real tool — it finds bugs when they're there and reports
+none when they're not. hex supplies the structure that makes it work: the divergent-design pipeline,
+the skeptical-verify gate, the fix-loop, and the evidence anchor — orchestrating `claude -p` agents
+into a disciplined build-and-harden pipeline you can point at a one-line spec and get tested,
+architecturally-clean code back. (The counts come from those build sessions, recorded in the ADR
+above; the systems themselves are reproducible from their gates.)
+
+## What hex can do today
+
+Concretely, with the receipts:
+
+**What works:**
+- The hexagonal architecture is real and self-enforced — `hex analyze .` grades the workspace
+  **A+ / 100 / 0 boundary violations** over 712 source files (hex passes its own analyzer; the grade
+  reflects the boundary rules the `hex-analysis` engine enforces). `hex analyze hex-nexus` is also A+ —
+  nexus went from **F (30/100)** before the crate split to A+ after (ADR-2606071340).
+- The evidence-gated loop genuinely produces real, tested, committed code, and the gate holds
+  under failure (a wandering model commits *nothing*).
+- Best-of-N + the `claude -p` fallback let the loop recover across models automatically —
+  validated live (a local model failed a task; Claude took over and committed).
+- The **cooperative+adversarial harness** builds *and* hardens whole systems from one-line specs —
+  the three above, each gated by its own tests, with the adversarial pass catching real bugs the
+  build missed. hex even used it to find a bug in its *own* output.
+
+**The honest envelope:**
+- **The full capability above runs on a frontier API or a logged-in `claude` CLI.** Strictly local
+  on commodity hardware has a ceiling (see the next section) — there, the local loop is a reliable
+  implementer of bounded work, and the frontier path takes the whole-system design and the hardest
+  tasks. hex routes between them by *measured fit*, not by guessing.
+- The benchmark corpus is small; treat any single number as directional, not gospel.
+
+## Local AI: the honest picture
+
+hex is model-agnostic (Ollama, vLLM, OpenAI-compatible, Claude). But the *agentic loop* —
+multi-turn tool use, not single-shot codegen — is demanding, and we measured it:
+
+- **It's a RAM problem, not just a VRAM one.** Top open models are large MoEs (e.g.
+  Qwen3-Coder-Next is ~51 GB of weights); on a 16 GB-GPU / 30 GB-RAM box they don't fit, even with
+  offload. The reachable set is ~≤13 GB-resident models.
+- **No single local model dominates.** A benchmark across the reachable models reordered the
+  "best" model on *every* fixture — devstral leads on string tasks, qwen on algorithmic ones, and
+  the top-of-the-leaderboard local model (`gpt-oss:20b`) scored *last* on our grid. **Leaderboard
+  scores do not predict agentic-loop performance.**
+- **The *language* matters as much as the model.** We ran the *same* CSV-parser task in Rust, TS,
+  and Go (react, per-model pass rate; data in `docs/benchmarks/fixtures/t25-csv-parse*.json`):
+
+  | Model | Rust | TS | Go |
+  |---|---|---|---|
+  | qwen2.5-coder:14b | 0/5 | **2/3** | 0/3 |
+  | gpt-oss:20b | 0/5 | **1/3** | 0/3 |
+  | devstral-small-2:24b | 5/5 | 3/3 | 2/3 |
+  | gemma3:12b | 4/5 | 2/3 | 1/3 |
+
+  The lesson isn't "static typing is hard" — it's that **TypeScript is uniquely *forgiving*, while
+  Rust *and* Go are strict and hard for weaker local models.** The two models that recover in TS
+  (qwen, gpt-oss) crash right back to 0/3 in Go — Go's strictness (unused imports/vars are compile
+  errors, byte-vs-rune) punishes them almost like Rust's borrow checker. So the local ceiling — and
+  how much the `claude -p` fallback is load-bearing — depends heavily on your language: lowest for
+  TS/JS, high for Rust and Go.
+- **So hex doesn't bet on one model.** It runs best-of-N across a complementary pair and falls
+  back to `claude -p` for tasks locals can't finish. That's the honest path to reliability on this
+  hardware — most so for Rust, less needed for TS.
+
+If you have a frontier API or a logged-in `claude` CLI, hex is strong. If you're strictly local on
+commodity hardware, hex works but inherits the local models' ceiling — and the benchmark tells you
+exactly where that is.
+
+## Architecture
+
+Full detail in **[ARCHITECTURE.md](ARCHITECTURE.md)** (the living map; always describes HEAD). The
+Rust workspace decomposes nexus behind ports (ADR-2606071340); the reusable core crates:
+
+| Crate | Role |
+|---|---|
+| **hex-core** | Domain types + **all** port traits; the gravity center every crate depends on (no intra-workspace deps) |
+| **hex-exec** | The agent engine: single-agent ReAct loop, best-of-N, `claude -p` delegate, the adversarial harness, the resource governor, guarded tools |
+| **hex-graph** | Code-knowledge-graph engine → `graph-out/graph.json` (`context_for`, `rank_lessons`) |
+| **hex-analysis** | Tree-sitter boundary checking; powers `hex analyze` |
+| **hex-git** / **hex-state** | git plumbing (libgit2) · SpacetimeDB state adapter |
+| **hex-nexus** | Composition root + daemon (axum `:5555`, dashboard, DI) — the only place adapters are wired |
+| **hex-cli** | The canonical `hex` entry point |
+
+Support crates round out the workspace: **hex-agent** (architecture-enforcement runtime),
+**hex-parser** (parsing), **hex-desktop** (Tauri dashboard wrapper). **SpacetimeDB** (required) is the
+coordination/state core — WASM modules live in `spacetime-modules/`; because WASM can't touch
+FS/spawn/network, **hex-nexus** is the FS-bridge daemon.
 
 ## Quick start
 
-### Docker (recommended)
-
 ```bash
-docker run -d --name hex \
-  -p 5555:5555 -p 3033:3033 \
-  -v $(pwd):/workspace \
-  ghcr.io/gaberger/hex-nexus:latest
+hex bootstrap          # prerequisites, SpacetimeDB, Ollama (if present), config
+hex nexus start        # the daemon (dashboard at :5555)
+hex do run --file <f> --evidence "<cmd that must exit 0>" "<what to do>"
+hex bench agentic --filter <fixture>   # measure a model through the real loop
+hex swarm build "<challenge>" --target <dir> --gate "<test>" --review   # design + harden
+hex dev deploy         # rebuild + install + restart, one command
+hex analyze .          # architecture grade + boundary violations
 ```
 
-### CLI
+## Governance
 
-```bash
-curl -L https://github.com/gaberger/hex/releases/latest/download/hex-darwin-arm64 -o /usr/local/bin/hex
-chmod +x /usr/local/bin/hex
-hex                           # status + next-step suggestions
-```
+- **ADRs are an append-only ledger** — decisions are never edited or deleted; a changed decision
+  gets a new ADR that supersedes the old one. Lifecycle: `Proposed → Accepted → Completed`, or
+  `Rejected | Abandoned | Superseded | Deprecated`. Status changes only via `hex adr accept|complete|supersede`.
+- **Epochs** group ADRs by design era (`foundation` → `org-sim` *(retired)* → `single-agent` →
+  **`hybrid-inference`** *(current — ADR-2606072243)*). `hex adr reindex` regenerates the
+  [INDEX](docs/adrs/INDEX.md).
+- **[ARCHITECTURE.md](ARCHITECTURE.md) is the living map**; the ADR ledger is its history. If code or
+  older docs contradict the map, the map wins — and the contradiction is worth an ADR.
 
-Dashboard: `http://localhost:5555`. 
+## Influences & attestation
 
-### One-Command Setup: `hex bootstrap`
-
-```bash
-# Automated setup for local development (handles everything):
-hex bootstrap --profile dev
-
-# What it does:
-#  • Starts SpacetimeDB (coordination layer)
-#  • Starts Ollama with GPU support (if available)
-#  • Loads all 3 inference models (T1, T2, T2.5)
-#  • Creates .hex/project.json with tier configuration
-#  • Validates GPU acceleration if present
-#  • Reports diagnostic status
-
-# Takes ~2 minutes. No manual steps. No build tools needed.
-```
-
-Before bootstrap, hex required 45 minutes of manual setup (downloading models, configuring ports, managing processes). Now it's one command. See [Bootstrap Guide](docs/BOOTSTRAP.md) for details.
+The **`hex-graph`** code-knowledge engine is **graphify-influenced** — a GraphRAG-style code graph
+(typed nodes + edges, community detection, `EXTRACTED`/`INFERRED`/`AMBIGUOUS` confidence levels)
+reimplemented natively in Rust. The single-agent execution model (one gateway-mediated ReAct loop
+fed by code-graph context + memory, ADR-2606061359) converges with ideas from **OpenClaw** and
+**Hermes Agent** (Nous Research). These shaped the design; the implementation is hex's own.
 
 ---
 
-## How a feature flows through hex
-
-```
-user prompt ──► classify_work_intent ──► tier
-                                          │
-                      T1: answered in-session (TodoWrite)
-                      T2: one-line suggestion in hook output
-                      T3: auto-drafts docs/workplans/drafts/draft-*.json
-                                          │
-                                /hex-feature-dev
-                                          │
-                                          ▼
-                behavioral-spec-writer ──► docs/specs/<feature>.json
-                                          │
-                            planner ──► docs/workplans/feat-<feature>.json
-                                          │
-                        hex plan execute <workplan>
-                                          │
-                    HexFlo swarm dispatches tasks per adapter
-                                          │
-                          worktree: feat/<feature>/<layer>
-                                          │
-                 best-of-N ──► cargo check / tsc --noEmit (blocking gate)
-                                          │
-                     validation-judge ──► PASS / FAIL (blocking)
-                                          │
-                        integrator merges worktrees in dependency order
-                                          │
-                     hex plan reconcile ──► verify evidence.commits[]
-```
-
-Each artifact is auditable: the spec is a JSON file, the workplan is a JSON file, every task carries the commits it produced, and every merge runs the analyzer.
-
----
-
-## Commands
-
-```bash
-# project status
-hex                           # next-step suggestions
-hex status                    # overview
-hex analyze .                 # architecture violations + dead code
-
-# workplans
-hex plan draft <prompt>       # create a workplan stub (auto-invoked on T3 prompts)
-hex plan execute <wp.json>    # dispatch to HexFlo
-hex plan reconcile --update   # sync task status with git evidence
-
-# daemon (autonomous tick loop)
-hex sched daemon --background --interval 30
-hex sched enqueue workplan <wp.json>
-hex sched queue list
-
-# swarm
-hex swarm init <name>
-hex task list
-```
-
-Natural-language dispatch (`hex hey "rebuild nexus and validate"`) routes through the classifier; explicit commands are equivalent.
-
----
-
-## Reliability: Workplan Timeout Guards (ADR-2604180001)
-
-**Problem:** Workplan tasks could hang indefinitely during inference, blocking autonomous execution. Processes would accumulate at 0% CPU with no feedback, making diagnosis impossible.
-
-**Solution:** Implemented tier-specific timeout guards + heartbeat mechanism (P2-P3 from ADR-2604180001):
-
-| Tier | Timeout | Use Case |
-|------|---------|----------|
-| T1 | 30s | Scaffold/transform (qwen3:4b) |
-| T2 | 120s | Codegen (qwen2.5-coder:32b) |
-| T2.5 | 300s | Complex reasoning (devstral-small-2:24b) |
-| T3 | 600s | Frontier tasks (Claude) |
-
-**Proof of Fix (2026-04-17 Testing):**
-```
-E2E Validation on Bazzite GPU — Task Execution Times:
-  P1-1: ✅ 60s (first attempt) → 44s (retry) — NO HANG
-  P1-2: ✅ 35s (retry) — NO HANG
-  P1-3: Started execution (file path issue unrelated to timeouts)
-  
-Before fix: Tasks would hang for hours at 0% CPU
-After fix: Tasks complete within tier timeout or fail with clear error
-```
-
-**Implementation Details:**
-- `hex-nexus/src/orchestration/workplan_executor.rs`: Task-level timeout calculation based on inferred tier
-- Heartbeat logging every 30s during long-running inference
-- Error reasons captured and reported (not silent failures)
-- Proper state sync to prevent zombie processes
-
-**Verification:**
-```bash
-# Review timeout configuration
-grep -A 10 "timeout_secs = match task_tier" hex-nexus/src/orchestration/workplan_executor.rs
-
-# Check heartbeat logging
-hex plan execute <workplan> 2>&1 | grep "heartbeat\|timeout"
-```
-
-This fix enables **autonomous workplan execution** without indefinite hangs.
-
----
-
-## Repository layout
-
-```
-hex-cli/              CLI binary, MCP server, tier classifier
-hex-nexus/            Daemon (REST API, dashboard, filesystem bridge, inference adapters)
-hex-core/             Port traits + domain types (zero external deps)
-hex-agent/            Agent runtime (skills, hooks, boundary enforcement)
-hex-parser/           Tree-sitter wrappers
-spacetime-modules/    7 WASM modules (coordination state, only in AIOS-linked mode)
-docs/adrs/            182 Architecture Decision Records
-docs/specs/           Behavioral specs (written before code)
-docs/workplans/       Active and archived workplans
-```
-
-hex runs in two modes:
-- **Claude-integrated**: `CLAUDE_SESSION_ID` set. Dispatches through Claude Code.
-- **Standalone**: `CLAUDE_SESSION_ID` unset. Dispatches through an Ollama adapter (ADR-2604112000). The same workplan executes either way. Run `hex doctor composition` to see which is active.
-
----
-
-## Status
-
-Alpha. 182 ADRs document the design trail; core paths (classifier, compile gate, reconciler, HexFlo, tree-sitter analyzer) are in place and exercised by tests and examples. Every mechanical claim above has a reproducer — see [EVIDENCE.md](docs/EVIDENCE.md) for the exact command per claim, prerequisites, and expected output. Benchmark numbers in [INFERENCE.md](docs/INFERENCE.md) were measured on a single Strix Halo + Vulkan-Ollama box and will differ on other hardware; the evidence page includes a script you can run to get numbers for your own environment.
-
-Formal specs of the coordination, scheduling, and feature-pipeline state machines live in `docs/algebra/` (TLA+, model-checked with TLC).
-
----
-
-## Documentation
-
-| Doc | Contents |
-|---|---|
-| [Evidence](docs/EVIDENCE.md) | Reproducer for every claim in this README — commands, tests, expected output |
-| [Architecture](docs/ARCHITECTURE.md) | Crates, layers, analyzer rules, SpacetimeDB modules |
-| [Getting Started](docs/GETTING-STARTED.md) | Install, standalone mode, remote agents |
-| [Inference](docs/INFERENCE.md) | Tier routing, GBNF grammar constraints, RL model selection |
-| [Comparison](docs/COMPARISON.md) | hex vs. SpecKit, BAML, Claude Agent SDK, LangChain |
-| [Developer Experience](docs/DEVELOPER-EXPERIENCE.md) | Pulse / Brief / Console / Override layers |
-| [Formal Verification](docs/FORMAL-VERIFICATION.md) | TLA+ models and TLC workflow |
-| [ADRs](docs/adrs/) | 182 decision records — the `why` behind each mechanism |
-
----
-
-## Credits
-
-hex builds on hexagonal architecture ([Alistair Cockburn, 2005](https://alistair.cockburn.us/hexagonal-architecture/)), tree-sitter ([Max Brunsfeld et al.](https://tree-sitter.github.io/)), and SpacetimeDB. HexFlo was informed by [claude-flow](https://github.com/ruvnet/claude-flow) (Reuven Cohen).
-
-| Contributor | Role |
-|---|---|
-| Gary ([@gaberger](https://github.com/gaberger)) | Creator, architect |
-| Claude (Anthropic) | Pair programmer |
-
-## License
-
-[MIT](LICENSE)
+*Operational rules (how to drive hex day-to-day) live in [CLAUDE.md](CLAUDE.md). The architecture
+map is [ARCHITECTURE.md](ARCHITECTURE.md).*

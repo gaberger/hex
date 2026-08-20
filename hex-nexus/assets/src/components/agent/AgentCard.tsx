@@ -33,11 +33,11 @@ function statusBorderColor(status: string): string {
 
 const AgentCard: Component<{ agent: AgentInfo }> = (props) => {
   const heartbeat = createMemo(() =>
-    agentHeartbeats().find((h: any) => (h.agent_id ?? "") === props.agent.id)
+    (agentHeartbeats() ?? []).find((h: any) => (h.agent_id ?? "") === props.agent.id)
   );
 
   const currentTask = createMemo(() =>
-    swarmTasks().find(
+    (swarmTasks() ?? []).find(
       (t: any) =>
         (t.assigned_to ?? t.agent_id ?? "") === props.agent.id &&
         (t.status === "in_progress" || t.status === "active")

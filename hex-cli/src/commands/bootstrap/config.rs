@@ -32,7 +32,7 @@ impl ConfigSetup {
                 "tier_models": {
                     "t1": "qwen3:4b",
                     "t2": "qwen2.5-coder:32b",
-                    "t2_5": "devstral-small-2:24b"
+                    "t2_5": "gemma4:latest"
                 }
             },
             "bootstrap": {

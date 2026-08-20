@@ -1,0 +1,79 @@
+{
+  "adr": "ADR-030",
+  "created_at": "2026-05-11T14:26:19.534702915+00:00",
+  "created_by": "hex-coder",
+  "feature": "Multi-provider inference broker with OpenAI-compatible adapter for cost optimization",
+  "id": "wp-multi-provider-inference-broker",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Extend domain model for multi-provider support",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "src/ports/rl.rs"
+          ],
+          "id": "P0.1",
+          "layer": "ports",
+          "name": "Add MiniMax and MiniMaxFast variants to ModelSelection enum",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "OpenAI-compatible adapter implementation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "src/adapters/secondary/openai_compat.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Create OpenAiCompatAdapter implementing AnthropicPort with request/response translation",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "CLI and composition root integration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "src/main.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Add --provider and --minimax-model CLI arguments, wire MiniMax adapter in composition root",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P3",
+      "name": "Provider failover and routing logic",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "src/usecases/conversation.rs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Extend ConversationLoop fallback chain to include MiniMax providers",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

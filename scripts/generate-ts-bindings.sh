@@ -14,7 +14,7 @@ MODULES_DIR="$PROJECT_ROOT/spacetime-modules"
 OUT_BASE="$PROJECT_ROOT/hex-chat/ui/src/spacetimedb"
 OUT_DASHBOARD="$PROJECT_ROOT/hex-nexus/assets/src/spacetimedb"
 
-# All modules to generate bindings for (ADR-2604050900: right-sized to 7)
+# All modules to generate bindings for (ADR-2026-04-05-0900: right-sized to 7)
 MODULES=(
   hexflo-coordination
   agent-registry

@@ -29,7 +29,7 @@ function extractAlwaysInitializedPorts(rootPath: string): Set<string> {
   const compositionPath = join(rootPath, 'src/composition-root.ts');
   const alwaysInitialized = new Set<string>();
 
-  // The TypeScript `src/` layout was deprecated in ADR-2603222050; hex is now a
+  // The TypeScript `src/` layout was deprecated in ADR-2026-03-22-2050; hex is now a
   // Rust workspace. This TS-specific heuristic has nothing to act on when the
   // legacy file is missing, so skip silently instead of crashing the hook.
   if (!existsSync(compositionPath)) {
@@ -100,7 +100,7 @@ function extractNullablePorts(rootPath: string): Map<string, number> {
   const nullablePorts = new Map<string, number>();
 
   // Same rationale as extractAlwaysInitializedPorts: the legacy TS layout is
-  // gone (ADR-2603222050). Absence means "nothing to check", not "error".
+  // gone (ADR-2026-03-22-2050). Absence means "nothing to check", not "error".
   if (!existsSync(appContextPath)) {
     return nullablePorts;
   }
@@ -153,7 +153,7 @@ function main() {
   const rootPath = process.cwd();
 
   // Guard: this detector targets the deprecated TypeScript codebase
-  // (ADR-2603222050 migrated runtime to Rust). If the TS source files don't
+  // (ADR-2026-03-22-2050 migrated runtime to Rust). If the TS source files don't
   // exist, there's nothing to validate — no-op silently.
   const compositionPath = join(rootPath, 'src/composition-root.ts');
   const appContextPath = join(rootPath, 'src/core/ports/app-context.ts');

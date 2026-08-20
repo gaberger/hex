@@ -29,19 +29,24 @@ fn q_entry_rows() -> Vec<Vec<serde_json::Value>> {
 }
 
 /// Build the 10 experience fixture rows — 2 per q-entry, all within last 7 days.
+///
+/// Timestamps are computed relative to `Utc::now()` so the 7-day trend window
+/// in `q_report` always captures them regardless of when the test runs.
 fn experience_rows() -> Vec<Vec<serde_json::Value>> {
+    let now = chrono::Utc::now();
+    let ts = |hours_ago: i64| json!((now - chrono::Duration::hours(hours_ago)).to_rfc3339());
     vec![
-        // (state_key, action, reward, timestamp)
-        vec![json!("scaffold_init"),    json!("qwen3:4b"),              json!(0.80), json!("2026-04-14T09:00:00Z")],
-        vec![json!("scaffold_init"),    json!("qwen3:4b"),              json!(0.70), json!("2026-04-13T09:00:00Z")],
-        vec![json!("codegen_adapter"),  json!("qwen2.5-coder:32b"),    json!(0.90), json!("2026-04-13T10:00:00Z")],
-        vec![json!("codegen_adapter"),  json!("qwen2.5-coder:32b"),    json!(0.80), json!("2026-04-12T10:00:00Z")],
-        vec![json!("inference_router"), json!("devstral-small-2:24b"),  json!(0.95), json!("2026-04-12T14:00:00Z")],
-        vec![json!("inference_router"), json!("devstral-small-2:24b"),  json!(0.85), json!("2026-04-11T14:00:00Z")],
-        vec![json!("codegen_test"),     json!("claude-sonnet-4-20250514"), json!(0.98), json!("2026-04-14T16:00:00Z")],
-        vec![json!("codegen_test"),     json!("claude-sonnet-4-20250514"), json!(0.92), json!("2026-04-13T16:00:00Z")],
-        vec![json!("transform_format"),json!("qwen3:4b"),              json!(0.65), json!("2026-04-09T08:00:00Z")],
-        vec![json!("transform_format"),json!("qwen3:4b"),              json!(0.55), json!("2026-04-08T08:00:00Z")],
+        // (state_key, action, reward, timestamp) — all within last ~6 days
+        vec![json!("scaffold_init"),    json!("qwen3:4b"),                  json!(0.80), ts(24)],
+        vec![json!("scaffold_init"),    json!("qwen3:4b"),                  json!(0.70), ts(48)],
+        vec![json!("codegen_adapter"),  json!("qwen2.5-coder:32b"),         json!(0.90), ts(48)],
+        vec![json!("codegen_adapter"),  json!("qwen2.5-coder:32b"),         json!(0.80), ts(72)],
+        vec![json!("inference_router"), json!("devstral-small-2:24b"),      json!(0.95), ts(72)],
+        vec![json!("inference_router"), json!("devstral-small-2:24b"),      json!(0.85), ts(96)],
+        vec![json!("codegen_test"),     json!("claude-sonnet-4-20250514"),  json!(0.98), ts(24)],
+        vec![json!("codegen_test"),     json!("claude-sonnet-4-20250514"),  json!(0.92), ts(48)],
+        vec![json!("transform_format"), json!("qwen3:4b"),                  json!(0.65), ts(120)],
+        vec![json!("transform_format"), json!("qwen3:4b"),                  json!(0.55), ts(144)],
     ]
 }
 

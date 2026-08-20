@@ -23,7 +23,7 @@ use crate::prompts::PromptTemplate;
 pub struct AdrPhaseResult {
     /// The generated ADR markdown content.
     pub content: String,
-    /// Proposed file path relative to the project root (e.g. `docs/adrs/ADR-2603231415-add-caching.md`).
+    /// Proposed file path relative to the project root (e.g. `docs/adrs/ADR-2026-03-23-1415-add-caching.md`).
     pub file_path: String,
     /// Model identifier used for inference.
     pub model_used: String,
@@ -92,17 +92,17 @@ impl AdrPhase {
         context.insert("related_adrs".to_string(), related_adrs);
 
         // ── 2. Load and render prompt template ───────────────────────────
-        let template = PromptTemplate::load("adr-generate")
-            .context("loading adr-generate prompt template")?;
+        let template = PromptTemplate::load("ADR-generate")
+            .context("loading ADR-generate prompt template")?;
         let system_prompt = template.render(&context);
         debug!(
-            template = "adr-generate",
+            template = "ADR-generate",
             placeholders = ?template.placeholders(),
             "rendered ADR prompt"
         );
 
         // ── 3. Select model — YAML definition wins over RL engine ───────
-        let yaml_model = AgentDefinition::load("adr-reviewer")
+        let yaml_model = AgentDefinition::load("ADR-reviewer")
             .map(|d| d.model.preferred_model_id().to_string())
             .filter(|m| is_compatible_with_provider(m, provider_pref));
         let effective_override = model_override

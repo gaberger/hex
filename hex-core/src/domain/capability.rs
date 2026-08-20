@@ -1,4 +1,4 @@
-//! Capability-based agent authorization (ADR-2604051800 P1).
+//! Capability-based agent authorization (ADR-2026-04-05-1800 P1).
 //!
 //! Defines the domain types for agent capability tokens. Tokens are
 //! signed by hex-nexus at spawn time and verified on every request.
@@ -66,7 +66,7 @@ pub struct VerifiedClaims {
 /// Requirements that a task declares — what capabilities an agent must
 /// have before it can be dispatched to execute this task.
 ///
-/// ADR-2604111229 P5: the supervisor calls `claims.subsumes(&requirements)`
+/// ADR-2026-04-11-1229 P5: the supervisor calls `claims.subsumes(&requirements)`
 /// before dispatching. If it returns `Err`, the agent is not eligible.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -186,7 +186,7 @@ impl VerifiedClaims {
                 .any(|c| matches!(c, Capability::SwarmWrite))
     }
 
-    /// Pre-dispatch subsumption check (ADR-2604111229 P5).
+    /// Pre-dispatch subsumption check (ADR-2026-04-11-1229 P5).
     ///
     /// Returns `Ok(())` if this agent's capabilities cover every
     /// requirement in `reqs`. Returns `Err(gaps)` listing every

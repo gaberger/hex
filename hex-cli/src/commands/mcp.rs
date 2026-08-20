@@ -46,7 +46,7 @@ struct JsonRpcError {
 // ─── Tool Definitions ────────────────────────────────────
 
 /// Compiled-in fallback: the JSON is baked in at build time via rust-embed
-/// (ADR-2603221522) so the MCP server works even when `config/mcp-tools.json`
+/// (ADR-2026-03-22-1522) so the MCP server works even when `config/mcp-tools.json`
 /// is not on disk (e.g. installed binary).
 fn builtin_tools_json() -> String {
     crate::assets::Assets::get_str("schemas/mcp-tools.json")
@@ -118,14 +118,14 @@ fn load_tools_json() -> String {
     builtin_tools_json()
 }
 
-// ─── Enforcement (ADR-2603221959) ───────────────────────
+// ─── Enforcement (ADR-2026-03-22-1959) ───────────────────────
 
 use hex_core::domain::enforcement::DefaultEnforcer;
 use hex_core::ports::enforcement::{EnforcementContext, EnforcementMode, EnforcementResult, IEnforcementPort};
 
 /// Tools that are read-only — no enforcement needed.
 const READ_ONLY_TOOLS: &[&str] = &[
-    "hex_analyze", "hex_analyze_json", "hex_status", "hex_hexflo_swarm_status", "hex_hexflo_task_list",
+    "hex_analyze", "hex_analyze_json", "hex_status", "hex_monitor", "hex_hexflo_swarm_status", "hex_hexflo_task_list",
     "hex_hexflo_memory_retrieve", "hex_hexflo_memory_search",
     "hex_adr_list", "hex_adr_search", "hex_adr_status", "hex_adr_abandoned",
     "hex_plan_list", "hex_plan_status", "hex_plan_history", "hex_plan_report",
@@ -183,7 +183,7 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "hex_opencode_status", "hex_opencode_config",
 ];
 
-/// Returns true when running inside Claude Code as an MCP tool call (ADR-2604081320).
+/// Returns true when running inside Claude Code as an MCP tool call (ADR-2026-04-08-1320).
 /// Claude Code sets CLAUDE_SESSION_ID on every tool invocation.
 /// hex-nexus also sets CLAUDECODE=1 for bypass mode — treated as equivalent.
 pub fn is_claude_code_context() -> bool {
@@ -282,15 +282,26 @@ fn find_adr_dir() -> Option<std::path::PathBuf> {
     }
 }
 
-/// Extract ADR ID from filename: "ADR-001-foo.md" → "ADR-001",
-/// "ADR-2603222035-foo.md" → "ADR-2603222035".
+/// Extract ADR ID from filename. Handles legacy sequential, hyphenated
+/// timestamp (YYYY-MM-DD-HHMM), and legacy 10-digit forms.
 fn extract_adr_id(filename: &str) -> String {
     let stem = filename.trim_end_matches(".md");
-    if let Some(rest) = stem.strip_prefix("ADR-").or_else(|| stem.strip_prefix("adr-")) {
-        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if !digits.is_empty() {
-            return format!("ADR-{}", digits);
-        }
+    let rest = match stem.strip_prefix("ADR-").or_else(|| stem.strip_prefix("adr-")) {
+        Some(r) => r,
+        None => return stem.to_string(),
+    };
+    let parts: Vec<&str> = rest.splitn(5, '-').collect();
+    if parts.len() >= 4
+        && parts[0].len() == 4 && parts[0].chars().all(|c| c.is_ascii_digit())
+        && parts[1].len() == 2 && parts[1].chars().all(|c| c.is_ascii_digit())
+        && parts[2].len() == 2 && parts[2].chars().all(|c| c.is_ascii_digit())
+        && parts[3].len() == 4 && parts[3].chars().all(|c| c.is_ascii_digit())
+    {
+        return format!("ADR-{}-{}-{}-{}", parts[0], parts[1], parts[2], parts[3]);
+    }
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if !digits.is_empty() {
+        return format!("ADR-{}", digits);
     }
     stem.to_string()
 }
@@ -384,7 +395,7 @@ fn read_adr_detail(dir: &std::path::Path, id: &str) -> Option<serde_json::Value>
 /// Execute a tool call by delegating to the nexus REST API.
 /// Returns MCP-formatted content result.
 async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
-    // ADR-2603221959 P2: Enforce rules before mutating tools
+    // ADR-2026-03-22-1959 P2: Enforce rules before mutating tools
     if !READ_ONLY_TOOLS.contains(&name) {
         let ctx = build_enforcement_ctx(name, args);
         let enforcer = DefaultEnforcer::new(get_enforcement_mode());
@@ -648,10 +659,17 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
 
         "hex_plan_status" => {
             let file = args.get("file").and_then(|v| v.as_str()).unwrap_or("");
-            let path = std::path::Path::new("docs/workplans").join(file);
-            match std::fs::read_to_string(&path) {
-                Ok(contents) => serde_json::from_str::<Value>(&contents).map_err(|e| format!("Parse error: {}", e)),
-                Err(e) => Err(format!("Cannot read {}: {}", path.display(), e)),
+            // Use the same resolver as `hex plan execute` so callers can pass
+            // either a bare slug (`wp-foo`), a basename (`wp-foo.json`), or a
+            // full repo-relative path (`docs/workplans/wp-foo.json`) without
+            // the path being double-prefixed when CWD ≠ repo root.
+            match crate::commands::plan::resolve_workplan_path(file) {
+                Err(e) => Err(format!("{}", e)),
+                Ok(path) => match std::fs::read_to_string(&path) {
+                    Ok(contents) => serde_json::from_str::<Value>(&contents)
+                        .map_err(|e| format!("Parse error: {}", e)),
+                    Err(e) => Err(format!("Cannot read {}: {}", path.display(), e)),
+                },
             }
         }
 
@@ -852,10 +870,10 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
 
         "hex_enforce_sync" => {
             // Re-use the local rule loader from enforce.rs via nexus POST
-            // Read .hex/adr-rules.toml and POST each rule
-            let rules_path = std::path::Path::new(".hex/adr-rules.toml");
+            // Read .hex/ADR-rules.toml and POST each rule
+            let rules_path = std::path::Path::new(".hex/ADR-rules.toml");
             let alt_path = std::env::var("CLAUDE_PROJECT_DIR")
-                .map(|d| std::path::PathBuf::from(d).join(".hex/adr-rules.toml"))
+                .map(|d| std::path::PathBuf::from(d).join(".hex/ADR-rules.toml"))
                 .unwrap_or_default();
             let content = std::fs::read_to_string(rules_path)
                 .or_else(|_| std::fs::read_to_string(&alt_path));
@@ -891,10 +909,10 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                                 "errors": errors,
                             }))
                         }
-                        Err(e) => Err(format!("Failed to parse .hex/adr-rules.toml: {}", e)),
+                        Err(e) => Err(format!("Failed to parse .hex/ADR-rules.toml: {}", e)),
                     }
                 }
-                Err(_) => Err("No .hex/adr-rules.toml found".to_string()),
+                Err(_) => Err("No .hex/ADR-rules.toml found".to_string()),
             }
         }
 
@@ -934,7 +952,7 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
         "hex_project_list" => {
             let resp = nexus.get("/api/projects").await.map_err(|e| e.to_string());
             // When inside Claude Code, enrich with structured actions so Claude
-            // can call MCP tools directly instead of narrating CLI commands (ADR-2604081320).
+            // can call MCP tools directly instead of narrating CLI commands (ADR-2026-04-08-1320).
             if is_claude_code_context() {
                 resp.map(|r| {
                     let mut enriched = r.clone();
@@ -976,7 +994,7 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             nexus.post("/api/projects/register", &body).await.map_err(|e| e.to_string())
         }
 
-        // ── Fingerprint (ADR-2603301200 / ADR-2604081320) ──
+        // ── Fingerprint (ADR-2026-03-30-1200 / ADR-2026-04-08-1320) ──
         "hex_fingerprint_generate" => {
             let project_id = args.get("project_id").and_then(|v| v.as_str()).unwrap_or("");
             let mut body = serde_json::json!({});
@@ -993,7 +1011,7 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                 .await.map_err(|e| e.to_string())
         }
 
-        // ── Self-update (ADR-2604080929) ──
+        // ── Self-update (ADR-2026-04-08-0929) ──
         "hex_self_update" => {
             let check_only = args.get("check_only").and_then(|v| v.as_bool()).unwrap_or(true);
             let _target_version = args.get("version").and_then(|v| v.as_str());
@@ -1160,7 +1178,7 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             }))
         }
 
-        // ── Provider-agnostic lifecycle tools (ADR-2603221959 P3) ──
+        // ── Provider-agnostic lifecycle tools (ADR-2026-03-22-1959 P3) ──
         // These replace Claude Code hooks for non-Claude providers.
 
         "hex_session_start" => {

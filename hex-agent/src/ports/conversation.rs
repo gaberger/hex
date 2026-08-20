@@ -41,7 +41,7 @@ pub trait ConversationPort: Send + Sync {
     /// 1. Summarizes the current conversation into a checkpoint
     /// 2. Clears message history from state
     /// 3. Optionally injects a new system prompt for the task
-    /// 4. Returns the checkpoint for persistence (AgentDB/SQLite)
+    /// 4. Returns the checkpoint for persistence (SpacetimeDB)
     async fn reset_context(
         &self,
         state: &mut ConversationState,

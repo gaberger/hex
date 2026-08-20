@@ -27,7 +27,7 @@ pub(crate) struct HexFloTask {
     pub(crate) title: String,
 }
 
-// CompleteBody replaced by hex_core::domain::swarm_task::SwarmTaskCompletion (ADR-2603311000)
+// CompleteBody replaced by hex_core::domain::swarm_task::SwarmTaskCompletion (ADR-2026-03-31-1000)
 
 impl TaskExecutor {
     /// Create from environment variables:

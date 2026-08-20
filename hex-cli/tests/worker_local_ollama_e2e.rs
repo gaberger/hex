@@ -1,21 +1,21 @@
-/// E2E integration test for ADR-2604130010 — Worker Local Inference Discovery (P1.3).
-///
-/// Verifies the full coordinator → worker → nexus round-trip:
-///
-/// 1. Coordinator creates a swarm + task on nexus (Mac side)
-/// 2. Worker discovers local Ollama via /api/tags probe (P1.2)
-/// 3. Worker claims the pending task via PATCH /api/hexflo/tasks/{id}
-/// 4. Worker generates code via direct Ollama call (NOT through nexus inference)
-/// 5. Worker runs compile gate (rustc/cargo check on generated code)
-/// 6. Worker stores structured WorkerResult with compile_pass=true in hexflo memory
-/// 7. Worker reports task completed via PATCH /api/hexflo/tasks/{id}
-/// 8. hex report swarm (GET /api/swarms/active) shows task completed with compile=true
-///
-/// Requires:
-///   - hex-nexus running on localhost:5555 (or HEX_NEXUS_URL)
-///   - Ollama running on localhost:11434 (or OLLAMA_HOST)
-///
-/// Run manually: cargo test -p hex-cli --test worker_local_ollama_e2e -- --nocapture
+//! E2E integration test for ADR-2026-04-13-0010 — Worker Local Inference Discovery (P1.3).
+//!
+//! Verifies the full coordinator → worker → nexus round-trip:
+//!
+//! 1. Coordinator creates a swarm + task on nexus (Mac side)
+//! 2. Worker discovers local Ollama via /api/tags probe (P1.2)
+//! 3. Worker claims the pending task via PATCH /api/hexflo/tasks/{id}
+//! 4. Worker generates code via direct Ollama call (NOT through nexus inference)
+//! 5. Worker runs compile gate (rustc/cargo check on generated code)
+//! 6. Worker stores structured WorkerResult with compile_pass=true in hexflo memory
+//! 7. Worker reports task completed via PATCH /api/hexflo/tasks/{id}
+//! 8. hex report swarm (GET /api/swarms/active) shows task completed with compile=true
+//!
+//! Requires:
+//!   - hex-nexus running on localhost:5555 (or HEX_NEXUS_URL)
+//!   - Ollama running on localhost:11434 (or OLLAMA_HOST)
+//!
+//! Run manually: cargo test -p hex-cli --test worker_local_ollama_e2e -- --nocapture
 
 use serde_json::json;
 
@@ -36,6 +36,28 @@ async fn is_reachable(url: &str) -> bool {
         .build()
         .unwrap();
     client.get(url).send().await.is_ok()
+}
+
+/// True if nexus's `POST /api/swarms` accepts unauthenticated requests.
+/// Production nexus requires an `X-Hex-Agent-Id` header (registered
+/// session); when that gate is on, these e2e tests can't exercise the
+/// coordinator path without first registering a session, so they skip.
+async fn swarms_endpoint_open(nexus: &str) -> bool {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .unwrap();
+    let resp = client
+        .post(format!("{}/api/swarms", nexus))
+        .json(&serde_json::json!({ "name": "e2e-auth-probe", "topology": "pipeline" }))
+        .send()
+        .await;
+    match resp {
+        Ok(r) if r.status().is_success() => true,
+        // 401/403 + the explicit "requires a registered hex-agent" error
+        // body all mean the gate is closed for unauthenticated callers.
+        _ => false,
+    }
 }
 
 // ── Unit: WorkerResult round-trip with compile_pass field ───────────────────
@@ -165,6 +187,10 @@ async fn e2e_worker_generates_code_with_local_ollama_compile_true() {
     }
     if !is_reachable(&format!("{}/api/tags", ollama)).await {
         eprintln!("SKIP: Ollama not reachable at {}", ollama);
+        return;
+    }
+    if !swarms_endpoint_open(&nexus).await {
+        eprintln!("SKIP: /api/swarms is auth-gated (X-Hex-Agent-Id required); manual run only");
         return;
     }
 
@@ -519,6 +545,10 @@ async fn e2e_task_state_transitions() {
 
     if !is_reachable(&format!("{}/api/swarms/active", nexus)).await {
         eprintln!("SKIP: nexus not reachable at {}", nexus);
+        return;
+    }
+    if !swarms_endpoint_open(&nexus).await {
+        eprintln!("SKIP: /api/swarms is auth-gated (X-Hex-Agent-Id required); manual run only");
         return;
     }
 

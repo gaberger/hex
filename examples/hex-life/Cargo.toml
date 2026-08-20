@@ -1,0 +1,16 @@
+[package]
+name = "hex-life"
+version = "0.1.0"
+edition = "2021"
+description = "Conway's Game of Life on a hexagonal grid (B2/S34) — example of hex-architecture in a real game"
+
+[dependencies]
+
+[dev-dependencies]
+
+[[bin]]
+name = "hex-life"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"

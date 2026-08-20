@@ -1,10 +1,10 @@
-//! Tier→model mapping configuration for inference routing (ADR-2604120202 P1.2).
+//! Tier→model mapping configuration for inference routing (ADR-2026-04-12-0202 P1.2).
 //!
 //! Each task tier maps to a model name that the inference router uses to
 //! select the right server.  Defaults are baked in; per-project overrides
 //! come from `.hex/project.json` → `inference.tier_models`.
 
-use crate::remote::transport::{TaskTier, TransportError};
+use crate::domain::transport::{TaskTier, TransportError};
 
 /// Tier→model mapping loaded by the composition root.
 ///
@@ -28,7 +28,7 @@ impl Default for TierModelConfig {
         Self {
             t1: "qwen3:4b".into(),
             t2: "qwen2.5-coder:32b".into(),
-            t2_5: "devstral-small-2:24b".into(),
+            t2_5: "gemma4:latest".into(),
             t3: None, // frontier — must be explicitly configured
         }
     }
@@ -70,7 +70,7 @@ mod tests {
         let cfg = TierModelConfig::default();
         assert_eq!(cfg.model_for_tier(TaskTier::T1).unwrap(), "qwen3:4b");
         assert_eq!(cfg.model_for_tier(TaskTier::T2).unwrap(), "qwen2.5-coder:32b");
-        assert_eq!(cfg.model_for_tier(TaskTier::T2_5).unwrap(), "devstral-small-2:24b");
+        assert_eq!(cfg.model_for_tier(TaskTier::T2_5).unwrap(), "gemma4:latest");
     }
 
     #[test]

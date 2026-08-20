@@ -1,0 +1,71 @@
+{
+  "id": "t25-csv-parse-ts",
+  "tier": "T2.5",
+  "axis_focus": [
+    "evidence_gated_success",
+    "react_convergence"
+  ],
+  "instruction": "Implement `export function parseCsvLine(line: string): string[]` in this file, replacing the stub. Parse ONE CSV line into fields: comma-separated; a double-quoted field may contain literal commas; a doubled quote \"\" inside quotes is a literal quote; empty and trailing-empty fields preserved. Examples: parseCsvLine(\"a,b,c\")=[\"a\",\"b\",\"c\"]; parseCsvLine('a,\"b,c\",d')=[\"a\",\"b,c\",\"d\"]; parseCsvLine('\"a\"\"b\"')=['a\"b']. Edit only this file.",
+  "target_file": "bench-sandbox-ts/csv.ts",
+  "oracle": {
+    "kind": "node_test",
+    "setup_files": {
+      "bench-sandbox-ts/tsconfig.json": "{ \"compilerOptions\": { \"target\": \"es2020\", \"module\": \"commonjs\", \"outDir\": \"dist\", \"strict\": true, \"skipLibCheck\": true }, \"include\": [\"*.ts\"] }\n",
+      "bench-sandbox-ts/csv.ts": "export function parseCsvLine(_line: string): string[] {\n  return [];\n}\n",
+      "bench-sandbox-ts/csv.test.ts": "import { test } from \"node:test\";\nimport assert from \"node:assert\";\nimport { parseCsvLine } from \"./csv\";\ntest(\"plain\", () => assert.deepStrictEqual(parseCsvLine(\"a,b,c\"), [\"a\",\"b\",\"c\"]));\ntest(\"quoted\", () => assert.deepStrictEqual(parseCsvLine('a,\"b,c\",d'), [\"a\",\"b,c\",\"d\"]));\ntest(\"escaped\", () => assert.deepStrictEqual(parseCsvLine('\"a\"\"b\"'), ['a\"b']));\ntest(\"trailing\", () => assert.deepStrictEqual(parseCsvLine(\"a,\"), [\"a\",\"\"]));\n",
+      "bench-sandbox-ts/package.json": "{ \"type\": \"commonjs\" }\n"
+    },
+    "command": "cd bench-sandbox-ts && rm -rf dist; tsc -p tsconfig.json >/dev/null 2>&1; node --test dist/"
+  },
+  "graph_context_required": false,
+  "arms": [
+    "react",
+    "fast"
+  ],
+  "status": "verified",
+  "_verification": "TS twin of t25-csv-parse (Rust). Same spec, different language \u2014 to test whether local models do better on TS than Rust. Oracle RED->GREEN confirmed 2026-06-08; gates on node --test behavioral exit (tsc type-noise ignored).",
+  "observed_baseline": {
+    "_finding": "TS twin of t25-csv-parse (Rust). The two models that FAILED the Rust CSV (qwen 0/5, gpt-oss 0/5) recover in TypeScript \u2014 the Rust borrow-checker/idioms were a real factor, not just the parsing logic. devstral strong in both. Language matters: a Rust-only benchmark overstates the local-model ceiling.",
+    "_comparison": "vs Rust t25-csv-parse (react): qwen 0/5\u21922/3 \u00b7 gpt-oss 0/5\u21921/3 \u00b7 devstral 5/5\u21923/3 \u00b7 gemma3 4/5\u21922/3. The Rust-FAILURES (qwen, gpt-oss) recover in TS; models already-capable in Rust stay comparable.",
+    "qwen2.5-coder:14b": {
+      "measured_by": "hex bench agentic",
+      "date": "2026-06-08",
+      "react": {
+        "valid": true,
+        "pass_rate": "2/3",
+        "samples": 3,
+        "rust_csv": "0/5"
+      }
+    },
+    "gpt-oss:20b": {
+      "measured_by": "hex bench agentic",
+      "date": "2026-06-08",
+      "react": {
+        "valid": true,
+        "pass_rate": "1/3",
+        "samples": 3,
+        "rust_csv": "0/5"
+      }
+    },
+    "devstral-small-2:24b": {
+      "measured_by": "hex bench agentic",
+      "date": "2026-06-08",
+      "react": {
+        "valid": true,
+        "pass_rate": "3/3",
+        "samples": 3,
+        "rust_csv": "5/5"
+      }
+    },
+    "gemma3:12b": {
+      "measured_by": "hex bench agentic",
+      "date": "2026-06-08",
+      "react": {
+        "valid": true,
+        "pass_rate": "2/3",
+        "samples": 3,
+        "rust_csv": "4/5"
+      }
+    }
+  }
+}

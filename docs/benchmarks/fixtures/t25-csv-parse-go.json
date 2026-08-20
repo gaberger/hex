@@ -1,0 +1,66 @@
+{
+  "id": "t25-csv-parse-go",
+  "tier": "T2.5",
+  "axis_focus": [
+    "evidence_gated_success",
+    "react_convergence"
+  ],
+  "instruction": "Implement `func ParseCSVLine(line string) []string` in this file, replacing the stub. Parse ONE CSV line into fields: comma-separated; a double-quoted field may contain literal commas; a doubled quote \"\" inside quotes is a literal quote; empty and trailing-empty fields preserved. Examples: ParseCSVLine(\"a,b,c\")=[a b c]; ParseCSVLine(`a,\"b,c\",d`)=[a \"b,c\" d]; ParseCSVLine(`\"a\"\"b\"`)=[`a\"b`]. Return an empty (non-nil) slice growable with append. Edit only this file.",
+  "target_file": "bench-sandbox-go/csv.go",
+  "oracle": {
+    "kind": "go_test",
+    "setup_files": {
+      "bench-sandbox-go/go.mod": "module benchsandbox\n\ngo 1.21\n",
+      "bench-sandbox-go/csv.go": "package benchsandbox\n\nfunc ParseCSVLine(line string) []string {\n\treturn nil\n}\n",
+      "bench-sandbox-go/csv_test.go": "package benchsandbox\n\nimport (\n\t\"reflect\"\n\t\"testing\"\n)\n\nfunc eq(t *testing.T, got, want []string) {\n\tif !reflect.DeepEqual(got, want) {\n\t\tt.Errorf(\"got %v want %v\", got, want)\n\t}\n}\nfunc TestPlain(t *testing.T)    { eq(t, ParseCSVLine(\"a,b,c\"), []string{\"a\", \"b\", \"c\"}) }\nfunc TestQuoted(t *testing.T)   { eq(t, ParseCSVLine(`a,\"b,c\",d`), []string{\"a\", \"b,c\", \"d\"}) }\nfunc TestEscaped(t *testing.T)  { eq(t, ParseCSVLine(`\"a\"\"b\"`), []string{`a\"b`}) }\nfunc TestTrailing(t *testing.T) { eq(t, ParseCSVLine(\"a,\"), []string{\"a\", \"\"}) }\n"
+    },
+    "command": "cd bench-sandbox-go && PATH=/usr/lib/go-1.22/bin:/usr/local/go/bin:/usr/bin:$PATH go test ./..."
+  },
+  "graph_context_required": false,
+  "arms": [
+    "react",
+    "fast"
+  ],
+  "status": "verified",
+  "_verification": "Go twin of t25-csv-parse (Rust) + t25-csv-parse-ts (TS). go test ./..., PATH-safe (go at /usr/lib/go-1.22/bin not on nexus PATH). RED->GREEN confirmed 2026-06-08.",
+  "observed_baseline": {
+    "_finding": "Go twin of the CSV fixture. Go is HARD like Rust \u2014 the two weak models that recovered in TS (qwen, gpt-oss) go back to 0/3 in Go. Likely Go's strictness (unused imports/vars = compile errors, byte vs rune). So TS is uniquely FORGIVING; Rust AND Go are strict & hard for weaker locals.",
+    "_three_language_grid": "CSV parser, react \u2014 Rust | TS | Go:  qwen 0/5 | 2/3 | 0/3 \u00b7 gpt-oss 0/5 | 1/3 | 0/3 \u00b7 devstral 5/5 | 3/3 | 2/3 \u00b7 gemma3 4/5 | 2/3 | 1/3",
+    "qwen2.5-coder:14b": {
+      "date": "2026-06-08",
+      "react": {
+        "valid": true,
+        "pass_rate": "0/3",
+        "rust": "0/5",
+        "ts": "2/3"
+      }
+    },
+    "gpt-oss:20b": {
+      "date": "2026-06-08",
+      "react": {
+        "valid": true,
+        "pass_rate": "0/3",
+        "rust": "0/5",
+        "ts": "1/3"
+      }
+    },
+    "devstral-small-2:24b": {
+      "date": "2026-06-08",
+      "react": {
+        "valid": true,
+        "pass_rate": "2/3",
+        "rust": "5/5",
+        "ts": "3/3"
+      }
+    },
+    "gemma3:12b": {
+      "date": "2026-06-08",
+      "react": {
+        "valid": true,
+        "pass_rate": "1/3",
+        "rust": "4/5",
+        "ts": "2/3"
+      }
+    }
+  }
+}

@@ -4,7 +4,10 @@
  * Shows connection status, project cards with actions (archive/delete),
  * swarm/agent counts, and global activity summary.
  */
-import { Component, For, Show, createMemo, createSignal } from "solid-js";
+import { Component, For, Show, createMemo, createSignal, createResource } from "solid-js";
+import { restClient } from "../../services/rest-client";
+// @ts-expect-error — SweepsPanel.jsx (no .d.ts), wp-idle-research-swarm P5.2
+import SweepsPanel from "../SweepsPanel.jsx";
 import {
   swarms,
   swarmTasks,
@@ -208,17 +211,17 @@ const ControlPlane: Component = () => {
       const ppath = (p as any).rootPath || (p as any).path || "";
 
       // Count swarms: use shared project matching utility
-      const projectSwarms = swarms().filter((s: any) =>
+      const projectSwarms = (swarms() ?? []).filter((s: any) =>
         entityBelongsToProject(s, pid),
       );
 
       // Count agents: use shared project matching utility
-      const projectAgents = registryAgents().filter((a: any) =>
+      const projectAgents = (registryAgents() ?? []).filter((a: any) =>
         entityBelongsToProject(a, pid),
       );
 
       // Count swarm agents too
-      const swarmAgentCount = swarmAgents().filter((sa: any) => {
+      const swarmAgentCount = (swarmAgents() ?? []).filter((sa: any) => {
         const saSwarm = sa.swarm_id ?? sa.swarmId ?? "";
         return projectSwarms.some((s: any) => (s.id ?? s.swarm_id) === saSwarm);
       }).length;
@@ -226,7 +229,7 @@ const ControlPlane: Component = () => {
       const totalAgents = projectAgents.length + swarmAgentCount;
 
       // Active tasks for this project's swarms
-      const projectTasks = swarmTasks().filter((t: any) => {
+      const projectTasks = (swarmTasks() ?? []).filter((t: any) => {
         const tSwarm = t.swarm_id ?? t.swarmId ?? "";
         return projectSwarms.some((s: any) => (s.id ?? s.swarm_id) === tSwarm);
       });
@@ -239,17 +242,29 @@ const ControlPlane: Component = () => {
   );
 
   // Global totals (including unscoped swarms)
-  const totalSwarms = createMemo(() => swarms().filter((s: any) => s.status === "active").length);
+  const totalSwarms = createMemo(() => (swarms() ?? []).filter((s: any) => s.status === "active").length);
   const totalTasksInProgress = createMemo(() =>
-    swarmTasks().filter(
+    (swarmTasks() ?? []).filter(
       (t: any) => t.status === "in_progress" || t.status === "running" || t.status === "assigned",
     ).length,
   );
   const totalActiveAgents = createMemo(() =>
-    registryAgents().filter(
+    (registryAgents() ?? []).filter(
       (a: any) => a.status === "active" || a.status === "running" || a.status === "registered",
     ).length,
   );
+
+  // ADR-2606061359: the unit of work is a RUN (task → evidence → commit), not
+  // swarms/agents. Summarize the single-agent loop instead of org-sim liveness.
+  const [runs] = createResource(async () => {
+    try { return await restClient.get<any>("/api/direct/runs"); } catch { return null; }
+  });
+  const runTotal = () => runs()?.summary?.total ?? 0;
+  const runPassPct = () => {
+    const s = runs()?.summary;
+    return s && s.total ? Math.round((s.pass_rate ?? 0) * 100) : 0;
+  };
+  const runCommitted = () => runs()?.summary?.committed ?? 0;
 
   async function handleRegister(e: Event) {
     e.preventDefault();
@@ -280,9 +295,9 @@ const ControlPlane: Component = () => {
             <h2 class="text-xl font-bold text-gray-100">Control Plane</h2>
             <p class="mt-1 text-xs text-gray-500">
               {projectList().length} project{projectList().length !== 1 ? "s" : ""}
-              {" · "}{totalSwarms()} active swarm{totalSwarms() !== 1 ? "s" : ""}
-              {" · "}{totalActiveAgents()} agent{totalActiveAgents() !== 1 ? "s" : ""}
-              {" · "}{totalTasksInProgress()} task{totalTasksInProgress() !== 1 ? "s" : ""} in progress
+              {" · "}{runTotal()} run{runTotal() !== 1 ? "s" : ""}
+              {" · "}{runPassPct()}% verified
+              {" · "}{runCommitted()} committed
             </p>
           </div>
           <div class="flex items-center gap-3">
@@ -394,27 +409,24 @@ const ControlPlane: Component = () => {
             </button>
           </div>
 
-          {/* Global activity summary */}
+          {/* Global activity summary — the single-agent loop (runs/evidence/commits) */}
           <div class="flex items-center gap-6 rounded-lg border border-gray-800 bg-gray-900 px-5 py-3">
             <div class="flex items-center gap-2">
-              <span class="h-2 w-2 rounded-full bg-green-400" classList={{ "animate-pulse": totalSwarms() > 0 }} />
-              <span class="text-xs text-gray-300">
-                {totalSwarms()} active swarm{totalSwarms() !== 1 ? "s" : ""}
-              </span>
+              <span class="h-2 w-2 rounded-full bg-cyan-400" />
+              <span class="text-xs text-gray-300">{runTotal()} run{runTotal() !== 1 ? "s" : ""}</span>
             </div>
             <div class="flex items-center gap-2">
-              <span class="h-2 w-2 rounded-full bg-cyan-400" classList={{ "animate-pulse": totalTasksInProgress() > 0 }} />
-              <span class="text-xs text-gray-300">
-                {totalTasksInProgress()} task{totalTasksInProgress() !== 1 ? "s" : ""} in progress
-              </span>
+              <span class="h-2 w-2 rounded-full bg-green-400" />
+              <span class="text-xs text-gray-300">{runPassPct()}% verified</span>
             </div>
             <div class="flex items-center gap-2">
               <span class="h-2 w-2 rounded-full bg-blue-400" />
-              <span class="text-xs text-gray-300">
-                {totalActiveAgents()} active agent{totalActiveAgents() !== 1 ? "s" : ""}
-              </span>
+              <span class="text-xs text-gray-300">{runCommitted()} committed</span>
             </div>
           </div>
+
+          {/* Idle-research sweep summaries (wp-idle-research-swarm P5.2) */}
+          <SweepsPanel />
         </Show>
       </div>
     </div>

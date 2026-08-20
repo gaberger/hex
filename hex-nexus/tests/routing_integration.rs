@@ -1,4 +1,4 @@
-//! Integration tests for task-type-aware inference routing (ADR-2604142000).
+//! Integration tests for task-type-aware inference routing (ADR-2026-04-14-2000).
 //!
 //! Regression-proofs the motivating case: `run nvidia-smi on bazzite` is short
 //! but must route to T2.5 because the classifier floor overrides the complexity
@@ -11,7 +11,7 @@
 
 use hex_nexus::adapters::spacetime_inference::InferenceProviderRow;
 use hex_nexus::quant_router::select_provider_task_aware;
-use hex_nexus::remote::transport::TaskTier;
+use hex_nexus::domain::transport::TaskTier;
 use hex_nexus::task_type_classifier::{classify, TaskType};
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ fn provider_ladder() -> Vec<InferenceProviderRow> {
 
 #[test]
 fn short_shell_command_routes_to_t2_5() {
-    // Motivating case from ADR-2604142000: short prompt, 30 chars, would
+    // Motivating case from ADR-2026-04-14-2000: short prompt, 30 chars, would
     // score Low complexity (=> T1) without the classifier floor.
     let providers = provider_ladder();
     let (effective, selected) = select_provider_task_aware(

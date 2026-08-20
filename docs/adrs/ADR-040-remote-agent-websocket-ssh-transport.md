@@ -1,6 +1,6 @@
 # ADR-040: Remote Agent Transport — WebSocket over SSH with SpacetimeDB Coordination
 
-**Status:** Accepted
+**Status:** Completed
 **Accepted Date:** 2026-03-22
 ## Date: 2026-03-21
 

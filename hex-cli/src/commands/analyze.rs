@@ -56,7 +56,7 @@ pub async fn run(
     let mut rust_violations: Vec<RustViolation> = Vec::new();
     let mut all_violation_count = 0usize;
 
-    // If --adr-compliance flag is set, skip boundary analysis entirely
+    // If --ADR-compliance flag is set, skip boundary analysis entirely
     if !adr_compliance_only {
         // Check for hex project markers
         let has_src = root.join("src").is_dir();
@@ -117,7 +117,7 @@ pub async fn run(
             print_check("Composition Root", has_composition_root);
         }
 
-        // Rust workspace layer detection (ADR-2603283000)
+        // Rust workspace layer detection (ADR-2026-03-28-3000)
         let rust_layers = if has_cargo_toml {
             let layers = scan_rust_workspace_layers(&root);
             if !layers.is_empty() {
@@ -655,7 +655,7 @@ fn find_go_module_prefix(root: &Path) -> Option<String> {
     None
 }
 
-// ── Rust Workspace Analysis (ADR-2603283000) ────────────────────────────
+// ── Rust Workspace Analysis (ADR-2026-03-28-3000) ────────────────────────────
 
 /// A boundary violation found in Rust source.
 pub struct RustViolation {
@@ -670,31 +670,43 @@ pub struct RustViolation {
 /// so nested workspaces like `spacetime-modules/hexflo-coordination/` are included.
 /// Excludes `target/` directories and git worktrees (`hex-worktrees*/`).
 fn find_workspace_crate_dirs(root: &Path) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    let Ok(depth1) = std::fs::read_dir(root) else { return dirs; };
-    for entry in depth1.flatten() {
-        let path = entry.path();
-        if !path.is_dir() { continue; }
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if name == "target" || name.starts_with("hex-worktrees") || name.starts_with('.') {
-            continue;
+    // Recursive, bounded. The previous scan went exactly two levels deep, which misses the common
+    // hexagonal layout that groups adapter crates under a parent directory:
+    //
+    //   okf-adapters/secondary/yaml-serde/Cargo.toml     <- depth 3, previously invisible
+    //
+    // A workspace whose adapters are invisible reports no adapter layers and no adapter boundary
+    // violations, which reads as a clean result rather than an incomplete scan.
+    const MAX_DEPTH: usize = 4;
+    fn walk(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+        if depth > MAX_DEPTH {
+            return;
         }
-        if path.join("Cargo.toml").is_file() {
-            dirs.push(path.clone());
-        }
-        // Also scan one level deeper (e.g. spacetime-modules/hexflo-coordination/)
-        if let Ok(depth2) = std::fs::read_dir(&path) {
-            for sub in depth2.flatten() {
-                let sub_path = sub.path();
-                if sub_path.is_dir() && sub_path.join("Cargo.toml").is_file() {
-                    let sub_name = sub_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if sub_name != "target" {
-                        dirs.push(sub_path);
-                    }
-                }
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
             }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            // Never descend into build output, VCS/tooling dirs, or a crate's own sources.
+            if name == "target"
+                || name == "src"
+                || name == "node_modules"
+                || name.starts_with("hex-worktrees")
+                || name.starts_with('.')
+            {
+                continue;
+            }
+            if path.join("Cargo.toml").is_file() {
+                out.push(path.clone());
+            }
+            // Keep descending regardless: a crate may contain nested member crates.
+            walk(&path, depth + 1, out);
         }
     }
+    let mut dirs = Vec::new();
+    walk(root, 1, &mut dirs);
     dirs
 }
 
@@ -732,6 +744,49 @@ static RUST_LAYER_RULES: &[RustLayerRule] = &[
     RustLayerRule { label: "usecases", layer: "Use Cases", signals: &["orchestration/", "usecases/"], matches: match_rust_usecases },
 ];
 
+
+/// Classify a hex layer from the CRATE's path, for workspaces that put one layer per crate.
+///
+/// Two layouts are idiomatic for hexagonal Rust, and hex must read both:
+///
+///   dir-per-layer     `hex-core/src/domain/tokens.rs`        layer is a subdirectory of src/
+///   crate-per-layer   `okf-domain/src/lib.rs`                layer IS the crate
+///
+/// Only the first was recognised, so a crate-per-layer workspace classified every file as
+/// Infrastructure and `analyze` reported score 100 with zero violations — a vacuous pass
+/// indistinguishable from a clean one. That is the layout hex should most approve of: with a crate
+/// per layer, Cargo refuses to resolve an undeclared import, so a boundary violation is a compile
+/// error rather than something a linter has to notice.
+///
+/// `crate_rel` is the crate directory relative to the workspace root, so nested adapter crates
+/// (`okf-adapters/secondary/yaml-serde`) are classified by their path, and flat layer crates
+/// (`okf-domain`) by the last `-`/`_` separated segment of the directory name.
+fn classify_rust_crate_layer(crate_rel: &str) -> Option<&'static str> {
+    let p = crate_rel.replace('\\', "/");
+    // Path form first: an adapter crate says which side it is on by where it lives.
+    if p.contains("adapters/primary/") {
+        return Some("Primary Adapters");
+    }
+    if p.contains("adapters/secondary/") {
+        return Some("Secondary Adapters");
+    }
+    // Otherwise the crate NAME carries the layer: okf-domain, my_app_ports, usecases.
+    let last = p.rsplit('/').next().unwrap_or(&p);
+    let seg = last.rsplit(['-', '_']).next().unwrap_or(last);
+    match seg {
+        "domain" => Some("Domain"),
+        "ports" | "port" => Some("Ports"),
+        "usecases" | "usecase" | "orchestration" => Some("Use Cases"),
+        _ => None,
+    }
+}
+
+/// Layer for a file, from the crate it lives in and its path under `src/`.
+/// The `src/` path wins so existing dir-per-layer workspaces classify exactly as before.
+fn classify_rust_layer(crate_rel: &str, rel_to_src: &str) -> Option<&'static str> {
+    classify_rust_src_layer(rel_to_src).or_else(|| classify_rust_crate_layer(crate_rel))
+}
+
 /// Classify a path relative to a crate's `src/` directory into a hex layer label.
 /// Returns `None` for infrastructure (unclassified) files.
 fn classify_rust_src_layer(rel_to_src: &str) -> Option<&'static str> {
@@ -760,7 +815,8 @@ fn scan_rust_workspace_layers(root: &Path) -> Vec<(String, usize)> {
                 .unwrap_or(file)
                 .to_string_lossy()
                 .to_string();
-            match classify_rust_src_layer(&rel) {
+            let crate_rel = crate_dir.strip_prefix(root).unwrap_or(crate_dir).to_string_lossy().to_string();
+            match classify_rust_layer(&crate_rel, &rel) {
                 Some(layer) => *counts.entry(layer).or_insert(0) += 1,
                 None => infra_count += 1,
             }
@@ -810,7 +866,8 @@ fn scan_rust_boundary_violations(root: &Path) -> Vec<RustViolation> {
                 .unwrap_or(file_path)
                 .to_string_lossy()
                 .to_string();
-            let Some(layer) = classify_rust_src_layer(&rel_to_src) else {
+            let crate_rel = crate_dir.strip_prefix(root).unwrap_or(crate_dir).to_string_lossy().to_string();
+            let Some(layer) = classify_rust_layer(&crate_rel, &rel_to_src) else {
                 continue;
             };
             let file_rel = file_path
@@ -930,6 +987,16 @@ fn scan_local_violations(root: &Path) -> Vec<boundary::Violation> {
             .to_string_lossy()
             .to_string();
 
+        // Test code is exempt. A use case under test constructing the in-memory
+        // adapter is the pattern ports-and-adapters exists to enable, not a
+        // boundary breach — the dependency is compiled out of the shipped
+        // artifact. Counting it turns a real finding into noise: measured on the
+        // homelab project, 8 of 12 reported violations were test doubles, which
+        // is how the 4 genuine ones stayed invisible behind a grade of F.
+        if is_test_file(&rel) {
+            continue;
+        }
+
         let source_layer = boundary::detect_layer(&rel);
         if source_layer == Layer::Unknown || source_layer == Layer::CompositionRoot {
             continue;
@@ -944,6 +1011,26 @@ fn scan_local_violations(root: &Path) -> Vec<boundary::Violation> {
     }
 
     all_violations
+}
+
+/// Whether a path is test code, by the naming convention of its language.
+///
+/// Deliberately applied at the violation scan rather than in
+/// [`collect_source_files`], which also feeds the per-layer file counts —
+/// excluding tests there would silently shrink the reported size of the
+/// project.
+fn is_test_file(rel: &str) -> bool {
+    let p = rel.replace('\\', "/").to_lowercase();
+    let name = p.rsplit('/').next().unwrap_or(&p);
+
+    // Go and Rust integration tests carry it in the filename or the directory.
+    name.ends_with("_test.go")
+        || name.ends_with("_test.rs")
+        || p.contains("/tests/")
+        || p.starts_with("tests/")
+        // TS/JS colocated tests: foo.test.ts, foo.spec.tsx, …
+        || name.contains(".test.")
+        || name.contains(".spec.")
 }
 
 /// Recursively collect `.rs`, `.ts`, and `.js` source files under a directory.
@@ -984,8 +1071,42 @@ fn extract_import_paths(source: &str, source_rel: &str) -> Vec<String> {
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
 
+    // Rust puts its unit tests *inside* the file it tests, behind `#[cfg(test)]`.
+    // Those imports never reach the shipped binary, so an adapter imported there
+    // is a test double rather than a boundary breach. Tracked by brace depth:
+    // the attribute arms the skip, the next line that opens a block starts it,
+    // and returning to the depth it started at ends it.
+    let mut cfg_test_armed = false;
+    let mut test_block_depth: Option<i32> = None;
+    let mut depth: i32 = 0;
+
     for line in source.lines() {
         let trimmed = line.trim();
+
+        if trimmed.starts_with("#[cfg(test)]") {
+            cfg_test_armed = true;
+        }
+
+        let opens = line.matches('{').count() as i32;
+        let closes = line.matches('}').count() as i32;
+
+        if cfg_test_armed && opens > 0 {
+            test_block_depth = Some(depth);
+            cfg_test_armed = false;
+        }
+
+        let in_test_block = test_block_depth.is_some();
+        depth += opens - closes;
+        if let Some(started_at) = test_block_depth {
+            if depth <= started_at {
+                test_block_depth = None;
+            }
+        }
+
+        if in_test_block {
+            continue;
+        }
+
         // Rust: use crate::adapters::...
         if let Some(rest) = trimmed.strip_prefix("use crate::") {
             if let Some(path_part) = rest.split(';').next() {
@@ -1035,7 +1156,7 @@ fn resolve_relative_path(source_dir: &str, import_path: &str) -> String {
 }
 
 // ── ADR Compliance (ADR-045) ────────────────────────────
-// Rules are loaded from the project's `.hex/adr-rules.toml` — hex ships no
+// Rules are loaded from the project's `.hex/ADR-rules.toml` — hex ships no
 // project-specific rules. The engine is the framework; the rules are the project's.
 
 struct AdrViolationLocal {
@@ -1073,8 +1194,8 @@ struct AdrRuleConfig {
 fn default_severity() -> String { "warning".to_string() }
 
 fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
-    // Load rules from project's .hex/adr-rules.toml
-    let rules_path = root.join(".hex").join("adr-rules.toml");
+    // Load rules from project's .hex/ADR-rules.toml
+    let rules_path = root.join(".hex").join("ADR-rules.toml");
     let rules = if rules_path.is_file() {
         match std::fs::read_to_string(&rules_path) {
             Ok(content) => match toml::from_str::<AdrRulesFile>(&content) {
@@ -1089,7 +1210,7 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
                 }
                 Err(e) => {
                     eprintln!(
-                        "    {} Failed to parse adr-rules.toml: {}",
+                        "    {} Failed to parse ADR-rules.toml: {}",
                         "\u{2717}".red(), e
                     );
                     return Vec::new();
@@ -1099,7 +1220,7 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
         }
     } else {
         eprintln!(
-            "    {} No .hex/adr-rules.toml found — skipping compliance check",
+            "    {} No .hex/ADR-rules.toml found — skipping compliance check",
             "\u{25cb}".dimmed()
         );
         return Vec::new();
@@ -1194,7 +1315,7 @@ async fn store_compliance_in_hexflo(
         .collect();
 
     let payload = serde_json::json!({
-        "key": "adr-compliance:default",
+        "key": "ADR-compliance:default",
         "value": serde_json::json!({
             "violationCount": violations.len(),
             "errorCount": error_count,
@@ -1230,7 +1351,7 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
             Vec::new()
         };
 
-        // Rust workspace layers and violations (ADR-2603283000)
+        // Rust workspace layers and violations (ADR-2026-03-28-3000)
         let has_cargo_toml = root.join("Cargo.toml").is_file();
         let rust_layers_data: Vec<serde_json::Value> = if has_cargo_toml {
             scan_rust_workspace_layers(root)
@@ -1346,6 +1467,118 @@ mod tests {
         let p = base.join(rel);
         fs::create_dir_all(p.parent().unwrap()).unwrap();
         fs::write(&p, content).unwrap();
+    }
+
+    // ── Test code is not a boundary violation ───────────────────────────────
+
+    /// The defect this guards: a use case importing the in-memory adapter to
+    /// build a test double was reported as `usecases/ may only import from
+    /// domain/ and ports/`. The import is inside `#[cfg(test)]` and never
+    /// reaches the binary.
+    #[test]
+    fn imports_inside_cfg_test_are_not_extracted() {
+        let src = r#"
+use crate::ports::Store;
+
+pub struct Maintenance;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::secondary::memory_store::MemoryStore;
+
+    #[test]
+    fn sweeps() {
+        let s = MemoryStore::new();
+    }
+}
+"#;
+        let imports = extract_import_paths(src, "src/usecases/maintain.rs");
+        assert!(
+            imports.iter().any(|i| i.contains("ports")),
+            "production import was dropped: {imports:?}"
+        );
+        assert!(
+            !imports.iter().any(|i| i.contains("adapters")),
+            "test-only import leaked into production imports: {imports:?}"
+        );
+    }
+
+    /// The block must END. A file that closes its test module and then declares
+    /// more production code must have that code scanned, or the fix would hide
+    /// real violations below the tests.
+    #[test]
+    fn extraction_resumes_after_the_test_module_closes() {
+        let src = r#"
+#[cfg(test)]
+mod tests {
+    use crate::adapters::secondary::memory_store::MemoryStore;
+}
+
+use crate::adapters::secondary::broadcast_bus::BroadcastBus;
+"#;
+        let imports = extract_import_paths(src, "src/adapters/primary/http.rs");
+        assert!(
+            imports.iter().any(|i| i.contains("broadcast_bus")),
+            "production import after the test module was skipped: {imports:?}"
+        );
+        assert!(
+            !imports.iter().any(|i| i.contains("memory_store")),
+            "test-only import leaked: {imports:?}"
+        );
+    }
+
+    /// Nested braces inside the test module must not end it early.
+    #[test]
+    fn nested_blocks_do_not_terminate_the_test_module() {
+        let src = r#"
+#[cfg(test)]
+mod tests {
+    fn helper() {
+        if true { let _ = 1; }
+    }
+    use crate::adapters::secondary::memory_store::MemoryStore;
+}
+"#;
+        let imports = extract_import_paths(src, "src/usecases/triage.rs");
+        assert!(
+            imports.is_empty(),
+            "nested braces ended the test block early: {imports:?}"
+        );
+    }
+
+    /// A file with no test module at all must be unaffected.
+    #[test]
+    fn production_only_files_are_unchanged() {
+        let src = "use crate::adapters::secondary::usage::UsageLog;\n";
+        let imports = extract_import_paths(src, "src/adapters/primary/gateway.rs");
+        assert_eq!(imports.len(), 1, "production import lost: {imports:?}");
+    }
+
+    #[test]
+    fn test_files_are_recognised_by_convention() {
+        for p in [
+            "src/domain/search.test.ts",
+            "src/domain/twin.spec.tsx",
+            "internal/svc/handler_test.go",
+            "tests/integration.rs",
+            "src/adapters/tests/helper.rs",
+        ] {
+            assert!(is_test_file(p), "should be treated as test code: {p}");
+        }
+    }
+
+    #[test]
+    fn production_files_are_not_mistaken_for_tests() {
+        for p in [
+            "src/usecases/maintain.rs",
+            "src/adapters/primary/http.rs",
+            // "latest" contains "test" — a substring match would misfire here.
+            "src/domain/latest_reading.rs",
+            "src/domain/contest.ts",
+        ] {
+            assert!(!is_test_file(p), "wrongly treated as test code: {p}");
+        }
     }
 
     // ── P5.1: scan_rust_workspace_layers ────────────────────────────────

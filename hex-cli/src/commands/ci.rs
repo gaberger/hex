@@ -1,6 +1,6 @@
 //! `hex ci` — Run all hex enforcement gates.
 //!
-//! ADR-2604061100: single entry point for CI systems.
+//! ADR-2026-04-06-1100: single entry point for CI systems.
 //! Gates: architecture boundaries, ADR rules, workplan done_commands, spec coverage.
 
 use colored::Colorize;
@@ -23,8 +23,14 @@ pub async fn run() -> anyhow::Result<()> {
     // Gate 4: Spec coverage — every step must reference >=1 spec ID
     all_passed &= gate_spec_coverage().await;
 
-    // Gate 5: Embedded assets must be project-generic (ADR-2604111142)
+    // Gate 5: Embedded assets must be project-generic (ADR-2026-04-11-1142)
     all_passed &= gate_embedded_assets_generic();
+
+    // Gate 6: WASM assets in hex-cli/assets/wasm/ must be at-or-newer than
+    // the corresponding spacetime-modules/<x>/src/. Stale wasm means nexus
+    // ships old reducer behavior despite source updates — root cause of the
+    // "no agents starting" outage we just fixed.
+    all_passed &= gate_wasm_fresh().await;
 
     println!();
     if all_passed {
@@ -36,7 +42,7 @@ pub async fn run() -> anyhow::Result<()> {
     }
 }
 
-/// Standalone composition gate (ADR-2604112000).
+/// Standalone composition gate (ADR-2026-04-11-2000).
 ///
 /// Validates that the standalone composition path works by:
 /// 1. Running the doctor composition check to verify prerequisites.
@@ -44,7 +50,7 @@ pub async fn run() -> anyhow::Result<()> {
 pub async fn run_standalone_gate() -> anyhow::Result<()> {
     println!("{} hex ci --standalone-gate", "\u{2b21}".cyan());
     println!();
-    println!("  {}", "Standalone composition gate (ADR-2604112000)".bold());
+    println!("  {}", "Standalone composition gate (ADR-2026-04-11-2000)".bold());
     println!();
 
     let mut all_passed = true;
@@ -186,9 +192,9 @@ async fn gate_analyze() -> bool {
 async fn gate_enforce() -> bool {
     print!("  {} ADR rule compliance ....... ", "\u{25cb}".dimmed());
 
-    let rules_file = std::path::Path::new(".hex/adr-rules.toml");
+    let rules_file = std::path::Path::new(".hex/ADR-rules.toml");
     if !rules_file.exists() {
-        println!("{} (no .hex/adr-rules.toml)", "skip".yellow());
+        println!("{} (no .hex/ADR-rules.toml)", "skip".yellow());
         return true;
     }
 
@@ -461,6 +467,34 @@ async fn gate_spec_coverage() -> bool {
             println!("      {}", m.dimmed());
         }
         false
+    }
+}
+
+/// Verify each spacetime-modules/<x>/src/ tree's newest .rs mtime is <=
+/// the corresponding hex-cli/assets/wasm/<x>.wasm mtime. Wraps
+/// scripts/check-wasm-fresh.sh — single source of truth for the policy.
+async fn gate_wasm_fresh() -> bool {
+    print!("  {} WASM assets fresh ......... ", "\u{25cb}".dimmed());
+    let script = std::path::Path::new("scripts/check-wasm-fresh.sh");
+    if !script.exists() {
+        println!("{} (scripts/check-wasm-fresh.sh missing)", "skip".yellow());
+        return true;
+    }
+    let out = tokio::process::Command::new("bash")
+        .arg(script)
+        .output()
+        .await;
+    match out {
+        Ok(o) if o.status.success() => { println!("{}", "pass".green()); true }
+        Ok(o) => {
+            println!("{}", "fail".red());
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            for line in stdout.lines().take(8) {
+                println!("      {}", line.dimmed());
+            }
+            false
+        }
+        Err(e) => { println!("{} ({})", "fail".red(), e); false }
     }
 }
 

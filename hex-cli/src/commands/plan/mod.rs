@@ -63,16 +63,29 @@ pub enum PlanAction {
     },
     /// Reconcile workplan step statuses against actual code (check done conditions)
     Reconcile {
-        /// Workplan filename (e.g. feat-fix-dev-pipeline.json)
-        file: String,
+        /// Workplan filename (e.g. feat-fix-dev-pipeline.json). Omit when
+        /// using --all.
+        #[arg(conflicts_with = "all")]
+        file: Option<String>,
+        /// Reconcile every docs/workplans/wp-*.json. Mutually exclusive with
+        /// a positional file. Used by the improver `reconcile_strict`
+        /// detector to scan the whole workplan corpus in one shot.
+        #[arg(long, default_value_t = false)]
+        all: bool,
         /// Write confirmed-done statuses back to the workplan JSON
         #[arg(long, default_value_t = false)]
         update: bool,
         /// Re-verify tasks already marked done and demote them when evidence
-        /// fails. Heals JSONs corrupted by the pre-ADR-2604142200 reconcile
+        /// fails. Heals JSONs corrupted by the pre-ADR-2026-04-14-2201 reconcile
         /// loop. Combine with `--update` to persist demotions.
         #[arg(long, default_value_t = false)]
         audit: bool,
+        /// ADR-2026-04-27-0800 P0.2: tighter evidence rule. Implies --audit.
+        /// Requires every commit match to also reference workplan_id (not
+        /// just task_id), so a `(p0.2)` commit from another workplan can't
+        /// satisfy this workplan's P0.2.
+        #[arg(long, default_value_t = false)]
+        strict: bool,
         /// Print per-task verdict and reasons without mutating the workplan
         #[arg(long, default_value_t = false)]
         dry_run: bool,
@@ -82,10 +95,15 @@ pub enum PlanAction {
         /// Force-promote a task regardless of evidence (logs forced_by for audit)
         #[arg(long)]
         force: Option<String>,
+        /// Emit findings as JSON for the improver detector pipeline
+        /// (`{findings: [{workplan_id, task_id, kind, severity}]}`). Pairs
+        /// naturally with --all to scan every workplan's evidence drift.
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     /// Output the canonical workplan JSON schema
     Schema,
-    /// Create a draft workplan from a user prompt (ADR-2604110227).
+    /// Create a draft workplan from a user prompt (ADR-2026-04-11-0227).
     ///
     /// Writes a stub JSON to `docs/workplans/drafts/draft-<timestamp>.json`
     /// containing the original prompt. The hex hook router auto-invokes
@@ -99,12 +117,12 @@ pub enum PlanAction {
         #[arg(long, default_value_t = false)]
         background: bool,
     },
-    /// Manage draft workplans (ADR-2604110227)
+    /// Manage draft workplans (ADR-2026-04-11-0227)
     Drafts {
         #[command(subcommand)]
         action: DraftsAction,
     },
-    /// Validate workplan evidence (ADR-2604142200, wp-enforce-workplan-evidence E3.1).
+    /// Validate workplan evidence (ADR-2026-04-14-2200, wp-enforce-workplan-evidence E3.1).
     ///
     /// Runs `validate_workplan_evidence` on one workplan or on every
     /// `docs/workplans/wp-*.json`. Reports violations (task id + kind +
@@ -117,6 +135,67 @@ pub enum PlanAction {
         /// Lint every docs/workplans/wp-*.json file.
         #[arg(long, default_value_t = false)]
         all: bool,
+    },
+    /// Workplan structural integrity check — detects destructive
+    /// mutations (missing required fields like title, phases[*].title,
+    /// task[*].id) that aggressive `reconcile --update` runs can cause.
+    /// Used by the improver `workplan_integrity` detector to catch
+    /// action quality issues that ReconcileStrict's reward attribution
+    /// can't see (a hypothesis can clear AND the file get corrupted).
+    Integrity {
+        /// Emit findings as JSON for the improver detector pipeline
+        /// (`{findings: [{workplan_id, kind, severity, missing_fields}]}`).
+        #[arg(long)]
+        json: bool,
+    },
+    /// Layer-coverage scan — detects canonical hexagonal-architecture
+    /// directories that are missing in the current project (use cases,
+    /// primary adapters, composition root). Surfaces structural gaps
+    /// in target apps so the improver can propose drafts that close them.
+    /// Language is auto-detected (TS/Rust) from project markers.
+    Layers {
+        /// Emit findings as JSON for the improver detector pipeline
+        /// (`{findings: [{layer, severity, kind: "missing_layer"}]}`).
+        #[arg(long)]
+        json: bool,
+    },
+    /// Build-readiness probe — runs the project's typecheck (tsc/cargo
+    /// check) and tests, surfacing failures as findings. Closes the gap
+    /// between "structural layers exist" (hex plan layers) and "the code
+    /// actually compiles + tests pass." Critical for the improver's
+    /// ability to credit code-generation actions: structural existence ≠
+    /// functional correctness.
+    Ready {
+        /// Emit findings as JSON for the improver detector pipeline.
+        #[arg(long)]
+        json: bool,
+        /// Skip running tests (typecheck only). Faster — useful when the
+        /// detector runs on every daemon tick.
+        #[arg(long)]
+        no_tests: bool,
+    },
+    /// Test-coverage scan — for each non-test source file, check that a
+    /// sibling *.test.* file exists with at least one test case. Each
+    /// uncovered file becomes a finding so the improver can propose
+    /// test-generation workplans that a tester swarm consumes.
+    Tests {
+        /// Emit findings as JSON for the improver detector pipeline
+        /// (`{findings: [{source, kind: "no_test_file"|"empty_test_file"}]}`).
+        #[arg(long)]
+        json: bool,
+    },
+    /// COO observability baseline — runs 6 deterministic audit queries:
+    /// persona SOP failure rate, workplan drift, cost burn vs MA, STDB
+    /// reducer ticks, twin rejection rate, tool health. Exits 1 if any
+    /// metric exceeds amber threshold (docs/specs/coo-observability-baseline.md).
+    Health,
+    /// Run the in-nexus workplan-steward agent: validate workplan format +
+    /// reconcile status (all steps done → completed). Runs in nexus, records to
+    /// the agent feed, shows in the dashboard.
+    Steward {
+        /// Report without mutating.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -188,56 +267,115 @@ pub(super) struct Step {
 /// A workplan document — supports both legacy (steps) and current (phases/tasks) formats.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(super) struct Workplan {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub(super) id: String,
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) title: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) feature: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) language: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) status: String,
     #[serde(default)]
     pub(super) steps: Vec<Step>,
     #[serde(default, deserialize_with = "flexible_phases")]
     pub(super) phases: Vec<Phase>,
-    #[serde(default, alias = "createdAt", alias = "created")]
+    #[serde(default, alias = "createdAt", alias = "created", deserialize_with = "nullable_string")]
     pub(super) created_at: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) adr: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) description: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) priority: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) superseded_by: String,
 }
 
 /// A phase in the current workplan format.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(super) struct Phase {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) id: String,
-    #[serde(default)]
+    // `name` is the canonical field; older drafts used `title` for the
+    // human-readable phase header. Accept both via alias.
+    #[serde(default, alias = "title", deserialize_with = "nullable_string")]
     pub(super) name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "flexible_tasks")]
     pub(super) tasks: Vec<PhaseTask>,
 }
 
 /// A task within a phase.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(super) struct PhaseTask {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) id: String,
-    #[serde(default)]
+    // `name` is canonical; some drafts use `title`. Accept either.
+    #[serde(default, alias = "title", deserialize_with = "nullable_string")]
     pub(super) name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) status: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) layer: String,
-    #[serde(default)]
+    // Tolerate `file` (singular string) in addition to `files` (array).
+    #[serde(default, deserialize_with = "flexible_files")]
     pub(super) files: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub(super) done_command: String,
+}
+
+/// Accept `files: ["a", "b"]` (canonical) or `file: "a"` lifted from a
+/// sibling field. This deserializer only handles the array side; the
+/// `file` -> `files` lift is done via serde alias above when feasible.
+/// Bare string → single-element vec.
+fn flexible_files<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let val = serde_json::Value::deserialize(d)?;
+    match val {
+        serde_json::Value::Null => Ok(Vec::new()),
+        serde_json::Value::String(s) => Ok(vec![s]),
+        serde_json::Value::Array(arr) => arr
+            .into_iter()
+            .map(|v| match v {
+                serde_json::Value::String(s) => Ok(s),
+                serde_json::Value::Null => Ok(String::new()),
+                other => Ok(other.to_string()),
+            })
+            .collect(),
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// Accept tasks as either objects (current schema) or bare strings
+/// (legacy / hand-drafted workplans where a task was written as just a
+/// description). String tasks are lifted to `PhaseTask { name: s,
+/// status: "pending", .. }` so list/reconcile surfaces stop reporting
+/// them as "parse error".
+fn flexible_tasks<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<PhaseTask>, D::Error> {
+    let val = serde_json::Value::deserialize(d)?;
+    let arr = match val {
+        serde_json::Value::Array(a) => a,
+        _ => return Ok(Vec::new()),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for item in arr {
+        match item {
+            serde_json::Value::String(s) => {
+                out.push(PhaseTask {
+                    name: s,
+                    status: "pending".to_string(),
+                    ..Default::default()
+                });
+            }
+            obj @ serde_json::Value::Object(_) => {
+                let task: PhaseTask = serde_json::from_value(obj)
+                    .map_err(serde::de::Error::custom)?;
+                out.push(task);
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
 }
 
 impl Workplan {
@@ -346,31 +484,605 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::History => show_execution_history().await,
         PlanAction::Report { id } => show_execution_report(&id).await,
         PlanAction::Schema => show_schema().await,
-        PlanAction::Reconcile { file, update, audit, dry_run, why, force } => {
-            reconcile::run(&file, update, audit, dry_run, why.as_deref(), force.as_deref()).await
+        PlanAction::Reconcile { file, all, update, audit, strict, dry_run, why, force, json } => {
+            if all || json {
+                reconcile_all(strict, json).await
+            } else {
+                let file = file.ok_or_else(|| anyhow::anyhow!("specify a workplan file or use --all"))?;
+                reconcile::run(&file, update, audit || strict, strict, dry_run, why.as_deref(), force.as_deref()).await
+            }
         }
         PlanAction::Draft { prompt, background } => draft_plan(&prompt, background).await,
         PlanAction::Drafts { action } => drafts_dispatch(action).await,
         PlanAction::Lint { file, all } => lint::run(file.as_deref(), all).await,
+        PlanAction::Integrity { json } => integrity_check(json).await,
+        PlanAction::Layers { json } => layers_check(json).await,
+        PlanAction::Ready { json, no_tests } => ready_check(json, no_tests).await,
+        PlanAction::Tests { json } => tests_check(json).await,
+        PlanAction::Health => crate::commands::plan_health::run().await,
+        PlanAction::Steward { dry_run } => steward_sweep(dry_run).await,
     }
 }
 
-/// Execute a workplan — dispatches tasks through tiered inference routing (ADR-2604120202).
+/// `hex plan steward` — trigger the in-nexus workplan-steward agent (runs in
+/// nexus, records to the agent feed, shows in the dashboard).
+async fn steward_sweep(dry_run: bool) -> anyhow::Result<()> {
+    use colored::Colorize;
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    nexus.ensure_running().await?;
+    let path = if dry_run {
+        "/api/agent/workplan-steward/sweep?dry_run=true"
+    } else {
+        "/api/agent/workplan-steward/sweep"
+    };
+    println!("{} workplan-steward (in-nexus): validating format + reconciling status …", "\u{2b21}".cyan());
+    let r = nexus.post_long(path, &serde_json::json!({})).await?;
+    let advanced = r.get("advanced").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let issues = r.get("format_issues").and_then(|v| v.as_array());
+    let issue_count = issues.map(|a| a.len()).unwrap_or(0);
+    let scanned = r.get("scanned").and_then(|v| v.as_u64()).unwrap_or(0);
+    let committed = r.get("committed").and_then(|v| v.as_str());
+    println!(
+        "{} {} workplan(s) reconciled→completed, {} format issue(s) (of {} scanned){}",
+        if dry_run { "\u{2192}".dimmed() } else { "\u{2713}".green().bold() },
+        advanced,
+        issue_count,
+        scanned,
+        committed.map(|h| format!(" \u{b7} commit {}", h.yellow())).unwrap_or_default()
+    );
+    if let Some(arr) = issues {
+        for it in arr.iter().take(15).filter_map(|v| v.as_str()) {
+            println!("  {} {}", "format:".yellow(), it);
+        }
+        if arr.len() > 15 {
+            println!("  … ({} total)", arr.len());
+        }
+    }
+    println!("  {} recorded to the agent-runs feed — visible in the dashboard", "\u{2192}".dimmed());
+    Ok(())
+}
+
+/// Test-coverage scan. Walks src/ for non-test source files and emits
+/// a finding when no sibling *.test.* exists or when the test file
+/// contains zero test cases. Skips:
+///   - port files (interfaces only — testing them tests nothing)
+///   - composition-root (integration-tested via end-to-end suites)
+///   - barrel files (`index.ts`, `mod.rs`)
+///
+/// The detector is per-file granular so a tester swarm can handle each
+/// gap independently; the improver's source-scope dedup collapses them
+/// to one hypothesis per source-file path.
+async fn tests_check(json: bool) -> anyhow::Result<()> {
+    use std::path::Path;
+
+    let cwd = std::env::current_dir()?;
+    let src_root = cwd.join("src");
+    if !src_root.is_dir() {
+        if json {
+            println!("{}", serde_json::json!({"findings": []}));
+        }
+        return Ok(());
+    }
+
+    let is_test_file = |p: &Path| -> bool {
+        let s = p.to_string_lossy();
+        s.contains(".test.") || s.contains(".spec.") || s.contains("/tests/") || s.contains("\\tests\\")
+    };
+    let is_skip = |p: &Path| -> bool {
+        let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        // Ports are interfaces; don't require tests. Match any path
+        // component called "ports" (regardless of leading/trailing
+        // slashes) — earlier `contains("/ports/")` check missed
+        // `src/core/ports/IOrderRepository.ts` whose parent is
+        // `src/core/ports` (no trailing /).
+        let in_ports = p
+            .components()
+            .any(|c| c.as_os_str().to_string_lossy() == "ports");
+        in_ports
+            || name == "index.ts"
+            || name == "mod.rs"
+            || name == "composition-root.ts"
+            || name == "composition_root.ts"
+    };
+
+    fn walk(root: &Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(root) else { return };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if p.file_name().and_then(|s| s.to_str()) == Some("node_modules") {
+                    continue;
+                }
+                walk(&p, out);
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    let mut all_files: Vec<std::path::PathBuf> = Vec::new();
+    walk(&src_root, &mut all_files);
+
+    // Count `it(...)` / `test(...)` calls regardless of leading
+    // whitespace (vitest/jest test files routinely indent under a
+    // `describe(...)` block). The earlier `\nit(` regex missed
+    // every test inside an indented block, falsely flagging files
+    // with hundreds of tests as "empty_test_file."
+    let test_count_in_file = |path: &Path| -> usize {
+        let Ok(content) = std::fs::read_to_string(path) else { return 0 };
+        let lines = content
+            .lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                t.starts_with("it(")
+                    || t.starts_with("it (")
+                    || t.starts_with("test(")
+                    || t.starts_with("test (")
+                    || t.starts_with("it.skip(")
+                    || t.starts_with("it.only(")
+                    || t.starts_with("test.skip(")
+                    || t.starts_with("test.only(")
+            })
+            .count();
+        lines + content.matches("#[test]").count()
+    };
+
+    let mut findings: Vec<serde_json::Value> = Vec::new();
+    for path in &all_files {
+        if is_test_file(path) || is_skip(path) {
+            continue;
+        }
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext != "ts" && ext != "tsx" && ext != "js" && ext != "rs" {
+            continue;
+        }
+        // Look for a sibling *.test.<ext> at same dir + stem
+        let parent = path.parent().unwrap_or(Path::new(""));
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let candidates = [
+            parent.join(format!("{}.test.{}", stem, ext)),
+            parent.join(format!("{}.spec.{}", stem, ext)),
+        ];
+        let test_path = candidates.iter().find(|p| p.is_file());
+        let rel = path.strip_prefix(&cwd).unwrap_or(path).to_string_lossy().to_string();
+
+        match test_path {
+            None => {
+                findings.push(serde_json::json!({
+                    "source": rel,
+                    "kind": "no_test_file",
+                    "severity": "warning",
+                    "scope": rel,
+                }));
+            }
+            Some(tp) => {
+                if test_count_in_file(tp) == 0 {
+                    findings.push(serde_json::json!({
+                        "source": rel,
+                        "test_file": tp.strip_prefix(&cwd).unwrap_or(tp).to_string_lossy().to_string(),
+                        "kind": "empty_test_file",
+                        "severity": "warning",
+                        "scope": rel,
+                    }));
+                }
+            }
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::json!({"findings": findings}));
+    } else {
+        println!("Test coverage: {} source file(s) without tests", findings.len());
+        for f in &findings {
+            println!(
+                "  ✗ {} ({})",
+                f.get("source").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("kind").and_then(|v| v.as_str()).unwrap_or(""),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Build-readiness probe. Runs the project's typecheck command (npx tsc
+/// --noEmit for TypeScript, cargo check for Rust) and optionally the
+/// project's test suite, emitting one finding per failed gate.
+///
+/// Findings are intentionally coarse-grained: typecheck either passes or
+/// fails as a whole (with stderr captured for the prompt). Per-error
+/// breakdown belongs in the IDE / language-server, not in a homeostasis
+/// signal. The detector's job is "are we ready to ship," not "what's
+/// every error."
+async fn ready_check(json: bool, no_tests: bool) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let is_ts = cwd.join("package.json").exists();
+    let is_rust = cwd.join("Cargo.toml").exists();
+
+    let mut findings: Vec<serde_json::Value> = Vec::new();
+
+    if is_ts {
+        // Typecheck via npx tsc --noEmit
+        let out = std::process::Command::new("npx")
+            .args(["tsc", "--noEmit"])
+            .current_dir(&cwd)
+            .output();
+        match out {
+            Ok(o) if !o.status.success() => {
+                let stderr = String::from_utf8_lossy(&o.stderr).into_owned();
+                let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+                let combined = if stderr.trim().is_empty() { stdout } else { stderr };
+                let preview: String = combined.lines().take(20).collect::<Vec<_>>().join("\n");
+                findings.push(serde_json::json!({
+                    "gate": "typecheck",
+                    "kind": "typecheck_failed",
+                    "severity": "error",
+                    "language": "typescript",
+                    "errors_preview": preview,
+                }));
+            }
+            Ok(_) => {} // pass
+            Err(e) => {
+                findings.push(serde_json::json!({
+                    "gate": "typecheck",
+                    "kind": "typecheck_unavailable",
+                    "severity": "warning",
+                    "detail": e.to_string(),
+                }));
+            }
+        }
+
+        if !no_tests {
+            // Run npm test if a "test" script is defined
+            let pkg = cwd.join("package.json");
+            let has_test_script = std::fs::read_to_string(&pkg)
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| v.get("scripts").cloned())
+                .and_then(|s| s.get("test").cloned())
+                .is_some();
+            if has_test_script {
+                let out = std::process::Command::new("npm")
+                    .args(["test", "--silent"])
+                    .current_dir(&cwd)
+                    .output();
+                if let Ok(o) = out {
+                    if !o.status.success() {
+                        let combined = format!(
+                            "{}\n{}",
+                            String::from_utf8_lossy(&o.stdout),
+                            String::from_utf8_lossy(&o.stderr)
+                        );
+                        let preview: String =
+                            combined.lines().take(30).collect::<Vec<_>>().join("\n");
+                        findings.push(serde_json::json!({
+                            "gate": "tests",
+                            "kind": "tests_failed",
+                            "severity": "error",
+                            "language": "typescript",
+                            "errors_preview": preview,
+                        }));
+                    }
+                }
+            }
+        }
+    } else if is_rust {
+        let out = std::process::Command::new("cargo")
+            .args(["check", "--quiet"])
+            .current_dir(&cwd)
+            .output();
+        if let Ok(o) = out {
+            if !o.status.success() {
+                let stderr = String::from_utf8_lossy(&o.stderr).into_owned();
+                let preview: String = stderr.lines().take(20).collect::<Vec<_>>().join("\n");
+                findings.push(serde_json::json!({
+                    "gate": "typecheck",
+                    "kind": "typecheck_failed",
+                    "severity": "error",
+                    "language": "rust",
+                    "errors_preview": preview,
+                }));
+            }
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::json!({"findings": findings}));
+    } else {
+        println!("Build readiness: {} gate(s) failing", findings.len());
+        for f in &findings {
+            println!(
+                "  ✗ {} ({})",
+                f.get("gate").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("kind").and_then(|v| v.as_str()).unwrap_or("")
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Hexagonal-architecture layer-coverage scan. Each canonical layer that
+/// the project is missing becomes a finding so the improver can surface
+/// the gap as a hypothesis. Auto-detects language from project markers
+/// (package.json → TypeScript, Cargo.toml → Rust).
+async fn layers_check(json: bool) -> anyhow::Result<()> {
+    use std::path::PathBuf;
+
+    let cwd = std::env::current_dir()?;
+    let is_ts = cwd.join("package.json").exists();
+    let is_rust = cwd.join("Cargo.toml").exists();
+    if !is_ts && !is_rust {
+        if json {
+            println!("{}", serde_json::json!({"findings": []}));
+        } else {
+            println!("Layers: no project markers found (package.json / Cargo.toml)");
+        }
+        return Ok(());
+    }
+
+    // TS canonical layers — Rust/Go variants can be added when those
+    // examples land. Comp root has glob fallbacks for the conventional
+    // file names (composition-root.ts, composition_root.ts, app.ts,
+    // bootstrap.ts).
+    let layers: &[(&str, &[&str], &str)] = if is_ts {
+        &[
+            ("usecases", &["src/core/usecases"], "directory"),
+            ("primary_adapters", &["src/adapters/primary"], "directory"),
+            ("secondary_adapters", &["src/adapters/secondary"], "directory"),
+            ("ports", &["src/core/ports"], "directory"),
+            ("domain", &["src/core/domain"], "directory"),
+            (
+                "composition_root",
+                &[
+                    "src/composition-root.ts",
+                    "src/composition_root.ts",
+                    "src/composition.ts",
+                    "src/app.ts",
+                    "src/bootstrap.ts",
+                ],
+                "file",
+            ),
+        ]
+    } else {
+        &[]
+    };
+
+    let mut findings: Vec<serde_json::Value> = Vec::new();
+    for (layer, candidates, kind) in layers {
+        let exists = candidates.iter().any(|c| {
+            let p: PathBuf = cwd.join(c);
+            if *kind == "directory" {
+                p.is_dir()
+            } else {
+                p.is_file()
+            }
+        });
+        if !exists {
+            findings.push(serde_json::json!({
+                "layer": layer,
+                "kind": "missing_layer",
+                "severity": "warning",
+                "checked": candidates,
+                "remediation": format!(
+                    "create the {} layer at one of: {}",
+                    layer,
+                    candidates.join(", ")
+                ),
+            }));
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::json!({"findings": findings}));
+    } else {
+        println!("Layer coverage: {} missing", findings.len());
+        for f in &findings {
+            println!(
+                "  ✗ {} (checked: {})",
+                f.get("layer").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("checked")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Workplan integrity scan — detects genuine structural corruption.
+///
+/// Heterogeneity discovery (2026-05-03): workplans don't share a single
+/// schema. Some have `title`, some have `feature`, some have neither.
+/// An over-strict detector that flags every wp-*.json missing `title`
+/// poisons reward attribution by punishing the loop's actions for a
+/// schema mismatch they didn't cause.
+///
+/// Real corruption signals (the only things this detector flags):
+///   - Unparseable JSON (file is malformed)
+///   - Missing both `id` AND `phases` (no plan structure at all)
+///   - `phases` present but empty array (degenerate)
+///   - Any task object missing `id` (loses anchor for reconcile)
+///   - File shrank >40% vs its previous git revision (destructive mutation)
+async fn integrity_check(json: bool) -> anyhow::Result<()> {
+    use std::path::PathBuf;
+    let wp_dir = PathBuf::from("docs/workplans");
+    if !wp_dir.is_dir() {
+        if json {
+            println!("{}", serde_json::json!({"findings": []}));
+        }
+        return Ok(());
+    }
+    let mut findings: Vec<serde_json::Value> = Vec::new();
+    for entry in std::fs::read_dir(&wp_dir)?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if !name.starts_with("wp-") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        let Ok(root): Result<serde_json::Value, _> = serde_json::from_str(&content) else {
+            findings.push(serde_json::json!({
+                "workplan_id": name,
+                "kind": "unparseable_json",
+                "severity": "error",
+            }));
+            continue;
+        };
+
+        let workplan_id = root.get("id").and_then(|v| v.as_str()).unwrap_or(name).to_string();
+        let has_id = root.get("id").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
+        let phases = root.get("phases").and_then(|v| v.as_array());
+        let phases_present = phases.is_some();
+        let phases_nonempty = phases.map(|a| !a.is_empty()).unwrap_or(false);
+
+        if !has_id && !phases_present {
+            findings.push(serde_json::json!({
+                "workplan_id": workplan_id,
+                "kind": "missing_structural_fields",
+                "severity": "error",
+                "missing_fields": ["id", "phases"],
+            }));
+            continue;
+        }
+        if phases_present && !phases_nonempty {
+            findings.push(serde_json::json!({
+                "workplan_id": workplan_id,
+                "kind": "empty_phases",
+                "severity": "error",
+            }));
+        }
+
+        let mut tasks_missing_id = 0;
+        if let Some(phases) = phases {
+            for phase in phases {
+                if let Some(tasks) = phase.get("tasks").and_then(|v| v.as_array()) {
+                    for task in tasks {
+                        if task.get("id").and_then(|v| v.as_str()).map(|s| s.is_empty()).unwrap_or(true) {
+                            tasks_missing_id += 1;
+                        }
+                    }
+                }
+            }
+        }
+        if tasks_missing_id > 0 {
+            findings.push(serde_json::json!({
+                "workplan_id": workplan_id,
+                "kind": "tasks_missing_id",
+                "severity": "error",
+                "count": tasks_missing_id,
+            }));
+        }
+
+        // Destructive-shrinkage signal: file shrank >40% in last commit.
+        if let Some(prev_size) = previous_revision_size(&path) {
+            let curr_size = content.len() as i64;
+            if prev_size > 0 && curr_size < (prev_size * 6 / 10) {
+                findings.push(serde_json::json!({
+                    "workplan_id": workplan_id,
+                    "kind": "destructive_shrinkage",
+                    "severity": "error",
+                    "prev_bytes": prev_size,
+                    "curr_bytes": curr_size,
+                    "shrinkage_pct": ((prev_size - curr_size) as f64 / prev_size as f64 * 100.0) as i64,
+                }));
+            }
+        }
+    }
+    if json {
+        println!("{}", serde_json::json!({"findings": findings}));
+    } else {
+        println!("Workplan integrity: {} finding(s)", findings.len());
+        for f in &findings {
+            println!(
+                "  {} {} {}",
+                f.get("severity").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("workplan_id").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("kind").and_then(|v| v.as_str()).unwrap_or(""),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Get the size in bytes of the file at HEAD~1, or None if no prior
+/// revision exists or git is unavailable. Used by integrity_check to
+/// flag files that shrank dramatically (likely destructive mutation).
+fn previous_revision_size(path: &std::path::Path) -> Option<i64> {
+    let path_str = path.to_string_lossy();
+    let out = std::process::Command::new("git")
+        .args(["show", &format!("HEAD~1:{}", path_str)])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(out.stdout.len() as i64)
+}
+
+/// Resolve a workplan path argument. Tries (in order):
+///   1. The path as-given (absolute or relative to cwd).
+///   2. `docs/workplans/<basename>` from cwd — only if the input does not
+///      already start with `docs/workplans/`. Prevents the double-prefix
+///      bug seen by the sched daemon when its cwd is not the project root
+///      (`docs/workplans/docs/workplans/<file>`).
+///   3. Walk up from cwd looking for a directory containing the workplan
+///      at the input's relative position, so the daemon can find files
+///      regardless of where it was launched.
+pub(crate) fn resolve_workplan_path(file: &str) -> anyhow::Result<std::path::PathBuf> {
+    let raw = std::path::Path::new(file);
+    if raw.exists() {
+        return Ok(raw.to_path_buf());
+    }
+    if raw.is_absolute() {
+        anyhow::bail!("Workplan not found: {}", file);
+    }
+
+    let already_prefixed = raw.starts_with("docs/workplans");
+    if !already_prefixed {
+        let prefixed = std::path::Path::new("docs/workplans").join(raw);
+        if prefixed.exists() {
+            return Ok(prefixed);
+        }
+    }
+
+    // Walk up looking for a parent that contains the file at its relative path.
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut dir = cwd.as_path();
+        loop {
+            let candidate = dir.join(raw);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+            if !already_prefixed {
+                let candidate_prefixed = dir.join("docs/workplans").join(raw);
+                if candidate_prefixed.exists() {
+                    return Ok(candidate_prefixed);
+                }
+            }
+            match dir.parent() {
+                Some(parent) => dir = parent,
+                None => break,
+            }
+        }
+    }
+
+    anyhow::bail!("Workplan not found: {}", file);
+}
+
+/// Execute a workplan — dispatches tasks through tiered inference routing (ADR-2026-04-12-0202).
 ///
 /// Sends the workplan to hex-nexus for execution. Nexus routes each task through
 /// Path C (headless inference for T1/T2/T2.5) or Path A (spawn agent for T3),
 /// with compile gates, GBNF grammar constraints, and RL reward recording.
 async fn execute_plan(file: &str) -> anyhow::Result<()> {
-    let path = std::path::Path::new(file);
-    let path = if path.exists() {
-        path.to_path_buf()
-    } else {
-        let wp_path = std::path::Path::new("docs/workplans").join(file);
-        if !wp_path.exists() {
-            anyhow::bail!("Workplan not found: {} (also tried docs/workplans/{})", file, file);
-        }
-        wp_path
-    };
+    let path = resolve_workplan_path(file)?;
 
     // Parse and validate the workplan
     let content = std::fs::read_to_string(&path)?;
@@ -527,7 +1239,7 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
 }
 
 /// Distributed workplan execution — creates HexFlo swarm tasks and waits
-/// for remote workers to complete them (ADR-2604121630).
+/// for remote workers to complete them (ADR-2026-04-12-1630).
 ///
 /// Flow: create swarm → create tasks per phase → poll until complete → run gates → next phase
 /// Falls back to local execution if no workers are available.
@@ -1133,6 +1845,7 @@ async fn create_plan(requirements: &[String], lang: &str, adr: Option<&str>, no_
         let path = workplans_dir.join(&filename);
 
         let plan = Workplan {
+            id: String::new(),
             title: format!("Plan: {}", requirements.join(", ")),
             feature: String::new(),
             language: lang.to_string(),
@@ -1158,35 +1871,44 @@ async fn create_plan(requirements: &[String], lang: &str, adr: Option<&str>, no_
     Ok(())
 }
 
-/// List workplans from docs/workplans/.
+/// List workplans from docs/workplans/ plus any root-level workplan.json
+/// (common in small/example projects that don't use the docs/ layout).
 async fn list_plans() -> anyhow::Result<()> {
     let dir = Path::new("docs/workplans");
-    if !dir.is_dir() {
-        println!("No workplans directory found (docs/workplans/)");
-        return Ok(());
+    let root_wp = Path::new("workplan.json");
+
+    let mut paths: Vec<std::path::PathBuf> = Vec::new();
+    if dir.is_dir() {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "json" || ext == "md")
+                    .unwrap_or(false)
+            })
+            .map(|e| e.path())
+            .collect();
+        entries.sort_by_key(|p| p.file_name().map(|n| n.to_os_string()));
+        paths.extend(entries);
+    }
+    if root_wp.is_file() {
+        paths.push(root_wp.to_path_buf());
     }
 
-    let mut entries: Vec<_> = std::fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|ext| ext == "json" || ext == "md")
-                .unwrap_or(false)
-        })
-        .collect();
-
-    entries.sort_by_key(|e| e.file_name());
-
-    if entries.is_empty() {
-        println!("No workplans found in docs/workplans/");
+    if paths.is_empty() {
+        if !dir.is_dir() {
+            println!("No workplans directory found (docs/workplans/) and no root-level workplan.json");
+        } else {
+            println!("No workplans found in docs/workplans/");
+        }
         return Ok(());
     }
 
     println!(
-        "{} {} workplan(s) in docs/workplans/",
+        "{} {} workplan(s) found",
         "\u{2b21}".cyan(),
-        entries.len()
+        paths.len()
     );
     println!();
 
@@ -1195,8 +1917,7 @@ async fn list_plans() -> anyhow::Result<()> {
 
     let mut rows: Vec<PlanRow> = Vec::new();
 
-    for entry in &entries {
-        let path = entry.path();
+    for path in &paths {
         let name = path.file_name().unwrap().to_string_lossy();
 
         if path.extension().map(|e| e == "json").unwrap_or(false) {
@@ -1299,15 +2020,7 @@ async fn list_plans() -> anyhow::Result<()> {
 
 /// Show detailed status of a workplan.
 async fn show_plan_status(file: &str) -> anyhow::Result<()> {
-    let path = Path::new("docs/workplans").join(file);
-    if !path.exists() {
-        // Try adding .json
-        let with_ext = Path::new("docs/workplans").join(format!("{}.json", file));
-        if with_ext.exists() {
-            return show_plan_file(&with_ext).await;
-        }
-        anyhow::bail!("Workplan not found: {}", path.display());
-    }
+    let path = resolve_workplan_path(file)?;
     show_plan_file(&path).await
 }
 
@@ -1689,83 +2402,6 @@ fn file_has_git_evidence(file: &str, since: &str) -> bool {
 }
 
 /// Check if a task ID appears in recent git commit messages, scoped to a workplan.
-/// Matches patterns like "p1.1", "P1.1", "(p1.1)", "p1.1:" in commit subjects.
-/// When `adr_scope` is non-empty, the commit must ALSO contain the ADR id — this
-/// prevents cross-workplan false positives where generic task IDs like "P1.1"
-/// appear in unrelated commits. When `adr_scope` is empty, falls back to the
-/// legacy unscoped match (for workplans without an ADR link).
-/// Uses --fixed-strings to avoid regex interpretation of dots in task IDs.
-/// Uses a 24h buffer before created_at to account for timezone differences.
-fn task_id_in_git_log(task_id: &str, since: &str, adr_scope: &str) -> bool {
-    if task_id.is_empty() {
-        return false;
-    }
-    // Use 24h before created_at to account for UTC vs local timezone drift.
-    // If no created_at, search last 7 days.
-    let since_arg = if since.is_empty() {
-        "--since=7.days".to_string()
-    } else {
-        // Parse and subtract 1 day for buffer
-        let buffered = since
-            .parse::<chrono::DateTime<chrono::Utc>>()
-            .map(|dt| (dt - chrono::Duration::hours(24)).to_rfc3339())
-            .unwrap_or_else(|_| since.to_string());
-        format!("--since={}", buffered)
-    };
-    let mut args: Vec<String> = vec![
-        "log".to_string(),
-        "--oneline".to_string(),
-        since_arg,
-        "--fixed-strings".to_string(),
-        "-i".to_string(),
-        "--grep".to_string(),
-        task_id.to_string(),
-    ];
-    if !adr_scope.is_empty() {
-        // Require BOTH task_id AND adr_scope to appear — prevents unrelated
-        // commits that happen to share a generic task ID (P1.1, P2.1) from
-        // matching a different workplan.
-        args.push("--all-match".to_string());
-        args.push("--grep".to_string());
-        args.push(adr_scope.to_string());
-    }
-    let output = std::process::Command::new("git").args(&args).output();
-    match output {
-        Ok(out) => !out.stdout.is_empty(),
-        Err(_) => false,
-    }
-}
-
-/// Check if any commit since `since` modified `file` AND mentions `adr_scope` in
-/// its message. This narrows the plain "file was modified" heuristic so a commit
-/// on another workplan that happens to touch the same file doesn't register as
-/// evidence for an unrelated task. When `adr_scope` is empty, falls back to the
-/// legacy unscoped file-modified check.
-fn file_has_scoped_git_evidence(file: &str, since: &str, adr_scope: &str) -> bool {
-    if adr_scope.is_empty() {
-        return file_has_git_evidence(file, since);
-    }
-    if since.is_empty() || file.is_empty() {
-        return false;
-    }
-    let output = std::process::Command::new("git")
-        .args([
-            "log",
-            "--oneline",
-            &format!("--since={}", since),
-            "--fixed-strings",
-            "--grep",
-            adr_scope,
-            "--",
-            file,
-        ])
-        .output();
-    match output {
-        Ok(out) => !out.stdout.is_empty(),
-        Err(_) => false,
-    }
-}
-
 /// Check git evidence for a list of files. Returns a summary string.
 /// - All files modified: "[git: modified]" (green)
 /// - Some files modified: "[git: partial N/M]" (yellow)
@@ -1798,93 +2434,7 @@ fn run_done_command(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
-// Reconcile logic extracted to reconcile.rs (ADR-2604142200).
-
-/// Extract identifiers worth grepping from a done_condition string.
-/// Takes snake_case/camelCase words ≥5 chars and single-quoted strings.
-fn extract_identifiers(condition: &str) -> Vec<String> {
-    let mut ids = Vec::new();
-
-    // Single-quoted strings like 'sonnet', 'prior_errors'
-    let mut in_quote = false;
-    let mut current = String::new();
-    for ch in condition.chars() {
-        if ch == '\'' {
-            if in_quote && !current.is_empty() {
-                ids.push(current.clone());
-                current.clear();
-            }
-            in_quote = !in_quote;
-        } else if in_quote {
-            current.push(ch);
-        }
-    }
-    // Word tokens: snake_case or CamelCase, ≥5 chars, not common prose words
-    let skip = ["cargo", "check", "build", "passes", "returns", "reads", "files", "calls",
-                "found", "added", "output", "result", "using", "value", "field", "never",
-                "always", "every", "should", "where", "which", "other", "after", "first",
-                "then", "from", "with", "into", "that", "this", "have", "does", "when"];
-    for word in condition.split(|c: char| !c.is_alphanumeric() && c != '_') {
-        let w = word.trim();
-        if w.len() >= 5 && (w.contains('_') || w.chars().any(|c| c.is_uppercase()))
-            && !skip.iter().any(|s| w.to_lowercase() == *s) {
-                ids.push(w.to_string());
-            }
-    }
-
-    ids.sort();
-    ids.dedup();
-    ids
-}
-
-/// Grep for each identifier in the project source. Returns true if ≥1 found.
-fn check_identifiers(identifiers: &[String]) -> bool {
-    if identifiers.is_empty() { return false; }
-    for id in identifiers {
-        let output = std::process::Command::new("grep")
-            .args(["-r", "--include=*.rs", "-l", id.as_str(), "hex-cli/src", "hex-nexus/src", "hex-core/src"])
-            .output();
-        if let Ok(out) = output {
-            if !out.stdout.is_empty() {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Run cargo check/build to verify compilation. Returns true if passes.
-fn check_cargo(condition: &str) -> bool {
-    let (cmd, pkg) = if condition.contains("cargo test") {
-        ("test", extract_cargo_pkg(condition))
-    } else if condition.contains("cargo build") {
-        ("build", extract_cargo_pkg(condition))
-    } else {
-        ("check", extract_cargo_pkg(condition))
-    };
-
-    let mut args = vec![cmd];
-    if let Some(pkg) = pkg.as_deref() {
-        args.push("-p");
-        args.push(pkg);
-    }
-
-    std::process::Command::new("cargo")
-        .args(&args)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-fn extract_cargo_pkg(condition: &str) -> Option<String> {
-    // Match "-p hex-cli" or "-p hex-nexus" patterns in condition text
-    if condition.contains("hex-cli") { return Some("hex-cli".to_string()); }
-    if condition.contains("hex-nexus") { return Some("hex-nexus".to_string()); }
-    if condition.contains("hex-core") { return Some("hex-core".to_string()); }
-    None
-}
+// Reconcile logic extracted to reconcile.rs (ADR-2026-04-14-2201).
 
 /// Map adapter path to dependency tier.
 fn infer_tier(adapter: &str) -> u8 {
@@ -1901,7 +2451,7 @@ fn infer_tier(adapter: &str) -> u8 {
     }
 }
 
-// ── ADR-2604110227: Draft workplans ──────────────────────────────────
+// ── ADR-2026-04-11-0227: Draft workplans ──────────────────────────────────
 
 /// Directory where auto-invoked draft workplans are quarantined until
 /// the user approves, edits, or clears them.
@@ -1938,6 +2488,199 @@ fn slug_from_prompt(prompt: &str) -> String {
 /// Claude Code context so the agent can pick it up via /hex-feature-dev
 /// (or the user can approve/edit it manually).
 ///
+/// Scan every `docs/workplans/wp-*.json` for evidence drift and report
+/// divergences as findings. Used by the improver `reconcile_strict`
+/// detector. Read-only: never mutates workplan JSON. A finding is any
+/// task whose `status == "done"` (or "completed") yet either:
+///   - has no `evidence.commits` entries, OR
+///   - in strict mode, has commits but none reference the workplan_id
+///
+/// The check is deliberately cheap (no git interrogation) so the detector
+/// can run on every improver tick. Deeper evidence-validation belongs in
+/// `hex plan reconcile <file>` proper.
+async fn reconcile_all(strict: bool, json: bool) -> anyhow::Result<()> {
+    use std::path::PathBuf;
+
+    // Evidence-schema cutoff: ADR-2026-04-14-2201 (Reconcile must verify file
+    // evidence) was accepted 2026-04-14. Workplans whose first git commit
+    // predates that date can't reasonably be flagged for missing
+    // `evidence.commits` — the field didn't exist when their tasks were
+    // marked done. Skipping them turns ~514 raw task-findings into the
+    // ~30 that represent actual post-schema evidence drift.
+    const EVIDENCE_SCHEMA_EPOCH: i64 = 1744588800; // 2026-04-14T00:00:00Z
+
+    let wp_dir = PathBuf::from("docs/workplans");
+    if !wp_dir.is_dir() {
+        if json {
+            println!("{}", serde_json::json!({"findings": []}));
+        }
+        return Ok(());
+    }
+
+    let mut findings: Vec<serde_json::Value> = Vec::new();
+    for entry in std::fs::read_dir(&wp_dir)?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if !name.starts_with("wp-") {
+            continue;
+        }
+        // Pre-schema guard: skip workplans created before the evidence
+        // schema landed. file_first_commit_ts returns None for untracked
+        // files — those we still scan since we can't prove they're old.
+        if let Some(ts) = file_first_commit_ts(&path) {
+            if ts < EVIDENCE_SCHEMA_EPOCH {
+                continue;
+            }
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        let Ok(root): Result<serde_json::Value, _> = serde_json::from_str(&content) else { continue };
+
+        let workplan_id = root.get("id").and_then(|v| v.as_str()).unwrap_or(name).to_string();
+        let Some(phases) = root.get("phases").and_then(|v| v.as_array()) else { continue };
+        for phase in phases {
+            let Some(tasks) = phase.get("tasks").and_then(|v| v.as_array()) else { continue };
+            for task in tasks {
+                let task_id = task.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let status = task
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                if status != "done" && status != "completed" {
+                    continue;
+                }
+                let commits: Vec<&str> = task
+                    .get("evidence")
+                    .and_then(|e| e.get("commits"))
+                    .and_then(|c| c.as_array())
+                    .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
+
+                if commits.is_empty() {
+                    findings.push(serde_json::json!({
+                        "workplan_id": workplan_id,
+                        "task_id": task_id,
+                        "kind": "done_without_evidence",
+                        "severity": "error",
+                    }));
+                } else if strict {
+                    // Strict mode: at least one commit must reference workplan_id
+                    let workplan_referenced = commits
+                        .iter()
+                        .any(|sha| commit_message_contains(sha, &workplan_id).unwrap_or(false));
+                    if !workplan_referenced {
+                        findings.push(serde_json::json!({
+                            "workplan_id": workplan_id,
+                            "task_id": task_id,
+                            "kind": "evidence_missing_workplan_id",
+                            "severity": "warning",
+                            "commits": commits,
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::json!({"findings": findings}));
+    } else {
+        println!("Reconcile-all: {} divergence(s)", findings.len());
+        for f in &findings {
+            println!(
+                "  {} {} task={} kind={}",
+                f.get("severity").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("workplan_id").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("task_id").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("kind").and_then(|v| v.as_str()).unwrap_or(""),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// First-commit Unix timestamp for a tracked file, or `None` when the
+/// file isn't in git (untracked, new file, etc.). Used by the pre-schema
+/// guard in reconcile_all so we don't flag workplans that pre-date the
+/// evidence schema for "missing evidence."
+fn file_first_commit_ts(path: &std::path::Path) -> Option<i64> {
+    let out = std::process::Command::new("git")
+        .args([
+            "log",
+            "--diff-filter=A",
+            "--format=%ct",
+            "--",
+            &path.to_string_lossy(),
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    stdout.trim().lines().last()?.parse().ok()
+}
+
+/// Cheap check: does `git show -s --format=%B <sha>` contain `needle`?
+/// Returns `Ok(false)` rather than `Err` for failed git invocations so a
+/// transient git issue doesn't blow up the entire --all sweep.
+fn commit_message_contains(sha: &str, needle: &str) -> anyhow::Result<bool> {
+    let out = std::process::Command::new("git")
+        .args(["show", "-s", "--format=%B", sha])
+        .output();
+    let Ok(out) = out else { return Ok(false) };
+    if !out.status.success() {
+        return Ok(false);
+    }
+    let body = String::from_utf8_lossy(&out.stdout);
+    Ok(body.contains(needle))
+}
+
+/// Public wrapper for the improver act phase: draft a workplan stub from
+/// a prompt string. Returns the path of the created draft file so the
+/// caller can record it in dedup tracking. Bypasses `--background`
+/// chatter by always running silent.
+pub async fn draft_plan_silent(prompt: &str) -> anyhow::Result<std::path::PathBuf> {
+    use std::io::Write;
+    let trimmed = prompt.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("draft_plan_silent: empty prompt");
+    }
+    let dir = drafts_dir();
+    std::fs::create_dir_all(&dir)?;
+    let ts = chrono::Local::now().format("%y%m%d%H%M%S").to_string();
+    let slug = slug_from_prompt(trimmed);
+    // Hash the prompt to derive a 6-char unique suffix. Without this,
+    // multiple drafts created in the same second with similar prompts
+    // (5 TestCoverage findings → all slug "generate-tests-for-src-core")
+    // collide on filename and overwrite each other. Each call should
+    // produce a distinct file when the prompt is distinct.
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    trimmed.hash(&mut hasher);
+    let suffix = format!("{:06x}", (hasher.finish() & 0xFFFFFF));
+    let filename = format!("draft-{}-{}-{}.json", ts, slug, suffix);
+    let path = dir.join(&filename);
+    let draft_id = format!("draft-{}-{}-{}", ts, slug, suffix);
+    let draft = serde_json::json!({
+        "id": draft_id,
+        "kind": "workplan-draft",
+        "status": "pending-planner",
+        "adr": "ADR-2026-04-27-1100",
+        "created_at": chrono::Local::now().to_rfc3339(),
+        "origin": "improver-auto-act",
+        "prompt": trimmed,
+        "notes": "Auto-drafted by the improver act phase from a detector_health or q_starvation hypothesis. The improver couldn't fix the underlying surface (broken CLI, ineffective action mapping) automatically, so it captured the work as a draft for the operator (or a downstream planner agent) to pick up."
+    });
+    let mut file = std::fs::File::create(&path)?;
+    file.write_all(serde_json::to_string_pretty(&draft)?.as_bytes())?;
+    Ok(path)
+}
+
 /// This function deliberately does NOT spawn Claude subagents directly —
 /// that happens upstream in Claude Code when it reads the banner and
 /// notices the draft file. Keeping the spawn visible preserves the ADR
@@ -1978,7 +2721,7 @@ async fn draft_plan(prompt_parts: &[String], background: bool) -> anyhow::Result
         "id": draft_id,
         "kind": "workplan-draft",
         "status": "pending-planner",
-        "adr": "ADR-2604110227",
+        "adr": "ADR-2026-04-11-0227",
         "created_at": chrono::Local::now().to_rfc3339(),
         "origin": "auto-invoke",
         "prompt": trimmed,
@@ -1987,7 +2730,7 @@ async fn draft_plan(prompt_parts: &[String], background: bool) -> anyhow::Result
             format!("Or run `hex plan drafts approve {}`", filename),
             format!("Or run `hex plan drafts clear --name {}`", filename.trim_end_matches(".json")),
         ],
-        "notes": "This is a draft created by ADR-2604110227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up."
+        "notes": "This is a draft created by ADR-2026-04-11-0227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up."
     });
 
     let mut file = std::fs::File::create(&path)?;
@@ -2195,4 +2938,80 @@ async fn gc_drafts(days: u64) -> anyhow::Result<()> {
         days
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod resolve_workplan_path_tests {
+    use super::resolve_workplan_path;
+    use std::fs;
+
+    /// Pins the bug behind `brain-task:test-visible-pending`: when the
+    /// daemon is launched outside the project root and is handed a
+    /// `docs/workplans/<file>` payload, the resolver must NOT produce
+    /// `docs/workplans/docs/workplans/<file>`.
+    #[test]
+    fn does_not_double_prefix_when_input_already_under_docs_workplans() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let wp_dir = root.join("docs/workplans");
+        fs::create_dir_all(&wp_dir).unwrap();
+        let wp = wp_dir.join("wp-resolver-probe.json");
+        fs::write(&wp, "{}").unwrap();
+
+        let nested = root.join("hex-cli/src");
+        fs::create_dir_all(&nested).unwrap();
+        let _guard = CwdGuard::change_to(&nested);
+
+        let resolved = resolve_workplan_path("docs/workplans/wp-resolver-probe.json")
+            .expect("resolve via walk-up");
+        let resolved_str = resolved.to_string_lossy();
+        assert!(
+            !resolved_str.contains("docs/workplans/docs/workplans"),
+            "double-prefix regression: {}",
+            resolved_str
+        );
+        assert!(resolved.ends_with("docs/workplans/wp-resolver-probe.json"));
+    }
+
+    #[test]
+    fn finds_via_legacy_basename_prefix_from_project_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        fs::create_dir_all(root.join("docs/workplans")).unwrap();
+        fs::write(root.join("docs/workplans/wp-foo.json"), "{}").unwrap();
+        let _guard = CwdGuard::change_to(root);
+
+        let resolved = resolve_workplan_path("wp-foo.json").expect("legacy basename");
+        assert!(resolved.ends_with("docs/workplans/wp-foo.json"));
+    }
+
+    #[test]
+    fn errors_on_truly_missing_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _guard = CwdGuard::change_to(tmp.path());
+        assert!(resolve_workplan_path("docs/workplans/nope.json").is_err());
+    }
+
+    /// Serialize cwd-mutating tests: `std::env::set_current_dir` is process
+    /// global. Hold this for the duration of a test that changes cwd.
+    struct CwdGuard {
+        prev: std::path::PathBuf,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl CwdGuard {
+        fn change_to(dir: &std::path::Path) -> Self {
+            static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let prev = std::env::current_dir().expect("cwd");
+            std::env::set_current_dir(dir).expect("set cwd");
+            Self { prev, _lock: lock }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.prev);
+        }
+    }
 }

@@ -1,6 +1,8 @@
 # ADR-025: SpacetimeDB as Distributed State Backend
 
-**Status:** Accepted
+**Status:** Superseded
+**Superseded-By:** ADR-2026-04-02-0900-eliminate-sqlite-fallback
+**Verified:** 2026-05-12 via adversarial check — SpacetimeDB module count: 8 module dirs (must be > 0)
 
 ## Context
 

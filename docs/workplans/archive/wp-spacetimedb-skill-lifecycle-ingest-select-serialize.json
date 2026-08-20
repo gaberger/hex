@@ -1,0 +1,134 @@
+{
+  "adr": "ADR-042",
+  "created_at": "2026-05-23T19:18:42.896072983+00:00",
+  "created_by": "hex-coder",
+  "feature": "Implement SpacetimeDB Skill Lifecycle for ingestion, selection, and serialization.",
+  "id": "wp-spacetimedb-skill-lifecycle-ingest-select-serialize",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain/Ports Setup",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/skill-ingestion/model.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Define Skill Ingestion Domain Model",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/skill-ingestion/ingest_skill_port.rs",
+            "hex-agent/src/spacetimeskillloader/ingest_skill_port_impl.rs"
+          ],
+          "id": "P0.2",
+          "layer": "ports",
+          "name": "Create Skill Ingestion Ports",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary Adapters Implementation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-agent/src/skillloaderadapter/filesystem_skill_loader_adapter.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement Filesystem Skill Loader Adapter",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/spacetimedbsyncer/skill_syncer.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Implement SpacetimeDB Skill Syncer",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P2",
+      "name": "Primary Adapters Implementation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/skill-registry/spacetimeskill_registry_adapter.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Implement SpacetimeDB Skill Registry Adapter",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P3",
+      "name": "Usecases Implementation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/skill-ingestion/usecase.rs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Implement Skill Ingestion Use Case",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-agent/src/contextpacker/intelligent_skill_selector.rs",
+            "hex-nexus/src/skill-ingestion/selection_strategy.rs"
+          ],
+          "id": "P3.2",
+          "layer": "usecases",
+          "name": "Implement Intelligent Skill Selection Use Case",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P4",
+      "name": "Integration and CLI Commands",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/nexus_startup.rs"
+          ],
+          "id": "P4.1",
+          "layer": "integration",
+          "name": "Integrate Skill Ingestion Pipeline on Nexus Start",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-cli/src/commands/skill.rs"
+          ],
+          "id": "P4.2",
+          "layer": "infrastructure",
+          "name": "Implement CLI Commands for Skill Management",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

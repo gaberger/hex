@@ -1,0 +1,15 @@
+{
+  "adr": "ADR-2026-04-11-0227",
+  "created_at": "2026-06-05T13:24:01.647849318-04:00",
+  "id": "draft-2606051324-implement-adr-2026-07-10",
+  "kind": "workplan-draft",
+  "next_steps": [
+    "Run /hex-feature-dev to expand this draft into a full workplan",
+    "Or run `hex plan drafts approve draft-2606051324-implement-adr-2026-07-10.json`",
+    "Or run `hex plan drafts clear --name draft-2606051324-implement-adr-2026-07-10`"
+  ],
+  "notes": "This is a draft created by ADR-2026-04-11-0227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up.",
+  "origin": "auto-invoke",
+  "prompt": "Implement ADR-2026-07-10-1000 Resilient Dynamic Inference Routing: (1) tier_config.rs accept scalar-or-array candidate pools per tier with serde + auto-wrap; (2) inference_router/mod.rs route_request ordered local-first fallback honoring the 600s deadline and reporting the served model; (3) rate_limiter.rs CostTracker add is_budget_exhausted + inference.budget cap (daily/monthly, mode warn|demote|block); (4) quant_router.rs select_provider_with_rate_limits filter over-cap/paid providers preferring free-tier; (5) route sop_executor tool calls through quant_router so SOP inherits healthy-provider fallback + circuit breaker; (6) escalate to next candidate model after N typed-tool validation failures; with build gates and tier_routing.rs tests",
+  "status": "pending-planner"
+}

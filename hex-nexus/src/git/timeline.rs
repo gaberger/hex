@@ -40,9 +40,9 @@ pub fn build_timeline(
     let mut entries = Vec::new();
 
     // 1. Git commits
-    let log = super::log::get_log(root_path, None, None, limit)?;
+    let log = hex_git::log::get_log(root_path, None, None, limit)?;
     for commit in &log.commits {
-        let agent = super::correlation::extract_agent_name(&commit.message);
+        let agent = hex_git::correlation::extract_agent_name(&commit.message);
         entries.push(TimelineEntry {
             timestamp: commit.timestamp,
             kind: TimelineKind::Commit,

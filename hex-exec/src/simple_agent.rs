@@ -1,0 +1,905 @@
+//! Simple agent loop — the deliberately-flat alternative to the SOP path.
+//!
+//! Replaces the persona-rephrasing-rejoin loop (org_responder →
+//! commitment_parser → drafter → twin → executor) with one straight
+//! line: operator intent → LLM (with typed-tool function calling) →
+//! ToolRegistry::execute() → tool_result → loop until LLM is done OR
+//! the iteration budget hits. No personas, no Confirm:/Silent: contract,
+//! no atomic-claim, no dual registry.
+//!
+//! Same gates apply as elsewhere — every write that goes through
+//! `code_patch` / `adr_draft` / `spec_draft` / `workplan_emit` /
+//! `adr_status_set` is tagged proposed_by="tool:<name>" by those tools,
+//! so the twin's auto-approve fast path fires and the executor's
+//! cargo_check + autonomous commit step land the artifact. The simple
+//! agent loop never bypasses safety; it bypasses ceremony.
+
+use crate::tools::ToolRegistry;
+use serde_json::{json, Value};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+const DEFAULT_MAX_ITERATIONS: u32 = 10;
+const DEFAULT_MAX_TOKENS: u32 = 4096;
+
+/// Configuration knobs for a single agent run.
+pub struct RunConfig {
+    pub intent: String,
+    pub max_iterations: u32,
+    pub max_tokens: u32,
+    pub model: Option<String>,
+}
+
+/// Per-iteration step the agent took. Returned in the run summary so the
+/// caller can audit what happened.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AgentStep {
+    pub iteration: u32,
+    pub tool: String,
+    pub input: Value,
+    pub ok: bool,
+    pub output: Value,
+    pub error: Option<String>,
+    pub elapsed_ms: u64,
+    /// Free-form assistant text emitted alongside this tool_use block.
+    /// Empty when the LLM's response was pure tool calls. The Hermes-
+    /// style transcript view surfaces this inline above the tool block
+    /// so operators can read the model's reasoning.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub assistant_text: String,
+}
+
+/// Final outcome of an agent run.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RunSummary {
+    pub iterations: u32,
+    pub steps: Vec<AgentStep>,
+    pub final_text: String,
+    pub stop_reason: String, // "finished" | "max_iterations" | "no_tool_use" | "error"
+    pub elapsed_ms: u64,
+}
+
+/// Run one agent loop end-to-end. Returns when the LLM emits a turn
+/// with no tool_use blocks (it's done explaining), when the iteration
+/// budget is exhausted, or on transport error.
+///
+/// The inference path here is the same /api/anthropic-messages-compatible
+/// endpoint the sop_executor uses, but with NO persona system prompt,
+/// NO SOP phase scaffolding, and NO single-action emit constraint. The
+/// LLM is just told what it can do and is left to drive.
+pub async fn run(
+    cfg: RunConfig,
+    registry: Arc<ToolRegistry>,
+    inference_url: String,
+) -> Result<RunSummary, String> {
+    let started = Instant::now();
+    let max_iterations = if cfg.max_iterations == 0 {
+        DEFAULT_MAX_ITERATIONS
+    } else {
+        cfg.max_iterations
+    };
+    let max_tokens = if cfg.max_tokens == 0 {
+        DEFAULT_MAX_TOKENS
+    } else {
+        cfg.max_tokens
+    };
+    let model = cfg
+        .model
+        .clone()
+        .or_else(|| std::env::var("HEX_AGENT_MODEL").ok())
+        .unwrap_or_else(|| "qwen2.5-coder:14b".to_string());
+
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .build()
+        .map_err(|e| format!("http build: {}", e))?;
+
+    let system_prompt = build_system_prompt(&registry);
+    let mut messages: Vec<Value> = vec![json!({
+        "role": "user",
+        "content": cfg.intent,
+    })];
+
+    let tools_schema = registry.anthropic_schema();
+
+    let mut steps: Vec<AgentStep> = Vec::new();
+    let mut final_text = String::new();
+    // Track (tool, normalized_input) signatures of past successful tool
+    // dispatches so we can auto-terminate when the model retries the
+    // identical successful call. The model often forgets to emit
+    // `finish` after a single-shot write — preventing the duplicate
+    // collapses N spurious auto-commits into one.
+    let mut prior_successes: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for iteration in 0..max_iterations {
+        let req_body = json!({
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system_prompt,
+            "tools": tools_schema,
+            "messages": messages,
+        });
+
+        let resp = http
+            .post(&inference_url)
+            .json(&req_body)
+            .send()
+            .await
+            .map_err(|e| format!("inference http (iter {}): {}", iteration, e))?;
+        let status = resp.status();
+        let body: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("inference json (iter {}): {}", iteration, e))?;
+        if !status.is_success() {
+            return Ok(RunSummary {
+                iterations: iteration,
+                steps,
+                final_text,
+                stop_reason: format!("error: inference HTTP {}", status),
+                elapsed_ms: started.elapsed().as_millis() as u64,
+            });
+        }
+
+        // The inference adapter normalises whatever the upstream provider
+        // emits (Anthropic content[] blocks, OpenAI choices[].message.tool_calls,
+        // Ollama text-tool-call parse) into a single "content" string + an
+        // optional "tool_calls" array on the top-level body. Try Anthropic
+        // shape first (content blocks), then fall back to OpenAI shape.
+        let (assistant_text, tool_uses) = extract_tool_uses(&body);
+
+        if !assistant_text.is_empty() {
+            if !final_text.is_empty() {
+                final_text.push_str("\n\n");
+            }
+            final_text.push_str(&assistant_text);
+        }
+
+        if tool_uses.is_empty() {
+            // No more tool calls — the agent decided it's done.
+            return Ok(RunSummary {
+                iterations: iteration + 1,
+                steps,
+                final_text,
+                stop_reason: "no_tool_use".to_string(),
+                elapsed_ms: started.elapsed().as_millis() as u64,
+            });
+        }
+
+        // Mirror the assistant turn into history so the next iteration's
+        // tool_result references resolve.
+        messages.push(json!({
+            "role": "assistant",
+            "content": assistant_turn_content(&assistant_text, &tool_uses),
+        }));
+
+        let mut tool_results: Vec<Value> = Vec::new();
+        let mut saw_finish = false;
+        let mut saw_duplicate_success = false;
+        for tu in &tool_uses {
+            if tu.name == "finish" {
+                saw_finish = true;
+                if let Some(s) = tu.input.get("summary").and_then(|v| v.as_str()) {
+                    if !final_text.is_empty() {
+                        final_text.push_str("\n\n");
+                    }
+                    final_text.push_str(s);
+                }
+                continue;
+            }
+            let exec_start = Instant::now();
+            let normalized_input = normalize_tool_input(&tu.name, tu.input.clone());
+            // Duplicate detection: short-circuit if the model is asking
+            // us to re-run a call that already succeeded with the
+            // identical (tool, input) signature. Avoids the model's
+            // common forgot-to-call-finish failure mode producing N
+            // duplicate auto-commits.
+            //
+            // The signature strips metadata-only fields (`rationale`,
+            // `reason`, `comment`) that the LLM rephrases between turns
+            // — the action they describe is what matters for dedup,
+            // not the prose around it.
+            let sig_input = strip_metadata_fields(&normalized_input);
+            let sig = format!(
+                "{}:{}",
+                tu.name,
+                serde_json::to_string(&sig_input).unwrap_or_default()
+            );
+            if prior_successes.contains(&sig) {
+                saw_duplicate_success = true;
+                tracing::info!(
+                    tool = %tu.name,
+                    "simple_agent: duplicate-success detected, terminating loop"
+                );
+                steps.push(AgentStep {
+                    iteration,
+                    tool: tu.name.clone(),
+                    input: normalized_input.clone(),
+                    ok: true,
+                    output: serde_json::json!({"skipped": true, "reason": "duplicate of prior success"}),
+                    error: None,
+                    elapsed_ms: 0,
+                    assistant_text: assistant_text.clone(),
+                });
+                continue;
+            }
+            let res = registry.execute(&tu.name, normalized_input.clone()).await;
+            let elapsed = exec_start.elapsed().as_millis() as u64;
+            if res.ok {
+                prior_successes.insert(sig);
+            }
+            steps.push(AgentStep {
+                iteration,
+                tool: tu.name.clone(),
+                input: normalized_input,
+                ok: res.ok,
+                output: res.output.clone(),
+                error: res.error.clone(),
+                elapsed_ms: elapsed,
+                assistant_text: assistant_text.clone(),
+            });
+            let payload = json!({
+                "ok": res.ok,
+                "output": res.output,
+                "error": res.error,
+                "elapsed_ms": res.elapsed_ms,
+                "truncated": res.truncated,
+            });
+            tool_results.push(json!({
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": serde_json::to_string(&payload).unwrap_or_default(),
+                "is_error": !res.ok,
+            }));
+        }
+
+        if saw_finish {
+            return Ok(RunSummary {
+                iterations: iteration + 1,
+                steps,
+                final_text,
+                stop_reason: "finished".to_string(),
+                elapsed_ms: started.elapsed().as_millis() as u64,
+            });
+        }
+
+        if saw_duplicate_success {
+            return Ok(RunSummary {
+                iterations: iteration + 1,
+                steps,
+                final_text,
+                stop_reason: "finished_after_duplicate_success".to_string(),
+                elapsed_ms: started.elapsed().as_millis() as u64,
+            });
+        }
+
+        if !tool_results.is_empty() {
+            messages.push(json!({
+                "role": "user",
+                "content": tool_results,
+            }));
+        }
+    }
+
+    Ok(RunSummary {
+        iterations: max_iterations,
+        steps,
+        final_text,
+        stop_reason: "max_iterations".to_string(),
+        elapsed_ms: started.elapsed().as_millis() as u64,
+    })
+}
+
+/// A parsed tool_use block from an LLM turn.
+pub(crate) struct ToolUse {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) input: Value,
+}
+
+/// Parse a function-call's `arguments`, which providers emit inconsistently:
+/// OpenAI sends a JSON **string** that must be re-parsed; the hex inference
+/// fast-path (Ollama/gemma) sends a JSON **object** directly. Accept both — a
+/// string-typed-as-object meant tool inputs were silently dropped to `{}`,
+/// causing every dispatch to fail "missing required field" (found 2026-06-07).
+fn parse_tool_arguments(func: &Value) -> Value {
+    match func.get("arguments") {
+        Some(Value::String(s)) => serde_json::from_str(s).unwrap_or(Value::Object(Default::default())),
+        Some(v @ Value::Object(_)) => v.clone(),
+        _ => Value::Object(Default::default()),
+    }
+}
+
+/// Build the system prompt enumerating tools. Intentionally terse —
+/// the LLM's job is to pick a tool, not to recite the org chart.
+///
+/// Two response formats are accepted (extract_tool_uses tries each):
+///   1. Native Anthropic content[] blocks with type=tool_use (when the
+///      provider supports function-calling natively).
+///   2. OpenAI choices[].message.tool_calls (when routed through an
+///      OpenAI-compatible adapter).
+///   3. Text-mode JSON envelope as a fallback for local models without
+///      tool-use support: emit fenced ```json { "tool": "<name>",
+///      "args": { ... } } ``` or fenced ```json { "finish": "<summary>" }
+///      ```. The parser scans for these envelopes in the response text.
+///
+/// The system prompt requires #3 explicitly so the LLM doesn't drift
+/// into prose-describing-what-it-would-do.
+fn build_system_prompt(registry: &ToolRegistry) -> String {
+    let mut s = String::from(
+        "You are a focused hex agent. Use the typed tools below to fulfill the operator's intent.\n\n\
+         RESPONSE FORMAT — call the tools provided to you. The runtime supports two protocols and accepts either:\n\
+         1) NATIVE TOOL-USE (preferred): when your client exposes function-calling, emit tool_use blocks via the standard mechanism. This is what Anthropic Haiku/Sonnet, OpenAI, and other capable models do automatically when `tools` is supplied. Do NOT include a fenced-JSON block in addition — pick one protocol.\n\
+         2) TEXT-MODE FALLBACK (only when your client lacks native tool-use, e.g. local Ollama): emit fenced JSON of shape ```json\n{ \"tool\": \"<tool-name>\", \"args\": { ... } }\n``` followed by a final ```json\n{ \"finish\": \"<one-line summary>\" }\n```.\n\n\
+         Rules (apply to BOTH protocols):\n\
+         - Use EXACTLY the key names from each tool's input_schema. Do NOT rename `path` to `file_path`, `new_content` to `content`, etc.\n\
+         - Do NOT echo the operator intent back; act on it.\n\
+         - You may emit multiple tool calls in one response — they execute in order.\n\
+         - cargo_check is REQUIRED after any .rs write before finish. typescript_check is REQUIRED after any .ts/.tsx write before finish.\n\
+         - TEXT-MODE STRICT JSON ONLY inside the fence. Strings use double quotes; newlines encoded as \\n. NEVER backticks or JS template literals.\n\
+         - STOP-AFTER-SUCCESS: when a tool result returns `ok: true` AND the operator's intent has been satisfied by that single call (single-file writes, single ADR drafts, etc.), do NOT retry the same tool. Either emit `finish` (TEXT-MODE) or simply stop emitting tool calls (NATIVE TOOL-USE). The runtime will auto-terminate if it detects you re-issuing an identical successful call.\n\n\
+         When the intent is fully satisfied: NATIVE TOOL-USE callers can stop emitting tool calls; the runtime will detect zero tool_use and terminate. TEXT-MODE callers must emit the explicit { \"finish\": \"...\" } block.\n\n\
+         === Tools available (each with input_schema you must follow exactly) ===\n\n",
+    );
+    let mut names = registry.names();
+    names.sort();
+    for n in &names {
+        if let Some(tool) = registry.get(n) {
+            let schema_compact = serde_json::to_string(&tool.input_schema())
+                .unwrap_or_else(|_| "{}".to_string());
+            s.push_str(&format!(
+                "- {} — {}\n  input_schema: {}\n\n",
+                n,
+                tool.description(),
+                schema_compact
+            ));
+        }
+    }
+    s.push_str(
+        "- finish — signal that the intent is complete.\n  \
+         input_schema: {\"type\":\"object\",\"properties\":{\"summary\":{\"type\":\"string\"}},\"required\":[\"summary\"]}\n",
+    );
+    s
+}
+
+/// Lenient input-key normalization. LLMs drift on argument names even
+/// when the schema is in the prompt — observed today: `file_path` for
+/// `path`. Rather than failing the dispatch ("missing path"), normalize
+/// the known cross-tool drift before handing off to
+/// ToolRegistry::execute. The canonical key wins if both are present.
+///
+/// IMPORTANT: do NOT alias schema fields that are tool-specific. The
+/// 2026-05-14 first-iteration normalizer tried to map `new_content` →
+/// `content` for "all tools" and broke code_patch (whose schema
+/// canonical field IS `new_content`). Lesson: only alias what's
+/// genuinely cross-tool synonym (path-like keys, search patterns).
+/// Per-tool schema variations belong in the schema-aware prompt, not
+/// in this layer.
+/// Strip metadata-only fields from a tool input so the duplicate-success
+/// detector treats two calls as identical when they describe the same
+/// action but the LLM's prose around it has changed. The stripped
+/// fields are explicitly NOT consumed by any tool — they're commentary
+/// the model attaches voluntarily.
+pub(crate) fn strip_metadata_fields(input: &Value) -> Value {
+    const METADATA_FIELDS: &[&str] = &["rationale", "reason", "comment", "note"];
+    if let Some(obj) = input.as_object() {
+        let mut stripped = obj.clone();
+        for k in METADATA_FIELDS {
+            stripped.remove(*k);
+        }
+        Value::Object(stripped)
+    } else {
+        input.clone()
+    }
+}
+
+pub(crate) fn normalize_tool_input(_tool: &str, input: Value) -> Value {
+    let mut obj = match input {
+        Value::Object(m) => m,
+        other => return other,
+    };
+
+    // Cross-tool path-like keys.
+    for alias in ["file_path", "filepath", "filename", "file"] {
+        if !obj.contains_key("path") {
+            if let Some(v) = obj.remove(alias) {
+                obj.insert("path".to_string(), v);
+            }
+        } else {
+            obj.remove(alias);
+        }
+    }
+
+    // cargo_check expects `crate`; LLM sometimes emits `cratename`.
+    for alias in ["crate_name", "cratename", "package"] {
+        if !obj.contains_key("crate") {
+            if let Some(v) = obj.remove(alias) {
+                obj.insert("crate".to_string(), v);
+            }
+        } else {
+            obj.remove(alias);
+        }
+    }
+
+    // repo_grep expects `pattern`; LLM sometimes emits `query`/`regex`.
+    for alias in ["query", "regex", "search"] {
+        if !obj.contains_key("pattern") {
+            if let Some(v) = obj.remove(alias) {
+                obj.insert("pattern".to_string(), v);
+            }
+        } else {
+            obj.remove(alias);
+        }
+    }
+
+    Value::Object(obj)
+}
+
+/// Text-mode parser: scans the assistant text for fenced ```json blocks
+/// matching the contract documented in build_system_prompt. Returns
+/// (text_outside_blocks, tool_uses).
+///
+/// Triggered when neither the Anthropic block shape nor the OpenAI
+/// tool_calls shape is present in the response — the case for local
+/// LLMs (qwen2.5-coder:14b, ollama) that ignore the `tools` schema in
+/// the request body and reply in plain text.
+fn extract_text_mode_tool_uses(text: &str) -> Vec<ToolUse> {
+    let mut uses: Vec<ToolUse> = Vec::new();
+    let mut counter: u32 = 0;
+
+    // 1) Fenced ```json blocks: { tool|name, args|arguments|<flat> } or { finish }.
+    let mut rest = text;
+    while let Some(start) = rest.find("```json") {
+        let after = &rest[start + 7..];
+        let body_start = match after.find('\n') {
+            Some(i) => i + 1,
+            None => break,
+        };
+        let body = &after[body_start..];
+        let end = match body.find("\n```") {
+            Some(i) => i,
+            None => break,
+        };
+        let raw_json = body[..end].trim();
+        rest = &body[end + 4..];
+        if let Ok(v) = serde_json::from_str::<Value>(raw_json) {
+            push_tool_obj(&v, &mut uses, &mut counter);
+        }
+    }
+
+    // 2) <tool_call>…</tool_call> blocks (Qwen/Hermes style — { "name", "arguments" }).
+    // Many capable open models emit tool calls this way in *text* even when a
+    // `tools` schema is supplied, instead of via the native channel.
+    let mut rest = text;
+    while let Some(start) = rest.find("<tool_call>") {
+        let after = &rest[start + "<tool_call>".len()..];
+        let (segment, advance) = match after.find("</tool_call>") {
+            Some(end) => (&after[..end], end + "</tool_call>".len()),
+            None => (after, after.len()), // unclosed (truncated) — take the rest
+        };
+        rest = &after[advance..];
+        if let Some(obj_str) = first_json_object(segment) {
+            if let Ok(v) = serde_json::from_str::<Value>(&obj_str) {
+                push_tool_obj(&v, &mut uses, &mut counter);
+            }
+        }
+    }
+
+    uses
+}
+
+/// Convert one parsed JSON object into a ToolUse, accepting the several shapes
+/// models emit: { tool | name }, args from { args | arguments } (object OR
+/// stringified), or the remaining flat fields; plus { finish }.
+fn push_tool_obj(v: &Value, uses: &mut Vec<ToolUse>, counter: &mut u32) {
+    let name = v
+        .get("tool")
+        .and_then(|x| x.as_str())
+        .or_else(|| v.get("name").and_then(|x| x.as_str()));
+    if let Some(name) = name {
+        let args = match v.get("args").or_else(|| v.get("arguments")) {
+            Some(Value::String(s)) => serde_json::from_str(s).unwrap_or(Value::Object(Default::default())),
+            Some(other) => other.clone(),
+            None => {
+                // Flat fields: strip the call keys, treat the rest as args.
+                if let Some(obj) = v.as_object() {
+                    let mut r = obj.clone();
+                    r.remove("tool");
+                    r.remove("name");
+                    r.remove("rationale");
+                    Value::Object(r)
+                } else {
+                    Value::Object(Default::default())
+                }
+            }
+        };
+        uses.push(ToolUse { id: format!("textmode_{}", counter), name: name.to_string(), input: args });
+        *counter += 1;
+    } else if let Some(summary) = v.get("finish").and_then(|x| x.as_str()) {
+        uses.push(ToolUse {
+            id: format!("textmode_{}", counter),
+            name: "finish".to_string(),
+            input: serde_json::json!({ "summary": summary }),
+        });
+        *counter += 1;
+    }
+}
+
+/// Extract the first complete `{…}` object from a string by balancing braces
+/// (string-aware), so prose around the JSON — or trailing junk after an unclosed
+/// `<tool_call>` — doesn't break parsing.
+fn first_json_object(s: &str) -> Option<String> {
+    let start = s.find('{')?;
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut esc = false;
+    for i in start..bytes.len() {
+        let c = bytes[i];
+        if in_str {
+            if esc {
+                esc = false;
+            } else if c == b'\\' {
+                esc = true;
+            } else if c == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            b'"' => in_str = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(s[start..=i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Reconstruct what to put in the assistant message's `content` field so
+/// the next iteration's tool_result blocks refer to the right tool_use ids.
+pub(crate) fn assistant_turn_content(text: &str, tool_uses: &[ToolUse]) -> Value {
+    let mut blocks: Vec<Value> = Vec::new();
+    if !text.is_empty() {
+        blocks.push(json!({ "type": "text", "text": text }));
+    }
+    for tu in tool_uses {
+        blocks.push(json!({
+            "type": "tool_use",
+            "id": tu.id,
+            "name": tu.name,
+            "input": tu.input,
+        }));
+    }
+    Value::Array(blocks)
+}
+
+/// Try the Anthropic content-block shape, then the OpenAI tool_calls
+/// shape, then give up and return the body as plain text. Returns
+/// (assistant_text, tool_uses).
+pub(crate) fn extract_tool_uses(body: &Value) -> (String, Vec<ToolUse>) {
+    let mut text = String::new();
+    let mut uses: Vec<ToolUse> = Vec::new();
+
+    // Anthropic shape: { content: [{type: text|tool_use, ...}, ...] }
+    if let Some(blocks) = body.get("content").and_then(|v| v.as_array()) {
+        // If the content is a single string rather than blocks, it's
+        // probably the normalised "text completion" path — fall through.
+        let block_shape = blocks
+            .first()
+            .map(|b| b.is_object())
+            .unwrap_or(false);
+        if block_shape {
+            for block in blocks {
+                match block.get("type").and_then(|v| v.as_str()) {
+                    Some("text") => {
+                        if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
+                            if !text.is_empty() {
+                                text.push('\n');
+                            }
+                            text.push_str(t);
+                        }
+                    }
+                    Some("tool_use") => {
+                        uses.push(ToolUse {
+                            id: block
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string(),
+                            name: block
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string(),
+                            input: block.get("input").cloned().unwrap_or(Value::Null),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            return (text, uses);
+        }
+    }
+
+    // Inference-route tools fast-path: { content, tool_calls: [...] }
+    // where each entry is the OpenAI function-calling shape
+    // {id, type: "function", function: {name, arguments(string)}}.
+    // This is what the hex-nexus /api/inference/complete tools fast-path
+    // returns when a request includes a `tools` schema.
+    if let Some(calls) = body.get("tool_calls").and_then(|v| v.as_array()) {
+        if let Some(c) = body.get("content").and_then(|v| v.as_str()) {
+            text.push_str(c);
+        }
+        for (i, call) in calls.iter().enumerate() {
+            let id = call
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("call_{}", i));
+            let func = call.get("function").cloned().unwrap_or(Value::Null);
+            let name = func
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let input = parse_tool_arguments(&func);
+            uses.push(ToolUse { id, name, input });
+        }
+        if !uses.is_empty() {
+            return (text, uses);
+        }
+        // tool_calls present but empty/malformed — fall through to other shapes.
+    }
+
+    // OpenAI shape: { choices: [{message: {content, tool_calls: [...]}}] }
+    if let Some(msg) = body.pointer("/choices/0/message") {
+        if let Some(c) = msg.get("content").and_then(|v| v.as_str()) {
+            text.push_str(c);
+        }
+        if let Some(calls) = msg.get("tool_calls").and_then(|v| v.as_array()) {
+            for (i, call) in calls.iter().enumerate() {
+                let id = call
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("call_{}", i));
+                let func = call.get("function").cloned().unwrap_or(Value::Null);
+                let name = func
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let input = parse_tool_arguments(&func);
+                uses.push(ToolUse { id, name, input });
+            }
+        }
+        return (text, uses);
+    }
+
+    // Top-level normalised "content" string fallback (some adapters
+    // collapse everything to a single string field).
+    if let Some(s) = body.get("content").and_then(|v| v.as_str()) {
+        text.push_str(s);
+    }
+
+    // Text-mode fallback: local LLMs without tool-use support reply
+    // with fenced ```json envelopes in plain text per the contract in
+    // build_system_prompt. Scan for those and convert to ToolUse if
+    // the structured shapes above produced nothing.
+    if uses.is_empty() && !text.is_empty() {
+        uses = extract_text_mode_tool_uses(&text);
+    }
+    (text, uses)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn extract_anthropic_blocks() {
+        let body = json!({
+            "content": [
+                {"type": "text", "text": "I'll grep first."},
+                {"type": "tool_use", "id": "abc", "name": "repo_grep", "input": {"pattern": "fizzbuzz"}},
+            ]
+        });
+        let (t, uses) = extract_tool_uses(&body);
+        assert_eq!(t, "I'll grep first.");
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].name, "repo_grep");
+        assert_eq!(uses[0].id, "abc");
+    }
+
+    #[test]
+    fn extract_tools_fast_path_top_level() {
+        // /api/inference/complete tools fast-path returns this shape.
+        let body = json!({
+            "content": "",
+            "tool_calls": [{
+                "id": "call_abc",
+                "type": "function",
+                "function": {
+                    "name": "code_patch",
+                    "arguments": "{\"path\":\"foo.tsx\",\"new_content\":\"hello\"}"
+                }
+            }],
+            "model": "anthropic/claude-haiku-4.5",
+            "input_tokens": 100,
+            "output_tokens": 20
+        });
+        let (t, uses) = extract_tool_uses(&body);
+        assert_eq!(t, "");
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].name, "code_patch");
+        assert_eq!(uses[0].id, "call_abc");
+        let path = uses[0].input.get("path").and_then(|v| v.as_str()).unwrap_or("");
+        assert_eq!(path, "foo.tsx");
+    }
+
+    #[test]
+    fn extract_tool_calls_with_object_arguments() {
+        // The hex inference fast-path (Ollama/gemma) returns `arguments` as a
+        // JSON OBJECT, not a string. Must not drop the input to {} (2026-06-07).
+        let body = json!({
+            "content": "",
+            "tool_calls": [{
+                "id": "call_x",
+                "function": { "name": "repo_grep", "arguments": { "pattern": "STATUS:" } }
+            }]
+        });
+        let (_t, uses) = extract_tool_uses(&body);
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].name, "repo_grep");
+        assert_eq!(uses[0].input.get("pattern").and_then(|v| v.as_str()), Some("STATUS:"));
+    }
+
+    #[test]
+    fn extract_openai_tool_calls() {
+        let body = json!({
+            "choices": [{
+                "message": {
+                    "content": "Calling.",
+                    "tool_calls": [{
+                        "id": "call_0",
+                        "function": {
+                            "name": "cargo_check",
+                            "arguments": "{\"crate\":\"hex-cli\"}"
+                        }
+                    }]
+                }
+            }]
+        });
+        let (t, uses) = extract_tool_uses(&body);
+        assert_eq!(t, "Calling.");
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].name, "cargo_check");
+        assert_eq!(uses[0].input.get("crate").and_then(|v| v.as_str()), Some("hex-cli"));
+    }
+
+    #[test]
+    fn no_tool_use_terminates() {
+        let body = json!({
+            "content": [{"type": "text", "text": "Done."}]
+        });
+        let (t, uses) = extract_tool_uses(&body);
+        assert_eq!(t, "Done.");
+        assert!(uses.is_empty());
+    }
+
+    #[test]
+    fn text_mode_fenced_json_tool() {
+        // The qwen2.5-coder:14b shape from the 2026-05-14 fire-it demo:
+        // plain text response wrapping fenced JSON envelopes.
+        let resp = "```json\n{\"tool\":\"repo_grep\",\"args\":{\"pattern\":\"fizzbuzz\"}}\n```";
+        let body = json!({"content": resp});
+        let (_t, uses) = extract_tool_uses(&body);
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].name, "repo_grep");
+        assert_eq!(
+            uses[0].input.get("pattern").and_then(|v| v.as_str()),
+            Some("fizzbuzz")
+        );
+    }
+
+    #[test]
+    fn text_mode_qwen_tool_call_tags() {
+        // Qwen3 emits tool calls as <tool_call>{name, arguments}</tool_call> text.
+        let resp = "I'll do it.\n<tool_call>\n{\"name\": \"propose_edit\", \"arguments\": {\"mode\": \"append\", \"new_string\": \"STATUS: ok\"}}\n</tool_call>";
+        let body = json!({ "content": resp });
+        let (_t, uses) = extract_tool_uses(&body);
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].name, "propose_edit");
+        assert_eq!(uses[0].input.get("mode").and_then(|v| v.as_str()), Some("append"));
+        assert_eq!(uses[0].input.get("new_string").and_then(|v| v.as_str()), Some("STATUS: ok"));
+    }
+
+    #[test]
+    fn text_mode_unclosed_tool_call() {
+        // Truncated output (no closing tag) must still parse the object.
+        let resp = "<tool_call>\n{\"name\": \"repo_grep\", \"arguments\": {\"pattern\": \"foo\"}}";
+        let body = json!({ "content": resp });
+        let (_t, uses) = extract_tool_uses(&body);
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].name, "repo_grep");
+        assert_eq!(uses[0].input.get("pattern").and_then(|v| v.as_str()), Some("foo"));
+    }
+
+    #[test]
+    fn text_mode_fenced_json_finish() {
+        let resp = "```json\n{\"finish\":\"all done\"}\n```";
+        let body = json!({"content": resp});
+        let (_t, uses) = extract_tool_uses(&body);
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].name, "finish");
+        assert_eq!(
+            uses[0].input.get("summary").and_then(|v| v.as_str()),
+            Some("all done")
+        );
+    }
+
+    #[test]
+    fn normalize_aliases_file_path_to_path() {
+        let input = json!({"file_path": "src/foo.rs", "content": "fn main() {}"});
+        let out = normalize_tool_input("code_patch", input);
+        assert_eq!(out.get("path").and_then(|v| v.as_str()), Some("src/foo.rs"));
+        assert_eq!(out.get("content").and_then(|v| v.as_str()), Some("fn main() {}"));
+        assert!(out.get("file_path").is_none());
+    }
+
+    #[test]
+    fn normalize_preserves_new_content_for_code_patch() {
+        // 2026-05-14 lesson: code_patch's schema canonical field is
+        // `new_content`, not `content`. The earlier normalizer mapped
+        // patch/body/text/data → content for "all tools" and broke
+        // code_patch by draining the real schema field. Don't touch
+        // tool-specific schema fields here.
+        let input = json!({
+            "file_path": "Cargo.toml",
+            "mode": "create",
+            "new_content": "[package]\nname=\"x\"",
+            "rationale": "create"
+        });
+        let out = normalize_tool_input("code_patch", input);
+        assert_eq!(out.get("path").and_then(|v| v.as_str()), Some("Cargo.toml"));
+        assert_eq!(out.get("new_content").and_then(|v| v.as_str()), Some("[package]\nname=\"x\""));
+        assert_eq!(out.get("mode").and_then(|v| v.as_str()), Some("create"));
+        // No 'content' key — we did NOT clobber the schema canonical field.
+        assert!(out.get("content").is_none());
+    }
+
+    #[test]
+    fn normalize_canonical_key_wins_when_both_present() {
+        // If LLM emits BOTH path and file_path, the canonical one wins
+        // and the alias gets dropped (no silent override).
+        let input = json!({"path": "good.rs", "file_path": "bad.rs"});
+        let out = normalize_tool_input("code_patch", input);
+        assert_eq!(out.get("path").and_then(|v| v.as_str()), Some("good.rs"));
+        assert!(out.get("file_path").is_none());
+    }
+
+    #[test]
+    fn normalize_passthrough_on_no_aliases() {
+        let input = json!({"path": "x", "content": "y"});
+        let out = normalize_tool_input("code_patch", input.clone());
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn text_mode_multiple_blocks() {
+        let resp = "first call:\n```json\n{\"tool\":\"repo_read\",\"args\":{\"path\":\"a\"}}\n```\nsecond:\n```json\n{\"tool\":\"repo_read\",\"args\":{\"path\":\"b\"}}\n```\nfinish:\n```json\n{\"finish\":\"read both\"}\n```";
+        let body = json!({"content": resp});
+        let (_t, uses) = extract_tool_uses(&body);
+        assert_eq!(uses.len(), 3);
+        assert_eq!(uses[0].input.get("path").and_then(|v| v.as_str()), Some("a"));
+        assert_eq!(uses[1].input.get("path").and_then(|v| v.as_str()), Some("b"));
+        assert_eq!(uses[2].name, "finish");
+    }
+}

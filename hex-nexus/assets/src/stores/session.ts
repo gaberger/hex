@@ -7,6 +7,7 @@ import { addToast } from "./toast";
 import { loadChatHistory } from "./chat";
 import { restClient } from "../services/rest-client";
 import { storage } from "../services/local-storage";
+import { uuid } from "../utils/uuid";
 
 export interface Session {
   id: string;
@@ -57,8 +58,18 @@ export async function loadSessions(): Promise<void> {
     console.warn("[session] failed to load sessions:", e.message);
     // Seed a local-only session so the UI is usable
     if (sessions().length === 0) {
+      const generateUUID = () => {
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+          return crypto.randomUUID();
+        }
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+          const r = (Math.random() * 16) | 0;
+          const v = c === 'x' ? r : (r & 0x3) | 0x8;
+          return v.toString(16);
+        });
+      };
       const fallback: Session = {
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         name: "Local Session",
         createdAt: new Date().toISOString(),
         messageCount: 0,
@@ -95,7 +106,7 @@ export async function createSession(name?: string): Promise<Session> {
     // Fall back to local-only session
     addToast("error", `Failed to create session: ${e.message}`);
     const local: Session = {
-      id: crypto.randomUUID(),
+      id: uuid(),
       name: title,
       createdAt: new Date().toISOString(),
       messageCount: 0,

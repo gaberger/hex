@@ -1,12 +1,45 @@
+pub mod adr_conformance;
+pub mod adr_steward;
+pub mod adversarial_swarm;
 pub mod agent;
+pub mod agent_loop;
 pub mod agent_manager;
+pub mod classifier_types;
+pub mod classifier_parser;
+pub mod classifier_adapter;
+pub mod persona_prompt_seeds;
+pub mod workplan_conductor;
+pub mod workplan_steward;
+pub mod auto_repair;
+pub mod supervisor_subscriber;
+pub mod integrator_subscriber;
+pub mod brain_dispatch_reconciler;
+pub mod heartbeat_client;
+pub mod brain_progress_streamer;
 pub mod constraint_enforcer;
 pub mod context_pressure;
+pub mod cost_watchdog;
 pub mod directive;
 pub mod errors;
 pub mod grammars;
+pub mod inference_strategy_builder;
+pub use hex_exec::simple_agent;
+pub mod repo_grounding;
+pub mod resource_observer;
+pub mod sop_executor;
+pub mod zombie_sweeper;
+pub mod orphan_reaper;
+pub mod pool_autopause;
+pub mod workplan_auto_emitter;
 pub mod regression;
+pub mod promote_orchestrator;
+pub mod promotion_judge;
 pub mod scaffolding;
+pub mod secret_shadow_router;
+pub mod substrate_autopilot;
+pub mod shadow_decision;
+pub mod shadow_router;
+pub mod shrinkage_daemon;
 pub mod skill_selector;
 pub mod workplan_executor;
 
@@ -30,9 +63,14 @@ use crate::ports::state::IHexFloMemoryStatePort;
 pub fn build_role_preamble(role: &str) -> String {
     match role {
         "hex-coder" | "coder" => {
+            // ADR-2026-04-27-0800 P0.2: Path-A agents that author the commit message themselves
+            // must produce the same subject shape strict reconcile accepts; otherwise valid
+            // work is demoted because the subject never names the workplan it came from.
             "You are a hex-coder agent operating inside the hex AIOS framework. \
 Your role is to implement production-quality code within a single adapter boundary, \
-following hexagonal architecture rules and a strict TDD workflow.\n\n"
+following hexagonal architecture rules and a strict TDD workflow. \
+When you commit, the subject MUST be `<layer>(<task_id_lower>): wp-<workplan_id> — <name>` \
+(emoji-free, lowercase task id in parens, em-dash separator).\n\n"
                 .to_string()
         }
         "hex-planner" | "planner" => {
@@ -64,7 +102,7 @@ and validate end-to-end behaviour across all integration boundaries.\n\n"
 /// Returns true when this process is running inside an active Claude Code session.
 /// Claude Code sets CLAUDECODE=1 and CLAUDE_CODE_ENTRYPOINT in all child processes.
 /// Used by the workplan executor and agent_manager to select Path B (inference queue)
-/// vs Path A (direct inference gateway) per ADR-2604010000.
+/// vs Path A (direct inference gateway) per ADR-2026-04-01-0000.
 pub fn is_claude_code_session() -> bool {
     std::env::var("CLAUDECODE").as_deref() == Ok("1")
         || std::env::var("CLAUDE_CODE_ENTRYPOINT").is_ok()

@@ -1,7 +1,7 @@
 //! Port for intelligent inference request routing (ADR-040).
 
 use async_trait::async_trait;
-use crate::remote::transport::{
+use crate::domain::transport::{
     CodeGenRequest, CodeGenResult, InferenceServer, TransportError,
 };
 

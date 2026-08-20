@@ -4,6 +4,7 @@
 
 use colored::Colorize;
 
+use crate::commands::sched;
 use crate::nexus_client::NexusClient;
 
 pub async fn run() -> anyhow::Result<()> {
@@ -51,6 +52,13 @@ pub async fn run() -> anyhow::Result<()> {
             let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
             println!("  Branch:  {}", branch);
         }
+    }
+
+    // wp-idle-research-swarm P5.1: surface the most recent idle-research
+    // sweep on the no-arg status panel. Silent when `docs/analysis/` has no
+    // `idle-sweep-*.yaml` (a fresh repo, or sweeps disabled).
+    if let Some(line) = sched::last_sweep_summary_line(&cwd) {
+        println!("  last_sweep: {}", line);
     }
 
     // Service health

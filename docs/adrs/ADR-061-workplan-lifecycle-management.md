@@ -1,6 +1,7 @@
 # ADR-061: Workplan Lifecycle Management — Creation, Tracking, and Reporting
 
-**Status:** Accepted
+**Status:** Completed
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-core/src/domain/workplan.rs, hex-nexus/src/git/status.rs, hex-nexus/src/orchestration/workplan_executor.rs
 **Accepted Date:** 2026-03-22
 ## Date: 2026-03-21
 
@@ -212,7 +213,7 @@ Add reporting endpoints and CLI commands:
 | System | Integration |
 |--------|-------------|
 | **Git (ADR-044)** | Task completion records commit SHA. Timeline endpoint merges workplan events with commits. |
-| **ADR compliance (ADR-045)** | Phase gates can run `hex analyze --adr-compliance` as a blocking gate. |
+| **ADR compliance (ADR-045)** | Phase gates can run `hex analyze --ADR-compliance` as a blocking gate. |
 | **HexFlo (ADR-027)** | Workplan tasks map 1:1 to HexFlo swarm tasks. Swarm topology matches workplan tier structure. |
 | **Dashboard** | SpacetimeDB subscription on `WorkplanExecution` + `WorkplanTask` tables drives real-time progress view. |
 | **Remote agents** | Agents read assigned tasks from SpacetimeDB. No polling — subscription pushes updates. |

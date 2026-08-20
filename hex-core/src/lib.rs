@@ -13,12 +13,18 @@
 //!   └── rules/      — Hex architecture enforcement logic
 //! ```
 
+pub mod composition;
 pub mod domain;
 pub mod inference_q;
+pub mod inference_task;
 pub mod ports;
 pub mod quantization;
+pub mod research_finding;
+pub mod resource_governor;
 pub mod rules;
+pub mod telemetry;
 pub mod types;
+pub mod validation;
 
 // ── Infrastructure Constants ──────────────────────────────
 // Shared across hex-cli, hex-nexus, and hex-agent to prevent string drift.
@@ -34,7 +40,7 @@ pub const SPACETIMEDB_PING_PATH: &str = "/v1/ping";
 pub const SPACETIMEDB_DEFAULT_HOST: &str = "http://127.0.0.1:3033";
 
 // ── SpacetimeDB Module Database Names ─────────────────────
-// Each WASM module publishes to its own database (ADR-2603231500).
+// Each WASM module publishes to its own database (ADR-2026-03-23-1500).
 // hexflo-coordination → "hex" (backward compat), all others → directory name.
 
 /// Database name for the core coordination module (backward-compatible).
@@ -56,6 +62,7 @@ pub const STDB_MODULE_DATABASES: &[(&str, &str)] = &[
     ("inference-gateway", "inference-gateway"),
     ("secret-grant", "secret-grant"),
     // Tier 2: Coordination
+    ("agent-comms", "agent-comms"),
     ("chat-relay", "chat-relay"),
     ("rl-engine", "rl-engine"),
     // Tier 3: Research
@@ -88,4 +95,5 @@ pub use domain::workplan::{PhaseGate, TaskStatus, Workplan, WorkplanPhase, Workp
 pub use domain::capability::{AgentCapabilityToken, Capability, VerifiedClaims};
 pub use inference_q::QReportEntry;
 pub use quantization::QuantizationLevel;
+pub use research_finding::{ActionKind, Domain, Finding, Severity, SuggestedAction};
 pub use types::TaskCompletionBody;

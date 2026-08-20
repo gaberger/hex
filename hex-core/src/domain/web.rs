@@ -1,4 +1,4 @@
-//! Web search + fetch domain types (ADR-2604142100: hex-native web search).
+//! Web search + fetch domain types (ADR-2026-04-14-2100: hex-native web search).
 //!
 //! These value objects describe search results, fetched pages, and the
 //! provider/format options consumed by the primary/secondary adapters that

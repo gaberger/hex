@@ -1,5 +1,9 @@
-use hex_agent::{domain, ports, adapters, usecases, worker};
+use hex_agent::{domain, ports, adapters, usecases, worker, workplan_executor::execute_workplan_autonomous};
 
+mod agent_comms_subscriber;
+
+use agent_comms_subscriber::{subscribe_and_listen, AgentCommsConfig};
+use anyhow::Context;
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -135,6 +139,14 @@ enum Command {
         #[arg(long)]
         nexus_port: Option<String>,
     },
+    /// Execute a workplan autonomously (for daemon-spawned background agents)
+    Workplan {
+        /// Path to workplan JSON file
+        workplan: PathBuf,
+        /// Run in background mode (suppress interactive prompts)
+        #[arg(long)]
+        background: bool,
+    },
 }
 
 /// Generate a unique, human-readable agent name from the agent UUID.
@@ -161,6 +173,62 @@ fn generate_agent_name(agent_id: &str) -> String {
     // Append 4 hex chars from the ID for extra uniqueness
     let suffix = &agent_id[..4.min(agent_id.len())];
     format!("hex-{}-{}-{}", adj, noun, suffix)
+}
+
+/// Subscribe to agent-comms WebSocket for CEO messages
+async fn subscribe_agent_comms(
+    agent_id: String,
+    shutdown: Arc<AtomicBool>,
+) -> anyhow::Result<()> {
+    // Fetch agent-comms database identity from registry
+    let nexus_host = std::env::var("NEXUS_HOST")
+        .unwrap_or_else(|_| "127.0.0.1".to_string());
+    let nexus_port = std::env::var("NEXUS_PORT")
+        .unwrap_or_else(|_| "5555".to_string());
+    let nexus_url = format!("http://{}:{}", nexus_host, nexus_port);
+
+    let client = reqwest::Client::builder()
+        .build()
+        .context("Failed to build reqwest client")?;
+    let registry_url = format!("{}/api/stdb/registry", nexus_url);
+
+    let response = client.get(&registry_url).send().await
+        .context("Failed to fetch registry")?;
+    let registry: serde_json::Value = response.json().await?;
+
+    let agent_comms_db = registry["agent_comms"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("agent_comms not found in registry"))?
+        .to_string();
+
+    let stdb_host = std::env::var("SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+
+    // Extract role from agent_id
+    // Agent IDs can be:
+    // - Simple names: "ceo", "cto", "hex-coder"
+    // - With suffix: "ceo-clean", "hex-coder-bazzite.lan"
+    // Always strip trailing suffix but keep "hex-" prefix if present
+    let role = if agent_id.starts_with("hex-") {
+        agent_id.split('-').take(2).collect::<Vec<_>>().join("-")
+    } else {
+        agent_id.split('-').next().unwrap_or(&agent_id).to_string()
+    };
+
+    tracing::info!(
+        agent_id = %agent_id,
+        role = %role,
+        database = %agent_comms_db,
+        "Starting agent-comms subscriber"
+    );
+
+    let config = AgentCommsConfig {
+        stdb_host,
+        database: agent_comms_db,
+        agent_role: role,
+    };
+
+    subscribe_and_listen(config, shutdown).await
 }
 
 #[tokio::main]
@@ -217,6 +285,48 @@ async fn main() -> anyhow::Result<()> {
         use adapters::secondary::stdb_task_poller::{StdbTaskPoller, TaskPayload};
         use adapters::secondary::code_phase_worker::CodePhaseWorker;
         use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+
+        // ADR-2026-05-08-1126 P2.1 — refuse to run from trunk. Hijacker damage in
+        // 2026-05-07 came from daemons writing to `/home/gary/hex-intf` directly;
+        // this guard enforces the worktree-mandatory rule before any other work.
+        match hex_agent::worktree_guard::check_cwd() {
+            hex_agent::worktree_guard::GuardOutcome::RefuseTrunk { trunk_path } => {
+                eprintln!("{}", hex_agent::worktree_guard::refuse_message(&trunk_path));
+                std::process::exit(2);
+            }
+            hex_agent::worktree_guard::GuardOutcome::Indeterminate { reason } => {
+                eprintln!(
+                    "hex-agent daemon: could not determine git state ({}). \
+                     Set HEXFLO_WORKTREE_REQUIRED=0 to bypass.",
+                    reason
+                );
+                if std::env::var("HEXFLO_WORKTREE_REQUIRED")
+                    .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false")))
+                    .unwrap_or(true)
+                {
+                    std::process::exit(2);
+                }
+            }
+            hex_agent::worktree_guard::GuardOutcome::Ok { worktree_path, is_trunk } => {
+                std::env::set_var(
+                    hex_agent::worktree_guard::ENV_WORKTREE_PATH,
+                    worktree_path.display().to_string(),
+                );
+                if is_trunk {
+                    eprintln!(
+                        "hex-agent daemon: HEXFLO_WORKTREE_REQUIRED=0 override active; \
+                         running from trunk {} (operator-mode)",
+                        worktree_path.display()
+                    );
+                } else {
+                    tracing::info!(
+                        worktree = %worktree_path.display(),
+                        "hex-agent daemon: worktree-guard OK"
+                    );
+                }
+            }
+        }
+
         // CLI args override env vars
         if let Some(id) = agent_id  { std::env::set_var("HEX_AGENT_ID", id); }
         if let Some(id) = task_id   { std::env::set_var("HEX_SWARM_ID", id); }
@@ -228,6 +338,69 @@ async fn main() -> anyhow::Result<()> {
         let poller = StdbTaskPoller::from_env();
         poller.initialize().await;
         poller.init_project(&args.project_dir).await;
+
+        // Register with hex-nexus as a hex_agent
+        // The agent_id from CLI args is actually the role name (ceo, cto, hex-coder, etc.)
+        let role_name = std::env::var("HEX_AGENT_ID").unwrap_or_else(|_| "unknown".to_string());
+        let agent_uuid = uuid::Uuid::new_v4().to_string();
+        let nexus_url = format!(
+            "http://{}:{}",
+            std::env::var("NEXUS_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
+            std::env::var("NEXUS_PORT").unwrap_or_else(|_| "5555".into())
+        );
+
+        // Register via hex-nexus connect endpoint with role
+        let client = reqwest::Client::builder()
+            .build()
+            .context("Failed to build HTTP client")?;
+        let hostname = gethostname::gethostname().to_string_lossy().to_string();
+        let register_result = client
+            .post(format!("{}/api/hex-agents/connect", nexus_url))
+            .json(&serde_json::json!({
+                "agent_id": agent_uuid,
+                "name": role_name.clone(),
+                "host": hostname,
+                "project_dir": std::env::var("HEX_PROJECT_DIR").unwrap_or_else(|_| ".".into()),
+                "model": "default",
+                "session_id": format!("daemon-{}", role_name),
+                "role": role_name,
+                "capabilities": {}
+            }))
+            .send()
+            .await;
+        match register_result {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!(
+                    role = %role_name,
+                    agent_uuid = %agent_uuid,
+                    status = %resp.status(),
+                    "hex-agent daemon: registered to hex_agent table via /api/hex-agents/connect"
+                );
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                tracing::warn!(
+                    role = %role_name,
+                    agent_uuid = %agent_uuid,
+                    status = %status,
+                    body = %body.chars().take(200).collect::<String>(),
+                    "hex-agent daemon: /api/hex-agents/connect returned non-success — \
+                     worker will run but won't appear in `hex agent list` or as a valid \
+                     cc_agent for workplan_executor"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    role = %role_name,
+                    agent_uuid = %agent_uuid,
+                    error = %e,
+                    "hex-agent daemon: /api/hex-agents/connect HTTP request failed — \
+                     worker will run but won't appear in `hex agent list` or as a valid \
+                     cc_agent for workplan_executor"
+                );
+            }
+        }
 
         // P3: CodePhaseWorker — direct code phase, no inner pipeline
         let worker = CodePhaseWorker::from_env().await;
@@ -242,7 +415,40 @@ async fn main() -> anyhow::Result<()> {
             shutdown_clone.store(true, Ordering::SeqCst);
         });
 
-        // P3.1 (ADR-2604141200): remote-shell worker runs alongside the
+        // Heartbeat task — send heartbeat every 30s
+        let heartbeat_shutdown = shutdown.clone();
+        let heartbeat_nexus_url = nexus_url.clone();
+        let heartbeat_agent_uuid = agent_uuid.clone();
+        // HEX_WORKER_PROCESS_ID is set by nexus's spawn_local_agent so
+        // hex-agent can heartbeat the EXACT worker_process row the
+        // supervisor created for it. Without this, supervisor_tick
+        // reaps the row as stale_heartbeat every 60s and spawns a
+        // replacement — observed 2026-05-21: ~3 hex-agents/pool/min
+        // growth and unbounded orphan accumulation.
+        let worker_process_id = std::env::var("HEX_WORKER_PROCESS_ID").ok();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            // 15s cadence = 4× headroom against the 60s stale threshold,
+            // mirroring HeartbeatClient in hex-nexus.
+            let interval_secs: u64 = if worker_process_id.is_some() { 15 } else { 30 };
+            while !heartbeat_shutdown.load(Ordering::SeqCst) {
+                tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)).await;
+                // Always beat the legacy hex_agent row.
+                let _ = client
+                    .post(format!("{}/api/hex-agents/{}/heartbeat", heartbeat_nexus_url, heartbeat_agent_uuid))
+                    .send()
+                    .await;
+                // If a worker_process row backs us, beat that too.
+                if let Some(ref wpid) = worker_process_id {
+                    let _ = client
+                        .post(format!("{}/api/worker-process/{}/heartbeat", heartbeat_nexus_url, wpid))
+                        .send()
+                        .await;
+                }
+            }
+        });
+
+        // P3.1 (ADR-2026-04-14-1200): remote-shell worker runs alongside the
         // HexFlo task poller so a single `hex-agent daemon` can service
         // both workplan dispatch and operator-issued `hex hey ... on <host>`
         // shell enqueues.
@@ -250,6 +456,16 @@ async fn main() -> anyhow::Result<()> {
         let rs_shutdown = shutdown.clone();
         tokio::spawn(async move {
             worker::run_loop(rs_worker, rs_shutdown).await;
+        });
+
+        // Spawn agent-comms WebSocket subscriber for CEO messages
+        let shutdown_comms = shutdown.clone();
+        let role_for_comms = role_name.clone();
+        tokio::spawn(async move {
+            if let Err(e) = subscribe_agent_comms(role_for_comms, shutdown_comms).await {
+                eprintln!("[hex-agent] agent-comms subscriber error: {e:?}");
+                tracing::error!(error = ?e, "agent-comms subscriber failed");
+            }
         });
 
         while !shutdown.load(Ordering::SeqCst) {
@@ -286,8 +502,18 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 None => {
-                    // No tasks available — short sleep to avoid busy-loop on REST fallback
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    // No tasks available — sleep before next poll. Was 2s
+                    // when only 1-2 agents existed; at 30+ agents that
+                    // produced 16 reqs/sec → ~5 cores in nexus task-claim
+                    // handler. 15s matches the heartbeat + agent-comms
+                    // cadence; same end-to-end SLA for inbound work.
+                    // HEX_AGENT_TASK_POLL_SECS env var for hot-tweaking.
+                    let task_poll_secs = std::env::var("HEX_AGENT_TASK_POLL_SECS")
+                        .ok()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .filter(|v| (1..=300).contains(v))
+                        .unwrap_or(15);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(task_poll_secs)).await;
                 }
             }
         }
@@ -304,6 +530,22 @@ async fn main() -> anyhow::Result<()> {
             }
             Err(e) => {
                 eprintln!("\x1b[31mMigration failed: {}\x1b[0m", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if let Some(Command::Workplan { workplan, background }) = &args.command {
+        let writer = adapters::safe_file_writer::SafeFileWriter::new();
+        let result =
+            execute_workplan_autonomous(workplan, *background, &project_dir, &writer).await;
+        match result {
+            Ok(summary) => {
+                println!("{}", summary);
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("{}", e);
                 std::process::exit(1);
             }
         }
@@ -589,7 +831,7 @@ async fn main() -> anyhow::Result<()> {
     let rate_limiter: Arc<dyn ports::rate_limiter::RateLimiterPort> = Arc::new(RateLimiterAdapter::new());
     let metrics: Arc<dyn ports::token_metrics::TokenMetricsPort> = Arc::new(TokenMetricsAdapter::new());
 
-    // Preflight: ADR-2604101500 local-first (bazzite:11434 before Anthropic)
+    // Preflight: ADR-2026-04-10-1500 local-first (bazzite:11434 before Anthropic)
     let preflight: Arc<dyn ports::PreflightPort> = if args.no_preflight {
         Arc::new(NoopPreflight)
     } else if let Some(ref key) = anthropic_key {
@@ -1139,7 +1381,7 @@ fn load_hex_state_config() -> Option<(String, String, String)> {
 
     // Per-module database names, falling back to the single "database" field
     let default_db = json.get("database").and_then(|v| v.as_str()).unwrap_or("hex-nexus");
-    // ADR-2604050900: skill-registry and agent-definition-registry modules deleted;
+    // ADR-2026-04-05-0900: skill-registry and agent-definition-registry modules deleted;
     // config now synced via hexflo-coordination ("hex" database)
     let skill_db = json
         .get("skill_db")

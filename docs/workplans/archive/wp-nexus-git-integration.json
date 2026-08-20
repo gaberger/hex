@@ -1,0 +1,157 @@
+{
+  "adr": "ADR-044",
+  "created_at": "2026-05-23T21:34:17.187290762+00:00",
+  "created_by": "hex-coder",
+  "feature": "Implement three-layer git integration in hex-nexus for project-scoped git intelligence.",
+  "id": "wp-nexus-git-integration",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Read-Only Git Queries (v1)",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/Cargo.toml"
+          ],
+          "id": "P1.1",
+          "layer": "infrastructure",
+          "name": "Add `git2` dependency to `hex-nexus/Cargo.toml`",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/git/mod.rs",
+            "hex-nexus/src/git/status.rs",
+            "hex-nexus/src/git/log.rs",
+            "hex-nexus/src/git/diff.rs",
+            "hex-nexus/src/git/worktree.rs"
+          ],
+          "id": "P1.2",
+          "layer": "primary",
+          "name": "Implement `git/status.rs`, `git/log.rs`, `git/diff.rs`, `git/worktree.rs`",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/routes/git_routes.rs"
+          ],
+          "id": "P1.3",
+          "layer": "primary",
+          "name": "Add REST routes under `/api/{project_id}/git/...`",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-web/src/components/ProjectDetail.tsx"
+          ],
+          "id": "P1.4",
+          "layer": "secondary",
+          "name": "Wire `GitStatusBadge` and `CommitLog` into `ProjectDetail.tsx`",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-web/src/components/ProjectDetail.tsx"
+          ],
+          "id": "P1.5",
+          "layer": "secondary",
+          "name": "Replace `MOCK_WORKTREES` with real data from `GET /git/worktrees`",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P2",
+      "name": "Write Operations + WebSocket (v2)",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/routes/git_routes.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Worktree create/delete via POST/DELETE endpoints",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/tasks/poll_git_status.rs"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Background polling task for git status changes",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/ws/git_ws_handler.rs"
+          ],
+          "id": "P2.3",
+          "layer": "integration",
+          "name": "WebSocket broadcast on status change",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-web/src/components/BranchPicker.tsx",
+            "hex-web/src/components/DiffViewer.tsx"
+          ],
+          "id": "P2.4",
+          "layer": "secondary",
+          "name": "BranchPicker and DiffViewer components",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P3",
+      "name": "Cross-Cutting Intelligence (v3)",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/git/correlation.rs"
+          ],
+          "id": "P3.1",
+          "layer": "primary",
+          "name": "Commit-to-task correlation (HexFlo task_id in commit messages)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/analysis/violation_mapping.rs"
+          ],
+          "id": "P3.2",
+          "layer": "usecases",
+          "name": "Violation-to-commit mapping (when was a boundary violation introduced?)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-web/src/components/Timeline.tsx"
+          ],
+          "id": "P3.3",
+          "layer": "secondary",
+          "name": "Agent activity timeline overlaid with commit history",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/git/blame.rs"
+          ],
+          "id": "P3.4",
+          "layer": "primary",
+          "name": "Blame integration for architecture violations",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}
