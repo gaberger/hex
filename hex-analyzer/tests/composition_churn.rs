@@ -70,6 +70,30 @@ fn write_adr(repo: &Path, name: &str, status: &str, date: &str) {
     write(repo, &format!("docs/adrs/ADR-{name}.md"), &body);
 }
 
+/// `YYYY-MM-DD` for `days_ago` days before now (UTC) — civil-from-days
+/// (Hinnant). Fixtures that need an ADR date "inside the window" must
+/// compute it relative to the actual clock rather than hardcode an
+/// absolute date, which silently ages out of any window once enough
+/// real time has passed (this detector's own bug class, applied to its
+/// own tests).
+fn date_days_ago(days_ago: i64) -> String {
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let z = now_secs / 86_400 - days_ago + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
 // ── Tests ────────────────────────────────────────────────────────────
 
 #[test]
@@ -110,7 +134,7 @@ fn architectural_detectors_composition_churn_flags_when_ratio_above_threshold() 
     init_repo(root);
     make_wiring_commits(root, 4);
     // ADR dated today (within any reasonable window).
-    write_adr(root, "0001", "Accepted", "2026-04-27");
+    write_adr(root, "0001", "Accepted", &date_days_ago(0));
 
     let report = composition_churn::analyze(root, "30d").unwrap();
     assert_eq!(report.findings.len(), 1, "{:#?}", report.findings);
@@ -134,9 +158,9 @@ fn architectural_detectors_composition_churn_silent_when_ratio_below_threshold()
     let root = tmp.path();
     init_repo(root);
     make_wiring_commits(root, 3);
-    write_adr(root, "0001", "Accepted", "2026-04-27");
-    write_adr(root, "0002", "Accepted", "2026-04-26");
-    write_adr(root, "0003", "Accepted", "2026-04-25");
+    write_adr(root, "0001", "Accepted", &date_days_ago(0));
+    write_adr(root, "0002", "Accepted", &date_days_ago(1));
+    write_adr(root, "0003", "Accepted", &date_days_ago(2));
 
     let report = composition_churn::analyze(root, "30d").unwrap();
     assert!(
