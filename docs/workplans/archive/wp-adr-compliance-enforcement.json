@@ -1,0 +1,106 @@
+{
+  "adr": "ADR-054",
+  "created_at": "2026-05-23T21:06:30.983534756+00:00",
+  "created_by": "hex-coder",
+  "feature": "Implementing ADR compliance enforcement to prevent architectural drift",
+  "id": "wp-adr-compliance-enforcement",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain + ports scaffolding for ADR rules and violations",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-core/src/domain/adr_rules.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Define the domain type for ADR rules",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-core/src/ports/adr_violations_port.rs"
+          ],
+          "id": "P0.2",
+          "layer": "ports",
+          "name": "Define the port interface for ADR violations",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary adapter implementation for ADR compliance check",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/adr_rules_adapter.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement the secondary adapter for ADR rules",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "Primary usecase implementation for ADR compliance enforcement",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/usecases/adr_compliance_checker.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Implement the primary usecase for ADR compliance check",
+          "status": "pending"
+        },
+        {
+          "files": [
+            ".git/hooks/pre-commit"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Integrate the pre-commit hook for ADR compliance",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P3",
+      "name": "Infrastructure setup for shared state in SpacetimeDB",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/spacetimedb/adr_violations_table.rs"
+          ],
+          "id": "P3.1",
+          "layer": "infrastructure",
+          "name": "Migrate ADR compliance results to dedicated SpacetimeDB table",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-dashboard/src/components/AdrViolations.vue"
+          ],
+          "id": "P3.2",
+          "layer": "infrastructure",
+          "name": "Update dashboard for real-time ADR violation updates",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

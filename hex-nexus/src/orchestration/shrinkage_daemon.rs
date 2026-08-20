@@ -1,6 +1,6 @@
 //! L4 Shrinkage daemon — re-bound from "delete dead code" to "delete
 //! adapters the substrate has not routed traffic to within an idle
-//! window" (ADR-2604261311 L4, ADR-2604261500 C6, this turn's L4 ship).
+//! window" (ADR-2026-04-26-1311 L4, ADR-2026-04-26-1500 C6, this turn's L4 ship).
 //!
 //! On each tick the daemon asks the `ShadowRouter` for handles eligible
 //! for shrinkage (registered, not bound, not an active shadow candidate,

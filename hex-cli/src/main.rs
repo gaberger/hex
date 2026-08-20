@@ -1,4 +1,4 @@
-// Pre-existing clippy lints — tracked for cleanup in ADR-2603222050
+// Pre-existing clippy lints — tracked for cleanup in ADR-2026-03-22-2050
 #![allow(
     clippy::manual_strip,
     clippy::ptr_arg,
@@ -39,6 +39,7 @@ use commands::{
     neural_lab::NeuralLabAction,
     nexus::NexusAction,
     sandbox::SandboxAction,
+    service::ServiceAction,
     plan::PlanAction,
     fingerprint::FingerprintAction,
     fs::FsAction,
@@ -140,6 +141,15 @@ enum DevGroupAction {
         #[arg(long)]
         parallel: bool,
     },
+    /// Build release binaries, install hex to BIN_DIR, restart the daemon — one-command deploy (ADR-2606071702)
+    Deploy {
+        /// Install without restarting the daemon
+        #[arg(long)]
+        no_restart: bool,
+        /// Report install-vs-build drift without building
+        #[arg(long)]
+        check: bool,
+    },
     /// Run integration tests (unit, arch, services, swarm)
     Test {
         #[command(subcommand)]
@@ -200,6 +210,16 @@ enum OverrideAction {
     Direct(Vec<String>),
 }
 
+#[derive(Subcommand, Clone, Debug)]
+enum AutoRepairAction {
+    /// Show the loop's current state (iterations, error count, paused?)
+    Status,
+    /// Reset the loop state so the next tick fires fresh — useful after
+    /// the loop has self-paused on a plateau and you've shipped a fix
+    /// you want it to retry against.
+    Restart,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     // ════════════════════════════════════════════════════════════════════
@@ -235,6 +255,11 @@ enum Commands {
         #[command(subcommand)]
         action: NexusAction,
     },
+    /// Manage hex as systemd user services (boot-persistent stdb + nexus)
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
     /// Manage remote agents (list, connect, spawn, disconnect)
     Agent {
         #[command(subcommand)]
@@ -252,9 +277,33 @@ enum Commands {
     },
     /// Do the next right thing — check project health and suggest/execute actions
     Go,
-    /// Hey Hex — natural language task classifier (ADR-2604140000)
+    /// Knowledge graph — build/query/path/explain a project's code+docs graph
+    Graph {
+        #[command(subcommand)]
+        action: commands::graph::GraphAction,
+    },
+    /// Inspect / restart the autonomous code-repair loop
+    #[command(name = "auto-repair")]
+    AutoRepair {
+        #[command(subcommand)]
+        action: AutoRepairAction,
+    },
+    /// Hey Hex — natural language task classifier (ADR-2026-04-14-0000)
     Hey(HeyArgs),
-    /// Scheduler daemon — queue drain, validation, auto-fix (ADR-2604150000)
+    /// Adversarially verify a claim about the repo — returns CONFIRMED / REFUTED / INCONCLUSIVE
+    Verify(commands::verify::VerifyArgs),
+    /// Direct executor — task → one agent → evidence → commit (ADR-2026-06-04-1740 Path A)
+    #[command(name = "do")]
+    Do {
+        #[command(subcommand)]
+        action: commands::direct::DoAction,
+    },
+    /// Agentic inference benchmarks — run the corpus through the loop in isolated worktrees (ADR-2606071734)
+    Bench {
+        #[command(subcommand)]
+        action: commands::bench::BenchAction,
+    },
+    /// Scheduler daemon — queue drain, validation, auto-fix (ADR-2026-04-15-0000)
     Sched {
         #[command(subcommand)]
         action: BrainAction,
@@ -264,7 +313,7 @@ enum Commands {
         #[command(subcommand)]
         action: commands::pool::PoolAction,
     },
-    /// Deprecated alias for `sched` (ADR-2604150000) — forwards with warning
+    /// Deprecated alias for `sched` (ADR-2026-04-15-0000) — forwards with warning
     #[command(hide = true)]
     Brain {
         #[command(subcommand)]
@@ -275,7 +324,7 @@ enum Commands {
         #[command(subcommand)]
         action: StdbAction,
     },
-    /// Substrate (ADR-2604261500): propose / list / inspect inference swaps
+    /// Substrate (ADR-2026-04-26-1500): propose / list / inspect inference swaps
     Substrate {
         #[command(subcommand)]
         action: commands::substrate::SubstrateAction,
@@ -294,6 +343,12 @@ enum Commands {
     Inbox {
         #[command(subcommand)]
         action: InboxAction,
+    },
+    /// Operator-grade SOP primitives (write / send / abandon) — wraps
+    /// the autonomous-loop endpoints so the operator never types curl.
+    Ops {
+        #[command(subcommand)]
+        action: commands::ops::OpsAction,
     },
     /// Insight extraction surfaces (punch-list, gap detection)
     Insight {
@@ -335,6 +390,12 @@ enum Commands {
     },
     /// Interactive AI chat session (TUI by default, --no-tui for plain stdout)
     Chat(ChatArgs),
+    /// Inspect + apply persona system prompts (STDB-backed, ADR-2026-05-23-0900)
+    #[command(name = "persona-prompt")]
+    PersonaPrompt {
+        #[command(subcommand)]
+        action: commands::persona_prompt::PersonaPromptAction,
+    },
     /// Claude Code hook handler (called by .claude/settings.json hooks)
     Hook {
         #[command(subcommand)]
@@ -347,7 +408,7 @@ enum Commands {
         #[command(subcommand)]
         action: SkillAction,
     },
-    /// Inspect and sync embedded assets baked into the binary (ADR-2603221522)
+    /// Inspect and sync embedded assets baked into the binary (ADR-2026-03-22-1522)
     Assets {
         #[command(subcommand)]
         action: commands::assets_cmd::AssetsAction,
@@ -357,16 +418,16 @@ enum Commands {
         #[command(subcommand)]
         action: GitAction,
     },
-    /// Native filesystem primitives (ADR-2604142100) — replaces Bash/Read/Grep/Glob
+    /// Native filesystem primitives (ADR-2026-04-14-2100) — replaces Bash/Read/Grep/Glob
     Fs {
         #[command(subcommand)]
         action: FsAction,
     },
     /// Project status
     Status,
-    /// One-glance multi-project pulse (ADR-2604131500 P6.1)
+    /// One-glance multi-project pulse (ADR-2026-04-13-1500 P6.1)
     Pulse,
-    /// Inject hex context into opencode (ADR-2603231800)
+    /// Inject hex context into opencode (ADR-2026-03-23-1800)
     Opencode {
         #[command(subcommand)]
         action: commands::opencode::Commands,
@@ -376,12 +437,12 @@ enum Commands {
         #[command(subcommand)]
         action: commands::docs::DocsAction,
     },
-    /// Docker AI Sandbox management — build image, check readiness (ADR-2603282000)
+    /// Docker AI Sandbox management — build image, check readiness (ADR-2026-03-28-2000)
     Sandbox {
         #[command(subcommand)]
         action: SandboxAction,
     },
-    /// Architecture fingerprint management (ADR-2603301200)
+    /// Architecture fingerprint management (ADR-2026-03-30-1200)
     Fingerprint {
         #[command(subcommand)]
         action: FingerprintAction,
@@ -403,7 +464,7 @@ enum Commands {
         #[command(subcommand)]
         action: ContextAction,
     },
-    /// Update hex to the latest release (ADR-2604080929)
+    /// Update hex to the latest release (ADR-2026-04-08-0929)
     #[command(name = "self-update")]
     SelfUpdate {
         /// Only check for updates, do not install
@@ -416,7 +477,7 @@ enum Commands {
         #[arg(long, short)]
         yes: bool,
     },
-    /// Emergency override — send priority-2 directive to all agents (ADR-2604131500)
+    /// Emergency override — send priority-2 directive to all agents (ADR-2026-04-13-1500)
     #[command(name = "send-override")]
     OverrideDirect {
         /// Project name
@@ -539,7 +600,7 @@ enum Commands {
         #[command(subcommand)]
         action: Option<PauseAction>,
     },
-    /// Resume a paused workplan (ADR-2604131500 §1 Layer 4)
+    /// Resume a paused workplan (ADR-2026-04-13-1500 §1 Layer 4)
     Resume,
     /// (hidden) Decide — use `hex override decide` instead
     #[command(hide = true)]
@@ -547,6 +608,27 @@ enum Commands {
         #[command(subcommand)]
         action: DecideAction,
     },
+}
+
+async fn auto_repair_run(action: AutoRepairAction) -> anyhow::Result<()> {
+    let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".into());
+    let base = format!("http://127.0.0.1:{}", port);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+    match action {
+        AutoRepairAction::Status => {
+            let resp = client.get(format!("{}/api/auto-repair/status", base)).send().await?;
+            let j: serde_json::Value = resp.json().await?;
+            println!("{}", serde_json::to_string_pretty(&j)?);
+        }
+        AutoRepairAction::Restart => {
+            let resp = client.post(format!("{}/api/auto-repair/restart", base)).send().await?;
+            let j: serde_json::Value = resp.json().await?;
+            println!("{}", serde_json::to_string_pretty(&j)?);
+        }
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -591,6 +673,7 @@ async fn main() -> anyhow::Result<()> {
             DevGroupAction::Validate { skip_test, strict, parallel } => {
                 doctor::run_validate_pipeline(skip_test, strict, parallel).await
             }
+            DevGroupAction::Deploy { no_restart, check } => commands::deploy::run(no_restart, check).await,
             DevGroupAction::Test { action } => commands::test::run(action).await,
             DevGroupAction::Ci { standalone_gate } => {
                 if standalone_gate { commands::ci::run_standalone_gate().await }
@@ -627,6 +710,7 @@ async fn main() -> anyhow::Result<()> {
         // ── Standalone commands ──────────────────────────────────────
         Commands::Bootstrap(args) => commands::bootstrap::run(args).await,
         Commands::Nexus { action } => commands::nexus::run(action).await,
+        Commands::Service { action } => commands::service::run(action).await,
         Commands::Agent { action } => commands::agent::run(action).await,
         Commands::Brief { action, args } => {
             let effective_args = match action {
@@ -636,7 +720,12 @@ async fn main() -> anyhow::Result<()> {
             commands::brief::run(effective_args).await
         }
         Commands::Go => commands::go::run().await,
+        Commands::Graph { action } => commands::graph::run(action).await,
+        Commands::AutoRepair { action } => auto_repair_run(action).await,
         Commands::Hey(args) => commands::hey::run(args).await,
+        Commands::Verify(args) => commands::verify::run(args).await,
+        Commands::Do { action } => commands::direct::run(action).await,
+        Commands::Bench { action } => commands::bench::run(action).await,
         Commands::Sched { action } => commands::sched::run(action).await,
         Commands::Pool { action } => commands::pool::run(action).await,
         Commands::Brain { action } => commands::brain_alias::run(action).await,
@@ -645,6 +734,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Swarm { action } => commands::swarm::run(action).await,
         Commands::Task { action } => commands::task::run(action).await,
         Commands::Inbox { action } => commands::inbox::run(action).await,
+        Commands::Ops { action } => commands::ops::run(action).await,
         Commands::Insight { action } => commands::insight::run(action).await,
         Commands::Memory { action } => commands::memory::run(action).await,
         Commands::Monitor(args) => commands::monitor::run(args).await,
@@ -654,6 +744,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Project { action } => commands::project::run(action).await,
         Commands::Plan { action } => commands::plan::run(action).await,
         Commands::Chat(args) => commands::chat::run(args).await,
+        Commands::PersonaPrompt { action } => commands::persona_prompt::run(action).await,
         Commands::Hook { event } => commands::hook::run(event).await,
         Commands::Mcp => commands::mcp::run_mcp_server().await,
         Commands::Skill { action } => commands::skill::run(action).await,
@@ -667,11 +758,13 @@ async fn main() -> anyhow::Result<()> {
         Commands::Sandbox { action } => commands::sandbox::run(action).await,
         Commands::Fingerprint { action } => commands::fingerprint::run(action).await,
         Commands::Doctor { verbose, fix, check } => {
-            if check.as_deref() == Some("composition") {
-                doctor::composition::run_composition_check().await;
-                Ok(())
-            } else {
-                doctor::run_doctor(verbose, fix).await
+            match check.as_deref() {
+                Some("composition") => {
+                    doctor::composition::run_composition_check().await;
+                    Ok(())
+                }
+                Some("liveness") => doctor::liveness::run().await,
+                _ => doctor::run_doctor(verbose, fix).await,
             }
         }
         Commands::Context { action } => commands::context::run(action).await,

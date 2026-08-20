@@ -1,0 +1,88 @@
+{
+  "adr": "ADR-046",
+  "created_at": "2026-05-23T20:56:13.325128634+00:00",
+  "created_by": "hex-coder",
+  "feature": "Define SpacetimeDB as the single authority for state mutations in the dashboard",
+  "id": "wp-spacetimedb-single-authority",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain + ports scaffolding",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-core/src/domain/spacetimedb.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Define the SpacetimeDB domain type",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-core/src/ports/spacetimedb_port.rs"
+          ],
+          "id": "P0.2",
+          "layer": "ports",
+          "name": "Define the SpacetimeDB port interface",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary adapter implementation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/spacetimedb_adapter.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement the SpacetimeDB secondary adapter",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "Primary usecase implementation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-core/src/usecases/spacetimedb_mutation.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Implement state mutation via SpacetimeDB reducers",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P3",
+      "name": "Integration with REST endpoints",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/drafter.rs"
+          ],
+          "id": "P3.1",
+          "layer": "integration",
+          "name": "Modify hex-nexus/src/orchestration/drafter.rs to enforce REST rules",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

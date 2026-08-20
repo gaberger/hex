@@ -14,7 +14,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tracing;
 
 use crate::ports::agent_transport::IAgentTransportPort;
-use crate::remote::transport::{AgentMessage, TransportError};
+use crate::domain::transport::{AgentMessage, TransportError};
 
 const CHANNEL_BUFFER: usize = 256;
 

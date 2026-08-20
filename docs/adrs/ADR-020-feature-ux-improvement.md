@@ -1,6 +1,7 @@
 # ADR-020: Feature Development UX Improvement
 
-**Status:** Accepted
+**Status:** Superseded
+**Superseded-By:** ADR-2026-03-31-2300-workplan-live-execution-overlay
 ## Date: 2026-03-17
 **Deciders**: Core Team
 **Related**: ADR-011 (Coordination), ADR-014 (No mock.module), ADR-015 (Hub Persistence)

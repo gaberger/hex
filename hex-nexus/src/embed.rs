@@ -32,7 +32,29 @@ async fn serve_asset(name: &str) -> Response {
         Some(content) => {
             let body = content.data.to_vec();
             let mime = mime_from_ext(name);
-            (StatusCode::OK, [(http::header::CONTENT_TYPE, mime)], body).into_response()
+            // Cache policy:
+            //   HTML entry (index.html) — no-cache so browsers always re-
+            //   fetch and pick up the new bundle hash references after a
+            //   rebuild. The bundle JS/CSS already have content-hashed
+            //   filenames so they can be cached aggressively.
+            //   Hashed assets — immutable, one year.
+            let cache_control: &'static str = if name.ends_with(".html") {
+                "no-cache, no-store, must-revalidate"
+            } else if name.contains('-') && (name.ends_with(".js") || name.ends_with(".css")) {
+                // Vite-produced hashed asset: foo-AbCd123.js — safe to cache forever.
+                "public, max-age=31536000, immutable"
+            } else {
+                "no-cache"
+            };
+            (
+                StatusCode::OK,
+                [
+                    (http::header::CONTENT_TYPE, mime),
+                    (http::header::CACHE_CONTROL, cache_control),
+                ],
+                body,
+            )
+                .into_response()
         }
         None => (StatusCode::NOT_FOUND, format!("{} not found", name)).into_response(),
     }

@@ -1,10 +1,10 @@
-//! `hex adr doctor` — ADR registry self-consistency checker (ADR-2604270800).
+//! `hex adr doctor` — ADR registry self-consistency checker (ADR-2026-04-27-0800).
 //!
 //! Pure detection surface. Scans `docs/adrs/`, parses each file's frontmatter,
 //! and emits structured `Finding`s. No mutation here — auto-fix lives in
 //! [`shadow_promote`] (P2) and the daemon dispatcher in `sched.rs` (P3).
 //!
-//! Detection rules are encoded in a static data table per ADR-2604142243
+//! Detection rules are encoded in a static data table per ADR-2026-04-14-2243
 //! (rules-as-data, not control flow). Each `FindingKind` has exactly one row
 //! mapping it to an [`AutoFixTier`] and a [`Severity`]. Adding a new check
 //! requires picking both — there is no implicit default.
@@ -31,7 +31,7 @@ use super::{collect_adrs, find_adr_dir};
 /// A single registry-consistency finding emitted by `doctor::run`.
 #[derive(Debug, Clone, Serialize)]
 pub struct Finding {
-    /// ADR identifier (e.g. `ADR-2604270800`). Empty string if the file
+    /// ADR identifier (e.g. `ADR-2026-04-27-0800`). Empty string if the file
     /// itself is so malformed we can't extract one.
     pub adr_id: String,
     pub file_path: PathBuf,
@@ -42,7 +42,7 @@ pub struct Finding {
     pub detail: String,
 }
 
-/// What went wrong. One variant per check defined in ADR-2604270800 §1.
+/// What went wrong. One variant per check defined in ADR-2026-04-27-0800 §1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FindingKind {
@@ -62,7 +62,7 @@ pub enum FindingKind {
     SupersededUnlinked,
 }
 
-/// What the daemon is allowed to do without human consent (ADR-2604270800 §1a).
+/// What the daemon is allowed to do without human consent (ADR-2026-04-27-0800 §1a).
 ///
 /// Tier is a column on each finding type, stored in the same rule table that
 /// drives detection — there is no implicit default.
@@ -85,11 +85,11 @@ pub enum Severity {
     Warning,
 }
 
-// ── Rule table (ADR-2604270800 §1 + §1a) ─────────────────────────────────
+// ── Rule table (ADR-2026-04-27-0800 §1 + §1a) ─────────────────────────────────
 
 /// Static rule table: every `FindingKind` maps to exactly one `(tier, severity)`.
 ///
-/// Severity column matches the table in ADR-2604270800 §1.
+/// Severity column matches the table in ADR-2026-04-27-0800 §1.
 /// Tier column matches §1a. Variants not explicitly tabled in §1a default to
 /// the most-conservative tier that's still actionable:
 ///   - `IdFormatMismatch` → Tier B (filename rename is mechanical, but renaming
@@ -177,7 +177,16 @@ pub fn scan_single_file(path: &Path, content: &str, now: NaiveDate) -> Vec<Findi
 
 fn adr_id_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"ADR-\d+").unwrap())
+    // Two forms, hyphenated YYYY-MM-DD-HHMM first (longest match wins in
+    // alternation only when used with `find` — must list more-specific
+    // pattern first). Falls back to legacy sequential / 10-digit form.
+    // Without this, `ADR-2026-03-22-1500` truncates to `ADR-2026` and the
+    // doctor reports 154 duplicates.
+    // Order matters (leftmost-first): full date-time (YYYY-MM-DD-HHMM), then
+    // date-only (YYYY-MM-DD, used by ADR-2026-05-09/-05-12/-05-20), then the
+    // legacy sequential / 10-digit fallback. Without the date-only form those
+    // three collapse to `ADR-2026` and read as duplicates.
+    RE.get_or_init(|| Regex::new(r"ADR-\d{4}-\d{2}-\d{2}-\d{4}|ADR-\d{4}-\d{2}-\d{2}|ADR-\d+").unwrap())
 }
 
 /// Strict canonical-format extraction. Mirrors the parent module's
@@ -242,7 +251,7 @@ fn classify_status(value: &str) -> Option<&'static str> {
         .collect();
     let words: Vec<&str> = cleaned.split_whitespace().collect();
 
-    let known = ["proposed", "accepted", "deprecated", "superseded", "abandoned"];
+    let known = ["proposed", "accepted", "completed", "deprecated", "superseded", "abandoned", "rejected"];
     let matches: Vec<&'static str> = known
         .iter()
         .copied()
@@ -265,6 +274,14 @@ fn extract_date(content: &str) -> Option<NaiveDate> {
             Some(stripped["**Date**:".len()..].trim())
         } else if lower.starts_with("date:") {
             Some(stripped["date:".len()..].trim())
+        } else if lower.starts_with("## date:") {
+            // Legacy heading form: `## Date: 2026-03-15`
+            Some(stripped["## Date:".len()..].trim())
+        } else if lower.starts_with("## date ") || lower == "## date" {
+            // `## Date` heading followed by value on next non-blank line is
+            // unusual but possible; caller-side handles that via the lenient
+            // detector. Skip here.
+            None
         } else {
             None
         };
@@ -286,6 +303,7 @@ fn lenient_has_date_line(content: &str) -> bool {
         if lower.starts_with("**date:**")
             || lower.starts_with("**date**:")
             || lower.starts_with("date:")
+            || lower.starts_with("## date")
         {
             return true;
         }
@@ -317,9 +335,13 @@ fn has_superseded_by(content: &str) -> bool {
         let stripped = line.trim().trim_start_matches("- ").trim_start();
         let lower = stripped.to_lowercase();
         // Accept canonical `**Superseded by:**`, the buggy `**Superseded by**:`,
-        // and the YAML-style `superseded by:` / `superseded-by:`.
+        // the hyphenated `**Superseded-By:**` form that TEMPLATE.md, `hex adr
+        // supersede`, and `is_superseded` all emit, and the YAML-style
+        // `superseded by:` / `superseded-by:`.
         if lower.starts_with("**superseded by:**")
             || lower.starts_with("**superseded by**:")
+            || lower.starts_with("**superseded-by:**")
+            || lower.starts_with("**superseded-by**:")
             || lower.starts_with("superseded by:")
             || lower.starts_with("superseded-by:")
         {
@@ -571,7 +593,7 @@ fn detect_dangling_dependencies(adrs: &[(PathBuf, String)]) -> Vec<Finding> {
     findings
 }
 
-// ── Auto-fix patch generation (P2.1, ADR-2604270800 §1a) ─────────────────
+// ── Auto-fix patch generation (P2.1, ADR-2026-04-27-0800 §1a) ─────────────────
 
 /// A regex-based text transformation emitted by [`Finding::auto_fix_patch`]
 /// for Tier-A findings. The shadow-promotion orchestrator in P2.2 calls
@@ -610,7 +632,7 @@ impl TextEdit {
 
 impl Finding {
     /// Return the auto-fix patch for this finding, or `None` if the kind is
-    /// Tier B/C (drafted-only or notify-only per ADR-2604270800 §1a).
+    /// Tier B/C (drafted-only or notify-only per ADR-2026-04-27-0800 §1a).
     ///
     /// Today, only [`FindingKind::UnparseableStatus`] yields a patch — it
     /// normalizes the bullet-prefixed bold-outside-colon frontmatter form
@@ -657,7 +679,7 @@ fn unparseable_status_patch() -> TextEdit {
     }
 }
 
-// ── Shadow-promote orchestration (P2.2, ADR-2604270800 §1a) ─────────────
+// ── Shadow-promote orchestration (P2.2, ADR-2026-04-27-0800 §1a) ─────────────
 //
 // `shadow_promote` is the safe-by-construction Tier-A auto-fix path. It
 // applies the patch on a sched-owned worktree branch, re-runs `doctor` in
@@ -674,8 +696,8 @@ fn unparseable_status_patch() -> TextEdit {
 //   4. Cannot drop commits — uses `git merge --no-ff`, which always
 //      records a real merge commit (sidesteps the fast-forward
 //      drop-commits failure mode of `hex worktree merge` documented in
-//      ADR-2604150100). Raw `git checkout <branch> -- <file>` is never
-//      used, per ADR-2604131930.
+//      ADR-2026-04-15-0100). Raw `git checkout <branch> -- <file>` is never
+//      used, per ADR-2026-04-13-1930.
 
 use std::path::Path as StdPath;
 use std::process::Command;
@@ -840,9 +862,9 @@ pub fn shadow_promote_with_policy(
     }
 
     // Step 3: create the auto-fix worktree on a deterministically-named
-    // branch. Branch lives under `sched/auto-fix/adr-doctor/<adr-id>` so
+    // branch. Branch lives under `sched/auto-fix/ADR-doctor/<ADR-id>` so
     // operators can `git branch --list 'sched/auto-fix/*'` to audit.
-    let branch = format!("sched/auto-fix/adr-doctor/{}", finding.adr_id);
+    let branch = format!("sched/auto-fix/ADR-doctor/{}", finding.adr_id);
     let worktree_dir = match create_auto_fix_worktree(&cfg.repo_root, &branch) {
         Ok(p) => p,
         Err(e) => {
@@ -914,7 +936,7 @@ pub fn shadow_promote_with_policy(
     match policy {
         MergePolicy::Merge => {
             // 7a: merge --no-ff (always a true merge commit) rather than
-            // fast-forward to side-step the ADR-2604150100 dropped-commits
+            // fast-forward to side-step the ADR-2026-04-15-0100 dropped-commits
             // failure mode.
             let pre_merge_head = match rev_parse_head(&cfg.repo_root) {
                 Ok(s) => s,
@@ -953,7 +975,7 @@ pub fn shadow_promote_with_policy(
     })
 }
 
-// ── Tier-B drafting (P2.3, ADR-2604270800 §1a) ──────────────────────────
+// ── Tier-B drafting (P2.3, ADR-2026-04-27-0800 §1a) ──────────────────────────
 //
 // Tier-B findings (StaleProposed, SupersededUnlinked, IdFormatMismatch)
 // can't be auto-applied — they're per-finding judgment calls — but they
@@ -999,7 +1021,7 @@ pub fn tier_b_draft_with_config(
     }
 
     let branch = format!(
-        "sched/auto-fix/adr-doctor/tier-b/{}-{}",
+        "sched/auto-fix/ADR-doctor/tier-b/{}-{}",
         finding.adr_id,
         kind_slug(finding.kind)
     );
@@ -1019,7 +1041,7 @@ pub fn tier_b_draft_with_config(
 
     // Write the notes file inside the worktree at a deterministic path.
     let notes_rel = PathBuf::from(format!(
-        ".hex/adr-doctor-drafts/{}-{}.md",
+        ".hex/ADR-doctor-drafts/{}-{}.md",
         finding.adr_id,
         kind_slug(finding.kind)
     ));
@@ -1041,7 +1063,7 @@ pub fn tier_b_draft_with_config(
          **Detail:** {}\n\
          \n\
          This file is an auto-generated placeholder for a Tier-B finding\n\
-         (per ADR-2604270800 §1a). The doctor cannot mechanically resolve\n\
+         (per ADR-2026-04-27-0800 §1a). The doctor cannot mechanically resolve\n\
          this kind of issue; a human must review the source ADR, decide\n\
          the right fix, and either merge this branch (after editing) or\n\
          delete it.\n\
@@ -1312,7 +1334,7 @@ fn file_is_claimed(
     Ok(None)
 }
 
-/// Create an auxiliary worktree at `<repo>/.hex/auto-fix-worktrees/<adr-id>`
+/// Create an auxiliary worktree at `<repo>/.hex/auto-fix-worktrees/<ADR-id>`
 /// on a fresh branch named `branch`. Returns the worktree's absolute path.
 /// The directory and any pre-existing branch with that name are removed
 /// first to make the operation idempotent.
@@ -1408,7 +1430,7 @@ fn commit_in_worktree(
     let out = Command::new("git")
         .args([
             "-c",
-            "user.email=hex-adr-doctor@hex.local",
+            "user.email=hex-ADR-doctor@hex.local",
             "-c",
             "user.name=hex adr doctor",
             "commit",
@@ -1429,8 +1451,8 @@ fn commit_in_worktree(
 
 fn commit_message(finding: &Finding) -> String {
     format!(
-        "chore(adr-doctor): auto-fix {:?} in {}\n\n\
-         Generated by `hex adr doctor --fix` (ADR-2604270800 §1a, Tier-A).\n\
+        "chore(ADR-doctor): auto-fix {:?} in {}\n\n\
+         Generated by `hex adr doctor --fix` (ADR-2026-04-27-0800 §1a, Tier-A).\n\
          Detail: {}\n",
         finding.kind, finding.adr_id, finding.detail
     )
@@ -1441,7 +1463,7 @@ fn rev_parse_head(repo: &StdPath) -> anyhow::Result<String> {
 }
 
 /// Merge `branch` into the repo's current HEAD with `--no-ff`. We never
-/// fast-forward — that's the ADR-2604150100 failure mode. `--no-ff`
+/// fast-forward — that's the ADR-2026-04-15-0100 failure mode. `--no-ff`
 /// always records a merge commit whose parents are (HEAD, branch tip),
 /// so every commit reachable from either side stays reachable from the
 /// new HEAD.
@@ -1454,7 +1476,7 @@ fn merge_no_ff(repo: &StdPath, branch: &str, finding: &Finding) -> anyhow::Resul
     let out = Command::new("git")
         .args([
             "-c",
-            "user.email=hex-adr-doctor@hex.local",
+            "user.email=hex-ADR-doctor@hex.local",
             "-c",
             "user.name=hex adr doctor",
             "merge",
@@ -1541,7 +1563,7 @@ pub fn to_json_with_dispatch(
     Ok(serde_json::to_string_pretty(&envelope)?)
 }
 
-/// Map findings to a process exit code per ADR-2604270800 §1.
+/// Map findings to a process exit code per ADR-2026-04-27-0800 §1.
 ///
 ///   - `0` clean
 ///   - `1` warnings only
@@ -1698,8 +1720,8 @@ mod tests {
 
     #[test]
     fn extract_dependencies_parses_canonical_line() {
-        let deps = extract_dependencies("**Depends on:** ADR-2604101600 (one), ADR-027 (two)\n");
-        assert_eq!(deps, vec!["ADR-2604101600".to_string(), "ADR-027".to_string()]);
+        let deps = extract_dependencies("**Depends on:** ADR-2026-04-10-1600 (one), ADR-027 (two)\n");
+        assert_eq!(deps, vec!["ADR-2026-04-10-1600".to_string(), "ADR-027".to_string()]);
     }
 
     #[test]
@@ -1711,8 +1733,8 @@ mod tests {
 
     #[test]
     fn extract_h1_adr_id_finds_canonical_title() {
-        let content = "# ADR-2604270800: My Title\n";
-        assert_eq!(extract_h1_adr_id(content), Some("ADR-2604270800".to_string()));
+        let content = "# ADR-2026-04-27-0800: My Title\n";
+        assert_eq!(extract_h1_adr_id(content), Some("ADR-2026-04-27-0800".to_string()));
     }
 
     #[test]
@@ -1819,7 +1841,7 @@ mod tests {
         assert_eq!(kinds(&findings), vec![FindingKind::IdFormatMismatch]);
         assert_eq!(findings[0].adr_id, "ADR-2604010006");
         assert!(findings[0].detail.contains("ADR-2604010006"));
-        assert!(findings[0].detail.contains("ADR-9999999999"));
+        assert!(findings[0].detail.contains("ADR-2099-99-99-9999"));
     }
 
     #[test]
@@ -1987,11 +2009,11 @@ mod tests {
     #[test]
     fn dangling_dependency_flags_missing_target() {
         let (path, content) = read_fixture(FX_DEP_DANGLING);
-        // Corpus contains only this one file → its dep on ADR-9999999999 is dangling.
+        // Corpus contains only this one file → its dep on ADR-2099-99-99-9999 is dangling.
         let corpus = vec![(path.clone(), content)];
         let findings = detect_dangling_dependencies(&corpus);
         assert_eq!(kinds(&findings), vec![FindingKind::DanglingDependency]);
-        assert!(findings[0].detail.contains("ADR-9999999999"));
+        assert!(findings[0].detail.contains("ADR-2099-99-99-9999"));
     }
 
     #[test]
@@ -2007,8 +2029,8 @@ mod tests {
     fn dangling_dependency_dedupes_within_file() {
         // If a file lists the same missing ID twice on the Depends on line,
         // we emit one finding, not two.
-        let path = PathBuf::from("ADR-1111111111-synthetic.md");
-        let content = "**Depends on:** ADR-9999999999 (one), ADR-9999999999 (dup)\n";
+        let path = PathBuf::from("ADR-2011-11-11-1111-synthetic.md");
+        let content = "**Depends on:** ADR-2099-99-99-9999 (one), ADR-2099-99-99-9999 (dup)\n";
         let corpus = vec![(path.clone(), content.to_string())];
         let findings = detect_dangling_dependencies(&corpus);
         assert_eq!(findings.len(), 1);
@@ -2017,7 +2039,7 @@ mod tests {
     // ── Auto-fix patch tests (P2.1) ──────────────────────────────────────
     //
     // Three positive cases mirror real ADR frontmatter that was hand-normalized
-    // earlier in this session (ADR-2604141400, ADR-2604150100, ADR-2604150130).
+    // earlier in this session (ADR-2026-04-14-1400, ADR-2026-04-15-0100, ADR-2026-04-15-0130).
     // The "before" text in each case is the exact buggy form pulled from the
     // pre-normalization commit; "after" is the canonical form post-fix.
 
@@ -2033,17 +2055,17 @@ mod tests {
     #[test]
     fn auto_fix_patch_normalizes_brain_queue_swarm_lease_frontmatter() {
         // Real pre-normalization frontmatter from
-        // docs/adrs/ADR-2604141400-brain-queue-swarm-lease.md.
+        // docs/adrs/ADR-2026-04-14-1400-brain-queue-swarm-lease.md.
         let before = "\
 - **Status**: §1 Accepted 2026-04-14 (P1 scope complete — git-evidence guard, inline fallback, queue history); §2 (swarm-lease + task states) Proposed
 - **Date**: 2026-04-14
-- **Depends on**: ADR-2604132330 (brain queue), ADR-2604150000 (brain→sched rename), ADR-027 (HexFlo)
+- **Depends on**: ADR-2026-04-13-2330 (brain queue), ADR-2026-04-15-0000 (brain→sched rename), ADR-027 (HexFlo)
 - **Relates to**: feedback_verify_before_done, feedback_use_hexflo_hex_agent
 ";
         let expected = "\
 **Status:** §1 Accepted 2026-04-14 (P1 scope complete — git-evidence guard, inline fallback, queue history); §2 (swarm-lease + task states) Proposed
 **Date:** 2026-04-14
-**Depends on:** ADR-2604132330 (brain queue), ADR-2604150000 (brain→sched rename), ADR-027 (HexFlo)
+**Depends on:** ADR-2026-04-13-2330 (brain queue), ADR-2026-04-15-0000 (brain→sched rename), ADR-027 (HexFlo)
 **Relates to:** feedback_verify_before_done, feedback_use_hexflo_hex_agent
 ";
         let patch = unparseable_finding().auto_fix_patch().expect("Tier-A finding must have a patch");
@@ -2053,17 +2075,17 @@ mod tests {
     #[test]
     fn auto_fix_patch_normalizes_worktree_merge_drop_commits_frontmatter() {
         // Real pre-normalization frontmatter from
-        // docs/adrs/ADR-2604150100-worktree-merge-fast-forward-drops-commits.md.
+        // docs/adrs/ADR-2026-04-15-0100-worktree-merge-fast-forward-drops-commits.md.
         let before = "\
 - **Status**: Proposed
 - **Date**: 2026-04-15
-- **Depends on**: ADR-2604131930 (original worktree-merge integrity claim)
+- **Depends on**: ADR-2026-04-13-1930 (original worktree-merge integrity claim)
 - **Relates to**: `feedback_use_hex_worktree_merge.md`
 ";
         let expected = "\
 **Status:** Proposed
 **Date:** 2026-04-15
-**Depends on:** ADR-2604131930 (original worktree-merge integrity claim)
+**Depends on:** ADR-2026-04-13-1930 (original worktree-merge integrity claim)
 **Relates to:** `feedback_use_hex_worktree_merge.md`
 ";
         let patch = unparseable_finding().auto_fix_patch().unwrap();
@@ -2073,17 +2095,17 @@ mod tests {
     #[test]
     fn auto_fix_patch_normalizes_worktree_cleanup_frontmatter() {
         // Real pre-normalization frontmatter from
-        // docs/adrs/ADR-2604150130-worktree-cleanup-kills-active-worktree.md.
+        // docs/adrs/ADR-2026-04-15-0130-worktree-cleanup-kills-active-worktree.md.
         let before = "\
 - **Status**: Proposed
 - **Date**: 2026-04-15
-- **Depends on**: ADR-2604150100 (related worktree-merge drop-commits bug)
+- **Depends on**: ADR-2026-04-15-0100 (related worktree-merge drop-commits bug)
 - **Relates to**: `feedback_enforce_worktrees.md`, `feedback_use_hex_worktree_merge.md`
 ";
         let expected = "\
 **Status:** Proposed
 **Date:** 2026-04-15
-**Depends on:** ADR-2604150100 (related worktree-merge drop-commits bug)
+**Depends on:** ADR-2026-04-15-0100 (related worktree-merge drop-commits bug)
 **Relates to:** `feedback_enforce_worktrees.md`, `feedback_use_hex_worktree_merge.md`
 ";
         let patch = unparseable_finding().auto_fix_patch().unwrap();

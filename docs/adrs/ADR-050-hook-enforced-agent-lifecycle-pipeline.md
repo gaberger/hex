@@ -1,6 +1,6 @@
 # ADR-050: Hook-Enforced Agent Lifecycle Pipeline
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-22
 **Supersedes:** None
 **Extends:** ADR-048 (Session Registration), ADR-046 (Workplan Lifecycle), ADR-027 (HexFlo)

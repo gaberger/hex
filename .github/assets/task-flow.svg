@@ -41,7 +41,7 @@
   <rect x="200" y="150" width="400" height="60" class="box" rx="5"/>
   <text x="400" y="175" class="text" text-anchor="middle" font-weight="600">classify_work_intent</text>
   <text x="400" y="192" class="text-small" text-anchor="middle">T1: scaffold • T2: codegen • T2.5: reasoning • T3: frontier</text>
-  <text x="580" y="180" class="text-small">ADR-2604110227</text>
+  <text x="580" y="180" class="text-small">ADR-2026-04-11-0227</text>
 
   <!-- Arrow -->
   <path d="M 400 210 L 400 240" class="arrow"/>
@@ -87,7 +87,7 @@
   <text x="400" y="622" class="text-gate" text-anchor="middle">EVIDENCE GATE (blocking)</text>
   <text x="400" y="640" class="text" text-anchor="middle">• task.files exist?</text>
   <text x="400" y="656" class="text" text-anchor="middle">• commit subject has task ID?</text>
-  <text x="580" y="635" class="text-small">ADR-2604270800</text>
+  <text x="580" y="635" class="text-small">ADR-2026-04-27-0800</text>
 
   <!-- Arrow -->
   <path d="M 400 670 L 400 700" class="arrow"/>
@@ -96,7 +96,7 @@
   <rect x="200" y="700" width="400" height="60" class="box" rx="5"/>
   <text x="400" y="725" class="text" text-anchor="middle" font-weight="600">Judge: behavioral spec check</text>
   <text x="400" y="742" class="text-small" text-anchor="middle">5-axis rubric • Scores ≥ confidence threshold</text>
-  <text x="580" y="730" class="text-small">ADR-2604261311</text>
+  <text x="580" y="730" class="text-small">ADR-2026-04-26-1311</text>
 
   <!-- Arrow -->
   <path d="M 400 760 L 400 790" class="arrow"/>
@@ -105,7 +105,7 @@
   <rect x="200" y="790" width="400" height="60" class="box" rx="5"/>
   <text x="400" y="815" class="text" text-anchor="middle" font-weight="600">hex worktree merge</text>
   <text x="400" y="832" class="text-small" text-anchor="middle">Safe cross-worktree merge • NEVER raw git checkout</text>
-  <text x="580" y="820" class="text-small">ADR-2604131930</text>
+  <text x="580" y="820" class="text-small">ADR-2026-04-13-1930</text>
 
   <!-- Arrow -->
   <path d="M 400 850 L 400 880" class="arrow"/>

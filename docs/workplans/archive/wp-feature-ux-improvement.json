@@ -1,0 +1,152 @@
+{
+  "adr": "ADR-020",
+  "created_at": "2026-05-11T14:12:25.687681898+00:00",
+  "created_by": "hex-coder",
+  "feature": "Feature Progress Orchestrator with persistent CLI status view",
+  "id": "wp-feature-ux-improvement",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Core domain & ports infrastructure",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "src/core/ports/feature-progress.ts"
+          ],
+          "id": "P0.1",
+          "layer": "ports",
+          "name": "Define IFeatureProgressPort interface with FeatureSession, AgentStatusUpdate types",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "src/core/usecases/feature-progress-orchestrator.ts"
+          ],
+          "id": "P0.2",
+          "layer": "usecases",
+          "name": "Implement FeatureProgressOrchestrator use case with phase transition logic",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "src/core/usecases/workplan-visualizer.ts"
+          ],
+          "id": "P0.3",
+          "layer": "usecases",
+          "name": "Build WorkplanVisualizer use case for tree rendering and tier grouping",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Event bus and agent output management",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "src/adapters/secondary/event-bus-adapter.ts"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Add event bus subscriptions for agent.status topic with structured event schema",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "src/core/usecases/agent-executor.ts",
+            ".hex/logs/.gitkeep"
+          ],
+          "id": "P1.2",
+          "layer": "usecases",
+          "name": "Update agent-executor to redirect background agent stdout/stderr to .hex/logs/",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "CLI display adapter with interactive controls",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "src/adapters/primary/feature-progress-display.ts"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Build FeatureProgressDisplay adapter with ANSI rendering and clear/refresh logic",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "src/adapters/primary/feature-progress-display.ts"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Add interactive keyboard handler (d/q/h) and terminal compatibility detection",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P3",
+      "name": "Agent integration and workflow updates",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "agents/feature-developer.yml"
+          ],
+          "id": "P3.1",
+          "layer": "integration",
+          "name": "Update feature-developer.yml to use featureProgress.startFeature and emit structured events",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "src/cli/commands/feature-dev.ts",
+            ".hex/events.jsonl"
+          ],
+          "id": "P3.2",
+          "layer": "infrastructure",
+          "name": "Add --verbose flag support and event persistence to .hex/events.jsonl",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P4",
+      "name": "Documentation and testing",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "CLAUDE.md"
+          ],
+          "id": "P4.1",
+          "layer": "infrastructure",
+          "name": "Update CLAUDE.md with new feature UX flow and keyboard shortcuts",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "tests/integration/feature-progress-e2e.test.ts"
+          ],
+          "id": "P4.2",
+          "layer": "integration",
+          "name": "Integration test with real feature workflow (webhook-notifications example)",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

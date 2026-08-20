@@ -1,0 +1,141 @@
+{
+  "adr": "ADR-037",
+  "created_at": "2026-05-23T16:58:30.712677149+00:00",
+  "created_by": "hex-coder",
+  "feature": "Implement agent lifecycle with local default and remote connect.",
+  "id": "wp-agent-lifecycle-local-default-remote-connect",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain/Ports Setup",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/domain/agent_lifecycle.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Define agent lifecycle domain model.",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/ports/agent_transport.rs"
+          ],
+          "id": "P0.2",
+          "layer": "ports",
+          "name": "Define agent transport port interface.",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary Adapters Implementation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/local_agent.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement local agent adapter.",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/remote_agent.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Implement remote agent adapter.",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P2",
+      "name": "Primary Adapters Implementation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/primary/websocket_transport.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Implement WebSocket transport for primary agent communication.",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/cli/agent_commands.rs"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Implement CLI commands for agent management (list, connect, disconnect).",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P3",
+      "name": "Use Cases Implementation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/usecases/spawn_local_agent.rs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Implement use cases for local agent spawn.",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/usecases/connect_remote_agent.rs"
+          ],
+          "id": "P3.2",
+          "layer": "usecases",
+          "name": "Implement use cases for remote agent connection.",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P4",
+      "name": "Integration and Testing",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/agent_manager.rs"
+          ],
+          "id": "P4.1",
+          "layer": "integration",
+          "name": "Integrate agent lifecycle into hex-nexus orchestration.",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "tests/integration/agent_lifecycle_tests.rs"
+          ],
+          "id": "P4.2",
+          "layer": "integration",
+          "name": "Write integration tests for local and remote agent scenarios.",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

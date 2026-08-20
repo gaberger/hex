@@ -1,0 +1,103 @@
+{
+  "adr": "ADR-038",
+  "created_at": "2026-05-21T19:48:37.972031492+00:00",
+  "created_by": "hex-coder",
+  "feature": "Vite dev server for fast frontend iteration, Axum serves built assets in production",
+  "id": "wp-vite-dev-axum-prod",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Frontend scaffolding and Vite setup",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-chat/ui/index.html",
+            "hex-chat/ui/vite.config.ts",
+            "hex-chat/ui/package.json",
+            "hex-chat/ui/src/main.ts",
+            "hex-chat/ui/src/App.tsx",
+            "hex-chat/ui/src/styles.css"
+          ],
+          "id": "P0.1",
+          "layer": "primary",
+          "name": "Create hex-chat/ui/ directory with Vite + TypeScript scaffold (index.html, vite.config.ts, package.json, src/main.ts, src/App.tsx, src/styles.css)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-chat/ui/vite.config.ts"
+          ],
+          "id": "P0.2",
+          "layer": "primary",
+          "name": "Configure Vite proxy to forward API calls to hex-nexus during development",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P1",
+      "name": "Axum production asset serving",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-chat/src/web.rs"
+          ],
+          "id": "P1.1",
+          "layer": "primary",
+          "name": "Modify hex-chat/src/web.rs to serve built assets from dist/ in production with rust-embed or include_bytes!",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-chat/src/web.rs"
+          ],
+          "id": "P1.2",
+          "layer": "primary",
+          "name": "Implement fallback logic to serve embedded minimal HTML when dist/ doesn't exist at runtime",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-chat/src/web.rs"
+          ],
+          "id": "P1.3",
+          "layer": "primary",
+          "name": "Add /assets/*path route handler with MIME type detection for js/css/html files",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P2",
+      "name": "Build pipeline and documentation",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-chat/README.md"
+          ],
+          "id": "P2.1",
+          "layer": "infrastructure",
+          "name": "Update hex-chat/README.md with development (npm run dev + hex nexus start) and production build instructions",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-chat/ui/.gitignore"
+          ],
+          "id": "P2.2",
+          "layer": "infrastructure",
+          "name": "Add .gitignore entry for hex-chat/ui/dist/ and hex-chat/ui/node_modules/",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

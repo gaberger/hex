@@ -1,5 +1,5 @@
 //! SpacetimeDB-backed adapter implementing [`IExperimentPort`]
-//! (ADR-2605021400 P3, wp-experiment-loop-p3b).
+//! (ADR-2026-05-02-1400 P3, wp-experiment-loop-p3b).
 //!
 //! Tables and reducers live in the `hexflo-coordination` WASM module
 //! (database "hex"). Domain enums are translated to/from string columns;

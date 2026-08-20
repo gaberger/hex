@@ -19,7 +19,7 @@ pub struct Swarm {
     pub topology: String,
     /// Status: "active", "completed", "failed"
     pub status: String,
-    /// Agent ID that owns this swarm (ADR-2603241900). Authoritative owner —
+    /// Agent ID that owns this swarm (ADR-2026-03-24-1900). Authoritative owner —
     /// not just creator. Use swarm_transfer to change ownership.
     pub owner_agent_id: String,
     /// Kept for backward compatibility during migration; mirrors owner_agent_id.
@@ -29,7 +29,7 @@ pub struct Swarm {
 }
 
 /// A task within a swarm — the unit of work assigned to agents.
-/// CAS fields (ADR-2603241900): callers read `version` before assigning, then
+/// CAS fields (ADR-2026-03-24-1900): callers read `version` before assigning, then
 /// pass it to task_assign. Mismatch → ConflictError; prevents double-assignment
 /// across remote nodes without distributed locks.
 #[table(name = swarm_task, public)]
@@ -123,6 +123,87 @@ pub struct HexAgent {
     pub capabilities_json: String,
 }
 
+/// One recorded hex-agent run — what an agent (direct-executor, adr-steward,
+/// workplan-steward, …) actually DID, with the commit it produced. Persisted so
+/// the dashboard Agent Runs feed survives nexus restarts. Written by nexus's
+/// record_agent_run/record_run via the `record_agent_run` reducer below.
+#[table(name = agent_run, public)]
+#[derive(Clone, Debug)]
+pub struct AgentRun {
+    /// Globally-unique key (nexus uses `<started_at>#<seq>` — unique across restarts).
+    #[primary_key]
+    pub id: String,
+    pub agent: String,
+    pub started_at: String,
+    pub instruction: String,
+    pub file: String,
+    pub model: String,
+    pub ok: bool,
+    pub attempts: u32,
+    pub evidence_passed: bool,
+    /// Commit hash, or "" if none (plain String avoids STDB's Option sum-type
+    /// encoding on the SQL read path).
+    pub committed: String,
+    pub duration_ms: u64,
+    /// Error message, or "" if none.
+    pub error: String,
+}
+
+/// Upsert one agent run (persists the Agent Runs feed across restarts).
+#[reducer]
+pub fn record_agent_run(
+    ctx: &ReducerContext,
+    id: String,
+    agent: String,
+    started_at: String,
+    instruction: String,
+    file: String,
+    model: String,
+    ok: bool,
+    attempts: u32,
+    evidence_passed: bool,
+    committed: String,
+    duration_ms: u64,
+    error: String,
+) -> Result<(), String> {
+    let row = AgentRun {
+        id: id.clone(),
+        agent,
+        started_at,
+        instruction,
+        file,
+        model,
+        ok,
+        attempts,
+        evidence_passed,
+        committed,
+        duration_ms,
+        error,
+    };
+    if ctx.db.agent_run().id().find(&id).is_some() {
+        ctx.db.agent_run().id().update(row);
+    } else {
+        ctx.db.agent_run().insert(row);
+    }
+    // Bound the table — keep the newest AGENT_RUN_CAP rows by started_at, deleting
+    // the oldest excess. Self-pruning on insert (no separate scheduler needed).
+    const AGENT_RUN_CAP: usize = 1000;
+    let mut all: Vec<(String, String)> = ctx
+        .db
+        .agent_run()
+        .iter()
+        .map(|r| (r.id.clone(), r.started_at.clone()))
+        .collect();
+    if all.len() > AGENT_RUN_CAP {
+        all.sort_by(|a, b| a.1.cmp(&b.1)); // oldest first
+        let excess = all.len() - AGENT_RUN_CAP;
+        for (old_id, _) in all.into_iter().take(excess) {
+            ctx.db.agent_run().id().delete(&old_id);
+        }
+    }
+    Ok(())
+}
+
 /// Register or re-register an agent (upsert by ID).
 /// Called by hex hook session-start via /api/hex-agents/connect.
 #[reducer]
@@ -211,7 +292,7 @@ pub fn agent_disconnect(ctx: &ReducerContext, id: String, timestamp: String) -> 
 }
 
 /// Update agent capabilities (models, tok/s, provider) without full re-registration.
-/// Called by worker after inference discovery (ADR-2604130010 P2.1).
+/// Called by worker after inference discovery (ADR-2026-04-13-0010 P2.1).
 #[reducer]
 pub fn agent_update_capabilities(
     ctx: &ReducerContext,
@@ -624,7 +705,7 @@ pub fn mcp_tool_sync(
 }
 
 // ============================================================
-//  Remote Agent Registry (ADR-2604050900 P4.1)
+//  Remote Agent Registry (ADR-2026-04-05-0900 P4.1)
 //
 //  Replaces in-memory RemoteRegistryAdapter with SpacetimeDB-backed state.
 //  Dashboard subscribes to this table for real-time fleet visibility.
@@ -1035,7 +1116,7 @@ pub fn swarm_init(
         return Err(format!("Swarm '{}' already exists", id));
     }
 
-    // ADR-2603241900: enforce 1:1 agent↔swarm ownership.
+    // ADR-2026-03-24-1900: enforce 1:1 agent↔swarm ownership.
     // An agent may not own more than one active swarm at a time.
     if !created_by.is_empty() {
         let already_owns = ctx
@@ -1129,6 +1210,45 @@ pub fn swarm_fail(
 //  Task Management Reducers
 // ============================================================
 
+/// Purge terminal swarm_task rows (failed / completed / abandoned). Tasks are
+/// status-changed on completion but never deleted, so the table grows unbounded
+/// (observed: 1857 failed rows from the retired org-sim). Operator-driven bulk
+/// cleanup — ADR-2606061359. Same pattern as agent-registry purge_all_agents.
+#[reducer]
+pub fn purge_terminal_tasks(ctx: &ReducerContext) -> Result<(), String> {
+    let ids: Vec<String> = ctx
+        .db
+        .swarm_task()
+        .iter()
+        .filter(|t| t.status == "failed" || t.status == "completed" || t.status == "abandoned")
+        .map(|t| t.id)
+        .collect();
+    let count = ids.len();
+    for id in ids {
+        ctx.db.swarm_task().id().delete(&id);
+    }
+    log::info!("purge_terminal_tasks: removed {} task(s)", count);
+    Ok(())
+}
+
+/// Purge terminal swarms (completed / failed). Companion to purge_terminal_tasks.
+#[reducer]
+pub fn purge_terminal_swarms(ctx: &ReducerContext) -> Result<(), String> {
+    let ids: Vec<String> = ctx
+        .db
+        .swarm()
+        .iter()
+        .filter(|s| s.status == "completed" || s.status == "failed")
+        .map(|s| s.id)
+        .collect();
+    let count = ids.len();
+    for id in ids {
+        ctx.db.swarm().id().delete(&id);
+    }
+    log::info!("purge_terminal_swarms: removed {} swarm(s)", count);
+    Ok(())
+}
+
 /// Create a new task in a swarm.
 /// `depends_on` is a comma-separated list of task IDs that must complete before
 /// this task can be assigned. Pass empty string for no dependencies.
@@ -1209,7 +1329,7 @@ fn dependencies_met(ctx: &ReducerContext, task: &SwarmTask) -> bool {
     true
 }
 
-/// Assign a task to an agent using Compare-And-Swap (ADR-2603241900).
+/// Assign a task to an agent using Compare-And-Swap (ADR-2026-03-24-1900).
 ///
 /// `expected_version` must match `task.version` at the time of the call.
 /// Pass `u64::MAX` (18446744073709551615) to skip version check (legacy / force-assign).
@@ -1297,7 +1417,7 @@ pub fn task_assign(
     Ok(())
 }
 
-/// Transfer swarm ownership to a new agent (ADR-2603241900).
+/// Transfer swarm ownership to a new agent (ADR-2026-03-24-1900).
 /// Only the current owner or a call with no owner set may transfer.
 #[reducer]
 pub fn swarm_transfer(
@@ -1614,7 +1734,7 @@ pub fn inference_task_fail(
         .find(&id)
         .ok_or_else(|| format!("InferenceTask '{}' not found", id))?;
 
-    // ADR-2604241630: sanitize empty error strings - never store empty
+    // ADR-2026-04-24-1630: sanitize empty error strings - never store empty
     let sanitized_error = if error.trim().is_empty() {
         "unknown error".to_string()
     } else {
@@ -1632,7 +1752,7 @@ pub fn inference_task_fail(
 }
 
 // ============================================================
-//  Workplan event log — ADR-2604271000 §2 (state-model-v2)
+//  Workplan event log — ADR-2026-04-27-1000 §2 (state-model-v2)
 // ============================================================
 //
 // Append-only event log for workplan task state transitions. Replaces the
@@ -2136,7 +2256,7 @@ pub fn memory_clear_scope(ctx: &ReducerContext, scope: String) -> Result<(), Str
 }
 
 // ============================================================
-//  Dev Session & Inference Log (ADR-2604071300)
+//  Dev Session & Inference Log (ADR-2026-04-07-1300)
 //  Tracks hex dev pipeline sessions with full audit trail.
 //  Dashboard subscribes for real-time progress visibility.
 // ============================================================
@@ -2404,10 +2524,10 @@ pub fn inference_log_create(
 }
 
 // ============================================================
-//  Enforcement Rules (ADR-2603221959 P5)
+//  Enforcement Rules (ADR-2026-03-22-1959 P5)
 // ============================================================
 
-/// An enforcement rule — persisted in SpacetimeDB, synced from .hex/adr-rules.toml.
+/// An enforcement rule — persisted in SpacetimeDB, synced from .hex/ADR-rules.toml.
 /// These rules are checked by MCP tool guards and nexus API middleware.
 #[table(name = enforcement_rule, public)]
 #[derive(Clone, Debug)]
@@ -2654,7 +2774,7 @@ pub fn trigger_cleanup(ctx: &ReducerContext, cutoff: String) -> Result<(), Strin
 
 // ─── Architecture Fingerprint ──────────────────────────────────────────────
 //
-// ADR-2603301200: Token-efficient architecture context injected into every
+// ADR-2026-03-30-1200: Token-efficient architecture context injected into every
 // LLM inference system prompt. Generated from go.mod/package.json/Cargo.toml,
 // workplan, and active ADRs. Prevents models from hallucinating wrong stacks.
 
@@ -2748,7 +2868,7 @@ pub fn delete_fingerprint(ctx: &ReducerContext, project_id: String) -> Result<()
 }
 
 // ============================================================
-//  Fleet State (absorbed from fleet-state module — ADR-2604050900)
+//  Fleet State (absorbed from fleet-state module — ADR-2026-04-05-0900)
 // ============================================================
 
 /// A compute node in the fleet — tracks capacity for multi-host agent dispatch.
@@ -3100,7 +3220,7 @@ pub fn lifecycle_check_unblocked(ctx: &ReducerContext, swarm_id: String) {
     }
 }
 
-// ─── Developer Decision Inbox (ADR-2604131500) ──────────────────────────
+// ─── Developer Decision Inbox (ADR-2026-04-13-1500) ──────────────────────────
 
 /// A decision that requires developer input. hex surfaces these with a
 /// recommended default action; if the developer doesn't respond before the
@@ -3240,7 +3360,7 @@ pub fn expire_decisions(ctx: &ReducerContext, current_time: String) -> Result<()
     Ok(())
 }
 
-// ─── Delegation Trust Model (ADR-2604131500) ─────────────────────────────
+// ─── Delegation Trust Model (ADR-2026-04-13-1500) ─────────────────────────────
 
 /// Per-scope trust level that controls how much autonomy hex has in a given
 /// area. Trust can be elevated by consistent good outcomes and decayed when
@@ -3419,7 +3539,7 @@ pub fn init_project_trust(
     Ok(())
 }
 
-// ─── Briefing Buffer (ADR-2604131500) ────────────────────────────────────
+// ─── Briefing Buffer (ADR-2026-04-13-1500) ────────────────────────────────────
 
 /// Accumulated events for the developer briefing. Events are logged
 /// continuously and consumed when the developer opens a session or asks
@@ -3531,7 +3651,7 @@ pub fn archive_old_briefings(ctx: &ReducerContext, cutoff_time: String) -> Resul
 }
 
 // ============================================================
-//  Substrate — swap-ticket + shadow-sample (ADR-2604261500 P6, wp-substrate-shadow-promotion P1)
+//  Substrate — swap-ticket + shadow-sample (ADR-2026-04-26-1500 P6, wp-substrate-shadow-promotion P1)
 // ============================================================
 //
 // `swap_ticket` records every proposed swap of a port -> adapter binding in
@@ -3839,7 +3959,7 @@ mod swap_ticket_state_tests {
 }
 
 // ============================================================
-//  Brain-task history — wire type (ADR-2604141400 §1 P1, wp-sched-queue-history P1.1)
+//  Brain-task history — wire type (ADR-2026-04-14-1400 §1 P1, wp-sched-queue-history P1.1)
 // ============================================================
 //
 // Brain tasks (the `hex sched` / `hex brain queue` pipeline) are NOT stored in
@@ -3847,7 +3967,7 @@ mod swap_ticket_state_tests {
 // `brain-task:<uuid>` with the full task record serialized as JSON in the
 // value column. This keeps the queue schemaless at the DB layer — daemons can
 // evolve the task record (adding lease/evidence-guard fields per
-// ADR-2604141400) without WASM re-publish gates.
+// ADR-2026-04-14-1400) without WASM re-publish gates.
 //
 // Adding a parallel `brain_task` table here would duplicate that state and
 // invite drift between "the canonical task record" (hexflo_memory) and "the
@@ -3870,21 +3990,21 @@ mod swap_ticket_state_tests {
 //   created_at_us: i64            // RFC3339 → microseconds since epoch
 //   completed_at_us: i64          // 0 if not completed
 
-// ─── Experimental Loop (ADR-2605021400) ──────────────────────────────────
+// ─── Experimental Loop (ADR-2026-05-02-1400) ──────────────────────────────────
 //
 // Storage for the loop-closing trio of target-app representations:
 // Objective (what to maximize), Hypothesis (predicted Δ on Objective),
 // and Verdict (measured outcome + graduate/hold/rollback decision).
 //
 // Persona / Workload / Trial / Failure tables land in a follow-up phase
-// (wp-experiment-loop-p2-extras, ADR-2605021400 §Implementation P5–P8).
+// (wp-experiment-loop-p2-extras, ADR-2026-05-02-1400 §Implementation P5–P8).
 //
 // Enums are stored as String columns (SpacetimeDB cannot store nested
-// Rust enums in columns). The hex-side adapter (ADR-2605021400 §P3)
+// Rust enums in columns). The hex-side adapter (ADR-2026-05-02-1400 §P3)
 // converts between these row shapes and `hex_core::domain::experiment::*`.
 
 /// A target-app objective — what the application is trying to maximize/
-/// minimize over its workload (ADR-2605021400 §Decision).
+/// minimize over its workload (ADR-2026-05-02-1400 §Decision).
 #[table(name = objective, public)]
 #[derive(Clone, Debug)]
 pub struct Objective {
@@ -4392,6 +4512,16 @@ pub struct WorkerProcess {
     pub in_crash_loop: bool,
     pub exited_at: String,
     pub exit_reason: String,
+    /// Self-reported liveness ("healthy" | "degraded" | "stopping"). Added
+    /// 2026-05-19 for ADR-2026-05-19-0900 P1.2 — IHeartbeatPort lets components
+    /// downgrade themselves proactively when they know they can't fully
+    /// serve their contract (e.g. STDB downstream unreachable). Supervisor
+    /// reads this to escalate Degraded → operator after a TTL even if
+    /// last_heartbeat is fresh.
+    pub status: String,
+    /// Free-form note attached to the latest beat — surfaced to the
+    /// dashboard. Empty string when unused (STDB has no Option<String>).
+    pub evidence: String,
 }
 
 /// Register a freshly-spawned worker. Called by hex-nexus subscriber after
@@ -4417,6 +4547,8 @@ pub fn worker_process_register(
         in_crash_loop: false,
         exited_at: String::new(),
         exit_reason: String::new(),
+        status: "healthy".to_string(),
+        evidence: String::new(),
     };
     ctx.db.worker_process().insert(row);
     Ok(())
@@ -4432,6 +4564,251 @@ pub fn worker_process_heartbeat(ctx: &ReducerContext, id: String) -> Result<(), 
         .ok_or_else(|| format!("worker_process '{}' not found", id))?;
     row.last_heartbeat = format!("{:?}", ctx.timestamp);
     ctx.db.worker_process().id().update(row);
+    Ok(())
+}
+
+/// Self-reported status update. The component publishes `healthy`, downgrades
+/// to `degraded` when an upstream is unreachable, or to `stopping` on graceful
+/// shutdown. Same row as last_heartbeat — supervisor reads both together.
+/// Added 2026-05-19 for ADR-2026-05-19-0900 P1.2 to match the IHeartbeatPort
+/// contract (hex-core/src/ports/heartbeat.rs).
+#[reducer]
+pub fn worker_process_status(
+    ctx: &ReducerContext,
+    id: String,
+    status: String,
+    evidence: String,
+) -> Result<(), String> {
+    if !matches!(status.as_str(), "healthy" | "degraded" | "stopping") {
+        return Err(format!("invalid status '{}' — expected healthy|degraded|stopping", status));
+    }
+    let mut row = ctx.db.worker_process().id().find(&id)
+        .ok_or_else(|| format!("worker_process '{}' not found", id))?;
+    row.last_heartbeat = format!("{:?}", ctx.timestamp);
+    row.status = status;
+    row.evidence = evidence;
+    ctx.db.worker_process().id().update(row);
+    Ok(())
+}
+
+/// Graceful deregistration — removes the row outright. Idempotent: calling
+/// twice or on an unknown id returns Ok so the adapter's Drop impl can be
+/// best-effort. Distinct from worker_process_record_exit which keeps the
+/// row for crash-loop accounting; deregister is the clean-shutdown path.
+#[reducer]
+pub fn worker_process_deregister(ctx: &ReducerContext, id: String) -> Result<(), String> {
+    // The unique column accessor's delete() takes the column value, not
+    // the row — pass &id directly. Find-then-delete is unnecessary; STDB
+    // returns false on missing rows so idempotence is built in.
+    let _existed = ctx.db.worker_process().id().delete(&id);
+    Ok(())
+}
+
+// ============================================================
+// dead_letter — bounded-retry quarantine for brain-tasks (ADR-2026-05-19-0900 P2.1).
+// ============================================================
+// A dedicated audit row for brain-tasks that exceeded their retry budget.
+// Distinct from BrainTaskStatus::DeadLetter — that's a status flag on the
+// brain-task row; this table is the durable record of WHY a task was
+// quarantined and HOW to replay it.
+//
+// The dispatcher (hex-nexus/src/orchestration/brain_dispatch_reconciler.rs)
+// writes one row here on the Nth consecutive failure of a brain-task. The
+// dashboard's #/dead-letter view reads from here; `dead_letter_replay` is
+// the operator-driven "try again" path that moves the row back into the
+// sched_task pending queue.
+//
+// Why a separate table, not just a status:
+//   1) BrainTaskStatus::DeadLetter doesn't capture HOW MANY tries or WHEN
+//      they happened — both are needed for the dispatch_retry_quota
+//      hypothesis the improver consumes (P2.4).
+//   2) The 2026-05-19 postmortem observed brain-tasks getting NEW ids
+//      every minute instead of being marked failed — the existing
+//      retry_count on the brain-task row never incremented for those.
+//      A dedicated table sidesteps the bug regardless of how the
+//      dispatcher counts.
+//   3) Replay should be auditable. Moving the row out of dead_letter
+//      back to sched_task pending is one reducer; the operation is
+//      visible in the event log.
+// ============================================================
+
+#[table(name = dead_letter, public)]
+#[derive(Clone, Debug)]
+pub struct DeadLetter {
+    /// Original brain-task / sched_task id. Same handle the dashboard
+    /// already shows in #/queue.
+    #[primary_key]
+    pub task_id: String,
+    /// "workplan" | "hex-command" | "shell" — matches the brain-task kind.
+    pub kind: String,
+    /// The original payload (workplan path, command args, shell line).
+    pub payload: String,
+    /// Most recent error message from the dispatcher / executor. Bounded
+    /// to ~1 KB at write time — long stack traces get truncated.
+    pub last_error: String,
+    /// How many attempts before quarantine. Single source of truth — the
+    /// brain-task's retry_count gets reset by reschedules, this stays
+    /// monotonic.
+    pub attempt_count: u32,
+    /// RFC 3339 timestamps. Useful for "how old is this and is it worth
+    /// bothering" triage on the dashboard.
+    pub first_failed_at: String,
+    pub last_failed_at: String,
+    /// Operator-tunable priority at the time of quarantine — `replay`
+    /// preserves it so the re-enqueued task lands in the same bucket.
+    pub original_priority: i32,
+}
+
+/// Append a dead-letter row. Called by the dispatcher when a brain-task's
+/// attempt_count exceeds the configured threshold (HEX_DEAD_LETTER_THRESHOLD).
+/// On duplicate task_id the row is upserted — attempt_count bumps to the
+/// new value, last_failed_at refreshes. first_failed_at preserved.
+#[reducer]
+pub fn dead_letter_record(
+    ctx: &ReducerContext,
+    task_id: String,
+    kind: String,
+    payload: String,
+    last_error: String,
+    attempt_count: u32,
+    original_priority: i32,
+    timestamp: String,
+) -> Result<(), String> {
+    if task_id.is_empty() {
+        return Err("empty task_id".to_string());
+    }
+    // Bound the error string so an oversize traceback doesn't blow up the
+    // STDB row size limit (see ADR-2026-05-08-2600).
+    const MAX_ERR_LEN: usize = 1024;
+    let last_error = if last_error.len() > MAX_ERR_LEN {
+        let mut truncated = last_error[..MAX_ERR_LEN].to_string();
+        truncated.push_str("… [truncated]");
+        truncated
+    } else {
+        last_error
+    };
+    if let Some(existing) = ctx.db.dead_letter().task_id().find(&task_id) {
+        ctx.db.dead_letter().task_id().update(DeadLetter {
+            kind,
+            payload,
+            last_error,
+            attempt_count,
+            last_failed_at: timestamp,
+            first_failed_at: existing.first_failed_at,
+            original_priority,
+            ..existing
+        });
+    } else {
+        ctx.db.dead_letter().insert(DeadLetter {
+            task_id,
+            kind,
+            payload,
+            last_error,
+            attempt_count,
+            first_failed_at: timestamp.clone(),
+            last_failed_at: timestamp,
+            original_priority,
+        });
+    }
+    Ok(())
+}
+
+// ============================================================
+// improver_event — append-only log of MAPE-K transitions
+// (ADR-2026-05-19-0721 P4.1 + ADR-2026-05-19-0900 P2.4).
+// ============================================================
+// The improver loop's K phase: every hypothesis discover / propose /
+// judge / act / dead-letter transition writes one row here. The
+// improver_judge reads back via `historical_reject_rate` so the system
+// learns which detector + scope patterns the operator tends to overrule.
+//
+// Distinct from supervisor_event — supervisor_event is the OTP-style
+// pool reconciliation log; improver_event is the MAPE-K learning log.
+// Different consumers, different cadences.
+// ============================================================
+
+#[table(name = improver_event, public)]
+#[derive(Clone, Debug)]
+pub struct ImproverEvent {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub ts: String,
+    /// "discover" | "propose" | "judge" | "act" | "retry_quota_exceeded" | "pong" | …
+    /// Loose enum — detector authors invent new kinds; the dashboard
+    /// groups by kind without enumerating them up front.
+    pub kind: String,
+    /// Where the event originated. Same shape as Hypothesis.source —
+    /// e.g. "AdrDoctor", "DispatchRetryQuota", "GodTypes", "Liveness".
+    pub source: String,
+    /// Scope of the event — typically a task_id, ADR id, or component
+    /// role. Together with source it acts as the dedup key for
+    /// historical_reject_rate computation.
+    pub scope: String,
+    /// JSON blob with kind-specific fields. Kept under ~2 KB per row
+    /// to stay below STDB's per-row size cap (ADR-2026-05-08-2600).
+    pub payload: String,
+    /// Optional cross-reference — e.g. a `pong` event's `related` points
+    /// to the `ping` event's id; an `act` event's `related` points to
+    /// the originating `discover`.
+    pub related: u64,
+}
+
+/// Append one improver_event row. Loose schema — callers are
+/// responsible for their kind/source/scope conventions. Returns the
+/// auto-incremented id so the caller can include it in a downstream
+/// `related` reference.
+#[reducer]
+pub fn improver_event_record(
+    ctx: &ReducerContext,
+    kind: String,
+    source: String,
+    scope: String,
+    payload: String,
+    related: u64,
+    timestamp: String,
+) -> Result<(), String> {
+    if kind.is_empty() {
+        return Err("kind is required".to_string());
+    }
+    // Bound payload to ~2 KB so a runaway emitter can't blow up STDB's
+    // per-row size cap.
+    const MAX_PAYLOAD_LEN: usize = 2048;
+    let payload = if payload.len() > MAX_PAYLOAD_LEN {
+        let mut t = payload[..MAX_PAYLOAD_LEN].to_string();
+        t.push_str("… [truncated]");
+        t
+    } else {
+        payload
+    };
+    ctx.db.improver_event().insert(ImproverEvent {
+        id: 0, // auto_inc fills this
+        ts: timestamp,
+        kind,
+        source,
+        scope,
+        payload,
+        related,
+    });
+    Ok(())
+}
+
+/// Operator-driven replay — copy the dead-letter row back into the
+/// sched_task pending queue (or whichever queue the dispatcher reads
+/// from) and remove the dead_letter row. Returns the rehydrated kind +
+/// payload + priority so the caller can re-enqueue at the API layer.
+/// Idempotent: calling on an unknown task_id returns an empty result
+/// rather than erroring, so the dashboard "Replay" button is safe to
+/// double-click.
+#[reducer]
+pub fn dead_letter_replay(ctx: &ReducerContext, task_id: String) -> Result<(), String> {
+    if let Some(row) = ctx.db.dead_letter().task_id().find(&task_id) {
+        // The actual re-enqueue happens on the nexus side — the dispatcher
+        // owns sched_task creation. This reducer just opens the gate by
+        // removing the dead-letter quarantine; nexus subscribes to deletes
+        // and re-enqueues. Wiring lives in P2.3.
+        ctx.db.dead_letter().task_id().delete(&row.task_id);
+    }
     Ok(())
 }
 
@@ -4533,6 +4910,40 @@ pub fn supervisor_init(ctx: &ReducerContext) -> Result<(), String> {
     Ok(())
 }
 
+/// Disable the worker-pool supervisor by deleting its tick schedule anchor.
+/// STDB stops calling `supervisor_tick`. The single-agent epoch runs the
+/// supervisor dormant (ADR-2606071340 P0) — the agent runs in-process, so there
+/// is no pool fleet to supervise. Re-enable with `supervisor_init`.
+#[reducer]
+pub fn supervisor_disable(ctx: &ReducerContext) -> Result<(), String> {
+    let ids: Vec<u64> = ctx
+        .db
+        .supervisor_tick_schedule()
+        .iter()
+        .map(|s| s.scheduled_id)
+        .collect();
+    let count = ids.len();
+    for id in ids {
+        ctx.db.supervisor_tick_schedule().scheduled_id().delete(&id);
+    }
+    log::info!("supervisor_disable: removed {} tick schedule(s)", count);
+    Ok(())
+}
+
+/// Purge ALL supervisor_event rows. With the supervisor dormant
+/// (ADR-2606071340 P0) the accumulated spawn_request/crash_loop backlog is inert
+/// cruft (e.g. 19k rows from the 2026-06-07 flood). Operator-invoked cleanup.
+#[reducer]
+pub fn supervisor_event_purge(ctx: &ReducerContext) -> Result<(), String> {
+    let ids: Vec<u64> = ctx.db.supervisor_event().iter().map(|e| e.id).collect();
+    let count = ids.len();
+    for id in ids {
+        ctx.db.supervisor_event().id().delete(&id);
+    }
+    log::info!("supervisor_event_purge: removed {} event(s)", count);
+    Ok(())
+}
+
 /// THE supervisor. Fires every 10s.
 ///
 /// For each non-paused worker_pool_intent:
@@ -4573,7 +4984,60 @@ pub fn supervisor_tick(
     }
     let now_micros = parse_ts_micros(&now_str).unwrap_or(0);
 
+    // ── Stale-heartbeat reap pass (ADR-2026-05-19-0900 P3.2) ──
+    //
+    // Before the spawn/crash accounting runs, mark any worker whose
+    // last_heartbeat is older than STALE_HEARTBEAT_SECS as exited. Without
+    // this pass, a worker that stops beating WITHOUT setting exited_at
+    // (the 11-day zombie sched daemon pattern from the 2026-05-19
+    // postmortem) is counted as `alive_count` forever and the supervisor
+    // never asks for a respawn.
+    //
+    // Threshold rationale: heartbeats land every 15s (IHeartbeatPort
+    // recommended cadence). 60s = 4 missed beats — enough margin to
+    // tolerate GC pauses or transient STDB reconnects without false
+    // reaping, narrow enough that an actually-dead worker triggers
+    // respawn within 1-2 minutes.
+    const STALE_HEARTBEAT_SECS: i64 = 60;
+    let stale_cutoff_micros = now_micros - (STALE_HEARTBEAT_SECS * 1_000_000);
+    if now_micros != 0 {
+        let alive_rows: Vec<WorkerProcess> = ctx.db.worker_process().iter()
+            .filter(|p| p.exited_at.is_empty())
+            .collect();
+        for row in alive_rows {
+            let last_beat_micros = parse_ts_micros(&row.last_heartbeat).unwrap_or(0);
+            if last_beat_micros == 0 || last_beat_micros >= stale_cutoff_micros {
+                continue;
+            }
+            let mut updated = row.clone();
+            updated.exited_at = now_str.clone();
+            updated.exit_reason = "stale_heartbeat".to_string();
+            updated.status = "stopping".to_string();
+            ctx.db.worker_process().id().update(updated);
+            ctx.db.supervisor_event().insert(SupervisorEvent {
+                id: 0,
+                ts: now_str.clone(),
+                kind: "stale_heartbeat".to_string(),
+                pool_id: row.pool_id.clone(),
+                worker_id: row.id.clone(),
+                payload: format!(
+                    r#"{{"last_heartbeat":"{}","threshold_secs":{}}}"#,
+                    row.last_heartbeat, STALE_HEARTBEAT_SECS
+                ),
+                handled: false,
+                handled_at: String::new(),
+                handled_by: String::new(),
+            });
+            log::warn!(
+                "supervisor: reaped stale worker {} (pool {}, last_heartbeat {})",
+                row.id, row.pool_id, row.last_heartbeat
+            );
+        }
+    }
+
     // Snapshot all worker_process rows once; we'll scan per-pool.
+    // Re-snapshot after the reap pass so the alive_count below sees the
+    // freshly-set exited_at values.
     let processes: Vec<WorkerProcess> = ctx.db.worker_process().iter().collect();
     let pools: Vec<WorkerPoolIntent> = ctx.db.worker_pool_intent().iter().collect();
 
@@ -4597,6 +5061,24 @@ pub fn supervisor_tick(
         // its lifetime can never recover — the supervisor would re-trip the
         // breaker every tick because all-time exits dwarfs max_restarts.
         // Window: max_restart_window_secs from the pool config.
+        //
+        // ALSO exclude `stale_heartbeat` exits from the crash-loop tally.
+        // That reason is set when the worker's heartbeat stops, which
+        // happens for two distinct causes:
+        //   (a) actual worker crash / hang — a true crash-loop signal
+        //   (b) nexus restart orphaning live workers — they get reaped
+        //       en masse on the next tick, NOT a crash
+        // Counting (b) as crash-loops false-trips the breaker on every
+        // nexus restart that had >max_restarts personas running, marking
+        // every pool dead until an operator clears it. Observed
+        // 2026-05-21: 31/31 pools went into crash_loop after a routine
+        // nexus restart because the supervisor reaped 30+ orphaned
+        // workers in one tick.
+        //
+        // True-crash signals that DO count: "panic", "killed", "oom",
+        // "abort", "exit_nonzero", "unknown" (from /proc-watchdog path
+        // which fires on any non-graceful termination). "normal" never
+        // counts.
         let window_micros: i64 = (pool.max_restart_window_secs as i64) * 1_000_000;
         let cutoff_micros = now_micros - window_micros;
         let exited_in_pool: Vec<&WorkerProcess> = processes.iter()
@@ -4611,7 +5093,12 @@ pub fn supervisor_tick(
                 }
             })
             .collect();
-        let recent_exits = exited_in_pool.len() as u32;
+        // Crash-loop tally excludes stale_heartbeat (see comment above).
+        // The `exited_in_pool` set above is still used for `transient`
+        // restart_strategy decisions, which depend on the FULL exit set.
+        let recent_exits: u32 = exited_in_pool.iter()
+            .filter(|p| p.exit_reason != "stale_heartbeat")
+            .count() as u32;
 
         // Crash-loop check (pool-level, sticky until operator resumes).
         if !pool.in_crash_loop && recent_exits > pool.max_restarts {
@@ -4755,6 +5242,773 @@ pub struct PersonaTickSchedule {
     #[auto_inc]
     pub scheduled_id: u64,
     pub scheduled_at: ScheduleAt,
+}
+
+// ============================================================
+// Persona prompt — STDB mirror of the seed bodies in
+// hex-nexus::orchestration::persona_prompt_seeds (ADR-2026-05-23-0900).
+//
+// One row per role. Read by org_responder / sop_executor at every SOP
+// tick, ahead of the hardcoded fallback. Seeded by nexus at cold-start
+// via `seed_persona_prompt` below. Body cap 8 KB per field; row cap
+// well under the BSATN 24 KB payload threshold.
+//
+// Notable absences (deferred to future ADRs that ship the consumers):
+//   - no `version` field — single row per role in v1; history table
+//     will be added when there's a rollback consumer
+//   - no `rl_score_*` fields — no RL producer keyed to per-prompt
+//     versions exists yet
+//   - no audit table — no audit consumer
+//
+// Identity binding: `seeded_by` is set to ctx.sender.to_hex() inside
+// the reducer, NOT supplied by the caller. This is the only enforced
+// identity field in v1; future apply-gate ADR will add an allowlist
+// of acceptable senders.
+// ============================================================
+
+#[table(name = persona_prompt, public)]
+#[derive(Clone, Debug)]
+pub struct PersonaPrompt {
+    #[primary_key]
+    pub role: String,
+    /// Body used by org_responder's CLASSIFY phase (strict-JSON classifier).
+    pub classify_body: String,
+    /// Body used by sop_executor's REASON phase (post-CLASSIFY, post-GROUND).
+    pub reason_body: String,
+    pub model_preferred: String,
+    pub model_upgrade_to: String,
+    pub seeded_at: Timestamp,
+    /// STDB principal hex of the caller — bound from ctx.sender, NOT a
+    /// caller-supplied label. Adversarial review of v0 ADR
+    /// (2026-05-23-0815) flagged free-text identity fields as a P0;
+    /// this field closes that finding at the v1 reducer surface.
+    pub seeded_by: String,
+}
+
+const PERSONA_PROMPT_BODY_MAX: usize = 8192;
+
+// ============================================================
+// persona_prompt_history — append-only audit + rollback substrate
+// for Path B item 3 (ADR-2026-05-23-0900 follow-up).
+//
+// Every successful write to `persona_prompt` (via seed_persona_prompt
+// OR persona_prompt_apply) appends a row here BEFORE mutating the
+// active row. Rows are never deleted — the table is the durable
+// audit trail and the source of truth for `persona_prompt_rollback`.
+//
+// Schema rationale:
+//   - composite primary key (role, version): natural ordering per role,
+//     stable identity across rollbacks (rolling back to v2 then re-
+//     applying creates v4 with the v2 body, not a new v2)
+//   - `superseded_at: Option<Timestamp>`: NULL while this version is
+//     the active one; set when a newer version is applied
+//   - `superseded_by_version: Option<u64>`: which version replaced
+//     this one — Some(N) for retired rows, None for the active row
+//   - `event_kind: String`: "seed" | "apply" | "rollback" — tells
+//     the operator (and future RL learn-phase) what kind of write
+//     produced this row
+// ============================================================
+
+#[table(name = persona_prompt_history, public)]
+#[derive(Clone, Debug)]
+pub struct PersonaPromptHistory {
+    /// Composite-id-ish primary key: `{role}::{version:010}`. Numeric
+    /// zero-pad lets STDB SQL ORDER BY id give natural version order
+    /// without needing a SQL `ORDER BY version`.
+    #[primary_key]
+    pub id: String,
+    pub role: String,
+    pub version: u64,
+    pub classify_body: String,
+    pub reason_body: String,
+    pub model_preferred: String,
+    pub model_upgrade_to: String,
+    pub applied_at: Timestamp,
+    pub applied_by: String,
+    /// "seed" (cold-start), "apply" (operator/improver apply), or
+    /// "rollback" (operator/observer revert to a prior version).
+    pub event_kind: String,
+    /// NULL while this version is the currently-active row in
+    /// `persona_prompt`. Set to the apply timestamp of the version
+    /// that replaced this one when superseded.
+    pub superseded_at: Option<Timestamp>,
+    /// The version that replaced this one. None while active.
+    pub superseded_by_version: Option<u64>,
+}
+
+/// Insert a history row + (for non-seed events) supersede the prior
+/// active row. Called by `seed_persona_prompt`, `persona_prompt_apply`,
+/// and `persona_prompt_rollback` — all three write paths funnel
+/// through here so the audit trail is uniform.
+fn record_persona_prompt_history(
+    ctx: &ReducerContext,
+    role: &str,
+    new_version: u64,
+    classify_body: &str,
+    reason_body: &str,
+    model_preferred: &str,
+    model_upgrade_to: &str,
+    applied_by: &str,
+    event_kind: &str,
+) {
+    // Supersede the prior active row for this role: walk history,
+    // find the row with the highest version where superseded_at is
+    // None, and stamp it.
+    let mut latest_active: Option<(String, u64)> = None;
+    for h in ctx.db.persona_prompt_history().iter() {
+        if h.role != role || h.superseded_at.is_some() {
+            continue;
+        }
+        if latest_active.as_ref().is_none_or(|(_, v)| h.version > *v) {
+            latest_active = Some((h.id.clone(), h.version));
+        }
+    }
+    if let Some((prev_id, _prev_v)) = latest_active {
+        if let Some(mut prev) = ctx.db.persona_prompt_history().id().find(&prev_id) {
+            prev.superseded_at = Some(ctx.timestamp);
+            prev.superseded_by_version = Some(new_version);
+            ctx.db.persona_prompt_history().id().update(prev);
+        }
+    }
+    let id = format!("{}::{:010}", role, new_version);
+    ctx.db.persona_prompt_history().insert(PersonaPromptHistory {
+        id,
+        role: role.to_string(),
+        version: new_version,
+        classify_body: classify_body.to_string(),
+        reason_body: reason_body.to_string(),
+        model_preferred: model_preferred.to_string(),
+        model_upgrade_to: model_upgrade_to.to_string(),
+        applied_at: ctx.timestamp,
+        applied_by: applied_by.to_string(),
+        event_kind: event_kind.to_string(),
+        superseded_at: None,
+        superseded_by_version: None,
+    });
+}
+
+/// Compute the next version number for a role. The next version is
+/// `max(history.version) + 1`, or 1 if no history exists. Walks the
+/// table linearly — fine at the ≤8-roles × ≤many-versions scale.
+fn next_persona_prompt_version(ctx: &ReducerContext, role: &str) -> u64 {
+    let mut max_v: u64 = 0;
+    for h in ctx.db.persona_prompt_history().iter() {
+        if h.role == role && h.version > max_v {
+            max_v = h.version;
+        }
+    }
+    max_v + 1
+}
+
+/// Idempotent seed for one persona role. Called by nexus cold-start for
+/// each role in `persona_prompt_seeds::SEEDED_ROLES`. If the row exists
+/// and the body fields are byte-identical, no-op. If bodies differ, the
+/// row is updated and `seeded_at` is bumped to ctx.timestamp.
+///
+/// **Not** a runtime-mutation pathway — v1 of the persona-prompts ADR
+/// explicitly does not include `persona_prompt_apply` (no improver),
+/// `persona_prompt_rollback` (no history), or `promote_to_yaml` (the
+/// v0 attack chain leg).
+#[reducer]
+pub fn seed_persona_prompt(
+    ctx: &ReducerContext,
+    role: String,
+    classify_body: String,
+    reason_body: String,
+    model_preferred: String,
+    model_upgrade_to: String,
+) -> Result<(), String> {
+    if role.is_empty() {
+        return Err("role is required".into());
+    }
+    if classify_body.len() > PERSONA_PROMPT_BODY_MAX {
+        return Err(format!(
+            "classify_body size {} exceeds {} byte cap",
+            classify_body.len(),
+            PERSONA_PROMPT_BODY_MAX
+        ));
+    }
+    if reason_body.len() > PERSONA_PROMPT_BODY_MAX {
+        return Err(format!(
+            "reason_body size {} exceeds {} byte cap",
+            reason_body.len(),
+            PERSONA_PROMPT_BODY_MAX
+        ));
+    }
+    // Role allowlist: must exist in persona_pool. Prevents arbitrary-row
+    // injection (an attacker that can call the reducer cannot seed
+    // a row for a role the supervisor doesn't know about).
+    if ctx.db.persona_pool().role().find(&role).is_none() {
+        return Err(format!(
+            "persona_prompt: role '{}' is not in persona_pool — seed persona_pool first",
+            role
+        ));
+    }
+
+    let seeded_by = ctx.sender.to_string();
+    let new_row = PersonaPrompt {
+        role: role.clone(),
+        classify_body: classify_body.clone(),
+        reason_body: reason_body.clone(),
+        model_preferred: model_preferred.clone(),
+        model_upgrade_to: model_upgrade_to.clone(),
+        seeded_at: ctx.timestamp,
+        seeded_by: seeded_by.clone(),
+    };
+    if let Some(existing) = ctx.db.persona_prompt().role().find(&role) {
+        // Preserve operator-driven state (apply / rollback) across nexus
+        // restarts. Without this guard the supervisor's cold-start seed
+        // would silently overwrite any applied prompt back to the seed
+        // body on every restart — defeating the whole runtime-mutable
+        // contract. Detected by the seeded_by prefix: cold-start writes
+        // are bare principal hex; apply uses "applied:..."; rollback
+        // uses "rollback:...". A subsequent operator-driven apply
+        // (via `hex persona-prompt apply`) is the documented way to
+        // refresh seed content.
+        if existing.seeded_by.starts_with("applied:")
+            || existing.seeded_by.starts_with("rollback:")
+        {
+            return Ok(());
+        }
+        if existing.classify_body == new_row.classify_body
+            && existing.reason_body == new_row.reason_body
+            && existing.model_preferred == new_row.model_preferred
+            && existing.model_upgrade_to == new_row.model_upgrade_to
+        {
+            // Byte-equal — no-op. seeded_at preserved. No history row
+            // (idempotent re-seed shouldn't bloat the audit trail).
+            return Ok(());
+        }
+        ctx.db.persona_prompt().role().update(new_row);
+    } else {
+        ctx.db.persona_prompt().insert(new_row);
+    }
+    // History append AFTER the active-row write succeeds. event_kind
+    // depends on whether this is the first row for the role.
+    let version = next_persona_prompt_version(ctx, &role);
+    let event_kind = if version == 1 { "seed" } else { "seed-update" };
+    record_persona_prompt_history(
+        ctx,
+        &role,
+        version,
+        &classify_body,
+        &reason_body,
+        &model_preferred,
+        &model_upgrade_to,
+        &seeded_by,
+        event_kind,
+    );
+    Ok(())
+}
+
+/// Apply a new active prompt for a persona. Distinct from `seed_persona_prompt`
+/// in three ways:
+///
+/// 1. Always overwrites (not idempotent on byte-equality) so the operator
+///    can re-apply the same body to bump `seeded_at` — useful when the body
+///    is identical but the operator wants to log the apply event.
+/// 2. The `seeded_by` field records `"applied:" + ctx.sender.to_string()` so
+///    the audit trail in v0 / future ADRs can distinguish seed events from
+///    apply events without a separate `applied_by` column.
+/// 3. The role MUST already exist in `persona_prompt` — applies cannot
+///    create a row from scratch. This forces operators to seed first
+///    (cold-start does this) before applying a rewrite.
+///
+/// **Operator-triggered Path-A pilot only.** No automated apply gate; no
+/// adversarial verdict check inside the reducer. The operator (or a tool
+/// that runs adversarial-red + adversarial-blue + validation-judge before
+/// calling this) is the master supervisor in v1.
+///
+/// Future apply-gate ADR will add a `persona_prompt_proposal` row that this
+/// reducer validates against — but that requires the platform `provider_lock`
+/// enforcement which doesn't exist yet (`hex agent worker` dispatcher gap).
+#[reducer]
+pub fn persona_prompt_apply(
+    ctx: &ReducerContext,
+    role: String,
+    classify_body: String,
+    reason_body: String,
+    model_preferred: String,
+    model_upgrade_to: String,
+) -> Result<(), String> {
+    if role.is_empty() {
+        return Err("role is required".into());
+    }
+    if classify_body.len() > PERSONA_PROMPT_BODY_MAX {
+        return Err(format!(
+            "classify_body size {} exceeds {} byte cap",
+            classify_body.len(),
+            PERSONA_PROMPT_BODY_MAX
+        ));
+    }
+    if reason_body.len() > PERSONA_PROMPT_BODY_MAX {
+        return Err(format!(
+            "reason_body size {} exceeds {} byte cap",
+            reason_body.len(),
+            PERSONA_PROMPT_BODY_MAX
+        ));
+    }
+    if ctx.db.persona_prompt().role().find(&role).is_none() {
+        return Err(format!(
+            "persona_prompt_apply: role '{}' not yet seeded — call seed_persona_prompt first",
+            role
+        ));
+    }
+    let applied_by = format!("applied:{}", ctx.sender);
+    let new_row = PersonaPrompt {
+        role: role.clone(),
+        classify_body: classify_body.clone(),
+        reason_body: reason_body.clone(),
+        model_preferred: model_preferred.clone(),
+        model_upgrade_to: model_upgrade_to.clone(),
+        seeded_at: ctx.timestamp,
+        seeded_by: applied_by.clone(),
+    };
+    ctx.db.persona_prompt().role().update(new_row);
+    // History append. Every apply writes a fresh history row, even when
+    // the body bytes match the prior — apply explicitly bumps seeded_at
+    // as an audit signal (per the reducer's contract).
+    let version = next_persona_prompt_version(ctx, &role);
+    record_persona_prompt_history(
+        ctx,
+        &role,
+        version,
+        &classify_body,
+        &reason_body,
+        &model_preferred,
+        &model_upgrade_to,
+        &applied_by,
+        "apply",
+    );
+    Ok(())
+}
+
+/// Revert `persona_prompt` for a role to a prior `persona_prompt_history`
+/// version. The row written to `persona_prompt` is the history row's
+/// body content; a NEW history row is appended with `event_kind="rollback"`
+/// and version = max + 1 (rollbacks are forward-only in version space —
+/// rolling back to v2 and re-applying creates v4, never re-uses v2).
+///
+/// `to_version` of 0 means "the most recent superseded version" — handy
+/// for one-shot undo when the operator just regrets the last apply.
+#[reducer]
+pub fn persona_prompt_rollback(
+    ctx: &ReducerContext,
+    role: String,
+    to_version: u64,
+) -> Result<(), String> {
+    if role.is_empty() {
+        return Err("role is required".into());
+    }
+
+    // Resolve the target version.
+    let target_version = if to_version == 0 {
+        // Pick the latest superseded row for this role.
+        let mut best: Option<u64> = None;
+        for h in ctx.db.persona_prompt_history().iter() {
+            if h.role != role || h.superseded_at.is_none() {
+                continue;
+            }
+            if best.is_none_or(|v| h.version > v) {
+                best = Some(h.version);
+            }
+        }
+        match best {
+            Some(v) => v,
+            None => return Err(format!(
+                "persona_prompt_rollback: no prior versions to revert to for role '{}'",
+                role
+            )),
+        }
+    } else {
+        to_version
+    };
+
+    let target_id = format!("{}::{:010}", role, target_version);
+    let target = ctx
+        .db
+        .persona_prompt_history()
+        .id()
+        .find(&target_id)
+        .ok_or_else(|| {
+            format!(
+                "persona_prompt_rollback: no history row for role '{}' version {}",
+                role, target_version
+            )
+        })?;
+
+    // Active row must exist (rollback ≠ create).
+    if ctx.db.persona_prompt().role().find(&role).is_none() {
+        return Err(format!(
+            "persona_prompt_rollback: role '{}' is not currently active in persona_prompt",
+            role
+        ));
+    }
+
+    let rolled_by = format!("rollback:{}", ctx.sender);
+    let new_row = PersonaPrompt {
+        role: role.clone(),
+        classify_body: target.classify_body.clone(),
+        reason_body: target.reason_body.clone(),
+        model_preferred: target.model_preferred.clone(),
+        model_upgrade_to: target.model_upgrade_to.clone(),
+        seeded_at: ctx.timestamp,
+        seeded_by: rolled_by.clone(),
+    };
+    ctx.db.persona_prompt().role().update(new_row);
+
+    let new_version = next_persona_prompt_version(ctx, &role);
+    record_persona_prompt_history(
+        ctx,
+        &role,
+        new_version,
+        &target.classify_body,
+        &target.reason_body,
+        &target.model_preferred,
+        &target.model_upgrade_to,
+        &rolled_by,
+        "rollback",
+    );
+    Ok(())
+}
+
+// ============================================================
+// persona_prompt_proposal — successful-applies-only verdict ledger
+// (Path B item 4, ADR-2026-05-23-0900 follow-up).
+//
+// Records every SUCCESSFUL gated apply with the full verdict chain
+// attached. Rejections are not recorded here — STDB reducers are
+// transactional, so an Err return rolls back the row insert anyway.
+// Rejection audit lives in the nexus tracing log (hive_improver +
+// CLI both log structured rejection events).
+//
+// This is the complement to persona_prompt_history: history records
+// every successful write (seed / apply / rollback) with body+model;
+// proposal additionally records the verdict chain that authorised
+// the gated apply. Queryable join key is (role, applied_at ≈ created_at).
+//
+// Schema notes:
+//   - composite primary key uses role + creation timestamp, formatted
+//     so STDB SQL ORDER BY id sorts chronologically per role
+//   - provider strings are the divergence-class tags ("anthropic",
+//     "openai", "ollama", "openrouter"). Caller passes them; reducer
+//     compares for inequality. Empty string is rejected.
+//   - decision is always "applied" for rows that land in this table;
+//     the field is kept (rather than dropped) so future RL outcome
+//     classifiers (Path B item 2) can extend it to "applied" /
+//     "applied-then-rolled-back" without a schema migration.
+// ============================================================
+
+#[table(name = persona_prompt_proposal, public)]
+#[derive(Clone, Debug)]
+pub struct PersonaPromptProposal {
+    /// `{role}::{created_at_micros:020}` — chronological per role
+    #[primary_key]
+    pub id: String,
+    pub role: String,
+    pub classify_body: String,
+    pub reason_body: String,
+    pub model_preferred: String,
+    pub model_upgrade_to: String,
+    pub red_provider: String,
+    pub red_verdict: String,
+    pub blue_provider: String,
+    pub blue_verdict: String,
+    pub judge_verdict: String,
+    pub decision: String,
+    pub decision_reason: String,
+    pub created_at: Timestamp,
+    pub created_by: String,
+    pub applied_version: Option<u64>,
+}
+
+fn is_approving_verdict(v: &str) -> bool {
+    matches!(v, "approve" | "approve-with-changes" | "approve_with_changes")
+}
+
+/// Verdict-gated apply: the only path the autonomous improver and the
+/// CLI's debate-enabled improve take. Enforces — at the STDB reducer
+/// boundary — what the CLI / nexus orchestrators were enforcing in
+/// process. Future callers (other clients, MCP, RL agents) cannot
+/// bypass: this reducer is the contract.
+///
+/// Validations (fail-closed; the first failed check returns Err and
+/// rolls back the entire reducer transaction):
+///   1. role non-empty, exists in `persona_prompt`
+///   2. classify_body / reason_body within PERSONA_PROMPT_BODY_MAX
+///   3. red_verdict, blue_verdict, judge_verdict all approving
+///   4. red_provider and blue_provider both non-empty
+///   5. red_provider != blue_provider (provider divergence)
+///
+/// On success the reducer:
+///   - writes the new active row to persona_prompt (seeded_by = "gated:<sender>")
+///   - appends a history row with event_kind = "apply-gated"
+///   - inserts a proposal row with decision = "applied"
+///
+/// On failure: STDB rolls back; persona_prompt unchanged; no proposal
+/// row recorded. Rejection audit lives in the caller's logs (the
+/// hive_improver and CLI both emit structured rejection events).
+#[reducer]
+pub fn persona_prompt_apply_gated(
+    ctx: &ReducerContext,
+    role: String,
+    classify_body: String,
+    reason_body: String,
+    model_preferred: String,
+    model_upgrade_to: String,
+    red_provider: String,
+    red_verdict: String,
+    blue_provider: String,
+    blue_verdict: String,
+    judge_verdict: String,
+) -> Result<(), String> {
+    if role.is_empty() {
+        return Err("role is required".into());
+    }
+    if classify_body.len() > PERSONA_PROMPT_BODY_MAX {
+        return Err(format!(
+            "classify_body size {} exceeds {} byte cap",
+            classify_body.len(),
+            PERSONA_PROMPT_BODY_MAX
+        ));
+    }
+    if reason_body.len() > PERSONA_PROMPT_BODY_MAX {
+        return Err(format!(
+            "reason_body size {} exceeds {} byte cap",
+            reason_body.len(),
+            PERSONA_PROMPT_BODY_MAX
+        ));
+    }
+    if !is_approving_verdict(&red_verdict) {
+        return Err(format!("red verdict '{}' is not approving", red_verdict));
+    }
+    if !is_approving_verdict(&blue_verdict) {
+        return Err(format!("blue verdict '{}' is not approving", blue_verdict));
+    }
+    if !is_approving_verdict(&judge_verdict) {
+        return Err(format!(
+            "judge verdict '{}' is not approving",
+            judge_verdict
+        ));
+    }
+    if red_provider.is_empty() || blue_provider.is_empty() {
+        return Err("red_provider and blue_provider must both be specified".into());
+    }
+    if red_provider == blue_provider {
+        return Err(format!(
+            "provider divergence violation: red and blue both ran on '{}'",
+            red_provider
+        ));
+    }
+    if ctx.db.persona_prompt().role().find(&role).is_none() {
+        return Err(format!(
+            "persona_prompt_apply_gated: role '{}' not yet seeded — call seed_persona_prompt first",
+            role
+        ));
+    }
+
+    // All gates passed — write the active row.
+    let created_at = ctx.timestamp;
+    let created_by = format!("gated:{}", ctx.sender);
+    let new_row = PersonaPrompt {
+        role: role.clone(),
+        classify_body: classify_body.clone(),
+        reason_body: reason_body.clone(),
+        model_preferred: model_preferred.clone(),
+        model_upgrade_to: model_upgrade_to.clone(),
+        seeded_at: ctx.timestamp,
+        seeded_by: created_by.clone(),
+    };
+    ctx.db.persona_prompt().role().update(new_row);
+
+    let version = next_persona_prompt_version(ctx, &role);
+    record_persona_prompt_history(
+        ctx,
+        &role,
+        version,
+        &classify_body,
+        &reason_body,
+        &model_preferred,
+        &model_upgrade_to,
+        &created_by,
+        "apply-gated",
+    );
+
+    let id = format!("{}::{:?}", role, created_at);
+    ctx.db.persona_prompt_proposal().insert(PersonaPromptProposal {
+        id,
+        role: role.clone(),
+        classify_body,
+        reason_body,
+        model_preferred,
+        model_upgrade_to,
+        red_provider,
+        red_verdict,
+        blue_provider,
+        blue_verdict,
+        judge_verdict,
+        decision: "applied".into(),
+        decision_reason: String::new(),
+        created_at,
+        created_by,
+        applied_version: Some(version),
+    });
+
+    Ok(())
+}
+
+// ============================================================
+// User-defined SOUL personas (ADR-2026-05-13-1849, wp-user-defined-soul-personas P1)
+// ============================================================
+// Flat-peer personas that coexist with the built-in c-suite. Storage on
+// disk at ~/.hex/personas/<name>/SOUL.md; this table tracks the rows so
+// the dashboard + routing can enumerate them. Separate from persona_pool
+// so the c-suite supervisor (25s tick, ban-after-3-fails) does NOT
+// operate over user-personas — they are invoked on demand and have no
+// health-state machine.
+//
+// name validation: ^[a-z][a-z0-9-]{0,63}$ enforced in the create reducer.
+// collision with persona_pool (c-suite + IC roles) is rejected.
+// ============================================================
+
+#[table(name = user_persona, public)]
+#[derive(Clone, Debug)]
+pub struct UserPersona {
+    #[primary_key]
+    pub name: String,
+    pub soul_hash: String,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+    pub tools_override: Option<String>,
+    pub tier_models_override: Option<String>,
+}
+
+fn user_persona_name_valid(name: &str) -> bool {
+    if name.is_empty() || name.len() > 64 {
+        return false;
+    }
+    let mut chars = name.chars();
+    let first = match chars.next() {
+        Some(c) => c,
+        None => return false,
+    };
+    if !first.is_ascii_lowercase() {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Belt-and-suspenders c-suite + IC role collision check. The reducer
+/// also queries persona_pool dynamically, but if persona_pool was
+/// transiently emptied (e.g. by a `--delete-data=on-conflict` republish
+/// before the supervisor's first tick re-seeds it), the dynamic check
+/// alone would let a user-persona named `cto` slip in. The hardcoded
+/// list closes that window.
+fn user_persona_name_reserved(name: &str) -> bool {
+    matches!(
+        name,
+        // C-suite
+        "ceo" | "cto" | "cpo" | "coo" | "ciso" | "chief-architect"
+        | "chief-visionary" | "cmo"
+        // Leads
+        | "engineering-lead" | "product-lead" | "sre-lead" | "validation-judge"
+        // ICs and tooling agents
+        | "hex-coder" | "hex-tester" | "hex-fixer" | "hex-reviewer" | "hex-ux"
+        | "hex-documenter" | "rust-refactorer" | "dead-code-analyzer"
+        | "scaffold-validator" | "planner" | "integrator" | "ux-designer"
+        | "cli-designer" | "pm-agent" | "behavioral-spec-writer"
+        | "adversarial-red" | "adversarial-blue" | "adr-reviewer"
+        | "platform-engineer" | "sre-engineer"
+    )
+}
+
+#[reducer]
+pub fn user_persona_create(
+    ctx: &ReducerContext,
+    name: String,
+    soul_hash: String,
+    tools_override: Option<String>,
+    tier_models_override: Option<String>,
+) -> Result<(), String> {
+    if !user_persona_name_valid(&name) {
+        return Err(format!(
+            "user_persona_create: invalid name '{}' (must match ^[a-z][a-z0-9-]{{0,63}}$)",
+            name
+        ));
+    }
+    if soul_hash.is_empty() {
+        return Err("user_persona_create: soul_hash is required".into());
+    }
+    if user_persona_name_reserved(&name) {
+        return Err(format!(
+            "user_persona_create: '{}' is a reserved c-suite or IC role identifier",
+            name
+        ));
+    }
+    if ctx.db.persona_pool().role().find(&name).is_some() {
+        return Err(format!(
+            "user_persona_create: name '{}' collides with a built-in c-suite or IC role in persona_pool",
+            name
+        ));
+    }
+    if ctx.db.user_persona().name().find(&name).is_some() {
+        return Err(format!(
+            "user_persona_create: user_persona '{}' already exists; use user_persona_update_soul to refresh",
+            name
+        ));
+    }
+    let now = format!("{:?}", ctx.timestamp);
+    ctx.db.user_persona().insert(UserPersona {
+        name,
+        soul_hash,
+        created_at: now,
+        last_used_at: None,
+        tools_override,
+        tier_models_override,
+    });
+    Ok(())
+}
+
+#[reducer]
+pub fn user_persona_delete(ctx: &ReducerContext, name: String) -> Result<(), String> {
+    if ctx.db.user_persona().name().find(&name).is_none() {
+        return Err(format!("user_persona_delete: '{}' not found", name));
+    }
+    ctx.db.user_persona().name().delete(&name);
+    Ok(())
+}
+
+#[reducer]
+pub fn user_persona_touch(ctx: &ReducerContext, name: String) -> Result<(), String> {
+    let mut row = ctx
+        .db
+        .user_persona()
+        .name()
+        .find(&name)
+        .ok_or_else(|| format!("user_persona_touch: '{}' not found", name))?;
+    row.last_used_at = Some(format!("{:?}", ctx.timestamp));
+    ctx.db.user_persona().name().update(row);
+    Ok(())
+}
+
+#[reducer]
+pub fn user_persona_update_soul(
+    ctx: &ReducerContext,
+    name: String,
+    soul_hash: String,
+) -> Result<(), String> {
+    if soul_hash.is_empty() {
+        return Err("user_persona_update_soul: soul_hash is required".into());
+    }
+    let mut row = ctx
+        .db
+        .user_persona()
+        .name()
+        .find(&name)
+        .ok_or_else(|| format!("user_persona_update_soul: '{}' not found", name))?;
+    row.soul_hash = soul_hash;
+    ctx.db.user_persona().name().update(row);
+    Ok(())
 }
 
 #[reducer]
@@ -5009,7 +6263,7 @@ fn parse_persona_ts_micros(s: &str) -> Option<i64> {
 }
 
 // ============================================================
-//  Merge-Team Safety Gate (ADR-2605081126 P1)
+//  Merge-Team Safety Gate (ADR-2026-05-08-1126 P1)
 //
 //  No agent writes to trunk. Every change to a hex-internal source file
 //  originates inside a git worktree, opens a merge_request, accumulates
@@ -5423,7 +6677,7 @@ pub fn merge_decision_tally(
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// ADR-2605082200 — Resource-aware supervisor
+// ADR-2026-05-08-2200 — Resource-aware supervisor
 //
 // Adds /proc-derived process observations (RSS, CPU, ppid, state, argv
 // signature) plus a 60s tick that emits resource_anomaly rows for
@@ -5958,7 +7212,7 @@ pub fn commitment_check_tick(
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Digital-twin action queue (ADR-2605082300)
+// Digital-twin action queue (ADR-2026-05-08-2300)
 //
 // Personas can't write files. The drafter task picks up open commitments
 // with verifiable_path artifacts, asks the proposer for the actual
@@ -6150,7 +7404,7 @@ pub fn proposed_action_operator_override(
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Persona turn claim (ADR-2605082400)
+// Persona turn claim (ADR-2026-05-08-2400)
 //
 // Closes the 5-PLANs-simultaneously race. The first persona to call
 // commitment_thread_claim wins the right to emit a Confirm row for that
@@ -6194,6 +7448,265 @@ pub fn claim_persona_turn(
         claimed_by,
         claimed_at: ctx.timestamp,
         originating_msg_id,
+    });
+    Ok(())
+}
+
+// ============================================================
+//  Agent-loop observability (wp-sop-agent-loop P6)
+// ============================================================
+//
+// One row in `agent_trajectory` per ReAct loop driver::run() call. One
+// row in `agent_step` per agent step inside that trajectory. Together
+// they're the audit trail the operator uses to see what the autonomous
+// SOP path actually did: which tools the persona called, what arguments,
+// what observations came back, and where the trajectory terminated.
+
+/// One ReAct driver run.
+#[table(name = agent_trajectory, public)]
+#[derive(Clone, Debug)]
+pub struct AgentTrajectory {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    /// Persona role that ran the loop (e.g. "hex-coder").
+    pub role: String,
+    /// First ~1k chars of the task brief the driver was given. Truncated
+    /// at insert time by the caller — the table doesn't enforce a cap.
+    pub task_brief: String,
+    /// Serialised TerminatedReason. One of: "terminal_action", "max_steps",
+    /// "token_budget", "parse_exhausted", "unknown_tool:<name>",
+    /// "inference_failed:<error>".
+    pub terminated_reason: String,
+    /// Path the terminal action targeted (empty if non-terminal).
+    pub final_action_path: String,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    /// Cumulative cost in USD across all steps (0 for local-AI runs).
+    pub total_cost_usd: f64,
+    pub total_latency_ms: u64,
+    /// ISO-8601 timestamp of when the trajectory was opened. Set by the
+    /// caller; nexus formats ctx.timestamp the same way it does in
+    /// agent-comms (STDB doesn't auto-populate String columns).
+    pub opened_at: String,
+    /// ISO-8601 timestamp of when the trajectory was closed. Empty until
+    /// agent_trajectory_close fires.
+    pub closed_at: String,
+}
+
+/// One step within a trajectory. step_idx is monotonic per trajectory.
+#[table(name = agent_step, public)]
+#[derive(Clone, Debug)]
+pub struct AgentStep {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub trajectory_id: u64,
+    pub step_idx: u32,
+    /// Persona's free-text reasoning for this step (the "thought" field
+    /// of the ReAct contract). Capped at ~2k chars by the caller.
+    pub thought: String,
+    /// Tool name invoked. For parse-failure steps the empty string;
+    /// for synthetic compile/twin-feedback steps "cargo_check" /
+    /// "twin_review" respectively.
+    pub tool: String,
+    /// JSON-serialised args the persona emitted. Empty object if none.
+    pub args_json: String,
+    /// What the tool returned. Capped at ~4k chars by the caller; the
+    /// `truncated` flag indicates whether the original was longer.
+    pub observation: String,
+    pub bytes: u64,
+    pub truncated: bool,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub latency_ms: u64,
+    pub created_at: String,
+}
+
+/// Open a new trajectory row. Returns the auto-incremented id via the
+/// `agent_trajectory_opened` event the caller subscribes to (no direct
+/// return value from reducers in STDB — read it back via SQL).
+#[reducer]
+pub fn agent_trajectory_open(
+    ctx: &ReducerContext,
+    role: String,
+    task_brief: String,
+    opened_at: String,
+) -> Result<(), String> {
+    if role.is_empty() {
+        return Err("role is required".to_string());
+    }
+    let truncated_brief: String = task_brief.chars().take(1024).collect();
+    ctx.db.agent_trajectory().insert(AgentTrajectory {
+        id: 0,
+        role,
+        task_brief: truncated_brief,
+        terminated_reason: String::new(),
+        final_action_path: String::new(),
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_cost_usd: 0.0,
+        total_latency_ms: 0,
+        opened_at,
+        closed_at: String::new(),
+    });
+    Ok(())
+}
+
+/// Record one step. Caller is responsible for passing the trajectory_id
+/// returned from agent_trajectory_open (looked up via SQL post-open). The
+/// step inserts unconditionally; concurrent recorders simply produce
+/// independent rows ordered by id.
+#[reducer]
+pub fn agent_step_record(
+    ctx: &ReducerContext,
+    trajectory_id: u64,
+    step_idx: u32,
+    thought: String,
+    tool: String,
+    args_json: String,
+    observation: String,
+    bytes: u64,
+    truncated: bool,
+    input_tokens: u64,
+    output_tokens: u64,
+    latency_ms: u64,
+    created_at: String,
+) -> Result<(), String> {
+    if trajectory_id == 0 {
+        return Err("trajectory_id is required".to_string());
+    }
+    let thought = thought.chars().take(2048).collect();
+    let observation = observation.chars().take(4096).collect();
+    let args_json = args_json.chars().take(2048).collect();
+    ctx.db.agent_step().insert(AgentStep {
+        id: 0,
+        trajectory_id,
+        step_idx,
+        thought,
+        tool,
+        args_json,
+        observation,
+        bytes,
+        truncated,
+        input_tokens,
+        output_tokens,
+        latency_ms,
+        created_at,
+    });
+    Ok(())
+}
+
+/// Close a trajectory, populating its terminal fields + totals. Idempotent:
+/// re-closing an already-closed trajectory overwrites the existing close.
+#[reducer]
+pub fn agent_trajectory_close(
+    ctx: &ReducerContext,
+    trajectory_id: u64,
+    terminated_reason: String,
+    final_action_path: String,
+    total_input_tokens: u64,
+    total_output_tokens: u64,
+    total_cost_usd: f64,
+    total_latency_ms: u64,
+    closed_at: String,
+) -> Result<(), String> {
+    if trajectory_id == 0 {
+        return Err("trajectory_id is required".to_string());
+    }
+    let Some(existing) = ctx.db.agent_trajectory().id().find(trajectory_id) else {
+        return Err(format!("trajectory {} not found", trajectory_id));
+    };
+    ctx.db.agent_trajectory().id().update(AgentTrajectory {
+        terminated_reason,
+        final_action_path,
+        total_input_tokens,
+        total_output_tokens,
+        total_cost_usd,
+        total_latency_ms,
+        closed_at,
+        ..existing
+    });
+    Ok(())
+}
+
+// ============================================================
+// classifier_response — SOP pipeline P2.1 (ADR-2026-05-17-2030)
+//
+// One row per classifier LLM call from the org_responder CLASSIFY phase.
+// Producer: nexus `post_classifier_response_open` (hex-nexus/src/orchestration/
+// org_responder.rs). Consumers: routes/observability.rs `silent_drops`
+// counter; future autonomy_ratio dashboard metric.
+//
+// Shipped 2026-05-28 to close the P2.1 gap surfaced during the ebay-mvp
+// scaling test — the writer had been calling this reducer for ~11 days
+// while the WASM module half of the change never landed, producing a
+// silent 404 on every classify call.
+//
+// Schema rationale:
+//   - `id: u64 auto_inc` — observability.rs SELECTs `id`
+//   - `created_at: String` (RFC3339) — caller-supplied, matches the
+//     module-wide convention; observability.rs uses RFC3339 string compare
+//   - `tool_plan_json` / `tool_spec_json` — serde_json strings, not BSATN;
+//     classifier schema is permissive (Option<Vec<ToolPlanStep>>) and
+//     consumers parse client-side
+//   - Insert-only, no update. Fire-and-forget at the call site.
+// ============================================================
+
+#[table(name = classifier_response, public)]
+#[derive(Clone, Debug)]
+pub struct ClassifierResponse {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub msg_id: u64,
+    pub from_role: String,
+    pub to_role: String,
+    pub decision: String,
+    pub tool_plan_json: String,
+    pub reason: String,
+    pub target_persona: String,
+    pub question: String,
+    pub tool_spec_json: String,
+    pub reparse_attempts: u32,
+    pub final_outcome: String,
+    pub cost_usd: f32,
+    pub created_at: String,
+}
+
+#[reducer]
+#[allow(clippy::too_many_arguments)]
+pub fn classifier_response_open(
+    ctx: &ReducerContext,
+    msg_id: u64,
+    from_role: String,
+    to_role: String,
+    decision: String,
+    tool_plan_json: String,
+    reason: String,
+    target_persona: String,
+    question: String,
+    tool_spec_json: String,
+    reparse_attempts: u32,
+    final_outcome: String,
+    cost_usd: f32,
+    created_at: String,
+) -> Result<(), String> {
+    ctx.db.classifier_response().insert(ClassifierResponse {
+        id: 0, // auto_inc
+        msg_id,
+        from_role,
+        to_role,
+        decision,
+        tool_plan_json,
+        reason,
+        target_persona,
+        question,
+        tool_spec_json,
+        reparse_attempts,
+        final_outcome,
+        cost_usd,
+        created_at,
     });
     Ok(())
 }

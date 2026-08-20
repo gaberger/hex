@@ -64,7 +64,7 @@ hex agents have a `model_tier` field (1-3) that determines which model class the
 | scaffold-validator | 1 | File existence checks | Yes — any model |
 | hex-coder | 2 | Code generation within one adapter | Yes — 14B+ recommended |
 | dead-code-analyzer | 2 | Pattern matching + grep | Yes — 14B+ |
-| adr-reviewer | 2 | Template validation | Yes — 14B+ |
+| ADR-reviewer | 2 | Template validation | Yes — 14B+ |
 | dependency-analyst | 2 | Dependency analysis | Yes — 14B+ |
 | rust-refactorer | 2 | Rust-specific refactoring | Yes — 32B+ recommended |
 | integrator | 2 | Merge + test orchestration | Yes — 14B+ |

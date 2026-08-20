@@ -13,15 +13,15 @@ import SwarmTimeline, { tasksToTimeline } from "./SwarmTimeline";
 
 const SwarmMonitor: Component<{ swarmId: string }> = (props) => {
   const swarm = createMemo(() =>
-    swarms().find((s: any) => (s.id ?? s.swarm_id ?? "") === props.swarmId)
+    (swarms() ?? []).find((s: any) => (s.id ?? s.swarm_id ?? "") === props.swarmId)
   );
 
   const tasks = createMemo(() =>
-    swarmTasks().filter((t: any) => (t.swarmId ?? t.swarm_id ?? "") === props.swarmId)
+    (swarmTasks() ?? []).filter((t: any) => (t.swarmId ?? t.swarm_id ?? "") === props.swarmId)
   );
 
   const agents = createMemo(() =>
-    swarmAgents().filter((a: any) => (a.swarmId ?? a.swarm_id ?? "") === props.swarmId)
+    (swarmAgents() ?? []).filter((a: any) => (a.swarmId ?? a.swarm_id ?? "") === props.swarmId)
   );
 
   // Map tasks to DAG nodes

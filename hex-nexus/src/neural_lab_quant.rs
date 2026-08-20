@@ -1,4 +1,4 @@
-//! Quantization-aware Neural Lab calibration experiment (ADR-2603271000, P4).
+//! Quantization-aware Neural Lab calibration experiment (ADR-2026-03-27-1000, P4).
 //!
 //! Runs a standardised benchmark prompt through all uncalibrated providers,
 //! scores outputs, and writes quality_score back to SpacetimeDB.

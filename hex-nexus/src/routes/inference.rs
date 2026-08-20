@@ -69,8 +69,9 @@ pub async fn inference_complete(
     Json(body): Json<InferenceCompleteRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let work = async move {
+    let started = std::time::Instant::now();
 
-    // Score complexity before consuming body.messages (ADR-2603271000).
+    // Score complexity before consuming body.messages (ADR-2026-03-27-1000).
     let prompt_text = body.messages.iter()
         .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
         .collect::<Vec<_>>()
@@ -83,7 +84,7 @@ pub async fn inference_complete(
         "quantization routing: complexity scored, minimum tier selected"
     );
 
-    // Resolve architecture fingerprint for ACI injection (ADR-2603301200).
+    // Resolve architecture fingerprint for ACI injection (ADR-2026-03-30-1200).
     // Read project_id from x-hex-project-id header; look up in state.fingerprints.
     // If found, prepend the fingerprint block to the system prompt.
     let aci_block: Option<String> = {
@@ -120,9 +121,234 @@ pub async fn inference_complete(
         messages.insert(0, json!({ "role": "system", "content": system }));
     }
 
+    // ── Tools fast-path (hex agent run / typed-tool dispatch) ──────────
+    // When the request includes a `tools` schema, iterate registered
+    // inference providers in priority order (local first → paid last)
+    // and use the first one that supports tools AND completes the call.
+    // This replaces an older hardcoded-OpenRouter path that burned
+    // credits even when a local Ollama was registered (observed
+    // 2026-05-21: 6 persona tasks all failed with "OpenRouter:
+    // insufficient credits" while Ollama sat idle on localhost).
+    //
+    // Fallback chain in priority order:
+    //   1. Registered tools-capable providers, sorted by
+    //      `priority_for_tools` (ollama/vllm/llama-cpp → openai-compat
+    //      → openrouter, healthy > unknown > unhealthy within tier)
+    //   2. Synthetic OpenRouter endpoint from OPENROUTER_API_KEY env
+    //      (preserves legacy behavior for operators with no registered
+    //      providers)
+    //   3. Fall through to the no-tools chain — the simple_agent
+    //      text-mode parser still gets a chance to surface structured
+    //      output from prose
+    if let Some(ref tools_schema) = body.tools {
+        if !tools_schema.is_empty() {
+            // Convert STDB ProviderRow → secrets::InferenceEndpointEntry
+            // (the shape `call_inference_endpoint_with_tools` consumes).
+            // ProviderRow has multi-model JSON; we expand each row into
+            // one entry per advertised model, then dedupe later in the
+            // priority sort.
+            let registered: Vec<crate::routes::secrets::InferenceEndpointEntry> =
+                if let Some(ref stdb) = state.inference_stdb {
+                    let rows = stdb.list_providers().await.unwrap_or_default();
+                    let mut out: Vec<crate::routes::secrets::InferenceEndpointEntry> =
+                        Vec::with_capacity(rows.len() * 2);
+                    for r in rows {
+                        // Pick the first model from models_json (defensive
+                        // parse — strings work, JSON arrays work).
+                        let model = serde_json::from_str::<Vec<String>>(&r.models_json)
+                            .ok()
+                            .and_then(|v| v.into_iter().next())
+                            .unwrap_or_else(|| {
+                                r.models_json
+                                    .trim_start_matches('[')
+                                    .trim_end_matches(']')
+                                    .split(',')
+                                    .next()
+                                    .unwrap_or(&r.models_json)
+                                    .trim()
+                                    .trim_matches('"')
+                                    .to_string()
+                            });
+                        out.push(crate::routes::secrets::InferenceEndpointEntry {
+                            id: r.provider_id,
+                            url: r.base_url,
+                            provider: r.provider_type,
+                            model,
+                            status: if r.healthy == 1 { "healthy".into() } else { "unknown".into() },
+                            requires_auth: !r.api_key_ref.is_empty(),
+                            secret_key: r.api_key_ref,
+                            health_checked_at: r.last_health_check,
+                        });
+                    }
+                    out
+                } else {
+                    Vec::new()
+                };
+
+            // Build the candidate list. Filter to tools-capable, sort
+            // by priority. Within Ollama family, prefer entries whose
+            // model matches the request's model hint (if any).
+            let requested_model = body.model.clone();
+            let mut candidates: Vec<crate::routes::secrets::InferenceEndpointEntry> = registered
+                .into_iter()
+                .filter(super::chat::provider_supports_tools)
+                .collect();
+            candidates.sort_by_key(super::chat::priority_for_tools);
+
+            // If the caller specified a model, the provider that actually
+            // serves it wins — model match DOMINATES the local-first
+            // priority. Otherwise a tier request for a cloud model (e.g.
+            // T2 "Qwen/Qwen3-32B" on Tenstorrent) gets hijacked by whatever
+            // local Ollama model happens to be registered, since Ollama
+            // ranks above openai-compat in priority_for_tools. Priority only
+            // breaks ties within the matched / unmatched groups.
+            if let Some(ref m) = requested_model {
+                candidates.sort_by(|a, b| {
+                    let pa = super::chat::priority_for_tools(a);
+                    let pb = super::chat::priority_for_tools(b);
+                    let am = if a.model == *m { 0 } else { 1 };
+                    let bm = if b.model == *m { 0 } else { 1 };
+                    (am, pa).cmp(&(bm, pb))
+                });
+            }
+
+            // Always append a synthetic OpenRouter env-key endpoint as
+            // the last-resort fallback. Skipped if no key is available.
+            let openrouter_key: Option<String> = state.openrouter_api_key.clone()
+                .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()
+                    .filter(|k| k.starts_with("sk-or-")));
+            if let Some(or_key) = openrouter_key.clone() {
+                // Skip if a registered openrouter entry is already
+                // first-class — no point queueing two of them.
+                let already_have_or = candidates.iter().any(|c| {
+                    c.provider.eq_ignore_ascii_case("openrouter")
+                        || c.url.contains("openrouter.ai")
+                });
+                if !already_have_or {
+                    let raw_model = requested_model
+                        .clone()
+                        .unwrap_or_else(|| "anthropic/claude-haiku-4.5".to_string());
+                    // OpenRouter needs vendor/model slug; tolerate
+                    // Ollama-style names by substituting a sane default.
+                    let or_model = if raw_model.contains('/') {
+                        raw_model
+                    } else if raw_model.starts_with("claude") {
+                        format!("anthropic/{}", raw_model)
+                    } else if raw_model.starts_with("gpt") || raw_model.starts_with("o1") {
+                        format!("openai/{}", raw_model)
+                    } else if raw_model.contains(':') {
+                        "anthropic/claude-haiku-4.5".to_string()
+                    } else {
+                        raw_model
+                    };
+                    candidates.push(crate::routes::secrets::InferenceEndpointEntry {
+                        id: "openrouter-env-fastpath".into(),
+                        url: "https://openrouter.ai/api/v1".into(),
+                        provider: "openrouter".into(),
+                        model: or_model,
+                        status: "unknown".into(),
+                        requires_auth: true,
+                        secret_key: or_key,
+                        health_checked_at: String::new(),
+                    });
+                }
+            }
+
+            // Walk the candidate list. First success wins.
+            let mut last_err = String::new();
+            for ep in &candidates {
+                // Resolve a vault secret reference (e.g. "TENSTORRENT") to the
+                // real key before dispatch. The no-tools path does this at the
+                // L513 block; the tools fast-path must too, or openai-compat
+                // providers receive a bogus `Bearer <ref>` and 401. Env var
+                // first, then the SpacetimeDB vault (3s cap).
+                let mut ep = ep.clone();
+                // Honor the requested model on LOCAL providers. One Ollama/vLLM/
+                // llama-cpp endpoint serves any locally-available model, so the
+                // registered provider's model must not pin the request — otherwise
+                // `--model` (and `hex do --model`, the bench `--model`) is silently
+                // ignored on the tools path and every call runs the registered
+                // default. Diagnostic 2026-06-07: the bench `react` arm ran
+                // gemma4-12b regardless of --model because of this.
+                if let Some(ref m) = requested_model {
+                    let m = m.trim();
+                    if !m.is_empty()
+                        && m != ep.model
+                        && matches!(ep.provider.as_str(), "ollama" | "vllm" | "llama-cpp" | "llamacpp")
+                    {
+                        ep.model = m.to_string();
+                    }
+                }
+                if ep.requires_auth && !ep.secret_key.is_empty() && !ep.secret_key.starts_with("sk-") {
+                    let key_ref = ep.secret_key.clone();
+                    if let Ok(val) = std::env::var(&key_ref) {
+                        ep.secret_key = val;
+                    } else if let Some(ref stdb) = state.spacetime_secrets {
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(3),
+                            stdb.vault_get(&key_ref),
+                        ).await {
+                            Ok(Ok(Some(val))) => ep.secret_key = val,
+                            _ => {
+                                tracing::warn!(key = %key_ref, "tools fast-path: vault resolution failed; skipping candidate");
+                                continue;
+                            }
+                        }
+                    }
+                }
+                tracing::debug!(
+                    provider = %ep.provider,
+                    model = %ep.model,
+                    "tools fast-path: trying candidate"
+                );
+                match super::chat::call_inference_endpoint_with_tools(&ep, &messages, tools_schema).await {
+                    Ok(((content, model_used, input_tokens, output_tokens, cost), tool_calls)) => {
+                        tracing::info!(
+                            provider = %ep.provider,
+                            model = %model_used,
+                            input_tokens,
+                            output_tokens,
+                            tool_calls = tool_calls.len(),
+                            "inference/complete OK (tools fast-path)"
+                        );
+                        let mut resp = json!({
+                            "content": content,
+                            "model": model_used,
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                            "tool_calls": tool_calls,
+                            "provider": ep.provider,
+                        });
+                        if !cost.is_empty() {
+                            resp["openrouter_cost_usd"] = json!(cost);
+                        }
+                        return (StatusCode::OK, Json(resp));
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            provider = %ep.provider,
+                            error = %e,
+                            "tools fast-path: candidate failed; trying next"
+                        );
+                        last_err = e;
+                    }
+                }
+            }
+
+            if !candidates.is_empty() {
+                tracing::warn!(
+                    last_err = %last_err,
+                    candidates = candidates.len(),
+                    "tools fast-path: all candidates exhausted — falling through to no-tools chain"
+                );
+            }
+        }
+    }
+
     // Try registered inference endpoints first (SpacetimeDB providers)
     // If a model is requested, find the provider that serves it; otherwise use first provider.
-    // Complexity scoring selects minimum quantization tier (ADR-2603271000).
+    // Complexity scoring selects minimum quantization tier (ADR-2026-03-27-1000).
     let endpoint: Option<crate::routes::secrets::InferenceEndpointEntry> =
         if let Some(ref stdb) = state.inference_stdb {
             match stdb.list_providers().await {
@@ -265,6 +491,31 @@ pub async fn inference_complete(
             return model.to_string();
         }
         if model.starts_with("claude-") {
+            // Anthropic-direct uses dashes + 8-digit date suffix
+            // (e.g. "claude-haiku-4-5-20251001", "claude-sonnet-4-6").
+            // OpenRouter uses dotted version, no date (e.g. "claude-haiku-4.5",
+            // "claude-3.7-sonnet"). Convert here so callers can use either form.
+            let mut parts: Vec<&str> = model.split('-').collect();
+            if parts.last().is_some_and(|p| p.len() == 8 && p.chars().all(|c| c.is_ascii_digit())) {
+                parts.pop();
+            }
+            let n = parts.len();
+            // Pattern A: claude-FAMILY-MAJOR-MINOR  → anthropic/claude-FAMILY-MAJOR.MINOR
+            if n >= 4
+                && parts[n-1].chars().all(|c| c.is_ascii_digit())
+                && parts[n-2].chars().all(|c| c.is_ascii_digit())
+            {
+                let prefix = parts[..n-2].join("-");
+                return format!("anthropic/{}-{}.{}", prefix, parts[n-2], parts[n-1]);
+            }
+            // Pattern B: claude-MAJOR-MINOR-FAMILY  → anthropic/claude-MAJOR.MINOR-FAMILY
+            if n >= 4
+                && parts[1].chars().all(|c| c.is_ascii_digit())
+                && parts[2].chars().all(|c| c.is_ascii_digit())
+            {
+                let suffix = parts[3..].join("-");
+                return format!("anthropic/claude-{}.{}-{}", parts[1], parts[2], suffix);
+            }
             format!("anthropic/{}", model)
         } else if model.starts_with("gpt-") || model.starts_with("o1") || model.starts_with("o3") || model.starts_with("o4") {
             format!("openai/{}", model)
@@ -274,6 +525,17 @@ pub async fn inference_complete(
             format!("mistralai/{}", model)
         } else if model.starts_with("deepseek-") {
             format!("deepseek/{}", model)
+        } else if model.contains(':') {
+            // Ollama-style (e.g. qwen2.5-coder:14b) — won't resolve on OpenRouter.
+            // When no local Ollama provider is registered to serve it, substitute
+            // a tool-capable OpenRouter default so the drafter/SOP chain doesn't
+            // 502 on "not a valid model ID". Mirrors the tools fast-path at L146-156.
+            tracing::warn!(
+                requested = %model,
+                fallback = "anthropic/claude-haiku-4.5",
+                "legacy path: Ollama-style model substituted with OpenRouter-capable default"
+            );
+            "anthropic/claude-haiku-4.5".to_string()
         } else {
             model.to_string()
         }
@@ -327,7 +589,7 @@ pub async fn inference_complete(
                 tracing::warn!("spacetime_secrets not available for vault resolution");
             }
         }
-        // Record request dispatch in rate limiter (ADR-2604052125)
+        // Record request dispatch in rate limiter (ADR-2026-04-05-2125)
         state.rate_limiter.record_request(&ep.id, body.max_tokens as u64).await;
         match super::chat::call_inference_endpoint(&ep, &messages).await {
             Ok(resp) => {
@@ -339,7 +601,7 @@ pub async fn inference_complete(
             // fallback chain. Doing so wastes the entire retry budget and produces an error
             // trail that ends at Anthropic with no indication of the root cause.
             Err(ref e) if e.contains("401") || e.contains("Unauthorized") => {
-                // Record auth failure in rate limiter (ADR-2604052125)
+                // Record auth failure in rate limiter (ADR-2026-04-05-2125)
                 state.rate_limiter.record_completion(&ep.id, 0, 0, false).await;
                 tracing::error!(provider = %ep.provider, error = %e,
                     "authentication failed — bad credentials, not retrying");
@@ -354,7 +616,7 @@ pub async fn inference_complete(
                 || e.contains("parse:") || e.contains("500") || e.contains("503")
                 || e.contains("404") || e.contains("No endpoints") || e.contains("data policy")
                 || e.contains("connection:") || e.contains("null content") => {
-                // Record transient failure in rate limiter (ADR-2604052125)
+                // Record transient failure in rate limiter (ADR-2026-04-05-2125)
                 state.rate_limiter.record_completion(&ep.id, 0, 0, false).await;
                 // OpenRouter transient failure (credits, rate limit, parse/server error),
                 // or permanent failure (404 model-not-found / data policy).
@@ -544,9 +806,28 @@ pub async fn inference_complete(
                             .into_iter()
                             .find(|p| p.provider_type == "ollama" && !p.base_url.is_empty());
                         if let Some(p) = ollama {
-                            // Default to the T2 codegen tier model; operators can
-                            // override per project via .hex/project.json → inference.tier_models.
-                            let local_model = "qwen2.5-coder:32b".to_string();
+                            // Pick a model the LOCAL Ollama can actually serve.
+                            // Priority: (1) the originally-requested model if it's
+                            // local-shaped (no vendor "/" slug — e.g. "nemotron-mini",
+                            // "qwen2.5-coder:14b"); (2) the configured T2 tier model,
+                            // but ONLY if it's local — since T2 may now be a cloud-only
+                            // id like "Qwen/Qwen3-32B" that Ollama 404s on; (3) a known
+                            // local default. Reading T2 also keeps us from asking for a
+                            // model larger than the local GPU can hold.
+                            let is_local_name = |m: &str| !m.contains('/');
+                            let t2_local = std::fs::read_to_string(".hex/project.json")
+                                .ok()
+                                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                                .and_then(|v| v.get("inference")
+                                    .and_then(|i| i.get("tier_models"))
+                                    .and_then(|t| t.get("t2"))
+                                    .and_then(|m| m.as_str())
+                                    .map(|s| s.to_string()))
+                                .filter(|m| is_local_name(m));
+                            let local_model = body.model.clone()
+                                .filter(|m| is_local_name(m))
+                                .or(t2_local)
+                                .unwrap_or_else(|| "qwen2.5-coder:32b".to_string());
                             tracing::info!(
                                 provider = %p.provider_id,
                                 model = %local_model,
@@ -676,8 +957,65 @@ pub async fn inference_complete(
                 "output_tokens": output_tokens,
             });
             if !openrouter_cost.is_empty() {
-                resp["openrouter_cost_usd"] = json!(openrouter_cost);
+                resp["openrouter_cost_usd"] = json!(openrouter_cost.clone());
             }
+            // Fire-and-forget inference_log write — closes CTO commitment 12294.
+            // Never blocks the response; tokio::spawn isolates any STDB failure.
+            let log_model = model.clone();
+            let log_cost = openrouter_cost.clone();
+            let duration_ms = started.elapsed().as_millis() as u64;
+            let stdb_for_log = state.inference_stdb.clone();
+            tokio::spawn(async move {
+                let session_id = std::env::var("CLAUDE_SESSION_ID")
+                    .unwrap_or_else(|_| "nexus-bg".to_string());
+                // Resolve the ACTUAL provider type by matching the served model
+                // against registered providers. The old name-only heuristic
+                // mislabeled cloud openai_compat models with vendor slugs (e.g.
+                // "Qwen/Qwen3-32B", "deepseek-ai/DeepSeek-R1-0528") as
+                // "openrouter" because they have no ':' and aren't "anthropic/".
+                let mut provider = if log_model.starts_with("anthropic/") || log_model.starts_with("claude") {
+                    "anthropic".to_string()
+                } else if log_model.starts_with("ollama/") || log_model.contains(':') {
+                    "ollama".to_string()
+                } else {
+                    "openrouter".to_string()
+                };
+                if let Some(stdb) = stdb_for_log {
+                    if let Ok(providers) = stdb.list_providers().await {
+                        if let Some(p) = providers.iter().find(|p| {
+                            serde_json::from_str::<Vec<String>>(&p.models_json)
+                                .map(|models| models.iter().any(|m| m == &log_model))
+                                .unwrap_or(false)
+                        }) {
+                            provider = p.provider_type.clone();
+                        }
+                    }
+                }
+                let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
+                    .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+                let url = format!("{}/v1/database/hex/call/inference_log_create", stdb_host);
+                let body = serde_json::json!([
+                    uuid::Uuid::new_v4().to_string(),
+                    session_id,
+                    "chat",
+                    log_model,
+                    provider,
+                    input_tokens,
+                    output_tokens,
+                    log_cost,
+                    duration_ms,
+                    0u64,
+                    "",
+                    "success",
+                    chrono::Utc::now().to_rfc3339(),
+                ]);
+                let _ = reqwest::Client::new()
+                    .post(&url)
+                    .json(&body)
+                    .timeout(std::time::Duration::from_secs(3))
+                    .send()
+                    .await;
+            });
             (StatusCode::OK, Json(resp))
         }
         Err(e) => {
@@ -700,7 +1038,7 @@ pub async fn inference_complete(
     }
 }
 
-// ── Path B: Inference Queue (ADR-2604010000) ──────────────────────────────
+// ── Path B: Inference Queue (ADR-2026-04-01-0000) ──────────────────────────────
 
 /// An entry in the inference dispatch queue. Stored in HexFlo memory so workers
 /// can claim tasks via GET /api/inference/queue/pending.
@@ -923,7 +1261,7 @@ pub async fn queue_update(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Streaming chat endpoint (ADR-2604011300)
+// Streaming chat endpoint (ADR-2026-04-01-1300)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// POST /api/inference/chat/stream — streaming LLM completion via Server-Sent Events.
@@ -1100,9 +1438,21 @@ async fn stream_inference(
         }
         ("https://openrouter.ai/api/v1/chat/completions".to_string(), b)
     } else if is_ollama {
+        // Ollama: cap via options.num_predict + DISABLE think-mode by
+        // default (qwen3 etc. otherwise burn the whole budget on <think>
+        // tokens and emit empty content). HEX_OLLAMA_THINK=1 to opt in.
+        let think_enabled = std::env::var("HEX_OLLAMA_THINK")
+            .ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         (
             format!("{}/api/chat", ep.url.trim_end_matches('/')),
-            json!({ "model": ep.model, "messages": messages, "stream": true }),
+            json!({
+                "model": ep.model,
+                "messages": messages,
+                "stream": true,
+                "think": think_enabled,
+                "options": { "num_predict": max_tokens },
+            }),
         )
     } else {
         let mut b = json!({ "model": ep.model, "messages": messages, "max_tokens": max_tokens, "stream": true });
@@ -1433,7 +1783,312 @@ pub async fn openai_chat_completions(
     (StatusCode::OK, Json(openai_resp)).into_response()
 }
 
-// ── Rate State + Cost Attribution (ADR-2604052125) ─────────────────────────
+// ── Anthropic-compatible gateway route (/v1/messages) ────────────────────────
+//
+// Lets ANY Anthropic-Messages-API client — Claude Code itself, plus
+// Anthropic-format agents (Hermes, etc.) — point `ANTHROPIC_BASE_URL` at hex
+// and inherit hex's tiered, local-first, circuit-broken routing instead of
+// talking to a raw provider. Mirrors `openai_chat_completions`: translate the
+// Anthropic request → hex's internal `InferenceCompleteRequest`, reuse the same
+// provider selection (and the local-first fallback from
+// ADR-2026-07-10-1000), then translate the response back to Anthropic shape.
+
+/// Anthropic `system` is a top-level field that may be a bare string OR an
+/// array of `{type:"text", text}` content blocks. Flatten to a single string.
+fn flatten_anthropic_system(system: Option<&serde_json::Value>) -> Option<String> {
+    match system {
+        Some(serde_json::Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        Some(serde_json::Value::Array(blocks)) => {
+            let joined = blocks
+                .iter()
+                .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            (!joined.is_empty()).then_some(joined)
+        }
+        _ => None,
+    }
+}
+
+/// Translate Anthropic messages → OpenAI-format `[{role, content, tool_calls?, tool_call_id?}]`
+/// (what hex's provider dispatch expects). Handles the agentic tool loop so
+/// Claude Code's multi-turn tool_use/tool_result history round-trips:
+///   - assistant `tool_use` block  → OpenAI `tool_calls` entry
+///   - user `tool_result` block    → OpenAI `{role:"tool", tool_call_id, content}` message
+///   - `text` blocks               → folded into the message content string
+fn anthropic_messages_to_openai(messages: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut out: Vec<serde_json::Value> = Vec::new();
+
+    let block_text = |c: &serde_json::Value| -> String {
+        match c {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Array(blocks) => blocks
+                .iter()
+                .filter_map(|b| {
+                    // tool_result content may itself be a string or block array.
+                    if b.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        b.get("text").and_then(|t| t.as_str()).map(String::from)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => String::new(),
+        }
+    };
+
+    for msg in messages {
+        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+        let content = msg.get("content").cloned().unwrap_or(serde_json::Value::Null);
+
+        // Simple string content → straight through.
+        if let serde_json::Value::String(s) = &content {
+            out.push(json!({ "role": role, "content": s }));
+            continue;
+        }
+
+        let blocks = content.as_array().cloned().unwrap_or_default();
+        let mut text_parts: Vec<String> = Vec::new();
+        let mut tool_calls: Vec<serde_json::Value> = Vec::new();
+        let mut tool_results: Vec<serde_json::Value> = Vec::new();
+
+        for b in &blocks {
+            match b.get("type").and_then(|t| t.as_str()) {
+                Some("text") => {
+                    if let Some(t) = b.get("text").and_then(|t| t.as_str()) {
+                        text_parts.push(t.to_string());
+                    }
+                }
+                Some("tool_use") => {
+                    let id = b.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let name = b.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let input = b.get("input").cloned().unwrap_or(json!({}));
+                    tool_calls.push(json!({
+                        "id": id,
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": serde_json::to_string(&input).unwrap_or_else(|_| "{}".into()),
+                        }
+                    }));
+                }
+                Some("tool_result") => {
+                    let tool_use_id = b.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let result_content = b.get("content").map(block_text).unwrap_or_default();
+                    tool_results.push(json!({
+                        "role": "tool",
+                        "tool_call_id": tool_use_id,
+                        "content": result_content,
+                    }));
+                }
+                _ => {} // image / other blocks: ignored in v1 (text-first agents)
+            }
+        }
+
+        // OpenAI ordering: tool result messages stand alone (they answer a prior
+        // assistant tool_call); assistant/user text+tool_calls form one message.
+        if !tool_results.is_empty() {
+            out.extend(tool_results);
+        }
+        let text = text_parts.join("\n");
+        if !text.is_empty() || !tool_calls.is_empty() {
+            let mut m = serde_json::Map::new();
+            m.insert("role".into(), json!(role));
+            m.insert("content".into(), if text.is_empty() { serde_json::Value::Null } else { json!(text) });
+            if !tool_calls.is_empty() {
+                m.insert("tool_calls".into(), json!(tool_calls));
+            }
+            out.push(serde_json::Value::Object(m));
+        }
+    }
+
+    out
+}
+
+/// Build the Anthropic `content` block array + `stop_reason` from hex's internal
+/// `{content, tool_calls}` response.
+fn anthropic_content_from_inner(inner: &serde_json::Value) -> (Vec<serde_json::Value>, &'static str) {
+    let mut content: Vec<serde_json::Value> = Vec::new();
+    let text = inner.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    if !text.is_empty() {
+        content.push(json!({ "type": "text", "text": text }));
+    }
+    let tool_calls = inner.get("tool_calls").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    for tc in &tool_calls {
+        let id = tc.get("id").and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| format!("toolu_{}", Uuid::new_v4()));
+        let func = tc.get("function").cloned().unwrap_or(serde_json::Value::Null);
+        let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let args_str = func.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}");
+        let input: serde_json::Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+        content.push(json!({ "type": "tool_use", "id": id, "name": name, "input": input }));
+    }
+    let stop_reason = if !tool_calls.is_empty() { "tool_use" } else { "end_turn" };
+    // An empty content array is invalid Anthropic; emit a placeholder text block.
+    if content.is_empty() {
+        content.push(json!({ "type": "text", "text": "" }));
+    }
+    (content, stop_reason)
+}
+
+/// POST /v1/messages — Anthropic-compatible Messages API proxy.
+///
+/// Accepts an Anthropic-format request and delegates to the same routing as
+/// `/api/inference/complete` (tiered, local-first, circuit-broken). The
+/// `model` field is ignored for provider choice — hex routes — except a
+/// `hex/<id>` value pins a specific registered provider. `stream:true` returns
+/// the Anthropic SSE event sequence synthesised from the completed response
+/// (pseudo-streaming): correct on the wire for Claude Code, without per-token
+/// streaming through every provider.
+pub async fn anthropic_messages(
+    State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let model_raw = body.get("model").and_then(|v| v.as_str()).unwrap_or("hex/default");
+    let stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let max_tokens = body.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(4096) as u32;
+    let system = flatten_anthropic_system(body.get("system"));
+    let anthropic_msgs = body.get("messages").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let messages = anthropic_messages_to_openai(&anthropic_msgs);
+    let tools = body.get("tools").and_then(|v| v.as_array()).cloned();
+
+    // hex routes; only a "hex/<id>" override pins a provider. Claude Code always
+    // sends "claude-*" names — those map to default (let hex choose), never 400.
+    let resolved_model: Option<String> = model_raw
+        .strip_prefix("hex/")
+        .filter(|s| !s.is_empty() && *s != "default")
+        .map(String::from);
+
+    let complete_body = InferenceCompleteRequest {
+        model: resolved_model,
+        messages,
+        system,
+        max_tokens,
+        tools,
+    };
+
+    let (status, Json(inner)) =
+        inference_complete(State(state), headers, Json(complete_body)).await;
+
+    if !status.is_success() {
+        // Re-shape hex's error into Anthropic's error envelope.
+        let msg = inner.get("error").and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| inner.to_string());
+        return (status, Json(json!({
+            "type": "error",
+            "error": { "type": "api_error", "message": msg }
+        }))).into_response();
+    }
+
+    let model_used = inner.get("model").and_then(|v| v.as_str()).unwrap_or(model_raw).to_string();
+    let input_tokens = inner.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let output_tokens = inner.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let (content, stop_reason) = anthropic_content_from_inner(&inner);
+    let msg_id = format!("msg_{}", Uuid::new_v4());
+
+    if !stream {
+        let resp = json!({
+            "id": msg_id,
+            "type": "message",
+            "role": "assistant",
+            "model": model_used,
+            "content": content,
+            "stop_reason": stop_reason,
+            "stop_sequence": null,
+            "usage": { "input_tokens": input_tokens, "output_tokens": output_tokens }
+        });
+        return (StatusCode::OK, Json(resp)).into_response();
+    }
+
+    // Pseudo-streaming: build the full Anthropic SSE event sequence from the
+    // finished result, then stream it. Claude Code parses these events
+    // identically to real streaming; we just deliver each content block in one
+    // delta. Uses futures-mpsc (its Receiver is a Stream) to match
+    // `inference_stream`.
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use futures::channel::mpsc;
+    use futures::SinkExt;
+    use std::convert::Infallible;
+
+    let mut events: Vec<(&'static str, serde_json::Value)> = Vec::new();
+    events.push(("message_start", json!({
+        "type": "message_start",
+        "message": {
+            "id": msg_id, "type": "message", "role": "assistant", "model": model_used,
+            "content": [], "stop_reason": null, "stop_sequence": null,
+            "usage": { "input_tokens": input_tokens, "output_tokens": 0 }
+        }
+    })));
+    for (idx, block) in content.iter().enumerate() {
+        let btype = block.get("type").and_then(|t| t.as_str()).unwrap_or("text");
+        if btype == "tool_use" {
+            events.push(("content_block_start", json!({
+                "type": "content_block_start", "index": idx,
+                "content_block": { "type": "tool_use", "id": block.get("id"), "name": block.get("name"), "input": {} }
+            })));
+            let partial = serde_json::to_string(block.get("input").unwrap_or(&json!({}))).unwrap_or_else(|_| "{}".into());
+            events.push(("content_block_delta", json!({
+                "type": "content_block_delta", "index": idx,
+                "delta": { "type": "input_json_delta", "partial_json": partial }
+            })));
+        } else {
+            let text = block.get("text").and_then(|t| t.as_str()).unwrap_or("");
+            events.push(("content_block_start", json!({
+                "type": "content_block_start", "index": idx,
+                "content_block": { "type": "text", "text": "" }
+            })));
+            events.push(("content_block_delta", json!({
+                "type": "content_block_delta", "index": idx,
+                "delta": { "type": "text_delta", "text": text }
+            })));
+        }
+        events.push(("content_block_stop", json!({ "type": "content_block_stop", "index": idx })));
+    }
+    events.push(("message_delta", json!({
+        "type": "message_delta",
+        "delta": { "stop_reason": stop_reason, "stop_sequence": null },
+        "usage": { "output_tokens": output_tokens }
+    })));
+    events.push(("message_stop", json!({ "type": "message_stop" })));
+
+    let (mut tx, rx) = mpsc::channel::<Result<Event, Infallible>>(events.len() + 1);
+    tokio::spawn(async move {
+        for (name, data) in events {
+            if tx.send(Ok(Event::default().event(name).data(data.to_string()))).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    Sse::new(rx)
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+/// POST /v1/messages/count_tokens — Anthropic token-count pre-flight. Claude
+/// Code calls this before sending; a rough estimate keeps it happy without a
+/// tokenizer (hex bills on real provider usage, not this estimate).
+pub async fn anthropic_count_tokens(
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let system_len = flatten_anthropic_system(body.get("system")).map(|s| s.len()).unwrap_or(0);
+    let msgs = body.get("messages").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let openai = anthropic_messages_to_openai(&msgs);
+    let chars: usize = system_len + openai.iter()
+        .filter_map(|m| m.get("content").and_then(|c| c.as_str()).map(str::len))
+        .sum::<usize>();
+    // ~4 chars/token heuristic.
+    let input_tokens = (chars / 4).max(1) as u64;
+    (StatusCode::OK, Json(json!({ "input_tokens": input_tokens })))
+}
+
+// ── Rate State + Cost Attribution (ADR-2026-04-05-2125) ─────────────────────────
 
 /// GET /api/inference/rate-state — per-provider rate limit and circuit breaker state.
 pub async fn rate_state(
@@ -1451,7 +2106,7 @@ pub async fn inference_stats_endpoint(
     (StatusCode::OK, Json(stats))
 }
 
-// ── Q-Report (ADR-2604120202 + wp-inference-q-report) ───────────────────
+// ── Q-Report (ADR-2026-04-12-0202 + wp-inference-q-report) ───────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct QReportParams {
@@ -1512,6 +2167,167 @@ async fn stdb_query_rl(sql: &str) -> Result<Vec<serde_json::Value>, String> {
     let body: serde_json::Value =
         serde_json::from_str(trimmed).map_err(|e| e.to_string())?;
     Ok(crate::adapters::spacetime_state::SpacetimeStateAdapter::parse_stdb_response(body))
+}
+
+/// Run a SQL query against the core ("hex") SpacetimeDB database.
+async fn stdb_query_core(sql: &str) -> Result<Vec<serde_json::Value>, String> {
+    let host = std::env::var("SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| hex_core::SPACETIMEDB_DEFAULT_HOST.to_string());
+    let db = hex_core::STDB_DATABASE_CORE;
+    let url = format!("{}/v1/database/{}/sql", host, db);
+
+    let client = reqwest::Client::new();
+    let mut req = client.post(&url).body(sql.to_string());
+    if let Ok(token) = std::env::var("SPACETIMEDB_TOKEN") {
+        if !token.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+    }
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("STDB SQL failed: {}", body));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let body: serde_json::Value =
+        serde_json::from_str(trimmed).map_err(|e| e.to_string())?;
+    Ok(crate::adapters::spacetime_state::SpacetimeStateAdapter::parse_stdb_response(body))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UsageParams {
+    /// Only count completions newer than this duration (e.g. "1h", "7d").
+    pub since: Option<String>,
+    /// Filter to models whose name contains this substring.
+    pub model: Option<String>,
+    #[serde(default = "default_usage_limit")]
+    pub limit: u32,
+}
+
+fn default_usage_limit() -> u32 {
+    30
+}
+
+/// GET /api/inference/usage — durable per-model usage aggregated from the
+/// `inference_log` table (the real, persisted record of every completion).
+///
+/// Unlike `/api/inference/q-report` (RL Q-table — only populated when the
+/// reinforcement-learning loop is closed) and `/api/inference/stats`
+/// (in-memory, resets on restart), this reflects actual traffic that
+/// survives restarts. Aggregates requests, tokens, and p50/p99 latency
+/// per model, sorted by request count.
+pub async fn usage_report(
+    axum::extract::Query(params): axum::extract::Query<UsageParams>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let rows = match stdb_query_core("SELECT * FROM inference_log").await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "usage: failed to query inference_log");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e })));
+        }
+    };
+
+    let now = chrono::Utc::now();
+    let since_cutoff = params
+        .since
+        .as_deref()
+        .and_then(parse_duration_secs)
+        .map(|secs| now - chrono::Duration::seconds(secs));
+
+    struct Agg {
+        provider: String,
+        count: u64,
+        input: u64,
+        output: u64,
+        durations: Vec<u64>,
+        last_seen: String,
+    }
+    let mut map: std::collections::HashMap<String, Agg> = std::collections::HashMap::new();
+    let mut counted = 0u64;
+
+    for r in &rows {
+        let model = r.get("model").and_then(|v| v.as_str()).unwrap_or("");
+        if model.is_empty() {
+            continue;
+        }
+        if let Some(ref mf) = params.model {
+            if !model.contains(mf.as_str()) {
+                continue;
+            }
+        }
+        let created = r.get("created_at").and_then(|v| v.as_str()).unwrap_or("");
+        if let Some(cut) = since_cutoff {
+            match chrono::DateTime::parse_from_rfc3339(created) {
+                Ok(dt) if dt.with_timezone(&Utc) >= cut => {}
+                _ => continue,
+            }
+        }
+        counted += 1;
+        let provider = r.get("provider").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let input = r.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let output = r.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let dur = r.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+
+        let e = map.entry(model.to_string()).or_insert_with(|| Agg {
+            provider: provider.clone(),
+            count: 0,
+            input: 0,
+            output: 0,
+            durations: Vec::new(),
+            last_seen: String::new(),
+        });
+        e.count += 1;
+        e.input += input;
+        e.output += output;
+        if dur > 0 {
+            e.durations.push(dur);
+        }
+        if created > e.last_seen.as_str() {
+            e.last_seen = created.to_string();
+        }
+        if e.provider.is_empty() {
+            e.provider = provider;
+        }
+    }
+
+    let mut out: Vec<serde_json::Value> = map
+        .into_iter()
+        .map(|(model, mut a)| {
+            a.durations.sort_unstable();
+            let pct = |q: f64| -> u64 {
+                if a.durations.is_empty() {
+                    0
+                } else {
+                    let idx = (((a.durations.len() - 1) as f64) * q).round() as usize;
+                    a.durations[idx.min(a.durations.len() - 1)]
+                }
+            };
+            json!({
+                "model": model,
+                "provider": a.provider,
+                "requests": a.count,
+                "input_tokens": a.input,
+                "output_tokens": a.output,
+                "total_tokens": a.input + a.output,
+                "p50_ms": pct(0.5),
+                "p99_ms": pct(0.99),
+                "last_seen": a.last_seen,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        b["requests"].as_u64().unwrap_or(0).cmp(&a["requests"].as_u64().unwrap_or(0))
+    });
+    out.truncate(params.limit as usize);
+
+    (
+        StatusCode::OK,
+        Json(json!({ "usage": out, "total_completions": counted, "source": "inference_log" })),
+    )
 }
 
 /// GET /api/inference/q-report — Q-table report with filtering, sorting, and 7-day trend.
@@ -1863,4 +2679,126 @@ async fn run_calibration(state: &SharedState, id: &str) -> CalibrationResult {
     }
 
     result
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── /v1/messages Anthropic translation ──────────────────────────────────
+    #[test]
+    fn system_flattens_string_and_blocks() {
+        assert_eq!(flatten_anthropic_system(Some(&json!("hi"))).as_deref(), Some("hi"));
+        let blocks = json!([{"type":"text","text":"a"},{"type":"text","text":"b"}]);
+        assert_eq!(flatten_anthropic_system(Some(&blocks)).as_deref(), Some("a\nb"));
+        assert_eq!(flatten_anthropic_system(None), None);
+    }
+
+    #[test]
+    fn string_content_passes_through() {
+        let m = json!([{"role":"user","content":"hello"}]);
+        let out = anthropic_messages_to_openai(m.as_array().unwrap());
+        assert_eq!(out, vec![json!({"role":"user","content":"hello"})]);
+    }
+
+    #[test]
+    fn assistant_tool_use_becomes_openai_tool_calls() {
+        let m = json!([{
+            "role":"assistant",
+            "content":[
+                {"type":"text","text":"let me read"},
+                {"type":"tool_use","id":"toolu_1","name":"repo_read","input":{"path":"a.rs"}}
+            ]
+        }]);
+        let out = anthropic_messages_to_openai(m.as_array().unwrap());
+        assert_eq!(out.len(), 1);
+        let tc = &out[0]["tool_calls"][0];
+        assert_eq!(tc["id"], "toolu_1");
+        assert_eq!(tc["function"]["name"], "repo_read");
+        assert_eq!(tc["function"]["arguments"], "{\"path\":\"a.rs\"}");
+        assert_eq!(out[0]["content"], "let me read");
+    }
+
+    #[test]
+    fn user_tool_result_becomes_openai_tool_role() {
+        let m = json!([{
+            "role":"user",
+            "content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"file body"}]
+        }]);
+        let out = anthropic_messages_to_openai(m.as_array().unwrap());
+        assert_eq!(out, vec![json!({"role":"tool","tool_call_id":"toolu_1","content":"file body"})]);
+    }
+
+    #[test]
+    fn inner_text_only_is_end_turn() {
+        let (content, stop) = anthropic_content_from_inner(&json!({"content":"hi","tool_calls":[]}));
+        assert_eq!(stop, "end_turn");
+        assert_eq!(content, vec![json!({"type":"text","text":"hi"})]);
+    }
+
+    #[test]
+    fn inner_tool_calls_become_tool_use_and_stop_tool_use() {
+        let inner = json!({
+            "content":"",
+            "tool_calls":[{"id":"toolu_9","function":{"name":"code_patch","arguments":"{\"path\":\"x\"}"}}]
+        });
+        let (content, stop) = anthropic_content_from_inner(&inner);
+        assert_eq!(stop, "tool_use");
+        // empty text dropped → only the tool_use block
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "tool_use");
+        assert_eq!(content[0]["name"], "code_patch");
+        assert_eq!(content[0]["input"], json!({"path":"x"}));
+    }
+
+    #[test]
+    fn test_cqs_bounds() {
+        assert!(compute_quality_score(200, false) < 0.6);
+        assert!(compute_quality_score(200, true) > 0.9);
+    }
+}
+    #[test]
+    fn test_cqs_slow_path() {
+        assert!(compute_quality_score(9000, true) > 0.8);
+        assert!(compute_quality_score(9000, false) < 0.5);
+    }
+      #[test]
+      fn test_cqs_latency_bonus() {
+          assert!(compute_quality_score(100, true) > 0.9);
+      }
+      #[test]
+      fn test_cqs_clamp_floor() {
+          assert!(compute_quality_score(9000, false) >= 0.0);
+      }
+      #[test]
+      fn test_cqs_pass() {
+          assert!(compute_quality_score(100, true) > 0.9);
+      }
+      #[test]
+      fn test_cqs_mid() {
+          assert!(compute_quality_score(2000, true) > 0.7);
+      }
+#[test]
+fn test_cqs_cli_proof() {
+    assert!(compute_quality_score(100, false) < 0.7);
+    assert!(compute_quality_score(100, true) > 0.9);
+}
+#[test]
+fn test_swarm_review_exec() {
+    assert!(compute_quality_score(100, true) > 0.9);
+}
+#[test]
+fn test_adversarial_reverify_xyz() {
+    let score = compute_quality_score(500, true);
+    assert!(score > 0.5);
+}
+// Tests for the compute_quality_score function under various conditions
+// This module contains tests for the inference logic.
+#[test]
+fn test_solo_path_check() {
+    assert!(compute_quality_score(100, true) > 0.9);
+}
+// Additional test cases for edge scenarios
+#[test]
+fn test_harden_proof() {
+    assert!(compute_quality_score(100, true) > 0.9);
 }

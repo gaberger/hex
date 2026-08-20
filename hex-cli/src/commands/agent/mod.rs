@@ -2,6 +2,8 @@
 //!
 //! `hex agent list|info|connect|spawn-remote|disconnect|fleet` — delegates to hex-nexus agent API.
 
+mod build_loop;
+
 use clap::Subcommand;
 use colored::Colorize;
 use serde_json::json;
@@ -46,7 +48,7 @@ pub enum AgentAction {
         /// Remote source directory to sync project files to before spawning
         #[arg(long)]
         source_dir: Option<String>,
-        /// Run the remote agent inside a Docker AI Sandbox (ADR-2604050900 P5.3)
+        /// Run the remote agent inside a Docker AI Sandbox (ADR-2026-04-05-0900 P5.3)
         #[arg(long, default_value_t = false)]
         sandbox: bool,
         /// Override the default model for the remote agent (e.g. sonnet, opus)
@@ -68,9 +70,9 @@ pub enum AgentAction {
         #[arg(long)]
         json: bool,
     },
-    /// Audit recent commits against HexFlo task tracking (ADR-2603221939)
+    /// Audit recent commits against HexFlo task tracking (ADR-2026-03-22-1939)
     Audit,
-    /// Show active git worktrees with assigned agent, task, and age (ADR-2603231700)
+    /// Show active git worktrees with assigned agent, task, and age (ADR-2026-03-23-1700)
     WorktreeAudit,
     /// Evict dead/stale agents from the registry
     Evict,
@@ -125,6 +127,30 @@ pub enum AgentAction {
         /// Workplan execution ID
         id: String,
     },
+    /// Run the simple agent loop on a natural-language intent. The
+    /// flat alternative to `hex ops send` — no persona rephrasing,
+    /// no atomic-claim, no Confirm: contract. Calls nexus
+    /// /api/agent/run which loops LLM → typed-tool → tool_result
+    /// until the LLM signals finish or the iteration budget hits.
+    Run {
+        /// Operator intent in natural language.
+        intent: String,
+        /// Max LLM round-trips (default 10).
+        #[arg(long, default_value_t = 10)]
+        max_iterations: u32,
+        /// Max tokens per LLM response (default 4096).
+        #[arg(long, default_value_t = 4096)]
+        max_tokens: u32,
+        /// Model override (default qwen2.5-coder:14b or $HEX_AGENT_MODEL).
+        #[arg(long)]
+        model: Option<String>,
+        /// Nexus URL.
+        #[arg(long, default_value = "http://127.0.0.1:5555")]
+        nexus: String,
+        /// Output mode: pretty (default) or json.
+        #[arg(long, default_value = "pretty")]
+        output: String,
+    },
     /// Run as a persistent agent worker for a specific role
     Worker {
         /// Agent role (hex-coder, hex-tester, hex-reviewer, hex-documenter, hex-ux, hex-fixer)
@@ -147,6 +173,34 @@ pub enum AgentAction {
         /// Exit after completing one task (useful for testing)
         #[arg(long)]
         once: bool,
+    },
+    /// Native agentic build loop (LLM ↔ raw tools ↔ files, gated by evidence).
+    ///
+    /// hex's OWN tight coding loop on local inference — read/write/list/run
+    /// tools, iterating until the gate command exits 0. No opencode, no
+    /// `claude -p`. Example:
+    ///   hex agent build "fix the failing build" --dir examples/foo --gate "npm run check"
+    Build {
+        /// What to build/fix, in natural language.
+        task: String,
+        /// Gate command that must exit 0 before the task is accepted as done.
+        #[arg(long)]
+        gate: Option<String>,
+        /// Working directory the agent operates in.
+        #[arg(long, default_value = ".")]
+        dir: String,
+        /// Max LLM ↔ tool round-trips.
+        #[arg(long, default_value_t = 30)]
+        max_iters: u32,
+        /// Model(s) to use, in fallback order — repeat to add fallbacks. A
+        /// failing/forbidden provider (403/quota) is SKIPPED to the next.
+        /// e.g. --model "Qwen/Qwen3-32B" --model "qwen2.5-coder:32b".
+        /// Default: $HEX_AGENT_MODEL or qwen2.5-coder:32b.
+        #[arg(long)]
+        model: Vec<String>,
+        /// Nexus inference URL.
+        #[arg(long, default_value = "http://127.0.0.1:5555")]
+        nexus: String,
     },
     /// Spawn a worker in the background (detached); survives CLI exit.
     ///
@@ -231,6 +285,22 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
             model,
         } => spawn_remote(&target, project_dir, source_dir, sandbox, model).await,
         AgentAction::Disconnect { agent_id } => disconnect(&agent_id).await,
+        AgentAction::Build {
+            task,
+            gate,
+            dir,
+            max_iters,
+            model,
+            nexus,
+        } => build_loop::build(task, gate, dir, max_iters, model, nexus).await,
+        AgentAction::Run {
+            intent,
+            max_iterations,
+            max_tokens,
+            model,
+            nexus,
+            output,
+        } => agent_run(intent, max_iterations, max_tokens, model, nexus, output).await,
         AgentAction::Fleet => fleet().await,
         AgentAction::Overview { json } => overview(json).await,
         AgentAction::Evict => evict().await,
@@ -857,7 +927,7 @@ async fn connect(nexus_url: &str) -> anyhow::Result<()> {
     println!("  Project:       {}", if project_name.is_empty() { "-" } else { &project_name });
     println!("  Session file:  {}", session_file.display());
 
-    // ADR-2604130010 P2.1: Discover local inference and POST capabilities
+    // ADR-2026-04-13-0010 P2.1: Discover local inference and POST capabilities
     if let Some(ref caps) = discover_local_inference_caps().await {
         let caps_path = format!("/api/hex-agents/{}/capabilities", agent_id);
         let caps_body = json!({
@@ -1424,7 +1494,7 @@ async fn fleet() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Audit recent commits against HexFlo task completions (ADR-2603221939 P5).
+/// Audit recent commits against HexFlo task completions (ADR-2026-03-22-1939 P5).
 ///
 /// Cross-references `git log` with completed HexFlo tasks to find "dark agents" —
 /// commits produced by AI agents that were not tracked in any swarm.
@@ -1590,7 +1660,7 @@ async fn worker(
     );
     println!("  Poll:     {}s", poll_interval);
 
-    // ADR-2604130010 P2.1: Discover local inference and POST to dedicated capabilities endpoint
+    // ADR-2026-04-13-0010 P2.1: Discover local inference and POST to dedicated capabilities endpoint
     let inference_caps = discover_local_inference_caps().await;
     if let Some(ref caps) = inference_caps {
         let caps_path = format!("/api/hex-agents/{}/capabilities", agent_id);
@@ -1630,7 +1700,7 @@ async fn worker(
     // Main task poll loop
     let poll_duration = std::time::Duration::from_secs(poll_interval);
     loop {
-// ADR-2604102100: Poll for steering instructions BEFORE task polling
+// ADR-2026-04-10-2100: Poll for steering instructions BEFORE task polling
         // Try both registered_id and agent_id (they may differ when --agent-id override is used)
         for steer_id in &[registered_id.clone(), agent_id.clone()] {
             if let Ok(instr_resp) = nexus.get(&format!("/api/steering/{}/instructions", steer_id)).await {
@@ -2059,7 +2129,7 @@ async fn execute_worker_task(
 
                 let full_prompt = format!("{}\n\n{}", hex_rules, current_step.description);
 
-                // GBNF grammar for code-only output (ADR-2604120202)
+                // GBNF grammar for code-only output (ADR-2026-04-12-0202)
                 let grammar = "root ::= code-line+\ncode-line ::= [^\\n]* \"\\n\"";
 
                 let ollama_body = json!({
@@ -2518,6 +2588,26 @@ async fn execute_worker_task(
                 )
             })?;
 
+            // provider_lock enforcement (gap closed 2026-05-23). Adversarial
+            // review of ADR-2026-05-23-0815 surfaced that the YAML's
+            // `model.provider_lock` field was decoration-only — the dispatcher
+            // would happily run adversarial-red AND adversarial-blue on the
+            // same provider, defeating the divergence contract on which the
+            // apply-gate of the self-improvement loop depends. Fail fast on
+            // mismatch so the operator (and any future hive-improver) sees
+            // the gap as a dispatcher error, not as a same-provider review
+            // pair quietly running undetected.
+            if let Err(reason) = p.model.validate_provider_lock() {
+                anyhow::bail!(
+                    "agent worker '{}' refused to start: {}\n  \
+                     fix: either change model.preferred in \
+                     hex-cli/assets/agents/hex/hex/{}.yml to a model whose \
+                     provider satisfies model.provider_lock, OR loosen the \
+                     provider_lock (not recommended for adversarial roles).",
+                    role, reason, role
+                );
+            }
+
             // Build system prompt from persona constraints + description.
             let mut system_lines: Vec<String> = Vec::new();
             if !p.description.is_empty() {
@@ -2623,12 +2713,12 @@ async fn execute_worker_task(
     Ok(result)
 }
 
-// ── Worker inference discovery (ADR-2604130010, P1.2) ───────────────────────
+// ── Worker inference discovery (ADR-2026-04-13-0010, P1.2) ───────────────────────
 
 /// Probe OLLAMA_HOST/api/tags for available models on startup.
 /// Sets HEX_PROVIDER=ollama and HEX_MODEL to the largest available model
 /// if not already configured by the user.
-/// Discovery result for local inference providers (ADR-2604130010 P2.1).
+/// Discovery result for local inference providers (ADR-2026-04-13-0010 P2.1).
 #[derive(Debug, Clone, Default)]
 struct LocalInferenceCapabilities {
     models: Vec<String>,
@@ -2716,7 +2806,7 @@ async fn discover_local_inference_caps() -> Option<LocalInferenceCapabilities> {
         }
     }
 
-    // ADR-2604130010 P2.1: Build capabilities struct from discovered models
+    // ADR-2026-04-13-0010 P2.1: Build capabilities struct from discovered models
     let max_size_gb = model_list.first().map(|(_, s)| *s as f64 / 1_073_741_824.0).unwrap_or(0.0);
     let model_names: Vec<String> = model_list.iter().map(|(n, _)| n.to_string()).collect();
     Some(LocalInferenceCapabilities {
@@ -3003,6 +3093,113 @@ async fn cancel_workplan(id: &str) -> anyhow::Result<()> {
     let body = serde_json::json!({ "id": id });
     let resp = nexus.post("/api/workplan/fail", &body).await?;
     println!("{}", resp);
+    Ok(())
+}
+
+/// `hex agent run <intent>` — flat LLM-driven typed-tool agent. Posts
+/// to nexus `/api/agent/run` and prints the summary.
+///
+/// The deliberately-simple alternative to the persona/org-comms loop:
+/// no rephrasing, no atomic-claim, no Confirm: contract, no dual
+/// registry. The LLM picks typed tools from the registry, the same
+/// twin + executor + autonomous-commit chain lands each write.
+async fn agent_run(
+    intent: String,
+    max_iterations: u32,
+    max_tokens: u32,
+    model: Option<String>,
+    nexus_url: String,
+    output: String,
+) -> anyhow::Result<()> {
+    if intent.trim().is_empty() {
+        anyhow::bail!("hex agent run: intent is required and must be non-empty");
+    }
+    let url = format!("{}/api/agent/run", nexus_url.trim_end_matches('/'));
+    let mut body = serde_json::json!({
+        "intent": intent,
+        "max_iterations": max_iterations,
+        "max_tokens": max_tokens,
+    });
+    if let Some(m) = model {
+        body["model"] = serde_json::Value::String(m);
+    }
+
+    let client = reqwest::Client::builder()
+        // Agent loops can take a while — N LLM round-trips × per-iter time.
+        // Generous timeout; let the nexus enforce the iteration budget.
+        .timeout(std::time::Duration::from_secs(60 * 30))
+        .build()?;
+    let resp = client.post(&url).json(&body).send().await?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+
+    if output == "json" {
+        println!("{}", text);
+        if !status.is_success() {
+            anyhow::bail!("hex agent run: HTTP {}", status);
+        }
+        return Ok(());
+    }
+
+    if !status.is_success() {
+        eprintln!("hex agent run: HTTP {}: {}", status, text);
+        anyhow::bail!("nexus returned non-success");
+    }
+
+    let summary: serde_json::Value =
+        serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    let iterations = summary
+        .get("iterations")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let stop_reason = summary
+        .get("stop_reason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let elapsed_ms = summary
+        .get("elapsed_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let final_text = summary
+        .get("final_text")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let steps = summary
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    println!("agent finished — {} iterations, {} steps, {} ms, stop_reason={}",
+        iterations, steps.len(), elapsed_ms, stop_reason);
+    for (i, step) in steps.iter().enumerate() {
+        let tool = step.get("tool").and_then(|v| v.as_str()).unwrap_or("?");
+        let ok = step.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        let elapsed = step
+            .get("elapsed_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let err = step
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let mark = if ok { "✓" } else { "✗" };
+        if ok {
+            println!("  {} step {:>2}: {:>20}  ({} ms)", mark, i + 1, tool, elapsed);
+        } else {
+            println!(
+                "  {} step {:>2}: {:>20}  ({} ms)  error: {}",
+                mark,
+                i + 1,
+                tool,
+                elapsed,
+                err.chars().take(120).collect::<String>()
+            );
+        }
+    }
+    if !final_text.is_empty() {
+        println!("\n--- agent's final reply ---\n{}", final_text);
+    }
     Ok(())
 }
 

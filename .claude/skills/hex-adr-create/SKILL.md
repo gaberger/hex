@@ -1,7 +1,7 @@
 ---
-name: hex-adr-create
+name: hex-ADR-create
 description: Create a new Architecture Decision Record with auto-numbering, dependency impact analysis, and validation gates. Use when the user asks to "create ADR", "write ADR", "new ADR", or "architecture decision".
-trigger: /hex-adr-create
+trigger: /hex-ADR-create
 ---
 
 # Create New ADR
@@ -12,21 +12,27 @@ must include a full consumer dependency map before it can be accepted.
 
 ## Phase 1: Gather Intent
 
-1. Ask the user for:
+1. Get the next available ADR number and schema:
+   ```bash
+   hex adr schema
+   ```
+   This returns the next number — atomically reserved in SpacetimeDB — plus the
+   template, valid statuses, and required sections. Never derive the number by
+   listing `docs/adrs/` and taking the tail: that races against every other agent
+   creating an ADR concurrently, and two agents will pick the same number.
+
+2. Ask the user for:
    - **Title** (required)
    - **Brief context description** — why this decision is needed
    - **Decision type**: one of `add | modify | delete | restructure | migrate`
+   - **Drivers** — what triggered this decision
 
-2. Find the highest ADR number in `docs/adrs/`:
-   ```bash
-   ls docs/adrs/ADR-*.md docs/adrs/adr-*.md 2>/dev/null | sort -t- -k2 -n | tail -1
-   ```
-
-3. Generate the ADR ID using timestamp format: `ADR-YYMMDDHHMM`
+3. If a reserved placeholder exists (`ADR-{NNN}-reserved.md`), delete it after
+   creating the real ADR.
 
 ## Phase 2: Dependency Impact Analysis (REQUIRED for modify/delete/restructure/migrate)
 
-**This phase exists because ADR-2604050900 proved that deleting modules without tracing
+**This phase exists because ADR-2026-04-05-0900 proved that deleting modules without tracing
 all consumers leaves compilation broken in downstream crates.**
 
 ### 2a. Identify Affected Artifacts
@@ -87,7 +93,7 @@ Define explicit gates that the workplan MUST include:
 
 **CRITICAL**: The workplan derived from this ADR MUST include a validation step that
 runs these gates AFTER every phase that deletes or restructures artifacts. The
-ADR-2604050900 migration skipped this, resulting in hex-agent being broken for an
+ADR-2026-04-05-0900 migration skipped this, resulting in hex-agent being broken for an
 entire session.
 
 ### 2d. Blast Radius Classification
@@ -159,7 +165,7 @@ Before marking the ADR as complete:
 3. **Gate completeness**: Every implementation phase has at least one validation gate
 4. **Workplan alignment**: If a workplan will be created, verify it includes all gates
 
-## Anti-Patterns (Lessons from ADR-2604050900)
+## Anti-Patterns (Lessons from ADR-2026-04-05-0900)
 
 ### Anti-Pattern: Module-Scoped Impact Analysis
 Analyzing impact only within the module being changed (e.g., only checking
@@ -187,4 +193,4 @@ prioritize code analysis over documentation analysis.
 
 | Command | What it does |
 |---------|-------------|
-| `/hex-adr-create` | Create a new ADR with full impact analysis |
+| `/hex-ADR-create` | Create a new ADR with full impact analysis |

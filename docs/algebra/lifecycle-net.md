@@ -1,6 +1,6 @@
 # Lifecycle Petri Net — 7-Phase Feature Pipeline
 
-**Phase:** P3 of [ADR-2604111229](../adrs/ADR-2604111229-algebraic-formalization-of-process-flow.md)
+**Phase:** P3 of [ADR-2026-04-11-1229](../adrs/ADR-2026-04-11-1229-algebraic-formalization-of-process-flow.md)
 **Source of truth:** `hex-cli/src/pipeline/supervisor.rs`
 **Last verified against source:** 2026-04-12
 

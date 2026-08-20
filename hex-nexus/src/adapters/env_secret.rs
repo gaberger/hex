@@ -121,10 +121,10 @@ mod tests {
     use hex_core::domain::secret_grant::GrantPurpose;
 
     // Env-var test isolation: tests that touch process-wide env state
-    // serialize on this lock to avoid cross-test interference. Other
-    // env-touching tests in the workspace (e.g. session_tests) use the
-    // same pattern.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    // serialize on this lock to avoid cross-test interference. Uses
+    // tokio's async Mutex so the guard can legally cross .await points
+    // (the std variant trips clippy::await_holding_lock under -D suspicious).
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     fn unique_var(name: &str) -> String {
         // Use a per-test unique prefix derived from std::process::id +
@@ -149,7 +149,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolves_secret_from_env() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = ENV_LOCK.lock().await;
         let key = unique_var("RESOLVES");
         std::env::set_var(&key, "secret-value");
         let adapter = EnvSecretAdapter::new();
@@ -160,7 +160,7 @@ mod tests {
 
     #[tokio::test]
     async fn returns_not_found_for_missing_env_var() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = ENV_LOCK.lock().await;
         let key = unique_var("MISSING");
         std::env::remove_var(&key);
         let adapter = EnvSecretAdapter::new();
@@ -170,7 +170,7 @@ mod tests {
 
     #[tokio::test]
     async fn prefix_is_prepended_to_lookups() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = ENV_LOCK.lock().await;
         let suffix = unique_var("PREFIX");
         let full = format!("HEX_SECRET_{}", suffix);
         std::env::set_var(&full, "with-prefix");
@@ -182,7 +182,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_prefix_is_direct_lookup() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = ENV_LOCK.lock().await;
         let key = unique_var("DIRECT");
         std::env::set_var(&key, "direct");
         let adapter = EnvSecretAdapter::with_prefix("");
@@ -193,7 +193,7 @@ mod tests {
 
     #[tokio::test]
     async fn grant_then_claim_returns_resolved_values() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = ENV_LOCK.lock().await;
         let key = unique_var("CLAIM");
         std::env::set_var(&key, "claimed-value");
         let adapter = EnvSecretAdapter::new();
@@ -216,7 +216,7 @@ mod tests {
 
     #[tokio::test]
     async fn revoke_removes_grant_from_pending() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = ENV_LOCK.lock().await;
         let key = unique_var("REVOKE");
         std::env::set_var(&key, "should-not-be-claimed");
         let adapter = EnvSecretAdapter::new();
@@ -229,7 +229,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_env_var_during_claim_silently_drops_that_entry() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = ENV_LOCK.lock().await;
         let present = unique_var("PRESENT");
         let absent = unique_var("ABSENT");
         std::env::set_var(&present, "ok");

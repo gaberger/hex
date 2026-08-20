@@ -1,0 +1,168 @@
+{
+  "adr": "ADR-005",
+  "created_at": "2026-05-11T14:01:27.804584268+00:00",
+  "created_by": "hex-coder",
+  "feature": "6-gate compile-lint-test feedback pipeline with convergence guarantees",
+  "id": "wp-quality-gates-feedback-loop",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain models and port interfaces for quality gates",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/domain/quality_gate.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Define BuildResult, LintResult, TestFailure, StructuralDiff domain types",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/ports/build_port.rs"
+          ],
+          "id": "P0.2",
+          "layer": "ports",
+          "name": "Define IBuildPort with compile(), lint(), test() operations",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/ports/ast_port.rs"
+          ],
+          "id": "P0.3",
+          "layer": "ports",
+          "name": "Define IASTPort with diffStructural() for gate 5",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/ports/code_generation_port.rs"
+          ],
+          "id": "P0.4",
+          "layer": "ports",
+          "name": "Define ICodeGenerationPort.refineFromFeedback() method",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary adapters for build tooling and AST analysis",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/rust_build_adapter.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement RustBuildAdapter with cargo check, clippy, test invocation",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/typescript_build_adapter.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Implement TypeScriptBuildAdapter with tsc, eslint, jest",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/ast_diff_adapter.rs"
+          ],
+          "id": "P1.3",
+          "layer": "secondary",
+          "name": "Implement ASTDiffAdapter using tree-sitter for structural diffs",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "Primary adapter for structured error output",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/primary/json_error_formatter.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Implement JSONErrorFormatter to normalize errors to common schema",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "P3",
+      "name": "Use case orchestrating the 6-gate pipeline with iteration limits",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/usecases/quality_gate_pipeline.rs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Implement QualityGatePipeline use case with 6 sequential gates",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/usecases/iteration_limit_enforcer.rs"
+          ],
+          "id": "P3.2",
+          "layer": "usecases",
+          "name": "Implement IterationLimitEnforcer with convergence rule and escalation logic",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/usecases/quality_score_calculator.rs"
+          ],
+          "id": "P3.3",
+          "layer": "usecases",
+          "name": "Implement QualityScoreCalculator (weighted sum: compile=40, lint=20, unit=25, integration=10, ast=3, budget=2)",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P4",
+      "name": "Integration with code generation feedback loop",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/orchestration/drafter.rs"
+          ],
+          "id": "P4.1",
+          "layer": "integration",
+          "name": "Wire quality gate pipeline into Drafter refineFromFeedback cycle",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/tests/integration/quality_gates_test.rs"
+          ],
+          "id": "P4.2",
+          "layer": "integration",
+          "name": "Add integration tests covering all 6 gates with iteration limits",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

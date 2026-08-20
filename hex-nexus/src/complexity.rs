@@ -1,4 +1,4 @@
-//! Task complexity scoring for quantization-aware inference routing (ADR-2603271000).
+//! Task complexity scoring for quantization-aware inference routing (ADR-2026-03-27-1000).
 //!
 //! Estimates how complex an inference request is so the router can select the
 //! minimum quantization tier that will produce acceptable quality output.

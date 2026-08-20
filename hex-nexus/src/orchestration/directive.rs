@@ -1,4 +1,4 @@
-//! Directive executor for developer steering (ADR-2604131500 P5.3).
+//! Directive executor for developer steering (ADR-2026-04-13-1500 P5.3).
 //!
 //! Processes classified directives:
 //! - priority_change: reorder workplan tasks

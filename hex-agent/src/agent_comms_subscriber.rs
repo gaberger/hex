@@ -89,8 +89,19 @@ pub async fn subscribe_and_listen(
             _ => {}
         }
 
-        // Poll every 2 seconds
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        // Poll every 15s. The 2s rate was set when only one or two
+        // hex-agents existed; with 30+ persona agents alive (one per
+        // pool), 2s polling generated 16 reqs/sec to nexus and pinned
+        // ~5 cores in nexus's heartbeat/comms handlers. 15s matches
+        // the worker_process heartbeat cadence — same end-to-end SLA
+        // for inbound DMs without the CPU blast.
+        // Operator override via HEX_AGENT_COMMS_POLL_SECS for hot-tweaking.
+        let interval_secs = std::env::var("HEX_AGENT_COMMS_POLL_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| (1..=300).contains(v))
+            .unwrap_or(15);
+        tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)).await;
     }
 
     tracing::info!("Agent-comms poller shutting down");

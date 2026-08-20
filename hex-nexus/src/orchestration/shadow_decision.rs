@@ -124,7 +124,7 @@ impl Default for AdapterRoutingTracker {
 /// pattern; not enforced via type system because async traits over generic
 /// per-port call shapes don't compose cleanly without dynamic dispatch.
 /// The substrate's `ShadowRouter` for `IInferencePort` is the canonical
-/// instance — new ports follow the same shape. See ADR-2604261800 for
+/// instance — new ports follow the same shape. See ADR-2026-04-26-1800 for
 /// the strategy-level integration model.
 pub trait PortShadowRouterShape {
     // Marker only — see module docs.

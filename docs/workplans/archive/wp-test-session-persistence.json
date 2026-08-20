@@ -1,0 +1,211 @@
+{
+  "adr": "ADR-058",
+  "created_at": "2026-05-23T18:22:53.003472837+00:00",
+  "created_by": "hex-coder",
+  "feature": "Persist test session outcomes in SpacetimeDB with SQLite fallback",
+  "id": "wp-test-session-persistence",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Create `test-results` WASM module",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "spacetime-modules/test-results/src/model.rs"
+          ],
+          "id": "P1.1",
+          "layer": "domain",
+          "name": "Define `TestSession` and `TestResult` data models in WASM",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "spacetime-modules/test-results/src/reducers.rs"
+          ],
+          "id": "P1.2",
+          "layer": "domain",
+          "name": "Implement reducers for recording test sessions in WASM",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/db/sqlite/schema.sql"
+          ],
+          "id": "P1.3",
+          "layer": "infrastructure",
+          "name": "Create SQLite schema for local fallback storage",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P2",
+      "name": "Integrate `TestSession` collection in test runner",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-cli/src/commands/test.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Modify `hex test all` to collect and structure test results",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-cli/src/commands/test_runner.rs"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Implement session start and end logic in test runner",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P3",
+      "name": "Add REST endpoints for session recording and querying",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/routes/test_sessions.rs"
+          ],
+          "id": "P3.1",
+          "layer": "primary",
+          "name": "Create `test-sessions` API routes in hex-nexus",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/services/session_recorder.rs"
+          ],
+          "id": "P3.2",
+          "layer": "secondary",
+          "name": "Implement session recording logic for HTTP POST requests",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/services/session_query.rs"
+          ],
+          "id": "P3.3",
+          "layer": "secondary",
+          "name": "Develop query logic for listing and retrieving test sessions",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P4",
+      "name": "Add CLI commands for history and trends",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-cli/src/commands/test_history.rs"
+          ],
+          "id": "P4.1",
+          "layer": "primary",
+          "name": "Implement `hex test history` command for CLI",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-cli/src/commands/test_trends.rs"
+          ],
+          "id": "P4.2",
+          "layer": "primary",
+          "name": "Develop `hex test trends` command with sparkline display",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P5",
+      "name": "Implement flake detection and regression comparison",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/services/flake_detector.rs"
+          ],
+          "id": "P5.1",
+          "layer": "secondary",
+          "name": "Create flake detection algorithm in hex-nexus",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/services/regression_comparator.rs"
+          ],
+          "id": "P5.2",
+          "layer": "secondary",
+          "name": "Develop regression comparison logic for test outcomes",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P6",
+      "name": "Wire workplan gate auto-verification",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-workplan/src/executor.rs"
+          ],
+          "id": "P6.1",
+          "layer": "primary",
+          "name": "Integrate `/api/test-sessions/trends` into workplan executor",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-workplan/src/gate_verification.rs"
+          ],
+          "id": "P6.2",
+          "layer": "secondary",
+          "name": "Implement auto-verification for test gate conditions",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P7",
+      "name": "Add dashboard test health panel",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-dashboard/src/components/TestHealthPanel.vue"
+          ],
+          "id": "P7.1",
+          "layer": "primary",
+          "name": "Design and implement frontend components for test health dashboard",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-dashboard/src/services/api.js"
+          ],
+          "id": "P7.2",
+          "layer": "secondary",
+          "name": "Connect dashboard to backend API for session data",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

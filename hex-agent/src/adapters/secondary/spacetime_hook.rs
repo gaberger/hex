@@ -42,7 +42,7 @@ struct HookEntryDto {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // REST-only implementation
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// NOTE(ADR-2604050900): The hook-registry WASM module has been deleted.
+// NOTE(ADR-2026-04-05-0900): The hook-registry WASM module has been deleted.
 // Hooks are loaded from local YAML files and synced via config_sync.rs.
 // This adapter uses REST to fetch hooks from hex-hub until a hexflo-coordination
 // subscription is implemented.

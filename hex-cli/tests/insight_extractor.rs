@@ -1,4 +1,4 @@
-//! Extractor tests for ADR-2604142345 phase I1.3.
+//! Extractor tests for ADR-2026-04-14-2345 phase I1.3.
 //!
 //! Each test loads a fixture from `tests/fixtures/insight/` and exercises
 //! `extract_insights` against one of the four canonical shapes: structured

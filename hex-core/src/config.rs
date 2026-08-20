@@ -1,28 +1,25 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
+    #[serde(default)]
     pub autonomous: AutonomousConfig,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
 pub struct AutonomousConfig {
-    #[serde(default = "default_enabled")]
     pub enabled: bool,
-    #[serde(default = "default_max_concurrent_agents")]
-    pub max_concurrent_agents: u32,
-    #[serde(default = "default_rollback_on_failure")]
+    pub max_concurrent_agents: u8,
     pub rollback_on_failure: bool,
 }
 
-fn default_enabled() -> bool {
-    true
-}
-
-fn default_max_concurrent_agents() -> u32 {
-    3
-}
-
-fn default_rollback_on_failure() -> bool {
-    true
+impl Default for AutonomousConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_concurrent_agents: 3,
+            rollback_on_failure: true,
+        }
+    }
 }

@@ -1,6 +1,6 @@
 # ADR-065: Registration Lifecycle Gaps — Project and Agent Identity
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-22
 **Drivers:** End-to-end system test (hex-monitor on bazzite) revealed that project registration, agent registration, and session identity are fragmented across multiple endpoints and tables. Agents can connect but not receive inbox notifications. Projects exist on disk but not in SpacetimeDB. Session files resolve to the wrong agent.
 

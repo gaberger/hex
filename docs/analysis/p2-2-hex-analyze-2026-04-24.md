@@ -58,7 +58,7 @@ hex analyze /var/home/gary/hex-intf/examples/hex-task-tracker
   ⬡ Architecture grade: A+ — score 100/100
 
   ADR compliance:
-    ○ No .hex/adr-rules.toml found — skipping compliance check
+    ○ No .hex/ADR-rules.toml found — skipping compliance check
     ✓ All ADR rules satisfied
 ```
 
@@ -93,7 +93,7 @@ Filed here so the next `hex analyze` workplan can pick them up:
 
 3. **"All ADR rules satisfied" is misleading when the rules file is
    missing**. `analyze.rs:329-333` prints the green check mark after the
-   "No .hex/adr-rules.toml found" line, making it look like rules were
+   "No .hex/ADR-rules.toml found" line, making it look like rules were
    evaluated. Differentiating "no rules loaded" from "zero violations"
    would remove the ambiguity.
 

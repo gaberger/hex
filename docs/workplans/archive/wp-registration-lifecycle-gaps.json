@@ -1,0 +1,159 @@
+{
+  "adr": "ADR-065",
+  "created_at": "2026-05-23T17:25:40.490976713+00:00",
+  "created_by": "hex-coder",
+  "feature": "Fix project and agent identity registration lifecycle gaps",
+  "id": "wp-registration-lifecycle-gaps",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Session File Handling",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/api/agents/connect.rs"
+          ],
+          "id": "P1.1",
+          "layer": "primary",
+          "name": "Write session file on remote host during `hex agent connect`",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-common/src/session_state.rs"
+          ],
+          "id": "P1.2",
+          "layer": "domain",
+          "name": "Ensure consistent session file format across local and remote agents",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P2",
+      "name": "Project Auto-Registration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/api/agents/connect.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Auto-register project when `hex agent connect` is called",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-cli/src/commands/init.rs"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Ensure `hex init` registers the project in SpacetimeDB",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P3",
+      "name": "Agent and Session ID Resolution",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-common/src/session_resolution.rs"
+          ],
+          "id": "P3.1",
+          "layer": "primary",
+          "name": "Implement `resolve_agent_id()` with priority order",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-common/src/session_state.rs",
+            "hex-statusline/src/statusbar.rs"
+          ],
+          "id": "P3.2",
+          "layer": "domain",
+          "name": "Add `claude_pid` field to SessionState and update statusline PPID-chain matching",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-cli/src/commands/agent/id.rs"
+          ],
+          "id": "P3.3",
+          "layer": "primary",
+          "name": "Implement `hex agent id` CLI subcommand for self-discovery",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P4",
+      "name": "Notification and Broadcasts",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/notifications.rs"
+          ],
+          "id": "P4.1",
+          "layer": "primary",
+          "name": "Ensure `notify_all_agents` reaches all agents in a project",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P5",
+      "name": "Deprecation and Redirects",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/api/deprecated.rs"
+          ],
+          "id": "P5.1",
+          "layer": "secondary",
+          "name": "Deprecate `POST /api/agents/connect` — forwards to `/api/hex-agents/connect` with Deprecation + Sunset headers",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P6",
+      "name": "Identity Persistence and Nexus Integration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/api/agents/connect.rs"
+          ],
+          "id": "P6.1",
+          "layer": "primary",
+          "name": "REST handler accepts client-provided `agent_id` for identity persistence across nexus restarts",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/api/agents/connect.rs"
+          ],
+          "id": "P6.2",
+          "layer": "primary",
+          "name": "Project auto-registration on agent connect (project_find → project_register)",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

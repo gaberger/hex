@@ -1,0 +1,20 @@
+{
+  "id": "t1-add-derive",
+  "tier": "T1",
+  "axis_focus": ["tool_protocol_fidelity", "react_convergence"],
+  "instruction": "The struct `Widget` in the target file derives Clone. Add `Debug` to its derive list so the struct is `#[derive(Clone, Debug)]`. Change nothing else.",
+  "target_file": "bench-sandbox/src/lib.rs",
+  "oracle": {
+    "kind": "cargo_test",
+    "setup_files": {
+      "bench-sandbox/Cargo.toml": "[package]\nname = \"bench-sandbox\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+      "bench-sandbox/src/lib.rs": "#[derive(Clone)]\npub struct Widget { pub id: u32 }\n",
+      "bench-sandbox/tests/debug.rs": "use bench_sandbox::Widget;\n#[test] fn widget_is_debug() { let w = Widget { id: 7 }; assert_eq!(format!(\"{:?}\", w), \"Widget { id: 7 }\"); }\n"
+    },
+    "command": "cargo test -p bench-sandbox --test debug"
+  },
+  "graph_context_required": false,
+  "arms": ["react", "fast"],
+  "status": "draft",
+  "observed_baseline": {}
+}

@@ -1,0 +1,1 @@
+hex-as-hermes harness phase 0 proof 2026-05-14

@@ -172,7 +172,7 @@ pub struct AgentManager {
     /// Resolves secret keys to values for injection into agent child processes (ADR-026).
     /// Injected by the composition root — keeps orchestration free of std::env access.
     secret_resolver: SecretResolver,
-    /// Capability token service for issuing tokens at spawn time (ADR-2604051800 P1).
+    /// Capability token service for issuing tokens at spawn time (ADR-2026-04-05-1800 P1).
     capability_token_service: Arc<crate::adapters::capability_token::CapabilityTokenService>,
 }
 
@@ -249,7 +249,7 @@ impl AgentManager {
         }
 
         // Docker-first spawn: if Docker daemon is running and hex-agent:latest image exists,
-        // prefer microVM isolation (ADR-2603282000 P7). Only when a worktree is set.
+        // prefer microVM isolation (ADR-2026-03-28-2000 P7). Only when a worktree is set.
         if config.worktree_branch.is_some()
             && is_docker_available()
             && docker_image_exists("hex-agent:latest")
@@ -322,7 +322,7 @@ impl AgentManager {
             );
             return Ok(instance);
         } else if config.worktree_branch.is_some() {
-            // Docker is required for worktree-based builds (ADR-2603282000).
+            // Docker is required for worktree-based builds (ADR-2026-03-28-2000).
             // Log clearly so the operator knows isolation is degraded.
             if !is_docker_available() {
                 tracing::warn!(
@@ -407,12 +407,36 @@ impl AgentManager {
             cmd.env("HEX_STDB_HOST", &stdb_cfg.host);
             cmd.env("HEX_STDB_DATABASE", &stdb_cfg.database);
             // Per-module database names removed — skill-registry and
-            // agent-definition-registry were absorbed into hexflo-coordination (ADR-2604050900).
+            // agent-definition-registry were absorbed into hexflo-coordination (ADR-2026-04-05-0900).
             cmd.env("HEX_STATE_BACKEND", "spacetimedb");
             tracing::debug!(agent_id = %id, host = %stdb_cfg.host, db = %stdb_cfg.database, "Injecting SpacetimeDB config");
         }
 
-        // ADR-2604051800 P1: Issue capability token and inject as env var.
+        // Bypass the worktree-guard for supervisor-spawned workers.
+        //
+        // ADR-2026-05-08-1126 P2.1 made hex-agent refuse to run from trunk to
+        // prevent the 2026-05-07 hijacker-style overwrite. That defense
+        // is correct for ad-hoc operator-invoked hex-agent runs, but the
+        // supervisor IS the operator in the single-host model: it spawns
+        // worker processes with cwd=trunk (nexus's cwd) deliberately so
+        // a single instance can serve all roles without worktree sprawl.
+        //
+        // Pre-fix (observed 2026-05-14): supervisor spawns hex-agent
+        // daemon → worktree-guard at hex_agent/src/main.rs:293 prints
+        // "refusing to run from trunk" and exit(2)s → the registration
+        // call at line 358 (POST /api/hex-agents/connect) never fires →
+        // hex_agent table only ever holds the 10 persona-virtualized
+        // rows, never the real IC workers → workplan_executor's
+        // cc_agent UUID lookup misses → tasks time out at 120s. This is
+        // the construction-loop break diagnosed in ADR-2026-05-14-1135 Phase 1.
+        //
+        // Override is supervisor-scoped only. Direct `hex-agent daemon`
+        // invocations from a developer shell still hit the guard.
+        // SafeFileWriter (commit 0346eff8) remains the real safety net
+        // for autonomous source-tree writes.
+        cmd.env("HEXFLO_WORKTREE_REQUIRED", "0");
+
+        // ADR-2026-04-05-1800 P1: Issue capability token and inject as env var.
         // Default capabilities: SwarmWrite + admin for orchestrator agents.
         // Scoped agents (hex-coder) get TaskWrite + FileSystem for their worktree.
         {
@@ -443,7 +467,7 @@ impl AgentManager {
             tracing::debug!(agent_id = %id, "Injected capability token");
         }
 
-        // Always deliver the task prompt via --prompt flag (ADR-2604010000).
+        // Always deliver the task prompt via --prompt flag (ADR-2026-04-01-0000).
         // Stdin is null — prompt delivery via pipe is removed.
         if let Some(ref prompt) = config.prompt {
             cmd.arg("--prompt").arg(prompt);
@@ -583,12 +607,22 @@ impl AgentManager {
     /// The child process handle is stored for lifecycle management — killed on nexus shutdown.
     ///
     /// Returns the PID of the spawned process, or an error if the binary is not found.
+    /// Spawn a hex-agent child process and return both its OS pid AND the
+    /// `process_id` UUID used for hex_agent + worker_process registration.
+    ///
+    /// Caller (supervisor_subscriber) MUST use the returned process_id when
+    /// it calls `worker_process_register` — otherwise it registers the
+    /// row under a different UUID than the one passed to the child via
+    /// `HEX_WORKER_PROCESS_ID`, and the child's heartbeats target a row
+    /// that doesn't exist. Observed 2026-05-21: that mismatch produced
+    /// 572+ stale `worker_process` rows per pool with 5.7-core CPU burn
+    /// from the supervisor's spawn-reap cycle.
     pub async fn spawn_local_agent(
         &self,
         hub_url: &str,
         project_dir: &std::path::Path,
         role: Option<&str>,
-    ) -> Result<u32, String> {
+    ) -> Result<(u32, String), String> {
         let agent_bin = crate::find_agent_binary()
             .ok_or_else(|| "hex-agent binary not found (checked sibling dir, ~/.hex/bin/, PATH, cargo target)".to_string())?;
 
@@ -622,6 +656,23 @@ impl AgentManager {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped());
 
+        // Persona-pool + default-agent spawns operate from trunk and use
+        // typed-tool mediation (twin → executor) instead of direct file
+        // writes, so the worktree gate from ADR-2026-05-08-1126 doesn't
+        // apply. Without this override the supervisor spawns workers
+        // that immediately exit with "refusing to run from trunk",
+        // producing the persistent-zombie pattern observed 2026-05-21.
+        // Feature-dev coding agents take the `spawn_agent` path (with
+        // config.worktree_branch set) and are unaffected.
+        cmd.env("HEXFLO_WORKTREE_REQUIRED", "0");
+
+        // Pass the worker_process row id so the hex-agent can heartbeat
+        // its OWN supervision row instead of a fresh UUID. Without this,
+        // supervisor_tick reaps the row as stale_heartbeat every 60s
+        // and the supervisor spawns a replacement — observed 2026-05-21:
+        // ~3 hex-agents per pool per minute, growing unboundedly.
+        cmd.env("HEX_WORKER_PROCESS_ID", &process_id);
+
         let child = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn hex-agent at {}: {}", agent_bin.display(), e))?;
@@ -647,13 +698,13 @@ impl AgentManager {
 
         // Store child handle for lifecycle management
         self.local_children.lock().await.push(LocalAgent {
-            id: process_id,
+            id: process_id.clone(),
             pid,
             child,
             project_dir: project_dir_str,
         });
 
-        Ok(pid)
+        Ok((pid, process_id))
     }
 
     /// Stop all locally-spawned child agents (called on nexus shutdown).
@@ -769,6 +820,24 @@ impl AgentManager {
 mod tests {
     use super::*;
 
+    // ── Liveness ─────────────────────────────────────────────────────────────
+
+    /// The registry writes `processId: 0` for "never had a process". Passing
+    /// that to `kill` asks about the caller's own process group and succeeds,
+    /// which made every such record read as alive and stopped `check_health`
+    /// from reaping any of them. Regression guard: pid 0 is never alive.
+    #[test]
+    fn pid_zero_is_never_alive() {
+        assert!(!is_process_alive(0), "pid 0 must never read as alive");
+    }
+
+    /// The counterpart: a pid that genuinely exists must still read as alive,
+    /// so the guard above cannot be satisfied by returning false for everything.
+    #[test]
+    fn a_real_process_is_alive() {
+        assert!(is_process_alive(std::process::id()));
+    }
+
     // ── SpawnConfig serde ────────────────────────────────────────────────────
 
     /// JSON without `waitForCompletion` must deserialize with the field defaulting to false.
@@ -813,7 +882,7 @@ mod tests {
     }
 
     /// When docker is not available, is_docker_available returns false without panicking.
-    /// This verifies the docker-unavailable fallback path (ADR-2603282000 P7).
+    /// This verifies the docker-unavailable fallback path (ADR-2026-03-28-2000 P7).
     #[test]
     fn docker_unavailable_does_not_panic() {
         // is_docker_available calls `docker info`; on CI or machines without docker this
@@ -871,7 +940,18 @@ fn docker_image_exists(image: &str) -> bool {
 }
 
 /// Check if a process is alive by sending signal 0.
+///
+/// Pid 0 is rejected before it ever reaches `kill`. The registry writes 0 to
+/// mean "no process", but `kill(0, 0)` is not a liveness probe — POSIX defines
+/// it as signalling *every process in the caller's process group*, and it
+/// returns success. Without this guard every record with `processId: 0` reads
+/// as alive, so `check_health` reaps nothing and the registry accumulates
+/// agents claiming `running` forever. Measured on bazzite 2026-07-26: 997 such
+/// records dating to May, and a reap that reported `deadCount: 0`.
 fn is_process_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
     #[cfg(unix)]
     {
         let result = unsafe { libc::kill(pid as i32, 0) };

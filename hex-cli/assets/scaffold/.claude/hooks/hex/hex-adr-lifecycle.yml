@@ -1,7 +1,7 @@
-# hex-adr-lifecycle — ADR creation and status transition hooks
+# hex-ADR-lifecycle — ADR creation and status transition hooks
 # Enforces ADR template compliance and cross-reference integrity
 
-name: hex-adr-lifecycle
+name: hex-ADR-lifecycle
 type: on-change
 description: >
   Validates ADR documents when they are created or modified. Ensures template
@@ -117,4 +117,4 @@ output:
         Fix: {{suggested_fix}}
     {{/each}}
 
-    Run `/hex-adr-create` to create a properly formatted ADR.
+    Run `/hex-ADR-create` to create a properly formatted ADR.

@@ -203,7 +203,7 @@ pub async fn get_persona_status(
     }
 
     // Merge static persona data with live status
-    let mut personas: Vec<PersonaStatus> = personas_static
+    let personas: Vec<PersonaStatus> = personas_static
         .iter()
         .map(|p| {
             let (status, last_heartbeat, active_count) = persona_status_map

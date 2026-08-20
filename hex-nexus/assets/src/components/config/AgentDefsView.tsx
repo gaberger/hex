@@ -86,7 +86,7 @@ const AgentDefsView: Component = () => {
 
   // Map SpacetimeDB rows to AgentDef objects
   const agentList = createMemo((): AgentDef[] => {
-    return agentDefinitions().map((d: any) => {
+    return (agentDefinitions() ?? []).map((d: any) => {
       const role = d.role ?? '';
       let tools: string[] = [];
       try { tools = JSON.parse(d.toolsJson ?? d.tools_json ?? '[]'); } catch { /* empty */ }

@@ -11,7 +11,7 @@ use crate::domain::messages::{ContentBlock, StopReason};
 use crate::domain::tools::ToolDefinition;
 
 /// Pure in-memory mock implementation of [`IInferencePort`]. Used by the
-/// standalone composition tests (ADR-2604112000 P2/P5). Left unconditionally
+/// standalone composition tests (ADR-2026-04-11-2000 P2/P5). Left unconditionally
 /// `pub` because hex-core has no cargo features and downstream test code in
 /// hex-nexus/hex-cli imports it directly.
 pub mod mock;
@@ -28,7 +28,7 @@ pub struct InferenceRequest {
     pub thinking_budget: Option<u32>,
     pub cache_control: bool,
     pub priority: Priority,
-    /// GBNF grammar constraint for structured output (ADR-2604120202 Phase 2).
+    /// GBNF grammar constraint for structured output (ADR-2026-04-12-0202 Phase 2).
     /// When set, the inference backend constrains token generation to only
     /// grammar-valid continuations. Ollama passes this to llama.cpp's GBNF
     /// decoder; other backends may ignore it.
@@ -101,7 +101,7 @@ pub enum ModelTier {
 
 /// Backend reachability/health as reported by [`IInferencePort::health`].
 ///
-/// Per ADR-2604112000 (Hex Self-Sufficient Dispatch), every inference
+/// Per ADR-2026-04-11-2000 (Hex Self-Sufficient Dispatch), every inference
 /// backend exposes a `health()` probe so the composition root can decide
 /// whether a standalone provider is usable before dispatching a workplan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,7 +135,7 @@ pub trait IInferencePort: Send + Sync {
 
     /// Probe the backend. Ollama: `GET /api/tags`. ClaudeCode: `claude
     /// --version`. SpacetimeDB: reducer roundtrip. Used by the composition
-    /// root (ADR-2604112000) to decide which standalone provider to wire.
+    /// root (ADR-2026-04-11-2000) to decide which standalone provider to wire.
     async fn health(&self) -> Result<HealthStatus, InferenceError>;
 
     /// What capabilities does this backend support?
@@ -155,7 +155,7 @@ pub mod futures_stream {
 }
 
 /// PortTelemetry surface for `IInferencePort` implementations (substrate
-/// C3, ADR-2604261500). Adapter authors call
+/// C3, ADR-2026-04-26-1500). Adapter authors call
 /// `InferencePortTelemetry::emit(adapter_id, sample)` after each
 /// `complete` / `stream` call. The substrate routes samples to the
 /// registered sink (`telemetry::register_sink`); unconfigured callers pay

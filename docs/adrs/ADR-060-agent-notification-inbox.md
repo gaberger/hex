@@ -1,6 +1,6 @@
 # ADR-060: Agent Notification Inbox
 
-**Status:** Accepted
+**Status:** Completed
 **Date:** 2026-03-22
 **Drivers:** No mechanism exists to notify a running Claude Code agent of critical system events (hex-nexus update, hex-agent restart, config change). Agents operate in a closed process loop — external systems cannot push messages into an active session. This creates risk of agents working against stale binaries or missing coordinated restarts.
 

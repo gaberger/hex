@@ -1,4 +1,4 @@
-//! Default enforcement implementation (ADR-2603221959).
+//! Default enforcement implementation (ADR-2026-03-22-1959).
 //!
 //! Checks operations against hex lifecycle rules:
 //! - Background agent spawn requires HEXFLO_TASK

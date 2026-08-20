@@ -97,7 +97,7 @@ const WorkPlanDetail: Component = () => {
   // Check hexflo memory for a linked swarm
   const linkedSwarmId = createMemo(() => {
     const key = `workplan:${workplanId()}:swarm`;
-    const mem = hexfloMemory().find(
+    const mem = (hexfloMemory() ?? []).find(
       (m: any) => (m.key ?? "") === key,
     );
     return mem?.value ?? "";
@@ -106,7 +106,7 @@ const WorkPlanDetail: Component = () => {
   const linkedSwarm = createMemo(() => {
     const sid = linkedSwarmId();
     if (!sid) return null;
-    return swarms().find(
+    return (swarms() ?? []).find(
       (s: any) => (s.id ?? s.swarm_id ?? "") === sid,
     );
   });

@@ -364,7 +364,7 @@ mod tests {
             "violations": [
                 { "source_file": "src/adapters/primary/cli.ts",
                   "imported_path": "src/adapters/secondary/db.ts",
-                  "rule": "adr-hex-adapter-isolation" }
+                  "rule": "ADR-hex-adapter-isolation" }
             ]
         });
         let findings = parse_findings(&payload);
@@ -373,7 +373,7 @@ mod tests {
         assert_eq!(f.severity, Severity::High);
         assert_eq!(f.suggested_action.kind, ActionKind::DraftWorkplan);
         assert!(f.title.contains("primary/cli.ts"));
-        assert!(f.evidence.iter().any(|e| e.contains("adr-hex-adapter-isolation")));
+        assert!(f.evidence.iter().any(|e| e.contains("ADR-hex-adapter-isolation")));
         assert!(f.id.starts_with("f-arch-ts-"));
     }
 

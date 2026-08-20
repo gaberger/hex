@@ -1,0 +1,154 @@
+{
+  "adr": "ADR-034",
+  "created_at": "2026-05-11T14:31:13.941265789+00:00",
+  "created_by": "hex-coder",
+  "feature": "Migrate hex analyzer from TypeScript to Rust in hex-nexus",
+  "id": "wp-migrate-analyzer-to-rust",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain + Ports (Tier 0)",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/analysis/domain.rs",
+            "hex-nexus/src/analysis/mod.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Create analysis domain types (HexLayer, ImportEdge, DependencyViolation, ArchAnalysisResult)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/analysis/ports.rs"
+          ],
+          "id": "P0.2",
+          "layer": "ports",
+          "name": "Define ArchAnalysisPort and AstPort trait interfaces",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/analysis/layer_classifier.rs"
+          ],
+          "id": "P0.3",
+          "layer": "domain",
+          "name": "Implement layer classification logic (directory + filename patterns)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/analysis/path_normalizer.rs"
+          ],
+          "id": "P0.4",
+          "layer": "domain",
+          "name": "Implement path normalization for TS/Go/Rust imports",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Tree-Sitter Native Adapter (Tier 1)",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/analysis/treesitter_adapter.rs",
+            "hex-nexus/Cargo.toml"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Add tree-sitter native crates and implement AstPort for import/export extraction",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P2",
+      "name": "Analysis Use Cases (Tier 3)",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/analysis/boundary_checker.rs"
+          ],
+          "id": "P2.1",
+          "layer": "usecases",
+          "name": "Implement boundary checker for hex dependency direction rules",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/analysis/dead_export_finder.rs"
+          ],
+          "id": "P2.2",
+          "layer": "usecases",
+          "name": "Implement dead export finder",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/analysis/cycle_detector.rs"
+          ],
+          "id": "P2.3",
+          "layer": "usecases",
+          "name": "Implement cycle detector with DFS-based circular dependency detection",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/analysis/analyzer.rs"
+          ],
+          "id": "P2.4",
+          "layer": "usecases",
+          "name": "Create ArchAnalyzer orchestrator implementing ArchAnalysisPort",
+          "status": "pending"
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "P3",
+      "name": "REST Routes + Integration (Tier 2/4)",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/routes/analysis.rs",
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "id": "P3.1",
+          "layer": "primary",
+          "name": "Add analysis REST routes to hex-nexus (GET /api/{project_id}/analyze)",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-cli/src/commands/analyze.rs"
+          ],
+          "id": "P3.2",
+          "layer": "primary",
+          "name": "Create hex-cli analyze command calling hex-nexus REST API",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/lib.rs"
+          ],
+          "id": "P3.3",
+          "layer": "integration",
+          "name": "Wire analysis module into hex-nexus lib",
+          "status": "pending"
+        }
+      ],
+      "tier": 2
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

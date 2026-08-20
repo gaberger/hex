@@ -87,6 +87,18 @@ pub enum TaskAction {
         /// Agent ID (auto-resolved from session state if omitted)
         agent_id: Option<String>,
     },
+    /// Set a task's status directly (pending|in_progress|completed|failed|blocked).
+    ///
+    /// The direct task-manager lifecycle verb. `completed` should reflect a
+    /// passing evidence predicate — prefer `hex task complete` (which is the
+    /// gated path) for completion; use this for in_progress/failed/blocked.
+    Status {
+        /// Task ID
+        task_id: String,
+        /// Target status
+        #[arg(value_parser = ["pending", "in_progress", "completed", "failed", "blocked"])]
+        status: String,
+    },
 }
 
 pub async fn run(action: TaskAction) -> anyhow::Result<()> {
@@ -95,6 +107,7 @@ pub async fn run(action: TaskAction) -> anyhow::Result<()> {
         TaskAction::List => list().await,
         TaskAction::Complete { id, result, json } => complete(&id, result.as_deref(), json).await,
         TaskAction::Assign { task_id, agent_id } => assign(&task_id, agent_id).await,
+        TaskAction::Status { task_id, status } => set_status(&task_id, &status).await,
     }
 }
 
@@ -102,13 +115,13 @@ async fn create(swarm_id: &str, title: &str, depends_on: &str, agent: Option<Str
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
-    // ADR-2604102200: Auto-register agent if not already registered
+    // ADR-2026-04-10-2200: Auto-register agent if not already registered
     // This ensures task creation works without requiring manual hex agent connect first
     let _ = ensure_agent_registered(&nexus).await;
 
     // Only assign if --agent is explicitly provided. Auto-resolving from session
     // state would pre-assign tasks to the supervisor, preventing Docker workers
-    // from self-claiming via the pull model (ADR-2603282000).
+    // from self-claiming via the pull model (ADR-2026-03-28-2000).
     let agent_id = agent;
 
     // POST to /api/swarms/{swarm_id}/tasks
@@ -297,6 +310,39 @@ async fn complete(id: &str, result: Option<&str>, json_output: bool) -> anyhow::
         }
     }
 
+    Ok(())
+}
+
+/// `hex task status <id> <status>` — direct task-manager lifecycle setter.
+async fn set_status(task_id: &str, status: &str) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    // Resolve the owning swarm (same lookup as `complete`).
+    let swarms = nexus.get("/api/swarms/active").await?.as_array().cloned().unwrap_or_default();
+    let mut swarm_id: Option<String> = None;
+    for swarm in &swarms {
+        if let Some(tasks) = swarm["tasks"].as_array() {
+            if tasks.iter().any(|t| t["id"].as_str() == Some(task_id)) {
+                swarm_id = swarm["id"].as_str().map(String::from);
+                break;
+            }
+        }
+    }
+    let swarm_id = swarm_id
+        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found in any active swarm", task_id))?;
+
+    if status == "completed" {
+        println!(
+            "  {} setting status=completed directly — `completed` should reflect a passing \
+             evidence predicate; `hex task complete` is the gated path.",
+            "!".yellow()
+        );
+    }
+    let path = format!("/api/swarms/{}/tasks/{}", swarm_id, task_id);
+    let _ = nexus.patch(&path, &json!({ "status": status })).await?;
+    println!("{} task {} → {}", "\u{2b21}".cyan(), task_id, status.green().bold());
+    println!("  swarm: {}", swarm_id);
     Ok(())
 }
 

@@ -92,7 +92,7 @@ impl CleanupService {
                 }
             }
 
-            // ── Decision auto-resolution (ADR-2604131500 P3.3, P1.2) ──
+            // ── Decision auto-resolution (ADR-2026-04-13-1500 P3.3, P1.2) ──
             // Auto-acknowledge unresolved decision notifications past the
             // configurable deadline. Reads from env / .hex/project.json / default 2h.
             if let Some(sp) = &self.state.state_port {
@@ -316,14 +316,33 @@ mod tests {
         // PID 99999 should not exist (unless system has 100k+ processes)
         assert!(!is_pid_alive(99999));
     }
+
+    /// pid 0 means "no process" in the registry, and `kill(0, 0)` signals the
+    /// caller's whole process group rather than probing a process — so it
+    /// succeeds and a dead record reads as alive.
+    #[test]
+    #[cfg(unix)]
+    fn test_is_pid_alive_rejects_pid_zero() {
+        assert!(!is_pid_alive(0), "pid 0 must never read as alive");
+    }
 }
 
 /// Check if a process with the given PID is alive
 ///
 /// On Unix: Uses kill(pid, 0) via libc which returns success if process exists
 /// On Windows: Always returns true (requires sysinfo crate for proper check)
+///
+/// Pid 0 is rejected up front. `kill(0, 0)` does not ask "does process 0
+/// exist" — POSIX defines pid 0 as *every process in the caller's process
+/// group*, so it returns success and the pid reads as alive. The registry uses
+/// 0 to mean "no process", so without this guard a dead record looks live.
+/// This is the same defect that stopped `agent_manager::check_health` from
+/// reaping 997 stale agents on bazzite (2026-07-26).
 #[allow(dead_code)]
 fn is_pid_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
     #[cfg(unix)]
     {
         // Use libc kill(pid, 0) - returns 0 if process exists

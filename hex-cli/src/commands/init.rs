@@ -107,7 +107,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // ── 1b. .hex/project.yaml (ADR-043 manifest) ───────────────
     create_project_yaml(&target, &project_name, interview.as_ref())?;
 
-    // ── 1c. .hex/adr-rules.toml (enforcement rules) ───────────────
+    // ── 1c. .hex/ADR-rules.toml (enforcement rules) ───────────────
     create_adr_rules_toml(&target)?;
 
     // ── 2. .mcp.json ─────────────────────────────────────────────
@@ -140,7 +140,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
     println!();
     println!("  {} .hex/project.json", "\u{2713}".green());
     println!("  {} .hex/project.yaml (auto-register manifest)", "\u{2713}".green());
-    println!("  {} .hex/adr-rules.toml (enforcement rules)", "\u{2713}".green());
+    println!("  {} .hex/ADR-rules.toml (enforcement rules)", "\u{2713}".green());
     println!("  {} .mcp.json", "\u{2713}".green());
     println!("  {} .claude/settings.json", "\u{2713}".green());
     if !args.no_claude_md {
@@ -181,7 +181,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
     match &register_result {
         Ok(pid) => {
             println!("  {} SpacetimeDB project registered ({})", "\u{2713}".green(), &pid[..8.min(pid.len())]);
-            // ADR-2603301200: Generate architecture fingerprint on init so it's available
+            // ADR-2026-03-30-1200: Generate architecture fingerprint on init so it's available
             // immediately in Claude Code sessions and the first `hex dev` run.
             let nexus = crate::nexus_client::NexusClient::from_env();
             let fp_body = serde_json::json!({
@@ -322,7 +322,7 @@ pub fn create_mcp_json(target: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Load the embedded settings template (ADR-2603221522).
+/// Load the embedded settings template (ADR-2026-03-22-1522).
 fn settings_template() -> String {
     crate::assets::Assets::get_str("templates/hex-claude-settings.json")
         .expect("hex-claude-settings.json must be embedded in assets/templates/")
@@ -476,7 +476,7 @@ fn create_adr_rules_toml(target: &Path) -> Result<()> {
     let hex_dir = target.join(".hex");
     create_dir_if_missing(&hex_dir)?;
 
-    let rules_path = hex_dir.join("adr-rules.toml");
+    let rules_path = hex_dir.join("ADR-rules.toml");
     if rules_path.exists() {
         // Never overwrite existing rules
         return Ok(());
@@ -521,7 +521,7 @@ layer = "usecases"
 "#;
 
     fs::write(&rules_path, content)
-        .context("Failed to write .hex/adr-rules.toml")?;
+        .context("Failed to write .hex/ADR-rules.toml")?;
 
     Ok(())
 }

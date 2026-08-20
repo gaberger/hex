@@ -1,6 +1,6 @@
 # hex bootstrap
 
-Single command to orchestrate full hex environment setup: verify prerequisites, start services in parallel, load models, configure project, validate. Eliminates manual service juggling and unclear setup steps (ADR-2604170001).
+Single command to orchestrate full hex environment setup: verify prerequisites, start services in parallel, load models, configure project, validate. Eliminates manual service juggling and unclear setup steps (ADR-2026-04-17-0001).
 
 ## Quick Start
 
@@ -243,6 +243,6 @@ hex analyze .
 
 ## Related
 
-- **ADR-2604170001**: Bootstrap design & phases
-- **ADR-2604120202**: Tiered inference routing (T1/T2/T2.5)
-- **ADR-2604131800**: Self-hosting gaps (bootstrap is Phase 1 fix)
+- **ADR-2026-04-17-0001**: Bootstrap design & phases
+- **ADR-2026-04-12-0202**: Tiered inference routing (T1/T2/T2.5)
+- **ADR-2026-04-13-1800**: Self-hosting gaps (bootstrap is Phase 1 fix)

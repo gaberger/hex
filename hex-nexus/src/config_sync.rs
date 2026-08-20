@@ -150,7 +150,7 @@ pub async fn auto_register_project(project_root: &Path, stdb_host: &str, stdb_db
 
 /// Preload inference endpoints from `~/.hex/inference-servers.json` into SpacetimeDB.
 ///
-/// Called during startup after SpacetimeDB connection is established (ADR-2604080813).
+/// Called during startup after SpacetimeDB connection is established (ADR-2026-04-08-0813).
 /// Re-registers any cached endpoints that are missing from the inference-gateway module.
 /// Stale/unreachable endpoints are logged as warnings but never fail startup.
 ///
@@ -273,26 +273,35 @@ pub async fn preload_inference_cache(stdb_host: &str) {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        // The cache is written from the /api/inference/endpoints JSON, which
+        // uses camelCase keys (qualityScore, quantizationLevel, …). Read those
+        // first, with snake_case as a fallback for older cache files — otherwise
+        // calibration/quant/limits all reset to defaults on every restart.
         let quantization = ep
-            .get("quantization_level")
+            .get("quantizationLevel")
+            .or_else(|| ep.get("quantization_level"))
             .or_else(|| ep.get("quantization"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
         let context_window = ep
-            .get("context_window")
+            .get("contextWindow")
+            .or_else(|| ep.get("context_window"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
         let rate_limit_rpm = ep
-            .get("rate_limit_rpm")
+            .get("rateLimitRpm")
+            .or_else(|| ep.get("rate_limit_rpm"))
             .and_then(|v| v.as_u64())
             .unwrap_or(60) as u32;
         let rate_limit_tpm = ep
-            .get("rate_limit_tpm")
+            .get("rateLimitTpm")
+            .or_else(|| ep.get("rate_limit_tpm"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         let quality_score = ep
-            .get("quality_score")
+            .get("qualityScore")
+            .or_else(|| ep.get("quality_score"))
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0) as f32;
 
@@ -327,7 +336,7 @@ pub async fn preload_inference_cache(stdb_host: &str) {
     }
 
     if preloaded > 0 {
-        tracing::info!("Preloaded {}/{} inference endpoints from cache (ADR-2604080813)", preloaded, endpoints.len());
+        tracing::info!("Preloaded {}/{} inference endpoints from cache (ADR-2026-04-08-0813)", preloaded, endpoints.len());
     }
 }
 
@@ -500,7 +509,7 @@ pub async fn sync_project_config_with_report(
         }
     }
 
-    // 5. Preload inference endpoints from ~/.hex/inference-servers.json (ADR-2604080813)
+    // 5. Preload inference endpoints from ~/.hex/inference-servers.json (ADR-2026-04-08-0813)
     preload_inference_cache(stdb_host).await;
 
     report

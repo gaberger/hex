@@ -35,6 +35,7 @@ function statusBadgeClasses(status: string): string {
   const s = status.toLowerCase();
   if (s === 'proposed') return 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/30';
   if (s === 'accepted') return 'bg-green-500/15 text-green-400 border border-green-500/30';
+  if (s === 'completed') return 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30';
   if (s === 'superseded') return 'bg-red-500/15 text-red-400 border border-red-500/30';
   if (s === 'deprecated') return 'bg-red-500/15 text-red-400 border border-red-500/30';
   if (s === 'abandoned') return 'bg-gray-500/15 text-gray-400 border border-gray-500/30';
@@ -45,6 +46,7 @@ function statusColor(status: string): string {
   const s = status.toLowerCase();
   if (s === 'proposed') return 'var(--status-warning)';
   if (s === 'accepted') return 'var(--status-active)';
+  if (s === 'completed') return 'var(--hex-primary)';
   if (s === 'superseded') return 'var(--hex-primary)';
   return 'var(--text-faint)';
 }
@@ -156,7 +158,7 @@ The hex-nexus system currently stores coordination state in **multiple disconnec
 
 ## Decision
 
-**Consolidate ALL coordination state into 7 focused SpacetimeDB modules (ADR-2604050900):**
+**Consolidate ALL coordination state into 7 focused SpacetimeDB modules (ADR-2026-04-05-0900):**
 
 1. \`hexflo-coordination\` — swarms, tasks, agents, memory, fleet (compute_node), lifecycle, cleanup
 2. \`inference-gateway\` — providers, requests, budgets, streaming, procedure-based LLM calls
@@ -273,6 +275,7 @@ async function fetchADRDetail(id: string, projectId?: string, projectPath?: stri
 
 const ADRBrowser: Component = () => {
   const [searchQuery, setSearchQuery] = createSignal('');
+  const [statusFilter, setStatusFilter] = createSignal<string>('all');
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
   const [retryCount, setRetryCount] = createSignal(0);
   const [sidebarOpen, setSidebarOpen] = createSignal(true);
@@ -305,7 +308,19 @@ const ADRBrowser: Component = () => {
 
   // Build a map: ADR number -> workplan count
   const adrWorkplanMap = createMemo(() => {
-    const plans = workplanList() ?? [];
+    // /api/workplan/list returns { data: { executions: [...] } } — NOT a bare
+    // array. Extract the array defensively; a `?? []` only guards null/undefined,
+    // so iterating the object threw "not iterable" and crashed the ADR view.
+    const raw = workplanList() as any;
+    const plans: any[] = Array.isArray(raw)
+      ? raw
+      : Array.isArray(raw?.data?.executions)
+        ? raw.data.executions
+        : Array.isArray(raw?.executions)
+          ? raw.executions
+          : Array.isArray(raw?.data)
+            ? raw.data
+            : [];
     const map = new Map<string, number>();
     for (const wp of plans) {
       const adrRef = wp.adr ?? wp.adrRef ?? '';
@@ -324,22 +339,43 @@ const ADRBrowser: Component = () => {
 
   const isFallback = createMemo(() => adrListResult()?.isFallback ?? false);
 
+  // Status counts across the full (unfiltered) list — drives the filter chips
+  // so only statuses that actually exist are shown, each with a live count.
+  const statusCounts = createMemo<Record<string, number>>(() => {
+    const list = adrListResult()?.items ?? [];
+    const counts: Record<string, number> = {};
+    for (const adr of list) {
+      const s = (adr.status || 'unknown').toLowerCase();
+      counts[s] = (counts[s] ?? 0) + 1;
+    }
+    return counts;
+  });
+
   const filteredList = createMemo(() => {
     const list = adrListResult()?.items ?? [];
     const q = searchQuery().toLowerCase().trim();
-    if (!q) return list;
-    return list.filter(
-      (adr) =>
+    const sf = statusFilter();
+    return list.filter((adr) => {
+      if (sf !== 'all' && (adr.status || 'unknown').toLowerCase() !== sf) return false;
+      if (!q) return true;
+      return (
         adr.id.includes(q) ||
         adr.title.toLowerCase().includes(q) ||
         adr.status.toLowerCase().includes(q)
-    );
+      );
+    });
   });
 
-  // Auto-select first ADR when list loads
+  // Deep-link target: #/project/{pid}/adrs/{adrId} pre-selects that ADR (used by
+  // the "View ADR" links in the Missions view).
+  const routeAdrId = createMemo(() => (route() as { adrId?: string }).adrId);
+
+  // Selection precedence: explicit click → route adrId → first in list.
   const effectiveSelectedId = createMemo(() => {
     const sel = selectedId();
     if (sel) return sel;
+    const fromRoute = routeAdrId();
+    if (fromRoute) return fromRoute;
     const list = filteredList();
     return list.length > 0 ? list[0].id : null;
   });
@@ -413,6 +449,31 @@ const ADRBrowser: Component = () => {
               onInput={(e) => setSearchQuery(e.currentTarget.value)}
             />
           </div>
+        </div>
+
+        {/* Status filter chips — ordered by lifecycle; only statuses present in
+            the data are shown, each with a live count. "All" clears the filter. */}
+        <div class="flex flex-wrap gap-1.5 px-3 pb-3">
+          <For each={['all', 'proposed', 'accepted', 'completed', 'superseded', 'deprecated', 'abandoned', 'rejected', 'unknown']}>
+            {(s) => {
+              const count = () => s === 'all'
+                ? (adrListResult()?.items?.length ?? 0)
+                : (statusCounts()[s] ?? 0);
+              const chipClass = () => {
+                const base = 'rounded-full px-2.5 py-0.5 text-[11px] font-medium border transition-colors capitalize ';
+                if (statusFilter() === s) return base + 'bg-gray-100 text-gray-900 border-gray-100';
+                if (s === 'all') return base + 'border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600';
+                return base + statusBadgeClasses(s) + ' hover:brightness-125';
+              };
+              return (
+                <Show when={s === 'all' || count() > 0}>
+                  <button onClick={() => setStatusFilter(s)} class={chipClass()}>
+                    {s} <span class="opacity-60 font-mono">{count()}</span>
+                  </button>
+                </Show>
+              );
+            }}
+          </For>
         </div>
 
         {/* Offline fallback banner */}

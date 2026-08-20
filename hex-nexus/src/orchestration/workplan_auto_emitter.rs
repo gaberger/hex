@@ -13,9 +13,9 @@
 //!
 //! Disabled with HEX_DISABLE_WORKPLAN_AUTO_EMITTER=1.
 
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::time::Duration;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -23,6 +23,19 @@ use crate::tools::ToolRegistry;
 
 const POLL_INTERVAL_SECS: u64 = 60;
 const MAX_PER_TICK: usize = 1;
+/// Cooldown for an ADR that failed derivation. Skip it for this long
+/// before retrying. Without this gate, the auto-emitter retries the
+/// same FIRST uncovered ADR every tick — observed 2026-05-21: ADR-035
+/// failed "no tool_calls in response" once per minute for an hour,
+/// burning inference calls and feeding the nexus-CPU runaway.
+const RETRY_COOLDOWN_SECS: u64 = 3600;
+
+/// Per-ADR last-failure timestamp. Tick skips any ADR whose last
+/// failure is within `RETRY_COOLDOWN_SECS`.
+fn failure_cache() -> &'static Mutex<HashMap<String, Instant>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 pub fn spawn(stdb_host: String, hex_db: String) {
     if std::env::var("HEX_DISABLE_WORKPLAN_AUTO_EMITTER").is_ok() {
@@ -71,8 +84,8 @@ pub fn spawn(stdb_host: String, hex_db: String) {
 
 async fn run_one(
     http: &reqwest::Client,
-    stdb_host: &str,
-    hex_db: &str,
+    _stdb_host: &str,
+    _hex_db: &str,
     inference_url: &str,
     registry: &Arc<ToolRegistry>,
 ) -> Result<(), String> {
@@ -120,7 +133,7 @@ async fn run_one(
                 let abs = i + idx + 4;
                 let tail = &content[abs..];
                 let end = tail.find(|c: char| !c.is_ascii_digit()).unwrap_or(tail.len());
-                if end >= 8 {
+                if end >= 3 {
                     covered_adr_ids.insert(tail[..end].to_string());
                 }
                 i = abs + 1;
@@ -128,15 +141,27 @@ async fn run_one(
         }
     }
 
-    // 3. Pick the FIRST uncovered ADR (one per tick to keep inference cost bounded).
+    // 3. Pick the FIRST uncovered ADR not in failure cooldown
+    //    (one per tick to keep inference cost bounded).
+    let now = Instant::now();
+    let cooldown = Duration::from_secs(RETRY_COOLDOWN_SECS);
     let mut to_process: Vec<(String, String, std::path::PathBuf)> = Vec::new();
-    for (id, name, path) in adr_entries {
-        if covered_adr_ids.contains(&id) {
-            continue;
-        }
-        to_process.push((id, name, path));
-        if to_process.len() >= MAX_PER_TICK {
-            break;
+    {
+        let cache = failure_cache().lock().unwrap();
+        for (id, name, path) in adr_entries {
+            if covered_adr_ids.contains(&id) {
+                continue;
+            }
+            if let Some(last_fail) = cache.get(&id) {
+                if now.saturating_duration_since(*last_fail) < cooldown {
+                    // Recently failed — skip until cooldown expires.
+                    continue;
+                }
+            }
+            to_process.push((id, name, path));
+            if to_process.len() >= MAX_PER_TICK {
+                break;
+            }
         }
     }
     if to_process.is_empty() {
@@ -144,8 +169,20 @@ async fn run_one(
     }
 
     for (adr_id, adr_name, adr_path) in to_process {
-        if let Err(e) = derive_one(http, inference_url, registry, &adr_id, &adr_name, &adr_path).await {
-            tracing::warn!(adr = %adr_name, error = %e, "workplan_auto_emitter: derive_one failed");
+        match derive_one(http, inference_url, registry, &adr_id, &adr_name, &adr_path).await {
+            Ok(()) => {
+                // Successful derive — clear any prior failure record.
+                failure_cache().lock().unwrap().remove(&adr_id);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    adr = %adr_name,
+                    error = %e,
+                    cooldown_secs = RETRY_COOLDOWN_SECS,
+                    "workplan_auto_emitter: derive_one failed — backing off"
+                );
+                failure_cache().lock().unwrap().insert(adr_id, now);
+            }
         }
     }
     Ok(())
@@ -166,37 +203,99 @@ async fn derive_one(
     }
     let trimmed = body_text.chars().take(24 * 1024).collect::<String>();
 
+    // System prompt with a one-shot example. The example is the most-
+    // load-bearing part: empirically observed 2026-05-23 that abstract
+    // rules alone produced ~30% schema-error rate (model emitting empty
+    // phase ids, missing slug, empty phases array). A concrete example
+    // showing the exact shape — every required field populated — cuts
+    // that rate sharply. Keep the example minimal (1-2 phases, 1-2 tasks
+    // each) so the model doesn't try to over-mimic structure.
     let system = format!(
         "You are the workplan-derivation persona. Read this ADR and emit a hex \
-         workplan via the workplan_emit tool. Rules:\n\
-         - The workplan slug should be a kebab-case summary of the ADR title (max 60 chars)\n\
-         - The 'feature' field is a one-line human description\n\
-         - The 'adr' field MUST be exactly: ADR-{adr_id}\n\
-         - Phases are dependency-ordered. Use P0 for domain/ports work, P1 for \
-           secondary adapters, P2 for primary, P3 for usecases, P4 for integration\n\
-         - Each phase has 1-5 concrete tasks; each task has id (e.g. P0.1), name \
-           (concrete deliverable), layer (domain|ports|usecases|primary|secondary|infrastructure|integration), \
-           AND files[] (1+ repo-relative paths the task creates or modifies — REQUIRED for hex plan reconcile).\n\
-         - Map the ADR's Decision section into 1-3 phases minimum. Don't over-decompose.\n\
-         - For files[]: extract concrete paths from the ADR text. Examples:\n\
-           * 'modify hex-nexus/src/orchestration/drafter.rs' → files: ['hex-nexus/src/orchestration/drafter.rs']\n\
-           * 'add new tool foo' → files: ['hex-nexus/src/tools/foo.rs']\n\
-           * 'doc-only ADR with no code' → files: ['docs/adrs/ADR-{adr_id}-*.md'] for the ADR itself\n\
-         - If the ADR is a pure-doc decision (no code work), emit ONE phase 'P0 Documentation' \
-           with one task layer=infrastructure files=['docs/adrs/ADR-{adr_id}-*.md']. Reconciler marks done immediately.\n\
-         You MUST call workplan_emit exactly once. Do not chat. Do not call other tools.",
+         workplan by calling the workplan_emit tool exactly ONCE. Do not chat. \
+         Do not call other tools.\n\n\
+         REQUIRED FIELDS (all 4 mandatory; missing any = rejection):\n\
+           slug    — kebab-case, ≤60 chars, derived from ADR title\n\
+           feature — one-line human description\n\
+           adr     — MUST be exactly: ADR-{adr_id}\n\
+           phases  — non-empty array; each phase has id, name, tier, tasks[]\n\n\
+         PER-PHASE REQUIRED FIELDS:\n\
+           id    — MUST match ^P\\d+$ (e.g. \"P0\", \"P1\", \"P2\")\n\
+           name  — what this phase delivers\n\
+           tier  — integer 0..5 (0=domain/ports, 1=secondary, 2=primary, 3=usecases, 4=integration)\n\
+           tasks — non-empty array\n\n\
+         PER-TASK REQUIRED FIELDS:\n\
+           id    — e.g. \"P0.1\" (phase-id . sequence)\n\
+           name  — concrete deliverable\n\
+           layer — one of: domain | ports | usecases | primary | secondary | infrastructure | integration\n\
+           files — non-empty array of repo-relative paths the task creates or modifies\n\n\
+         === ONE-SHOT EXAMPLE — call workplan_emit with arguments shaped EXACTLY like this ===\n\
+         {{\n\
+           \"slug\":    \"example-feature-name\",\n\
+           \"feature\": \"Short human description of what ships\",\n\
+           \"adr\":     \"ADR-{adr_id}\",\n\
+           \"phases\": [\n\
+             {{\n\
+               \"id\": \"P0\",\n\
+               \"name\": \"Domain + ports scaffolding\",\n\
+               \"tier\": 0,\n\
+               \"tasks\": [\n\
+                 {{\n\
+                   \"id\": \"P0.1\",\n\
+                   \"name\": \"Define the domain type\",\n\
+                   \"layer\": \"domain\",\n\
+                   \"files\": [\"hex-core/src/domain/feature.rs\"]\n\
+                 }},\n\
+                 {{\n\
+                   \"id\": \"P0.2\",\n\
+                   \"name\": \"Define the port interface\",\n\
+                   \"layer\": \"ports\",\n\
+                   \"files\": [\"hex-core/src/ports/feature_port.rs\"]\n\
+                 }}\n\
+               ]\n\
+             }},\n\
+             {{\n\
+               \"id\": \"P1\",\n\
+               \"name\": \"Secondary adapter implementation\",\n\
+               \"tier\": 1,\n\
+               \"tasks\": [\n\
+                 {{\n\
+                   \"id\": \"P1.1\",\n\
+                   \"name\": \"Implement the adapter\",\n\
+                   \"layer\": \"secondary\",\n\
+                   \"files\": [\"hex-nexus/src/adapters/feature_adapter.rs\"]\n\
+                 }}\n\
+               ]\n\
+             }}\n\
+           ]\n\
+         }}\n\
+         === END EXAMPLE ===\n\n\
+         DERIVATION RULES:\n\
+         - Map the ADR's Decision section into 1-3 phases minimum (don't over-decompose).\n\
+         - For files[]: extract concrete paths from the ADR text where possible:\n\
+             'modify hex-nexus/src/orchestration/drafter.rs' → files: [\"hex-nexus/src/orchestration/drafter.rs\"]\n\
+             'add new tool foo'                              → files: [\"hex-nexus/src/tools/foo.rs\"]\n\
+         - DOC-ONLY ADR (no code work in the Decision section): emit ONE phase exactly:\n\
+             {{\"id\":\"P0\",\"name\":\"Documentation\",\"tier\":0,\n\
+               \"tasks\":[{{\"id\":\"P0.1\",\"name\":\"Document the decision\",\n\
+                          \"layer\":\"infrastructure\",\n\
+                          \"files\":[\"docs/adrs/{adr_file_glob}\"]}}]}}\n\
+           Reconciler will mark this done immediately because the ADR file already exists.\n\n\
+         REMINDER: call workplan_emit ONCE with the arguments shaped like the example above. \
+         Every required field present. No commentary.",
         adr_id = adr_id,
+        adr_file_glob = format!("ADR-{}-*.md", adr_id),
     );
     let user_msg = format!("ADR file: docs/adrs/{}\n\n{}", adr_name, trimmed);
 
-    // Use the OpenRouter / Anthropic path same as sop_executor — but simpler:
-    // single tool call, no multi-round-trip loop. We emulate by sending the
-    // whole tool registry but expecting workplan_emit only.
-    let api_key = std::env::var("ANTHROPIC_API_KEY").ok().or_else(|| std::env::var("OPENROUTER_API_KEY").ok());
-    let api_key = match api_key {
-        Some(k) => k,
-        None => return Err("no ANTHROPIC_API_KEY or OPENROUTER_API_KEY".to_string()),
-    };
+    // Route through nexus `/api/inference/complete` — it already has the
+    // tools fast-path (provider chain: local Ollama → OpenAI-compat →
+    // OpenRouter, sorted by `priority_for_tools`, with credit-exhaustion
+    // handling baked in). This used to go direct to OpenRouter with a
+    // hardcoded model slug — that wedged for hours every time the slug
+    // went stale or the OpenRouter Anthropic credit ran out. The proxy
+    // fixes both: stale slug auto-routes, credit exhaustion auto-falls-
+    // through to the next provider.
 
     // Pull just the workplan_emit schema for a focused single-tool call.
     let wp_emit = registry.get("workplan_emit").ok_or("workplan_emit tool missing from registry")?;
@@ -209,7 +308,13 @@ async fn derive_one(
         }
     }]);
 
-    let model = std::env::var("HEX_AUTOEMITTER_MODEL").unwrap_or_else(|_| "anthropic/claude-sonnet-4.5".to_string());
+    // Default to the nexus-resolved model name (the inference layer maps
+    // this to whatever Anthropic provider is healthy + has credits). The
+    // OpenRouter direct-call path used `anthropic/claude-sonnet-4.5`
+    // which started returning null content circa 2026-05 — the nexus
+    // resolver routes `claude-sonnet-4-6` to a working endpoint.
+    let model = std::env::var("HEX_AUTOEMITTER_MODEL")
+        .unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
     let req_body = json!({
         "model": model,
         "messages": [
@@ -218,43 +323,212 @@ async fn derive_one(
         ],
         "tools": openai_tools,
         "tool_choice": { "type": "function", "function": { "name": "workplan_emit" } },
-        "max_tokens": 2048,
+        // 4096 covers a typical multi-phase workplan (~2-3k tokens). The
+        // earlier 1024 was set when we called OpenRouter direct and were
+        // budget-constrained ("can only afford 372 tokens" errors); now
+        // the proxy prefers local Ollama (no credit cap), so we can give
+        // the model enough room to emit a complete JSON payload. If the
+        // proxy falls all the way through to a credit-bound provider,
+        // operator can override down via HEX_AUTO_EMITTER_MAX_TOKENS.
+        "max_tokens": std::env::var("HEX_AUTO_EMITTER_MAX_TOKENS")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(4096),
     });
     let resp = http
-        .post("https://openrouter.ai/api/v1/chat/completions")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("HTTP-Referer", "https://hex-aios.local")
-        .header("X-Title", "hex workplan-auto-emitter")
+        .post(inference_url)
         .json(&req_body)
         .send()
         .await
-        .map_err(|e| format!("openrouter: {}", e))?;
+        .map_err(|e| format!("inference loopback: {}", e))?;
     let status = resp.status();
-    let v: Value = resp.json().await.map_err(|e| format!("openrouter json: {}", e))?;
+    let v: Value = resp.json().await.map_err(|e| format!("inference json: {}", e))?;
     if !status.is_success() {
-        return Err(format!("openrouter HTTP {}: {}", status, v));
+        return Err(format!("inference HTTP {}: {}", status, v));
     }
 
-    let tc = v
-        .pointer("/choices/0/message/tool_calls/0")
-        .ok_or("no tool_calls in response")?;
-    let args_str = tc
-        .pointer("/function/arguments")
-        .and_then(|x| x.as_str())
-        .ok_or("no function.arguments")?;
-    let args: Value = serde_json::from_str(args_str).map_err(|e| format!("args parse: {}", e))?;
+    // The nexus tools fast-path returns either
+    //   { content, tool_calls: [{id, type: "function", function: {name, arguments}}, ...] }
+    // OR (when the underlying provider returned the OpenAI shape unchanged)
+    //   { choices: [{message: {content, tool_calls: [...]}}] }
+    // Try the fast-path first, fall through to the OpenAI shape, fall
+    // through one more time to "tool call emitted as content JSON" (local
+    // Ollama tool-capable models do this — e.g. qwen2.5-coder:14b returns
+    //   content = "{\"name\":\"workplan_emit\",\"arguments\":{...}}"
+    // without lifting it into a structured tool_calls field).
+    let args: Value = if let Some(tc) = v
+        .pointer("/tool_calls/0")
+        .or_else(|| v.pointer("/choices/0/message/tool_calls/0"))
+    {
+        let args_str = tc
+            .pointer("/function/arguments")
+            .and_then(|x| x.as_str())
+            .ok_or("no function.arguments")?;
+        serde_json::from_str(args_str).map_err(|e| format!("args parse: {}", e))?
+    } else if let Some(parsed) = extract_tool_call_from_content(&v) {
+        parsed
+    } else {
+        // Include the response shape in the error so the operator can
+        // diagnose without re-running. Cap to 400 chars so logs stay
+        // readable.
+        let finish = v
+            .pointer("/finish_reason")
+            .or_else(|| v.pointer("/choices/0/finish_reason"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("?");
+        let content = v
+            .pointer("/content")
+            .or_else(|| v.pointer("/choices/0/message/content"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
+        let err_field = v.pointer("/error").map(|e| e.to_string()).unwrap_or_default();
+        let snippet: String = content.chars().take(200).collect();
+        return Err(format!(
+            "no tool_calls in response (finish={}, err={}, content[:200]={:?})",
+            finish, err_field, snippet
+        ));
+    };
 
     // Execute via registry (writes proposed_action under tool:workplan_emit).
     let result = registry.execute("workplan_emit", args).await;
     if !result.ok {
         return Err(format!("workplan_emit tool failed: {}", result.error.unwrap_or_default()));
     }
-    let _ = inference_url; // silence unused — we went direct to OpenRouter for tighter control
     tracing::info!(
         adr_id = %adr_id,
         adr = %adr_name,
         wp_path = ?result.output.get("target_path"),
+        model = %model,
         "workplan_auto_emitter: derived workplan from ADR"
     );
     Ok(())
+}
+
+/// Some Ollama tool-capable models (qwen2.5-coder, qwen3, etc.) reliably
+/// emit a tool call but in `content` as a JSON string rather than lifting
+/// it into a structured `tool_calls[]` field. Recognise the common shape
+///   {"name":"workplan_emit","arguments":{...}}
+/// and return the arguments object. Returns None if no parseable inline
+/// tool call is found — caller then surfaces the proper "no tool_calls"
+/// error with diagnostic context.
+fn extract_tool_call_from_content(v: &Value) -> Option<Value> {
+    let content = v
+        .pointer("/content")
+        .or_else(|| v.pointer("/choices/0/message/content"))
+        .and_then(|x| x.as_str())?;
+
+    // Strip common markdown fence prefixes the model might wrap around the JSON.
+    let trimmed = content.trim();
+    let trimmed = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .unwrap_or(trimmed)
+        .trim_end_matches("```")
+        .trim();
+
+    let parsed: Value = serde_json::from_str(trimmed).ok()?;
+
+    // Shape A: { "name": "workplan_emit", "arguments": { ... } }
+    if let (Some(name), Some(args)) = (parsed.get("name"), parsed.get("arguments")) {
+        if name.as_str() == Some("workplan_emit") {
+            return Some(args.clone());
+        }
+    }
+
+    // Shape B: { "tool_calls": [{"name":..., "arguments":...}, ...] }
+    if let Some(calls) = parsed.get("tool_calls").and_then(|v| v.as_array()) {
+        for call in calls {
+            let name = call
+                .pointer("/name")
+                .or_else(|| call.pointer("/function/name"))
+                .and_then(|x| x.as_str());
+            if name == Some("workplan_emit") {
+                if let Some(args) = call
+                    .pointer("/arguments")
+                    .or_else(|| call.pointer("/function/arguments"))
+                {
+                    if let Some(args_str) = args.as_str() {
+                        return serde_json::from_str::<Value>(args_str).ok();
+                    }
+                    return Some(args.clone());
+                }
+            }
+        }
+    }
+
+    // Shape C: the model emitted the workplan_emit args directly — i.e. the
+    // whole content IS the workplan JSON. Heuristic: it has the required
+    // top-level fields the tool schema demands.
+    if parsed.get("feature").is_some() && parsed.get("phases").is_some() {
+        return Some(parsed);
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn extract_inline_name_arguments_shape() {
+        let v = json!({
+            "content": r#"{"name":"workplan_emit","arguments":{"slug":"x","feature":"f","phases":[]}}"#
+        });
+        let args = extract_tool_call_from_content(&v).unwrap();
+        assert_eq!(args.get("slug").and_then(|x| x.as_str()), Some("x"));
+    }
+
+    #[test]
+    fn extract_inline_tool_calls_array_shape() {
+        let v = json!({
+            "content": r#"{"tool_calls":[{"name":"workplan_emit","arguments":{"slug":"y","feature":"f","phases":[]}}]}"#
+        });
+        let args = extract_tool_call_from_content(&v).unwrap();
+        assert_eq!(args.get("slug").and_then(|x| x.as_str()), Some("y"));
+    }
+
+    #[test]
+    fn extract_inline_with_markdown_fence() {
+        let v = json!({
+            "content": "```json\n{\"name\":\"workplan_emit\",\"arguments\":{\"slug\":\"z\",\"feature\":\"f\",\"phases\":[]}}\n```"
+        });
+        let args = extract_tool_call_from_content(&v).unwrap();
+        assert_eq!(args.get("slug").and_then(|x| x.as_str()), Some("z"));
+    }
+
+    #[test]
+    fn extract_openai_choices_message_content_shape() {
+        let v = json!({
+            "choices": [{"message": {"content": r#"{"name":"workplan_emit","arguments":{"slug":"q","feature":"f","phases":[]}}"#}}]
+        });
+        let args = extract_tool_call_from_content(&v).unwrap();
+        assert_eq!(args.get("slug").and_then(|x| x.as_str()), Some("q"));
+    }
+
+    #[test]
+    fn extract_bare_args_shape_when_top_level_workplan_fields_present() {
+        // Model skipped the {name,arguments} wrapper and just emitted the
+        // workplan_emit arguments directly. Accept when feature+phases present.
+        let v = json!({
+            "content": r#"{"slug":"bare","feature":"direct","phases":[]}"#
+        });
+        let args = extract_tool_call_from_content(&v).unwrap();
+        assert_eq!(args.get("slug").and_then(|x| x.as_str()), Some("bare"));
+    }
+
+    #[test]
+    fn extract_returns_none_for_non_workplan_content() {
+        let v = json!({"content": "Sorry, I cannot help with that."});
+        assert!(extract_tool_call_from_content(&v).is_none());
+    }
+
+    #[test]
+    fn extract_returns_none_for_wrong_tool_name() {
+        let v = json!({
+            "content": r#"{"name":"something_else","arguments":{"x":1}}"#
+        });
+        assert!(extract_tool_call_from_content(&v).is_none());
+    }
 }

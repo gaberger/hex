@@ -1,6 +1,6 @@
 --------------------------- MODULE lifecycle ---------------------------
 \* hex 7-Phase Feature Lifecycle — TLA+ Specification
-\* ADR-2604111229 Phase 3 (Petri net as TLA+ state machine)
+\* ADR-2026-04-11-1229 Phase 3 (Petri net as TLA+ state machine)
 \*
 \* Models the 7-phase pipeline with tiered fork/join in the Code phase.
 \* Encodes the 1-safe workflow Petri net from lifecycle-net.md as a

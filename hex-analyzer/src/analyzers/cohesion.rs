@@ -209,10 +209,16 @@ fn find_decl_list(node: Node<'_>) -> Option<Node<'_>> {
     if let Some(b) = node.child_by_field_name("body") {
         return Some(b);
     }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "declaration_list" {
-            return Some(child);
+    // `.find()` can't return through this cursor's drop — tree-sitter's
+    // Node<'cursor> borrows from cursor and the Option would dangle.
+    // Keep the explicit loop and silence the lint.
+    #[allow(clippy::manual_find)]
+    {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "declaration_list" {
+                return Some(child);
+            }
         }
     }
     None
@@ -369,10 +375,15 @@ mod tests {
     fn merge_collapses_verb_prefix_buckets_sharing_param_types() {
         // `get_user`, `delete_user`, `create_user`, `update_user` —
         // four prefix buckets that overlap on UserId/UserData/User and
-        // should merge into a single user-shaped cluster.
+        // should merge into a single user-shaped cluster. Each method
+        // needs enough shared types to clear PARAMETER_MERGE_THRESHOLD
+        // (0.5 Jaccard); a method with only one type cluster won't
+        // qualify on its own, so we give every CRUD operation at least
+        // {UserId, User} (the original fixture gave delete_user only
+        // {UserId} and the algorithm correctly held it out at 0.33).
         let methods = vec![
             m("get_user", &["UserId", "User"]),
-            m("delete_user", &["UserId"]),
+            m("delete_user", &["UserId", "User"]),
             m("create_user", &["UserData", "User"]),
             m("update_user", &["UserId", "UserData", "User"]),
         ];

@@ -3,7 +3,7 @@
 //! `hex opencode` — injects hex context (MCP tools, agents, skills, hooks, enforcement)
 //! into opencode's configuration system for seamless integration.
 //!
-//! ADR-2603231800: hex Context Injection into opencode
+//! ADR-2026-03-23-1800: hex Context Injection into opencode
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -277,7 +277,7 @@ fn read_hooks_config() -> Option<Value> {
 }
 
 fn read_enforcement_config() -> Option<Value> {
-    let rules_path = PathBuf::from(".hex/adr-rules.toml");
+    let rules_path = PathBuf::from(".hex/ADR-rules.toml");
     if !rules_path.exists() {
         return None;
     }

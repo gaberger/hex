@@ -1,4 +1,4 @@
-//! Capability-token authentication middleware (ADR-2604051800 P1).
+//! Capability-token authentication middleware (ADR-2026-04-05-1800 P1).
 //!
 //! Extracts and verifies `X-Hex-Agent-Token` header on incoming requests.
 //! If present and valid, injects `VerifiedClaims` into request extensions.

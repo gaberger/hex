@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Ensure cargo is reachable. On Bazzite / immutable Fedora and other
+# distros where rustup installs cargo to ~/.cargo/bin but the user's
+# default shell PATH doesn't pick it up, the `cargo check` call below
+# fails with "command not found" AFTER the Cargo.toml edit has already
+# landed — leaving the working tree in a partially-bumped state.
+# Measured 2026-05-22 during the 26.5.1 release. Same root cause as
+# the nexus PATH fix in hex-cli/src/commands/nexus.rs.
+if [[ -d "$HOME/.cargo/bin" ]]; then
+  export PATH="$HOME/.cargo/bin:$PATH"
+fi
+
 VERSION="${1:-}"
 
 # Derive default version from current date in YY.MM.0 format
@@ -38,11 +49,19 @@ echo "Bumping workspace version to $VERSION..."
 sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
 rm -f Cargo.toml.bak
 
+# Keep package.json in lockstep — CI version-check (.github/workflows/ci.yml)
+# fails if Cargo.toml and package.json disagree. Past releases left this
+# stale; bumping both here fixes red version-check at the source.
+if [[ -f package.json ]]; then
+  sed -i.bak "s/^\(  \"version\": *\)\"[^\"]*\"/\1\"$VERSION\"/" package.json
+  rm -f package.json.bak
+fi
+
 echo "Running cargo check to update Cargo.lock..."
 cargo check -p hex-cli -p hex-nexus 2>&1 | tail -5
 
 echo "Staging changes..."
-git add Cargo.toml Cargo.lock
+git add Cargo.toml Cargo.lock package.json
 
 echo "Creating release commit..."
 git commit -m "chore(release): bump version to v${VERSION}"

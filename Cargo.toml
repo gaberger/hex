@@ -1,9 +1,10 @@
 [workspace]
-members = ["hex-nexus", "hex-desktop", "hex-core", "hex-parser", "hex-agent", "hex-cli", "hex-analyzer", "examples/hex-life"]
+members = ["hex-nexus", "hex-desktop", "hex-core", "hex-parser", "hex-agent", "hex-cli", "hex-analyzer", "hex-analysis", "hex-git", "hex-state", "hex-exec", "hex-graph", "examples/hex-life"]
+exclude = ["examples/ebay-clone"]
 resolver = "2"
 
 [workspace.package]
-version = "26.4.31"
+version = "26.5.1"
 edition = "2021"
 license = "MIT"
 

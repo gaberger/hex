@@ -6,7 +6,6 @@
  */
 import { Component, Show, For, createSignal } from "solid-js";
 import { addToast } from "../../stores/toast";
-import { getHexfloConn, hexfloConnected } from "../../stores/connection";
 import { restClient } from "../../services/rest-client";
 
 const TOPOLOGIES = [
@@ -40,19 +39,20 @@ const SwarmInitDialog: Component<SwarmInitDialogProps> = (props) => {
     setSuccess("");
 
     try {
-      const conn = getHexfloConn();
-      if (!conn) {
-        // Fallback to REST if SpacetimeDB not connected
-        await restClient.post("/api/swarms", { name: trimmed, topology: topology() });
-      } else {
-        // Use SpacetimeDB reducer directly (WebSocket)
-        const id = crypto.randomUUID();
-        const timestamp = new Date().toISOString();
-        conn.reducers.swarmInit(id, trimmed, topology(), "", timestamp);
-      }
+      // Create via the nexus REST gateway: server-side, authenticated, and it
+      // returns only AFTER the swarm is persisted. The old direct-WS reducer
+      // path reported optimistic success but anonymous browser writes never
+      // landed (ADR-2606061359 — writes go through the gateway, not browser→STDB).
+      // created_by="" → operator-created, no single-active-swarm constraint.
+      await restClient.post("/api/swarms", {
+        name: trimmed,
+        topology: topology(),
+        projectId: "",
+        createdBy: "",
+      });
 
-      setSuccess(`Swarm "${trimmed}" initialized`);
-      addToast("success", `Swarm "${trimmed}" initialized via ${conn ? 'SpacetimeDB' : 'REST'}`);
+      setSuccess(`Swarm "${trimmed}" created`);
+      addToast("success", `Swarm "${trimmed}" created`);
       setTimeout(() => {
         props.onClose();
         setSuccess("");

@@ -1,101 +1,282 @@
 /**
- * MissionControl.tsx — operator's single landing surface.
+ * MissionControl.tsx — operator console, Hermes-shaped.
  *
- * Aggregates the per-domain views (#/merge-gate, #/resources, #/commitments,
- * #/persona-health) into one screen. Pulls /api/mission-control on a 5s
- * cadence; per-domain views remain available as drill-downs from each panel.
+ * ONE input. ONE stream. The c-suite is hidden machinery — operators
+ * type to "the team", the runtime picks who replies. No factory rail
+ * by default, no detail accordions, no filter chips, no pulse strip.
  *
- * Layout: 12-col grid
- *   [board ask compose box] full width
- *   [pending decisions]   8 cols   |   [persona health]      4 cols
- *   [recent activity]     8 cols   |   [open anomalies]      4 cols
- *   [top processes by RSS] full width
+ * Layout (full viewport, one column):
+ *   [top bar]      status chips · escalations badge · [team ▸ toggle]
+ *   [stream]       chat bubbles + autonomous-commit cards interleaved
+ *   [compose]      one big input, sticky bottom
+ *
+ * Team panel slides in on demand for the rare case the operator wants
+ * to address ONE persona specifically.
  */
 
-import { Component, For, Show, createSignal, onMount, onCleanup } from "solid-js";
+import { Component, For, Index, Show, Switch, Match, createSignal, onMount, onCleanup, createMemo, createEffect } from "solid-js";
 import { restClient } from "../../services/rest-client";
-import { navigate } from "../../stores/router";
 
-interface MissionControlPayload {
-  ts: string;
+interface PersonaRow { role: string; display_name: string; paused: boolean; last_tick_at: string; }
+interface ExecutedRow { id: number; kind: string; path: string | null; success: boolean; error: string; executed_at: string; evidence: string; }
+interface ActionRow { id: number; kind: string; proposed_by: string; status: string; twin_verdict: string; twin_rationale: string; escalate_reason: string; }
+interface CommitmentRow { id: number; role: string; action: string; success_artifact: string; status: string; created_at: string; }
+interface AttentionItem { id: string; priority: 0 | 1 | 2; kind: string; title: string; subtitle: string; age_seconds: number; cli_repro?: string; worktree_path?: string; branch?: string; }
+interface ChatMessage { msg_id: number; from_role: string; to_role: string; message: string; created_at: string; }
+interface Payload {
   stdb_alive: boolean;
-  activity: {
-    recent_executed: ExecutedRow[];
-    open_merge_requests: MergeRow[];
-  };
-  pending_decisions: {
-    actions: ActionRow[];
-    commitments: CommitmentRow[];
-    anomalies: AnomalyRow[];
-  };
+  pulse?: { autonomous_commits_today?: number };
   personas: PersonaRow[];
-  top_processes: ProcessRow[];
-}
-
-interface ExecutedRow {
-  id: number; kind: string; path: string | null;
-  success: boolean; error: string; executed_at: string; evidence: string;
-}
-interface MergeRow {
-  worktree_path: string; branch: string; status: string; opened_at: string;
-}
-interface ActionRow {
-  id: number; kind: string; proposed_by: string; status: string;
-  twin_verdict: string; twin_rationale: string; escalate_reason: string;
-}
-interface CommitmentRow {
-  id: number; role: string; action: string; success_artifact: string;
-  status: string; created_at: string;
-}
-interface AnomalyRow {
-  id: number; detected_at: string; kind: string; severity: string;
-  pids: string; note: string;
-}
-interface PersonaRow {
-  role: string; display_name: string; paused: boolean; last_tick_at: string;
-}
-interface ProcessRow {
-  pid: number; argv: string; rss_kb: number; cpu_pct: number; state: string;
+  activity: { recent_executed: ExecutedRow[]; open_merge_requests: any[] };
+  pending_decisions: { actions: ActionRow[]; commitments: CommitmentRow[]; anomalies: any[] };
+  attention_feed?: AttentionItem[];
+  recent_messages?: ChatMessage[];
 }
 
 const REFRESH_MS = 5000;
 
-const fmtRss = (kb: number) =>
-  kb >= 1024 * 1024 ? `${(kb / 1024 / 1024).toFixed(1)}G` : `${(kb / 1024).toFixed(0)}M`;
+// P2.1 (wp-dashboard-ux-remediation-2026-05-22): filter chips collapsed
+// from 10 dead sidebar entries. Each chip narrows `attention_feed` to
+// items whose `kind` starts with the listed prefixes. `All` clears the
+// filter. The selected chip lives in the hash as `?filter=<id>` so the
+// URL is shareable AND backwards-compatible with the redirector in
+// app/App.tsx::LEGACY_HASH_REDIRECTS.
+interface ChipDef { id: string; label: string; prefixes: string[]; }
+const FILTER_CHIPS: ChipDef[] = [
+  { id: "brain",           label: "Brain",         prefixes: ["brain_"] },
+  { id: "brain-decisions", label: "Decisions",     prefixes: ["brain_decision", "decision_", "proposed_action"] },
+  { id: "merge-gate",      label: "Merge Gate",    prefixes: ["merge_"] },
+  { id: "persona-health",  label: "Personas",      prefixes: ["persona_"] },
+  { id: "thoughts",        label: "Thoughts",      prefixes: ["thought_"] },
+  { id: "resources",       label: "Resources",     prefixes: ["resource_"] },
+  { id: "commitments",     label: "Commitments",   prefixes: ["commitment_"] },
+  { id: "missions",        label: "Missions",      prefixes: ["mission_", "workplan_"] },
+  { id: "ops-sla",         label: "Ops SLA",       prefixes: ["ops_", "sla_"] },
+  { id: "agent-runs",      label: "Agent Runs",    prefixes: ["agent_"] },
+];
 
-const sevColor = (s: string) => {
-  switch (s) {
-    case "critical": return "bg-red-900 text-red-300 border-red-700";
-    case "warn":     return "bg-yellow-900 text-yellow-300 border-yellow-700";
-    case "info":     return "bg-blue-900 text-blue-300 border-blue-700";
-    default:         return "bg-gray-800 text-gray-300 border-gray-700";
-  }
+/** Pull `?filter=<id>` out of a hash like `#/mission-control?filter=brain`. */
+function readFilterFromHash(): string {
+  if (typeof window === "undefined") return "";
+  const h = window.location.hash;
+  const q = h.indexOf("?");
+  if (q < 0) return "";
+  const params = new URLSearchParams(h.slice(q + 1));
+  return params.get("filter") || "";
+}
+
+/** Write `?filter=<id>` into the hash without losing the route prefix. */
+function writeFilterToHash(filterId: string) {
+  if (typeof window === "undefined") return;
+  const h = window.location.hash || "#/mission-control";
+  const q = h.indexOf("?");
+  const base = q >= 0 ? h.slice(0, q) : h;
+  // Always anchor at mission-control so a fresh write from any chip
+  // lands on the canonical surface even if the operator clicked through
+  // from an alias.
+  const anchor = base.startsWith("#/mission-control") ? base : "#/mission-control";
+  const next = filterId ? `${anchor}?filter=${filterId}` : anchor;
+  if (next !== h) window.location.hash = next;
+}
+// Workspaces — different role sets per workflow. The c-suite makes
+// sense for software development; marketing and research need their
+// own personas. Backend org_responder recognizes all of these (see
+// hex-nexus/src/orchestration/org_responder.rs::RESPONDER_ROLES).
+// Operator picks a workspace from the header dropdown.
+interface Workspace {
+  id: string;
+  label: string;
+  roles: string[];
+  capabilities: Record<string, string>;
+  description: string;
+}
+const WORKSPACES: Workspace[] = [
+  {
+    id: "dev",
+    label: "Development",
+    description: "Software org — c-suite + IC leads. Default.",
+    roles: ["ceo", "cto", "cpo", "ciso", "coo", "chief-visionary", "chief-architect", "product-lead", "engineering-lead", "design-lead", "sre-lead", "validation-judge"],
+    capabilities: {
+      ceo: "vision · prioritization",
+      cto: "architecture · ADRs · security",
+      cpo: "product · specs · UX",
+      ciso: "security audits · OWASP",
+      coo: "ops · runbooks · cost",
+      "chief-visionary": "long-term strategy",
+      "chief-architect": "system design",
+      "product-lead": "feature shaping",
+      "engineering-lead": "implementation",
+      "design-lead": "UI / UX",
+      "sre-lead": "incidents · SLOs",
+      "validation-judge": "PASS / FAIL gates",
+    },
+  },
+  {
+    id: "marketing",
+    label: "Marketing",
+    description: "Growth, content, brand, campaigns, analytics.",
+    roles: ["growth-lead", "content-lead", "brand-strategist", "campaign-manager", "analytics-lead"],
+    capabilities: {
+      "growth-lead": "acquisition · retention · funnel metrics",
+      "content-lead": "editorial calendar · long-form · SEO",
+      "brand-strategist": "positioning · voice · messaging",
+      "campaign-manager": "execution · scheduling · channels",
+      "analytics-lead": "measurement · attribution · dashboards",
+    },
+  },
+  {
+    id: "research",
+    label: "Research",
+    description: "Research lead, methodology, writing, peer review.",
+    roles: ["research-lead", "methodologist", "data-scientist", "writer", "peer-reviewer"],
+    capabilities: {
+      "research-lead": "research questions · scoping · prioritization",
+      "methodologist": "study design · sample · validity",
+      "data-scientist": "analysis · statistics · visualization",
+      "writer": "drafting · synthesis · narrative",
+      "peer-reviewer": "critique · rigor · counterarguments",
+    },
+  },
+];
+// Specialist read-only roles that work across all workspaces
+const SHARED_CAPABILITIES: Record<string, string> = {
+  "ux-designer": "WCAG audits (read-only)",
+  "dashboard-ux-architect": "dashboard IA synthesis",
 };
 
-const statusBadge = (s: string) => {
-  switch (s) {
-    case "executed": case "approved": case "merged":
-      return "bg-green-900 text-green-300 border-green-700";
-    case "rejected": case "execution_failed":
-      return "bg-red-900 text-red-300 border-red-700";
-    case "pending": case "voting": case "open":
-      return "bg-yellow-900 text-yellow-300 border-yellow-700";
-    case "escalated": case "overdue":
-      return "bg-orange-900 text-orange-300 border-orange-700";
-    default:
-      return "bg-gray-800 text-gray-300 border-gray-700";
-  }
+const ageSec = (s: number): string => {
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+};
+const tsToEpoch = (raw: any): number => {
+  if (!raw) return 0;
+  if (typeof raw === "number") return raw;
+  const s = String(raw);
+  const m = s.match(/__timestamp_micros_since_unix_epoch__:\s*(\d+)/);
+  if (m) return Math.floor(parseInt(m[1], 10) / 1000);
+  const t = Date.parse(s);
+  return isNaN(t) ? 0 : t;
+};
+const actorColor = (actor: string): string => {
+  if (actor === "operator") return "text-cyan-300";
+  if (actor.endsWith("-twin") || actor === "executor") return "text-green-300";
+  const palette = ["text-purple-300","text-fuchsia-300","text-pink-300","text-indigo-300","text-violet-300","text-rose-300"];
+  let h = 0;
+  for (let i = 0; i < actor.length; i++) h = (h * 31 + actor.charCodeAt(i)) & 0xfffff;
+  return palette[h % palette.length];
+};
+
+// P2.2 (wp-dashboard-ux-remediation-2026-05-22): pending replies render
+// as a distinct skeleton row so the operator can tell at a glance the
+// team is WORKING (not stalled). The outer bubble shape stays identical
+// to a delivered reply so the flip-to-real has no layout jolt — only
+// the interior contents change.
+//
+//   [spinner]  thinking…  <N>s elapsed
+//
+// Each instance owns its own 1-second interval (cleaned up onCleanup
+// when the row unmounts — happens as soon as the real reply arrives
+// and the pending entry is filtered out of `pendingChat`).
+interface PendingBubbleProps {
+  from: string;
+  to: string;
+  startedAt: number; // ms-epoch
+}
+const PendingBubble: Component<PendingBubbleProps> = (props) => {
+  const [elapsed, setElapsed] = createSignal(
+    Math.max(0, Math.floor((Date.now() - props.startedAt) / 1000)),
+  );
+  const id = setInterval(() => {
+    setElapsed(Math.max(0, Math.floor((Date.now() - props.startedAt) / 1000)));
+  }, 1000);
+  onCleanup(() => clearInterval(id));
+  return (
+    <div class="flex">
+      <div class="max-w-2xl rounded-lg px-3 py-2 text-sm bg-gray-900 border border-gray-700 animate-pulse">
+        <div class="flex items-baseline gap-2 mb-1 text-[10px]">
+          <span class={`font-mono ${actorColor(props.from)}`}>{props.from}</span>
+          <Show when={props.to && props.to !== "operator"}>
+            <span class="text-gray-600">→ {props.to}</span>
+          </Show>
+          <span class="text-gray-600 ml-auto tabular-nums">{elapsed()}s elapsed</span>
+        </div>
+        <div class="flex items-center gap-2 text-gray-400">
+          {/* Inline spinner — Tailwind animate-spin on a bordered ring */}
+          <span
+            class="inline-block h-3 w-3 rounded-full border-2 border-gray-600 border-t-cyan-400 animate-spin"
+            aria-hidden="true"
+          />
+          <span class="italic">thinking…</span>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 const MissionControl: Component = () => {
-  const [data, setData] = createSignal<MissionControlPayload | null>(null);
-  const [loading, setLoading] = createSignal(true);
+  const [data, setData] = createSignal<Payload | null>(null);
   const [error, setError] = createSignal<string | null>(null);
-  const [busyId, setBusyId] = createSignal<number | null>(null);
-  const [boardMessage, setBoardMessage] = createSignal("");
-  const [sendStatus, setSendStatus] = createSignal<string>("");
+  const [intent, setIntent] = createSignal("");
+  const [running, setRunning] = createSignal(false);
+  // Left rail visible by default — operator wants to see WHO is
+  // working (factory heat) alongside the stream. Toggle to collapse
+  // for a chat-only view.
+  const [teamOpen, setTeamOpen] = createSignal(true);
+  // Active workspace — picks the persona set + capability labels.
+  // Persisted to localStorage so workspace selection survives reloads.
+  const [workspaceId, setWorkspaceIdInternal] = createSignal<string>(
+    (typeof localStorage !== "undefined" && localStorage.getItem("hex.workspace")) || "dev"
+  );
+  const setWorkspaceId = (id: string) => {
+    setWorkspaceIdInternal(id);
+    try { localStorage.setItem("hex.workspace", id); } catch {}
+  };
+  const workspace = createMemo<Workspace>(() =>
+    WORKSPACES.find((w) => w.id === workspaceId()) || WORKSPACES[0]
+  );
+  const capabilityFor = (role: string): string =>
+    workspace().capabilities[role] || SHARED_CAPABILITIES[role] || "specialist";
+  const [pendingChat, setPendingChat] = createSignal<{from: string; to: string; body: string; ts: number}[]>([]);
+  const [attnBusy, setAttnBusy] = createSignal<string | null>(null);
+  const [attnSuppressed, setAttnSuppressed] = createSignal<Set<string>>(new Set());
+  const [expandedGroups, setExpandedGroups] = createSignal<Set<string>>(new Set());
+
+  // P2.1: chip filter id (empty string = "All"). Reads from `?filter=`
+  // on mount + on hashchange so the URL is the source of truth. Chip
+  // clicks call writeFilterToHash → hashchange → setFilter.
+  const [filter, setFilter] = createSignal<string>(readFilterFromHash());
+  const onHashChange = () => setFilter(readFilterFromHash());
+  onMount(() => { window.addEventListener("hashchange", onHashChange); });
+  onCleanup(() => { window.removeEventListener("hashchange", onHashChange); });
+  const chipPrefixes = createMemo<string[]>(() => {
+    const id = filter();
+    if (!id) return [];
+    return FILTER_CHIPS.find((c) => c.id === id)?.prefixes || [];
+  });
+  const matchesFilter = (kind: string): boolean => {
+    const ps = chipPrefixes();
+    if (ps.length === 0) return true;
+    return ps.some((p) => kind.startsWith(p));
+  };
+
+  // Group key for collapsing duplicate anomalies. Tuple of
+  // (kind, priority, title.slice(0,30)) — used for both stream
+  // grouping AND class-level suppression so "Ack all" hushes the
+  // whole class for 5min the same way single ack does today.
+  const groupKeyFor = (a: AttentionItem): string =>
+    `class:${a.kind}|${a.priority}|${a.title.slice(0, 30)}`;
+
+  const toggleGroup = (key: string) => {
+    const s = new Set(expandedGroups());
+    if (s.has(key)) s.delete(key); else s.add(key);
+    setExpandedGroups(s);
+  };
 
   let timer: ReturnType<typeof setInterval> | null = null;
+  let streamScrollRef: HTMLElement | undefined;
+  let lastStreamCount = 0;
 
   const refresh = async () => {
     try {
@@ -104,318 +285,666 @@ const MissionControl: Component = () => {
       setError(null);
     } catch (e: any) {
       setError(e?.message || String(e));
+    }
+  };
+  onMount(() => { refresh(); timer = setInterval(refresh, REFRESH_MS); });
+  onCleanup(() => { if (timer) clearInterval(timer); });
+
+  const suppressAttn = (id: string, cls?: string) => {
+    const s = new Set(attnSuppressed());
+    s.add(id);
+    if (cls) s.add(cls);
+    setAttnSuppressed(s);
+    setTimeout(() => {
+      const ns = new Set(attnSuppressed());
+      ns.delete(id);
+      if (cls) ns.delete(cls);
+      setAttnSuppressed(ns);
+    }, 5 * 60 * 1000);
+  };
+
+  // Send: leading @role addresses ONE persona; plain text broadcasts to
+  // the c-suite (the team replies as a unit). Either way → one optimistic
+  // bubble + one "thinking…" placeholder per recipient.
+  const send = async () => {
+    const text = intent().trim();
+    if (!text || running()) return;
+    setRunning(true);
+    const now = Date.now();
+    const m = text.match(/^@(\S+)\s+([\s\S]+)$/);
+    const targetRole = m ? m[1] : null;
+    const body = m ? m[2] : text;
+    const route = m
+      ? { from: "operator", to: targetRole, content: body }
+      : { from: "operator", content: body };
+    const recipients = m ? [targetRole!] : ["the team"];
+    setPendingChat([
+      ...pendingChat(),
+      { from: "operator", to: recipients.join(", "), body, ts: now },
+      ...recipients.map((r) => ({ from: r, to: "operator", body: "_thinking…_", ts: now + 1 })),
+    ]);
+    setIntent("");
+    try {
+      await restClient.post("/api/org/send-message", route);
+      await refresh();
+    } catch (e: any) {
+      setError(`send: ${e?.message || e}`);
     } finally {
-      setLoading(false);
+      setRunning(false);
+      setTimeout(() => setPendingChat(pendingChat().filter((p) => Date.now() - p.ts < 60_000)), 60_000);
     }
   };
 
-  onMount(() => {
-    refresh();
-    timer = setInterval(refresh, REFRESH_MS);
+  const abandonAction = async (id: string, actionId: number) => {
+    setAttnBusy(id);
+    suppressAttn(id);
+    try {
+      await fetch(`/v1/database/hex/call/proposed_action_operator_override`, {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify([actionId, "rejected", "operator abandoned via dashboard"]),
+      });
+    } finally { setAttnBusy(null); await refresh(); }
+  };
+  const ackAnomaly = async (id: string, anomalyId: number, cls: string) => {
+    setAttnBusy(id);
+    suppressAttn(id, cls);
+    try {
+      await fetch(`/v1/database/hex/call/resource_anomaly_ack`, {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify([anomalyId, "operator-ack via dashboard"]),
+      });
+    } finally { setAttnBusy(null); await refresh(); }
+  };
+  // Group ack — POST ack for every member of an anomaly group AND
+  // suppress the group key for 5min so the class doesn't immediately
+  // reappear on the next refresh tick.
+  const ackAllGroup = async (group: AttentionItem[], groupKey: string) => {
+    setAttnBusy(groupKey);
+    suppressAttn(groupKey, groupKey);
+    try {
+      await Promise.all(group.map(async (a) => {
+        const idMatch = a.id.match(/^[a-z]+-(\d+)/);
+        const numId = idMatch ? parseInt(idMatch[1], 10) : undefined;
+        if (numId === undefined || a.kind !== "resource_anomaly") return;
+        await fetch(`/v1/database/hex/call/resource_anomaly_ack`, {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify([numId, "operator-ack-all via dashboard"]),
+        });
+      }));
+    } finally { setAttnBusy(null); await refresh(); }
+  };
+  const decideMerge = async (id: string, worktreePath: string, decision: "approved"|"rejected") => {
+    setAttnBusy(id);
+    suppressAttn(id);
+    try {
+      await fetch(`/v1/database/hex/call/merge_request_set_status`, {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify([worktreePath, decision]),
+      });
+    } finally { setAttnBusy(null); await refresh(); }
+  };
+  const restartStdb = async (id: string) => {
+    if (!confirm("Restart SpacetimeDB? Loses in-memory state but reclaims RSS.")) return;
+    setAttnBusy(id);
+    try {
+      await fetch(`/api/stdb/restart`, { method: "POST" });
+      suppressAttn(id, "class:resource_anomaly:rss_oversize");
+    } finally { setAttnBusy(null); setTimeout(refresh, 3000); }
+  };
+
+  // ── Unified stream: chat bubbles + autonomous commits + attention
+  //    items, sorted oldest→newest so reads top-down like a real
+  //    conversation. The c-suite is hidden machinery.
+  interface StreamItem {
+    kind: "chat" | "commit" | "attention";
+    ts: number;
+    chat?: { from: string; to: string; body: string; pending?: boolean };
+    commit?: { id: number; path: string; actor: string };
+    attention?: AttentionItem;
+    // When attention items collapse into a class group, the
+    // representative is in `attention` and the full set (length >= 1)
+    // is here. Single-item groups still set this to one element so
+    // the renderer can rely on `attentionGroup` being present.
+    attentionGroup?: AttentionItem[];
+    groupKey?: string;
+  }
+  // Group the stream into "turns": each operator message is the head
+  // of a turn; everything that happened between it and the next
+  // operator message belongs to that turn. Renders as a workflow:
+  // "you asked X → team did Y → here's the output." If no operator
+  // message yet, items live under a synthetic "Background activity"
+  // turn so they're not orphaned.
+  interface StreamTurn {
+    headerTs: number;
+    headerBody?: string; // operator's question
+    headerLabel: string; // "you asked …" or "Background activity"
+    items: StreamItem[];
+  }
+
+  const stream = createMemo<StreamItem[]>(() => {
+    const d = data();
+    if (!d) return [];
+    const items: StreamItem[] = [];
+
+    // Real messages
+    const realMsgs = [...(d.recent_messages || [])].sort((a, b) => (a.msg_id || 0) - (b.msg_id || 0));
+    const realBodies = new Set(realMsgs.map((m) => `${m.from_role}:${m.message}`));
+    const pendingFresh = pendingChat().filter((p) => {
+      if (p.from === "operator" && realBodies.has(`operator:${p.body}`)) return false;
+      if (p.body === "_thinking…_") {
+        return !realMsgs.some((m) => m.from_role === p.from && tsToEpoch(m.created_at) >= p.ts - 1000);
+      }
+      return true;
+    });
+    // Collapse broadcast (same from+body within 5s) into one bubble
+    const seen = new Map<string, string>();
+    for (const msg of realMsgs) {
+      const ts = tsToEpoch(msg.created_at) || msg.msg_id;
+      const bucket = `${msg.from_role}|${Math.floor(ts / 5000)}|${msg.message}`;
+      if (seen.has(bucket)) continue;
+      seen.set(bucket, msg.from_role);
+      items.push({ kind: "chat", ts, chat: { from: msg.from_role, to: msg.to_role || "everyone", body: msg.message } });
+    }
+    for (const p of pendingFresh) {
+      items.push({ kind: "chat", ts: p.ts, chat: { from: p.from, to: p.to, body: p.body, pending: true } });
+    }
+
+    // Autonomous commits — inline cards in the stream
+    for (const ex of d.activity?.recent_executed || []) {
+      if (!ex.success || !ex.path) continue;
+      const ts = tsToEpoch(ex.executed_at);
+      if (!ts) continue;
+      const m = ex.evidence?.match(/by (\S+):/);
+      items.push({ kind: "commit", ts, commit: { id: ex.id, path: ex.path, actor: m ? m[1] : "executor" } });
+    }
+
+    // Attention items — group by class (kind|priority|title-prefix)
+    // and emit one stream item per group. Single-item groups still
+    // produce a stream entry so the renderer can fall back to the
+    // existing single-card shape. Dedup-by-id guarantees the same
+    // anomaly never appears twice within or across groups.
+    const sup = attnSuppressed();
+    const seenIds = new Set<string>();
+    const groups = new Map<string, AttentionItem[]>();
+    for (const i of (d.attention_feed || [])) {
+      if (sup.has(i.id)) continue;
+      // P2.1: chip filter — narrow by attention kind prefix (client-side).
+      if (!matchesFilter(i.kind)) continue;
+      const key = groupKeyFor(i);
+      if (sup.has(key)) continue;
+      if (seenIds.has(i.id)) continue;
+      seenIds.add(i.id);
+      const arr = groups.get(key);
+      if (arr) arr.push(i); else groups.set(key, [i]);
+    }
+    for (const [key, group] of groups) {
+      // Representative = newest (smallest age_seconds) so the title /
+      // subtitle shown match what just fired; ts = oldest occurrence
+      // so the group sorts where the class first showed up.
+      const newest = group.reduce((a, b) => (a.age_seconds <= b.age_seconds ? a : b));
+      const oldestAge = group.reduce((mx, x) => (x.age_seconds > mx ? x.age_seconds : mx), 0);
+      const ts = Date.now() - oldestAge * 1000;
+      items.push({ kind: "attention", ts, attention: newest, attentionGroup: group, groupKey: key });
+    }
+
+    items.sort((a, b) => a.ts - b.ts);
+    return items;
   });
-  onCleanup(() => {
-    if (timer) clearInterval(timer);
+
+  // Walk the chronological stream and split into turns. Each operator
+  // message starts a new turn; everything after it (replies, commits,
+  // attention items) belongs to that turn until the next operator
+  // message. Items before the first operator message group into
+  // "Background activity."
+  const turns = createMemo<StreamTurn[]>(() => {
+    const items = stream();
+    if (items.length === 0) return [];
+    const out: StreamTurn[] = [];
+    let current: StreamTurn = {
+      headerTs: items[0].ts,
+      headerLabel: "Background activity",
+      items: [],
+    };
+    for (const it of items) {
+      if (it.kind === "chat" && it.chat && it.chat.from === "operator") {
+        // Close current turn, start a new one headed by this operator question
+        if (current.items.length > 0 || current.headerBody) out.push(current);
+        current = {
+          headerTs: it.ts,
+          headerBody: it.chat.body,
+          headerLabel: `you asked · ${ageSec(Math.max(0, Math.floor((Date.now() - it.ts) / 1000)))} ago`,
+          items: [],
+        };
+      } else {
+        current.items.push(it);
+      }
+    }
+    out.push(current);
+    return out;
   });
 
-  const ackAnomaly = async (id: number) => {
-    setBusyId(id);
-    try {
-      await restClient.post("/api/resources/anomalies/ack", { id, handled_by: "mission-control" });
-      await refresh();
-    } catch (e: any) {
-      setError(`ack failed: ${e?.message || String(e)}`);
-    } finally {
-      setBusyId(null);
+  // Auto-scroll to bottom on new content (the most-recent is at bottom)
+  createEffect(() => {
+    const n = stream().length;
+    if (n > lastStreamCount && streamScrollRef) {
+      const el = streamScrollRef;
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
+      if (nearBottom || lastStreamCount === 0) {
+        requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+      }
     }
-  };
+    lastStreamCount = n;
+  });
 
-  const overrideAction = async (id: number, action: "approve" | "reject") => {
-    setBusyId(id);
-    try {
-      const new_status = action === "approve" ? "approved" : "rejected";
-      await restClient.post("/api/resources/anomalies/ack", { id, handled_by: "mission-control" });
-      // proposed_action override needs its own endpoint; approximate via STDB call.
-      await refresh();
-    } catch (e: any) {
-      setError(`override failed: ${e?.message || String(e)}`);
-    } finally {
-      setBusyId(null);
+  const attentionCount = () => (data()?.attention_feed || []).length;
+
+  // Per-persona heat: recent activity count + what they're working on
+  // (latest thought / message / commitment). Drives the "WHO is working
+  // right now" half of the flow visualization.
+  interface PersonaHeat { count: number; workingOn: string; workingKind: string; }
+  const personaHeat = createMemo<Record<string, PersonaHeat>>(() => {
+    const d = data();
+    if (!d) return {};
+    const heat: Record<string, PersonaHeat> = {};
+    const touch = (role: string, body: string, kind: string) => {
+      if (!role || role === "operator") return;
+      const cur = heat[role];
+      if (!cur) heat[role] = { count: 1, workingOn: body, workingKind: kind };
+      else cur.count += 1;
+    };
+    // thoughts have the highest signal — what the persona is reasoning about
+    for (const t of (d as any).recent_thoughts || []) {
+      touch(t.agent_role, t.content || "", "thinking");
     }
-  };
-
-  const satisfyCommitment = async (id: number) => {
-    setBusyId(id);
-    try {
-      await restClient.post("/api/commitments/satisfy", { id, evidence: "mission-control manual mark" });
-      await refresh();
-    } catch (e: any) {
-      setError(`satisfy failed: ${e?.message || String(e)}`);
-    } finally {
-      setBusyId(null);
+    for (const m of d.recent_messages || []) {
+      if (m.from_role === "operator") continue;
+      touch(m.from_role, m.message || "", "said");
     }
-  };
-
-  const sendBoardAsk = async () => {
-    const text = boardMessage().trim();
-    if (!text) return;
-    setSendStatus("sending…");
-    try {
-      const resp = await restClient.post("/api/org/send-message", { from: "ceo", content: text });
-      setBoardMessage("");
-      setSendStatus(`routed → ${(resp.routed_to || []).join(", ")}`);
-      setTimeout(() => setSendStatus(""), 4000);
-      await refresh();
-    } catch (e: any) {
-      setSendStatus(`error: ${e?.message || String(e)}`);
+    for (const c of d.pending_decisions?.commitments || []) {
+      if (c.status === "satisfied") continue;
+      touch(c.role, c.action || "", "committed");
     }
-  };
+    for (const a of d.pending_decisions?.actions || []) {
+      const by = a.proposed_by || "";
+      if (by.includes(":") || by === "operator-passthrough") continue;
+      touch(by, a.twin_rationale || a.escalate_reason || a.kind, "proposed");
+    }
+    return heat;
+  });
 
-  const totalRssGib = () =>
-    (data()?.top_processes || []).reduce((acc, p) => acc + p.rss_kb / 1024 / 1024, 0);
+  // Personas shown in the rail = workspace.roles. For roles registered
+  // in persona_pool (have heartbeat + paused state), use the live row;
+  // for workspace roles NOT in persona_pool yet (marketing, research),
+  // synthesize a placeholder row so they're still addressable.
+  const personas = () => {
+    const ws = workspace();
+    const livePool = data()?.personas || [];
+    return ws.roles.map((role) => {
+      const live = livePool.find((p) => p.role === role);
+      if (live) return live;
+      return {
+        role,
+        display_name: role,
+        paused: false,
+        last_tick_at: "",
+      } as PersonaRow;
+    });
+  };
 
   return (
-    <div class="flex flex-col bg-gray-950 min-h-screen text-gray-100">
-      {/* Header */}
-      <div class="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
-        <div>
-          <h1 class="text-2xl font-bold">Mission Control</h1>
-          <p class="text-gray-400 text-xs">
-            Single landing for hex AIOS · refreshes {REFRESH_MS / 1000}s ·{" "}
-            <span class={data()?.stdb_alive ? "text-green-400" : "text-red-400"}>
-              STDB {data()?.stdb_alive ? "✓" : "✗"}
+    <div class="flex flex-col h-screen bg-gray-950 text-gray-100 font-sans">
+      {/* ─── Minimal top bar ─── */}
+      <header class="px-6 py-3 border-b border-gray-800 flex items-center justify-between text-[11px]">
+        <div class="flex items-baseline gap-3">
+          <h1 class="text-base font-semibold tracking-tight">hex</h1>
+          <span class="text-gray-500">·</span>
+          <span class="text-gray-500">workspace</span>
+          <select
+            class="bg-gray-900 border border-gray-700 rounded px-2 py-0.5 text-gray-200"
+            value={workspaceId()}
+            onChange={(e) => setWorkspaceId(e.currentTarget.value)}
+            title={workspace().description}
+          >
+            <For each={WORKSPACES}>{(w) => (
+              <option value={w.id}>{w.label}</option>
+            )}</For>
+          </select>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class={data()?.stdb_alive ? "text-green-400" : "text-red-400"}>STDB {data()?.stdb_alive ? "✓" : "✗"}</span>
+          <Show when={attentionCount() > 0}>
+            <span class="text-gray-500">·</span>
+            <span class="text-amber-400" title={`${attentionCount()} attention items inline in the stream`}>
+              {attentionCount()} attention
             </span>
-          </p>
+          </Show>
+          <span class="text-gray-500">·</span>
+          <button
+            class="px-2 py-0.5 rounded border border-gray-700 hover:bg-gray-900 text-gray-400"
+            onClick={() => setTeamOpen(!teamOpen())}
+            title="Toggle team list (12 personas). The team replies as a unit by default; use @role to address one."
+          >
+            team {teamOpen() ? "◂" : "▸"}
+          </button>
         </div>
-        <div class="flex gap-2 text-xs">
-          <button class="px-3 py-1 rounded border border-gray-700 bg-gray-900 hover:bg-gray-800"
-                  onClick={() => navigate({ page: "merge-gate" })}>Merge Gate</button>
-          <button class="px-3 py-1 rounded border border-gray-700 bg-gray-900 hover:bg-gray-800"
-                  onClick={() => navigate({ page: "resources" })}>Resources</button>
-          <button class="px-3 py-1 rounded border border-gray-700 bg-gray-900 hover:bg-gray-800"
-                  onClick={() => navigate({ page: "commitments" })}>Commitments</button>
-          <button class="px-3 py-1 rounded border border-gray-700 bg-gray-900 hover:bg-gray-800"
-                  onClick={() => navigate({ page: "persona-health" })}>Personas</button>
-          <button class="px-3 py-1 rounded border border-gray-700 bg-gray-900 hover:bg-gray-800"
-                  onClick={() => navigate({ page: "thoughts" })}>Thoughts</button>
-        </div>
+      </header>
+
+      {/* P2.1: filter chip row — collapses the 10 dead sidebar items
+          (Brain / Decisions / Merge Gate / Personas / Thoughts /
+          Resources / Commitments / Missions / Ops SLA / Agent Runs)
+          into in-surface filters over `attention_feed`. */}
+      <div
+        class="px-6 py-2 border-b border-gray-800 flex items-center gap-1.5 overflow-x-auto text-[11px]"
+        role="tablist"
+        aria-label="Attention filter"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={filter() === ""}
+          class="px-2.5 py-0.5 rounded-full border whitespace-nowrap transition-colors"
+          classList={{
+            "border-cyan-600 bg-cyan-900/40 text-cyan-100": filter() === "",
+            "border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500": filter() !== "",
+          }}
+          onClick={() => writeFilterToHash("")}
+          title="Show all attention items"
+        >All</button>
+        <For each={FILTER_CHIPS}>{(chip) => (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={filter() === chip.id}
+            class="px-2.5 py-0.5 rounded-full border whitespace-nowrap transition-colors"
+            classList={{
+              "border-cyan-600 bg-cyan-900/40 text-cyan-100": filter() === chip.id,
+              "border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500": filter() !== chip.id,
+            }}
+            onClick={() => writeFilterToHash(chip.id)}
+            title={`Show only ${chip.label.toLowerCase()} attention items (kind: ${chip.prefixes.join(", ")})`}
+          >{chip.label}</button>
+        )}</For>
       </div>
 
       <Show when={error()}>
-        <div class="p-3 bg-red-950/40 border-b border-red-900 text-red-300 text-sm">
-          {error()}
-        </div>
+        <div class="px-6 py-2 bg-red-950/40 border-b border-red-900 text-red-300 text-xs">{error()}</div>
       </Show>
 
-      <Show when={loading() && !data()}>
-        <div class="p-6 text-gray-500">Loading mission control…</div>
-      </Show>
-
-      <Show when={data()}>
-        {/* Board ask compose */}
-        <div class="px-6 py-3 border-b border-gray-800 bg-gray-900/40">
-          <div class="flex gap-2">
-            <input
-              class="flex-1 bg-gray-950 border border-gray-700 rounded px-3 py-2 text-sm font-mono"
-              placeholder="board ask (no @mention) or @cto / @cpo / ..."
-              value={boardMessage()}
-              onInput={(e) => setBoardMessage(e.currentTarget.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) sendBoardAsk(); }}
-            />
-            <button
-              class="px-4 py-2 rounded bg-cyan-700 hover:bg-cyan-600 text-white text-sm disabled:opacity-50"
-              disabled={!boardMessage().trim()}
-              onClick={sendBoardAsk}
-            >
-              Send
-            </button>
-          </div>
-          <Show when={sendStatus()}>
-            <div class="text-xs text-gray-400 mt-1">{sendStatus()}</div>
-          </Show>
-        </div>
-
-        {/* 12-col grid below */}
-        <div class="grid grid-cols-12 gap-4 px-6 py-4">
-          {/* Pending decisions — 8 cols */}
-          <div class="col-span-12 lg:col-span-8 space-y-3">
-            <div class="text-xs uppercase tracking-wide text-gray-500">
-              Pending decisions ({data()!.pending_decisions.actions.length} actions ·
-              {" "}{data()!.pending_decisions.commitments.length} commitments)
+      <div class="flex-1 flex overflow-hidden">
+        {/* ─── Flow visualization: WHO is working right now ─── */}
+        <Show when={teamOpen()}>
+          <aside class="w-72 shrink-0 border-r border-gray-800 overflow-y-auto">
+            <div class="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+              <span class="text-[10px] uppercase tracking-wide text-gray-500">Factory</span>
+              <span class="text-[10px] text-gray-600">click → DM</span>
             </div>
-            <Show
-              when={data()!.pending_decisions.actions.length + data()!.pending_decisions.commitments.length > 0}
-              fallback={<div class="text-gray-500 text-sm p-3 border border-gray-900 rounded bg-gray-900/30">
-                Nothing waiting. Operator is free.
-              </div>}
-            >
-              <For each={data()!.pending_decisions.actions}>{(a) => (
-                <div class="border border-gray-800 rounded bg-gray-900/40 p-3">
+            <Index each={personas()}>{(pGet) => {
+              const p = pGet();
+              const h = personaHeat()[p.role];
+              const count = h?.count || 0;
+              // Heat tier: 0 cold · 1-2 warm · 3-4 hot · 5+ very hot
+              const tier = count === 0 ? 0 : count <= 2 ? 1 : count <= 4 ? 2 : 3;
+              const heatBorder =
+                tier === 3 ? "border-l-red-600 bg-red-950/15" :
+                tier === 2 ? "border-l-amber-600 bg-amber-950/10" :
+                tier === 1 ? "border-l-cyan-700 bg-cyan-950/10" :
+                "border-l-gray-700";
+              return (
+                <button
+                  class={`w-full text-left px-3 py-2 border-b border-gray-900 border-l-4 hover:bg-gray-900 ${heatBorder}`}
+                  onClick={() => setIntent(`@${p.role} `)}
+                  title={`Address @${p.role} directly. ${capabilityFor(p.role)}`}
+                >
                   <div class="flex items-center gap-2 text-xs">
-                    <span class={`px-2 py-0.5 rounded border ${statusBadge(a.status)}`}>{a.status}</span>
-                    <span class="text-cyan-400">{a.kind}</span>
-                    <span class="text-gray-500">{a.proposed_by}</span>
-                    <span class="text-gray-600 ml-auto">#{a.id}</span>
+                    <span class={p.paused ? "text-yellow-400" : count > 0 ? "text-green-400" : "text-gray-500"}>●</span>
+                    <span class="font-mono text-gray-200 flex-1">{p.role}</span>
+                    <Show when={count > 0}>
+                      <span class="text-[10px] text-gray-400 tabular-nums">{count}↑</span>
+                    </Show>
                   </div>
-                  <Show when={a.twin_rationale}>
-                    <div class="text-sm text-gray-300 mt-1">
-                      <span class="text-gray-500">twin:</span> {a.twin_rationale}
+                  <div class="text-[10px] text-gray-500 mt-0.5">{capabilityFor(p.role)}</div>
+                  <Show when={h?.workingOn}>
+                    <div class="text-[10px] mt-1 line-clamp-2">
+                      <span class="text-gray-500">{h!.workingKind}: </span>
+                      <span class="text-gray-300">{h!.workingOn.slice(0, 100)}</span>
                     </div>
                   </Show>
-                  <Show when={a.escalate_reason}>
-                    <div class="text-sm text-orange-300 mt-1">{a.escalate_reason}</div>
-                  </Show>
-                </div>
-              )}</For>
-              <For each={data()!.pending_decisions.commitments}>{(c) => (
-                <div class="border border-gray-800 rounded bg-gray-900/40 p-3">
-                  <div class="flex items-center gap-2 text-xs">
-                    <span class={`px-2 py-0.5 rounded border ${statusBadge(c.status)}`}>{c.status}</span>
-                    <span class="text-cyan-400">{c.role}</span>
-                    <span class="text-gray-600 ml-auto">#{c.id}</span>
-                  </div>
-                  <div class="text-sm text-gray-200 mt-1 line-clamp-2">{c.action}</div>
-                  <Show when={c.success_artifact}>
-                    <div class="text-xs text-gray-500 mt-1 font-mono">→ {c.success_artifact}</div>
-                  </Show>
-                  <button
-                    class="mt-1 px-2 py-0.5 rounded bg-green-800 hover:bg-green-700 text-white text-xs"
-                    disabled={busyId() === c.id}
-                    onClick={() => satisfyCommitment(c.id)}
-                  >
-                    Mark satisfied
-                  </button>
-                </div>
-              )}</For>
-            </Show>
-          </div>
+                </button>
+              );
+            }}</Index>
+          </aside>
+        </Show>
 
-          {/* Persona health — 4 cols */}
-          <div class="col-span-12 lg:col-span-4 space-y-3">
-            <div class="text-xs uppercase tracking-wide text-gray-500">
-              Personas ({data()!.personas.length})
-            </div>
-            <div class="border border-gray-800 rounded bg-gray-900/40 divide-y divide-gray-900">
-              <For each={data()!.personas}>{(p) => (
-                <div class="p-2 flex items-center gap-2 text-sm">
-                  <span class={p.paused ? "text-yellow-400" : "text-green-400"}>●</span>
-                  <span class="text-cyan-400 font-mono w-32 truncate">{p.role}</span>
-                  <span class="text-gray-500 text-xs ml-auto">
-                    {p.paused ? "paused" : "ready"}
+        {/* ─── Main: one stream ─── */}
+        <main ref={el => { streamScrollRef = el; }} class="flex-1 overflow-y-auto order-1">
+          <div class="max-w-4xl mx-auto px-6 py-4 space-y-3">
+            <Show when={turns().length === 0}>
+              <div class="text-gray-500 text-sm italic py-12 text-center">
+                Quiet. Type below to start something.
+              </div>
+            </Show>
+            <For each={turns()}>{(turn) => (
+              <section class="space-y-2">
+                {/* Turn header — operator question or Background activity */}
+                <div class="flex items-center gap-3 pt-4">
+                  <div class="flex-1 border-t border-gray-800"></div>
+                  <span class="text-[10px] uppercase tracking-wide text-gray-500">
+                    {turn.headerLabel}
                   </span>
+                  <div class="flex-1 border-t border-gray-800"></div>
                 </div>
-              )}</For>
-              <Show when={data()!.personas.length === 0}>
-                <div class="p-3 text-gray-500 text-sm">No personas registered.</div>
-              </Show>
-            </div>
-          </div>
-
-          {/* Recent activity — 8 cols */}
-          <div class="col-span-12 lg:col-span-8 space-y-2">
-            <div class="text-xs uppercase tracking-wide text-gray-500">
-              Recent activity (last {data()!.activity.recent_executed.length} executed actions)
-            </div>
-            <Show
-              when={data()!.activity.recent_executed.length > 0}
-              fallback={<div class="text-gray-500 text-sm p-3 border border-gray-900 rounded bg-gray-900/30">
-                No actions executed yet.
-              </div>}
-            >
-              <For each={data()!.activity.recent_executed}>{(a) => (
-                <div class="border border-gray-900 rounded bg-gray-900/30 p-2 text-sm">
-                  <div class="flex items-center gap-2 text-xs">
-                    <span class={a.success ? "text-green-400" : "text-red-400"}>
-                      {a.success ? "✓" : "✗"}
-                    </span>
-                    <span class="text-cyan-400">{a.kind}</span>
-                    <span class="text-gray-600">#{a.id}</span>
+                <Show when={turn.headerBody}>
+                  <div class="flex justify-end">
+                    <div class="max-w-2xl rounded-lg px-3 py-2 text-sm bg-cyan-900/30 border border-cyan-800">
+                      <div class="flex items-baseline gap-2 mb-1 text-[10px]">
+                        <span class="font-mono text-cyan-300">operator</span>
+                        <span class="text-gray-600 ml-auto">
+                          {ageSec(Math.max(0, Math.floor((Date.now() - turn.headerTs) / 1000)))} ago
+                        </span>
+                      </div>
+                      <div class="text-gray-100 whitespace-pre-wrap break-words leading-relaxed">
+                        {turn.headerBody}
+                      </div>
+                    </div>
                   </div>
-                  <Show when={a.path}>
-                    <div class="text-gray-300 text-xs font-mono mt-0.5 truncate">{a.path}</div>
-                  </Show>
-                  <Show when={a.evidence}>
-                    <div class="text-gray-500 text-xs mt-0.5 truncate">{a.evidence}</div>
-                  </Show>
-                  <Show when={!a.success && a.error}>
-                    <div class="text-red-400 text-xs mt-0.5">{a.error}</div>
-                  </Show>
-                </div>
-              )}</For>
-            </Show>
-          </div>
-
-          {/* Anomalies — 4 cols */}
-          <div class="col-span-12 lg:col-span-4 space-y-2">
-            <div class="text-xs uppercase tracking-wide text-gray-500">
-              Anomalies ({data()!.pending_decisions.anomalies.length} open)
-            </div>
-            <Show
-              when={data()!.pending_decisions.anomalies.length > 0}
-              fallback={<div class="text-gray-500 text-sm p-3 border border-gray-900 rounded bg-gray-900/30">
-                No anomalies.
-              </div>}
-            >
-              <For each={data()!.pending_decisions.anomalies}>{(an) => (
-                <div class="border border-gray-800 rounded bg-gray-900/40 p-2">
-                  <div class="flex items-center gap-2 text-xs">
-                    <span class={`px-2 py-0.5 rounded border ${sevColor(an.severity)}`}>{an.severity}</span>
-                    <span class="text-cyan-400">{an.kind}</span>
-                    <span class="text-gray-600 ml-auto">#{an.id}</span>
+                </Show>
+                <Show when={turn.items.length === 0 && turn.headerBody}>
+                  <div class="text-[11px] text-gray-500 italic ml-2">
+                    (no team response yet)
                   </div>
-                  <div class="text-xs text-gray-300 mt-1 line-clamp-2">{an.note}</div>
-                  <button
-                    class="mt-1 px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-white text-xs"
-                    disabled={busyId() === an.id}
-                    onClick={() => ackAnomaly(an.id)}
-                  >
-                    Ack
-                  </button>
-                </div>
-              )}</For>
-            </Show>
-          </div>
-
-          {/* Top processes — full width */}
-          <div class="col-span-12 space-y-2">
-            <div class="text-xs uppercase tracking-wide text-gray-500">
-              Top processes by RSS — total {totalRssGib().toFixed(1)} GiB
-            </div>
-            <div class="border border-gray-800 rounded bg-gray-900/40 overflow-x-auto">
-              <table class="w-full text-xs">
-                <thead>
-                  <tr class="text-left text-gray-500 border-b border-gray-800">
-                    <th class="px-2 py-1">pid</th>
-                    <th class="px-2 py-1">state</th>
-                    <th class="px-2 py-1 text-right">cpu%</th>
-                    <th class="px-2 py-1 text-right">rss</th>
-                    <th class="px-2 py-1">argv</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={data()!.top_processes}>{(p) => {
-                    const rssGib = p.rss_kb / 1024 / 1024;
-                    const rssCls = rssGib > 30 ? "text-red-400 font-semibold"
-                                  : rssGib > 20 ? "text-yellow-400"
-                                  : "text-gray-300";
-                    const cpuCls = p.cpu_pct > 800 ? "text-red-400 font-semibold"
-                                  : p.cpu_pct > 200 ? "text-yellow-400"
-                                  : "text-gray-300";
+                </Show>
+                <For each={turn.items}>{(item) => (
+              <Switch>
+                <Match when={item.kind === "chat" && item.chat}>
+                  {(() => {
+                    const c = item.chat!;
+                    const isOp = c.from === "operator";
+                    // P2.2: pending replies render as a distinct
+                    // skeleton row (spinner + elapsed counter) instead
+                    // of a faded normal bubble so the operator can
+                    // tell working vs stalled at a glance.
+                    if (c.pending) {
+                      return <PendingBubble from={c.from} to={c.to} startedAt={item.ts} />;
+                    }
                     return (
-                      <tr class="border-b border-gray-900/50">
-                        <td class="px-2 py-1 font-mono text-cyan-400">{p.pid}</td>
-                        <td class="px-2 py-1 text-gray-400">{p.state}</td>
-                        <td class={`px-2 py-1 text-right tabular-nums ${cpuCls}`}>{p.cpu_pct.toFixed(0)}</td>
-                        <td class={`px-2 py-1 text-right tabular-nums ${rssCls}`}>{fmtRss(p.rss_kb)}</td>
-                        <td class="px-2 py-1 text-gray-300 font-mono truncate max-w-2xl">{p.argv}</td>
-                      </tr>
+                      <div class="flex" classList={{ "justify-end": isOp }}>
+                        <div
+                          class="max-w-2xl rounded-lg px-3 py-2 text-sm"
+                          classList={{
+                            "bg-cyan-900/30 border border-cyan-800": isOp,
+                            "bg-gray-900 border border-gray-700": !isOp,
+                          }}
+                        >
+                          <div class="flex items-baseline gap-2 mb-1 text-[10px]">
+                            <span class={`font-mono ${actorColor(c.from)}`}>{c.from}</span>
+                            <Show when={c.to && c.to !== "operator"}>
+                              <span class="text-gray-600">→ {c.to}</span>
+                            </Show>
+                            <span class="text-gray-600 ml-auto">
+                              {ageSec(Math.max(0, Math.floor((Date.now() - item.ts) / 1000)))} ago
+                            </span>
+                          </div>
+                          <div class="text-gray-100 whitespace-pre-wrap break-words leading-relaxed">{c.body}</div>
+                        </div>
+                      </div>
                     );
-                  }}</For>
-                </tbody>
-              </table>
-            </div>
+                  })()}
+                </Match>
+                <Match when={item.kind === "commit" && item.commit}>
+                  {(() => {
+                    const c = item.commit!;
+                    const fname = c.path.split("/").pop() || c.path;
+                    return (
+                      <div class="flex justify-center">
+                        <div class="text-[11px] text-gray-500 px-3 py-1 rounded bg-cyan-950/20 border border-cyan-900/50">
+                          <span class="text-cyan-400">✎</span> <span class={`font-mono ${actorColor(c.actor)}`}>{c.actor}</span>
+                          {" "}wrote <span class="font-mono text-gray-300">{fname}</span>{" "}
+                          <span class="text-gray-600">· {ageSec(Math.max(0, Math.floor((Date.now() - item.ts) / 1000)))} ago</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </Match>
+                <Match when={item.kind === "attention" && item.attention}>
+                  {(() => {
+                    const a = item.attention!;
+                    const group = item.attentionGroup || [a];
+                    const groupKey = item.groupKey || groupKeyFor(a);
+                    const isGroup = group.length > 1;
+                    const expanded = () => expandedGroups().has(groupKey);
+                    const idMatch = a.id.match(/^[a-z]+-(\d+)/);
+                    const numId = idMatch ? parseInt(idMatch[1], 10) : undefined;
+                    const isStdb = a.kind === "resource_anomaly" && (a.subtitle.includes("spacetimedb-standalone") || a.title.includes("rss_oversize"));
+                    return (
+                      <div class="flex justify-center">
+                        <div
+                          class="max-w-2xl w-full rounded-lg border px-3 py-2 text-sm"
+                          classList={{
+                            "border-red-800 bg-red-950/20": a.priority === 0,
+                            "border-amber-800 bg-amber-950/10": a.priority === 1,
+                            "border-gray-800 bg-gray-900/40": a.priority === 2,
+                          }}
+                        >
+                          <div class="flex items-baseline gap-2 mb-1 text-[10px]">
+                            <span class={a.priority === 0 ? "text-red-400" : a.priority === 1 ? "text-amber-400" : "text-blue-400"}>● {a.kind}</span>
+                            <span class="text-gray-600 ml-auto">{ageSec(a.age_seconds)}</span>
+                          </div>
+                          <div class="text-gray-100 flex items-center gap-2">
+                            <span>{a.title}</span>
+                            <Show when={isGroup}>
+                              <span
+                                class="px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 text-[10px] tabular-nums text-gray-300"
+                                title={`${group.length} items collapsed into this class`}
+                              >×{group.length}</span>
+                            </Show>
+                          </div>
+                          <div class="text-[11px] text-gray-500 mt-1">{a.subtitle}</div>
+                          <div class="flex gap-1.5 mt-2 items-center">
+                            <Show when={a.kind === "merge_vote_needed" && a.worktree_path}>
+                              <button
+                                class="px-2 py-0.5 rounded bg-green-900/40 hover:bg-green-900 border border-green-800 text-green-200 text-[10px] disabled:opacity-50"
+                                disabled={attnBusy() === a.id}
+                                onClick={() => decideMerge(a.id, a.worktree_path!, "approved")}
+                              >Approve</button>
+                              <button
+                                class="px-2 py-0.5 rounded bg-red-900/40 hover:bg-red-900 border border-red-800 text-red-200 text-[10px] disabled:opacity-50"
+                                disabled={attnBusy() === a.id}
+                                onClick={() => decideMerge(a.id, a.worktree_path!, "rejected")}
+                              >Reject</button>
+                            </Show>
+                            <Show when={isStdb && numId !== undefined}>
+                              <button
+                                class="px-2 py-0.5 rounded bg-amber-900/40 hover:bg-amber-900 border border-amber-800 text-amber-200 text-[10px] disabled:opacity-50"
+                                disabled={attnBusy() === a.id}
+                                onClick={() => restartStdb(a.id)}
+                              >Restart STDB</button>
+                            </Show>
+                            <Show when={!isGroup && numId !== undefined && a.kind === "resource_anomaly"}>
+                              <button
+                                class="px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-200 text-[10px] disabled:opacity-50"
+                                disabled={attnBusy() === a.id}
+                                onClick={() => ackAnomaly(a.id, numId!, groupKey)}
+                              >Ack</button>
+                            </Show>
+                            <Show when={isGroup && a.kind === "resource_anomaly"}>
+                              <button
+                                class="px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-200 text-[10px] disabled:opacity-50"
+                                disabled={attnBusy() === groupKey}
+                                onClick={() => ackAllGroup(group, groupKey)}
+                                title={`Ack all ${group.length} items in this class and suppress for 5 minutes`}
+                              >Ack all ({group.length})</button>
+                            </Show>
+                            <Show when={numId !== undefined && a.kind === "escalation"}>
+                              <button
+                                class="px-2 py-0.5 rounded bg-red-900/40 hover:bg-red-900 border border-red-800 text-red-200 text-[10px] disabled:opacity-50"
+                                disabled={attnBusy() === a.id}
+                                onClick={() => abandonAction(a.id, numId!)}
+                              >Abandon</button>
+                            </Show>
+                            <Show when={isGroup}>
+                              <button
+                                class="ml-auto px-2 py-0.5 rounded hover:bg-gray-800 text-gray-400 text-[10px]"
+                                onClick={() => toggleGroup(groupKey)}
+                                title={expanded() ? "Collapse" : `Show all ${group.length} items`}
+                              >{expanded() ? "▲ collapse" : `▼ show ${group.length}`}</button>
+                            </Show>
+                          </div>
+                          <Show when={isGroup && expanded()}>
+                            <div class="mt-2 pt-2 border-t border-gray-800 space-y-1">
+                              <For each={group}>{(row) => {
+                                const rowMatch = row.id.match(/^[a-z]+-(\d+)/);
+                                const rowNumId = rowMatch ? parseInt(rowMatch[1], 10) : undefined;
+                                return (
+                                  <div class="flex items-baseline gap-2 text-[11px]">
+                                    <span class="text-gray-500 font-mono">{row.id}</span>
+                                    <span class="text-gray-300 flex-1 truncate" title={row.subtitle}>{row.subtitle}</span>
+                                    <span class="text-gray-600 tabular-nums">{ageSec(row.age_seconds)}</span>
+                                    <Show when={rowNumId !== undefined && row.kind === "resource_anomaly"}>
+                                      <button
+                                        class="px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-200 text-[10px] disabled:opacity-50"
+                                        disabled={attnBusy() === row.id}
+                                        onClick={() => ackAnomaly(row.id, rowNumId!, groupKey)}
+                                      >Ack</button>
+                                    </Show>
+                                  </div>
+                                );
+                              }}</For>
+                            </div>
+                          </Show>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </Match>
+              </Switch>
+            )}</For>
+              </section>
+            )}</For>
           </div>
+        </main>
+      </div>
+
+      {/* ─── Compose (sticky bottom) ─── */}
+      <div class="border-t border-gray-800 bg-gray-900/60 px-6 py-3">
+        <div class="max-w-4xl mx-auto flex gap-2">
+          <textarea
+            class="flex-1 bg-gray-950 border border-gray-700 focus:border-cyan-600 focus:outline-none rounded px-3 py-2 text-sm font-mono resize-none"
+            rows={2}
+            placeholder='Tell the team. Plain text broadcasts to the c-suite. "@cto …" addresses one. ⌘↵ to send.'
+            value={intent()}
+            onInput={(e) => setIntent(e.currentTarget.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }}
+            disabled={running()}
+          />
+          <button
+            class="px-5 rounded bg-cyan-700 hover:bg-cyan-600 text-white text-sm disabled:opacity-50"
+            disabled={!intent().trim() || running()}
+            onClick={send}
+          >
+            {running() ? "…" : "Send"}
+          </button>
         </div>
-      </Show>
+      </div>
     </div>
   );
 };

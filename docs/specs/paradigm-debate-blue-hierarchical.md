@@ -42,7 +42,7 @@ artifact*. Red's pipeline has no row for that. The org chart does:
 "`validation-judge + adversarial-red + adversarial-blue` voting in
 parallel, 2-of-3 + judge-pass to merge." That is not flat. The
 **judge outranks the adversaries** — judge-pass is required,
-adversary 2-of-3 is necessary-but-insufficient. ADR-2605081126 literally
+adversary 2-of-3 is necessary-but-insufficient. ADR-2026-05-08-1126 literally
 encodes a two-tier authority structure: peer adversaries below, judge
 above with override. Red called this "flat" while describing
 hierarchy. The merge gate is not a counterexample to hierarchy; it is
@@ -224,7 +224,7 @@ the operator's intent is converted to L4-consumable schema*. Without
 them, the operator becomes the drafter and the entire pretense of
 delegation collapses.
 
-Red's own central evidence — the merge gate at ADR-2605081126 — is
+Red's own central evidence — the merge gate at ADR-2026-05-08-1126 — is
 two-tier hierarchy. Red's central anti-pattern — "personas have no
 tools" — is a wiring gap, not a structural one. Red's central proposal
 — delete the org chart — solves a tooling problem with an

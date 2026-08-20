@@ -1,0 +1,107 @@
+{
+  "adr": "ADR-014",
+  "created_at": "2026-05-11T14:07:19.376840385+00:00",
+  "created_by": "hex-coder",
+  "feature": "Replace mock.module() with dependency injection pattern for test isolation",
+  "id": "wp-ban-mock-module-use-di",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Define Deps interfaces for adapters",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/dashboard-adapter.ts"
+          ],
+          "id": "P0.1",
+          "layer": "secondary",
+          "name": "Add DashboardAdapterDeps interface and refactor DashboardAdapter constructor",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/coordination-adapter.ts"
+          ],
+          "id": "P0.2",
+          "layer": "secondary",
+          "name": "Add CoordinationAdapterDeps interface and refactor CoordinationAdapter constructor",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/adapters/secondary/hub-launcher.ts"
+          ],
+          "id": "P0.3",
+          "layer": "secondary",
+          "name": "Add HubLauncherDeps interface and refactor HubLauncher constructor",
+          "status": "pending"
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "P1",
+      "name": "Refactor test files to use dependency injection",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/tests/adapters/secondary/dashboard-adapter.test.ts"
+          ],
+          "id": "P1.1",
+          "layer": "integration",
+          "name": "Remove mock.module() and add makeDeps() pattern in dashboard-adapter.test.ts",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/tests/adapters/secondary/coordination-adapter.test.ts"
+          ],
+          "id": "P1.2",
+          "layer": "integration",
+          "name": "Remove mock.module() and add makeDeps() pattern in coordination-adapter.test.ts",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/tests/adapters/secondary/hub-launcher.test.ts"
+          ],
+          "id": "P1.3",
+          "layer": "integration",
+          "name": "Remove mock.module() and add makeDeps() pattern in hub-launcher.test.ts",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/tests/adapters/primary/hub-command-sender.test.ts"
+          ],
+          "id": "P1.4",
+          "layer": "integration",
+          "name": "Remove mock.module() and use real HTTP server with port 0 in hub-command-sender.test.ts",
+          "status": "pending"
+        }
+      ],
+      "tier": 4
+    },
+    {
+      "id": "P2",
+      "name": "Add pre-commit enforcement",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            ".git/hooks/pre-commit"
+          ],
+          "id": "P2.1",
+          "layer": "infrastructure",
+          "name": "Add grep check for mock.module() in pre-commit hook",
+          "status": "pending"
+        }
+      ],
+      "tier": 5
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

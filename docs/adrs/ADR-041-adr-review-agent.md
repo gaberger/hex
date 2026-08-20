@@ -1,6 +1,7 @@
 # ADR-041: ADR Review Agent — Architectural Consistency Guardian
 
-**Status:** Accepted
+**Status:** Completed
+**Implementation-Present:** 2026-05-12 by auto-scan — evidence: hex-cli/src/commands/adr_review.rs
 **Accepted Date:** 2026-03-22
 ## Date: 2026-03-21
 
@@ -40,7 +41,7 @@ If ADRs contradict each other, the pipeline generates architecturally inconsiste
 
 ### 1. ADR Review Agent
 
-Create an autonomous agent (`adr-reviewer`) that runs after any ADR is created or updated. It performs five checks:
+Create an autonomous agent (`ADR-reviewer`) that runs after any ADR is created or updated. It performs five checks:
 
 #### Check 1: Scope Conflict Detection
 
@@ -158,7 +159,7 @@ hex-cli/src/commands/
   adr.rs                     # hex adr review command (extend existing)
 
 agents/
-  adr-reviewer.yml           # Agent definition for Claude Code integration
+  ADR-reviewer.yml           # Agent definition for Claude Code integration
 ```
 
 The reviewer use case depends on:

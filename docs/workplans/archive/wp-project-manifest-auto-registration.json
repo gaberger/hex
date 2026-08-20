@@ -1,0 +1,132 @@
+{
+  "adr": "ADR-043",
+  "created_at": "2026-05-23T18:08:29.769378535+00:00",
+  "created_by": "hex-coder",
+  "feature": "Implement Project Manifest and Auto-Registration via SpacetimeDB",
+  "id": "wp-project-manifest-auto-registration",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain/Ports Work",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/domain/project_manifest.rs"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Define Project Manifest Schema",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/ports/auto_registration.rs"
+          ],
+          "id": "P0.2",
+          "layer": "ports",
+          "name": "Define Auto-Registration Logic",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary Adapters",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/secondary/adapters/project_manifest_parser.rs"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement Project Manifest Parser",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/secondary/adapters/auto_registration_queue.rs"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Implement Auto-Registration Queue",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P2",
+      "name": "Primary Adapters",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/primary/nexus_startup.rs"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Integrate Project Manifest Parser with Nexus Startup",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/primary/auto_registration_on_startup.rs"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Implement Auto-Registration on Nexus Startup",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P3",
+      "name": "Usecases",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/usecases/auto_register_project.rs"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Define Usecase for Project Auto-Registration",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P4",
+      "name": "Integration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-agent/src/main.rs"
+          ],
+          "id": "P4.1",
+          "layer": "integration",
+          "name": "Integrate Auto-Registration with Hex Agent",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-dashboard/src/project_list.rs"
+          ],
+          "id": "P4.2",
+          "layer": "integration",
+          "name": "Update Dashboard to Use SpacetimeDB Only",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

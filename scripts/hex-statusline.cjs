@@ -187,7 +187,7 @@ if (hubRunning) {
     }
   }
 
-  // Pulse — per-project state from /api/pulse (ADR-2604131500 P6.2)
+  // Pulse — per-project state from /api/pulse (ADR-2026-04-13-1500 P6.2)
   const pulseData = fetchSync('/api/pulse');
   if (Array.isArray(pulseData)) {
     pulseProjects = pulseData;
@@ -228,7 +228,7 @@ if (agentIdShort) {
 const mark = isDirty ? `${P.dirty}✱` : `${P.clean}✓`;
 parts.push(`${P.branch}⎇ ${branch} ${mark}`);
 
-// Active ADR — ◆ADR-2603240130 Declarative Swarm…
+// Active ADR — ◆ADR-2026-03-24-0130 Declarative Swarm…
 if (activeAdr) {
   const title = activeAdrTitle.length > 28
     ? activeAdrTitle.slice(0, 27) + '…'
@@ -237,7 +237,7 @@ if (activeAdr) {
   parts.push(`${P.adr}◆${label}`);
 }
 
-// Pulse — per-project state (ADR-2604131500 P6.2)
+// Pulse — per-project state (ADR-2026-04-13-1500 P6.2)
 // Symbols: ● active (green), ◐ decision (yellow), ◉ blocked (red), ○ idle (dim), ✓ complete (green)
 const pulseSymbol = (state) => {
   switch (state) {

@@ -22,6 +22,11 @@ pub struct CreateSwarmRequest {
     pub project_id: String,
     pub name: String,
     pub topology: Option<String>,
+    /// Owner agent id. Operator/dashboard-created swarms send "" (no
+    /// agent-ownership constraint). When absent, falls back to the
+    /// `X-Hex-Agent-Id` header (agent callers).
+    #[serde(default)]
+    pub created_by: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,11 +44,11 @@ pub struct CreateTaskRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateTaskRequest {
-    /// Typed status — invalid strings return 422 at deserialization (ADR-2603311000).
+    /// Typed status — invalid strings return 422 at deserialization (ADR-2026-03-31-1000).
     pub status: Option<SwarmTaskStatus>,
     pub result: Option<String>,
     pub agent_id: Option<String>,
-    /// CAS version — must match current task.version (ADR-2603241900).
+    /// CAS version — must match current task.version (ADR-2026-03-24-1900).
     /// Omit to skip version check (legacy / force-assign).
     pub version: Option<u64>,
 }
@@ -95,10 +100,13 @@ pub async fn create_swarm(
     // "hex-pipeline" is hex-nexus's internal name for the phased dev topology.
     // SpacetimeDB only accepts the canonical set; map before forwarding.
     let topology = if raw_topology == "hex-pipeline" { "pipeline" } else { raw_topology };
-    let created_by = headers
+    let header_agent = headers
         .get("x-hex-agent-id")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
+    // Body `created_by` wins (dashboard sends "" → operator-created, no
+    // single-active-swarm ownership constraint); else fall back to the header.
+    let created_by = body.created_by.as_deref().unwrap_or(header_agent);
 
     port.swarm_init(&id, &body.name, topology, &body.project_id, created_by)
         .await
@@ -275,7 +283,7 @@ pub async fn create_task(
     Path(swarm_id): Path<String>,
     Json(body): Json<CreateTaskRequest>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
-    // ADR-2604051800 P1: Require swarm-write capability
+    // ADR-2026-04-05-1800 P1: Require swarm-write capability
     require_capability(
         claims.as_ref().map(|c| &c.0),
         |c| c.has_capability(&hex_core::Capability::SwarmWrite),
@@ -332,7 +340,7 @@ pub async fn update_task(
     Path((_swarm_id, task_id)): Path<(String, String)>,
     Json(body): Json<UpdateTaskRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    // ADR-2604051800 P1: Check task-write capability
+    // ADR-2026-04-05-1800 P1: Check task-write capability
     require_capability(
         claims.as_ref().map(|c| &c.0),
         |c| c.can_write_task(&task_id),

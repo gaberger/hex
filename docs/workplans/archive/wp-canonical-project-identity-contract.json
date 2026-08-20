@@ -1,0 +1,141 @@
+{
+  "adr": "ADR-059",
+  "created_at": "2026-05-23T18:24:30.217864620+00:00",
+  "created_by": "hex-coder",
+  "feature": "Define and enforce canonical project identity across systems",
+  "id": "wp-canonical-project-identity-contract",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Domain/Ports Work",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/domain/project-identity.ts"
+          ],
+          "id": "P0.1",
+          "layer": "domain",
+          "name": "Define Canonical Project Identity Contract in domain layer",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/reducers/register-project.ts"
+          ],
+          "id": "P0.2",
+          "layer": "domain",
+          "name": "Create Project ID Generator in SpacetimeDB reducer",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P1",
+      "name": "Secondary Adapters",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/cli/project-resolver.ts"
+          ],
+          "id": "P1.1",
+          "layer": "secondary",
+          "name": "Implement CLI project resolution utility",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/mcp/tools/*.ts"
+          ],
+          "id": "P1.2",
+          "layer": "secondary",
+          "name": "Update MCP tools to use canonical IDs",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P2",
+      "name": "Primary Adapters",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/adapters/spacetimedb/reducers.ts"
+          ],
+          "id": "P2.1",
+          "layer": "primary",
+          "name": "Update SpacetimeDB reducers to validate project IDs",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-dashboard/src/components/project-filter.tsx"
+          ],
+          "id": "P2.2",
+          "layer": "primary",
+          "name": "Implement Dashboard filtering using entityBelongsToProject utility",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P3",
+      "name": "Use Cases",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/use-cases/register-project.ts"
+          ],
+          "id": "P3.1",
+          "layer": "usecases",
+          "name": "Create use case for registering projects with canonical IDs",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "hex-nexus/src/use-cases/resolve-project-reference.ts"
+          ],
+          "id": "P3.2",
+          "layer": "usecases",
+          "name": "Create use case for resolving project references to canonical IDs",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    },
+    {
+      "id": "P4",
+      "name": "Integration",
+      "status": "pending",
+      "tasks": [
+        {
+          "files": [
+            "hex-nexus/src/integration/cli-mcp-dashboard.ts"
+          ],
+          "id": "P4.1",
+          "layer": "integration",
+          "name": "Integrate CLI, MCP, and Dashboard with new project identity logic",
+          "status": "pending"
+        },
+        {
+          "files": [
+            "tests/end-to-end/project-identity-resolution.spec.ts"
+          ],
+          "id": "P4.2",
+          "layer": "integration",
+          "name": "Test end-to-end scenarios for project identity resolution",
+          "status": "pending"
+        }
+      ],
+      "tier": 0
+    }
+  ],
+  "priority": "normal",
+  "status": "planned"
+}

@@ -1,4 +1,4 @@
-//! `hex fs` — native filesystem primitives (ADR-2604142100, wp-hex-native-filesystem P2.1).
+//! `hex fs` — native filesystem primitives (ADR-2026-04-14-2100, wp-hex-native-filesystem P2.1).
 //!
 //! Thin dispatcher on top of the `/api/fs/*` endpoints in hex-nexus. Provides
 //! eight subcommands — `list`, `read`, `search`, `glob`, `tree`, `stat`,

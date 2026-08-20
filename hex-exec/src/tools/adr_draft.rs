@@ -1,0 +1,287 @@
+//! `adr_draft` — emit a proposed_action(file_write) for a new ADR.
+//!
+//! The persona's primary "produce an artifact" tool. Validates the body
+//! contains the required ADR sections; the resulting proposed_action
+//! row flows through the existing digital-twin executor which writes the
+//! file under `docs/adrs/<id>-<slug>.md`.
+
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use std::time::{Duration, Instant};
+
+use super::{Tool, ToolResult};
+
+const STDB_HOST_DEFAULT: &str = "http://127.0.0.1:3033";
+const MIN_BODY: usize = 200;
+// CTO ADR-2026-05-08-2600 — halved from 50_000 to 24_000 (BSATN crash mitigation).
+const MAX_BODY: usize = 24_000;
+
+pub struct AdrDraft;
+
+#[async_trait]
+impl Tool for AdrDraft {
+    fn name(&self) -> &'static str {
+        "adr_draft"
+    }
+    fn description(&self) -> &'static str {
+        "Draft a new Architecture Decision Record. Writes a \
+         proposed_action(kind=file_write) row to STDB; the digital-twin \
+         executor materialises the file at docs/adrs/<id>-<slug>.md after \
+         the twin's approval. Body MUST include ## Context, ## Decision, \
+         and ## Consequences sections."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "ADR id. Canonical form: 'YYYY-MM-DD-HHMM' (e.g. '2026-05-21-1400'). Compact form '2605211400' is also accepted and auto-expanded to canonical. The compact form looks like a phone number to LLM PII filters and silently corrupts to [PHONE] in downstream responses; prefer the dashed form. Must be unique.",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "ADR title, kebab-case-friendly, max 80 chars.",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["proposed", "accepted", "superseded"],
+                    "description": "ADR status. Use 'proposed' for new drafts pending operator review.",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Full ADR markdown body. Must include `## Context`, `## Decision`, and `## Consequences` sections. 200-24000 bytes.",
+                }
+            },
+            "required": ["id", "title", "status", "body"]
+        })
+    }
+    async fn execute(&self, input: Value) -> ToolResult {
+        let start = Instant::now();
+        let id = match input.get("id").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => return ToolResult::err("missing/empty id", start.elapsed().as_millis() as u64),
+        };
+        let title = match input.get("title").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() && s.len() <= 80 => s.to_string(),
+            _ => return ToolResult::err("missing/invalid title (1-80 chars)", start.elapsed().as_millis() as u64),
+        };
+        let status = match input.get("status").and_then(|v| v.as_str()) {
+            Some(s @ "proposed" | s @ "accepted" | s @ "superseded") => s.to_string(),
+            _ => return ToolResult::err("status must be proposed|accepted|superseded", start.elapsed().as_millis() as u64),
+        };
+        let body = match input.get("body").and_then(|v| v.as_str()) {
+            Some(s) if (MIN_BODY..=MAX_BODY).contains(&s.len()) => s.to_string(),
+            Some(s) => return ToolResult::err(
+                format!("body length {} outside [{}, {}]", s.len(), MIN_BODY, MAX_BODY),
+                start.elapsed().as_millis() as u64,
+            ),
+            None => return ToolResult::err("missing body", start.elapsed().as_millis() as u64),
+        };
+        // Schema check: required sections.
+        for section in ["## Context", "## Decision", "## Consequences"] {
+            if !body.contains(section) {
+                return ToolResult::err(
+                    format!("body missing required section `{}`", section),
+                    start.elapsed().as_millis() as u64,
+                );
+            }
+        }
+        // ID format — accept both forms, normalize to canonical dashed.
+        let canonical_id = match normalize_adr_id(&id) {
+            Some(c) => c,
+            None => return ToolResult::err(
+                "id must be canonical 'YYYY-MM-DD-HHMM' (e.g. '2026-05-21-1400') OR 10-digit compact form 'YYMMDDHHMM' (e.g. '2605211400')",
+                start.elapsed().as_millis() as u64,
+            ),
+        };
+
+        let slug = slugify(&title);
+        let target_path = format!("docs/adrs/ADR-{}-{}.md", canonical_id, slug);
+        let full_body = format!(
+            "# ADR-{} — {}\n\nStatus: **{}**\nDate: {}\n\n{}",
+            canonical_id,
+            title,
+            initial_caps(&status),
+            chrono::Utc::now().format("%Y-%m-%d"),
+            body.trim_start_matches("# ").trim_start(),
+        );
+
+        let payload = serde_json::json!({
+            "path": target_path,
+            "content": full_body,
+        });
+
+        let host = std::env::var("HEX_SPACETIMEDB_HOST")
+            .unwrap_or_else(|_| STDB_HOST_DEFAULT.to_string());
+        let db = std::env::var("HEX_STDB_DATABASE")
+            .unwrap_or_else(|_| hex_core::stdb_database_for_module("hexflo-coordination").to_string());
+        let url = format!("{}/v1/database/{}/call/proposed_action_open", host, db);
+
+        let http = match reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => return ToolResult::err(format!("http build: {}", e), start.elapsed().as_millis() as u64),
+        };
+
+        // related_commitment_id = 0 (tool-driven, no commitment row)
+        let body_call = serde_json::json!([
+            "file_write",
+            payload.to_string(),
+            "tool:adr_draft",
+            0u64,
+        ]);
+        let resp = match http.post(&url).json(&body_call).send().await {
+            Ok(r) => r,
+            Err(e) => return ToolResult::err(format!("stdb call: {}", e), start.elapsed().as_millis() as u64),
+        };
+        if !resp.status().is_success() {
+            let status_code = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return ToolResult::err(
+                format!("proposed_action_open HTTP {}: {}", status_code, body),
+                start.elapsed().as_millis() as u64,
+            );
+        }
+
+        let elapsed = start.elapsed().as_millis() as u64;
+        ToolResult::ok(
+            json!({
+                "ok": true,
+                "target_path": target_path,
+                "body_bytes": full_body.len(),
+                "note": "proposed_action queued; digital-twin executor will write the file after approval",
+            }),
+            elapsed,
+        )
+    }
+}
+
+/// Canonicalise an ADR id to the dashed `YYYY-MM-DD-HHMM` form.
+/// Accepts:
+///   - Already-canonical `2026-05-21-1400` → returned verbatim
+///   - 10-digit compact `2605211400` → expanded with `20` century prefix
+///     to `2026-05-21-1400`
+///   - 12-digit compact `202605211400` → expanded to `2026-05-21-1400`
+///
+/// Returns None for unparseable shapes. The dashed form is canonical
+/// because LLM PII filters in the OpenRouter pipeline classify the
+/// 10-digit compact form as a phone number and silently rewrite it to
+/// `[PHONE]` in downstream replies — exactly the bug that triggered
+/// the 2026-05-21 ADR rename (commit 490eb227).
+pub(crate) fn normalize_adr_id(id: &str) -> Option<String> {
+    // Already-canonical: `YYYY-MM-DD-HHMM` — 4 digits, dash, 2, dash, 2, dash, 4.
+    let parts: Vec<&str> = id.split('-').collect();
+    if parts.len() == 4
+        && parts[0].len() == 4
+        && parts[1].len() == 2
+        && parts[2].len() == 2
+        && parts[3].len() == 4
+        && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit()))
+    {
+        return Some(id.to_string());
+    }
+    // Compact: 10 or 12 digits. 10 = YYMMDDHHMM (assume century 20xx); 12 = YYYYMMDDHHMM.
+    if id.chars().all(|c| c.is_ascii_digit()) {
+        match id.len() {
+            10 => {
+                let yy = &id[0..2];
+                let mm = &id[2..4];
+                let dd = &id[4..6];
+                let hhmm = &id[6..10];
+                return Some(format!("20{}-{}-{}-{}", yy, mm, dd, hhmm));
+            }
+            12 => {
+                let yyyy = &id[0..4];
+                let mm = &id[4..6];
+                let dd = &id[6..8];
+                let hhmm = &id[8..12];
+                return Some(format!("{}-{}-{}-{}", yyyy, mm, dd, hhmm));
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn slugify(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn initial_caps(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn slugifies() {
+        assert_eq!(slugify("Typed Tool Library + SOP Execution"), "typed-tool-library-sop-execution");
+    }
+    #[test]
+    fn normalize_canonical_passthrough() {
+        // Already-canonical dashed form returns as-is.
+        assert_eq!(
+            normalize_adr_id("2026-05-21-1400"),
+            Some("2026-05-21-1400".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_compact_10_digit_expands() {
+        // 10-digit compact gets century prefix.
+        assert_eq!(
+            normalize_adr_id("2605211400"),
+            Some("2026-05-21-1400".to_string())
+        );
+        // Exact bug that produced ADR-2605211400-child-reap-on-spawn-local-agent.md
+        // before the fix — should now expand correctly.
+    }
+
+    #[test]
+    fn normalize_compact_12_digit_expands() {
+        // Full 4-digit year compact also accepted.
+        assert_eq!(
+            normalize_adr_id("202605211400"),
+            Some("2026-05-21-1400".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_rejects_garbage() {
+        assert_eq!(normalize_adr_id(""), None);
+        assert_eq!(normalize_adr_id("foo"), None);
+        assert_eq!(normalize_adr_id("2026-05"), None);
+        assert_eq!(normalize_adr_id("123"), None);
+        assert_eq!(normalize_adr_id("ADR-2026-05-21-1400"), None);
+    }
+
+    #[test]
+    fn schema_requires_all() {
+        let s = AdrDraft.input_schema();
+        let req: Vec<String> = s
+            .get("required").unwrap().as_array().unwrap()
+            .iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        for r in ["id", "title", "status", "body"] {
+            assert!(req.contains(&r.to_string()), "missing required: {}", r);
+        }
+    }
+}
