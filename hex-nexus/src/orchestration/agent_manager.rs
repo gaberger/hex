@@ -820,6 +820,24 @@ impl AgentManager {
 mod tests {
     use super::*;
 
+    // ── Liveness ─────────────────────────────────────────────────────────────
+
+    /// The registry writes `processId: 0` for "never had a process". Passing
+    /// that to `kill` asks about the caller's own process group and succeeds,
+    /// which made every such record read as alive and stopped `check_health`
+    /// from reaping any of them. Regression guard: pid 0 is never alive.
+    #[test]
+    fn pid_zero_is_never_alive() {
+        assert!(!is_process_alive(0), "pid 0 must never read as alive");
+    }
+
+    /// The counterpart: a pid that genuinely exists must still read as alive,
+    /// so the guard above cannot be satisfied by returning false for everything.
+    #[test]
+    fn a_real_process_is_alive() {
+        assert!(is_process_alive(std::process::id()));
+    }
+
     // ── SpawnConfig serde ────────────────────────────────────────────────────
 
     /// JSON without `waitForCompletion` must deserialize with the field defaulting to false.
@@ -922,7 +940,18 @@ fn docker_image_exists(image: &str) -> bool {
 }
 
 /// Check if a process is alive by sending signal 0.
+///
+/// Pid 0 is rejected before it ever reaches `kill`. The registry writes 0 to
+/// mean "no process", but `kill(0, 0)` is not a liveness probe — POSIX defines
+/// it as signalling *every process in the caller's process group*, and it
+/// returns success. Without this guard every record with `processId: 0` reads
+/// as alive, so `check_health` reaps nothing and the registry accumulates
+/// agents claiming `running` forever. Measured on bazzite 2026-07-26: 997 such
+/// records dating to May, and a reap that reported `deadCount: 0`.
 fn is_process_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
     #[cfg(unix)]
     {
         let result = unsafe { libc::kill(pid as i32, 0) };

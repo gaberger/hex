@@ -42,6 +42,7 @@ pub mod project;
 pub mod pulse;
 pub mod refresh;
 pub mod secrets;
+pub mod service;
 pub mod skill;
 pub mod stdb;
 pub mod status;
