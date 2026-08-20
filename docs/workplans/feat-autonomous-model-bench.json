@@ -1,0 +1,64 @@
+{
+  "id": "feat-autonomous-model-bench",
+  "title": "Autonomous model discovery + benchmark background task in hex-nexus",
+  "specs": "docs/specs/autonomous-model-bench.json",
+  "architecture_decision": "OPTION (a) — extract the bench unit-of-work into hex-core (new module hex-core::bench), consumed by BOTH hex-cli and hex-nexus. Rationale: the entire bench suite in hex-cli/src/commands/inference.rs (BenchResult, bench_chat with its 8192-token budget + reasoning/thinking field fallback, bench_identity/codegen/reasoning, the three persona benches, has_meta_reasoning/count_grounded, and compute_tier) is currently private and lives inside a leaf binary crate that nexus cannot depend on. Its only dependencies are reqwest + serde_json + regex + anyhow — zero hex-cli-specific state, no NexusClient, no clap. That makes it a pure, relocatable unit. Option (b) (duplicate a thin bench client in nexus) was rejected because it would fork the just-fixed reasoning-field/8192-budget regression logic (spec category reasoning-model-token-budget-and-field) into two copies that will silently drift — the exact 'tests mirror bugs / drift' failure mode CLAUDE.md warns against; the scoring rubric (compute_tier thresholds) is a single source of truth that the spec persist_shape depends on. Option (c) (shell to `hex inference bench`) is rejected outright: it violates the no-runtime-scripts / route-through-hex HARD RULES and would fork-exec a CLI from inside the daemon. By moving the suite to hex-core, hex-cli re-exports it (its existing private fns become thin wrappers over hex_core::bench, preserving the CLI surface), and nexus calls the same hex_core::bench::run_suite + compute_tier directly in-process. Cost accounting (per-model estimated USD, free/local-first ordering, 402/out-of-credits skip) is added as a bench-runner concern in hex-core so both callers share one cost model.",
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Extract the bench unit-of-work from hex-cli into a new module hex-core::bench. Move BenchResult, bench_chat (verbatim — preserving max_tokens=8192 / options.num_predict=8192 AND the content.trim().is_empty() -> reasoning/thinking field fallback for both OpenRouter and Ollama), bench_identity, bench_codegen, bench_reasoning, bench_persona_chat/commit/drafter, has_meta_reasoning, count_grounded, and compute_tier. Make the suite-running entry point public: `pub async fn run_suite(http, url, provider_type, model, quick) -> Vec<BenchResult>` plus `pub fn compute_tier(results) -> (f32 overall, u8 tier, &'static str label)`. Add a cost helper `pub fn estimate_bench_cost_usd(provider, cost_per_output_mtok, is_free_tier) -> f64` (0.0 for local ollama/openai_compat and free-tier; otherwise derived from the suite's bounded token budget) and an enum/Result that distinguishes BenchOutcome::Scored vs BenchOutcome::Skipped{reason} so a 402/403/404/timeout/connection-refused returns Skipped instead of a fabricated zero score. Register `pub mod bench;` in hex-core/src/lib.rs and add reqwest+regex to hex-core deps if not already present (keep hex-core's zero-business-dep posture: these are the only additions, gated to this module).",
+      "files": ["hex-core/src/bench.rs", "hex-core/src/lib.rs", "hex-core/Cargo.toml"],
+      "dependencies": [],
+      "done_condition": "cargo check -p hex-core passes"
+    },
+    {
+      "id": "step-2",
+      "description": "Rewire hex-cli to consume hex-core::bench. Replace the private bench_chat/bench_identity/bench_codegen/bench_reasoning/bench_persona_*/compute_tier/BenchResult definitions in hex-cli/src/commands/inference.rs with re-exports / thin wrappers over hex_core::bench so `hex inference bench` behaves identically (same prompts, same scoring, same --save PATCH of {quality_score, tier} to /api/inference/endpoints/{id}). Keep bench_provider's target-resolution, vault-key hydration, cloud-compat nexus-proxy rewrite, compare mode, and print_bench_results in hex-cli (they are CLI/NexusClient concerns and stay). Confirm no behavioral drift in the persist shape.",
+      "files": ["hex-cli/src/commands/inference.rs"],
+      "dependencies": ["step-1"],
+      "done_condition": "cargo check -p hex-cli passes"
+    },
+    {
+      "id": "step-3",
+      "description": "Add the cost-cap + cadence config surface, mirroring the existing resolve_decision_deadline_secs precedence pattern in hex-nexus/src/state_config.rs. Add `pub fn resolve_model_bench_cost_cap_usd() -> f64` with precedence: (1) env HEX_MODEL_BENCH_COST_CAP_USD, (2) .hex/project.json -> inference.model_bench.cost_cap_usd, (3) a conservative default (e.g. 0.50 USD/cycle). Add a sibling `resolve_model_bench_enabled() -> bool` (default true; project.json inference.model_bench.enabled / env HEX_MODEL_BENCH_DISABLED) and `MODEL_BENCH_TICK_INTERVAL_SECS` const (~6h = 21600) in sched_service.rs alongside the other *_TICK_INTERVAL_SECS consts. Document each with the same comment style as the existing interval consts.",
+      "files": ["hex-nexus/src/state_config.rs", "hex-nexus/src/sched_service.rs"],
+      "dependencies": [],
+      "done_condition": "cargo check -p hex-nexus passes"
+    },
+    {
+      "id": "step-4",
+      "description": "Implement the discovery + diff step as a private async helper in sched_service.rs: `async fn discover_uncalibrated_models() -> Result<Vec<BenchCandidate>, String>`. Reuse the locally_served_models()-style error-tolerant GET /api/inference/endpoints fetch (accept both bare-array and {endpoints:[...]} shapes); a non-2xx or transport error returns Err which the caller treats as a silent no-op tick (spec: discovery-provider-unreachable-whole-cycle). Diff discovered models against already-calibrated ones using the persisted quality_score on the endpoint record as the dedupe key (spec: idempotency-already-calibrated-not-rebenched + no-new-models-noop-tick). Build a BenchCandidate {id, url, provider, model, is_free_tier, cost_per_output_mtok, is_local} for each uncalibrated model. Sort the candidate queue local-Ollama first, then OpenRouter free-tier, then paid (spec: prefer-free-and-local-before-paid).",
+      "files": ["hex-nexus/src/sched_service.rs"],
+      "dependencies": ["step-3"],
+      "done_condition": "cargo check -p hex-nexus passes"
+    },
+    {
+      "id": "step-5",
+      "description": "Implement the bench-invocation + persist + cost-cap body: `async fn bench_and_persist_candidates(state, candidates, cost_cap_usd) -> Vec<NewlyCalibrated>`. For each candidate in preference order: if it is paid cloud and (accumulated_cloud_spend + estimate_bench_cost_usd(candidate)) >= cost_cap, STOP dispatching further paid benches for this cycle, log the cap-hit at warn, and defer the rest (spec: cost-cap-guard-negative — total paid spend <= cap, deferred not abandoned). Otherwise call hex_core::bench::run_suite(...) (8192-budget + reasoning/thinking fallback come for free from step-1). On BenchOutcome::Skipped (402 out-of-credits, 403/404 gated, connection-refused, timeout) skip the model: do NOT increment the cost accumulator for a request that produced no usable output, do NOT PATCH any calibration, log warn with provider+reason, and continue to the next candidate (specs: out-of-credits-graceful-skip-negative, gated-or-unreachable-model-skip — isolation, no fabrication). On a scored result, compute (overall, tier) via hex_core::bench::compute_tier and PATCH /api/inference/endpoints/{id} with {quality_score: overall, tier} (the existing secrets::calibrate_inference handler); only increment the cloud-spend accumulator by the actual estimated cost of a successfully-scored paid bench. After persisting a newly-calibrated LOCAL model, record/seed its model:<name> action into rl_q_entry for state_key() so it intersects locally_served_models() in the existing select_model_for_cycle loop; do NOT seed cloud-only models (specs: feed-rl-improvement-loop, cloud_exclusion). Return the list of newly-calibrated models with their recommended tiers. Wrap the whole body so any single-candidate error is isolated and the function returns Ok — never panics the daemon.",
+      "files": ["hex-nexus/src/sched_service.rs"],
+      "dependencies": ["step-4"],
+      "done_condition": "cargo check -p hex-nexus passes"
+    },
+    {
+      "id": "step-6",
+      "description": "Add the inbox-notification step. After bench_and_persist_candidates returns, if and only if at least one model was newly calibrated, emit exactly ONE ADR-060 priority-2 inbox notification via the HexFlo coordination port on SharedState (state.hexflo -> inbox_notify(agent_id, 2, kind, payload), mirroring the inbox_notify call sites in workplan_executor.rs and routes/inference.rs). The payload summarizes each new model name and its recommended tier. When the newly-calibrated set is empty (no new models, all-gated, all-deferred, or unreachable discovery), emit NO notification — the tick is silent (specs: no-new-models-noop-tick, happy-path-discover-bench-persist-notify exactly-one-notification).",
+      "files": ["hex-nexus/src/sched_service.rs"],
+      "dependencies": ["step-5"],
+      "done_condition": "cargo check -p hex-nexus passes"
+    },
+    {
+      "id": "step-7",
+      "description": "Wire the spawn into sched_service startup. Add `fn spawn_model_bench_discovery(state: SharedState)` following the exact spawn_substrate_autopilot / spawn_promote_orchestrator pattern: tokio::spawn -> tokio::time::interval(MODEL_BENCH_TICK_INTERVAL_SECS) -> initial interval.tick().await delay -> loop { update a state.last_model_bench_tick timestamp (add the RwLock field to SharedState in state.rs mirroring last_autopilot_tick), guard on resolve_model_bench_enabled(), run one tick = discover -> bench_and_persist (under sched_inference_lock() to serialize against the autopilot/RL loops on the shared Ollama backend) -> notify, match Ok/Err with graceful tracing::warn on Err, interval.tick().await }. Call spawn_model_bench_discovery(state.clone()) from the top of pub fn spawn() next to the other spawn_* calls. The tick must always return — wrap the cycle so an Err logs and the loop continues.",
+      "files": ["hex-nexus/src/sched_service.rs", "hex-nexus/src/state.rs"],
+      "dependencies": ["step-6"],
+      "done_condition": "cargo check -p hex-nexus passes"
+    },
+    {
+      "id": "step-8",
+      "description": "Add tests and validate against the behavioral specs. Add unit tests in hex-core/src/bench.rs for compute_tier boundary cases (tier3 overall>=0.85 && reason_raw>=4; tier2 overall>=0.65 && code_raw>=7; tier1 overall>=0.40; else tier0) and for the bench_chat reasoning/thinking field-fallback parsing (feed a JSON body with empty content + populated reasoning, and one with empty content + populated thinking, assert non-empty scored response). Add sched_service tests for the candidate ordering (local -> free -> paid) and the cost-cap accumulator gate (paid spend never exceeds cap; a Skipped 402 does not increment the accumulator and writes no calibration) using injected fixture candidates rather than live HTTP. Run the full validation chain so the 10 behavioral specs in docs/specs/autonomous-model-bench.json are exercised.",
+      "files": ["hex-core/src/bench.rs", "hex-nexus/src/sched_service.rs", "docs/specs/autonomous-model-bench.json"],
+      "dependencies": ["step-7"],
+      "done_condition": "hex dev validate passes (build + test + analyze + behavioral specs)"
+    }
+  ]
+}

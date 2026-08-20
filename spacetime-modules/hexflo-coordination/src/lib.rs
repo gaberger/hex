@@ -7710,3 +7710,106 @@ pub fn classifier_response_open(
     });
     Ok(())
 }
+
+// ─── Discovered Model Registry (ADR-2607140850) ─────────────────────────────
+//
+// A HuggingFace model found by the daily hf-model-researcher tick (P3.1 in
+// hex-nexus/src/sched_service.rs). Records real hardware feasibility --
+// smallest known GGUF quant size vs. this box's actual capacity, never the
+// headline parameter count -- so local-feasible candidates can be auto-pulled
+// and auto-benched with no approval gate, while non-local candidates are only
+// ever logged here and surfaced via hex inbox for human approval before any
+// paid API call is considered (never made automatically).
+
+/// A model discovered on HuggingFace, with its local-feasibility verdict.
+#[table(name = discovered_model, public)]
+#[derive(Clone, Debug)]
+pub struct DiscoveredModel {
+    /// HuggingFace repo id, e.g. "org/model-name" -- natural key, dedups discovery.
+    #[primary_key]
+    pub repo: String,
+    pub discovered_at: String,
+    /// Quant label of the smallest known GGUF variant, e.g. "Q4_K_M" (empty if unknown).
+    pub smallest_quant_label: String,
+    /// Smallest known GGUF quant file size in bytes (0 if unknown).
+    pub smallest_quant_bytes: u64,
+    /// Real hardware-feasibility verdict (16GB GPU / 30GB RAM), not headline param count.
+    pub local_feasible: bool,
+    /// JSON-encoded bench result. Empty until a local-feasible candidate is auto-tested.
+    pub bench_result: String,
+    /// "", "pending", "approved", "rejected" -- empty until surfaced via hex inbox.
+    pub review_status: String,
+    pub updated_at: String,
+}
+
+/// Record a newly-discovered model. Dedup by design (ADR-2607140850): if the
+/// repo is already known, this is a no-op so re-discovery never clobbers an
+/// existing bench_result or review_status.
+#[reducer]
+pub fn discovered_model_record(
+    ctx: &ReducerContext,
+    repo: String,
+    discovered_at: String,
+    smallest_quant_label: String,
+    smallest_quant_bytes: u64,
+    local_feasible: bool,
+) -> Result<(), String> {
+    if ctx.db.discovered_model().repo().find(&repo).is_some() {
+        return Ok(());
+    }
+    ctx.db.discovered_model().insert(DiscoveredModel {
+        repo,
+        discovered_at: discovered_at.clone(),
+        smallest_quant_label,
+        smallest_quant_bytes,
+        local_feasible,
+        bench_result: String::new(),
+        review_status: String::new(),
+        updated_at: discovered_at,
+    });
+    Ok(())
+}
+
+/// Record the bench result for a local-feasible model that was auto-tested.
+#[reducer]
+pub fn discovered_model_set_bench_result(
+    ctx: &ReducerContext,
+    repo: String,
+    bench_result: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let existing = ctx
+        .db
+        .discovered_model()
+        .repo()
+        .find(&repo)
+        .ok_or_else(|| format!("Discovered model '{}' not found", repo))?;
+    ctx.db.discovered_model().repo().update(DiscoveredModel {
+        bench_result,
+        updated_at: timestamp,
+        ..existing
+    });
+    Ok(())
+}
+
+/// Set the review status for a non-local-feasible model surfaced via hex inbox.
+#[reducer]
+pub fn discovered_model_set_review_status(
+    ctx: &ReducerContext,
+    repo: String,
+    review_status: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let existing = ctx
+        .db
+        .discovered_model()
+        .repo()
+        .find(&repo)
+        .ok_or_else(|| format!("Discovered model '{}' not found", repo))?;
+    ctx.db.discovered_model().repo().update(DiscoveredModel {
+        review_status,
+        updated_at: timestamp,
+        ..existing
+    });
+    Ok(())
+}

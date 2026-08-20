@@ -16,7 +16,12 @@
     "react_models": [
       "devstral-small-2:24b",
       "claude-code"
-    ]
+    ],
+    "lora": {
+      "augment_model": "qwen2.5-coder:32b",
+      "corpus_qa_count": 5,
+      "enabled": true
+    }
   },
   "auto_repair": {
     "enabled": false,

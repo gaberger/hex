@@ -1,0 +1,15 @@
+{
+  "adr": "ADR-2026-04-11-0227",
+  "created_at": "2026-06-15T15:24:59.502404650-04:00",
+  "id": "draft-2606151524-add-an-autonomous-model-discovery",
+  "kind": "workplan-draft",
+  "next_steps": [
+    "Run /hex-feature-dev to expand this draft into a full workplan",
+    "Or run `hex plan drafts approve draft-2606151524-add-an-autonomous-model-discovery.json`",
+    "Or run `hex plan drafts clear --name draft-2606151524-add-an-autonomous-model-discovery`"
+  ],
+  "notes": "This is a draft created by ADR-2026-04-11-0227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up.",
+  "origin": "auto-invoke",
+  "prompt": "Add an autonomous model discovery and benchmark sched_service task to hex-nexus. Every 6 hours it should: (1) call inference discovery for openrouter free-tier and local ollama to enumerate available models; (2) diff against already-calibrated models in the RL/calibration table to find new or uncalibrated ones; (3) for each new model, run the hex inference bench quality suite (identity, code-gen, reasoning, persona prompts) reusing the existing bench_provider logic, capping max_tokens for reasoning models and reading the reasoning field; (4) persist quality_score and recommended tier to nexus calibration; (5) emit a priority inbox notification summarizing new models and their tiers; (6) newly calibrated models then feed the existing select_model_for_cycle RL improvement loop. Must be a nexus background task, not a script (HARD RULE). Gate cloud benching behind a per-cycle cost cap. Surface results on the dashboard inference panel.",
+  "status": "pending-planner"
+}

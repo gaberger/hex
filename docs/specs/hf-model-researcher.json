@@ -1,0 +1,91 @@
+{
+  "feature": "hf-model-researcher",
+  "title": "Continuous HuggingFace Model Researcher",
+  "adr": "ADR-2607140850",
+  "description": "A daily sched_service tick that discovers new HuggingFace models, checks real (not headline) hardware feasibility, auto-benches local-feasible candidates through hex's existing test path, and surfaces non-local candidates via hex inbox for human approval before any paid API call.",
+  "spec_version": "2.0",
+  "behaviors": [
+    {
+      "id": "daily-discovery-tick",
+      "description": "The researcher runs on a daily cadence, not continuously",
+      "given": ["hex-nexus is running with sched_service active"],
+      "when": ["24 hours (HF_RESEARCH_INTERVAL_SECS) have elapsed since the last tick"],
+      "then": [
+        "a new discovery cycle fires",
+        "it fetches HuggingFace's public models API via the existing WebFetchPort with FetchFormat::Raw",
+        "no new port or adapter is created for this fetch"
+      ]
+    },
+    {
+      "id": "dedup-known-models",
+      "description": "Previously-discovered models are not re-surfaced or re-tested every cycle",
+      "given": ["a model repo already exists as a row in the discovered_model table"],
+      "when": ["the daily discovery tick runs and encounters that same repo again"],
+      "then": [
+        "the existing row is not duplicated",
+        "the model is not re-pulled or re-benched if it already has a bench_result",
+        "the model is not re-surfaced to hex inbox if it already has a review_status"
+      ]
+    },
+    {
+      "id": "local-feasible-auto-test",
+      "description": "A model whose smallest real quantization fits this box's hardware is tested automatically, no approval gate",
+      "given": ["a newly-discovered model's smallest available GGUF quantization is under this box's real GPU+RAM capacity (16GB GPU / 30GB RAM)"],
+      "when": ["the discovery tick evaluates this candidate"],
+      "then": [
+        "local_feasible = true is recorded for this candidate",
+        "the model is auto-pulled via the same path as `hex inference add ollama --model <name>`",
+        "the model is auto-run through the existing `hex bench agentic` / `hex inference bench` commands",
+        "no human approval is requested before pulling or benching",
+        "the bench_result is recorded on the model's discovered_model row"
+      ]
+    },
+    {
+      "id": "non-local-surfaced-not-tested",
+      "description": "A model that needs a paid API or exceeds local hardware is never auto-tested, only surfaced",
+      "given": ["a newly-discovered model's smallest available quantization exceeds this box's real GPU+RAM capacity, OR the model is only accessible via a paid cloud API"],
+      "when": ["the discovery tick evaluates this candidate"],
+      "then": [
+        "the model is NOT auto-pulled",
+        "the model is NOT auto-benched",
+        "no paid API call is made",
+        "the candidate is logged to the discovered_model table with local_feasible = false",
+        "a notification is raised via the existing hex inbox mechanism for human review"
+      ],
+      "negative_spec": false
+    },
+    {
+      "id": "never-autonomous-spend",
+      "description": "Negative spec: the researcher must never cause a paid API call without explicit human approval, under any code path",
+      "given": ["any discovered model, regardless of size, architecture, or claimed capability"],
+      "when": ["the discovery tick runs to completion for that model, unattended, with no human present"],
+      "then": [
+        "no request is sent to any paid/metered inference provider (OpenRouter, Z.ai, or similar) on behalf of this model",
+        "the only external network calls made autonomously are: HuggingFace's free public API (discovery), and Ollama's local pull (free, local disk/compute only)"
+      ],
+      "negative_spec": true
+    },
+    {
+      "id": "hardware-feasibility-uses-real-quant-size",
+      "description": "Feasibility is judged on actual smallest-quant file size, not headline parameter count",
+      "given": ["a discovered MoE model advertises a large headline parameter count (e.g. hundreds of billions) but has a much smaller quantized GGUF variant available"],
+      "when": ["the hardware-feasibility resolver evaluates it"],
+      "then": [
+        "the resolver checks the actual file size of the smallest available GGUF quantization for that model repo",
+        "the feasibility verdict is based on that real file size compared to this box's GPU+RAM capacity, not on the headline parameter count"
+      ]
+    },
+    {
+      "id": "hf-api-failure-is-soft-fail",
+      "description": "A HuggingFace API failure does not crash sched_service or block other ticks",
+      "given": ["HuggingFace's public models API is unreachable or returns an error on a given day"],
+      "when": ["the daily discovery tick attempts its fetch"],
+      "then": [
+        "the failure is logged",
+        "that day's cycle is skipped",
+        "sched_service's other ticks (e.g. run_improvement_cycle) continue running unaffected",
+        "the next day's tick is still scheduled normally"
+      ]
+    }
+  ]
+}

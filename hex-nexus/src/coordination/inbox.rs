@@ -116,4 +116,26 @@ impl HexFlo {
             .await
             .map_err(|e| e.to_string())
     }
+
+    /// Surface a non-local-feasible HuggingFace model candidate for human
+    /// review (ADR-2607140850 P4). Goes through the same `inbox_notify_all`
+    /// mechanism as every other inbox notification -- no new delivery path.
+    /// Project "*" mirrors the supervisor's crash-loop notification
+    /// (`orchestration/supervisor_subscriber.rs`'s `handle_crash_loop`): this
+    /// is an operator-wide concern, not scoped to one agent/project.
+    pub async fn inbox_notify_model_candidate(
+        &self,
+        repo: &str,
+        smallest_quant_label: &str,
+        smallest_quant_bytes: u64,
+    ) -> Result<(), String> {
+        let payload = serde_json::json!({
+            "repo": repo,
+            "smallest_quant_label": smallest_quant_label,
+            "smallest_quant_bytes": smallest_quant_bytes,
+            "reason": "exceeds local hardware capacity or requires a paid API -- never auto-tested",
+        })
+        .to_string();
+        self.inbox_notify_all("*", 2, "hf_model_candidate", &payload).await
+    }
 }
