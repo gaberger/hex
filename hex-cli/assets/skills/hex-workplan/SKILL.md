@@ -16,6 +16,24 @@ Every hex feature requires **two** JSON artifacts before code begins:
 
 Specs come first (enforced by the hex-specs-required hook). The workplan references specs by ID so every coding task is traceable to a behavioral expectation.
 
+## Where This Sits in the SDLC Loop
+
+The workplan is the **Stage 3 plan artifact** of the AI-native SDLC loop
+(`hex-sdlc-loop`). The stage before it produced a signed requirements-and-design
+spec (`hex-spec-design`) from a committed intent (`hex-intent`); the stage after
+it checks the merged diff back against this file (`hex-review-gate`).
+
+Consequences that matter here:
+
+- Nothing is implemented without an accepted plan. Draft → review → approve →
+  build, and if implementation departs from the plan, update the plan in the
+  same commit.
+- Every step carries its own done-condition, so the plan and the definition of
+  done are one file. `hex plan lint` rejects evidence that cannot be checked.
+- The prose spec is what the product owner signs; the behavioral specs are the
+  independent oracle the validation judge runs. Write both from the same session
+  as the design, never from the finished code.
+
 ---
 
 ## Behavioral Spec Format

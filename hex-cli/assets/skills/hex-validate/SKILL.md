@@ -93,3 +93,13 @@ If fix_on_fail is true and verdict is FAIL:
 ## Output
 
 Report the verdict (PASS/WARN/FAIL), overall score, category breakdowns, and path to the verdict report.
+
+## The Loop Around This Skill
+
+This skill is the **final** check — a fresh verdict once the session believes the
+work is done, so it is not colored by the assumptions that produced the code. It
+does not replace the loop that runs *during* the task: one command that verifies
+the work, listed in `CLAUDE.md` with an example of healthy output, run before any
+task is reported complete. See `hex-feedback-loop` for setting that up, and for
+the eval suite that regression-tests `CLAUDE.md`, skills and hooks the way this
+skill regression-tests the code.

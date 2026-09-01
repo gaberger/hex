@@ -46,6 +46,7 @@ coverage/
 # Docs — local-only by default, but track the structured artifact dirs
 docs/*
 !docs/adrs/
+!docs/intent/
 !docs/workplans/
 !docs/specs/
 !docs/analysis/

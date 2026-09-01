@@ -26,6 +26,13 @@ This skill can be invoked three ways:
 
 ## How Hex Treats Features
 
+Before Phase 1, check what upstream artifacts exist. A feature that arrives with
+no committed intent and no signed spec is a feature whose acceptance criteria
+live in the conversation — see `hex-sdlc-loop` for the chain, `hex-intent` and
+`hex-spec-design` for the two artifacts that precede this skill. Small, bounded
+changes may start here with the intent recorded in the commit message; anything
+cross-boundary or policy-touching should not.
+
 In hexagonal architecture, a "feature" is NOT a single vertical slice. It decomposes inside-out across layers:
 
 ```
