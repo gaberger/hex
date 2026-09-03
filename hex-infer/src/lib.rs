@@ -10,6 +10,7 @@
 
 pub mod adapters;
 pub mod complete;
+pub mod spend;
 
 pub use adapters::{ClaudeCodeInferenceAdapter, OllamaInferenceAdapter};
 pub use complete::{complete_raw, complete_text};

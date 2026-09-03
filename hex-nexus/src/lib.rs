@@ -743,7 +743,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                         );
                         // Now that hexflo-coordination (and its agent_run table) is
                         // published, restore the Agent Runs feed from the prior process.
-                        crate::direct_exec::hydrate_from_stdb().await;
+                        crate::direct_exec::hydrate_feed().await;
                     }
                     Err(e) => {
                         tracing::warn!(

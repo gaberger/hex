@@ -37,7 +37,7 @@ impl Tool for MemorySearch {
         "memory_search"
     }
     fn description(&self) -> &'static str {
-        "Search hex persistent memory (hexflo_memory STDB table) by substring \
+        "Search hex persistent memory (the local memory feed) by substring \
          match on key OR value. Use in the GROUND phase to surface prior \
          lessons, known gaps, and project context the operator or other \
          agents have stored. Key prefix conventions: lesson:* (don't-repeat-this), \

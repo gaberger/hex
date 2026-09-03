@@ -5,9 +5,8 @@
 //! body, returns grouped spend summaries.
 
 use async_trait::async_trait;
-use reqwest::Client;
 use serde_json::{json, Value};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::{Tool, ToolResult};
 
@@ -22,7 +21,7 @@ impl Tool for CostMeter {
         "cost_meter"
     }
     fn description(&self) -> &'static str {
-        "Read token-spend totals from STDB inference_log table. Returns \
+        "Read token-spend totals from the local inference log. Returns \
          grouped token counts and cost summaries over a time window. \
          Use this to understand cost distribution across models, roles, or intents."
     }
@@ -61,77 +60,11 @@ impl Tool for CostMeter {
             );
         }
 
-        // STDB SQL doesn't support SUM/NOW/INTERVAL/GROUP BY — pull recent rows
-        // and aggregate in Rust. Bounded by LIMIT to avoid runaway scans.
-        let sql = format!(
-            "SELECT {}, input_tokens, output_tokens, cost_usd, created_at FROM inference_log LIMIT 5000",
-            group_by
-        );
-
-        // Query STDB via HTTP POST /v1/database/hex/sql with text/plain body
-        let stdb_url = std::env::var("HEX_SPACETIMEDB_HOST")
-            .or_else(|_| std::env::var("SPACETIME_URL"))
-            .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
-        let url = format!("{}/v1/database/hex/sql", stdb_url);
-
-        let client = match Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                return ToolResult::err(
-                    format!("failed to build HTTP client: {}", e),
-                    start.elapsed().as_millis() as u64,
-                );
-            }
-        };
-
-        let resp = match client
-            .post(&url)
-            .header("Content-Type", "text/plain")
-            .body(sql.clone())
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                return ToolResult::err(
-                    format!("STDB query failed: {}", e),
-                    start.elapsed().as_millis() as u64,
-                );
-            }
-        };
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return ToolResult::err(
-                format!("STDB returned {}: {}", status, body.chars().take(200).collect::<String>()),
-                start.elapsed().as_millis() as u64,
-            );
-        }
-
-        let json_resp: Value = match resp.json().await {
-            Ok(j) => j,
-            Err(e) => {
-                return ToolResult::err(
-                    format!("failed to parse STDB response: {}", e),
-                    start.elapsed().as_millis() as u64,
-                );
-            }
-        };
-
-        // STDB response shape: [{ "schema": {...}, "rows": [[...], ...], ... }]
-        // The top-level is an array (one entry per result set).
-        let rows_owned: Vec<Value> = json_resp
-            .as_array()
-            .and_then(|a| a.first())
-            .and_then(|first| first.get("rows"))
-            .and_then(|r| r.as_array())
-            .cloned()
-            .or_else(|| json_resp.get("rows").and_then(|v| v.as_array()).cloned())
-            .unwrap_or_default();
+        // A local read. Was a SQL query against SpacetimeDB's `inference_log` over HTTP, which
+        // meant asking "what have I spent" required a database that the daemon owned — and after
+        // Phase 1 there is no daemon logging inference in the first place. Rows come back in the
+        // same [key, input, output, cost, created_at] shape, so the aggregation below is unchanged.
+        let rows_owned: Vec<Value> = crate::local_store::spend_rows(&group_by, 5000);
         let rows = &rows_owned;
 
         // Aggregate in Rust: STDB SQL doesn't have SUM/GROUP BY. Each row is
