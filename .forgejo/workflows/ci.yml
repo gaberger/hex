@@ -53,12 +53,13 @@ jobs:
       - name: Pre-create the embedded asset dir
         run: mkdir -p hex-nexus/assets/dist
 
-      # --exclude hex-desktop: Tauri needs gdk-3.0 and dbus-1 SYSTEM libraries, not crates. It is
-      # the only thing that fails the workspace build, and the solo plan's Phase 0 removes it from
-      # `[workspace] members` outright. Excluding it here matches what .github/workflows/ci.yml
-      # already does, so the two forges gate the same tree.
+      # No `--exclude hex-desktop` any more: Phase 0 removed it from `[workspace] members`, so it is
+      # not in the workspace to exclude. Keeping the flag would make this gate unable to PROVE the
+      # phase — `cargo check --workspace` succeeding with the exclude still present says nothing
+      # about whether the tree builds without Tauri's gdk-3.0 and dbus-1 system libraries.
+      # .github/workflows/ci.yml still carries its own exclude; that is GitHub's to fix.
       - name: cargo check
-        run: cargo check --workspace --exclude hex-desktop
+        run: cargo check --workspace
 
       # Correctness and suspicious only. The blanket `-D warnings` policy went red under clippy
       # 1.95's expanded default set — 140+ pre-existing style nits that were never real bugs.
@@ -68,10 +69,10 @@ jobs:
         run: rustup component add clippy
 
       - name: cargo clippy
-        run: cargo clippy --workspace --exclude hex-desktop -- -D clippy::correctness -D clippy::suspicious
+        run: cargo clippy --workspace -- -D clippy::correctness -D clippy::suspicious
 
       - name: cargo test
-        run: cargo test --workspace --exclude hex-desktop
+        run: cargo test --workspace
 
   boundary-check:
     name: hex analyze — the architecture gate
