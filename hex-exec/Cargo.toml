@@ -9,6 +9,7 @@ path = "src/lib.rs"
 
 [dependencies]
 hex-core = { path = "../hex-core" }
+hex-infer = { path = "../hex-infer" }
 hex-graph = { path = "../hex-graph" }
 hex-git = { path = "../hex-git" }
 serde = { version = "1", features = ["derive"] }
