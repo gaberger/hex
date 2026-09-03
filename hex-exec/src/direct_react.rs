@@ -125,17 +125,6 @@ async fn react_attempts(
     let seed = build_seed(task, &context_block, &abs_path);
     let mut messages: Vec<Value> = vec![json!({ "role": "user", "content": seed })];
 
-    let inference_url = {
-        let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
-        format!("http://127.0.0.1:{}/api/inference/complete", port)
-    };
-    let http = match reqwest::Client::builder().timeout(Duration::from_secs(600)).build() {
-        Ok(c) => c,
-        Err(e) => {
-            result.error = Some(format!("http build: {}", e));
-            return (result, 0, model);
-        }
-    };
 
     let mut prior_successes: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut steps = 0u32;
@@ -146,7 +135,7 @@ async fn react_attempts(
         // Compress the transcript before each call; LLM-summarize on overflow.
         let mut sent = compress_messages(&messages, &opts);
         if estimate_tokens(&sent) > MAX_CTX_TOKENS {
-            sent = summarize_overflow(&http, &inference_url, &model, sent).await;
+            sent = summarize_overflow(&model, sent).await;
         }
 
         let req = json!({
@@ -156,16 +145,13 @@ async fn react_attempts(
             "tools": tools_schema,
             "messages": sent,
         });
-        let body: Value = match http.post(&inference_url).json(&req).send().await {
-            Ok(r) => match r.json().await {
-                Ok(v) => v,
-                Err(e) => {
-                    result.error = Some(format!("inference json: {}", e));
-                    break;
-                }
-            },
+        // A library call. This was a POST to 127.0.0.1:$HEX_NEXUS_PORT, which is why the ReAct
+        // loop could not run without a daemon up. The request and the reply keep the daemon
+        // route's exact JSON shape, so `extract_tool_uses` below is untouched.
+        let body: Value = match hex_infer::complete_raw(&req).await {
+            Ok(v) => v,
             Err(e) => {
-                result.error = Some(format!("inference http: {}", e));
+                result.error = Some(format!("inference: {}", e));
                 break;
             }
         };
@@ -465,12 +451,7 @@ fn build_seed(task: &DirectTask, context: &str, abs_path: &std::path::Path) -> S
 /// LLM half of hybrid compression: when even the mechanical pass is over budget,
 /// summarize the older region (everything but the seed + last 2 turns) into one
 /// note via a single cheap-model call. Best-effort: on failure, return the input.
-async fn summarize_overflow(
-    http: &reqwest::Client,
-    url: &str,
-    model: &str,
-    messages: Vec<Value>,
-) -> Vec<Value> {
+async fn summarize_overflow(model: &str, messages: Vec<Value>) -> Vec<Value> {
     if messages.len() <= 3 {
         return messages;
     }
@@ -490,14 +471,22 @@ async fn summarize_overflow(
         "max_tokens": 512,
         "messages": [{ "role": "user", "content": prompt }],
     });
-    let summary = match http.post(url).json(&req).send().await {
-        Ok(r) => r
-            .json::<Value>()
-            .await
-            .ok()
-            .and_then(|b| b.get("content").and_then(|v| v.as_str()).map(|s| s.to_string())),
-        Err(_) => None,
-    };
+    // Best-effort, as before: a failed summary returns the input unchanged rather than failing
+    // the run. `content` is a block array now, not a string, so the text is joined out of it.
+    let summary = hex_infer::complete_raw(&req).await.ok().and_then(|b| {
+        let joined: String = b
+            .get("content")
+            .and_then(|v| v.as_array())
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .filter_map(|x| x.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default();
+        if joined.is_empty() { None } else { Some(joined) }
+    });
 
     let mut out = vec![seed];
     if let Some(s) = summary {

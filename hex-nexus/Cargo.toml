@@ -60,6 +60,7 @@ git2 = { version = "0.20", features = ["vendored-libgit2"] }
 toml = "0.8"
 # Shared domain types and port traits (hex-core is the gravity center)
 hex-core = { path = "../hex-core" }
+hex-infer = { path = "../hex-infer" }
 # Knowledge-graph engine
 hex-graph = { path = "../hex-graph" }
 # Architecture analysis engine (tree-sitter boundary checking) — ADR-2606071340 P1

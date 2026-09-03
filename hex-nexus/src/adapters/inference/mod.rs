@@ -1,15 +1,11 @@
-//! Concrete `IInferencePort` adapters for hex-nexus.
+//! Re-export of the `IInferencePort` adapters, which now live in `hex-infer`.
 //!
-//! Ships with two reference implementations today: [`ollama`] (HTTP-backed,
-//! the primary standalone provider) and [`claude_code`] (subprocess-backed,
-//! the fallback standalone provider) — both wired into
-//! [`crate::composition::standalone`] per ADR-2026-04-11-2000. Future providers
-//! (vLLM, OpenAI-compatible) will live alongside them as new submodules
-//! implementing the same `hex_core::ports::inference::IInferencePort`
-//! trait.
+//! Phase 1 of the solo refactor moved `ollama.rs` and `claude_code.rs` out of this crate. Neither
+//! had a single `crate::` reference — the only thing binding inference to the daemon was the crate
+//! they happened to sit in.
+//!
+//! This shim keeps nexus compiling while the daemon tier is still present. It goes with the crate
+//! at Phase 3.
 
-pub mod claude_code;
-pub mod ollama;
-
-pub use claude_code::ClaudeCodeInferenceAdapter;
-pub use ollama::OllamaInferenceAdapter;
+pub use hex_infer::adapters::{claude_code, ollama};
+pub use hex_infer::{ClaudeCodeInferenceAdapter, OllamaInferenceAdapter};

@@ -767,8 +767,6 @@ async fn request_edit(
     context: &str,
     prior_error: Option<&str>,
 ) -> Result<Edit, String> {
-    let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
-    let url = format!("http://127.0.0.1:{}/api/inference/complete", port);
 
     let system = "You are a precise Rust code editor. Reply in EXACTLY this format and nothing \
         else (no prose before or after):\n\
@@ -807,26 +805,17 @@ async fn request_edit(
         ));
     }
 
-    let body = json!({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "max_tokens": std::env::var("HEX_DIRECT_MAX_TOKENS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(4096),
-    });
+    // A LIBRARY CALL, not a POST to 127.0.0.1.
+    //
+    // This used to go to `http://127.0.0.1:$HEX_NEXUS_PORT/api/inference/complete`, so `hex do`
+    // could not run unless a daemon was up — for a call that already knew its own model. Same
+    // inputs, same reply, one process (Phase 1 of the solo refactor).
+    let max_tokens = std::env::var("HEX_DIRECT_MAX_TOKENS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(4096);
 
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(600))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = http.post(&url).json(&body).send().await.map_err(|e| e.to_string())?;
-    let status = resp.status();
-    let rb: Value = resp.json().await.map_err(|e| e.to_string())?;
-    if !status.is_success() {
-        return Err(format!("HTTP {}: {}", status, rb));
-    }
-    let content = rb.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let content = hex_infer::complete_text(model, system, &user, max_tokens).await?;
     parse_edit(&content)
 }
 
