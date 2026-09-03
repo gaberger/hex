@@ -1,0 +1,101 @@
+name: CI
+
+# The forge's CI for hex, and the gate every phase of the solo refactor
+# (docs/analysis/2026-08-24-hex-solo-refactor-plan.md) is measured against.
+#
+# WHY THIS FILE REPLACES .github/workflows ON THE FORGE, ENTIRELY:
+# Forgejo reads `.forgejo/workflows/` and, once that directory exists, NEVER falls back to
+# `.github/workflows/`. So this is not an addition — it is the whole of forge CI, and anything
+# omitted here simply does not run. GitHub keeps using its own five workflows, untouched.
+#
+# WHY `git clone` INSTEAD OF actions/checkout:
+# actions/checkout is a JAVASCRIPT action — the runner executes it with `node` INSIDE the job
+# container, and rust:1-bookworm has no node. It fails before any step of ours runs, with
+# "executable file `node` not found in $PATH", which reads like a broken workflow rather than a
+# missing interpreter. Installing node just to fetch the tree would add a package manager round
+# trip to every job to do what git already does. The rust image ships git.
+#
+# WHY A CONTAINER INSTEAD OF setup-rust ACTIONS:
+# The runner is a podman host with no Rust toolchain. `rust:1-bookworm` ships cargo, clippy and a
+# C toolchain, which is what the tree needs, and it removes two action downloads from the critical
+# path. `Swatinem/rust-cache` is deliberately absent: it needs GitHub's cache service, which this
+# forge does not provide, and a cache action that silently no-ops is worse than none.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"      # a cold container gains nothing and pays in disk
+
+jobs:
+  rust-check:
+    name: check · clippy · tests
+    runs-on: ubuntu-latest
+    container:
+      image: rust:1-bookworm
+    steps:
+      - name: checkout
+        run: |
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git -c http.extraheader="Authorization: Basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" \
+              fetch -q --depth 1 origin "$GITHUB_SHA"
+          git checkout -q FETCH_HEAD
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # hex-nexus embeds its dashboard bundle at compile time and the directory is gitignored, so a
+      # fresh clone cannot build without it. The scar disappears with nexus at Phase 3 of the solo
+      # plan; until then, omitting it fails the build for a reason that has nothing to do with code.
+      - name: Pre-create the embedded asset dir
+        run: mkdir -p hex-nexus/assets/dist
+
+      # --exclude hex-desktop: Tauri needs gdk-3.0 and dbus-1 SYSTEM libraries, not crates. It is
+      # the only thing that fails the workspace build, and the solo plan's Phase 0 removes it from
+      # `[workspace] members` outright. Excluding it here matches what .github/workflows/ci.yml
+      # already does, so the two forges gate the same tree.
+      - name: cargo check
+        run: cargo check --workspace --exclude hex-desktop
+
+      # Correctness and suspicious only. The blanket `-D warnings` policy went red under clippy
+      # 1.95's expanded default set — 140+ pre-existing style nits that were never real bugs.
+      # The official rust image ships rustc and cargo, not the optional components. Adding it here
+      # rather than swapping to a heavier image keeps the pull small; it is a few seconds.
+      - name: install clippy
+        run: rustup component add clippy
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --exclude hex-desktop -- -D clippy::correctness -D clippy::suspicious
+
+      - name: cargo test
+        run: cargo test --workspace --exclude hex-desktop
+
+  boundary-check:
+    name: hex analyze — the architecture gate
+    runs-on: ubuntu-latest
+    needs: rust-check
+    container:
+      image: rust:1-bookworm
+    steps:
+      - name: checkout
+        run: |
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git -c http.extraheader="Authorization: Basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" \
+              fetch -q --depth 1 origin "$GITHUB_SHA"
+          git checkout -q FETCH_HEAD
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: mkdir -p hex-nexus/assets/dist
+
+      # hex analysing itself. This is the claim the whole product rests on — a harness that enforces
+      # hexagonal boundaries has no excuse for violating them. nexus scored F (30/100) before its
+      # split, which is exactly why this runs on every change rather than on request.
+      - name: Build hex-cli
+        run: cargo build -p hex-cli --release
+
+      - name: hex analyze .
+        run: ./target/release/hex analyze .
