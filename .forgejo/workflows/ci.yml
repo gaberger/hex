@@ -62,6 +62,11 @@ jobs:
 
       # Correctness and suspicious only. The blanket `-D warnings` policy went red under clippy
       # 1.95's expanded default set — 140+ pre-existing style nits that were never real bugs.
+      # The official rust image ships rustc and cargo, not the optional components. Adding it here
+      # rather than swapping to a heavier image keeps the pull small; it is a few seconds.
+      - name: install clippy
+        run: rustup component add clippy
+
       - name: cargo clippy
         run: cargo clippy --workspace --exclude hex-desktop -- -D clippy::correctness -D clippy::suspicious
 
