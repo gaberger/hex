@@ -7,7 +7,6 @@ use std::time::Instant;
 
 use super::{Tool, ToolResult};
 
-const STDB_HOST_DEFAULT: &str = "http://127.0.0.1:3033";
 
 pub struct EscalateToOperator;
 
@@ -64,14 +63,9 @@ impl Tool for EscalateToOperator {
             return ToolResult::err("max 6 options", start.elapsed().as_millis() as u64);
         }
 
-        let host = std::env::var("HEX_SPACETIMEDB_HOST")
-            .unwrap_or_else(|_| STDB_HOST_DEFAULT.to_string());
-        let db = std::env::var("HEX_STDB_DATABASE")
-            .unwrap_or_else(|_| hex_core::stdb_database_for_module("hexflo-coordination").to_string());
-        // Use the existing resource_anomaly stream as the inbox surface
-        // until a dedicated inbox_notification reducer ships. This keeps
-        // the operator's existing #/resources view as the one alert sink.
-        let url = format!("{}/v1/database/{}/call/", host, db);
+        // No STDB URL is built here any more. The old code assembled one, never sent it, and
+        // ended with `let _ = url;` to silence the unused warning — a dependency that existed only
+        // in appearance. The escalation is a log line plus a Telegram send, and always was.
 
         let priority = match urgency.as_str() {
             "high" => "critical",
@@ -109,7 +103,6 @@ impl Tool for EscalateToOperator {
             priority = %priority,
             "escalate_to_operator: escalation raised (logged; dashboard wiring deferred to wave 2)"
         );
-        let _ = url; // suppress unused warning for now
 
         let elapsed = start.elapsed().as_millis() as u64;
 

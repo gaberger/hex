@@ -24,7 +24,6 @@ use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DirectTask {
@@ -88,7 +87,7 @@ const RUN_HISTORY: usize = 200;
 /// One recorded agent run — the monitorable unit of the new model. Shared by the
 /// direct executor and any other in-nexus agent (e.g. adr-steward) so they all
 /// surface in one dashboard feed.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirectRun {
     pub id: u64,
     /// Which agent produced this run ("direct-executor", "adr-steward", ...).
@@ -220,142 +219,55 @@ fn record_run(started_at: String, task: &DirectTask, model: &str, r: &DirectResu
     store_run(run);
 }
 
-// ── SpacetimeDB persistence (survives nexus restarts) ────────────────────────
+// ── local persistence (survives a restart, needs no database) ────────────────
 
-fn stdb_host() -> String {
-    std::env::var("HEX_STDB_HOST").unwrap_or_else(|_| hex_core::SPACETIMEDB_DEFAULT_HOST.to_string())
-}
-
-/// Fire-and-forget persist of a run to STDB. The in-memory feed is the fast path;
-/// STDB is the durable backing. Never blocks or fails a recorder.
+/// Fire-and-forget persist of a run. The in-memory ring is the fast path; this is the copy that
+/// outlives the process. Never blocks or fails a recorder.
+///
+/// Was a `record_agent_run` reducer call to SpacetimeDB — so a feed that exists to be READ needed a
+/// database WRITE to a service the daemon owned, and the agent loop carried that dependency purely
+/// to leave a trace of itself.
 fn persist_run_async(run: DirectRun) {
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        handle.spawn(async move {
-            if let Err(e) = persist_run(&run).await {
-                tracing::debug!(error = %e, "agent-run STDB persist failed (non-fatal)");
-            }
-        });
-    }
-}
-
-async fn persist_run(run: &DirectRun) -> Result<(), String> {
-    // Globally-unique key — `<started_at>#<seq>` stays unique even though the
-    // in-memory RUN_ID resets to 1 on each restart (started_at differs).
+    // `<started_at>#<seq>` stays unique across restarts even though RUN_ID resets to 1, because
+    // started_at differs. Kept from the STDB key for exactly that reason.
     let id = format!("{}#{}", run.started_at, run.id);
-    let url = format!("{}/v1/database/hex/call/record_agent_run", stdb_host());
-    let args = json!([
-        id,
-        run.agent,
-        run.started_at,
-        run.instruction,
-        run.file,
-        run.model,
-        run.ok,
-        run.attempts,
-        run.evidence_passed,
-        run.committed.clone().unwrap_or_default(),
-        run.duration_ms,
-        run.error.clone().unwrap_or_default(),
-    ]);
-    let res = reqwest::Client::new()
-        .post(&url)
-        .json(&args)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        return Err(format!("reducer {}: {}", res.status(), res.text().await.unwrap_or_default()));
-    }
-    Ok(())
+    crate::local_store::persist_run(&json!({
+        "id": id,
+        "agent": run.agent,
+        "started_at": run.started_at,
+        "instruction": run.instruction,
+        "file": run.file,
+        "model": run.model,
+        "ok": run.ok,
+        "attempts": run.attempts,
+        "evidence_passed": run.evidence_passed,
+        "committed": run.committed,
+        "duration_ms": run.duration_ms,
+        "error": run.error,
+    }));
 }
 
-/// Hydrate the in-memory feed from STDB at startup (newest `RUN_HISTORY`). Called
-/// once after SpacetimeDB is up; safe to fail (empty feed) if the table is absent.
-pub async fn hydrate_from_stdb() {
-    let url = format!("{}/v1/database/hex/sql", stdb_host());
-    // SpacetimeDB SQL has no ORDER BY — fetch (bounded) and sort newest-first in Rust.
-    let q = "SELECT id, agent, started_at, instruction, file, model, ok, attempts, evidence_passed, committed, duration_ms, error FROM agent_run LIMIT 2000".to_string();
-    let res = match reqwest::Client::new()
-        .post(&url)
-        .header("Content-Type", "text/plain")
-        .body(q)
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(error = %e, "agent-run hydrate: query failed");
-            return;
-        }
-    };
-    let text = match res.text().await {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::warn!(error = %e, "agent-run hydrate: body read failed");
-            return;
-        }
-    };
-    let body: Value = match serde_json::from_str(&text) {
-        Ok(b) => b,
-        Err(_) => {
-            tracing::warn!(body = %text.chars().take(160).collect::<String>(), "agent-run hydrate: non-JSON response");
-            return;
-        }
-    };
-    let rows = body
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|f| f.get("rows"))
-        .and_then(|r| r.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    // Rows come newest-first; rebuild the deque oldest-last and re-number for display.
-    let mut loaded: Vec<DirectRun> = Vec::new();
-    for row in &rows {
-        let c = match row.as_array() {
-            Some(c) if c.len() >= 12 => c,
-            _ => continue,
-        };
-        let s = |i: usize| c.get(i).and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let opt = |i: usize| {
-            let v = s(i);
-            if v.is_empty() { None } else { Some(v) }
-        };
-        loaded.push(DirectRun {
-            id: 0, // reassigned below
-            agent: s(1),
-            started_at: s(2),
-            instruction: s(3),
-            file: s(4),
-            model: s(5),
-            ok: c.get(6).and_then(|v| v.as_bool()).unwrap_or(false),
-            attempts: c.get(7).and_then(|v| v.as_u64()).unwrap_or(1) as u32,
-            steps: c.get(7).and_then(|v| v.as_u64()).unwrap_or(1) as u32,
-            evidence_passed: c.get(8).and_then(|v| v.as_bool()).unwrap_or(false),
-            committed: opt(9),
-            duration_ms: c.get(10).and_then(|v| v.as_u64()).unwrap_or(0),
-            error: opt(11),
-        });
-    }
-    // Newest-first (RFC3339 UTC strings sort lexically = chronologically), capped.
-    loaded.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-    loaded.truncate(RUN_HISTORY);
-    let n = loaded.len();
+/// Hydrate the in-memory feed at startup, newest first.
+///
+/// The name keeps `_from_stdb` off it deliberately: there is no database to be up or down, so the
+/// old caller contract — "call once after SpacetimeDB is up; safe to fail if the table is absent" —
+/// no longer has a failure mode worth naming. An absent file is an empty feed.
+pub async fn hydrate_feed() {
+    let rows = crate::local_store::recent_runs(RUN_HISTORY);
+    let n = rows.len();
     if n == 0 {
         return;
     }
-    // Display ids: highest number = most recent (loaded[0]).
-    for (idx, run) in loaded.iter_mut().enumerate() {
-        run.id = (n - idx) as u64;
-    }
-    RUN_ID.store((n as u64) + 1, Ordering::Relaxed);
-    if let Ok(mut q) = RUNS.lock() {
-        for run in loaded {
-            q.push_back(run);
+    let mut feed = RUNS.lock().unwrap_or_else(|e| e.into_inner());
+    for row in rows.into_iter().rev() {
+        if let Ok(run) = serde_json::from_value::<DirectRun>(row) {
+            feed.push_back(run);
+            while feed.len() > RUN_HISTORY {
+                feed.pop_front();
+            }
         }
     }
-    tracing::info!(count = n, "agent-run feed hydrated from SpacetimeDB");
+    tracing::info!(count = n, "agent-run feed hydrated from local store");
 }
 
 /// Newest-first snapshot of recorded runs for the API / CLI / dashboard.
@@ -690,66 +602,18 @@ pub(crate) async fn gather_context(task: &DirectTask) -> String {
     out
 }
 
-/// Best-effort pull of `lesson:`/`gap:` entries (key, value) from the
-/// hexflo_memory table over the STDB HTTP SQL endpoint. Columns mapped by name
-/// (schema.elements). Returned unranked; callers rank by graph relevance
+/// Best-effort pull of `lesson:`/`gap:` entries from the local memory file.
+///
+/// Was a SQL query against the `hexflo_memory` table over SpacetimeDB's HTTP endpoint, so the
+/// agent could not recall a lesson without a database up — for a read of key/value pairs it never
+/// writes here. Returned unranked; callers rank by graph relevance
 /// (`hex_graph::context::rank_lessons`). Capped to keep the pull bounded.
+///
+/// One JSON object per line, `{"key": "lesson:…", "value": "…"}`, at `~/.hex/memory.jsonl`. An
+/// absent file is an empty memory, not an error — a fresh install has learned nothing yet.
 pub async fn fetch_lessons() -> Vec<(String, String)> {
     const CAP: usize = 200;
-    let url = format!("{}/v1/database/hex/sql", stdb_host());
-    let http = match reqwest::Client::builder().timeout(Duration::from_secs(3)).build() {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
-    let resp = match http
-        .post(&url)
-        .header("Content-Type", "text/plain")
-        .body("SELECT key, value FROM hexflo_memory")
-        .send()
-        .await
-    {
-        Ok(r) if r.status().is_success() => r,
-        _ => return Vec::new(),
-    };
-    let body: Value = match resp.json().await {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let mut lessons = Vec::new();
-    let Some(tables) = body.as_array() else {
-        return lessons;
-    };
-    for table in tables {
-        let cols: Vec<&str> = table
-            .get("schema")
-            .and_then(|s| s.get("elements"))
-            .and_then(|e| e.as_array())
-            .map(|els| {
-                els.iter()
-                    .filter_map(|el| {
-                        el.get("name").and_then(|n| n.get("some")).and_then(|s| s.as_str())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let ki = cols.iter().position(|c| *c == "key");
-        let vi = cols.iter().position(|c| *c == "value");
-        if let Some(rows) = table.get("rows").and_then(|r| r.as_array()) {
-            for row in rows {
-                if let Some(vals) = row.as_array() {
-                    let key = ki.and_then(|i| vals.get(i)).and_then(|v| v.as_str()).unwrap_or("");
-                    let val = vi.and_then(|i| vals.get(i)).and_then(|v| v.as_str()).unwrap_or("");
-                    if (key.starts_with("lesson:") || key.starts_with("gap:")) && !val.is_empty() {
-                        lessons.push((key.to_string(), val.to_string()));
-                        if lessons.len() >= CAP {
-                            return lessons;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    lessons
+    crate::local_store::memory_entries(CAP)
 }
 
 // ─── the one inference call ───────────────────────────────────────────────────

@@ -2357,11 +2357,13 @@ name = "hex-infer"
 version = "26.5.1"
 dependencies = [
  "async-trait",
+ "chrono",
  "futures",
  "hex-core",
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

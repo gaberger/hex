@@ -60,6 +60,8 @@ pub async fn complete_text(
         .await
         .map_err(|e| e.to_string())?;
 
+    crate::spend::record(model, response.input_tokens, response.output_tokens);
+
     // The daemon returned a flat `content` string. Concatenating the text blocks reproduces that
     // exactly for a reply with no tool use, which is all this path ever asks for.
     let text: String = response
@@ -146,6 +148,8 @@ pub async fn complete_raw(req: &serde_json::Value) -> Result<serde_json::Value, 
 
     // ContentBlock's serde renames already produce Anthropic's {type: text|tool_use} shape, which
     // is exactly what extract_tool_uses reads. No hand-rolled mapping to drift.
+    crate::spend::record(model, response.input_tokens, response.output_tokens);
+
     Ok(serde_json::json!({
         "content": serde_json::to_value(&response.content).map_err(|e| e.to_string())?,
         "model": response.model_used,
