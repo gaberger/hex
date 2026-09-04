@@ -85,7 +85,7 @@ impl Tool for AdrStatusSet {
         };
 
         // Resolve the ADR file via filesystem glob — accept any slug suffix.
-        let repo_root = std::env::var("HEX_REPO_ROOT").unwrap_or_else(|_| "/home/gary/hex-intf".to_string());
+        let repo_root = std::env::var("HEX_REPO_ROOT").unwrap_or_else(|_| crate::repo_root());
         let adrs_dir = Path::new(&repo_root).join("docs/adrs");
         let entries = match std::fs::read_dir(&adrs_dir) {
             Ok(e) => e,

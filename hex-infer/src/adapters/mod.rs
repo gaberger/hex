@@ -5,6 +5,7 @@
 //! inference to a control plane was the crate they happened to live in.
 
 pub mod claude_code;
+pub mod ollama_chat;
 pub mod ollama;
 
 pub use claude_code::ClaudeCodeInferenceAdapter;

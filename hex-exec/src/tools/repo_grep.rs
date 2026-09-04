@@ -62,7 +62,7 @@ impl Tool for RepoGrep {
         let max_matches = max_matches.min(MAX_MATCHES_HARD_CAP);
 
         let repo_root = std::env::var("HEX_REPO_ROOT")
-            .unwrap_or_else(|_| "/home/gary/hex-intf".to_string());
+            .unwrap_or_else(|_| crate::repo_root());
 
         let mut cmd = Command::new("rg");
         cmd.arg("--max-count").arg(format!("{}", max_matches))

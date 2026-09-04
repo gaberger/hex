@@ -84,7 +84,7 @@ impl Tool for RepoRead {
             .min(MAX_BYTES_HARD_CAP);
 
         let repo_root = std::env::var("HEX_REPO_ROOT")
-            .unwrap_or_else(|_| "/home/gary/hex-intf".to_string());
+            .unwrap_or_else(|_| crate::repo_root());
         let target = Path::new(&repo_root).join(&rel_path);
 
         // Canonicalise + verify under repo root (defence in depth).

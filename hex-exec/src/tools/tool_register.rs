@@ -135,7 +135,7 @@ impl Tool for ToolRegister {
 
         // Check not already registered by looking at mod.rs
         let repo_root = std::env::var("HEX_REPO_ROOT")
-            .unwrap_or_else(|_| "/home/jack/hex-intf".to_string());
+            .unwrap_or_else(|_| crate::repo_root());
         let mod_path = std::path::Path::new(&repo_root).join("hex-nexus/src/tools/mod.rs");
         let mod_content = match std::fs::read_to_string(&mod_path) {
             Ok(c) => c,

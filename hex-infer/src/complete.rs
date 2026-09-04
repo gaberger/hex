@@ -26,6 +26,21 @@ fn adapter_for(model: &str) -> Box<dyn IInferencePort> {
     }
 }
 
+
+/// Tools, or a real error — never a silent empty list.
+///
+/// This was `.ok().unwrap_or_default()`, which turned any shape mismatch into "no tools". A model
+/// given no tools does not fail: it invents a `{"tool": ...}` JSON-in-text convention, which
+/// `extract_tool_uses` cannot see, so the loop reports "ended with no edit" and the MODEL takes the
+/// blame for a bridge that dropped its arguments on the floor.
+fn parse_tools(v: &serde_json::Value) -> Result<Vec<hex_core::domain::tools::ToolDefinition>, String> {
+    if v.is_null() {
+        return Ok(Vec::new());
+    }
+    serde_json::from_value(v.clone())
+        .map_err(|e| format!("inference: tools did not match ToolDefinition ({e})"))
+}
+
 /// Send one system+user turn and return the text of the reply.
 ///
 /// The return is `Result<String, String>` rather than a typed error because every caller in
@@ -123,10 +138,7 @@ pub async fn complete_raw(req: &serde_json::Value) -> Result<serde_json::Value, 
         .map(|arr| arr.iter().map(message_from_json).collect::<Vec<_>>())
         .unwrap_or_default();
 
-    let tools: Vec<hex_core::domain::tools::ToolDefinition> = req
-        .get("tools")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default();
+    let tools = parse_tools(req.get("tools").unwrap_or(&serde_json::Value::Null))?;
 
     let request = InferenceRequest {
         model: model.to_string(),
@@ -141,10 +153,25 @@ pub async fn complete_raw(req: &serde_json::Value) -> Result<serde_json::Value, 
         grammar: None,
     };
 
-    let response = adapter_for(model)
-        .complete(request)
+    // TOOLS MEAN /api/chat. The OllamaInferenceAdapter posts to /api/generate, which has no
+    // `tools` parameter and whose `collapse_prompt` sends only the LAST USER MESSAGE — so a
+    // multi-step loop got neither its tools nor its transcript. It did not fail loudly: the model
+    // invented a JSON-in-text convention that `extract_tool_uses` cannot see, and the loop
+    // reported "ended with no edit" as though the model were incapable.
+    let response = if !request.tools.is_empty() && !model.to_lowercase().starts_with("claude") {
+        crate::adapters::ollama_chat::chat(
+            &std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string()),
+            std::time::Duration::from_secs(600),
+            request,
+        )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+    } else {
+        adapter_for(model)
+            .complete(request)
+            .await
+            .map_err(|e| e.to_string())?
+    };
 
     // ContentBlock's serde renames already produce Anthropic's {type: text|tool_use} shape, which
     // is exactly what extract_tool_uses reads. No hand-rolled mapping to drift.
@@ -173,4 +200,43 @@ fn message_from_json(v: &serde_json::Value) -> Message {
         _ => Vec::new(),
     };
     Message { role, content }
+}
+
+#[cfg(test)]
+mod tool_tests {
+    use super::*;
+
+    /// The shape `direct_react::curated_schema` actually emits.
+    fn curated_like() -> serde_json::Value {
+        serde_json::json!([
+            { "name": "repo_read", "description": "Read a file",
+              "input_schema": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] } },
+            { "name": "propose_edit", "description": "Apply the edit and run evidence",
+              "input_schema": { "type": "object", "properties": { "mode": { "type": "string" } }, "required": [] } }
+        ])
+    }
+
+    #[test]
+    fn the_curated_schema_survives_the_bridge() {
+        let tools = parse_tools(&curated_like()).expect("curated schema must deserialize");
+        assert_eq!(tools.len(), 2, "both tools must reach the model");
+        assert_eq!(tools[0].name, "repo_read");
+    }
+
+    /// The bug this replaced: `.ok().unwrap_or_default()` turned a shape mismatch into an EMPTY
+    /// tool list. The model then has no tools, invents a `{"tool": …}` JSON-in-text convention,
+    /// and `extract_tool_uses` finds nothing — so the loop reports "ended with no edit" and it
+    /// reads as the model being incapable. Observed with devstral-small-2:24b, which emits a
+    /// perfectly good structured tool_call when it is actually given tools.
+    #[test]
+    fn a_malformed_tool_is_an_error_not_a_silent_empty_list() {
+        // `input_schema` missing its required `type`.
+        let bad = serde_json::json!([{ "name": "x", "description": "d", "input_schema": { "properties": {} } }]);
+        assert!(parse_tools(&bad).is_err(), "a shape mismatch must be reported, never swallowed");
+    }
+
+    #[test]
+    fn absent_tools_are_legitimately_empty() {
+        assert_eq!(parse_tools(&serde_json::Value::Null).unwrap().len(), 0);
+    }
 }
