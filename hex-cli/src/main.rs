@@ -46,7 +46,6 @@ use commands::{
     project::ProjectAction,
     secrets::SecretsAction,
     skill::SkillAction,
-    stdb::StdbAction,
     status,
     swarm::SwarmAction,
     task::TaskAction,
@@ -318,11 +317,6 @@ enum Commands {
     Brain {
         #[command(subcommand)]
         action: BrainAction,
-    },
-    /// Manage local SpacetimeDB instance
-    Stdb {
-        #[command(subcommand)]
-        action: StdbAction,
     },
     /// Substrate (ADR-2026-04-26-1500): propose / list / inspect inference swaps
     Substrate {
@@ -729,7 +723,6 @@ async fn main() -> anyhow::Result<()> {
         Commands::Sched { action } => commands::sched::run(action).await,
         Commands::Pool { action } => commands::pool::run(action).await,
         Commands::Brain { action } => commands::brain_alias::run(action).await,
-        Commands::Stdb { action } => commands::stdb::run(action).await,
         Commands::Substrate { action } => commands::substrate::run(action).await,
         Commands::Swarm { action } => commands::swarm::run(action).await,
         Commands::Task { action } => commands::task::run(action).await,

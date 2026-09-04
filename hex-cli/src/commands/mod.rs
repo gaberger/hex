@@ -44,7 +44,6 @@ pub mod refresh;
 pub mod secrets;
 pub mod service;
 pub mod skill;
-pub mod stdb;
 pub mod status;
 pub mod substrate;
 pub mod sandbox;

@@ -1,0 +1,239 @@
+[
+  {
+    "id": "S01",
+    "category": "regression",
+    "description": "The canonical `hex do` loop completes an evidence-gated task with no daemon running",
+    "given": "hex-infer is extracted and hex-exec calls it in-process; the hex-nexus daemon is stopped (`hex nexus stop`) and no process is listening on :5555; an Ollama or OpenAI-compatible inference server is reachable at the URL declared in .hex/project.json",
+    "when": "`hex do run \"<instruction>\" --file <repo-relative-file> --evidence \"<shell command>\"` is invoked",
+    "then": "The ReAct loop runs to a terminal propose_edit, the edit is applied, the evidence command is executed, and the change is committed if and only if the evidence command exits 0 — otherwise the working tree is reverted and the error is returned to the agent. No connection to 127.0.0.1:5555 is attempted at any point.",
+    "negative_spec": false,
+    "domain_conventions": {
+      "adr": "ADR-2608241500 §2, ADR-2606071500",
+      "gate": "This is the P1 blocking gate. If it fails, the premise that the daemon is a pass-through is false and the workplan is void.",
+      "files": "hex-exec/src/direct_exec.rs:771, hex-exec/src/direct_react.rs:131"
+    }
+  },
+  {
+    "id": "S02",
+    "category": "regression",
+    "description": "Agentic benchmark pass-rate does not regress across the collapse",
+    "given": "A baseline `hex bench agentic` run over the corpus in docs/benchmarks/ was recorded in phase P0, before any extraction or deletion, with per-model pass-rates",
+    "when": "`hex bench agentic` is re-run against the same corpus after all deletion phases complete",
+    "then": "Per-model pass-rate is greater than or equal to the P0 baseline for every model in inference.react_models. Any decrease is a blocking failure requiring root-cause before the workplan can be marked done.",
+    "negative_spec": false,
+    "domain_conventions": {
+      "adr": "ADR-2606071734, ADR-2608241500 §Verification",
+      "rationale": "External coding-leaderboard scores do not predict agentic-loop performance in this project — the top-leaderboard local model scored last on the grid. The local corpus is the only admissible evidence."
+    }
+  },
+  {
+    "id": "S03",
+    "category": "regression",
+    "description": "Hexagonal boundary enforcement still detects violations after hex-analyzer is folded into hex-analysis",
+    "given": "hex-analyzer's six analyzers (composition_churn, cohesion, duplication, god_types, dead_layer, orphan) have been folded into hex-analysis, and a fixture project contains a known adapter-imports-adapter violation and a known dead export",
+    "when": "`hex analyze <fixture>` is run",
+    "then": "Both violations are reported with the same rule identity and severity as before the fold, and the process exits non-zero",
+    "negative_spec": false,
+    "domain_conventions": {
+      "adr": "ADR-2608241500 §3",
+      "note": "This is the quality bar the whole product claims. It must not weaken as a side effect of consolidation."
+    }
+  },
+  {
+    "id": "S04",
+    "category": "regression",
+    "description": "Code-graph context assembly is unaffected by the daemon's removal",
+    "given": "hex-nexus is deleted and graph-out/graph.json is built from the local repository",
+    "when": "A `hex do` task runs and hex-exec requests context for the target file",
+    "then": "hex-graph returns code-graph-relevant context and graph-proximity-ranked lessons exactly as before, sourced from the local graph and the local lesson store — no network call and no daemon process is involved",
+    "negative_spec": false,
+    "domain_conventions": {
+      "adr": "ADR-2608241500 §1, ADR-2606071713",
+      "note": "Context quality is the stated differentiator of the single-loop thesis; it is the one thing that must survive intact."
+    }
+  },
+  {
+    "id": "S05",
+    "category": "regression",
+    "description": "The cooperative+adversarial harness survives the rename and still gates on tests",
+    "given": "`hex swarm build` and `hex swarm review` have been renamed to `hex build` and `hex harden`, backed by the unchanged hex-exec/src/adversarial.rs",
+    "when": "`hex build '<one-line challenge>' --target <dir> --gate '<test command>'` is run, followed by `hex harden <path> --gate '<test command>'`",
+    "then": "N divergent designs are proposed and red-teamed, a lead synthesizes one spec, a build agent implements until the gate command exits 0; the harden pass finds candidate bugs, each is skeptically verified defaulting to refute, and confirmed fixes are each gated by the test command. The gate command remains the only authority on what counts as done.",
+    "negative_spec": false,
+    "domain_conventions": {
+      "adr": "ADR-2608241500 §4",
+      "note": "In-process fan-out of inference calls — no registry, no heartbeats, no peers. Retained because it is the measured source of quality, not because it is multi-agent."
+    }
+  },
+  {
+    "id": "S06",
+    "category": "regression",
+    "description": "Test coverage that exercises surviving crates is ported forward before the daemon is deleted",
+    "given": "hex-nexus carries ~1,000 test functions and hex-cli ~683, some of which assert behavior of hex-exec, hex-analysis, hex-graph, or hex-git rather than daemon routing",
+    "when": "Phase P3's consumer trace is performed, before any crate is deleted",
+    "then": "Every test whose assertions concern a surviving crate is relocated into that crate's own test module or tests/ directory and passes there. Tests that only exercise daemon routing, STDB adapters, or the dashboard are deleted with them and the count is recorded.",
+    "negative_spec": false,
+    "domain_conventions": {
+      "adr": "ADR-2608241500 §Consequences",
+      "risk": "Deleting 1,683 tests wholesale would make real regressions invisible."
+    }
+  },
+  {
+    "id": "S07",
+    "category": "excision",
+    "description": "The daemon tier no longer exists in the workspace",
+    "given": "hex-nexus (96,843 LOC), hex-agent (23,383), hex-desktop (782), hex-state (3,252), and spacetime-modules/ (13,165 across 11 WASM modules) are present at HEAD",
+    "when": "Phase P4 executes",
+    "then": "None of those directories exist in the repository tree, none appear in [workspace] members in Cargo.toml, and `cargo check --workspace` exits 0",
+    "negative_spec": false,
+    "domain_conventions": {
+      "adr": "ADR-2608241500 §3",
+      "order": "Salvage hex-nexus/src/adapters/inference/* and hex-agent/src/adapters/secondary/{openai_compat,anthropic}.rs into hex-infer in P1 before deleting either crate."
+    }
+  },
+  {
+    "id": "S08",
+    "category": "excision",
+    "description": "SpacetimeDB is absent from every surviving crate",
+    "given": "241 files across hex-nexus, hex-cli, hex-agent, hex-core, hex-exec, hex-state and hex-analysis reference SpacetimeDB at HEAD, and hex-exec reaches STDB through 8 plain HTTP SQL call sites behind HEX_SPACETIMEDB_HOST",
+    "when": "Phases P2 and P4 complete",
+    "then": "`grep -ri spacetime` across all surviving crate sources returns matches only inside comments or ADR prose; no Cargo.toml declares spacetimedb-sdk; no `spacetimedb` cargo feature remains; and the LocalStore adapter (SQLite or JSONL under ~/.hex/) serves the agent-run feed, cost meter, and ADR/spec/workplan writes that previously went to STDB",
+    "negative_spec": false,
+    "domain_conventions": {
+      "adr": "ADR-2608241500 §1, supersedes ADR-025",
+      "files": "hex-exec/src/tools/{code_patch,adr_draft,spec_draft,workplan_emit,adr_status_set,escalate_to_operator,cost_meter}.rs, hex-exec/src/direct_exec.rs:226"
+    }
+  },
+  {
+    "id": "S09",
+    "category": "excision",
+    "description": "The 1.5 MB of SpacetimeDB WASM is no longer compiled into the hex binary",
+    "given": "hex-cli/assets/wasm/ contains 7 committed .wasm blobs (hexflo_coordination 1.48 MB, inference_gateway 488 KB, neural_lab 399 KB, chat_relay 249 KB, rl_engine 240 KB, agent_registry 182 KB, agent_comms 181 KB) embedded via rust-embed into a 14 MB binary",
+    "when": "Phase P4 executes",
+    "then": "hex-cli/assets/wasm/ does not exist, no rust-embed directive references it, and the release binary is at least 1.4 MB smaller than the P0 baseline measurement",
+    "negative_spec": false,
+    "domain_conventions": {
+      "adr": "ADR-2608241500 §3",
+      "also_removed": "scripts/build-wasm.sh, scripts/check-wasm-fresh.sh, scripts/check-no-sqlite.sh, scripts/generate-ts-bindings.sh, scripts/stdb-watchdog.sh, docker-compose.yml"
+    }
+  },
+  {
+    "id": "S10",
+    "category": "excision",
+    "description": "The org-sim persona roster is removed, completing the phase ADR-2606061359 scheduled and never ran",
+    "given": "hex-cli/assets/agents/hex/hex/ ships 33 agent YAMLs, of which 16 are the C-suite roster (ceo, coo, cto, cpo, ciso, chief-architect, chief-visionary, product-lead, engineering-lead, pm-agent, sre-lead, sre-engineer, platform-engineer, ux-designer, dashboard-ux-architect, cli-designer), and DEPRECATED.md in that directory already names them and states that Phase 4 of wp-2606061700 removes them",
+    "when": "Phase P4 executes",
+    "then": "Only the functional worker roles and stewards remain (hex-coder, hex-tester, hex-reviewer, hex-documenter, hex-ux, hex-fixer, adr-steward, workplan-steward, plus the adversarial pair and the analysis roles actually dispatched by hex-exec — approximately 13 YAMLs), and DEPRECATED.md is deleted along with the roster it described",
+    "negative_spec": false,
+    "domain_conventions": {
+      "adr": "ADR-2606061359, ADR-2608241500 §3",
+      "also_removed": "hex-cli/assets/prompts/agent-{coder,documenter,fixer,reviewer,tester,ux}.md, hex-cli/assets/swarms/*.yml (8 behaviors), hex-cli/assets/context-templates/services/hexflo-{agent,global,swarm}.md, hex-cli/assets/helpers/{agent-register,hub-push,hook-handler,hex-statusline}.cjs"
+    }
+  },
+  {
+    "id": "S11",
+    "category": "excision",
+    "description": "Foreign third-party skills are removed from the harness context",
+    "given": ".claude/skills/ tracks 64 skills, of which approximately 31 belong to other frameworks — 9 v3-* (claude-flow v3), 5 agentdb-*, 5 github-*, plus swarm-advanced, swarm-orchestration, sparc-methodology, stream-chain, reasoningbank-* (2), pair-programming, hooks-automation, verification-quality, skill-builder, browser, project-output — totalling 354 KB, alongside 4 duplicate pairs where both <name>.md and <name>/SKILL.md exist",
+    "when": "Phase P0 executes",
+    "then": "Approximately 12 hex-owned skills remain; no skill describing swarm orchestration, distributed vector memory, or another product's architecture is present; and no skill name appears twice in different file forms",
+    "negative_spec": false,
+    "domain_conventions": {
+      "adr": "ADR-2608241500 §Consequences",
+      "rationale": "This is context pollution, not disk usage — every foreign skill is advertised to the model on every invocation, competing for attention with hex's own.",
+      "also_removed": "skills dead after the collapse: hex-dashboard, hex-spacetime, hex-publish-module, hex-swarm, hex-dev-rebuild; .claude/agents/neural-lab-researcher.yml"
+    }
+  },
+  {
+    "id": "S12",
+    "category": "excision",
+    "description": "Dead TypeScript tooling is removed and the validation gate stops running an impossible command",
+    "given": "src/ and tests/ do not exist (excised by wp-excise-ts-phantom), yet package.json, bun.lock (235 KB), tsconfig.json, tsconfig.test.json and eslint.config.js remain tracked, and package.json's test script globs `tests/unit tests/property tests/smoke` while `hex dev validate` chains `bun test`",
+    "when": "Phase P0 executes",
+    "then": "All five files are deleted, `hex dev validate` no longer invokes bun, and `hex dev validate` completes without hanging on target/ or failing on missing test directories",
+    "negative_spec": false,
+    "domain_conventions": {
+      "adr": "ADR-2608241500 §Consequences",
+      "evidence": "The bun test step was observed silently wedging two workplans for 22+ hours by globbing into the 23 GB target/ directory."
+    }
+  },
+  {
+    "id": "S13",
+    "category": "excision",
+    "description": "The working tree drops to the size of the actual repository",
+    "given": "`git ls-files` reports 2,159 tracked files totalling 20 MB, while `du -sh .` reports 31 GB — comprising target/ (23 GB), a vendored llama.cpp checkout under scripts/lora/ (~5.4 GB), example build output (~1.2 GB), spacetime-modules/target/ (453 MB) and hex-nexus/assets/node_modules/",
+    "when": "Phase P0 executes, after `git clean -ndx` has been reviewed by the operator",
+    "then": "A targeted allowlist clean has reclaimed ~24.6 GB (target/, spacetime-modules/target/, examples/*/target/, examples/*/node_modules/, hex-nexus/assets/node_modules/), scripts/lora/.venv/ (5.3 GB) has been relocated outside the repository rather than deleted, the working tree is under ~1.2 GB excluding a fresh target/, and .hexignore excludes examples/*/target and examples/*/node_modules",
+    "negative_spec": false,
+    "domain_conventions": {
+      "adr": "ADR-2608241500 §Consequences",
+      "safety": "Untracked deletion is not recoverable from git, and `git clean -fdx` here would destroy .hex/adapters/ (126 MB of trained LoRA adapters), .hex/corpus, .hex/inference, .hex/state.json, graph-out/, .claude/agents/hex/, .claude/helpers/, .weave/ and every untracked doc. Blanket clean is FORBIDDEN; use the allowlist in P0.2. hex-nexus/assets/dist/ must survive until P5.2 — rust-embed needs it."
+    }
+  },
+  {
+    "id": "S14",
+    "category": "excision",
+    "description": "hex-core shrinks to a genuine contract surface",
+    "given": "hex-core is 8,520 LOC, of which ports/state.rs alone is 1,088 and composition.rs is 633, plus coordination, experiment, consolidation_memory, agent_comm, heartbeat, dead_letter, worker_pool, secret, sandbox, brain and agent_runtime ports and their matching domain types",
+    "when": "Phase P6 executes",
+    "then": "hex-core is approximately 3,100 LOC, retaining ports/inference.rs and its mock, file_system, file_writer, build, enforcement, validator, adapter_generator, context_compressor and web ports plus the workplan, tokens, validation and enforcement domain types; and `cargo check --workspace` exits 0",
+    "negative_spec": false,
+    "domain_conventions": {
+      "adr": "ADR-2608241500 §3, serves G3",
+      "note": "hex-core must keep zero runtime dependencies — this is the G3 test."
+    }
+  },
+  {
+    "id": "S15",
+    "category": "negative",
+    "description": "No surviving CLI verb requires a background daemon",
+    "given": "52 of 91 command files under hex-cli/src/commands reference nexus_client, :5555, or NEXUS_URL at HEAD",
+    "when": "Phase P5 completes and every verb listed by `hex --help` is invoked on a clean machine with no hex background process running and no port 5555 listener",
+    "then": "No verb attempts a connection to 127.0.0.1:5555, no verb prints a 'starting nexus' or 'daemon not running' message, and no verb spawns a background process. A verb that cannot function without a daemon must have been deleted, not left to fail at runtime.",
+    "negative_spec": true,
+    "domain_conventions": {
+      "adr": "ADR-2608241500 §1",
+      "verification": "`grep -rE 'nexus_client|:5555|NEXUS_URL' hex-cli/src` returns zero matches."
+    }
+  },
+  {
+    "id": "S16",
+    "category": "negative",
+    "description": "No consumer of hex-infer names a concrete inference provider",
+    "given": "hex-infer implements hex_core::ports::inference::IInferencePort over Ollama, OpenAI-compatible, Anthropic and claude -p backends",
+    "when": "The workspace is grepped for provider identifiers (ollama, anthropic, openai, claude-, qwen, devstral) outside hex-core/src/ports/inference.rs, hex-infer/, .hex/project.json and test fixtures",
+    "then": "No match is found in any non-test source file. Every call site reaches inference through the port trait alone.",
+    "negative_spec": true,
+    "domain_conventions": {
+      "adr": "ADR-2608241500 §2",
+      "goal": "This is the G1 test verbatim: 'zero non-test files outside hex-core/src/ports/inference.rs and the registered adapters mention a specific provider name'."
+    }
+  },
+  {
+    "id": "S17",
+    "category": "negative",
+    "description": "No deletion phase leaves the workspace un-compilable, and no deletion is performed without a consumer trace",
+    "given": "ADR-2026-04-05-0900 records hex-agent being broken for an entire session because a workplan deleted code whose feature-gated importers were never traced",
+    "when": "Any task in phases P4, P5 or P6 removes a file, module, crate or workspace member",
+    "then": "A `hex graph consumers` trace across the entire workspace was recorded for that target during phase P3 and every consumer has a corresponding fix task; and the phase's blocking `cargo check --workspace` gate exits 0 before the next phase begins. A phase that ends with a broken build halts the workplan.",
+    "negative_spec": true,
+    "domain_conventions": {
+      "adr": "ADR-2606071713, ADR-2026-04-05-0900, ADR-2608241500 §3",
+      "rule": "Trace ALL consumers before deleting — grep the ENTIRE workspace, not just the immediate directory."
+    }
+  },
+  {
+    "id": "S18",
+    "category": "negative",
+    "description": "founding-goals.md is never edited by an agent, and no deletion begins before its human commit lands",
+    "given": "founding-goals.md declares itself the single artifact agents may not author or amend, requiring a human commit with CODEOWNERS approval, and states that a goal is retired only by such a commit together with a Retirement-ADR",
+    "when": "The workplan executes any phase",
+    "then": "No agent-authored commit modifies founding-goals.md. Phase P4 and every later phase remain blocked until a human commit removing G2 — referencing ADR-2608241500 as its Retirement-ADR — is present in git log. If that commit never lands, the workplan halts after P3 with the daemon tier intact.",
+    "negative_spec": true,
+    "domain_conventions": {
+      "adr": "ADR-2608241500 §5",
+      "rationale": "Deleting the fleet while G2 still stands would put the repository's governance layer in contradiction with its own head commit.",
+      "unaffected": "G1 and G3 remain in force and are strengthened by this work."
+    }
+  }
+]
