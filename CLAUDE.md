@@ -1,311 +1,191 @@
-# hex — AI Operating System (AIOS)
+# hex — a solo software-engineering agent
 
-## What This Project Is
+## What this project is
 
-hex is a microkernel-based **AIOS** built on **hexagonal architecture** (Ports & Adapters). It is installed INTO target projects to orchestrate AI-driven development — agents are the users, developers are the sysadmins.
+hex is one binary that writes hexagonally-correct code against an inference
+server. You give it a task, a file, and a command that must pass; it edits,
+runs your command, and commits only if the command exits 0.
 
-Everything in this repo (hooks, skills, agents, statuslines, settings) is instantiated into a target project. `examples/` contains sample targets that consume hex as a dependency.
+There is no daemon, no database, no dashboard, and no network peer. Nothing
+needs to be started.
 
-## System Components
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the map. This file is the
+operator's manual.
+
+## System components
 
 | Component | Role |
 |---|---|
-| **SpacetimeDB** (required) | Coordination & state core. 7 WASM modules in `spacetime-modules/`. All clients connect via WebSocket. WASM can't access FS / spawn procs / make network calls — that's why hex-nexus exists. |
-| **hex-nexus** (`hex-nexus/`) | Filesystem bridge daemon. Reads/writes files, runs tree-sitter analysis, manages git, syncs config → SpacetimeDB on startup (ADR-044), serves dashboard at `:5555`, exposes REST API. Editing `hex-nexus/assets/` requires `cd hex-nexus && cargo build --release`. |
-| **hex-agent** (`hex-agent/`) | Architecture enforcement runtime. Must be present on any host running hex dev agents. Enforces hex rules via skills/hooks/ADRs/workplans. |
-| **hex-dashboard** (`hex-nexus/assets/`) | Solid.js + Tailwind control plane. Multi-project, fleet, arch-health, inference monitoring. Real-time via SpacetimeDB subs. |
-| **Inference** | `inference-gateway` + `inference-bridge` WASM modules route requests; hex-nexus makes actual HTTP calls. Model-agnostic (Anthropic, OpenAI, Ollama). |
+| **hex-cli** | The binary, and the only composition root. |
+| **hex-exec** | The agent loop, the guarded tool library, the adversarial harness, and the file-backed local store. |
+| **hex-infer** | Every inference adapter, the endpoint registry, tier resolution. The single place a provider or model may be named. |
+| **hex-core** | The contract surface. Zero runtime dependencies. |
+| **hex-graph** · **hex-analysis** · **hex-git** · **hex-parser** | Code knowledge graph · boundary checking and health detectors · git plumbing · parsing. |
 
-### Standalone Mode (ADR-2026-04-11-2000)
+All state is files: `~/.hex/*.jsonl`, `~/.hex/inference-servers.json`,
+`graph-out/graph.json`, `.hex/project.json`, `docs/`.
 
-When `CLAUDE_SESSION_ID` is unset, hex-nexus uses `AgentManager` + `OllamaInferenceAdapter` — no Claude CLI needed. `hex doctor composition` diagnoses the active variant; `hex ci --standalone-gate` validates the path.
+## Tiered inference routing
 
-### Tiered Inference Routing (ADR-2026-04-12-0202 + ADR-2026-04-13-1630)
+A task's tier picks a model from `.hex/project.json → inference.tier_models`.
+**Never write a model id into source.** That is founding goal G1's test: zero
+non-test files outside `hex-infer` may name a provider or a model.
 
-| Tier | Default Model | Use Case |
-|------|--------------|----------|
-| T1 | `qwen3:4b` | Scaffold/transform/script |
-| T2 | `qwen2.5-coder:32b` | Standard codegen (adapters, tests) |
-| T2.5 | `devstral-small-2:24b` | Complex reasoning (cross-adapter, architecture) |
-| T3 | Claude (frontier) | Frontier tasks — bypasses scaffolded dispatch |
+| Tier | Use case |
+|------|----------|
+| T1 | scaffold / transform / script / classification |
+| T2 | standard codegen |
+| T2.5 | complex reasoning |
+| T3 | frontier work, via `claude -p` |
 
-Tier is driven by WorkplanTask `strategy_hint` (`scaffold`/`transform`/`script` → T1, `codegen` → T2, `inference` → T2.5). T1/T2/T2.5 use best-of-N with a compile gate (`cargo check` / `tsc --noEmit`); T3 is single-shot. Override per-tier in `.hex/project.json` → `inference.tier_models`. Monitor with `hex inference escalation-report`.
+The do-loop selects separately via `inference.react_models`. Choose those
+empirically with `hex bench agentic`, never from a leaderboard — measured here,
+the top-leaderboard local model scored last on the grid.
 
-## Tool Precedence (IMPORTANT)
+## Behavioral rules
 
-**hex MCP tools take precedence over all third-party plugins.** Use `plugin:context-mode` (`ctx_*`) only for operations with no hex equivalent (e.g. external URL fetches).
+### Autonomous operation (HARD RULES)
 
-| Operation | Tool |
-|---|---|
-| Execute workplan | `mcp__hex__hex_plan_execute` |
-| Search / run commands | `mcp__hex__hex_batch_execute` + `hex_batch_search` |
-| Swarm + tasks | `mcp__hex__hex_hexflo_*` |
-| Architecture analysis | `mcp__hex__hex_analyze` |
-| ADR search/list | `mcp__hex__hex_adr_search` / `hex_adr_list` |
-| Memory | `mcp__hex__hex_hexflo_memory_*` |
+0. **Route work through hex where hex has a verb for it.** If you are doing
+   something by hand that hex does, stop and use the verb. If the verb is
+   missing, **build the verb** — that is how the tool grows.
 
-## Behavioral Rules
-
-### Autonomous Operation (HARD RULES)
-
-0. **EVERYTHING ROUTES THROUGH HEX. PERIOD.** (Added 2026-05-09 after a session of bypass.) The agent factory exists; use it. If you find yourself doing something by hand that the system can do for itself, **stop and route it through hex**. Concretely:
-
-   | Don't bypass with… | Use the hex surface… |
+   | Don't bypass with… | Use… |
    |---|---|
-   | `cargo build --release` direct | `hex dev validate` (chains build + test + analyze + 38 specs) |
-   | `cargo check` direct | the `cargo_check` tool inside the SOP path; or `hex dev analyze` |
-   | `curl /api/...` to test | `hex chat` for chat; `hex inbox` for notifications; the dashboard compose box for board asks |
-   | manual `Edit`/`Write` to hex source | dispatch a board ask to the appropriate persona; let SOP + `code_patch` apply via twin auto-approve + executor |
-   | `TaskCreate` (Claude-side todo) | `hex task create <swarm-id> <title>` — local todos do not survive the session and the swarm coordinator can't see them |
-   | `mkdir docs/workplans/wp-X.json` by hand | `hex plan draft <prompt>` then approve, OR let `workplan_auto_emitter` derive from a persona-authored ADR |
-   | `git checkout <branch> -- <file>` | `hex worktree merge` (ADR-2026-04-13-1930) |
-   | restoring trunk after hijacker damage by hand | `hex worktree status` + `hex worktree approve|reject` |
-   | spawning STDB / nexus directly | `hex stdb start`, `hex nexus start/stop/status` |
-   | `pkill -9 hex-nexus` | `hex nexus stop` |
-   | Claude `/memory` write for persona-relevant lessons | `hex memory store lesson:<topic> "<text>"` (STDB-backed; queryable from SOP GROUND phase by personas — Claude memory is per-machine-per-account and invisible to the factory) |
+   | hand-editing then hoping | `hex do run "<task>" --file <f> --evidence "<cmd>"` |
+   | building a whole system by hand | `hex build '<challenge>' --target <dir> --gate '<cmd>'` |
+   | eyeballing a diff for bugs | `hex harden <path> --gate '<cmd>'` |
+   | "I think this is fine" | `hex analyze .` — the architecture grade |
+   | deleting code you *think* is dead | `hex graph consumers <path>` — the excision oracle |
+   | a lesson you will forget | `hex memory store lesson:<topic> "<text>"` |
+   | guessing which model is better | `hex bench agentic` |
 
-   The two only-bypass-when-necessary exceptions: (a) bootstrap when hex-nexus itself is broken and you need raw cargo to rebuild it; (b) emergencies where the hex surface is unreachable and the operator explicitly tells you to bypass. Everything else: route through hex. If a hex verb is missing, **build the verb** before doing the work — that's how the platform grows.
+   `hex --help` lists the verbs. `hex go` suggests the next action.
+   `hex hey <intent>` routes natural language to a verb.
 
-   When uncertain which surface to use: `hex --help` lists the verbs. `hex go` will suggest the next right action. `hex hey <intent>` will route a natural-language ask to the correct verb.
+1. **Trace consumers before deleting.** `hex graph consumers <path>` across the
+   *whole* workspace, then `grep` for what the graph cannot see: re-exports at a
+   crate root, and `#[cfg(feature = ...)]` imports. Both have bitten this repo —
+   see `docs/analysis/2608241500-consumer-trace.md`.
+2. **Every phase that deletes or restructures ends with `cargo check --workspace`.**
+   A "done" task with a broken build is worse than no task.
+3. **Never write a model or provider name outside `hex-infer`.** Read the tier.
+4. **`founding-goals.md` is the one file you may not touch.** Editing it needs a
+   human commit under CODEOWNERS. Retiring a goal needs a Retirement-ADR too.
+5. **Prefer `hex hey <intent>`** when the task maps cleanly to natural language.
+6. **Proactively seek improvements.** Noticed drift or a gap → ADR → workplan.
+7. **Never end with a menu of options.** Ship the highest-value item now; say
+   what shipped and what is left.
 
-1. **Enqueue, never defer to "next session".** Any outstanding work goes on the queue now:
-   ```bash
-   hex brain enqueue hex-command -- "worktree cleanup --force"
-   hex brain enqueue workplan docs/workplans/wp-foo.json
-   ```
-2. **Rebuild release binaries after commits touching hex-cli/hex-nexus/hex-agent.** Use `hex dev validate` (which chains the build); only fall back to `cargo build --release` if `hex dev` itself is broken.
-3. **Use `hex worktree merge`, NEVER `git checkout <branch> -- <file>`** — raw checkout silently drops parallel-worktree code (ADR-2026-04-13-1930).
-4. **Prefer `hex hey <intent>`** over raw commands when the task maps to natural language.
-5. **Start the brain daemon at session start** if not running: `hex brain daemon --background --interval 30`. Check with `hex brain daemon-status`.
-6. **Reconcile workplans after agent work**: `hex plan reconcile --all --update`.
-7. **Proactively seek improvements.** Noticed drift/gap → ADR → workplan → enqueue.
-8. **Never end with a menu of options.** Ship the highest-ROI item now, enqueue the rest. Close with what shipped + what's queued. Per-item permission prompts stall autonomous sessions.
-9. **`hey hex <question>` is answer-AND-act**, not answer-and-wait. Recommendation questions → analysis → apply rule 8.
-10. **No `echo FIXME` stub tasks.** Real work → workplan JSON; not-yet-actionable → ADR or TODO comment. `hex brain enqueue shell` rejects these at the CLI.
-11. **Persona work routes through SOP, not direct file edits.** When a persona-domain change is needed (security audit, ADR draft, spec, refactor, even a one-const code change), send the ask to the right persona via `/api/org/send-message` (or the Mission Control compose box) and let the SOP path emit the artifact via typed tools (`adr_draft`, `spec_draft`, `code_patch`, `workplan_emit`, `adr_status_set`). The system catches its own gaps via escalation; you fill the gap then re-fire. Bypassing this loop with manual edits is theater — the operator wants to see the factory working, not you.
+### Legacy rules
 
-### Legacy Rules
-
-- **Workplans are autonomous** — complete ALL phases without pausing. Parallelize via HexFlo + background agents.
-- **Inbox priority-2 notifications override current work** (ADR-060): stop → save state → `hex inbox ack <id>` → inform user. Checked by the `route` hook on every interaction.
-- Do what's asked; nothing more, nothing less.
+- Do what is asked; nothing more, nothing less.
 - ALWAYS read a file before editing it.
 - NEVER save files to the root folder.
 - NEVER commit secrets, credentials, or `.env` files.
-- ALWAYS run `hex dev validate` after code changes and before committing.
+- Run `cargo test --workspace` and `hex analyze .` before committing.
 - NEVER `mock.module()` in tests — use the Deps pattern (ADR-014).
 
-## Task Tier Routing (ADR-2026-04-11-0227)
+## Hexagonal architecture rules (ENFORCED)
 
-Every user prompt is classified by `hex-cli/src/commands/hook.rs::classify_work_intent` (run by `hex hook route` on `UserPromptSubmit`).
-
-| Tier | Signal | Artifact |
-|------|--------|----------|
-| T1 Todo | Questions, trivial edits, confirmations | Claude `TodoWrite` — silent |
-| T2 Mini-plan | Single-adapter work | One-line hook suggestion |
-| T3 Workplan | Feature-sized / cross-adapter | Auto-invokes `hex plan draft` → `docs/workplans/drafts/draft-*.json` |
-
-T3 auto-invocation creates a **draft stub only** — no worktrees, no agents, no specs, no commits. User promotes via `/hex-feature-dev`.
-
-**Opt-outs**: `HEX_AUTO_PLAN=0` env • `.hex/project.json` → `workplan.auto_invoke.enabled: false` • `hex skip plan` in prompt • questions (`?`/how/why/what) are always T1 • trivial phrases (`fix typo`, `rename`, `add a comment`) are always T1.
-
-```bash
-hex plan draft <prompt>           # (normally auto-invoked)
-hex plan drafts list | approve <name> | clear [--name N] | gc --days 7
-```
-
-## Hexagonal Architecture Rules (ENFORCED)
-
-Checked by `hex analyze .` + the dead-code-analyzer agent:
+Checked by `hex analyze .`:
 
 1. `domain/` imports only `domain/`.
-2. `ports/` imports `domain/` only (for value types).
+2. `ports/` imports `domain/` only (value types).
 3. `usecases/` imports `domain/` + `ports/` only.
 4. `adapters/primary/` and `adapters/secondary/` import `ports/` only.
 5. Adapters NEVER import other adapters.
-6. `composition-root.ts` is the ONLY file that imports from adapters.
-7. All relative imports MUST use `.js` extensions (NodeNext).
+6. The composition root is the ONLY file that imports from adapters.
+7. All relative imports in scaffolded TypeScript MUST use `.js` extensions (NodeNext).
 
-## File Organization
+hex obeys these itself: **A+, 100/100, 0 violations**.
+
+## File organization
 
 ```
-# Rust workspace
-hex-cli/                 CLI binary — the canonical user entry point
-hex-nexus/               FS-bridge daemon + dashboard (axum, :5555)
-  src/analysis/            Tree-sitter, boundary checking
-  src/coordination/        HexFlo swarm coordination (ADR-027)
-  src/adapters/            SpacetimeDB + SQLite state adapters
-  src/config_sync.rs       Repo → SpacetimeDB sync (ADR-044)
-  src/git/ src/orchestration/
-  assets/                  Solid.js dashboard (rust-embed)
-hex-core/                Shared domain types & port traits (zero deps)
-hex-agent/               Architecture enforcement runtime
-hex-desktop/             Tauri wrapper for dashboard
-hex-parser/              Code parsing utilities
-hex-analyzer/ hex-analysis/ hex-git/ hex-state/ hex-exec/ hex-graph/
+hex-cli/          the binary + every verb; the composition root
+  assets/           templates baked in via rust-embed (skills, agents, hooks)
+hex-exec/         the agent loop, tools, local store, adversarial harness
+hex-infer/        inference adapters, endpoint registry, tiers
+hex-core/         contract surface — zero runtime deps
+hex-graph/        code knowledge graph
+hex-analysis/     boundary checking + health detectors
+hex-git/          git plumbing
+hex-parser/       parsing utilities
 
-# SpacetimeDB WASM modules (7 total — ADR-2026-04-05-0900)
-spacetime-modules/
-  hexflo-coordination/     Swarms, tasks, agents, memory, fleet
-  agent-registry/          Lifecycle + heartbeats + cleanup
-  inference-gateway/       LLM routing
-  secret-grant/            TTL-based key distribution
-  rl-engine/ chat-relay/ neural-lab/
-
-# Embedded templates — baked into hex-cli & hex-nexus via rust-embed
-hex-cli/assets/
-  agents/hex/hex/  skills/  hooks/hex/  helpers/
-  swarms/          mcp/     schemas/    templates/
-
-# GENERIC-ONLY RULE: assets must NOT reference hex-intf internals
-# (hex-nexus, hex-core, hex-parser, hex-desktop, spacetime-modules, /Volumes/).
-# Enforced by `hex doctor` + `hex ci` (embedded-assets-generic check).
-
-# Support
-examples/   docs/{adrs,specs,workplans,analysis}/
-.claude/{skills,agents}/    agents/  skills/  config/  scripts/
+docs/{adrs,specs,workplans,analysis,benchmarks}/
+examples/  scripts/  .claude/{skills,agents}/
 ```
 
-## Build & Test
+## Build & test
 
 ```bash
-hex dev validate   # build + test + analyze + behavioral specs (preferred)
-
-# Raw cargo (bootstrap/emergency only — see Autonomous Operation rule 0)
 cargo build -p hex-cli --release
-cargo build -p hex-nexus --release
+cargo test --workspace
+hex analyze .
+hex bench agentic
 ```
 
-The TypeScript library that previously lived in `src/` was excised (wp-excise-ts-phantom); hexagonal TS rules above apply to scaffolded target projects, not this repo.
+**IMPORTANT**: Never recommend a command that is not in `hex --help`.
 
-**IMPORTANT**: Never recommend commands not in `hex --help`. If it's not in the Rust CLI, it doesn't exist.
+## Development pipeline (specs-first)
 
-### hex-nexus notes
-
-- SpacetimeDB required (ADR-025). SQLite fallback (`~/.hex/hub.db`) for offline.
-- Editing `hex-nexus/assets/*` → rebuild binary → restart daemon → hard-refresh browser (Cmd+Shift+R).
-- Multi-instance: `ICoordinationPort` + FS locks + heartbeats (ADR-011).
-
-## Development Pipeline (Specs-First)
-
-1. **Decide** — ADR in `docs/adrs/` if new ports/adapters/external deps.
-2. **Specify** — behavioral specs BEFORE code.
-3. **Build** — follow hex rules.
+1. **Decide** — an ADR in `docs/adrs/` if it adds a port, an adapter, or a
+   dependency.
+2. **Specify** — behavioral specs before code.
+3. **Build** — follow the hexagonal rules.
 4. **Test** — unit + property + smoke.
-5. **Validate** — `hex analyze` + validation judge.
-6. **Ship** — README + start scripts + commit.
+5. **Validate** — `hex analyze .`.
+6. **Ship** — README, commit.
 
-## Feature Development Workflow
+## Skills & agents
 
-A "feature" decomposes inside-out across layers; each adapter boundary gets its own worktree.
+**Slash commands**: `/hex-feature-dev`, `/hex-scaffold`, `/hex-generate`,
+`/hex-summarize`, `/hex-analyze-deps`, `/hex-analyze-arch`, `/hex-validate`,
+`/cargo-fast`.
 
-```bash
-/hex-feature-dev                                         # interactive (skill)
-./scripts/feature-workflow.sh setup|status|merge|cleanup|list|stale <feature>
-```
+**Agents**: `feature-developer`, `planner`, `hex-coder`, `integrator`,
+`dependency-analyst`, `dead-code-analyzer`, `scaffold-validator`,
+`behavioral-spec-writer`, `validation-judge`, `adversarial-reviewer`,
+`ADR-reviewer`, `rust-refactorer`.
 
-### Lifecycle (7 phases)
+## Key lessons (from adversarial review)
 
-```
-1 SPECS      behavioral-spec-writer → docs/specs/<feature>.json
-2 PLAN       planner               → docs/workplans/feat-<feature>.json
-3 WORKTREES  feature-workflow.sh setup
-4 CODE       hex-coder agents (parallel, TDD)
-5 VALIDATE   validation-judge (BLOCKING)
-6 INTEGRATE  merge in dependency order → full suite
-7 FINALIZE   cleanup, commit, report
-```
-
-**Conventions**: `feat/<feature>/<layer-or-adapter>` · max 8 concurrent · merge order: domain → ports → secondary → primary → usecases → integration · stale = >24h no commits.
-
-### Dependency Tiers
-
-| Tier | Layer | Depends On | Agent |
-|------|-------|------------|-------|
-| 0 | Domain + Ports | — | hex-coder |
-| 1 | Secondary adapters | 0 | hex-coder |
-| 2 | Primary adapters | 0 | hex-coder |
-| 3 | Use cases | 0–2 | hex-coder |
-| 4 | Composition root | 0–3 | hex-coder |
-| 5 | Integration tests | All | integrator |
-
-### Modes
-
-- **Swarm** (default) — 2+ adapters, parallel worktrees.
-- **Interactive** — critical features needing per-phase human review.
-- **Single-agent** — small change inside one adapter.
-
-## Skills & Agents
-
-**Slash commands**: `/hex-feature-dev`, `/hex-scaffold`, `/hex-generate`, `/hex-summarize`, `/hex-analyze-deps`, `/hex-analyze-arch`, `/hex-validate`, `/cargo-fast`.
-
-**Agents**: `feature-developer`, `planner`, `hex-coder`, `integrator`, `swarm-coordinator`, `dependency-analyst`, `dead-code-analyzer`, `scaffold-validator`, `behavioral-spec-writer`, `validation-judge`, `status-monitor`, `adversarial-reviewer`, `ADR-reviewer`, `rust-refactorer`.
-
-## Key Lessons (from adversarial review)
-
-- **Tests can mirror bugs** — same LLM writes code + tests → tests encode the misunderstanding. Use property tests + behavioral specs as independent oracles.
-- **"It compiles" ≠ "it works"** — always add runtime validation (can a user actually start the app?).
-- **Browser TS needs a dev server** — any HTML + TS project MUST include Vite or equivalent.
-- **Trace ALL consumers before deleting** (ADR-2026-04-05-0900) — `grep` the ENTIRE workspace, not just the immediate directory. hex-agent was broken for a session because a workplan missed feature-gated imports.
-- **Build gates between phases** — every phase that deletes/restructures ends with `cargo check --workspace`. A "done" workplan with a broken build is worse than no workplan.
-- **Parallelize by file boundary, serialize by file overlap** — multiple agents editing the same file produce conflicting diffs. Batch or serialize.
-- **Sign conventions matter** — for physics/math, document coordinate systems (e.g. `flapStrength` must be negative in screen coords).
-
-## Swarm Coordination (HexFlo — ADR-027)
-
-Native Rust coordination in `hex-nexus/src/coordination/` (`mod.rs`, `memory.rs`, `cleanup.rs`). State in SpacetimeDB via `hexflo-coordination` module; SQLite fallback.
-
-```bash
-hex swarm init <name> [topology]      hex swarm status
-hex task create <swarm-id> <title>    hex task list
-hex task complete <id> [result]
-hex memory store <k> <v>              hex memory get <k>    hex memory search <q>
-hex adr list|search|status|abandoned
-hex inbox list|notify|ack             hex status            hex analyze .
-hex nexus start|status
-```
-
-REST endpoints under `/api/swarms`, `/api/hexflo/*`. MCP tools (`mcp__hex__hex_*`) map 1:1 to CLI commands and delegate to the same nexus API.
-
-**Heartbeats**: agents beat on every `UserPromptSubmit` via `hex hook route`. `stale` @ 45s, `dead` @ 120s (tasks reclaimed).
-
-**Background agents**:
-```
-Agent: { subagent_type: "coder", mode: "bypassPermissions", run_in_background: true }
-```
-
-### Task State Sync (ADR-048)
-
-Include `HEXFLO_TASK:{task_id}` in the subagent prompt. `hex hook subagent-start` reads stdin, PATCHes `/api/hexflo/tasks/{task_id}` with `agent_id` (→ `in_progress`). `hex hook subagent-stop` PATCHes again with result (→ `completed`). State persists in `~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json`. `agent_id` auto-resolves from that file.
-
-## Declarative Swarm Behavior (ADR-2026-03-24-0130)
-
-Agent + swarm behavior is declared in YAML, not hardcoded. The supervisor reads YAMLs at startup.
-
-- **Agent YAMLs** (`hex-cli/assets/agents/hex/hex/`, 14 files): model selection (tier/preferred/fallback/upgrade), context level (L1 AST → L3 full source), workflow phases, feedback loop gates (compile/lint/test), quality thresholds, I/O schemas. Schema varies by role — coders use `workflow.phases[]` + `feedback_loop`; planners use `workflow.steps[]` + `escalation`.
-- **Swarm YAMLs** (`hex-cli/assets/swarms/`): participating agents, cardinality, parallelism, objectives, iteration limits. Available behaviors: `dev-pipeline`, `quick-fix`, `code-review`, `refactor`, `test-suite`, `documentation`, `migration`.
-- **Embedding**: all templates in `hex-cli/assets/` are baked into hex-cli + hex-nexus via `rust-embed` and extracted during `hex init`.
+- **Tests can mirror bugs** — the same model writes the code and the test, so the
+  test encodes the misunderstanding. Use property tests and behavioral specs as
+  independent oracles. Worse: a test that redefines its subject inside the test
+  file asserts against a copy of the design, not the shipped code. Thirty such
+  tests were deleted in the solo collapse and cost no coverage, because they had
+  never covered anything that ran.
+- **"It compiles" ≠ "it works"** — always add runtime validation. Can a user
+  actually start the thing?
+- **A gate that degrades silently is worse than no gate.** `hex ci`'s boundary
+  check fell back to `cargo check` when the daemon was down, quietly turning "no
+  boundary violations" into "it compiles" while still printing a result.
+- **Trace ALL consumers before deleting** — `grep` the entire workspace, and
+  remember that a crate-root re-export and a feature-gated import are both
+  invisible to the obvious search.
+- **Parallelize by file boundary, serialize by file overlap.**
+- **Sign conventions matter** — for physics and maths, document the coordinate
+  system.
 
 ## Security
 
-- `FileSystemAdapter` path traversal protection via `safePath()`.
-- API keys loaded only in `composition-root.ts` from env.
+- Path-traversal protection on every file write (`emit::resolve_in_repo`).
+- API keys are environment variables, read at dispatch. Never committed, never
+  written to any file hex produces.
 - Never commit `.env` — use `.env.example`.
-- Primary adapters MUST NOT use `innerHTML`/`outerHTML`/`insertAdjacentHTML` with non-domain data. Use `textContent` or `createElement`.
+- Primary adapters MUST NOT use `innerHTML` / `outerHTML` /
+  `insertAdjacentHTML` with non-domain data. Use `textContent` or
+  `createElement`.
 
-## HARD RULE: No Runtime Scripts
+## HARD RULE: no runtime scripts
 
-**NEVER create runtime functionality as shell scripts** (except build/dev tooling in scripts/).
+**NEVER create runtime functionality as a shell script.** Runtime behavior
+belongs in `hex-cli` verbs or `hex-exec`.
 
-All runtime functionality MUST flow through the hex architecture:
-- hex-nexus REST API endpoints
-- hex-nexus sched_service background tasks
-- hex-cli commands that call nexus
-- SpacetimeDB WASM modules
+Scripts are ONLY for build tooling (`scripts/build-*.sh`, `release.sh`),
+development utilities (`scripts/benchmark-*.sh`), and CI automation.
 
-Scripts are ONLY for:
-- Build tooling (scripts/build-*.sh, scripts/release.sh)
-- Development utilities (scripts/benchmark-*.sh)
-- CI/CD automation (scripts/test-*.sh)
-
-If you catch yourself creating a script for monitor enhancements, auto-triggers, retry logic, or ANY runtime feature → STOP and implement it in hex-nexus instead.
+If you catch yourself writing a script for retry logic, a monitor, an
+auto-trigger, or any runtime feature → stop and put it in the binary.

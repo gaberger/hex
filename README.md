@@ -10,10 +10,11 @@
 </p>
 
 <p align="center">
-  <strong>An AI Operating System built on hexagonal architecture.</strong><br>
-  A single evidence-gated agent loop for bounded work — and a cooperative+adversarial agent harness
-  that designs and hardens whole systems. Hybrid inference: local models first, a
-  <code>claude -p</code> frontier path for the hard parts.
+  <strong>A solo software-engineering agent, in one binary.</strong><br>
+  An evidence-gated loop for bounded work — and a cooperative+adversarial harness
+  that designs and hardens whole systems. Local models first, with a
+  <code>claude -p</code> frontier path for the hard parts.<br>
+  No daemon. No database. Nothing to start.
 </p>
 
 <p align="center">
@@ -24,19 +25,34 @@
 
 ---
 
-> **Status (2026-06, alpha).** hex is a working substrate with a real, measured execution model: an
-> evidence-gated agent loop for bounded work, and a [cooperative+adversarial harness](#the-agentic-harness)
-> that designs and hardens whole systems — exercised on three real systems built from one-line specs.
-> The full capability runs on frontier inference; strictly-local on commodity hardware has a measured
-> ceiling. What follows is what hex does today — every claim here is checkable against the source, the
-> [ADR ledger](docs/adrs/INDEX.md), or `docs/benchmarks/`.
+> **Status (2026-09, alpha).** hex has a real, measured execution model: an evidence-gated
+> agent loop for bounded work, and a [cooperative+adversarial harness](#the-agentic-harness)
+> that designs and hardens whole systems — exercised on three real systems built from
+> one-line specs. The full capability runs on frontier inference; strictly-local on
+> commodity hardware has a measured ceiling. Every claim here is checkable against the
+> source, the [ADR ledger](docs/adrs/INDEX.md), or `docs/benchmarks/`.
+>
+> **2026-08-24 — the `solo` epoch.** [ADR-2608241500](docs/adrs/ADR-2608241500-collapse-to-solo-software-engineering-agent.md)
+> deleted the daemon, the SpacetimeDB coordination core, the dashboard, the second agent
+> binary and the retired SOP pipeline: ~261k lines to ~59k, three processes to one. What
+> made the loop good — context assembly and evidence gates — was never in any of it.
 
 ## What hex is
 
-hex is a microkernel-based **AI Operating System (AIOS)** built on **hexagonal architecture**
-(Ports & Adapters). It installs *into* a target project to orchestrate AI-driven development:
-**agents are the users, developers are the sysadmins.** Hooks, skills, agents, and settings are
-instantiated into the target project; `examples/` holds sample targets.
+hex is a **solo software-engineering agent**. You give it a task, a file, and a command that
+must pass:
+
+```bash
+hex do run "make add() return a + b, not a - b" \
+  --file src/lib.rs --evidence "cargo test --test add"
+```
+
+It reads the code, edits it, runs your command, and commits **only if the command exits 0**.
+That is the whole product.
+
+It is built on **hexagonal architecture** (ports and adapters) and enforces those rules on the
+code it writes — `hex analyze` is the grader, and hex scores A+ against it. Hooks, skills and
+settings are instantiated into a target project; `examples/` holds sample targets.
 
 The current design is **one strong agent loop fed by tools, code-graph context, and memory** —
 *not* a simulated organization of many agents (that earlier `org-sim` epoch was
@@ -73,14 +89,8 @@ What's actually wired (all shipped + validated — see the ADR ledger and the ci
   key, no VRAM ceiling. Local runs free/fast; Claude recovers the hard ones.
 - **Benchmark-driven model choice** — `hex bench agentic` runs fixtures through the *real* loop in
   isolated worktrees and scores per-model pass-rates (`docs/benchmarks/`, ADR-2606071734).
-- **Memory-aware resource governor** — `hex-exec/src/resource_governor.rs` gates admission by available
-  memory so best-of-N and the swarm don't oversubscribe the box.
-- **Self-deploy** — `hex dev deploy` builds, installs, and restarts in one command (ADR-2606071702).
-- **Hex-native frontier swarm** — `hex swarm run` fans a task list out to parallel `claude -p` workers
-  under a semaphore-bounded supervisor. hex orchestrates its own agents.
-
-With `CLAUDE_SESSION_ID` unset, nexus drives the loop itself via an Ollama/OpenAI-compatible adapter —
-no Claude CLI needed (ADR-2026-04-11-2000). `hex doctor composition` diagnoses the active variant.
+- **Memory-aware resource governor** — `hex-exec/src/resource_governor.rs` gates admission by
+  available memory so best-of-N doesn't oversubscribe the box.
 
 ## The agentic harness
 
@@ -88,13 +98,13 @@ The single loop above is for *bounded* work. For whole systems, hex has a **coop
 harness** — multiple `claude -p` agents that disagree, attack each other's work, and resolve against
 a ground-truth gate (`hex-exec/src/adversarial.rs`). Two composable verbs:
 
-- **`hex swarm build '<challenge>' --target <dir> --gate '<test>'`** — *cooperative design*: N agents
+- **`hex build '<challenge>' --target <dir> --gate '<test>'`** — *cooperative design*: N agents
   propose divergent designs (durability-first, concurrency-first, …) → each is red-teamed → a lead
   synthesizes one spec → a build agent implements until the gate passes.
-- **`hex swarm review <path> --gate '<test>'`** — *adversarial hardening*: parallel reviewers hunt
+- **`hex harden <path> --gate '<test>'`** — *adversarial hardening*: parallel reviewers hunt
   bugs by failure-class lens → each finding is skeptically verified (default-refute) → confirmed bugs
   are fixed under the gate.
-- `--review` chains them: `hex swarm build … --review` runs the full design → harden pipeline.
+- `hex build … --harden` chains them into the full design → harden pipeline.
 
 What keeps it disciplined: **a ground-truth test gate is the only authority**, the verifier defaults
 to *refuting* findings (so plausible-but-wrong bugs die before any edit), and every artifact is
@@ -123,9 +133,8 @@ Concretely, with the receipts:
 
 **What works:**
 - The hexagonal architecture is real and self-enforced — `hex analyze .` grades the workspace
-  **A+ / 100 / 0 boundary violations** over 712 source files (hex passes its own analyzer; the grade
-  reflects the boundary rules the `hex-analysis` engine enforces). `hex analyze hex-nexus` is also A+ —
-  nexus went from **F (30/100)** before the crate split to A+ after (ADR-2606071340).
+  **A+ / 100 / 0 boundary violations** (hex passes its own analyzer). The daemon it replaced
+  scored **F (30/100)** against this same analyzer before its crate split (ADR-2606071340).
 - The evidence-gated loop genuinely produces real, tested, committed code, and the gate holds
   under failure (a wandering model commits *nothing*).
 - Best-of-N + the `claude -p` fallback let the loop recover across models automatically —
@@ -179,34 +188,32 @@ exactly where that is.
 
 ## Architecture
 
-Full detail in **[ARCHITECTURE.md](ARCHITECTURE.md)** (the living map; always describes HEAD). The
-Rust workspace decomposes nexus behind ports (ADR-2606071340); the reusable core crates:
+Full detail in **[ARCHITECTURE.md](ARCHITECTURE.md)** (the living map; always describes HEAD).
+Eight crates, one binary:
 
 | Crate | Role |
 |---|---|
-| **hex-core** | Domain types + **all** port traits; the gravity center every crate depends on (no intra-workspace deps) |
-| **hex-exec** | The agent engine: single-agent ReAct loop, best-of-N, `claude -p` delegate, the adversarial harness, the resource governor, guarded tools |
+| **hex-core** | The contract surface: the inference port, message/tool/validation types. Zero runtime dependencies |
+| **hex-infer** | Every inference adapter, the endpoint registry, tier resolution. The only place a provider or model may be named |
+| **hex-exec** | The agent engine: the ReAct loop, best-of-N, the `claude -p` delegate, the adversarial harness, the resource governor, guarded tools, the local store |
 | **hex-graph** | Code-knowledge-graph engine → `graph-out/graph.json` (`context_for`, `rank_lessons`) |
-| **hex-analysis** | Tree-sitter boundary checking; powers `hex analyze` |
-| **hex-git** / **hex-state** | git plumbing (libgit2) · SpacetimeDB state adapter |
-| **hex-nexus** | Composition root + daemon (axum `:5555`, dashboard, DI) — the only place adapters are wired |
-| **hex-cli** | The canonical `hex` entry point |
+| **hex-analysis** | Tree-sitter boundary checking + six health detectors; powers `hex analyze` |
+| **hex-git** / **hex-parser** | git plumbing (libgit2) · parsing utilities |
+| **hex-cli** | The binary, and the only composition root |
 
-Support crates round out the workspace: **hex-agent** (architecture-enforcement runtime),
-**hex-parser** (parsing), **hex-desktop** (Tauri dashboard wrapper). **SpacetimeDB** (required) is the
-coordination/state core — WASM modules live in `spacetime-modules/`; because WASM can't touch
-FS/spawn/network, **hex-nexus** is the FS-bridge daemon.
+All state is files: `~/.hex/*.jsonl` (memory, runs, spend),
+`~/.hex/inference-servers.json` (backends), `graph-out/graph.json` (the code graph),
+and `docs/` (ADRs, specs, workplans).
 
 ## Quick start
 
 ```bash
-hex bootstrap          # prerequisites, SpacetimeDB, Ollama (if present), config
-hex nexus start        # the daemon (dashboard at :5555)
+hex bootstrap          # prerequisites, Ollama (if present), config
 hex do run --file <f> --evidence "<cmd that must exit 0>" "<what to do>"
 hex bench agentic --filter <fixture>   # measure a model through the real loop
-hex swarm build "<challenge>" --target <dir> --gate "<test>" --review   # design + harden
-hex dev deploy         # rebuild + install + restart, one command
+hex build "<challenge>" --target <dir> --gate "<test>" --harden   # design + harden
 hex analyze .          # architecture grade + boundary violations
+hex graph consumers <path>             # trace before you delete
 ```
 
 ## Governance
