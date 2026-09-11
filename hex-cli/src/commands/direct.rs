@@ -1,12 +1,25 @@
-//! `hex do` — drive the direct executor (ADR-2026-06-04-1740 Path A) from the
-//! terminal. The new doing-path: task → one agent → evidence-gated edit → commit.
-//! No SOP/persona pipeline. Backed by POST /api/direct/execute + GET /api/direct/runs.
+//! `hex do` — drive the direct executor from the terminal.
+//!
+//! The doing-path: task → one agent → evidence-gated edit → commit.
+//!
+//! In-process (ADR-2608241500 P6.2). It used to POST `/api/direct/execute`,
+//! a daemon route whose entire body was
+//! `Json(execute_direct(task).await)` — no `State` extractor, no work of its
+//! own. The daemon contributed a localhost hop. `hex-cli` already depended on
+//! `hex-exec` directly, so this calls the same function the route called.
+//!
+//! This is the verb spec S01 is written about: the canonical loop must
+//! complete an evidence-gated task with no daemon running.
 
 use clap::Subcommand;
 use colored::Colorize;
-use serde_json::json;
 
-use crate::nexus_client::NexusClient;
+use hex_core::ports::local_store::ILocalStore;
+use hex_exec::direct_exec::{execute_direct, DirectTask};
+use hex_exec::store::FileStore;
+
+/// Runs listed by `hex do runs`.
+const RUNS_SHOWN: usize = 30;
 
 #[derive(Subcommand)]
 pub enum DoAction {
@@ -17,7 +30,7 @@ pub enum DoAction {
         /// Repo-relative file to edit.
         #[arg(short, long)]
         file: String,
-        /// Shell command that must exit 0 (e.g. "cargo test -p hex-nexus --lib my_test").
+        /// Shell command that must exit 0 (e.g. "cargo test -p hex-exec --lib my_test").
         #[arg(short, long)]
         evidence: String,
         /// Reasoning model override.
@@ -27,7 +40,7 @@ pub enum DoAction {
         #[arg(short, long)]
         attempts: Option<u32>,
         /// Use the single-shot path (read → one edit → evidence) instead of the
-        /// default multi-step ReAct tool-use loop (ADR-2606071XXX).
+        /// default multi-step ReAct tool-use loop.
         #[arg(long)]
         fast: bool,
         /// Max ReAct loop steps before giving up (default 12). Ignored with --fast.
@@ -39,92 +52,89 @@ pub enum DoAction {
 }
 
 pub async fn run(action: DoAction) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-
     match action {
         DoAction::Run { instruction, file, evidence, model, attempts, fast, max_steps } => {
-            // Interactive operator run: commit on the operator's own branch
-            // (ADR-2606071323 scopes `hex do` out of worktree isolation — the
-            // human owns their tree). Unset/autonomous callers isolate by default.
-            let mut body = json!({ "instruction": instruction, "file": file, "evidence": evidence, "fast": fast, "isolate": false });
-            if let Some(m) = model {
-                body["model"] = json!(m);
-            }
-            if let Some(a) = attempts {
-                body["max_attempts"] = json!(a);
-            }
-            if let Some(s) = max_steps {
-                body["max_steps"] = json!(s);
-            }
             let mode = if fast { "single-shot" } else { "react loop" };
-            println!("{} {} {}", "⬡ direct:".cyan().bold(), instruction, format!("[{}]", mode).dimmed());
+            println!(
+                "{} {} {}",
+                "⬡ direct:".cyan().bold(),
+                instruction,
+                format!("[{mode}]").dimmed()
+            );
             println!("  {} {}  {} {}", "file".dimmed(), file, "evidence".dimmed(), evidence);
 
-            let r = nexus.post_long("/api/direct/execute", &body).await?;
+            let r = execute_direct(DirectTask {
+                instruction,
+                file,
+                evidence,
+                model,
+                max_attempts: attempts,
+                fast,
+                max_steps,
+                // An interactive operator run commits on the operator's own
+                // branch (ADR-2606071323 scopes `hex do` out of worktree
+                // isolation — the human owns their tree). Autonomous callers
+                // leave this unset and isolate by default.
+                isolate: Some(false),
+            })
+            .await;
 
-            let ok = r.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-            let ev = r.get("evidence_passed").and_then(|v| v.as_bool()).unwrap_or(false);
-            let attempts_n = r.get("attempts").and_then(|v| v.as_u64()).unwrap_or(0);
-            let committed = r.get("committed").and_then(|v| v.as_str());
             let step_word = if fast { "attempt(s)" } else { "step(s)" };
-            let ev_label = if ev { "pass".green() } else { "fail".red() };
+            let ev_label = if r.evidence_passed { "pass".green() } else { "fail".red() };
 
-            if ok {
+            if r.ok {
                 println!(
                     "{} evidence {} · {} {} · commit {}",
                     "✓ done".green().bold(),
                     ev_label,
-                    attempts_n,
+                    r.attempts,
                     step_word,
-                    committed.unwrap_or("—").yellow()
+                    r.committed.as_deref().unwrap_or("—").yellow()
                 );
-            } else {
-                let err = r.get("error").and_then(|v| v.as_str()).unwrap_or("unknown");
-                println!(
-                    "{} evidence {} · {} {}\n  {}",
-                    "✗ failed".red().bold(),
-                    ev_label,
-                    attempts_n,
-                    step_word,
-                    err.dimmed()
-                );
-                if let Some(out) = r.get("evidence_output").and_then(|v| v.as_str()) {
-                    let tail: Vec<&str> = out.lines().rev().take(8).collect();
-                    for line in tail.into_iter().rev() {
-                        println!("  {}", line.dimmed());
-                    }
-                }
-                anyhow::bail!("direct run did not pass evidence");
+                return Ok(());
             }
+
+            println!(
+                "{} evidence {} · {} {}\n  {}",
+                "✗ failed".red().bold(),
+                ev_label,
+                r.attempts,
+                step_word,
+                r.error.as_deref().unwrap_or("unknown").dimmed()
+            );
+            let tail: Vec<&str> = r.evidence_output.lines().rev().take(8).collect();
+            for line in tail.into_iter().rev() {
+                println!("  {}", line.dimmed());
+            }
+            anyhow::bail!("direct run did not pass evidence");
         }
         DoAction::Runs => {
-            let r = nexus.get("/api/direct/runs").await?;
-            let s = &r["summary"];
-            let pass_pct = (s["pass_rate"].as_f64().unwrap_or(0.0) * 100.0) as u32;
+            let runs = FileStore::current().recent_runs(RUNS_SHOWN)?;
+            let total = runs.len();
+            let passed = runs.iter().filter(|r| r.ok).count();
+            let committed = runs.iter().filter(|r| r.committed.is_some()).count();
+            let pass_pct = if total > 0 { passed * 100 / total } else { 0 };
+
             println!(
                 "{}  {} runs · {} passed · {} failed · {} committed · {}% pass",
                 "⬡ Direct Runs".cyan().bold(),
-                s["total"],
-                s["passed"].to_string().green(),
-                s["failed"],
-                s["committed"].to_string().yellow(),
+                total,
+                passed.to_string().green(),
+                total - passed,
+                committed.to_string().yellow(),
                 pass_pct
             );
-            if let Some(runs) = r["runs"].as_array() {
-                if runs.is_empty() {
-                    println!("  {}", "no runs yet — `hex do run …` to start".dimmed());
-                }
-                for run in runs.iter().take(30) {
-                    let ev = run["evidence_passed"].as_bool().unwrap_or(false);
-                    let mark = if ev { "✓".green() } else { "✗".red() };
-                    let commit = run["committed"].as_str().unwrap_or("—");
-                    let file = run["file"].as_str().unwrap_or("").rsplit('/').next().unwrap_or("");
-                    let instr: String = run["instruction"].as_str().unwrap_or("").chars().take(64).collect();
-                    println!("  {} {:<9} {:<18} {}", mark, commit.yellow(), file.dimmed(), instr);
-                }
+            if runs.is_empty() {
+                println!("  {}", "no runs yet — `hex do run …` to start".dimmed());
             }
+            for run in &runs {
+                let mark = if run.evidence_passed { "✓".green() } else { "✗".red() };
+                let commit = run.committed.as_deref().unwrap_or("—");
+                let file = run.file.rsplit('/').next().unwrap_or("");
+                let instr: String = run.instruction.chars().take(64).collect();
+                println!("  {} {:<9} {:<18} {}", mark, commit.yellow(), file.dimmed(), instr);
+            }
+            Ok(())
         }
     }
-    Ok(())
 }
