@@ -137,11 +137,12 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // missing git binary or an already-initialized repo just skips silently.
     let git_committed = ensure_git_initialized_and_committed(&target, &project_name);
 
-    // ── 7. Pull embedded templates from hex-nexus (skills, agents, hooks) ──
-    let nexus_result = pull_templates_from_nexus(&target, &project_name).await;
-
-    // ── 8. Register project in SpacetimeDB (ADR-065 P4) ─────────
-    let register_result: Result<String> = register_project_in_nexus(&target, &project_name).await;
+    // ── 7. Write the embedded templates (skills, agents, hooks) ──
+    // These are baked into this binary by rust-embed. `hex init` used to ask
+    // the daemon for them over /api/projects/init — and the daemon served a
+    // copy it had re-embedded from the same source tree. Extraction never
+    // overwrites, so an operator's edits survive a re-init.
+    let templates = extract_templates(&target);
 
     // ── Summary ───────────────────────────────────────────────────
     println!();
@@ -161,7 +162,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
         println!("  {} git init + initial commit", "\u{2713}".green());
     }
 
-    match &nexus_result {
+    match &templates {
         Ok(created) => {
             let skills = created.iter().filter(|f| f.contains("/skills/")).count();
             let agents = created.iter().filter(|f| f.contains("/agents/")).count();
@@ -187,24 +188,6 @@ pub async fn run(args: InitArgs) -> Result<()> {
         }
     }
 
-    // ADR-065 P4: show project registration status
-    match &register_result {
-        Ok(pid) => {
-            println!("  {} SpacetimeDB project registered ({})", "\u{2713}".green(), &pid[..8.min(pid.len())]);
-            // ADR-2026-03-30-1200: Generate architecture fingerprint on init so it's available
-            // immediately in Claude Code sessions and the first `hex dev` run.
-            let nexus = crate::nexus_client::NexusClient::from_env();
-            let fp_body = serde_json::json!({
-                "project_root": target.display().to_string(),
-                "workplan_path": "",
-            });
-            match nexus.post_long(&format!("/api/projects/{}/fingerprint", pid), &fp_body).await {
-                Ok(_) => println!("  {} Architecture fingerprint generated", "\u{2713}".green()),
-                Err(_) => println!("  {} Fingerprint: will generate on first `hex dev` run", "\u{2022}".dimmed()),
-            }
-        }
-        Err(_) => println!("  {} SpacetimeDB: project will register on first agent connect", "\u{2022}".dimmed()),
-    }
 
     println!();
     println!(
@@ -214,13 +197,12 @@ pub async fn run(args: InitArgs) -> Result<()> {
     );
     println!();
     println!("  Next steps:");
-    if nexus_result.is_err() {
-        println!("    {} Start hex-nexus:      hex nexus start", "\u{2022}".dimmed());
-        println!("    {} Install templates:    hex init --force", "\u{2022}".dimmed());
+    if let Err(e) = &templates {
+        println!("    {} Retry templates:      hex init --force  ({e})", "\u{2022}".dimmed());
     }
-    println!("    {} Calibrate models:     hex inference setup", "\u{2022}".dimmed());
+    println!("    {} Calibrate models:     hex config inference setup", "\u{2022}".dimmed());
     println!("    {} Check architecture:   hex analyze .", "\u{2022}".dimmed());
-    println!("    {} Start the dashboard:  hex nexus start", "\u{2022}".dimmed());
+    println!("    {} Do some work:         hex do run \"<task>\" --file <f> --evidence \"<cmd>\"", "\u{2022}".dimmed());
     if !args.scaffold {
         println!("    {} Scaffold src/ dirs:   hex init --scaffold .", "\u{2022}".dimmed());
     }
@@ -608,9 +590,23 @@ fn ensure_git_initialized_and_committed(target: &Path, project_name: &str) -> bo
     }
 }
 
-/// Lightweight init for `hex dev` — creates `.hex/project.json` and registers
-/// with nexus. Skips interview, MCP config, claude settings, and scaffolding.
-/// This ensures every dev session has a project_id for traceability.
+/// Write the embedded `skills/`, `agents/` and `hooks/` templates into
+/// `.claude/`, returning the paths created.
+///
+/// Never overwrites: an existing file is a customisation, not a stale copy.
+fn extract_templates(target: &Path) -> std::io::Result<Vec<String>> {
+    use crate::assets::Assets;
+    let claude = target.join(".claude");
+    let mut created = Vec::new();
+    for (prefix, dir) in [("skills/", "skills"), ("agents/", "agents"), ("hooks/", "hooks")] {
+        created.extend(Assets::extract_to(prefix, &claude.join(dir))?);
+    }
+    Ok(created)
+}
+
+/// Lightweight init — creates `.hex/project.json` and nothing else. Skips the
+/// interview, claude settings, and scaffolding, so every project has an id for
+/// traceability without a full `hex init`.
 pub async fn run_init_in(dir: &str, name: &str) -> Result<()> {
     let target = PathBuf::from(dir);
     fs::create_dir_all(&target)?;
@@ -632,79 +628,6 @@ pub async fn run_init_in(dir: &str, name: &str) -> Result<()> {
 
     create_project_json(&target, &project_name)?;
 
-    // Best-effort nexus registration — non-fatal if nexus is unavailable
-    match register_project_in_nexus(&target, &project_name).await {
-        Ok(id) => {
-            println!(
-                "  {} Project registered: {} ({})",
-                "\u{2713}".green(),
-                project_name,
-                id,
-            );
-        }
-        Err(e) => {
-            tracing::debug!("Project registration skipped (non-fatal): {e}");
-        }
-    }
-
     Ok(())
 }
 
-/// ADR-065 P4: Register project in SpacetimeDB via nexus so it appears in the
-/// dashboard immediately. If nexus is offline, silently skip — the project will
-/// be registered on first agent connect (ADR-065 P1).
-async fn register_project_in_nexus(target: &Path, name: &str) -> Result<String> {
-    let nexus = crate::nexus_client::NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    let body = serde_json::json!({
-        "name": name,
-        "rootPath": target.to_string_lossy(),
-    });
-
-    let resp = nexus.post("/api/projects/register", &body).await?;
-
-    // Server assigns the canonical ID (slug-based). Update .hex/project.json
-    // so read_project_id_in() returns the nexus-registered ID, not the local UUID.
-    let server_id = resp["id"].as_str().unwrap_or_default().to_string();
-    if !server_id.is_empty() {
-        let project_json_path = target.join(".hex/project.json");
-        if project_json_path.exists() {
-            let content = fs::read_to_string(&project_json_path)?;
-            let mut parsed: serde_json::Value = serde_json::from_str(&content)?;
-            parsed["id"] = serde_json::Value::String(server_id.clone());
-            fs::write(&project_json_path, serde_json::to_string_pretty(&parsed)?)
-                .context("Failed to update .hex/project.json with server ID")?;
-        }
-    }
-
-    Ok(server_id)
-}
-
-/// Pull embedded skills, agents, and hooks from hex-nexus via its REST API.
-///
-/// Returns the list of files created by nexus, or an error if nexus is unreachable.
-async fn pull_templates_from_nexus(target: &Path, name: &str) -> Result<Vec<String>> {
-    let nexus = crate::nexus_client::NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    let body = serde_json::json!({
-        "path": target.to_string_lossy(),
-        "name": name,
-    });
-
-    let resp = nexus.post("/api/projects/init", &body).await?;
-
-    // The nexus endpoint returns { "created": ["file1", "file2", ...] }
-    let created: Vec<String> = resp
-        .get("created")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    Ok(created)
-}

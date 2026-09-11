@@ -314,33 +314,16 @@ async fn session_start(project_dir: &Path) -> Result<()> {
 
             // ADR-2026-03-30-1200: Inject architecture fingerprint into Claude Code context.
             // stdout is picked up by Claude Code as session context — never skip this.
-            // Strategy: fetch cached fingerprint → auto-generate if missing → print.
-            let client = crate::nexus_client::NexusClient::from_env();
-            let fp_text = match client.fetch_fingerprint_text(id).await {
-                Some(text) => Some(text),
-                None => {
-                    // Not cached — generate it now and re-fetch.
-                    let gen_url = format!("/api/projects/{}/fingerprint", id);
-                    let body = serde_json::json!({
-                        "project_root": project_dir.display().to_string(),
-                        "workplan_path": "",
-                    });
-                    let _ = client.post_long(&gen_url, &body).await;
-                    client.fetch_fingerprint_text(id).await
-                }
-            };
-            if let Some(text) = fp_text {
-                println!("\n{}", text);
-            } else {
-                // Generation failed — emit a minimal in-process block so context is never blank.
-                println!("\n{}", minimal_fingerprint_block_cached(project_dir, name));
-            }
+            //
+            // Generated here (ADR-2608241500 P6.2). The daemon used to cache
+            // it and hand back the rendered block; the extractor is a local
+            // read of the project either way, and caching it behind an HTTP
+            // call meant a cold cache plus a down daemon produced no context
+            // at all.
+            println!("\n{}", fingerprint_block(id, project_dir, name).await);
         }
         Err(_) => {
-            println!("  Nexus:   {} (run `hex nexus start`)", "offline".yellow());
-            println!("  StDB:    {} (requires nexus)", "offline".dimmed());
-            // Nexus offline — emit minimal in-process fingerprint so context is never blank.
-            println!("\n{}", minimal_fingerprint_block(project_dir, name));
+            println!("\n{}", fingerprint_block("", project_dir, name).await);
         }
     }
 
@@ -1790,33 +1773,40 @@ async fn refresh_fingerprint_if_stale(project_dir: &Path) -> Result<()> {
         return Ok(());
     }
 
-    // Best-effort regeneration — don't block or fail the hook on errors
-    let nexus = crate::nexus_client::NexusClient::from_env();
-
-    // Find active workplan path from session state
-    let workplan_path = SessionState::load()
-        .and_then(|s| s.workplan_id)
-        .map(|id| format!("docs/workplans/{}.json", id))
+    // Best-effort regeneration — never block or fail the hook.
+    let name = project_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-
-    let fp_body = serde_json::json!({
-        "project_root": project_dir.display().to_string(),
-        "workplan_path": workplan_path,
-    });
-
-    if nexus.post_long(&format!("/api/projects/{}/fingerprint", project_id), &fp_body).await.is_ok() {
-        // Update session state timestamp
-        if let Some(mut state) = SessionState::load() {
-            state.fingerprint_generated_at = Some(chrono::Utc::now().to_rfc3339());
-            let _ = state.save();
-        }
-        // Print updated fingerprint as context for Claude Code
-        if let Some(fp_text) = nexus.fetch_fingerprint_text(&project_id).await {
-            println!("\n{}", fp_text);
-        }
+    println!("\n{}", fingerprint_block(&project_id, project_dir, &name).await);
+    if let Some(mut state) = SessionState::load() {
+        state.fingerprint_generated_at = Some(chrono::Utc::now().to_rfc3339());
+        let _ = state.save();
     }
 
     Ok(())
+}
+
+/// The architecture fingerprint for this project, as an injection block.
+///
+/// Falls back to the minimal in-process block if extraction fails, because
+/// blank session context is worse than a thin one.
+async fn fingerprint_block(project_id: &str, project_dir: &Path, name: &str) -> String {
+    let workplan = SessionState::load()
+        .and_then(|s| s.workplan_id)
+        .map(|id| project_dir.join(format!("docs/workplans/{}.json", id)))
+        .filter(|p| p.exists());
+    let fp = hex_analysis::fingerprint_extractor::FingerprintExtractor::extract(
+        project_id,
+        project_dir,
+        workplan.as_deref(),
+    )
+    .await;
+    let block = fp.to_injection_block();
+    if block.trim().is_empty() {
+        return minimal_fingerprint_block(project_dir, name);
+    }
+    block
 }
 
 async fn route(project_dir: &Path) -> Result<()> {

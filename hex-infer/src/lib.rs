@@ -13,9 +13,11 @@ pub mod complete;
 pub mod endpoint;
 pub mod registry;
 pub mod spend;
+pub mod tiers;
 
 pub use adapters::{
     AnthropicAdapter, ClaudeCodeInferenceAdapter, OllamaInferenceAdapter, OpenAiCompatAdapter,
 };
 pub use endpoint::Endpoint;
 pub use complete::{complete_raw, complete_text};
+pub use tiers::{react_models, tier_model};

@@ -600,25 +600,19 @@ async fn llm_classify(text: &str) -> anyhow::Result<Option<(String, String, Stri
         "Classify this intent into a hex CLI task. Respond ONLY with JSON like {{\"kind\":\"hex-command\",\"payload\":\"analyze .\",\"description\":\"...\"}} or {{\"kind\":\"unknown\"}}.\n\nValid kinds: hex-command (hex <args>), shell (cargo/git/ls/echo only), workplan (path).\n\nIntent: {}",
         text
     );
-    let nexus = crate::nexus_client::NexusClient::from_env();
-    let resp: serde_json::Value = tokio::time::timeout(
-        std::time::Duration::from_secs(45),
-        nexus.post("/api/inference/complete", &serde_json::json!({
-            "model": "gemma4:latest",
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
-            "max_tokens": 200,
-        }))
-    ).await.map_err(|_| anyhow::anyhow!("LLM classify timed out after 15s — try manual: hex brain enqueue hex-command -- \"<cmd>\""))??;
-    // Response content may be a string OR an array of content blocks
-    let content_owned = match resp.get("content") {
-        Some(v) if v.is_string() => v.as_str().unwrap_or("").to_string(),
-        Some(v) if v.is_array() => v.as_array().unwrap().iter()
-            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
-            .collect::<Vec<_>>().join(""),
-        _ => String::new(),
+    // Classification is the cheapest thing hex asks a model to do, so it runs
+    // on T1. The model id comes from `.hex/project.json` rather than being
+    // written here: G1's test is that no file outside hex-infer names one.
+    let Some(model) = hex_infer::tier_model("t1") else {
+        return Ok(None); // no T1 model configured — fall back to the rules
     };
+    let content_owned = tokio::time::timeout(
+        std::time::Duration::from_secs(45),
+        hex_infer::complete_text(&model, "", &prompt, 200),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("intent classification timed out after 45s"))?
+    .map_err(|e| anyhow::anyhow!("intent classification: {e}"))?;
     let content = content_owned.as_str();
     // Parse JSON from response
     if let Some(start) = content.find('{') {
@@ -654,24 +648,16 @@ async fn llm_translate_shell_for_host(action: &str, host: Option<&str>) -> anyho
         "Translate this natural-language action into a single Linux shell command. Respond with ONLY the command, no explanation, no quotes, no code blocks. Use standard Linux utilities appropriate for the host.{}\n\nAction: {}\n\nCommand:",
         context_line, action
     );
-    let nexus = crate::nexus_client::NexusClient::from_env();
-    let resp: serde_json::Value = tokio::time::timeout(
-        std::time::Duration::from_secs(15),
-        nexus.post("/api/inference/complete", &serde_json::json!({
-            "model": "gemma4:latest",
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
-            "max_tokens": 100,
-        }))
-    ).await.map_err(|_| anyhow::anyhow!("LLM shell-translate timed out after 15s — inference endpoint may be busy"))??;
-    let content = match resp.get("content") {
-        Some(v) if v.is_string() => v.as_str().unwrap_or("").to_string(),
-        Some(v) if v.is_array() => v.as_array().unwrap().iter()
-            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
-            .collect::<Vec<_>>().join(""),
-        _ => String::new(),
+    let Some(model) = hex_infer::tier_model("t1") else {
+        anyhow::bail!("no T1 model configured in .hex/project.json → inference.tier_models");
     };
+    let content = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        hex_infer::complete_text(&model, "", &prompt, 100),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("shell translation timed out after 15s"))?
+    .map_err(|e| anyhow::anyhow!("shell translation: {e}"))?;
     // Take first non-empty line, strip code fences/quotes
     let cmd = content.lines()
         .find(|l| !l.trim().is_empty() && !l.trim().starts_with("```"))
