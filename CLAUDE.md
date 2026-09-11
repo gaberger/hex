@@ -128,15 +128,35 @@ hex bench agentic
 
 **IMPORTANT**: Never recommend a command that is not in `hex --help`.
 
-## Development pipeline (specs-first)
+## Development pipeline (gate-first)
+
+ADR-2026-09-11-1900. **The executable gate replaces the written spec.**
 
 1. **Decide** — an ADR in `docs/adrs/` if it adds a port, an adapter, or a
-   dependency.
-2. **Specify** — behavioral specs before code.
-3. **Build** — follow the hexagonal rules.
-4. **Test** — unit + property + smoke.
-5. **Validate** — `hex analyze .`.
+   dependency. Unchanged.
+2. **Gate** — write the command that must exit 0, *before* the code, and not
+   derived from it.
+3. **Diverge** — `hex build` proposes N designs and red-teams each. The spec is
+   synthesized here and is disposable.
+4. **Build to the gate.**
+5. **Harden** — `hex harden`: adversarial hunt, default-refute, every fix gated.
 6. **Ship** — README, commit.
+
+Three rules:
+
+- **A spec that cannot be run does not exist.** It becomes a gate, or it
+  becomes ADR prose — history, which is allowed to be unexecutable because it
+  never claims to describe the present.
+- **The gate is written before the code and is not derived from it.** A gate
+  generated from the implementation is the mirror-test failure in a new hat.
+- **A vacuous gate is a failed gate.** `evidence_is_vacuous` rejects "running 0
+  tests"; every new gate shape needs the same guard.
+
+Why: a 36-task spec-driven workplan was wrong in four places that would have
+broken the build, two of its own tasks contradicted each other, and 44 of 110
+specs described deleted features while nothing failed. Meanwhile `hex build`
+produced 777 working lines from one challenge and one command, and `hex harden`
+then found three real bugs its own passing tests missed.
 
 ## Skills & agents
 
