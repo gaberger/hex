@@ -23,8 +23,16 @@
 //! Tier routing, best-of-N, and the config loader land in this crate in
 //! workplan tasks P2.4 and P2.5.
 
+pub mod complete;
+pub mod config;
+pub mod endpoint;
 pub mod providers;
+pub mod routing;
+pub mod transport;
 
+pub use complete::{complete, CompleteError, CompleteRequest, Completion};
+pub use config::InferenceConfig;
+pub use endpoint::Endpoint;
 pub use providers::{
     AnthropicAdapter, ClaudeCodeInferenceAdapter, OllamaInferenceAdapter, OpenAiCompatAdapter,
 };
