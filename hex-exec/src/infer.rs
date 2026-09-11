@@ -33,8 +33,18 @@ pub fn config() -> InferenceConfig {
 }
 
 /// Run one completion against the repository's configured providers.
-pub async fn complete(request: CompleteRequest) -> Result<Completion, String> {
-    hex_infer::complete(request, &config()).await.map_err(|e| e.to_string())
+///
+/// `caller` names the loop and `intent` what it was doing; both are recorded
+/// for the cost meter. Usage recording is best-effort — losing an accounting
+/// row must never lose a completion.
+pub async fn complete(
+    caller: &str,
+    intent: &str,
+    request: CompleteRequest,
+) -> Result<Completion, String> {
+    let answer = hex_infer::complete(request, &config()).await.map_err(|e| e.to_string())?;
+    record_usage(caller, intent, &answer);
+    Ok(answer)
 }
 
 /// Run one completion, speaking the JSON shapes the old HTTP endpoint spoke.
@@ -42,10 +52,38 @@ pub async fn complete(request: CompleteRequest) -> Result<Completion, String> {
 /// `body` is `{model, messages, system?, max_tokens?, tools?}`; the success
 /// value is `{content, model, input_tokens, output_tokens, tool_calls,
 /// provider}`. Unknown fields are ignored, as the endpoint ignored them.
-pub async fn complete_json(body: Value) -> Result<Value, String> {
+pub async fn complete_json(caller: &str, intent: &str, body: Value) -> Result<Value, String> {
     let request: CompleteRequest =
         serde_json::from_value(body).map_err(|e| format!("malformed inference request: {e}"))?;
-    complete(request).await.map(|c| c.to_json())
+    complete(caller, intent, request).await.map(|c| c.to_json())
+}
+
+/// Longest `intent` kept in an accounting row. The cost meter groups on it;
+/// a whole instruction would make every group unique and the grouping useless.
+const INTENT_LEN: usize = 120;
+
+/// Append one accounting row for a completion that succeeded.
+///
+/// This is new ground, not a port: the cost meter used to read a table the
+/// daemon wrote on the agent's behalf. In-process, the caller that placed the
+/// request is the only thing that knows the answer, so it records its own.
+fn record_usage(caller: &str, intent: &str, answer: &Completion) {
+    use hex_core::ports::local_store::{ILocalStore, UsageRecord};
+    let record = UsageRecord {
+        at: crate::store::now_rfc3339(),
+        model: answer.model.clone(),
+        role: caller.to_string(),
+        intent: intent.chars().take(INTENT_LEN).collect(),
+        input_tokens: answer.input_tokens,
+        output_tokens: answer.output_tokens,
+        cost_usd: answer
+            .openrouter_cost_usd
+            .as_deref()
+            .and_then(|c| c.parse::<f64>().ok()),
+    };
+    if let Err(e) = crate::store::FileStore::current().append_usage(&record) {
+        tracing::debug!(error = %e, "usage accounting failed (non-fatal)");
+    }
 }
 
 #[cfg(test)]

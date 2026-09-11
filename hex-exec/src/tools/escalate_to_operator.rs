@@ -2,12 +2,13 @@
 //! emit a priority-2 inbox notification the operator sees on next chat.
 
 use async_trait::async_trait;
+use hex_core::ports::local_store::EmissionKind;
 use serde_json::{json, Value};
 use std::time::Instant;
 
+use super::emit;
 use super::{Tool, ToolResult};
 
-const STDB_HOST_DEFAULT: &str = "http://127.0.0.1:3033";
 
 pub struct EscalateToOperator;
 
@@ -64,24 +65,12 @@ impl Tool for EscalateToOperator {
             return ToolResult::err("max 6 options", start.elapsed().as_millis() as u64);
         }
 
-        let host = std::env::var("HEX_SPACETIMEDB_HOST")
-            .unwrap_or_else(|_| STDB_HOST_DEFAULT.to_string());
-        let db = std::env::var("HEX_STDB_DATABASE")
-            .unwrap_or_else(|_| hex_core::stdb_database_for_module("hexflo-coordination").to_string());
-        // Use the existing resource_anomaly stream as the inbox surface
-        // until a dedicated inbox_notification reducer ships. This keeps
-        // the operator's existing #/resources view as the one alert sink.
-        let url = format!("{}/v1/database/{}/call/", host, db);
-
         let priority = match urgency.as_str() {
             "high" => "critical",
             "med" => "warn",
             _ => "info",
         };
 
-        // Emit a synthetic resource_anomaly so it shows up in the existing
-        // anomalies surface. JSON shape matches the table.
-        // We pretend `pid=0` (synthetic) and put options into the note.
         let note = if options.is_empty() {
             reason.clone()
         } else {
@@ -94,22 +83,25 @@ impl Tool for EscalateToOperator {
             format!("{} — Options: {}", reason, opts_joined)
         };
 
-        // Reuse resource_supervisor_tick_schedule's emit path by calling
-        // process_observation_upsert(pid=0, ...) is wrong; we instead call
-        // a future inbox_notify — but that doesn't exist yet. For now
-        // log + return a stub id; the dashboard already polls
-        // /api/resources/anomalies, so we'll emit into resource_anomaly
-        // via a direct insert SQL call. STDB doesn't allow direct INSERT
-        // via SQL, so we pretend to and log the escalation locally.
-        // Wave-2 work will add a dedicated escalation reducer.
+        // Record it (ADR-2608241500 P3.2). The previous code built a
+        // SpacetimeDB reducer URL, discarded it with `let _ = url`, and logged
+        // — so an escalation reached the operator only if they happened to be
+        // reading the daemon's log. It is now an emission record that
+        // `hex do runs` can surface, plus the existing notifier.
+        emit::record(
+            EmissionKind::Escalation,
+            &format!("escalation/{}", priority),
+            "tool:escalate_to_operator",
+            note.len() as u64,
+            &note,
+        );
         tracing::warn!(
             reason = %reason,
             urgency = %urgency,
             options = ?options,
             priority = %priority,
-            "escalate_to_operator: escalation raised (logged; dashboard wiring deferred to wave 2)"
+            "escalate_to_operator: escalation raised"
         );
-        let _ = url; // suppress unused warning for now
 
         let elapsed = start.elapsed().as_millis() as u64;
 
@@ -132,7 +124,7 @@ impl Tool for EscalateToOperator {
                 "escalation_id": chrono::Utc::now().timestamp_millis(),
                 "priority": priority,
                 "note": note,
-                "warning": "escalation logged to nexus.log; dashboard surface lands in wave-2 follow-on workplan",
+                "warning": "escalation recorded locally and sent to the configured notifier; no operator inbox exists in solo mode",
             }),
             elapsed,
         )

@@ -146,7 +146,7 @@ async fn react_attempts(
             "messages": sent,
         });
         // In-process (ADR-2608241500 P2.5).
-        let body: Value = match crate::infer::complete_json(req).await {
+        let body: Value = match crate::infer::complete_json("direct-react", &task.instruction, req).await {
             Ok(v) => v,
             Err(e) => {
                 result.error = Some(format!("inference: {}", e));
@@ -469,7 +469,7 @@ async fn summarize_overflow(model: &str, messages: Vec<Value>) -> Vec<Value> {
         "max_tokens": 512,
         "messages": [{ "role": "user", "content": prompt }],
     });
-    let summary = crate::infer::complete_json(req)
+    let summary = crate::infer::complete_json("direct-react", "compress transcript", req)
         .await
         .ok()
         .and_then(|b| b.get("content").and_then(|v| v.as_str()).map(|s| s.to_string()));

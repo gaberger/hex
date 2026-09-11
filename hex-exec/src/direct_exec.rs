@@ -21,10 +21,8 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DirectTask {
@@ -80,8 +78,8 @@ const WINDOW: usize = 24;
 // conversation. Every run is recorded here so `GET /api/direct/runs`, the CLI,
 // and the dashboard can show what the agents actually DID — task, evidence
 // verdict, commit — instead of the retired liveness signals (personas/swarms/
-// commitments). In-memory ring buffer (last RUN_HISTORY); STDB persistence is a
-// follow-up.
+// commitments). Persisted to the local store as an append-only log, capped at
+// RUN_HISTORY on read (ADR-2608241500 P3.2).
 
 const RUN_HISTORY: usize = 200;
 
@@ -171,19 +169,63 @@ pub(crate) fn record_react_run(
     store_run(run);
 }
 
-/// Push a run into the in-memory feed (fast path for the API) AND persist it to
-/// SpacetimeDB (so the feed survives nexus restarts).
+/// Persist a run to the local store (ADR-2608241500 P3.2).
+///
+/// There is no in-memory ring buffer any more. It existed because the feed
+/// lived inside a long-running daemon and a restart would have emptied it;
+/// with `hex do` as a short-lived process, an in-memory feed would be empty
+/// on every read. The file IS the feed.
+///
+/// Never fails a run: losing a feed entry must not lose an edit.
 fn store_run(run: DirectRun) {
-    persist_run_async(run.clone());
-    if let Ok(mut q) = RUNS.lock() {
-        q.push_front(run);
-        while q.len() > RUN_HISTORY {
-            q.pop_back();
-        }
+    use hex_core::ports::local_store::ILocalStore;
+    if let Err(e) = crate::store::FileStore::current().append_run(&to_record(&run)) {
+        tracing::debug!(error = %e, "agent-run persist failed (non-fatal)");
     }
 }
 
-static RUNS: LazyLock<Mutex<VecDeque<DirectRun>>> = LazyLock::new(|| Mutex::new(VecDeque::new()));
+/// `DirectRun` → the port's record.
+///
+/// The stored key is `<started_at>#<seq>`, which stays unique even though the
+/// in-process counter restarts at 1 on every invocation.
+fn to_record(run: &DirectRun) -> hex_core::ports::local_store::RunRecord {
+    hex_core::ports::local_store::RunRecord {
+        id: format!("{}#{}", run.started_at, run.id),
+        agent: run.agent.clone(),
+        started_at: run.started_at.clone(),
+        instruction: run.instruction.clone(),
+        file: run.file.clone(),
+        model: run.model.clone(),
+        ok: run.ok,
+        attempts: run.attempts,
+        steps: run.steps,
+        evidence_passed: run.evidence_passed,
+        committed: run.committed.clone(),
+        duration_ms: run.duration_ms,
+        error: run.error.clone(),
+    }
+}
+
+/// The port's record → `DirectRun`, with a display id the caller assigns so
+/// the newest run carries the highest number.
+fn from_record(rec: hex_core::ports::local_store::RunRecord, display_id: u64) -> DirectRun {
+    DirectRun {
+        id: display_id,
+        agent: rec.agent,
+        started_at: rec.started_at,
+        instruction: rec.instruction,
+        file: rec.file,
+        model: rec.model,
+        ok: rec.ok,
+        attempts: rec.attempts,
+        steps: rec.steps,
+        evidence_passed: rec.evidence_passed,
+        committed: rec.committed,
+        duration_ms: rec.duration_ms,
+        error: rec.error,
+    }
+}
+
 static RUN_ID: AtomicU64 = AtomicU64::new(1);
 
 // Serialize the read→edit→evidence→commit critical section. Two concurrent runs
@@ -220,147 +262,16 @@ fn record_run(started_at: String, task: &DirectTask, model: &str, r: &DirectResu
     store_run(run);
 }
 
-// ── SpacetimeDB persistence (survives nexus restarts) ────────────────────────
-
-fn stdb_host() -> String {
-    std::env::var("HEX_STDB_HOST").unwrap_or_else(|_| hex_core::SPACETIMEDB_DEFAULT_HOST.to_string())
-}
-
-/// Fire-and-forget persist of a run to STDB. The in-memory feed is the fast path;
-/// STDB is the durable backing. Never blocks or fails a recorder.
-fn persist_run_async(run: DirectRun) {
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        handle.spawn(async move {
-            if let Err(e) = persist_run(&run).await {
-                tracing::debug!(error = %e, "agent-run STDB persist failed (non-fatal)");
-            }
-        });
-    }
-}
-
-async fn persist_run(run: &DirectRun) -> Result<(), String> {
-    // Globally-unique key — `<started_at>#<seq>` stays unique even though the
-    // in-memory RUN_ID resets to 1 on each restart (started_at differs).
-    let id = format!("{}#{}", run.started_at, run.id);
-    let url = format!("{}/v1/database/hex/call/record_agent_run", stdb_host());
-    let args = json!([
-        id,
-        run.agent,
-        run.started_at,
-        run.instruction,
-        run.file,
-        run.model,
-        run.ok,
-        run.attempts,
-        run.evidence_passed,
-        run.committed.clone().unwrap_or_default(),
-        run.duration_ms,
-        run.error.clone().unwrap_or_default(),
-    ]);
-    let res = reqwest::Client::new()
-        .post(&url)
-        .json(&args)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        return Err(format!("reducer {}: {}", res.status(), res.text().await.unwrap_or_default()));
-    }
-    Ok(())
-}
-
-/// Hydrate the in-memory feed from STDB at startup (newest `RUN_HISTORY`). Called
-/// once after SpacetimeDB is up; safe to fail (empty feed) if the table is absent.
-pub async fn hydrate_from_stdb() {
-    let url = format!("{}/v1/database/hex/sql", stdb_host());
-    // SpacetimeDB SQL has no ORDER BY — fetch (bounded) and sort newest-first in Rust.
-    let q = "SELECT id, agent, started_at, instruction, file, model, ok, attempts, evidence_passed, committed, duration_ms, error FROM agent_run LIMIT 2000".to_string();
-    let res = match reqwest::Client::new()
-        .post(&url)
-        .header("Content-Type", "text/plain")
-        .body(q)
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(error = %e, "agent-run hydrate: query failed");
-            return;
-        }
-    };
-    let text = match res.text().await {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::warn!(error = %e, "agent-run hydrate: body read failed");
-            return;
-        }
-    };
-    let body: Value = match serde_json::from_str(&text) {
-        Ok(b) => b,
-        Err(_) => {
-            tracing::warn!(body = %text.chars().take(160).collect::<String>(), "agent-run hydrate: non-JSON response");
-            return;
-        }
-    };
-    let rows = body
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|f| f.get("rows"))
-        .and_then(|r| r.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    // Rows come newest-first; rebuild the deque oldest-last and re-number for display.
-    let mut loaded: Vec<DirectRun> = Vec::new();
-    for row in &rows {
-        let c = match row.as_array() {
-            Some(c) if c.len() >= 12 => c,
-            _ => continue,
-        };
-        let s = |i: usize| c.get(i).and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let opt = |i: usize| {
-            let v = s(i);
-            if v.is_empty() { None } else { Some(v) }
-        };
-        loaded.push(DirectRun {
-            id: 0, // reassigned below
-            agent: s(1),
-            started_at: s(2),
-            instruction: s(3),
-            file: s(4),
-            model: s(5),
-            ok: c.get(6).and_then(|v| v.as_bool()).unwrap_or(false),
-            attempts: c.get(7).and_then(|v| v.as_u64()).unwrap_or(1) as u32,
-            steps: c.get(7).and_then(|v| v.as_u64()).unwrap_or(1) as u32,
-            evidence_passed: c.get(8).and_then(|v| v.as_bool()).unwrap_or(false),
-            committed: opt(9),
-            duration_ms: c.get(10).and_then(|v| v.as_u64()).unwrap_or(0),
-            error: opt(11),
-        });
-    }
-    // Newest-first (RFC3339 UTC strings sort lexically = chronologically), capped.
-    loaded.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-    loaded.truncate(RUN_HISTORY);
-    let n = loaded.len();
-    if n == 0 {
-        return;
-    }
-    // Display ids: highest number = most recent (loaded[0]).
-    for (idx, run) in loaded.iter_mut().enumerate() {
-        run.id = (n - idx) as u64;
-    }
-    RUN_ID.store((n as u64) + 1, Ordering::Relaxed);
-    if let Ok(mut q) = RUNS.lock() {
-        for run in loaded {
-            q.push_back(run);
-        }
-    }
-    tracing::info!(count = n, "agent-run feed hydrated from SpacetimeDB");
-}
-
-/// Newest-first snapshot of recorded runs for the API / CLI / dashboard.
+/// Newest-first snapshot of recorded runs, read from the local store.
 pub fn runs_snapshot() -> Vec<DirectRun> {
-    RUNS.lock().map(|q| q.iter().cloned().collect()).unwrap_or_default()
+    use hex_core::ports::local_store::ILocalStore;
+    let records = crate::store::FileStore::current().recent_runs(RUN_HISTORY).unwrap_or_default();
+    let n = records.len() as u64;
+    records
+        .into_iter()
+        .enumerate()
+        .map(|(idx, rec)| from_record(rec, n - idx as u64))
+        .collect()
 }
 
 /// Aggregate counters for an at-a-glance monitor header.
@@ -690,66 +601,34 @@ pub(crate) async fn gather_context(task: &DirectTask) -> String {
     out
 }
 
-/// Best-effort pull of `lesson:`/`gap:` entries (key, value) from the
-/// hexflo_memory table over the STDB HTTP SQL endpoint. Columns mapped by name
-/// (schema.elements). Returned unranked; callers rank by graph relevance
+/// Best-effort pull of `lesson:` / `gap:` entries from the local memory store
+/// (ADR-2608241500 P3.3).
+///
+/// This read used to be an HTTP SQL query against the `hexflo_memory`
+/// SpacetimeDB table, which made grounding the loop in past lessons depend on
+/// a database being up. The entries are a few hundred short Markdown files
+/// now, under `.hex/memory/` and `~/.hex/memory/`.
+///
+/// Returned unranked; callers rank by graph relevance
 /// (`hex_graph::context::rank_lessons`). Capped to keep the pull bounded.
 pub async fn fetch_lessons() -> Vec<(String, String)> {
+    use hex_core::ports::local_store::ILocalStore;
     const CAP: usize = 200;
-    let url = format!("{}/v1/database/hex/sql", stdb_host());
-    let http = match reqwest::Client::builder().timeout(Duration::from_secs(3)).build() {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
-    let resp = match http
-        .post(&url)
-        .header("Content-Type", "text/plain")
-        .body("SELECT key, value FROM hexflo_memory")
-        .send()
-        .await
-    {
-        Ok(r) if r.status().is_success() => r,
-        _ => return Vec::new(),
-    };
-    let body: Value = match resp.json().await {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let mut lessons = Vec::new();
-    let Some(tables) = body.as_array() else {
-        return lessons;
-    };
-    for table in tables {
-        let cols: Vec<&str> = table
-            .get("schema")
-            .and_then(|s| s.get("elements"))
-            .and_then(|e| e.as_array())
-            .map(|els| {
-                els.iter()
-                    .filter_map(|el| {
-                        el.get("name").and_then(|n| n.get("some")).and_then(|s| s.as_str())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let ki = cols.iter().position(|c| *c == "key");
-        let vi = cols.iter().position(|c| *c == "value");
-        if let Some(rows) = table.get("rows").and_then(|r| r.as_array()) {
-            for row in rows {
-                if let Some(vals) = row.as_array() {
-                    let key = ki.and_then(|i| vals.get(i)).and_then(|v| v.as_str()).unwrap_or("");
-                    let val = vi.and_then(|i| vals.get(i)).and_then(|v| v.as_str()).unwrap_or("");
-                    if (key.starts_with("lesson:") || key.starts_with("gap:")) && !val.is_empty() {
-                        lessons.push((key.to_string(), val.to_string()));
-                        if lessons.len() >= CAP {
-                            return lessons;
-                        }
-                    }
-                }
-            }
+    let entries = match crate::store::FileStore::current().list_memory() {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::debug!(error = %e, "lesson read failed (non-fatal)");
+            return Vec::new();
         }
-    }
-    lessons
+    };
+    entries
+        .into_iter()
+        .filter(|e| {
+            (e.key.starts_with("lesson:") || e.key.starts_with("gap:")) && !e.value.is_empty()
+        })
+        .map(|e| (e.key, e.value))
+        .take(CAP)
+        .collect()
 }
 
 // ─── the one inference call ───────────────────────────────────────────────────
@@ -815,7 +694,7 @@ async fn request_edit(
 
     // In-process (ADR-2608241500 P2.5): same request body the daemon endpoint
     // took, same response object it returned — no localhost hop.
-    let rb = crate::infer::complete_json(body).await?;
+    let rb = crate::infer::complete_json("direct-executor", &task.instruction, body).await?;
     let content = rb.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
     parse_edit(&content)
 }

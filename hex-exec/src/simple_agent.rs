@@ -111,7 +111,7 @@ pub async fn run(cfg: RunConfig, registry: Arc<ToolRegistry>) -> Result<RunSumma
             "messages": messages,
         });
 
-        let body: Value = match crate::infer::complete_json(req_body).await {
+        let body: Value = match crate::infer::complete_json("simple-agent", &cfg.intent, req_body).await {
             Ok(v) => v,
             Err(e) => {
                 return Ok(RunSummary {

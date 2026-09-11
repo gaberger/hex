@@ -12,11 +12,13 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::{Tool, ToolResult};
+use hex_core::ports::local_store::EmissionKind;
 
-const STDB_HOST_DEFAULT: &str = "http://127.0.0.1:3033";
+use super::emit;
+
 
 pub struct AdrStatusSet;
 
@@ -139,36 +141,20 @@ impl Tool for AdrStatusSet {
             );
         }
 
-        // Emit proposed_action(file_write) — same path adr_draft uses.
-        let payload = serde_json::json!({
-            "path": rel_path,
-            "content": new_content,
-        });
-        let host = std::env::var("HEX_SPACETIMEDB_HOST").unwrap_or_else(|_| STDB_HOST_DEFAULT.to_string());
-        let db = std::env::var("HEX_STDB_DATABASE")
-            .unwrap_or_else(|_| hex_core::stdb_database_for_module("hexflo-coordination").to_string());
-        let url = format!("{}/v1/database/{}/call/proposed_action_open", host, db);
-        let http = match reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build()
-        {
-            Ok(c) => c,
-            Err(e) => return ToolResult::err(format!("http: {}", e), start.elapsed().as_millis() as u64),
-        };
-        let body_call = serde_json::json!([
-            "file_write",
-            payload.to_string(),
+        // Write it (ADR-2608241500 P3.2). There is no twin and no executor
+        // to hand this to any more — a tool that only queues would silently
+        // do nothing while telling the model it succeeded.
+        if let Err(e) = emit::write_artifact(
+            EmissionKind::Adr,
+            &rel_path,
+            &new_content,
             "tool:adr_status_set",
-            0u64,
-        ]);
-        let resp = match http.post(&url).json(&body_call).send().await {
-            Ok(r) => r,
-            Err(e) => return ToolResult::err(format!("stdb: {}", e), start.elapsed().as_millis() as u64),
-        };
-        if !resp.status().is_success() {
-            let s = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return ToolResult::err(format!("proposed_action_open HTTP {}: {}", s, body), start.elapsed().as_millis() as u64);
+            "",
+        ) {
+            return ToolResult::err(
+                format!("write failed: {}", e),
+                start.elapsed().as_millis() as u64,
+            );
         }
         ToolResult::ok(
             json!({
@@ -177,7 +163,7 @@ impl Tool for AdrStatusSet {
                 "new_status": new_status,
                 "rationale": rationale,
                 "byte_len": new_content.len(),
-                "note": "proposed_action queued; twin auto-approves tool:* per ADR-2026-05-08-2500",
+                "note": "ADR status written to disk",
             }),
             start.elapsed().as_millis() as u64,
         )

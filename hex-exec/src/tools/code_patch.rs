@@ -20,15 +20,15 @@
 //! ADR-2026-05-08-2500 SOP-emitted-action policy).
 
 use async_trait::async_trait;
+use hex_core::ports::local_store::EmissionKind;
 use serde_json::{json, Value};
-use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::{Tool, ToolResult};
+use super::emit;
 use crate::tools::cargo_check::CargoCheck;
 use crate::tools::module_register::ModuleRegister;
 
-const STDB_HOST_DEFAULT: &str = "http://127.0.0.1:3033";
 const MAX_NEW_CONTENT: usize = 16 * 1024;
 
 pub struct CodePatch;
@@ -140,9 +140,7 @@ impl Tool for CodePatch {
             _ => return ToolResult::err("rationale required, 1-300 chars", start.elapsed().as_millis() as u64),
         };
 
-        let repo_root = std::env::var("HEX_REPO_ROOT")
-            .unwrap_or_else(|_| "/home/gary/hex-intf".to_string());
-        let target = Path::new(&repo_root).join(&rel_path);
+        let target = super::emit::repo_root().join(&rel_path);
 
         let final_content = match mode.as_str() {
             "create" => {
@@ -227,38 +225,20 @@ impl Tool for CodePatch {
             _ => unreachable!(),
         };
 
-        // Emit proposed_action(file_write) — same path adr_draft / spec_draft use.
-        let payload = serde_json::json!({
-            "path": rel_path,
-            "content": final_content,
-        });
-        let host = std::env::var("HEX_SPACETIMEDB_HOST")
-            .unwrap_or_else(|_| STDB_HOST_DEFAULT.to_string());
-        let db = std::env::var("HEX_STDB_DATABASE")
-            .unwrap_or_else(|_| hex_core::stdb_database_for_module("hexflo-coordination").to_string());
-        let url = format!("{}/v1/database/{}/call/proposed_action_open", host, db);
-        let http = match reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build()
-        {
-            Ok(c) => c,
-            Err(e) => return ToolResult::err(format!("http build: {}", e), start.elapsed().as_millis() as u64),
-        };
-        let body_call = serde_json::json!([
-            "file_write",
-            payload.to_string(),
+        // Write it (ADR-2608241500 P3.2). This used to open a proposed_action
+        // row for a digital twin to approve and an executor to apply; both
+        // lived in the daemon. The evidence gate in direct_exec, which reverts
+        // the tree unless the caller's command exits 0, is the check that
+        // actually held — and it is untouched.
+        if let Err(e) = emit::write_artifact(
+            EmissionKind::Code,
+            &rel_path,
+            &final_content,
             "tool:code_patch",
-            0u64,
-        ]);
-        let resp = match http.post(&url).json(&body_call).send().await {
-            Ok(r) => r,
-            Err(e) => return ToolResult::err(format!("stdb call: {}", e), start.elapsed().as_millis() as u64),
-        };
-        if !resp.status().is_success() {
-            let status_code = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+            &rationale,
+        ) {
             return ToolResult::err(
-                format!("proposed_action_open HTTP {}: {}", status_code, body),
+                format!("write failed: {}", e),
                 start.elapsed().as_millis() as u64,
             );
         }

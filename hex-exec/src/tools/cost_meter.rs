@@ -1,13 +1,13 @@
-//! `cost_meter` — queries SpacetimeDB inference_log table for token spend totals.
+//! `cost_meter` — token spend totals from the local usage log.
 //!
-//! Used by CPO to understand cost distribution across models, roles, or intents.
-//! Queries STDB hex database via HTTP POST /v1/database/hex/sql with a SQL
-//! body, returns grouped spend summaries.
+//! Shows where inference budget goes, grouped by model, by the loop that spent
+//! it, or by what it was spent on. Reads `.hex/local-store/usage.jsonl`, which
+//! every completion appends to (ADR-2608241500 P3.2); before that it queried a
+//! SpacetimeDB table the daemon maintained.
 
 use async_trait::async_trait;
-use reqwest::Client;
 use serde_json::{json, Value};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::{Tool, ToolResult};
 
@@ -22,9 +22,9 @@ impl Tool for CostMeter {
         "cost_meter"
     }
     fn description(&self) -> &'static str {
-        "Read token-spend totals from STDB inference_log table. Returns \
-         grouped token counts and cost summaries over a time window. \
-         Use this to understand cost distribution across models, roles, or intents."
+        "Read token-spend totals from the local usage log. Returns grouped \
+         token counts and cost summaries over a time window. Use this to \
+         understand cost distribution across models, roles, or intents."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -61,122 +61,46 @@ impl Tool for CostMeter {
             );
         }
 
-        // STDB SQL doesn't support SUM/NOW/INTERVAL/GROUP BY — pull recent rows
-        // and aggregate in Rust. Bounded by LIMIT to avoid runaway scans.
-        let sql = format!(
-            "SELECT {}, input_tokens, output_tokens, cost_usd, created_at FROM inference_log LIMIT 5000",
-            group_by
-        );
+        // Read the local usage log (ADR-2608241500 P3.2). This used to be an
+        // HTTP SQL query against SpacetimeDB's `inference_log`, a table the
+        // daemon wrote on the agent's behalf. In-process, the caller that
+        // placed each request records its own accounting, so the meter reads
+        // what the loop actually spent rather than what a daemon observed.
+        use hex_core::ports::local_store::ILocalStore;
+        use std::collections::HashMap;
 
-        // Query STDB via HTTP POST /v1/database/hex/sql with text/plain body
-        let stdb_url = std::env::var("HEX_SPACETIMEDB_HOST")
-            .or_else(|_| std::env::var("SPACETIME_URL"))
-            .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
-        let url = format!("{}/v1/database/hex/sql", stdb_url);
-
-        let client = match Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                return ToolResult::err(
-                    format!("failed to build HTTP client: {}", e),
-                    start.elapsed().as_millis() as u64,
-                );
-            }
-        };
-
-        let resp = match client
-            .post(&url)
-            .header("Content-Type", "text/plain")
-            .body(sql.clone())
-            .send()
-            .await
-        {
+        let cutoff = chrono::Utc::now() - chrono::Duration::seconds(window_secs as i64);
+        let rows = match crate::store::FileStore::current().usage_since(&cutoff.to_rfc3339()) {
             Ok(r) => r,
             Err(e) => {
                 return ToolResult::err(
-                    format!("STDB query failed: {}", e),
+                    format!("usage read failed: {}", e),
                     start.elapsed().as_millis() as u64,
                 );
             }
         };
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return ToolResult::err(
-                format!("STDB returned {}: {}", status, body.chars().take(200).collect::<String>()),
-                start.elapsed().as_millis() as u64,
-            );
-        }
-
-        let json_resp: Value = match resp.json().await {
-            Ok(j) => j,
-            Err(e) => {
-                return ToolResult::err(
-                    format!("failed to parse STDB response: {}", e),
-                    start.elapsed().as_millis() as u64,
-                );
-            }
-        };
-
-        // STDB response shape: [{ "schema": {...}, "rows": [[...], ...], ... }]
-        // The top-level is an array (one entry per result set).
-        let rows_owned: Vec<Value> = json_resp
-            .as_array()
-            .and_then(|a| a.first())
-            .and_then(|first| first.get("rows"))
-            .and_then(|r| r.as_array())
-            .cloned()
-            .or_else(|| json_resp.get("rows").and_then(|v| v.as_array()).cloned())
-            .unwrap_or_default();
-        let rows = &rows_owned;
-
-        // Aggregate in Rust: STDB SQL doesn't have SUM/GROUP BY. Each row is
-        // [group_key, input_tokens, output_tokens, cost_usd, created_at].
-        // cost_usd is stored as String (parse to f64). Time-window filter via
-        // string-prefix compare on ISO-8601 created_at.
-        use std::collections::HashMap;
-        let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        let cutoff_secs = now_secs.saturating_sub(window_secs as i64);
 
         let mut agg: HashMap<String, (u64, u64, f64)> = HashMap::new();
         let mut total_input = 0u64;
         let mut total_output = 0u64;
         let mut total_cost = 0.0f64;
 
-        for row in rows.iter() {
-            let arr = match row.as_array() {
-                Some(a) if a.len() >= 5 => a,
-                _ => continue,
+        for row in &rows {
+            let key = match group_by {
+                "role" => row.role.clone(),
+                "intent" => row.intent.clone(),
+                _ => row.model.clone(),
             };
-            // Best-effort window filter: created_at is ISO-8601 string;
-            // parse to unix secs if possible, otherwise include in window.
-            let created_at = arr[4].as_str().unwrap_or("");
-            let row_secs = chrono::DateTime::parse_from_rfc3339(created_at)
-                .map(|dt| dt.timestamp())
-                .unwrap_or(now_secs);
-            if row_secs < cutoff_secs {
-                continue;
-            }
-            let key = arr[0].as_str().unwrap_or("(unknown)").to_string();
-            let inp = arr[1].as_u64().unwrap_or(0);
-            let out = arr[2].as_u64().unwrap_or(0);
-            // cost_usd stored as String per inference_log schema
-            let cost: f64 = arr[3].as_str().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+            let key = if key.is_empty() { "(unknown)".to_string() } else { key };
+            let cost = row.cost_usd.unwrap_or(0.0);
 
-            total_input += inp;
-            total_output += out;
+            total_input += row.input_tokens;
+            total_output += row.output_tokens;
             total_cost += cost;
 
             let entry = agg.entry(key).or_insert((0, 0, 0.0));
-            entry.0 += inp;
-            entry.1 += out;
+            entry.0 += row.input_tokens;
+            entry.1 += row.output_tokens;
             entry.2 += cost;
         }
 
@@ -214,7 +138,7 @@ impl Tool for CostMeter {
             "window_secs": window_secs,
             "group_by": group_by,
             "rows_scanned": rows.len(),
-            "rows_truncated": rows.len() >= 5000,
+            "groups_truncated": rows.len() > MAX_GROUPS,
         });
 
         if rows.len() > MAX_GROUPS {

@@ -13,12 +13,16 @@
 //! before the LLM enters REASON, so the model can ground against
 //! "what we already know" instead of relearning every session.
 //!
-//! Backing endpoint: GET /api/hexflo/memory/search?q=<query>
-//! Backing store:    hexflo_memory STDB table (key, value, scope, updated_at)
+//! Backing store: Markdown files under `.hex/memory/` (git-tracked, travels
+//! with the repository) and `~/.hex/memory/` (this machine, every project).
+//! It was the `hexflo_memory` SpacetimeDB table, reached over HTTP, until
+//! ADR-2608241500 P3.3 — which made grounding the loop in past lessons
+//! depend on a database being up.
 
 use async_trait::async_trait;
+use hex_core::ports::local_store::ILocalStore;
 use serde_json::{json, Value};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::{Tool, ToolResult};
 
@@ -27,7 +31,6 @@ use super::{Tool, ToolResult};
 /// budget modest while covering the typical SOP context window.
 const MAX_RESULTS_DEFAULT: usize = 12;
 const MAX_RESULTS_HARD_CAP: usize = 50;
-const SEARCH_TIMEOUT_SECS: u64 = 5;
 
 pub struct MemorySearch;
 
@@ -37,7 +40,7 @@ impl Tool for MemorySearch {
         "memory_search"
     }
     fn description(&self) -> &'static str {
-        "Search hex persistent memory (hexflo_memory STDB table) by substring \
+        "Search hex persistent memory by substring \
          match on key OR value. Use in the GROUND phase to surface prior \
          lessons, known gaps, and project context the operator or other \
          agents have stored. Key prefix conventions: lesson:* (don't-repeat-this), \
@@ -81,59 +84,28 @@ impl Tool for MemorySearch {
             .map(|n| (n as usize).min(MAX_RESULTS_HARD_CAP))
             .unwrap_or(MAX_RESULTS_DEFAULT);
 
-        let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
-        let url = format!(
-            "http://127.0.0.1:{}/api/hexflo/memory/search?q={}",
-            port,
-            urlencoding::encode(query)
-        );
-
-        let client = match reqwest::Client::builder()
-            .timeout(Duration::from_secs(SEARCH_TIMEOUT_SECS))
-            .build()
-        {
-            Ok(c) => c,
+        let entries = match crate::store::FileStore::current().search_memory(query) {
+            Ok(e) => e,
             Err(e) => {
                 return ToolResult::err(
-                    format!("http client build: {}", e),
+                    format!("memory search failed: {}", e),
                     start.elapsed().as_millis() as u64,
                 )
             }
         };
-
-        let resp = match client.get(&url).send().await {
-            Ok(r) => r,
-            Err(e) => {
-                return ToolResult::err(
-                    format!("memory search transport: {}", e),
-                    start.elapsed().as_millis() as u64,
-                )
-            }
-        };
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return ToolResult::err(
-                format!("memory search HTTP {}: {}", status, body.chars().take(200).collect::<String>()),
-                start.elapsed().as_millis() as u64,
-            );
-        }
-
-        let body: Value = match resp.json().await {
-            Ok(v) => v,
-            Err(e) => {
-                return ToolResult::err(
-                    format!("memory search json: {}", e),
-                    start.elapsed().as_millis() as u64,
-                )
-            }
-        };
-
-        let all_results: Vec<Value> = body
-            .get("results")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
+        // The result shape the daemon endpoint returned, kept byte-for-byte so
+        // the model sees the same object it always did.
+        let all_results: Vec<Value> = entries
+            .into_iter()
+            .map(|e| {
+                json!({
+                    "key": e.key,
+                    "value": e.value,
+                    "scope": e.scope.as_str(),
+                    "updated_at": e.updated_at,
+                })
+            })
+            .collect();
 
         let total = all_results.len();
         let truncated = total > max_results;
@@ -170,8 +142,8 @@ mod tests {
 
     #[test]
     fn caps_max_results_at_hard_cap() {
-        // Verify the cap math, not the HTTP — actual execute() requires
-        // a running nexus and is exercised by the integration probe.
+        // Verify the cap math. execute() reads local files and is exercised
+        // by the FileStore tests in crate::store.
         let input = json!({"query": "x", "max_results": 1000});
         let n = input
             .get("max_results")

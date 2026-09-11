@@ -19,5 +19,6 @@ pub mod direct_workspace;
 pub mod infer;
 pub mod resource_governor;
 pub mod simple_agent;
+pub mod store;
 pub mod telegram_notifier;
 pub mod tools;

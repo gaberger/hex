@@ -16,6 +16,9 @@ pub mod heartbeat;
 // surface and `inference/mock.rs` ships `MockInferencePort` for downstream
 // test code (ADR-2026-04-11-2000 P1.2 / P2 / P5).
 pub mod inference;
+// The agent loop's own state — run feed, cost accounting, emission records
+// and memory — as files rather than a database (ADR-2608241500 P3.1).
+pub mod local_store;
 pub mod sandbox;
 pub mod secret;
 // State port contract (IStatePort + focused sub-traits + DTOs). Relocated from

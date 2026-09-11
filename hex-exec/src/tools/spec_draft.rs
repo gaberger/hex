@@ -7,11 +7,13 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::{Tool, ToolResult};
+use hex_core::ports::local_store::EmissionKind;
 
-const STDB_HOST_DEFAULT: &str = "http://127.0.0.1:3033";
+use super::emit;
+
 const MIN_BODY: usize = 200;
 // CTO ADR-2026-05-08-2600 — halved from 50_000 to 24_000 (BSATN crash mitigation).
 const MAX_BODY: usize = 24_000;
@@ -95,40 +97,18 @@ impl Tool for SpecDraft {
             body.trim_start_matches("# ").trim_start(),
         );
 
-        let payload = serde_json::json!({
-            "path": target_path,
-            "content": full_body,
-        });
-
-        let host = std::env::var("HEX_SPACETIMEDB_HOST")
-            .unwrap_or_else(|_| STDB_HOST_DEFAULT.to_string());
-        let db = std::env::var("HEX_STDB_DATABASE")
-            .unwrap_or_else(|_| hex_core::stdb_database_for_module("hexflo-coordination").to_string());
-        let url = format!("{}/v1/database/{}/call/proposed_action_open", host, db);
-
-        let http = match reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build()
-        {
-            Ok(c) => c,
-            Err(e) => return ToolResult::err(format!("http build: {}", e), start.elapsed().as_millis() as u64),
-        };
-
-        let body_call = serde_json::json!([
-            "file_write",
-            payload.to_string(),
+        // Write it (ADR-2608241500 P3.2). There is no twin and no executor
+        // to hand this to any more — a tool that only queues would silently
+        // do nothing while telling the model it succeeded.
+        if let Err(e) = emit::write_artifact(
+            EmissionKind::Spec,
+            &target_path,
+            &full_body,
             "tool:spec_draft",
-            0u64,
-        ]);
-        let resp = match http.post(&url).json(&body_call).send().await {
-            Ok(r) => r,
-            Err(e) => return ToolResult::err(format!("stdb call: {}", e), start.elapsed().as_millis() as u64),
-        };
-        if !resp.status().is_success() {
-            let status_code = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+            "",
+        ) {
             return ToolResult::err(
-                format!("proposed_action_open HTTP {}: {}", status_code, body),
+                format!("write failed: {}", e),
                 start.elapsed().as_millis() as u64,
             );
         }
@@ -139,7 +119,7 @@ impl Tool for SpecDraft {
                 "ok": true,
                 "target_path": target_path,
                 "body_bytes": full_body.len(),
-                "note": "proposed_action queued; digital-twin executor (auto-approved as tool:* via ADR-2026-05-08-2500 fix) will write the file shortly",
+                "note": "spec written to disk",
             }),
             elapsed,
         )

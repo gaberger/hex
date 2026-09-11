@@ -75,6 +75,10 @@ Volumes/
 **/.hex/*
 !.hex/project.json
 !.hex/project.yaml
+# Lessons are tracked on purpose (ADR-2608241500 P3.3): they are reviewable in
+# a diff, travel with a clone, and reach another machine with `git pull` —
+# none of which was true of the SpacetimeDB table they replace.
+!.hex/memory/
 .superset/
 # weave framework runtime state (sibling repo ~/development/weave integration) — local db only
 .weave/

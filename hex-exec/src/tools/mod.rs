@@ -21,6 +21,7 @@ pub mod code_patch;
 pub mod cost_meter;
 pub mod delegate;
 pub mod dep_audit;
+pub mod emit;
 pub mod escalate_to_operator;
 pub mod memory_search;
 pub mod repo_grep;
