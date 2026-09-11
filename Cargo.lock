@@ -3192,6 +3192,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "hex-infer"
+version = "26.5.1"
+dependencies = [
+ "async-trait",
+ "futures",
+ "hex-core",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "hex-life"
 version = "0.1.0"
 
@@ -3220,6 +3236,7 @@ dependencies = [
  "hex-exec",
  "hex-git",
  "hex-graph",
+ "hex-infer",
  "hex-state",
  "hmac 0.12.1",
  "http 1.4.0",

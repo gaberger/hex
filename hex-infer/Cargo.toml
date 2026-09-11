@@ -1,0 +1,23 @@
+[package]
+name = "hex-infer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Inference adapters and tier routing for hex — the single enforcement point for founding goal G1 (no consumer names a provider)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+hex-core = { path = "../hex-core" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+futures = "0.3"
+tracing = "0.1"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
