@@ -169,15 +169,17 @@
           "id": "P2.3",
           "name": "Salvage OpenAI-compatible and Anthropic adapters out of hex-agent",
           "layer": "secondary",
-          "description": "Relocate hex-agent/src/adapters/secondary/openai_compat.rs (582 LOC) and anthropic.rs (433 LOC) into hex-infer/src/providers/. These are the only parts of hex-agent's 23,383 LOC worth keeping; the crate is deleted in P5.2 and nothing in the workspace depends on it. Reconcile any duplication with P2.2's adapters into one provider abstraction.",
+          "description": "DONE 2026-09-11. openai_compat.rs (582) and anthropic.rs (433) rewritten into hex-infer/src/providers/ against hex_core::ports::inference::IInferencePort, replacing hex-agent's private AnthropicPort. The domain types translated for free \u2014 hex-agent/src/domain/mod.rs re-exports hex_core::domain::messages, so ContentBlock/Message/Role/StopReason/ToolDefinition/RateLimitHeaders were already hex-core types under a different path. One provider abstraction now: 4 adapters, 1 trait.\nReconciliation: the OpenAI-compat adapter's ollama() constructor is kept but documented as the remote/shim path \u2014 local Ollama should use providers::ollama, which streams NDJSON for real.\nAdded hex-infer/src/providers/vec_stream.rs: hex_core defines its own minimal Stream trait (not futures), so buffered providers need a Vec-backed adapter to satisfy IInferencePort::stream.\nFIXED IN THE MOVE (do not carry forward): (a) temperature is now forwarded by both adapters \u2014 the old AnthropicPort signature had no parameter for it, so it was silently dropped on every request; (b) the SSE parser dropped a trailing event when the stream did not end with a blank line; (c) Anthropic's message_delta now emits Usage + MessageStop separately, matching hex_core's StreamChunk shape; (d) both adapters gained health() probes (GET /models, GET /v1/models) that IInferencePort requires and AnthropicPort had no place for; (e) request timeouts are now set (HEX_INFERENCE_TIMEOUT_SECS, default 300s) \u2014 the originals used a default reqwest::Client with no timeout at all.\nKNOWN GAP, deferred to P2.4: request.grammar is ignored by both. OpenAI-compat servers express structured output via response_format, Anthropic has no GBNF equivalent. Documented in the module headers rather than silently pretended.\nThe hex-agent originals were NOT deleted \u2014 hex-agent still wires them and the whole crate dies in P5.2. Both files now carry a SUPERSEDED header pointing at hex-infer so nobody patches the dead copy.\nEvidence: cargo test -p hex-infer = 35 passed / 0 failed (was 5); cargo clippy -p hex-infer --all-targets -D clippy::correctness -D clippy::suspicious = clean; cargo check --workspace --exclude hex-desktop = clean.\n\nORIGINAL: Relocate hex-agent/src/adapters/secondary/openai_compat.rs (582 LOC) and anthropic.rs (433 LOC) into hex-infer/src/providers/. These are the only parts of hex-agent's 23,383 LOC worth keeping; the crate is deleted in P5.2 and nothing in the workspace depends on it. Reconcile any duplication with P2.2's adapters into one provider abstraction.",
           "deps": [
             "P2.1"
           ],
           "files": [
             "hex-infer/src/providers/openai_compat.rs",
-            "hex-infer/src/providers/anthropic.rs"
+            "hex-infer/src/providers/anthropic.rs",
+            "hex-infer/src/providers/vec_stream.rs",
+            "hex-infer/src/providers/mod.rs"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder",
           "strategy_hint": "transform"
         },

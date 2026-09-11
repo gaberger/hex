@@ -1,3 +1,9 @@
+//! SUPERSEDED (ADR-2608241500 P2.3). The maintained copy of this adapter now
+//! lives in `hex-infer/src/providers/` and implements
+//! `hex_core::ports::inference::IInferencePort` instead of hex-agent's private
+//! `AnthropicPort`. Do not fix bugs here — fix them in hex-infer. This file
+//! survives only so hex-agent keeps compiling until P5.2 deletes the crate.
+
 use crate::ports::{ApiRequestOptions, RateLimitHeaders};
 use crate::ports::{ContentBlock, Message, StopReason, TokenUsage, ToolDefinition};
 use crate::ports::anthropic::{AnthropicError, AnthropicPort, AnthropicResponse, StreamChunk};

@@ -1,20 +1,50 @@
-//! SUPERSEDED (ADR-2608241500 P2.3). The maintained copy of this adapter now
-//! lives in `hex-infer/src/providers/` and implements
-//! `hex_core::ports::inference::IInferencePort` instead of hex-agent's private
-//! `AnthropicPort`. Do not fix bugs here — fix them in hex-infer. This file
-//! survives only so hex-agent keeps compiling until P5.2 deletes the crate.
+//! OpenAI-compatible chat-completions adapter.
+//!
+//! Salvaged out of `hex-agent/src/adapters/secondary/openai_compat.rs` per
+//! ADR-2608241500 P2.3. The HTTP body construction, the Anthropic↔OpenAI
+//! message translation, the `<think>` stripping, and the OpenRouter routing
+//! preferences are carried over unchanged. What changed is the contract: the
+//! original implemented hex-agent's private `AnthropicPort`; this one
+//! implements [`IInferencePort`], the single inference contract in
+//! `hex-core`, so the whole workspace speaks one shape.
+//!
+//! Works with: MiniMax, Together AI, Groq, OpenRouter, Ollama's `/v1` shim,
+//! and vLLM.
+//!
+//! # Behaviour differences from the hex-agent original
+//!
+//! - `temperature` is forwarded. The old `AnthropicPort` signature had no
+//!   place for it, so it was silently dropped on every request.
+//! - Errors map onto [`InferenceError`] using the same convention the Ollama
+//!   adapter established: transport failure → `ProviderUnavailable`,
+//!   HTTP 404 → `UnknownProvider`, 429 → `RateLimited`, other 4xx/5xx →
+//!   `ApiError`.
+//! - [`IInferencePort::health`] is new — `GET {base_url}/models`.
+//!
+//! `request.grammar` is ignored here. OpenAI-compatible servers express
+//! structured output through `response_format`, not GBNF; wiring that is
+//! P2.4's job, and silently pretending to honour a grammar would be worse
+//! than declaring the gap.
 
-use crate::ports::anthropic::{AnthropicError, AnthropicPort, AnthropicResponse, StreamChunk};
-use crate::ports::{ApiRequestOptions, ContentBlock, Message, Role, StopReason, TokenUsage, ToolDefinition};
+use std::time::{Duration, Instant};
+
 use async_trait::async_trait;
-use futures::stream::{self, Stream};
+use hex_core::domain::messages::{ContentBlock, Role, StopReason};
+use hex_core::ports::inference::{
+    futures_stream, HealthStatus, IInferencePort, InferenceCapabilities, InferenceError,
+    InferenceRequest, InferenceResponse, ModelInfo, ModelTier, StreamChunk,
+};
+use hex_core::domain::messages::Message;
+use hex_core::domain::tools::ToolDefinition;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+use super::vec_stream::VecStream;
+
+/// Default request timeout. Overridable with `HEX_INFERENCE_TIMEOUT_SECS`.
+const DEFAULT_TIMEOUT_SECS: u64 = 300;
+
 /// Adapter for any OpenAI-compatible chat completions API.
-///
-/// Works with: MiniMax, Together AI, Groq, OpenRouter, Ollama, vLLM.
-/// Translates between hex-agent's Anthropic-native types and OpenAI's format.
 pub struct OpenAiCompatAdapter {
     client: Client,
     api_key: String,
@@ -24,8 +54,15 @@ pub struct OpenAiCompatAdapter {
 
 impl OpenAiCompatAdapter {
     pub fn new(api_key: String, base_url: String, model: String) -> Self {
+        let timeout = std::env::var("HEX_INFERENCE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_TIMEOUT_SECS);
         Self {
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(Duration::from_secs(timeout))
+                .build()
+                .unwrap_or_default(),
             api_key,
             base_url: base_url.trim_end_matches('/').to_string(),
             model,
@@ -50,18 +87,11 @@ impl OpenAiCompatAdapter {
         )
     }
 
-    /// Convenience constructor for Ollama (local or remote).
+    /// Convenience constructor for Ollama's OpenAI-compatible `/v1` shim.
     ///
-    /// Ollama doesn't require an API key and serves on port 11434 by default.
-    /// For remote hosts (e.g., Bazzite gaming rig with GPU), pass the host:
-    ///
-    /// ```rust,ignore
-    /// // Local Ollama
-    /// OpenAiCompatAdapter::ollama("qwen3:32b", None);
-    ///
-    /// // Remote Ollama on Bazzite
-    /// OpenAiCompatAdapter::ollama("qwen3:32b", Some("http://bazzite.local:11434"));
-    /// ```
+    /// Prefer [`super::ollama::OllamaInferenceAdapter`] for local Ollama —
+    /// it speaks Ollama's native API and streams for real. This constructor
+    /// exists for remote Ollama hosts already fronted as OpenAI-compatible.
     pub fn ollama(model: &str, host: Option<&str>) -> Self {
         let base_url = host
             .unwrap_or("http://127.0.0.1:11434")
@@ -87,10 +117,7 @@ impl OpenAiCompatAdapter {
         )
     }
 
-    /// Convenience constructor for OpenRouter (300+ models via single API key).
-    ///
-    /// OpenRouter uses the standard OpenAI chat completions format but requires
-    /// additional headers for analytics and supports provider preference routing.
+    /// Convenience constructor for OpenRouter (300+ models, one API key).
     pub fn openrouter(api_key: String, model: String) -> Self {
         Self::new(
             api_key,
@@ -106,29 +133,22 @@ impl OpenAiCompatAdapter {
 
     /// Create from environment variables for self-hosted models.
     ///
-    /// Reads:
-    /// - `HEX_OLLAMA_HOST` — Ollama URL (default: http://127.0.0.1:11434)
-    /// - `HEX_OLLAMA_MODEL` — Model name (default: qwen3:32b)
-    /// - `HEX_VLLM_HOST` — vLLM URL
-    /// - `HEX_VLLM_MODEL` — vLLM model name
-    /// - `HEX_INFERENCE_URL` — Generic OpenAI-compatible endpoint
-    /// - `HEX_INFERENCE_MODEL` — Generic model name
-    /// - `HEX_INFERENCE_KEY` — API key for generic endpoint
+    /// Reads, in priority order:
+    /// - `HEX_OLLAMA_MODEL` / `HEX_OLLAMA_HOST`
+    /// - `HEX_VLLM_MODEL` / `HEX_VLLM_HOST` / `HEX_VLLM_KEY`
+    /// - `HEX_INFERENCE_URL` / `HEX_INFERENCE_MODEL` / `HEX_INFERENCE_KEY`
     pub fn from_env_self_hosted() -> Option<Self> {
-        // Try Ollama first
         if let Ok(model) = std::env::var("HEX_OLLAMA_MODEL") {
             let host = std::env::var("HEX_OLLAMA_HOST").ok();
             return Some(Self::ollama(&model, host.as_deref()));
         }
 
-        // Try vLLM
         if let Ok(model) = std::env::var("HEX_VLLM_MODEL") {
             let host = std::env::var("HEX_VLLM_HOST").ok();
             let key = std::env::var("HEX_VLLM_KEY").ok();
             return Some(Self::vllm(&model, host.as_deref(), key.as_deref()));
         }
 
-        // Try generic OpenAI-compatible
         if let Ok(url) = std::env::var("HEX_INFERENCE_URL") {
             let model = std::env::var("HEX_INFERENCE_MODEL").unwrap_or("default".to_string());
             let key = std::env::var("HEX_INFERENCE_KEY").unwrap_or_default();
@@ -138,7 +158,17 @@ impl OpenAiCompatAdapter {
         None
     }
 
-    /// Convert hex-agent messages to OpenAI chat format.
+    /// The model this request should use: the request's own model when set,
+    /// otherwise the adapter's configured default.
+    fn resolve_model<'a>(&'a self, requested: &'a str) -> &'a str {
+        if requested.trim().is_empty() {
+            &self.model
+        } else {
+            requested
+        }
+    }
+
+    /// Convert hex-core messages to OpenAI chat format.
     fn to_openai_messages(system: &str, messages: &[Message]) -> Vec<OaiMessage> {
         let mut out = vec![OaiMessage {
             role: "system".to_string(),
@@ -222,7 +252,7 @@ impl OpenAiCompatAdapter {
         out
     }
 
-    /// Convert hex-agent tool definitions to OpenAI function format.
+    /// Convert hex-core tool definitions to OpenAI function format.
     fn to_openai_tools(tools: &[ToolDefinition]) -> Vec<OaiToolDef> {
         tools
             .iter()
@@ -237,47 +267,34 @@ impl OpenAiCompatAdapter {
             .collect()
     }
 
-    /// Strip `<think>` tags from content (MiniMax thinking output).
+    /// Strip `<think>` tags from content (MiniMax and Qwen thinking output).
     /// Returns (cleaned_text, thinking_text).
     fn strip_thinking(text: &str) -> (String, Option<String>) {
         if let Some(start) = text.find("<think>") {
             if let Some(end) = text.find("</think>") {
                 let thinking = text[start + 7..end].trim().to_string();
-                let cleaned = format!(
-                    "{}{}",
-                    text[..start].trim(),
-                    text[end + 8..].trim()
-                );
+                let cleaned = format!("{}{}", text[..start].trim(), text[end + 8..].trim());
                 return (cleaned.trim().to_string(), Some(thinking));
             }
         }
         (text.to_string(), None)
     }
-}
 
-#[async_trait]
-impl AnthropicPort for OpenAiCompatAdapter {
-    async fn send_message(
-        &self,
-        system: &str,
-        messages: &[Message],
-        tools: &[ToolDefinition],
-        max_tokens: u32,
-        model_override: Option<&str>,
-        _options: Option<&ApiRequestOptions>,
-    ) -> Result<AnthropicResponse, AnthropicError> {
-        let model = model_override.unwrap_or(&self.model);
-        let oai_messages = Self::to_openai_messages(system, messages);
+    /// Build the chat-completions request body.
+    fn build_body(&self, request: &InferenceRequest) -> serde_json::Value {
+        let model = self.resolve_model(&request.model);
+        let oai_messages = Self::to_openai_messages(&request.system_prompt, &request.messages);
 
         let mut body = serde_json::json!({
             "model": model,
             "messages": oai_messages,
-            "max_tokens": max_tokens,
+            "max_tokens": request.max_tokens,
+            "temperature": request.temperature,
         });
 
-        if !tools.is_empty() {
-            body["tools"] = serde_json::to_value(Self::to_openai_tools(tools))
-                .unwrap_or_default();
+        if !request.tools.is_empty() {
+            body["tools"] =
+                serde_json::to_value(Self::to_openai_tools(&request.tools)).unwrap_or_default();
         }
 
         // OpenRouter routing preferences (ADR-2026-03-23-1600)
@@ -289,26 +306,43 @@ impl AnthropicPort for OpenAiCompatAdapter {
             body["route"] = serde_json::json!("fallback");
         }
 
-        let mut request = self
+        body
+    }
+}
+
+#[async_trait]
+impl IInferencePort for OpenAiCompatAdapter {
+    async fn complete(
+        &self,
+        request: InferenceRequest,
+    ) -> Result<InferenceResponse, InferenceError> {
+        let started = Instant::now();
+        let body = self.build_body(&request);
+
+        let mut http = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json");
+
+        if !self.api_key.is_empty() {
+            http = http.header("Authorization", format!("Bearer {}", self.api_key));
+        }
 
         // OpenRouter-specific headers (ADR-2026-03-23-1600)
         if self.is_openrouter() {
-            request = request
+            http = http
                 .header("HTTP-Referer", "https://github.com/hex-intf")
-                .header("X-Title", "hex-agent");
+                .header("X-Title", "hex");
         }
 
-        let response = request
+        let response = http
             .json(&body)
             .send()
             .await
-            .map_err(|e| AnthropicError::Http(e.to_string()))?;
+            .map_err(|e| InferenceError::ProviderUnavailable(format!("{}: {}", self.base_url, e)))?;
 
         let status = response.status().as_u16();
+
         if status == 429 {
             let retry_after = response
                 .headers()
@@ -316,37 +350,47 @@ impl AnthropicPort for OpenAiCompatAdapter {
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(5);
-            return Err(AnthropicError::RateLimited {
-                retry_after_ms: retry_after * 1000,
-            });
+            return Err(InferenceError::RateLimited(format!(
+                "retry after {}s",
+                retry_after
+            )));
         }
         if status == 402 {
-            return Err(AnthropicError::Api {
+            return Err(InferenceError::ApiError {
                 status,
-                message: "OpenRouter: insufficient credits. Top up at https://openrouter.ai/credits".to_string(),
+                body: "insufficient credits (OpenRouter: top up at https://openrouter.ai/credits)"
+                    .to_string(),
             });
+        }
+        if status == 404 {
+            // Same convention as the Ollama adapter: 404 means the backend has
+            // never heard of this model, which is distinct from being down.
+            return Err(InferenceError::UnknownProvider(format!(
+                "{} has no model '{}'",
+                self.base_url,
+                self.resolve_model(&request.model)
+            )));
         }
         if status >= 400 {
             let text = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "unknown error".into());
-            return Err(AnthropicError::Api {
-                status,
-                message: text,
-            });
+            return Err(InferenceError::ApiError { status, body: text });
         }
 
-        let oai_resp: OaiChatResponse = response
-            .json()
-            .await
-            .map_err(|e| AnthropicError::Deserialize(e.to_string()))?;
+        let oai_resp: OaiChatResponse = response.json().await.map_err(|e| InferenceError::ApiError {
+            status,
+            body: format!("malformed chat-completions response: {}", e),
+        })?;
 
-        // Convert to hex-agent types
         let choice = oai_resp
             .choices
             .first()
-            .ok_or_else(|| AnthropicError::Deserialize("no choices in response".into()))?;
+            .ok_or_else(|| InferenceError::ApiError {
+                status,
+                body: "no choices in response".into(),
+            })?;
 
         let mut content = Vec::new();
 
@@ -381,64 +425,116 @@ impl AnthropicPort for OpenAiCompatAdapter {
             _ => StopReason::EndTurn,
         };
 
-        let usage = TokenUsage {
-            input_tokens: oai_resp.usage.prompt_tokens,
-            output_tokens: oai_resp.usage.completion_tokens,
-            ..Default::default()
-        };
-
         // Log OpenRouter actual cost if present
         if let Some(cost) = oai_resp.usage.cost {
-            tracing::info!(openrouter_cost_usd = cost, model = %oai_resp.model, "OpenRouter actual cost");
+            tracing::info!(
+                openrouter_cost_usd = cost,
+                model = %oai_resp.model,
+                "OpenRouter actual cost"
+            );
         }
 
-        Ok(AnthropicResponse {
+        Ok(InferenceResponse {
             content,
+            model_used: oai_resp.model,
             stop_reason,
-            usage,
-            model: oai_resp.model,
+            input_tokens: oai_resp.usage.prompt_tokens as u64,
+            output_tokens: oai_resp.usage.completion_tokens as u64,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            latency_ms: started.elapsed().as_millis() as u64,
         })
     }
 
-    async fn stream_message(
+    async fn stream(
         &self,
-        system: &str,
-        messages: &[Message],
-        tools: &[ToolDefinition],
-        max_tokens: u32,
-        model_override: Option<&str>,
-        options: Option<&ApiRequestOptions>,
-    ) -> Result<
-        Box<dyn Stream<Item = Result<StreamChunk, AnthropicError>> + Send + Unpin>,
-        AnthropicError,
-    > {
-        // For now, use non-streaming and emit as a single chunk.
-        // Full SSE streaming can be added later.
-        let resp = self
-            .send_message(system, messages, tools, max_tokens, model_override, options)
-            .await?;
+        request: InferenceRequest,
+    ) -> Result<Box<dyn futures_stream::Stream<Item = StreamChunk> + Send + Unpin>, InferenceError>
+    {
+        // This adapter does not yet parse SSE. It completes the request and
+        // replays the answer as chunks so callers get one shape either way.
+        // Callers that need real token-by-token output should use the Ollama
+        // adapter, which streams NDJSON for real.
+        let resp = self.complete(request).await?;
 
         let mut chunks = Vec::new();
         for block in &resp.content {
             match block {
                 ContentBlock::Text { text } => {
-                    chunks.push(Ok(StreamChunk::TextDelta(text.clone())));
+                    chunks.push(StreamChunk::TextDelta(text.clone()));
                 }
-                ContentBlock::ToolUse { id, name, .. } => {
-                    chunks.push(Ok(StreamChunk::ToolUseStart {
+                ContentBlock::ToolUse { id, name, input } => {
+                    chunks.push(StreamChunk::ToolUseStart {
                         id: id.clone(),
                         name: name.clone(),
-                    }));
+                    });
+                    chunks.push(StreamChunk::InputJsonDelta(
+                        serde_json::to_string(input).unwrap_or_default(),
+                    ));
                 }
                 _ => {}
             }
         }
-        chunks.push(Ok(StreamChunk::MessageStop {
-            stop_reason: resp.stop_reason,
-            usage: resp.usage,
-        }));
+        chunks.push(StreamChunk::Usage {
+            input_tokens: resp.input_tokens,
+            output_tokens: resp.output_tokens,
+        });
+        chunks.push(StreamChunk::MessageStop(resp.stop_reason));
 
-        Ok(Box::new(stream::iter(chunks)))
+        Ok(Box::new(VecStream::new(chunks)))
+    }
+
+    async fn health(&self) -> Result<HealthStatus, InferenceError> {
+        let mut http = self.client.get(format!("{}/models", self.base_url));
+        if !self.api_key.is_empty() {
+            http = http.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+
+        let response = match http.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                return Ok(HealthStatus::Unreachable {
+                    reason: format!("{}: {}", self.base_url, e),
+                })
+            }
+        };
+
+        let status = response.status().as_u16();
+        if status >= 400 {
+            return Ok(HealthStatus::Degraded {
+                reason: format!("GET {}/models returned {}", self.base_url, status),
+            });
+        }
+
+        let listing: OaiModelListing = match response.json().await {
+            Ok(l) => l,
+            // A reachable endpoint that cannot enumerate models is still
+            // usable for completions — many OpenAI-compatible shims omit
+            // /models entirely.
+            Err(_) => return Ok(HealthStatus::Ok { models: vec![] }),
+        };
+
+        Ok(HealthStatus::Ok {
+            models: listing.data.into_iter().map(|m| m.id).collect(),
+        })
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities {
+            models: vec![ModelInfo {
+                id: self.model.clone(),
+                provider: "openai_compat".to_string(),
+                tier: ModelTier::Local,
+                context_window: 0, // unknown without a provider-specific probe
+            }],
+            supports_tool_use: true,
+            supports_thinking: false,
+            supports_caching: false,
+            supports_streaming: false, // replayed, not incremental — see `stream`
+            max_context_tokens: 0,
+            cost_per_mtok_input: 0.0,
+            cost_per_mtok_output: 0.0,
+        }
     }
 }
 
@@ -500,18 +596,48 @@ struct OaiChoiceMessage {
     tool_calls: Option<Vec<OaiToolCall>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 struct OaiUsage {
+    #[serde(default)]
     prompt_tokens: u32,
+    #[serde(default)]
     completion_tokens: u32,
     /// Actual cost in USD (OpenRouter-specific, absent for other providers)
     #[serde(default)]
     cost: Option<f64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct OaiModelListing {
+    #[serde(default)]
+    data: Vec<OaiModelEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OaiModelEntry {
+    id: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hex_core::domain::tools::ToolInputSchema;
+    use hex_core::ports::inference::Priority;
+
+    fn req(model: &str) -> InferenceRequest {
+        InferenceRequest {
+            model: model.to_string(),
+            system_prompt: "You are helpful.".into(),
+            messages: vec![Message::user("Hello")],
+            tools: vec![],
+            max_tokens: 256,
+            temperature: 0.3,
+            thinking_budget: None,
+            cache_control: false,
+            priority: Priority::Normal,
+            grammar: None,
+        }
+    }
 
     #[test]
     fn strip_thinking_with_tags() {
@@ -554,8 +680,27 @@ mod tests {
     }
 
     #[test]
+    fn tool_result_becomes_a_tool_role_message() {
+        let messages = vec![Message {
+            role: Role::User,
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: "call_1".into(),
+                content: "42".into(),
+                is_error: None,
+            }],
+        }];
+        let oai = OpenAiCompatAdapter::to_openai_messages("sys", &messages);
+        assert_eq!(oai.len(), 2); // system + tool
+        assert_eq!(oai[1].role, "tool");
+        assert_eq!(oai[1].tool_call_id.as_deref(), Some("call_1"));
+    }
+
+    #[test]
     fn openrouter_constructor_sets_correct_url() {
-        let adapter = OpenAiCompatAdapter::openrouter("sk-or-test".to_string(), "meta-llama/llama-4-maverick".to_string());
+        let adapter = OpenAiCompatAdapter::openrouter(
+            "sk-or-test".to_string(),
+            "meta-llama/llama-4-maverick".to_string(),
+        );
         assert!(adapter.is_openrouter());
         assert_eq!(adapter.base_url, "https://openrouter.ai/api/v1");
         assert_eq!(adapter.model, "meta-llama/llama-4-maverick");
@@ -572,7 +717,7 @@ mod tests {
         let tools = vec![ToolDefinition {
             name: "read_file".to_string(),
             description: "Read a file".to_string(),
-            input_schema: crate::domain::ToolInputSchema {
+            input_schema: ToolInputSchema {
                 schema_type: "object".to_string(),
                 properties: serde_json::json!({
                     "path": {"type": "string"}
@@ -584,5 +729,51 @@ mod tests {
         let oai_tools = OpenAiCompatAdapter::to_openai_tools(&tools);
         assert_eq!(oai_tools.len(), 1);
         assert_eq!(oai_tools[0].function.name, "read_file");
+    }
+
+    #[test]
+    fn base_url_trailing_slash_is_trimmed() {
+        let a = OpenAiCompatAdapter::new("k".into(), "http://host:8000/v1/".into(), "m".into());
+        assert_eq!(a.base_url, "http://host:8000/v1");
+    }
+
+    #[test]
+    fn empty_request_model_falls_back_to_adapter_default() {
+        let a = OpenAiCompatAdapter::minimax("k".into());
+        assert_eq!(a.resolve_model(""), "MiniMax-M2.7");
+        assert_eq!(a.resolve_model("   "), "MiniMax-M2.7");
+        assert_eq!(a.resolve_model("other"), "other");
+    }
+
+    /// Regression guard for the defect this move fixes: the hex-agent
+    /// original had nowhere to put `temperature`, so it never reached the
+    /// provider.
+    #[test]
+    fn body_forwards_temperature_and_max_tokens() {
+        let a = OpenAiCompatAdapter::minimax("k".into());
+        let mut r = req("m");
+        r.temperature = 0.7;
+        r.max_tokens = 1234;
+        let body = a.build_body(&r);
+        assert_eq!(body["temperature"].as_f64().unwrap(), 0.7_f32 as f64);
+        assert_eq!(body["max_tokens"].as_u64().unwrap(), 1234);
+        assert_eq!(body["model"].as_str().unwrap(), "m");
+    }
+
+    #[test]
+    fn openrouter_body_carries_routing_preferences() {
+        let a = OpenAiCompatAdapter::openrouter("k".into(), "m".into());
+        let body = a.build_body(&req(""));
+        assert_eq!(body["route"].as_str().unwrap(), "fallback");
+        assert!(body["provider"]["allow_fallbacks"].as_bool().unwrap());
+        assert_eq!(body["model"].as_str().unwrap(), "m");
+    }
+
+    #[test]
+    fn non_openrouter_body_has_no_routing_preferences() {
+        let a = OpenAiCompatAdapter::minimax("k".into());
+        let body = a.build_body(&req("m"));
+        assert!(body.get("route").is_none());
+        assert!(body.get("provider").is_none());
     }
 }

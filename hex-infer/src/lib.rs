@@ -17,11 +17,14 @@
 //!
 //! # Layout
 //!
-//! - [`providers`] — concrete `IInferencePort` adapters, one module each.
+//! - [`providers`] — concrete `IInferencePort` adapters, one module each:
+//!   Ollama, any OpenAI-compatible endpoint, Anthropic, and `claude -p`.
 //!
 //! Tier routing, best-of-N, and the config loader land in this crate in
 //! workplan tasks P2.4 and P2.5.
 
 pub mod providers;
 
-pub use providers::{ClaudeCodeInferenceAdapter, OllamaInferenceAdapter};
+pub use providers::{
+    AnthropicAdapter, ClaudeCodeInferenceAdapter, OllamaInferenceAdapter, OpenAiCompatAdapter,
+};
