@@ -21,9 +21,8 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DirectTask {
@@ -170,19 +169,17 @@ pub(crate) fn record_react_run(
     store_run(run);
 }
 
-/// Push a run into the in-memory feed (fast path for the API) AND persist it to
-/// SpacetimeDB (so the feed survives nexus restarts).
+/// Persist a run to the local store.
+///
+/// There is no in-memory ring buffer any more. It was the fast path for a
+/// daemon's HTTP API, and a cache in front of a file that only a short-lived
+/// process reads is not a cache — it is a way to report zero runs while the
+/// file holds every one of them. Never fails a run: losing a feed entry must
+/// not lose an edit.
 fn store_run(run: DirectRun) {
-    persist_run_async(run.clone());
-    if let Ok(mut q) = RUNS.lock() {
-        q.push_front(run);
-        while q.len() > RUN_HISTORY {
-            q.pop_back();
-        }
-    }
+    persist_run_async(run);
 }
 
-static RUNS: LazyLock<Mutex<VecDeque<DirectRun>>> = LazyLock::new(|| Mutex::new(VecDeque::new()));
 static RUN_ID: AtomicU64 = AtomicU64::new(1);
 
 // Serialize the read→edit→evidence→commit critical section. Two concurrent runs
@@ -247,32 +244,50 @@ fn persist_run_async(run: DirectRun) {
     }));
 }
 
-/// Hydrate the in-memory feed at startup, newest first.
+/// Newest-first snapshot of recorded runs.
 ///
-/// The name keeps `_from_stdb` off it deliberately: there is no database to be up or down, so the
-/// old caller contract — "call once after SpacetimeDB is up; safe to fail if the table is absent" —
-/// no longer has a failure mode worth naming. An absent file is an empty feed.
-pub async fn hydrate_feed() {
-    let rows = crate::local_store::recent_runs(RUN_HISTORY);
-    let n = rows.len();
-    if n == 0 {
-        return;
-    }
-    let mut feed = RUNS.lock().unwrap_or_else(|e| e.into_inner());
-    for row in rows.into_iter().rev() {
-        if let Ok(run) = serde_json::from_value::<DirectRun>(row) {
-            feed.push_back(run);
-            while feed.len() > RUN_HISTORY {
-                feed.pop_front();
-            }
-        }
-    }
-    tracing::info!(count = n, "agent-run feed hydrated from local store");
-}
-
-/// Newest-first snapshot of recorded runs for the API / CLI / dashboard.
+/// Reads the local store directly. It used to read an in-memory ring buffer
+/// that `hydrate_feed()` filled at daemon startup — and when the daemon went,
+/// nothing called it. `hex do` is a short-lived process, so the buffer was
+/// empty on every read and `hex do runs` reported 0 while
+/// `~/.hex/agent-runs.jsonl` held every run that had ever happened.
+///
+/// The rows are mapped field by field rather than through
+/// `serde_json::from_value::<DirectRun>`, because the two shapes disagree and
+/// always have: the persisted `id` is the string `<started_at>#<seq>` — unique
+/// across restarts, which is why it is written that way — while `DirectRun.id`
+/// is a `u64` display number. A whole-struct deserialize fails on every row,
+/// and `hydrate_feed` swallowed that with `.ok()`. So the feed was broken
+/// twice over: never called, and wrong if it had been.
+///
+/// The display id is assigned here instead, newest highest.
 pub fn runs_snapshot() -> Vec<DirectRun> {
-    RUNS.lock().map(|q| q.iter().cloned().collect()).unwrap_or_default()
+    let rows = crate::local_store::recent_runs(RUN_HISTORY);
+    let n = rows.len() as u64;
+    rows.into_iter()
+        .enumerate()
+        .map(|(idx, v)| {
+            let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let opt = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string);
+            let u = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+            let b = |k: &str| v.get(k).and_then(|x| x.as_bool()).unwrap_or(false);
+            DirectRun {
+                id: n - idx as u64,
+                agent: s("agent"),
+                started_at: s("started_at"),
+                instruction: s("instruction"),
+                file: s("file"),
+                model: s("model"),
+                ok: b("ok"),
+                attempts: u("attempts") as u32,
+                steps: u("steps") as u32,
+                evidence_passed: b("evidence_passed"),
+                committed: opt("committed"),
+                duration_ms: u("duration_ms"),
+                error: opt("error"),
+            }
+        })
+        .collect()
 }
 
 /// Aggregate counters for an at-a-glance monitor header.
