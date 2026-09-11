@@ -176,3 +176,82 @@ fn a_freshly_initialised_claude_md_is_refreshable() {
     let after = std::fs::read_to_string(target.join("CLAUDE.md")).expect("read");
     assert_eq!(before, after, "hex refresh is not idempotent");
 }
+
+/// The path every *existing* project takes.
+///
+/// A CLAUDE.md written by an older `hex init` has no markers — it has the old
+/// headings, and user-maintained content below them. `hex refresh` must
+/// replace exactly the hex-managed span, insert the markers, and leave the
+/// user's own sections alone. Getting this wrong is not a cosmetic bug: too
+/// short a span leaves half a daemon-era rule set stranded under the new one,
+/// and too long a span silently eats the user's content.
+#[test]
+fn refresh_upgrades_a_legacy_claude_md_without_eating_user_content() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let target = dir.path().join("legacy-app");
+    std::fs::create_dir_all(&target).expect("mkdir");
+
+    let legacy = "\
+# legacy-app
+
+## My Own Rules
+
+Keep this. It is mine.
+
+## hex Autonomous Behavior (IMPORTANT)
+
+1. **Enqueue work, don't defer it.** `hex brain enqueue`.
+
+## hex Tool Precedence (IMPORTANT)
+
+Use `mcp__hex__hex_plan_execute`.
+
+## Hexagonal Architecture Rules (ENFORCED)
+
+1. domain imports only domain.
+
+## File Organization
+
+```
+src/
+```
+
+## Security
+
+Keep this too. Also mine.
+";
+    std::fs::write(target.join("CLAUDE.md"), legacy).expect("write legacy");
+
+    let out = Command::new(hex_bin())
+        .args(["refresh", target.to_str().unwrap()])
+        .output()
+        .expect("run hex refresh");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!log.contains("no hex-managed section"), "refresh skipped a legacy file:\n{log}");
+
+    let md = std::fs::read_to_string(target.join("CLAUDE.md")).expect("read");
+
+    // The user's own sections survive, on both sides of the hex span.
+    assert!(md.contains("Keep this. It is mine."), "refresh ate content above:\n{md}");
+    assert!(md.contains("Keep this too. Also mine."), "refresh ate content below:\n{md}");
+
+    // The daemon-era rules are gone, not merely buried under new ones.
+    assert!(!md.contains("hex brain enqueue"), "a deleted verb survived the upgrade:\n{md}");
+    assert!(!md.contains("mcp__hex__"), "a deleted MCP tool survived the upgrade:\n{md}");
+
+    // And the file is now marker-wrapped, so the next refresh is a span swap.
+    assert!(md.contains("<!-- hex:claude-md:start -->"), "no markers inserted:\n{md}");
+
+    // Which must then be idempotent.
+    let before = md;
+    Command::new(hex_bin())
+        .args(["refresh", target.to_str().unwrap()])
+        .output()
+        .expect("refresh again");
+    let after = std::fs::read_to_string(target.join("CLAUDE.md")).expect("read");
+    assert_eq!(before, after, "a second refresh changed the file");
+}
