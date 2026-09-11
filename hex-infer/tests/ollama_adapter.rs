@@ -16,7 +16,7 @@ use hex_core::ports::inference::{
     futures_stream, HealthStatus, IInferencePort, InferenceError, InferenceRequest, Priority,
     StreamChunk,
 };
-use hex_nexus::adapters::inference::OllamaInferenceAdapter;
+use hex_infer::providers::OllamaInferenceAdapter;
 use httpmock::prelude::*;
 
 // ---------------------------------------------------------------------------

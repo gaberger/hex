@@ -33,6 +33,7 @@ pub mod transport;
 pub use complete::{complete, CompleteError, CompleteRequest, Completion};
 pub use config::InferenceConfig;
 pub use endpoint::Endpoint;
+pub use routing::{classify_tier, TaskShape, Tier};
 pub use providers::{
     AnthropicAdapter, ClaudeCodeInferenceAdapter, OllamaInferenceAdapter, OpenAiCompatAdapter,
 };

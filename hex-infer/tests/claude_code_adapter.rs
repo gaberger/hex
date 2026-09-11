@@ -24,9 +24,9 @@ use hex_core::ports::inference::{
     futures_stream, HealthStatus, IInferencePort, InferenceError, InferenceRequest, Priority,
     StreamChunk,
 };
-use hex_nexus::adapters::inference::claude_code::testing::{MockProcessSpawner, MockResponse};
-use hex_nexus::adapters::inference::claude_code::SpawnedProcess;
-use hex_nexus::adapters::inference::ClaudeCodeInferenceAdapter;
+use hex_infer::providers::claude_code::testing::{MockProcessSpawner, MockResponse};
+use hex_infer::providers::claude_code::SpawnedProcess;
+use hex_infer::providers::ClaudeCodeInferenceAdapter;
 
 // ---------------------------------------------------------------------------
 // Helpers

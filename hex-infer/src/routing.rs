@@ -191,6 +191,145 @@ fn normalize_claude(model: &str) -> String {
     format!("anthropic/{model}")
 }
 
+
+// ── task tier classification ─────────────────────────────────────────────────
+//
+// Salvaged from `hex-nexus/src/orchestration/workplan_executor.rs::
+// classify_task_tier` and the nine classifier cases in
+// `hex-nexus/tests/tier_routing.rs`, per ADR-2608241500 P4.2. The daemon did
+// this classification on behalf of `hex plan execute`; once the daemon is gone
+// the executor runs in-process and still needs it, and tier routing is the
+// thing this crate is for.
+//
+// What did NOT come across: the router tests around `IRemoteRegistryPort` and
+// `IAgentTransportPort` — placing a request on a remote inference host is the
+// fleet model this ADR retires, and there is nothing left for them to assert.
+
+/// Inference tier for one unit of work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Tier {
+    /// Trivial edits: renames, typo fixes, comment changes. Fastest model.
+    #[serde(rename = "T1", alias = "t1")]
+    T1,
+    /// Single function or test generation. Best local codegen model.
+    #[serde(rename = "T2", alias = "t2")]
+    T2,
+    /// Multi-function, cross-file agentic work. Strong reasoning model.
+    #[serde(rename = "T2.5", alias = "t2.5", alias = "T2_5", alias = "t2_5")]
+    T2_5,
+    /// Multi-file features. Frontier model only.
+    #[serde(rename = "T3", alias = "t3")]
+    T3,
+}
+
+impl Tier {
+    /// The tier name as it appears in `.hex/project.json` and in workplans.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::T1 => "t1",
+            Self::T2 => "t2",
+            Self::T2_5 => "t2.5",
+            Self::T3 => "t3",
+        }
+    }
+}
+
+/// What the classifier needs to know about a task.
+///
+/// Deliberately not the workplan's own `WorkplanTask`: this crate places
+/// inference calls and must not take a position on the workplan schema. The
+/// caller projects whatever it has onto these fields.
+#[derive(Debug, Default, Clone)]
+pub struct TaskShape<'a> {
+    /// Explicit tier from the workplan. Wins over every heuristic.
+    pub tier: Option<Tier>,
+    /// `scaffold` / `transform` / `script` / `codegen` / `inference`.
+    pub strategy_hint: Option<&'a str>,
+    /// Role the task is assigned to, e.g. `hex-coder`, `planner`.
+    pub agent: Option<&'a str>,
+    /// Hexagonal layer: `domain`, `ports`, `primary`, `secondary`.
+    pub layer: Option<&'a str>,
+    /// How many other tasks this one waits on.
+    pub dep_count: usize,
+    /// Files the task creates or modifies.
+    pub files: &'a [String],
+    /// Task name and description, used for the design heuristic.
+    pub name: &'a str,
+    pub description: &'a str,
+}
+
+/// Route one task to a tier.
+///
+/// Priority: explicit `tier` > `strategy_hint` > design heuristic > agent role
+/// > layer and dependency count.
+///
+/// Deliberately conservative in one direction: under-classifying (T3 work sent
+/// to T2) costs a retry, while over-classifying (T1 work sent to T3) spends
+/// frontier budget on a rename.
+pub fn classify_tier(task: &TaskShape<'_>) -> Tier {
+    if let Some(tier) = task.tier {
+        return tier;
+    }
+
+    match task.strategy_hint.map(str::trim) {
+        Some(h) if h.eq_ignore_ascii_case("scaffold") => return Tier::T1,
+        Some(h) if h.eq_ignore_ascii_case("transform") => return Tier::T1,
+        Some(h) if h.eq_ignore_ascii_case("script") => return Tier::T1,
+        Some(h) if h.eq_ignore_ascii_case("codegen") => return Tier::T2,
+        Some(h) if h.eq_ignore_ascii_case("inference") => return Tier::T2_5,
+        _ => {}
+    }
+
+    // Front-end DESIGN work needs a reasoning model; standard codegen produces
+    // rough, unstyled output (lesson:tier-routing-for-ui, 2026-05-31). Checked
+    // before the role default so a coder building a Tailwind grid does not fall
+    // through to T2.
+    if is_ui_design(task) {
+        return Tier::T2_5;
+    }
+
+    match task.agent.map(str::trim) {
+        Some("planner" | "hex-planner") => return Tier::T2,
+        Some("reviewer" | "hex-reviewer") => return Tier::T2,
+        Some("integrator" | "hex-integrator") => return Tier::T2_5,
+        _ => {}
+    }
+
+    match task.layer.map(str::trim) {
+        Some("domain") | Some("ports") => Tier::T2,
+        Some("primary") | Some("secondary") => {
+            if task.dep_count >= 2 {
+                Tier::T2_5
+            } else {
+                Tier::T2
+            }
+        }
+        // Safe default: cheap to retry, expensive to over-spend.
+        _ => Tier::T2,
+    }
+}
+
+/// True when a task is front-end design work — visual, layout or styling.
+///
+/// Detected by the files it touches or by design vocabulary in its name and
+/// description.
+fn is_ui_design(task: &TaskShape<'_>) -> bool {
+    const UI_EXT: [&str; 7] = [".tsx", ".jsx", ".vue", ".svelte", ".css", ".scss", ".html"];
+    if task
+        .files
+        .iter()
+        .any(|f| UI_EXT.iter().any(|e| f.to_ascii_lowercase().ends_with(e)))
+    {
+        return true;
+    }
+    const UI_KW: [&str; 9] = [
+        "tailwind", "css", "stylesheet", " ui ", "frontend", "layout", "grid of", "component",
+        "responsive",
+    ];
+    let hay = format!("{} {}", task.name, task.description).to_ascii_lowercase();
+    UI_KW.iter().any(|k| hay.contains(k))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,4 +561,131 @@ mod selection_tests {
         assert_eq!(first_local(&eps).unwrap().id, "oll");
         assert!(first_local(&[ep("or", "openrouter", "x", 0.0)]).is_none());
     }
+
+    // ── tier classification (salvaged from hex-nexus/tests/tier_routing.rs) ──
+
+    fn task<'a>() -> TaskShape<'a> {
+        TaskShape::default()
+    }
+
+    #[test]
+    fn an_explicit_tier_overrides_every_heuristic() {
+        let t = TaskShape { tier: Some(Tier::T3), layer: Some("domain"), ..task() };
+        assert_eq!(classify_tier(&t), Tier::T3);
+    }
+
+    #[test]
+    fn a_strategy_hint_beats_the_role_and_layer_heuristics() {
+        let t = TaskShape {
+            strategy_hint: Some("scaffold"),
+            agent: Some("integrator"),
+            layer: Some("primary"),
+            dep_count: 5,
+            ..task()
+        };
+        assert_eq!(classify_tier(&t), Tier::T1);
+    }
+
+    #[test]
+    fn every_documented_strategy_hint_routes() {
+        for (hint, want) in [
+            ("scaffold", Tier::T1),
+            ("transform", Tier::T1),
+            ("script", Tier::T1),
+            ("codegen", Tier::T2),
+            ("inference", Tier::T2_5),
+            ("INFERENCE", Tier::T2_5),
+            ("  codegen  ", Tier::T2),
+        ] {
+            let t = TaskShape { strategy_hint: Some(hint), ..task() };
+            assert_eq!(classify_tier(&t), want, "hint {hint:?}");
+        }
+    }
+
+    #[test]
+    fn agent_roles_map_to_their_tiers() {
+        for (agent, want) in [
+            ("planner", Tier::T2),
+            ("hex-planner", Tier::T2),
+            ("reviewer", Tier::T2),
+            ("hex-reviewer", Tier::T2),
+            ("integrator", Tier::T2_5),
+            ("hex-integrator", Tier::T2_5),
+        ] {
+            let t = TaskShape { agent: Some(agent), ..task() };
+            assert_eq!(classify_tier(&t), want, "agent {agent:?}");
+        }
+    }
+
+    #[test]
+    fn contract_layers_map_to_t2() {
+        for layer in ["domain", "ports"] {
+            let t = TaskShape { layer: Some(layer), ..task() };
+            assert_eq!(classify_tier(&t), Tier::T2, "layer {layer:?}");
+        }
+    }
+
+    #[test]
+    fn an_adapter_escalates_only_once_it_has_dependencies() {
+        let few = TaskShape { layer: Some("secondary"), dep_count: 1, ..task() };
+        assert_eq!(classify_tier(&few), Tier::T2);
+        let many = TaskShape { layer: Some("primary"), dep_count: 2, ..task() };
+        assert_eq!(classify_tier(&many), Tier::T2_5);
+    }
+
+    #[test]
+    fn an_unknown_layer_takes_the_safe_default() {
+        assert_eq!(classify_tier(&task()), Tier::T2);
+        let t = TaskShape { layer: Some("something-else"), ..task() };
+        assert_eq!(classify_tier(&t), Tier::T2);
+    }
+
+    #[test]
+    fn design_work_escalates_by_the_files_it_touches() {
+        for ext in [".tsx", ".jsx", ".vue", ".svelte", ".css", ".scss", ".html"] {
+            let files = vec![format!("app/Widget{ext}")];
+            let t = TaskShape { files: &files, layer: Some("primary"), ..task() };
+            assert_eq!(classify_tier(&t), Tier::T2_5, "extension {ext}");
+        }
+    }
+
+    #[test]
+    fn design_work_escalates_by_vocabulary() {
+        let t = TaskShape {
+            name: "Build the responsive grid of cards",
+            agent: Some("hex-coder"),
+            ..task()
+        };
+        assert_eq!(classify_tier(&t), Tier::T2_5);
+    }
+
+    #[test]
+    fn ordinary_backend_work_is_not_mistaken_for_design() {
+        let files = vec!["hex-core/src/domain/workplan.rs".to_string()];
+        let t = TaskShape {
+            files: &files,
+            name: "Add a phase gate field",
+            description: "Extend the workplan schema.",
+            layer: Some("domain"),
+            ..task()
+        };
+        assert_eq!(classify_tier(&t), Tier::T2);
+    }
+
+    #[test]
+    fn tier_names_round_trip_through_json_including_the_dotted_one() {
+        for (json, tier) in [
+            ("\"T1\"", Tier::T1),
+            ("\"t1\"", Tier::T1),
+            ("\"T2.5\"", Tier::T2_5),
+            ("\"t2.5\"", Tier::T2_5),
+            ("\"T3\"", Tier::T3),
+        ] {
+            let got: Tier = serde_json::from_str(json).expect(json);
+            assert_eq!(got, tier, "parsing {json}");
+        }
+        assert_eq!(serde_json::to_string(&Tier::T2_5).unwrap(), "\"T2.5\"");
+        assert_eq!(Tier::T2_5.as_str(), "t2.5");
+    }
+
 }

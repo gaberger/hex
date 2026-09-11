@@ -2375,6 +2375,7 @@ dependencies = [
  "async-trait",
  "futures",
  "hex-core",
+ "httpmock",
  "reqwest",
  "serde",
  "serde_json",

@@ -313,7 +313,7 @@
           "id": "P4.2",
           "name": "Port surviving tests forward into the crates they exercise",
           "layer": "secondary",
-          "description": "hex-nexus carries ~1,000 test functions and hex-cli ~683. Identify every test whose assertions concern hex-exec, hex-core, hex-analysis, hex-graph or hex-git rather than daemon routing, and relocate it into that crate's own test module or tests/ directory, confirming it passes there. Tests that only exercise daemon routing, STDB adapters, or the dashboard are deleted with them \u2014 record the deleted count explicitly rather than letting it vanish silently. Satisfies S06.",
+          "description": "DONE 2026-09-11. docs/analysis/2608241500-test-salvage.md.\n\n1,197 test attributes sit in crates scheduled for deletion (hex-nexus 946, hex-agent 238, hex-state 13). 23 of them asserted behaviour of a surviving crate and all 23 were ported:\n- classify_task_tier + its 9 classifier cases -> hex-infer/src/routing.rs as classify_tier(TaskShape) (11 tests; table-driven, plus two for Tier's JSON round trip since T2.5's wire spelling differs from its name). `hex plan execute` survives and runs in-process, so it still needs the classification, and tier routing is what hex-infer is for. Taking a TaskShape rather than the daemon's WorkplanTask keeps hex-infer out of the workplan schema.\n- hex-nexus/tests/{ollama,claude_code}_adapter.rs -> hex-infer/tests/ (12 tests). Already hermetic (httpmock), so git mv plus an import rewrite. P2.2 moved the adapters' in-file unit tests; these integration tests were left behind and would have been deleted with the daemon. httpmock added to hex-infer dev-deps.\n\nFINDING WORTH NAMING: hex-nexus/tests/worktree_enforcement.rs is 30 tests across 'all 8 phases' of ADR-2026-03-23-1700 that import nothing but std \u2014 SessionState and the hook logic are REDEFINED INSIDE THE TEST FILE. It asserts against a copy of the design, not the shipped code: the exact 'tests can mirror bugs' failure CLAUDE.md warns about. Deleting it removes no coverage of anything that runs. merge_gate_reducers.rs (27) is the same shape against a live STDB.\n\nOPEN ITEM RECORDED, NOT FIXED: `hex worktree` survives with no tests against its real implementation. That gap is revealed by this audit, not created by it; it deserves its own task once the deletion phases settle the verb's surface.\n\n19 more tests (hexflo_memory_adapter/e2e) had their coverage REPLACED rather than ported \u2014 FileStore's 16 tests cover the same guarantees plus three the STDB adapter could not have. The remaining ~1,150 describe daemon routing, STDB reducers, fleet coordination or the retired SOP pipeline; there is no surviving code for them to describe.\n\nORIGINAL: hex-nexus carries ~1,000 test functions and hex-cli ~683. Identify every test whose assertions concern hex-exec, hex-core, hex-analysis, hex-graph or hex-git rather than daemon routing, and relocate it into that crate's own test module or tests/ directory, confirming it passes there. Tests that only exercise daemon routing, STDB adapters, or the dashboard are deleted with them \u2014 record the deleted count explicitly rather than letting it vanish silently. Satisfies S06.",
           "deps": [
             "P4.1"
           ],
@@ -323,7 +323,7 @@
             "hex-analysis/src/",
             "hex-graph/src/"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder",
           "strategy_hint": "transform"
         }

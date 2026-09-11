@@ -20,5 +20,6 @@ tracing = "0.1"
 thiserror = "2"
 
 [dev-dependencies]
+httpmock = "0.7"
 tempfile = "3"
 tokio = { version = "1", features = ["full", "macros", "rt-multi-thread"] }
