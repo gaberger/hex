@@ -338,8 +338,11 @@ fn create_claude_md(target: &Path, project_name: &str) -> Result<()> {
     // Don't overwrite existing CLAUDE.md — append hex rules instead
     if claude_md_path.exists() {
         let existing = fs::read_to_string(&claude_md_path)?;
-        if existing.contains("Hexagonal Architecture Rules") {
-            // Already has hex rules, skip
+        if existing.contains(super::refresh::START_MARKER)
+            || existing.contains("Hexagonal Architecture Rules")
+        {
+            // Already carries a hex section. `hex refresh` updates it; init
+            // must not append a second copy.
             return Ok(());
         }
         // Append hex section
@@ -375,9 +378,13 @@ fn create_claude_md(target: &Path, project_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// The hex-managed section, already wrapped in its refresh markers.
+///
+/// Written wrapped so `hex refresh` can replace it later as a pure span swap.
+/// A bare section leaves the file with no marker and no legacy heading, and
+/// refresh correctly refuses to guess where a hand-written file ends.
 fn hex_claude_md_section() -> String {
-    crate::assets::Assets::get_str("templates/claude-md-hex-section.md")
-        .expect("claude-md-hex-section.md must be embedded in assets/templates/")
+    super::refresh::wrapped_hex_section()
 }
 
 /// The languages `--scaffold` can emit, and the command that gates each one.
@@ -560,48 +567,8 @@ fn create_adr_rules_toml(target: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let content = r#"# hex architecture rules
-# - [rules]           read by `hex enforce check-file` (forbidden path patterns)
-# - [[hex_layer_rules]] read by `hex enforce check-file` (layer boundary rules)
-# - [[adr_rules]]     read by `hex analyze` (ADR compliance violation patterns)
-#
-# path_pattern is an unanchored substring match (see hex_core::rules::boundary),
-# so these match regardless of language or package-name nesting under src/ —
-# e.g. "/domain/" matches both "src/domain/foo.ts" and "src/mypkg/core/domain/foo.py",
-# while the trailing slash avoids false positives like "src/domainxyz/foo.py".
-
-[rules]
-forbidden_paths = ["node_modules", ".git", "dist", ".env", "target"]
-
-[[hex_layer_rules]]
-path_pattern = "/adapters/primary/"
-layer = "adapters/primary"
-
-[[hex_layer_rules]]
-path_pattern = "/adapters/secondary/"
-layer = "adapters/secondary"
-
-[[hex_layer_rules]]
-path_pattern = "/domain/"
-layer = "domain"
-
-[[hex_layer_rules]]
-path_pattern = "/ports/"
-layer = "ports"
-
-[[hex_layer_rules]]
-path_pattern = "/usecases/"
-layer = "usecases"
-
-# Example ADR compliance rule (uncomment and customize):
-# [[adr_rules]]
-# adr = "ADR-001"
-# id = "no-direct-db-in-domain"
-# message = "Domain must not import database adapters directly"
-# severity = "error"
-# file_patterns = ["src/domain/**"]
-# violation_patterns = ["import.*adapters/secondary"]
-"#;
+    let content = crate::assets::Assets::get_str("templates/ADR-rules.toml")
+        .expect("templates/ADR-rules.toml must be embedded in assets/templates/");
 
     fs::write(&rules_path, content)
         .context("Failed to write .hex/ADR-rules.toml")?;

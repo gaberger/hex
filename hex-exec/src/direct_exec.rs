@@ -310,7 +310,9 @@ pub fn runs_summary() -> Value {
 pub async fn execute_direct(task: DirectTask) -> DirectResult {
     let started = std::time::Instant::now();
     let started_at = chrono::Utc::now().to_rfc3339();
-    let model = resolve_model(&task);
+    let Some(model) = resolve_model(&task) else {
+        return DirectResult::err(NO_MODEL_CONFIGURED.to_string());
+    };
 
     // Default (ADR-2606071XXX): the multi-step ReAct tool-use loop — the agent
     // explores (grep/read/cargo_check) before editing. `--fast` keeps the
@@ -339,11 +341,26 @@ pub async fn execute_direct(task: DirectTask) -> DirectResult {
     }
 }
 
-pub(crate) fn resolve_model(task: &DirectTask) -> String {
-    task.model.clone().unwrap_or_else(|| {
-        std::env::var("HEX_DIRECT_MODEL").unwrap_or_else(|_| "qwen2.5-coder:32b".to_string())
-    })
+/// The model this task runs on: the task's own choice, then the environment
+/// override, then the project's configured tier.
+///
+/// The last step used to be a hardcoded model id. That is the founding-goal G1
+/// failure the tier module exists to remove — a caller that names a model
+/// cannot be re-pointed by editing configuration, which is the entire content
+/// of "model independence". `hex_infer::tier_model` returns `None` rather than
+/// guessing, on purpose, so an unconfigured project fails with a message that
+/// names the missing key instead of silently running on a model nobody chose.
+pub(crate) fn resolve_model(task: &DirectTask) -> Option<String> {
+    task.model
+        .clone()
+        .or_else(|| std::env::var("HEX_DIRECT_MODEL").ok())
+        .or_else(|| hex_infer::tier_model("t2"))
 }
+
+/// What to tell an operator whose project configures no model for the do-loop.
+pub(crate) const NO_MODEL_CONFIGURED: &str =
+    "no model configured — set inference.tier_models.t2 in .hex/project.json, \
+     pass --model, or set HEX_DIRECT_MODEL";
 
 /// Should this run be isolated to its own worktree? Default TRUE (ADR-2606071323)
 /// — only the operator path opts out via `isolate:false`.
@@ -393,9 +410,9 @@ async fn exec_attempts(task: &DirectTask, repo_root: &std::path::Path, factory: 
     // evidence depends on (ADR-2606080915 follow-up — do-loop commit-gap fix).
     let start_dirty = dirty_paths(repo_root).await;
     let max_attempts = task.max_attempts.unwrap_or(3).clamp(1, 6);
-    let model = task.model.clone().unwrap_or_else(|| {
-        std::env::var("HEX_DIRECT_MODEL").unwrap_or_else(|_| "qwen2.5-coder:32b".to_string())
-    });
+    let Some(model) = resolve_model(task) else {
+        return DirectResult::err(NO_MODEL_CONFIGURED.to_string());
+    };
 
     let abs_path = repo_root.join(&task.file);
 

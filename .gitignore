@@ -72,10 +72,14 @@ docs/algebra/states/
 
 # Filesystem artifacts
 Volumes/
-# .hex is runtime state (at any depth) except the two committed root config files
+# .hex is runtime state (at any depth) except the root config files below.
+# ADR-rules.toml is the project's rule set, not per-machine state: it is what
+# `hex analyze .` checks this repository against, so it has to travel with the
+# repository or every checkout enforces something different.
 **/.hex/*
 !.hex/project.json
 !.hex/project.yaml
+!.hex/ADR-rules.toml
 .superset/
 # weave framework runtime state (sibling repo ~/development/weave integration) — local db only
 .weave/

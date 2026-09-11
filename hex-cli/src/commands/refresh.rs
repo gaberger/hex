@@ -26,9 +26,20 @@ use anyhow::{Context, Result};
 use clap::Args;
 use colored::Colorize;
 
-const START_MARKER: &str = "<!-- hex:claude-md:start -->";
-const END_MARKER: &str = "<!-- hex:claude-md:end -->";
+pub const START_MARKER: &str = "<!-- hex:claude-md:start -->";
+pub const END_MARKER: &str = "<!-- hex:claude-md:end -->";
 const LEGACY_HEADING: &str = "## hex Autonomous Behavior";
+
+/// The shipped section, wrapped in the markers that make a later `hex refresh`
+/// a pure replacement.
+///
+/// `hex init` uses this too. It used to write the section bare, which meant a
+/// freshly initialised project had neither a marker nor the legacy heading, so
+/// `hex refresh` declined to touch it — the projects most likely to want a
+/// newer rule set were the only ones that could never receive one.
+pub fn wrapped_hex_section() -> String {
+    format!("{START_MARKER}\n{}\n{END_MARKER}", hex_section_template().trim())
+}
 
 #[derive(Args, Debug)]
 pub struct RefreshArgs {
@@ -80,7 +91,7 @@ pub async fn run(args: RefreshArgs) -> Result<()> {
     let existing = fs::read_to_string(&claude_md)
         .with_context(|| format!("reading {}", claude_md.display()))?;
     let template = hex_section_template();
-    let wrapped = format!("{START_MARKER}\n{}\n{END_MARKER}", template.trim());
+    let wrapped = wrapped_hex_section();
 
     let (updated, how) = if let (Some(start), Some(end)) = (
         existing.find(START_MARKER),
@@ -162,10 +173,17 @@ fn hex_section_template() -> String {
 /// those terminates it. If none found, returns `slice.len()` (EOF).
 fn find_legacy_section_end(slice: &str) -> usize {
     const HEX_HEADINGS: &[&str] = &[
+        // Pre-collapse headings. Kept so a CLAUDE.md written by an older hex
+        // is still recognised as one span and replaced whole, rather than
+        // leaving half a daemon-era rule set stranded below the new section.
         "## hex Autonomous Behavior",
         "## hex Tool Precedence",
+        // Current headings.
+        "## hex — how to work in this project",
+        "## Development pipeline",
         "## Hexagonal Architecture Rules",
         "## File Organization",
+        "## Lessons that a rule cannot catch",
     ];
     let mut cursor = 0;
     // Skip past the opening heading line itself so we don't match it.

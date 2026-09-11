@@ -45,19 +45,19 @@ const ALLOWED_TOOLS: &[&str] =
 /// its OWN setting, distinct from the single-shot default. Precedence:
 /// explicit `--model` → `HEX_REACT_MODEL` env → `.hex/project.json`
 /// `inference.react_model` → the single-shot default.
-pub(crate) fn resolve_react_model(task: &DirectTask) -> String {
+pub(crate) fn resolve_react_model(task: &DirectTask) -> Option<String> {
     if let Some(m) = &task.model {
         if !m.is_empty() {
-            return m.clone();
+            return Some(m.clone());
         }
     }
     if let Ok(m) = std::env::var("HEX_REACT_MODEL") {
         if !m.is_empty() {
-            return m;
+            return Some(m);
         }
     }
     if let Some(m) = react_model_from_config() {
-        return m;
+        return Some(m);
     }
     direct_exec::resolve_model(task)
 }
@@ -82,11 +82,17 @@ pub async fn react_execute(task: DirectTask) -> (DirectResult, u32, String) {
     let slug = crate::direct_workspace::next_run_slug();
     let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate) {
         Ok(w) => w,
-        Err(e) => return (DirectResult::err(format!("workspace: {e}")), 0, resolve_react_model(&task)),
+        Err(e) => {
+            return (
+                DirectResult::err(format!("workspace: {e}")),
+                0,
+                resolve_react_model(&task).unwrap_or_default(),
+            )
+        }
     };
     if let Err(e) = workspace.assert_off_operator_tree() {
         workspace.finish(false);
-        return (DirectResult::err(e), 0, resolve_react_model(&task));
+        return (DirectResult::err(e), 0, resolve_react_model(&task).unwrap_or_default());
     }
     let repo_root = workspace.workdir().to_path_buf();
     let factory = workspace.is_isolated();
@@ -101,7 +107,13 @@ async fn react_attempts(
     repo_root: &std::path::Path,
     factory: bool,
 ) -> (DirectResult, u32, String) {
-    let model = resolve_react_model(task);
+    let Some(model) = resolve_react_model(task) else {
+        return (
+            DirectResult::err(direct_exec::NO_MODEL_CONFIGURED.to_string()),
+            0,
+            String::new(),
+        );
+    };
     let max_steps = task.max_steps.unwrap_or(DEFAULT_MAX_STEPS).clamp(1, 40);
     let abs_path = repo_root.join(&task.file);
     // Snapshot pre-run dirty files so the commit includes the supporting files the
@@ -559,7 +571,11 @@ pub fn candidate_models(explicit: Option<&str>, configured: &[String], single: O
     if let Some(m) = single {
         return vec![m.to_string()];
     }
-    vec!["devstral-small-2:24b".to_string(), "qwen2.5-coder:14b".to_string()]
+    // No hardcoded last resort. A model id written here is a model the
+    // operator never chose and cannot change by editing configuration — the
+    // founding-goal G1 failure in one line. An empty list makes the caller
+    // say what is missing instead.
+    Vec::new()
 }
 /// Extract candidate model list from a parsed config JSON value
 /// and delegate ordering/precedence to candidate_models.

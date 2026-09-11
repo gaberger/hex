@@ -18,10 +18,17 @@ fn configured_list_used_when_no_explicit() {
 fn single_fallback_when_list_empty() {
     assert_eq!(candidate_models(None, &[], Some("bar")), s(&["bar"]));
 }
+/// Nothing configured means nothing to run, not a model of hex's choosing.
+///
+/// This used to assert a hardcoded pair of model ids. Founding goal G1 says no
+/// non-test file outside `hex-infer` may name a provider or a model, and a
+/// hardcoded last resort is the clearest way to break it: the operator cannot
+/// re-point it by editing configuration, and cannot see that it happened,
+/// because a run on the wrong model looks exactly like a run on the right one.
+///
+/// An empty list makes the caller say `NO_MODEL_CONFIGURED` and name the key
+/// that is missing.
 #[test]
-fn default_pair_when_nothing_set() {
-    assert_eq!(
-        candidate_models(None, &[], None),
-        s(&["devstral-small-2:24b", "qwen2.5-coder:14b"])
-    );
+fn nothing_configured_yields_no_candidates() {
+    assert_eq!(candidate_models(None, &[], None), Vec::<String>::new());
 }

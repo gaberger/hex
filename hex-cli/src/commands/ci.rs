@@ -43,9 +43,15 @@ pub async fn run() -> anyhow::Result<()> {
 
 /// Standalone composition gate (ADR-2026-04-11-2000).
 ///
-/// Validates that the standalone composition path works by:
-/// 1. Running the doctor composition check to verify prerequisites.
-/// 2. Running the standalone dispatch test suites from P2, P3, and P6.
+/// Validates that the dispatch path works end to end:
+/// 1. The composition check — an inference adapter resolves.
+/// 2. The inference adapters' own tests.
+/// 3. The agent loop and its guarded tool library.
+///
+/// "Standalone" named the no-daemon variant back when there was a daemon to be
+/// the other variant. There is only this one now (ADR-2608241500); the verb
+/// survives because the question it asks — can this binary dispatch work on its
+/// own — is still worth asking on every build.
 pub async fn run_standalone_gate() -> anyhow::Result<()> {
     println!("{} hex ci --standalone-gate", "\u{2b21}".cyan());
     println!();
@@ -68,26 +74,18 @@ pub async fn run_standalone_gate() -> anyhow::Result<()> {
         all_passed = false;
     }
 
-    // Step 2: Standalone dispatch tests (P2 — composition)
-    all_passed &= run_test_suite(
-        "P2 composition",
-        &["test", "-p", "hex-nexus", "--lib", "--", "composition_standalone", "--ignored"],
-    )
-    .await;
-
-    // Step 3: Ollama adapter tests (P3)
-    all_passed &= run_test_suite(
-        "P3 Ollama adapter",
-        &["test", "-p", "hex-nexus", "--lib", "--", "ollama", "--ignored"],
-    )
-    .await;
-
-    // Step 4: Standalone dispatch e2e tests (P6)
-    all_passed &= run_test_suite(
-        "P6 standalone dispatch",
-        &["test", "-p", "hex-nexus", "--lib", "--", "standalone_dispatch", "--ignored"],
-    )
-    .await;
+    // Steps 2 and 3: the crates the dispatch path is actually made of.
+    //
+    // These three steps used to run `cargo test -p hex-nexus -- … --ignored`
+    // against three suites in the daemon. The daemon went in ADR-2608241500 and
+    // its suites went with it, so every run of this gate printed three `fail`
+    // lines reading "package ID specification `hex-nexus` did not match any
+    // packages" — a gate failing for a reason that has nothing to do with what
+    // it gates, which is indistinguishable from the thing it gates being
+    // broken. It was found by hex's own ADR rules, on the line naming the
+    // deleted crate.
+    all_passed &= run_test_suite("Inference adapters", &["test", "-p", "hex-infer"]).await;
+    all_passed &= run_test_suite("Agent loop + tools", &["test", "-p", "hex-exec"]).await;
 
     println!();
     if all_passed {
@@ -121,14 +119,35 @@ async fn run_test_suite(label: &str, args: &[&str]) -> bool {
             let stderr = String::from_utf8_lossy(&o.stderr);
             let stdout = String::from_utf8_lossy(&o.stdout);
             println!("{}", "fail".red());
-            // Show first few lines of output for diagnostics
-            let combined = if stderr.is_empty() {
-                stdout.to_string()
+            // Show the lines that say what failed.
+            //
+            // This used to print the first five lines of stderr, which for
+            // `cargo test` are compile warnings from the build it ran first.
+            // A failing gate reported "warning: function `feed_path` is never
+            // used" and said nothing about the assertion that actually broke —
+            // output that is worse than none, because it sends the reader after
+            // the wrong thing.
+            let combined = format!("{stderr}\n{stdout}");
+            let signal: Vec<&str> = combined
+                .lines()
+                .filter(|l| {
+                    let t = l.trim_start();
+                    t.starts_with("error")
+                        || t.starts_with("test result: FAILED")
+                        || t.starts_with("panicked")
+                        || t.contains("... FAILED")
+                        || t.contains("did not match any packages")
+                })
+                .collect();
+            let shown: Vec<&str> = if signal.is_empty() {
+                // Nothing matched: fall back to the tail, where a runner puts
+                // its summary, rather than the head, where the build puts noise.
+                combined.lines().rev().take(5).collect::<Vec<_>>()
             } else {
-                stderr.to_string()
+                signal
             };
-            for line in combined.lines().take(5) {
-                println!("      {}", line.dimmed());
+            for line in shown.iter().take(8) {
+                println!("      {}", line.trim_end().dimmed());
             }
             false
         }

@@ -200,3 +200,61 @@ fn no_scaffolded_file_contains_a_placeholder() {
         }
     }
 }
+
+/// The lessons ship as rules, and a rule that never fires is prose with extra
+/// steps. One planted violation per rule, each of which must be reported.
+#[test]
+fn the_scaffolded_rules_actually_fire() {
+    let dir = scaffold("rust");
+    let target = dir.path().join("demo-app");
+    std::fs::write(
+        target.join("src/offender.rs"),
+        concat!(
+            "pub fn bad() {\n",
+            "    let _root = \"/home/someone/hardcoded\";\n",
+            "    let _url = \"http://127.0.0.1:5555/api\";\n",
+            "    let _model = \"qwen2.5-coder:14b\";\n",
+            "    let big: u64 = 1 << 40;\n",
+            "    let _small = big as u32;\n",
+            "}\n"
+        ),
+    )
+    .expect("write offender");
+
+    let out = Command::new(hex_bin())
+        .args(["analyze", "."])
+        .current_dir(&target)
+        .output()
+        .expect("run hex analyze");
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+
+    for expected in [
+        "Hardcoded absolute path",
+        "Hardcoded host:port",
+        "model or provider name outside the inference boundary",
+        "Narrowing `as` cast",
+    ] {
+        assert!(text.contains(expected), "rule did not fire: {expected}\n{text}");
+    }
+}
+
+/// And the other half, which matters more: a rule that flags correct code is
+/// worse than no rule, because it teaches people to ignore the output. A
+/// freshly scaffolded project must satisfy every rule it ships with.
+#[test]
+fn a_clean_scaffold_satisfies_its_own_rules() {
+    for lang in ["rust", "go", "ts"] {
+        let dir = scaffold(lang);
+        let target = dir.path().join("demo-app");
+        let out = Command::new(hex_bin())
+            .args(["analyze", "."])
+            .current_dir(&target)
+            .output()
+            .expect("run hex analyze");
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        assert!(
+            text.contains("All ADR rules satisfied"),
+            "{lang}: a fresh scaffold trips its own rules:\n{text}"
+        );
+    }
+}

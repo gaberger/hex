@@ -311,7 +311,8 @@ pub async fn run(
         println!();
         println!("  {}", "ADR compliance:".bold());
     }
-    let adr_violations = check_adr_compliance(&root);
+    let compliance = check_adr_compliance(&root);
+    let adr_violations = &compliance.violations;
     let error_count = adr_violations.iter().filter(|v| v.severity == "error").count();
     let warning_count = adr_violations.iter().filter(|v| v.severity == "warning").count();
 
@@ -329,12 +330,19 @@ pub async fn run(
                 v.file, v.line, v.message,
             );
         }
-        for v in &adr_violations {
+        for v in adr_violations {
             println!(
                 "VIOLATION [{}] {}:{} — {}",
                 v.adr, v.file, v.line, v.message,
             );
         }
+    } else if let Some(reason) = &compliance.skipped {
+        // Not a pass. Say so in the words of the thing that did not happen.
+        println!(
+            "    {} ADR rules NOT CHECKED — {}",
+            "\u{25cb}".yellow(),
+            reason,
+        );
     } else if adr_violations.is_empty() {
         println!(
             "    {} All ADR rules satisfied",
@@ -348,7 +356,7 @@ pub async fn run(
             error_count,
             warning_count,
         );
-        for v in &adr_violations {
+        for v in adr_violations {
             let icon = if v.severity == "error" {
                 "\u{2717}".red()
             } else {
@@ -1244,7 +1252,120 @@ struct AdrRuleConfig {
 
 fn default_severity() -> String { "warning".to_string() }
 
-fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
+/// The result of an ADR compliance run, which is *not* the same thing as a
+/// list of violations.
+///
+/// An empty list means one of two opposite things: every rule passed, or no
+/// rule ran. Collapsing them is the silent-fallback failure this codebase has
+/// already made once — `hex ci`'s boundary check fell back to `cargo check`
+/// when its analyzer was unreachable and still printed a result, quietly
+/// turning "no boundary violations" into "it compiles". Reporting a green tick
+/// for a check that did not happen is the same bug in a smaller hat, and until
+/// this type existed `hex analyze` printed exactly that: "skipping compliance
+/// check" immediately followed by "✓ All ADR rules satisfied".
+struct AdrCompliance {
+    /// `None` when the rules ran. `Some(reason)` when they did not.
+    skipped: Option<String>,
+    violations: Vec<AdrViolationLocal>,
+}
+
+impl AdrCompliance {
+    fn skipped(reason: impl Into<String>) -> Self {
+        Self { skipped: Some(reason.into()), violations: Vec::new() }
+    }
+    fn ran(violations: Vec<AdrViolationLocal>) -> Self {
+        Self { skipped: None, violations }
+    }
+}
+
+/// Line numbers (0-based) that sit inside a `#[cfg(test)]` module.
+///
+/// Rust does not put its unit tests in a separate file, so a rule's
+/// path-based `exclude_patterns` cannot reach them: `worktree.rs` is not a
+/// test path, but the bottom third of it is nothing but tests. Without this,
+/// every fixture string in the workspace is reported as production code — a
+/// test asserting `detect_from_model_name("qwen3:32b")` was flagged as naming
+/// a model outside the inference boundary, which is the rule firing on the
+/// code that proves the rule's own subject works. A rule that flags correct
+/// code is worse than no rule: it teaches people to skim past the output.
+///
+/// **Indentation, not brace counting.** The first version of this counted
+/// braces and was immediately fooled by a `{` inside a string literal — it
+/// swallowed the remaining 300 lines of `init.rs` and silently switched every
+/// rule off for that file. Nothing reported an error; the violation count just
+/// went down, which looks exactly like progress. That is the silent-fallback
+/// failure this rule set exists to name, committed by the rule set's own
+/// engine.
+///
+/// `#[cfg(test)] mod tests { … }` closes with a `}` at the attribute's own
+/// indentation, which no string literal can imitate, because rustfmt owns the
+/// left margin.
+///
+/// If no matching close is found, this skips **nothing** for that attribute.
+/// A missed exclusion shows up as noise, which someone reads; an over-broad
+/// one shows up as silence, which nobody does.
+fn cfg_test_lines(content: &str) -> std::collections::HashSet<usize> {
+    let mut skip = std::collections::HashSet::new();
+    let lines: Vec<&str> = content.lines().collect();
+    let indent_of = |l: &str| l.len() - l.trim_start().len();
+
+    let mut i = 0;
+    while i < lines.len() {
+        if !lines[i].trim_start().starts_with("#[cfg(test)]") {
+            i += 1;
+            continue;
+        }
+        let want = indent_of(lines[i]);
+        let close = (i + 1..lines.len()).find(|&k| {
+            let t = lines[k].trim_start();
+            t.starts_with('}') && indent_of(lines[k]) == want
+        });
+        match close {
+            Some(k) => {
+                skip.extend(i..=k);
+                i = k + 1;
+            }
+            None => i += 1,
+        }
+    }
+    skip
+}
+
+#[cfg(test)]
+mod cfg_test_lines_tests {
+    use super::cfg_test_lines;
+
+    #[test]
+    fn it_skips_a_top_level_test_module_and_nothing_after_it() {
+        let src = "fn a() {}\n#[cfg(test)]\nmod t {\n    fn b() {}\n}\nfn c() {}\n";
+        let skip = cfg_test_lines(src);
+        assert!(!skip.contains(&0), "production code before the module");
+        for n in 1..=4 {
+            assert!(skip.contains(&n), "line {n} is inside the test module");
+        }
+        assert!(!skip.contains(&5), "production code after the module");
+    }
+
+    /// The regression that motivated the rewrite: a brace inside a string
+    /// literal must not extend the module to the end of the file.
+    #[test]
+    fn a_brace_in_a_string_does_not_swallow_the_rest_of_the_file() {
+        let src = "#[cfg(test)]\nmod t {\n    let s = \"{unclosed\";\n}\nfn after() {}\n";
+        let skip = cfg_test_lines(src);
+        assert!(skip.contains(&2), "the string line is inside the module");
+        assert!(!skip.contains(&4), "`fn after` is production code and must be scanned");
+    }
+
+    /// Loud over quiet: an unterminated module excludes nothing rather than
+    /// silently disabling every rule for the rest of the file.
+    #[test]
+    fn an_unterminated_module_skips_nothing() {
+        let src = "#[cfg(test)]\nmod t {\n    let _ = 1;\n";
+        assert!(cfg_test_lines(src).is_empty());
+    }
+}
+
+fn check_adr_compliance(root: &Path) -> AdrCompliance {
     // Load rules from project's .hex/ADR-rules.toml
     let rules_path = root.join(".hex").join("ADR-rules.toml");
     let rules = if rules_path.is_file() {
@@ -1260,21 +1381,23 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
                     parsed.adr_rules
                 }
                 Err(e) => {
-                    eprintln!(
-                        "    {} Failed to parse ADR-rules.toml: {}",
-                        "\u{2717}".red(), e
-                    );
-                    return Vec::new();
+                    return AdrCompliance::skipped(format!(
+                        "{} is present but does not parse: {e}",
+                        rules_path.strip_prefix(root).unwrap_or(&rules_path).display()
+                    ));
                 }
             },
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                return AdrCompliance::skipped(format!(
+                    "{} could not be read: {e}",
+                    rules_path.strip_prefix(root).unwrap_or(&rules_path).display()
+                ));
+            }
         }
     } else {
-        eprintln!(
-            "    {} No .hex/ADR-rules.toml found — skipping compliance check",
-            "\u{25cb}".dimmed()
+        return AdrCompliance::skipped(
+            "no .hex/ADR-rules.toml — run `hex init` to write the shipped rule set",
         );
-        return Vec::new();
     };
 
     let active_rules: Vec<&AdrRuleConfig> = rules
@@ -1283,15 +1406,24 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
         .collect();
 
     let mut violations = Vec::new();
-    let files = collect_source_files(&root.join("src"));
-
-    // Also scan hex-nexus/src if it exists (multi-crate projects)
-    let mut all_files = files;
-    for subdir in &["hex-nexus/src", "hex-cli/src"] {
-        let sub = root.join(subdir);
-        if sub.is_dir() {
-            all_files.extend(collect_source_files(&sub));
-        }
+    // Every `src/` in the project: the root one, plus one per crate or package
+    // in a workspace. This used to be a hardcoded list of two directory names,
+    // one of which named a crate that no longer exists — so in an eight-crate
+    // workspace the rules were checked against one crate and reported as
+    // though they had been checked against all of them.
+    let mut all_files = collect_source_files(&root.join("src"));
+    let mut members: Vec<PathBuf> = std::fs::read_dir(root)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.path().join("src"))
+                .filter(|p| p.is_dir())
+                .collect()
+        })
+        .unwrap_or_default();
+    members.sort();
+    for sub in members {
+        all_files.extend(collect_source_files(&sub));
     }
 
     for path in &all_files {
@@ -1306,6 +1438,13 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
             Err(_) => continue,
         };
 
+        // Rust keeps its unit tests inline, so path exclusions miss them.
+        let inline_tests = if rel.ends_with(".rs") {
+            cfg_test_lines(&content)
+        } else {
+            std::collections::HashSet::new()
+        };
+
         for rule in &active_rules {
             if !rule.file_patterns.is_empty()
                 && !rule.file_patterns.iter().any(|p| rel.ends_with(p.as_str()))
@@ -1317,6 +1456,9 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
             }
 
             for (line_num, line) in content.lines().enumerate() {
+                if inline_tests.contains(&line_num) {
+                    continue;
+                }
                 let trimmed = line.trim();
                 if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
                     continue;
@@ -1337,7 +1479,7 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
         }
     }
 
-    violations
+    AdrCompliance::ran(violations)
 }
 
 /// JSON output mode for `hex analyze --json`.
@@ -1405,7 +1547,8 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
     }
 
     // ADR compliance
-    let adr_violations = check_adr_compliance(root);
+    let compliance = check_adr_compliance(root);
+    let adr_violations = &compliance.violations;
     let error_count = adr_violations.iter().filter(|v| v.severity == "error").count();
     let warning_count = adr_violations.iter().filter(|v| v.severity == "warning").count();
 
@@ -1422,7 +1565,11 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
         })
         .collect();
 
+    // `checked` is the field that keeps a consumer from reading
+    // violation_count: 0 as a pass when nothing ran.
     result["adr_compliance"] = serde_json::json!({
+        "checked": compliance.skipped.is_none(),
+        "skipped_reason": compliance.skipped,
         "violation_count": adr_violations.len(),
         "error_count": error_count,
         "warning_count": warning_count,

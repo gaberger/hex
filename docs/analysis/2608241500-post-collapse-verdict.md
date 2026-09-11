@@ -147,3 +147,87 @@ not author or amend, and that rule is not a formality — it is the only thing
 standing between "the agent decided the goal was obsolete" and "a human did".
 
 This is the single outstanding item in the workplan.
+
+---
+
+## Addendum — hex under its own rules (2026-09-11)
+
+The lessons from this collapse now ship as `[[adr_rules]]` in the
+`.hex/ADR-rules.toml` that `hex init` writes into every project
+(ADR-2026-09-11-1900). hex now carries that file itself, which it did not
+before, and `hex analyze .` therefore reports on hex.
+
+**This corrects a claim made above.** P9.4 records S16 — "provider names leaking
+outside `hex-infer`" — as checked by hand and closed, on the evidence that
+`hex verify` and `hex plan execute` had been repointed. The rules found four
+more, all in the agent hot path, all last-resort fallbacks that a hand-check
+reading the diff would not think to look for:
+
+| Site | Was |
+|---|---|
+| `hex-exec/src/direct_exec.rs` ×2 | a hardcoded model id as the fallback for `resolve_model` |
+| `hex-exec/src/direct_react.rs` | a hardcoded pair as the fallback candidate list |
+| `hex-exec/src/simple_agent.rs` | a hardcoded model id as the fallback for the agent loop |
+
+All four now resolve through `hex_infer::tier_model` / the configured
+`react_models`, and return `NO_MODEL_CONFIGURED` rather than guessing. Two
+oracle tests asserted the old hardcoded defaults and were updated with the
+reason; they are a small instance of the mirror problem — two files asserting
+the same wrong belief, neither able to see it.
+
+The hand-check was not lazy. It was a hand-check, and a hand-check reads what
+changed. A rule reads everything, every time, which is the whole argument for
+making a lesson executable.
+
+### Two further defects the rules surfaced
+
+- **`hex ci --standalone-gate` had been failing for the wrong reason since the
+  collapse.** Its three test suites ran `cargo test -p hex-nexus`. `hex-nexus`
+  was deleted here, so every run printed three `fail` lines reading "package ID
+  specification `hex-nexus` did not match any packages" — a gate that cannot
+  pass, failing for a reason unrelated to what it gates, which is
+  indistinguishable from the gated thing being broken. Repointed at `hex-infer`
+  and `hex-exec`; the gate now passes.
+  Its failure output also printed the first five lines of stderr, which for
+  `cargo test` are compile warnings. A failing gate reported an unused-function
+  warning and said nothing about the assertion that broke. Now filtered to the
+  lines that carry the verdict.
+- **`hex-cli/src/commands/plan/executor.rs` was 494 lines of dead code** — no
+  `mod executor;` declaration anywhere, proven by putting invalid Rust in the
+  file and watching the workspace build succeed. It simulated inference:
+  `receive_ollama_response` slept 50 ms and returned a fabricated HTTP 200 with
+  256 completion tokens. Deleted.
+
+### And one in the analyzer itself
+
+`hex analyze` printed `○ No .hex/ADR-rules.toml found — skipping compliance
+check` immediately followed by `✓ All ADR rules satisfied`. Both lines, every
+run, for a project with no rules. That is this collapse's own silent-fallback
+lesson committed by the code that reports the lesson. `check_adr_compliance`
+returned an empty vector for "no rules file", "unreadable", "unparseable" and
+"everything passed" alike, and the caller could not tell them apart. It now
+returns an outcome that distinguishes them, and the JSON carries a `checked`
+field so no consumer can read `violation_count: 0` as a pass.
+
+The rule scan also only ever looked in `src/`, `hex-cli/src` and
+`hex-nexus/src` — a hardcoded list of two crate names, one of them deleted. In
+an eight-crate workspace the rules were checked against one crate and reported
+as though they had covered all of them. It now scans every `*/src`.
+
+### What is still open
+
+63 findings across 20 files, none of them fixed here, all of them visible:
+
+| Class | Count | Reading |
+|---|---:|---|
+| model or provider name outside `hex-infer` | 32 | Real coupling, mostly `bootstrap/` and `doctor/composition.rs`, which install and diagnose an inference server and name it to do so. Closing these means moving the provider knowledge into `hex-infer`. `hey.rs` names models as natural-language keywords, which is a weaker case. |
+| narrowing `as` cast | 26 | Mostly tree-sitter byte offsets in `hex-parser` and `hex-analysis`. Individually benign, collectively the shape that produced the rate-limiter overflow. |
+| hardcoded host:port | 5 | `resource_governor.rs` reaches an inference host from outside `hex-infer`; the rest are defaults inside it. |
+
+One rule was written and then removed: `no-silent-fallback-in-a-gate`. Its
+lesson is real and its pattern could not separate a gate falling back from an
+ordinary default for an optional flag — every hit in this repository was the
+ordinary kind. It is now prose in the scaffolded `CLAUDE.md`, marked as not
+enforceable, with the reason recorded in `.hex/ADR-rules.toml`. A rule that
+flags correct code is worse than no rule, because it teaches people to skim
+past the output.
