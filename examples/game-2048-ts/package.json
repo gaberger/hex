@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "test": "tsc --noEmit && node --test --experimental-strip-types src/*.test.ts"
+    "test": "rm -rf dist && tsc && node --test dist/*.test.js"
   },
   "devDependencies": {
     "typescript": "^5.6.0",
