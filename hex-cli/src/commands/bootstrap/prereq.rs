@@ -42,8 +42,9 @@ impl PrereqChecker {
     pub async fn check_all(&self) -> anyhow::Result<PrereqReport> {
         let mut statuses = vec![];
 
-        // Check Ollama
-        statuses.push(self.check_ollama());
+        // The inference server, whoever it is. hex-infer names it; this file
+        // must not (founding goal G1).
+        statuses.push(self.check_inference_server());
 
         // Check Rust
         statuses.push(self.check_rust());
@@ -56,38 +57,34 @@ impl PrereqChecker {
 
         Ok(PrereqReport { statuses })
     }
-    fn check_ollama(&self) -> PrereqStatus {
-        if self.command_exists("ollama") {
-            if let Ok(output) = Command::new("ollama").arg("--version").output() {
-                let version = String::from_utf8_lossy(&output.stdout)
-                    .trim()
-                    .to_string();
-                PrereqStatus {
-                    name: "Ollama".to_string(),
-                    installed: true,
-                    version: Some(version),
-                    install_cmd: None,
-                }
-            } else {
-                PrereqStatus {
-                    name: "Ollama".to_string(),
-                    installed: true,
-                    version: None,
-                    install_cmd: None,
-                }
-            }
-        } else {
-            let cmd = if cfg!(target_os = "macos") {
-                "brew install ollama"
-            } else {
-                "curl https://ollama.ai/install.sh | sh"
-            };
-            PrereqStatus {
-                name: "Ollama".to_string(),
+
+    /// Is the local inference server installed?
+    ///
+    /// Every detail — the display name, the executable, the install command
+    /// per platform — comes from `hex_infer::local_provider()`. This used to
+    /// spell all of it out, which meant switching inference servers was a
+    /// six-file edit and G1 was violated in three places in one function.
+    fn check_inference_server(&self) -> PrereqStatus {
+        let provider = hex_infer::local_provider();
+        if !self.command_exists(provider.binary) {
+            return PrereqStatus {
+                name: provider.display_name.to_string(),
                 installed: false,
                 version: None,
-                install_cmd: Some(cmd.to_string()),
-            }
+                install_cmd: Some(provider.install_hint().to_string()),
+            };
+        }
+        let version = Command::new(provider.binary)
+            .arg("--version")
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|v| !v.is_empty());
+        PrereqStatus {
+            name: provider.display_name.to_string(),
+            installed: true,
+            version,
+            install_cmd: None,
         }
     }
 

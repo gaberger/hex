@@ -11,6 +11,7 @@
 pub mod adapters;
 pub mod complete;
 pub mod endpoint;
+pub mod local_provider;
 pub mod registry;
 pub mod spend;
 pub mod tiers;
@@ -21,3 +22,4 @@ pub use adapters::{
 pub use endpoint::Endpoint;
 pub use complete::{complete_raw, complete_text};
 pub use tiers::{react_models, tier_model};
+pub use local_provider::{configured_tiers, local_provider, LocalProvider};

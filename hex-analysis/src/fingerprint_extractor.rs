@@ -498,7 +498,7 @@ fn enforce_token_budget(mut fp: ArchitectureFingerprint) -> ArchitectureFingerpr
     const BUDGET: u32 = 512;
 
     let estimate = |f: &ArchitectureFingerprint| -> u32 {
-        (f.to_injection_block().len() / 4) as u32
+        u32::try_from(f.to_injection_block().len() / 4).unwrap_or(u32::MAX)
     };
 
     fp.fingerprint_tokens = estimate(&fp);

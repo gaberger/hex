@@ -288,7 +288,7 @@ impl IInferencePort for ClaudeCodeInferenceAdapter {
         if result.exit_code != 0 {
             let body = String::from_utf8_lossy(&result.stderr).to_string();
             return Err(InferenceError::ApiError {
-                status: result.exit_code as u16,
+                status: http_like_status(result.exit_code),
                 body: format!("claude exited with {}: {}", result.exit_code, body),
             });
         }
@@ -321,7 +321,7 @@ impl IInferencePort for ClaudeCodeInferenceAdapter {
             .await?;
         if exit_code != 0 {
             return Err(InferenceError::ApiError {
-                status: exit_code as u16,
+                status: http_like_status(exit_code),
                 body: format!("claude exited with {exit_code}"),
             });
         }
@@ -392,9 +392,23 @@ fn collapse_prompt(request: &InferenceRequest) -> String {
 // Test-facing mock spawner
 // ---------------------------------------------------------------------------
 
-/// Public helpers for integration tests. Not `#[cfg(test)]` because the
-/// integration-test crate under `hex-nexus/tests/` is a separate compile
-/// unit and cannot reach test-only items.
+/// A process exit code, expressed in the `u16` field `ApiError` gives us.
+///
+/// `exit_code` is an `i32` and is set to `-1` when the child is killed by a
+/// signal and has no exit code at all. `-1 as u16` is **65535**, which was
+/// then reported as an API status — a number that looks like it came from a
+/// server and did not. A rate limiter in this repository failed the same way,
+/// which is why the rule that found this one exists.
+///
+/// Zero means "no exit code": the process was signalled. The real value is in
+/// the error body either way, which is where a reader should look.
+fn http_like_status(exit_code: i32) -> u16 {
+    u16::try_from(exit_code).unwrap_or(0)
+}
+
+/// Public helpers for integration tests. Not test-only, because an
+/// integration-test crate is a separate compile unit and cannot reach
+/// test-only items.
 pub mod testing {
     use super::*;
     use std::collections::VecDeque;
@@ -476,6 +490,17 @@ pub mod testing {
 
 #[cfg(test)]
 mod tests {
+    use super::http_like_status;
+
+    /// The regression: a signalled process reported status 65535.
+    #[test]
+    fn a_signalled_process_does_not_become_a_65535_status() {
+        assert_eq!(http_like_status(-1), 0, "-1 must not wrap to 65535");
+        assert_eq!(http_like_status(-9), 0);
+        assert_eq!(http_like_status(2), 2);
+        assert_eq!(http_like_status(127), 127);
+    }
+
     use super::*;
 
     #[test]

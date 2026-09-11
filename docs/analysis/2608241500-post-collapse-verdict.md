@@ -214,20 +214,72 @@ The rule scan also only ever looked in `src/`, `hex-cli/src` and
 an eight-crate workspace the rules were checked against one crate and reported
 as though they had covered all of them. It now scans every `*/src`.
 
-### What is still open
+### What was still open, and what closing it found
 
-63 findings across 20 files, none of them fixed here, all of them visible:
+The 63 findings above are now **4**, all warnings, all reviewed. Closing them
+turned up three real defects that nothing else had noticed.
 
-| Class | Count | Reading |
-|---|---:|---|
-| model or provider name outside `hex-infer` | 32 | Real coupling, mostly `bootstrap/` and `doctor/composition.rs`, which install and diagnose an inference server and name it to do so. Closing these means moving the provider knowledge into `hex-infer`. `hey.rs` names models as natural-language keywords, which is a weaker case. |
-| narrowing `as` cast | 26 | Mostly tree-sitter byte offsets in `hex-parser` and `hex-analysis`. Individually benign, collectively the shape that produced the rate-limiter overflow. |
-| hardcoded host:port | 5 | `resource_governor.rs` reaches an inference host from outside `hex-infer`; the rest are defaults inside it. |
+**1. `hex analyze`'s own health score wrapped.** `hex-analysis/src/domain.rs`:
 
-One rule was written and then removed: `no-silent-fallback-in-a-gate`. Its
-lesson is real and its pattern could not separate a gate falling back from an
-ordinary default for an optional flag — every hit in this repository was the
-ordinary kind. It is now prose in the scaffolded `CLAUDE.md`, marked as not
-enforceable, with the reason recorded in `.hex/ADR-rules.toml`. A rule that
-flags correct code is worse than no rule, because it teaches people to skim
-past the output.
+```rust
+let penalty = (violations * 10) + (circular_deps * 15) + …;   // usize
+100u8.saturating_sub(penalty as u8)                           // ← truncates
+```
+
+A penalty of 260 — twenty-six boundary violations — is `4` in a `u8`. So the
+worst code in the repository scored **96/100**, and the score *rose* as
+violations were added. `saturating_sub` could not help; the truncation happens
+before it is called. The number hex prints for every project it looks at.
+Saturated in `usize` before narrowing, with a test asserting the score never
+climbs as violations are added over 0..60. The existing
+`health_score_floor_at_zero` test passed throughout, because it used a small
+input — a test that could not have caught its own subject.
+
+**2. `hex bootstrap` validated the wrong models, and `ready` ignored them.**
+It pulled and checked `gemma4:latest` and `qwen2.5-coder:32b` while
+`.hex/project.json` declared `gemma4-12b` and `devstral-small-2:24b` — up to
+33 GB of downloads the project does not use, and silence about the three it
+does. On top of that, `validate_all` computed `ready` from the service check
+and the config file only: **an install with no models at all reported ready.**
+Both now read `hex_infer::configured_tiers()`, so the check and the dispatcher
+read the same line and cannot drift.
+
+**3. `ollama serve` was awaited, so `hex bootstrap` hung on Linux.**
+`Command::new(..).arg("serve").output()` blocks until the child exits, and a
+server that exits has failed. The `Ok(_)` arm reporting "running: true" was
+unreachable. Now spawned, then the port is polled — the status reports what is
+true rather than what was attempted.
+
+Two more, smaller: `claude -p` exiting on a signal has `exit_code == -1`, and
+`-1 as u16` was reported as **API status 65535**; and `OLLAMA_HOST` was read in
+three places with three different meanings, so `OLLAMA_HOST=127.0.0.1:11434`
+— the spelling the server's own docs use — produced `http://http://…` in one
+of them. Both now resolve through `hex_infer::LocalProvider`.
+
+### Where the provider lives now
+
+All 32 "model or provider name outside `hex-infer`" findings are closed, and
+not by suppression. `hex-infer/src/local_provider.rs` owns the local inference
+server's identity — display name, binary, port, serve argument, install command
+per platform, host environment variable — and `configured_tiers()` reads the
+models from the same config the dispatcher reads. `bootstrap/`, `doctor/`,
+`hey` and `resource_governor` ask it. Switching inference servers was a
+six-file edit; it is now one struct.
+
+### The four that remain
+
+| Site | Why it stays |
+|---|---|
+| `parser.rs` `estimate_tokens` | float → int |
+| `inference.rs` `raw_quality` | float → int |
+| `direct.rs` pass-rate percentage | float → int |
+| `api_optimization.rs` rpm headroom | float → int |
+
+A float-to-int `as` in Rust **saturates**; it does not truncate. There is no
+`TryFrom<f64> for u32`, so the rule's own advice cannot be followed on these.
+The rule matches on the text ` as u32` and cannot see the source type, so it
+cannot tell the two cases apart. Rather than contort four correct expressions
+to drive a number to zero, each is now a single named function with its
+bounds written out, and the rule's message says plainly that it cannot
+distinguish the float case. Forcing the count to zero would be gaming the
+metric, which is the failure this rule set exists to prevent.

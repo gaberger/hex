@@ -12,7 +12,8 @@ pub struct CompositionResult {
     pub claude_session_id: CheckStatus,
     #[allow(dead_code)]
     pub session_file: CheckStatus,
-    pub ollama: CheckStatus,
+    /// The local inference server, whichever one `hex-infer` names.
+    pub local_inference: CheckStatus,
     pub claude_binary: CheckStatus,
 }
 
@@ -32,9 +33,9 @@ impl CompositionResult {
         self.has_any_inference()
     }
 
-    /// Returns true if at least one inference adapter (Ollama or claude) is reachable.
+    /// Returns true if at least one inference adapter is reachable.
     pub fn has_any_inference(&self) -> bool {
-        matches!(self.ollama, CheckStatus::Pass(_))
+        matches!(self.local_inference, CheckStatus::Pass(_))
             || matches!(self.claude_binary, CheckStatus::Pass(_))
     }
 
@@ -53,10 +54,9 @@ impl CompositionResult {
             && matches!(self.claude_binary, CheckStatus::Pass(_))
         {
             "ClaudeCodeInferenceAdapter".to_string()
-        } else if matches!(self.ollama, CheckStatus::Pass(_)) {
-            let host = std::env::var("OLLAMA_HOST")
-                .unwrap_or_else(|_| "http://localhost:11434".to_string());
-            format!("OllamaInferenceAdapter -> {}", host)
+        } else if matches!(self.local_inference, CheckStatus::Pass(_)) {
+            let provider = hex_infer::local_provider();
+            format!("{} -> {}", provider.display_name, provider.base_url())
         } else if matches!(self.claude_binary, CheckStatus::Pass(_)) {
             "ClaudeCodeInferenceAdapter (no session)".to_string()
         } else {
@@ -69,13 +69,13 @@ impl CompositionResult {
 pub async fn run_composition_check_quiet() -> CompositionResult {
     let claude_session_id = check_claude_session_id();
     let session_file = check_session_file();
-    let ollama = check_ollama().await;
+    let local_inference = check_local_inference().await;
     let claude_binary = check_claude_binary().await;
 
     CompositionResult {
         claude_session_id,
         session_file,
-        ollama,
+        local_inference,
         claude_binary,
     }
 }
@@ -92,9 +92,9 @@ pub async fn run_composition_check() -> CompositionResult {
     let session_file = check_session_file();
     print_status("Session file", &session_file);
 
-    // (c) Ollama reachability
-    let ollama = check_ollama().await;
-    print_status("Ollama", &ollama);
+    // (c) local inference reachability
+    let local_inference = check_local_inference().await;
+    print_status(hex_infer::local_provider().display_name, &local_inference);
 
     // (d) claude binary on PATH
     let claude_binary = check_claude_binary().await;
@@ -103,7 +103,7 @@ pub async fn run_composition_check() -> CompositionResult {
     let result = CompositionResult {
         claude_session_id,
         session_file,
-        ollama,
+        local_inference,
         claude_binary,
     };
 
@@ -182,9 +182,8 @@ fn check_session_file() -> CheckStatus {
     }
 }
 
-async fn check_ollama() -> CheckStatus {
-    let host = std::env::var("OLLAMA_HOST")
-        .unwrap_or_else(|_| "http://localhost:11434".to_string());
+async fn check_local_inference() -> CheckStatus {
+    let host = hex_infer::local_provider().base_url();
 
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(2))

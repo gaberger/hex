@@ -138,14 +138,19 @@ pub async fn run(args: BootstrapArgs) -> anyhow::Result<()> {
     if !config.skip_models {
         println!("{}", "⬡ Loading inference models...".cyan());
         let loader = ModelLoader::new(config.dry_run);
-        let model_status = loader.load_default_models().await?;
+        let model_status = loader.load_configured_models().await?;
 
+        if model_status.is_empty() {
+            // Say the real thing. Printing nothing here used to be
+            // indistinguishable from printing three successful pulls.
+            println!(
+                "  {} no models configured — set inference.tier_models in .hex/project.json",
+                "○".yellow()
+            );
+        }
         for status in &model_status {
             let icon = if status.loaded { "✓".green() } else { "✗".red() };
-            println!(
-                "  {} {} ({:.1} GB)",
-                icon, status.name, status.size_mb as f64 / 1024.0
-            );
+            println!("  {} {} ({})", icon, status.name, status.tier.dimmed());
         }
         println!();
     }

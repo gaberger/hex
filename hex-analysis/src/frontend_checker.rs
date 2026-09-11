@@ -91,6 +91,18 @@ pub fn check_frontend(root: &Path) -> Option<FrontendCheckResult> {
 /// - F1 (entry point): -10 if failed
 /// - F7 (services exist): -5 if failed
 fn compute_score(rules: &[FrontendRuleResult]) -> u32 {
+    /// A rule's violation count, as the `i32` the penalty arithmetic uses.
+    ///
+    /// Named rather than cast in four places. `len() as i32` on a `usize` is
+    /// a narrowing cast, and a narrowing cast in a scoring function is how the
+    /// sibling health score came to report 96/100 for the worst code in the
+    /// repository — the penalty wrapped, so adding violations raised the mark.
+    /// Saturating keeps the score monotonic, which is the only property this
+    /// function really has to have.
+    fn count(rule: &FrontendRuleResult) -> i32 {
+        i32::try_from(rule.violations.len()).unwrap_or(i32::MAX)
+    }
+
     let mut score: i32 = 100;
 
     for rule in rules {
@@ -102,9 +114,9 @@ fn compute_score(rules: &[FrontendRuleResult]) -> u32 {
                     10
                 }
             }
-            "F2" => rule.violations.len() as i32 * 3,
-            "F3" => rule.violations.len() as i32 * 2,
-            "F5" => rule.violations.len() as i32,
+            "F2" => count(rule).saturating_mul(3),
+            "F3" => count(rule).saturating_mul(2),
+            "F5" => count(rule),
             "F7" => {
                 if rule.passed {
                     0
@@ -112,13 +124,13 @@ fn compute_score(rules: &[FrontendRuleResult]) -> u32 {
                     5
                 }
             }
-            "F9" => rule.violations.len() as i32,
+            "F9" => count(rule),
             _ => 0,
         };
-        score -= penalty;
+        score = score.saturating_sub(penalty);
     }
 
-    score.max(0) as u32
+    u32::try_from(score.max(0)).unwrap_or(0)
 }
 
 // ── F1: Single entry point ──────────────────────────────────────

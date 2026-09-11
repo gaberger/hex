@@ -73,17 +73,34 @@ impl BootstrapValidator {
         // SpacetimeDB (3033) and hex-nexus (5555) were checked here too. Both
         // are deleted (ADR-2608241500); an inference backend is the only
         // service hex needs.
-        service_checks.push(("Ollama".to_string(), self.check_service_health(11434).await));
+        let provider = hex_infer::local_provider();
+        service_checks.push((
+            provider.display_name.to_string(),
+            self.check_service_health(provider.default_port).await,
+        ));
 
-        // Check models (quick existence check, don't wait for loading)
-        model_checks.push(("qwen3:4b (T1)".to_string(), self.model_exists("qwen3:4b")));
-        model_checks.push(("qwen2.5-coder:32b (T2)".to_string(), self.model_exists("qwen2.5-coder:32b")));
-        model_checks.push(("gemma4:latest (T2.5)".to_string(), self.model_exists("gemma4:latest")));
+        // Check the models this project configures — not a hardcoded list.
+        //
+        // The list here was three literal ids and had drifted: it checked
+        // `gemma4:latest` and `qwen2.5-coder:32b` while `.hex/project.json`
+        // declared `gemma4-12b` and `devstral-small-2:24b`. Bootstrap
+        // therefore validated three models the project does not use and said
+        // nothing about the three it does.
+        for (label, _key, model) in hex_infer::configured_tiers() {
+            let present = self.model_exists(&model);
+            model_checks.push((format!("{model} ({label})"), present));
+        }
 
         // Check config
         let config_exists = Path::new(".hex/project.json").exists();
 
+        // `ready` used to ignore `model_checks` entirely, so an install with
+        // the server up, a config file present and not one model pulled
+        // reported ready. A readiness claim that cannot be falsified by the
+        // thing it is about is not a claim.
         let ready = service_checks.iter().all(|(_, ok)| *ok)
+            && !model_checks.is_empty()
+            && model_checks.iter().all(|(_, ok)| *ok)
             && config_exists;
 
         Ok(BootstrapReport {
@@ -95,14 +112,14 @@ impl BootstrapValidator {
     }
 
     async fn check_service_health(&self, port: u16) -> bool {
-        match tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await {
+        match tokio::net::TcpStream::connect(hex_infer::local_provider().socket_addr()).await {
             Ok(_) => true,
             Err(_) => false,
         }
     }
 
     fn model_exists(&self, model_name: &str) -> bool {
-        if let Ok(output) = Command::new("ollama")
+        if let Ok(output) = Command::new(hex_infer::local_provider().binary)
             .arg("show")
             .arg(model_name)
             .output()

@@ -67,8 +67,10 @@ pub fn parse_model_size_mb(tags_json: &str, model: &str) -> Option<u64> {
 /// Query ollama for the model's on-disk size (MB); `None` if ollama is unreachable or
 /// the model is unknown.
 async fn model_size_mb(model: &str) -> Option<u64> {
-    let host = std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "127.0.0.1:11434".to_string());
-    let host = if host.starts_with("http") { host } else { format!("http://{host}") };
+    // One resolver, in the crate that is allowed to know the provider.
+    // This read the same variable as `doctor` and `complete` and normalised it
+    // a third way; see hex_infer::LocalProvider::base_url.
+    let host = hex_infer::local_provider().base_url();
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()

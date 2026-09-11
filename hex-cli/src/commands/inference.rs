@@ -1558,6 +1558,23 @@ struct BenchResult {
     quality_details: Vec<(&'static str, bool)>,
 }
 
+/// A benchmark's raw quality points: the 0..1 score scaled by its own maximum.
+///
+/// One named function instead of the same expression in three places. The
+/// float-to-int cast saturates in Rust rather than truncating, so this is not
+/// the bug class the narrowing-cast rule is named for — but the expression was
+/// hard to read three times and is easy to read once.
+fn raw_quality(r: &BenchResult) -> u32 {
+    let raw = r.quality_score * r.quality_max as f32;
+    if !raw.is_finite() || raw <= 0.0 {
+        0
+    } else if raw >= u32::MAX as f32 {
+        u32::MAX
+    } else {
+        raw as u32
+    }
+}
+
 impl BenchResult {
     fn tok_per_sec(&self) -> f64 {
         if self.wall_secs > 0.0 { self.tokens as f64 / self.wall_secs } else { 0.0 }
@@ -1865,8 +1882,8 @@ fn compute_tier(results: &[&BenchResult]) -> (f32, u8, &'static str) {
 
     let overall = code_score * 0.5 + reason_score * 0.3 + latency_score * 0.2;
 
-    let code_raw = codegen.map(|r| (r.quality_score * r.quality_max as f32) as u32).unwrap_or(0);
-    let reason_raw = reasoning.map(|r| (r.quality_score * r.quality_max as f32) as u32).unwrap_or(0);
+    let code_raw = codegen.map(|r| raw_quality(&r)).unwrap_or(0);
+    let reason_raw = reasoning.map(|r| raw_quality(&r)).unwrap_or(0);
 
     let (tier, label) = if overall >= 0.85 && reason_raw >= 4 {
         (3, "Tier 3 (Opus-equivalent: planning, specs, validation)")
@@ -1889,7 +1906,7 @@ fn print_bench_results(model: &str, results: &[BenchResult], label: Option<&str>
     println!();
     for r in results {
         let status = if r.quality_score >= 0.6 { "✓".green() } else if r.quality_score >= 0.3 { "~".yellow() } else { "✗".red() };
-        let q = (r.quality_score * r.quality_max as f32) as u32;
+        let q = raw_quality(r);
         println!("  {}  {:<12} {:>5.1}s  ({}/{} quality, {:.0} tok/s)",
             status, r.name, r.wall_secs, q, r.quality_max, r.tok_per_sec());
         for (name, passed) in &r.quality_details {

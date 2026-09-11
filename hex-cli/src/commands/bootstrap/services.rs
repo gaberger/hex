@@ -22,66 +22,71 @@ impl ServiceStarter {
     pub async fn start_all(&self) -> anyhow::Result<Vec<ServiceStatus>> {
         let mut statuses = vec![];
 
-        // Start Ollama
-        statuses.push(self.start_ollama().await);
+        statuses.push(self.start_inference_server().await);
 
         Ok(statuses)
     }
-    async fn start_ollama(&self) -> ServiceStatus {
-        if !self.is_port_open(11434).await && !self.force {
-            if self.is_process_running("ollama") {
-                return ServiceStatus {
-                    name: "Ollama".to_string(),
-                    running: true,
-                    pid: self.get_pid("ollama"),
-                };
-            }
-        }
 
+    /// Start the local inference server.
+    ///
+    /// Its name, binary, port and start command come from
+    /// `hex_infer::local_provider()` — this file named all four, which is
+    /// founding goal G1's failure and also meant a change of server was a
+    /// six-file edit.
+    ///
+    /// **The foreground start is spawned, not awaited.** It used to call
+    /// `.output()` on the serve subcommand, which blocks until the child
+    /// exits — and a server that exits is a server that failed. On Linux
+    /// `hex bootstrap` therefore hung until the operator killed it, and the
+    /// `Ok(_)` arm reporting "running: true" was unreachable.
+    async fn start_inference_server(&self) -> ServiceStatus {
+        let provider = hex_infer::local_provider();
+        let name = provider.display_name.to_string();
+
+        if self.is_port_open(provider.default_port).await && !self.force {
+            return ServiceStatus { name, running: true, pid: self.get_pid(provider.binary) };
+        }
+        if !self.force && self.is_process_running(provider.binary) {
+            return ServiceStatus { name, running: true, pid: self.get_pid(provider.binary) };
+        }
         if self.dry_run {
-            return ServiceStatus {
-                name: "Ollama".to_string(),
-                running: false,
-                pid: None,
-            };
+            return ServiceStatus { name, running: false, pid: None };
         }
-
         if self.force {
-            let _ = Command::new("pkill").arg("-f").arg("ollama").output();
+            let _ = Command::new("pkill").arg("-f").arg(provider.binary).output();
             sleep(Duration::from_millis(500)).await;
         }
 
-        let output = if cfg!(target_os = "macos") {
+        let started = if cfg!(target_os = "macos") {
+            // `brew services start` returns once the job is registered.
             Command::new("brew")
-                .arg("services")
-                .arg("start")
-                .arg("ollama")
+                .args(["services", "start", provider.binary])
                 .output()
+                .is_ok()
         } else {
-            Command::new("ollama")
-                .arg("serve")
-                .output()
+            Command::new(provider.binary)
+                .arg(provider.serve_arg)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .is_ok()
         };
-
-        match output {
-            Ok(_) => {
-                sleep(Duration::from_secs(1)).await;
-                ServiceStatus {
-                    name: "Ollama".to_string(),
-                    running: true,
-                    pid: self.get_pid("ollama"),
-                }
-            }
-            Err(_) => ServiceStatus {
-                name: "Ollama".to_string(),
-                running: false,
-                pid: None,
-            },
+        if !started {
+            return ServiceStatus { name, running: false, pid: None };
         }
+
+        // Report what is true, not what was attempted: wait for the port.
+        for _ in 0..20 {
+            sleep(Duration::from_millis(250)).await;
+            if self.is_port_open(provider.default_port).await {
+                return ServiceStatus { name, running: true, pid: self.get_pid(provider.binary) };
+            }
+        }
+        ServiceStatus { name, running: false, pid: None }
     }
 
     async fn is_port_open(&self, port: u16) -> bool {
-        match tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await {
+        match tokio::net::TcpStream::connect(hex_infer::local_provider().socket_addr()).await {
             Ok(_) => true,
             Err(_) => false,
         }

@@ -71,7 +71,7 @@ violation_patterns = ["gpt-4", "gpt-5", "claude-3", "claude-4", "qwen", "llama-3
 [[adr_rules]]
 adr = "ADR-2026-09-11-1900"
 id = "narrowing-cast-needs-a-check"
-message = "Narrowing `as` cast. A silent truncation builds something that looks like it works: hex wrote a rate limiter whose burst check overflowed a u128, truncated through `as u64`, and produced a limiter that never limited. Use try_from so the compiler sees the narrowing."
+message = "Narrowing `as` cast. An integer `as` silently truncates: hex wrote a rate limiter whose burst check overflowed a u128 and produced a limiter that never limited, and its own health score wrapped a penalty of 260 to 4, so the worst code in the repository scored 96/100 and the score ROSE as violations were added. Use try_from. NOTE: a float-to-int `as` saturates rather than truncating, and has no try_from — this rule cannot tell the two apart, so if the source is a float, give the cast a named function and move on."
 severity = "warning"
 file_patterns = [".rs"]
 exclude_patterns = ["test", "_test."]

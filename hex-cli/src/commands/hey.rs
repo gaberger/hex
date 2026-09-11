@@ -34,15 +34,17 @@ pub enum TaskIntent {
 /// Entries are matched as a prefix followed by end-of-string or whitespace,
 /// so `"systemctl status"` covers `"systemctl status ollama"` but not
 /// `"systemctl stop ollama"`.
-pub(crate) const COMMAND_WHITELIST: &[&str] = &[
-    "nvidia-smi",
-    "df",
-    "ollama",
-    "ps",
-    "systemctl status",
-    "uptime",
-    "free",
-];
+pub(crate) fn command_whitelist() -> Vec<String> {
+    let mut v: Vec<String> = ["nvidia-smi", "df", "ps", "systemctl status", "uptime", "free"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    // The inference server's binary is whitelisted too, but this file does not
+    // get to know its name (founding goal G1).
+    v.push(hex_infer::local_provider().binary.to_string());
+    v.sort();
+    v
+}
 
 /// Read additional whitelist entries from `.hex/project.json` under the
 /// `command_whitelist` array key. Missing file/key → empty list.
@@ -86,7 +88,7 @@ fn whitelist_entry_matches(command: &str, entry: &str) -> bool {
 /// True iff `command` matches the hard-coded whitelist or any addition from
 /// `.hex/project.json`. Used to gate remote-shell dispatch (P1.2).
 pub(crate) fn is_command_whitelisted(command: &str) -> bool {
-    if COMMAND_WHITELIST
+    if command_whitelist()
         .iter()
         .any(|e| whitelist_entry_matches(command, e))
     {
@@ -106,7 +108,7 @@ fn whitelist_rejection_reason(command: &str) -> String {
     format!(
         "`{}` is not in the remote-shell whitelist.\n    Allowed: {}\n    Add custom entries to .hex/project.json:\n      {{ \"command_whitelist\": [\"your-command\"] }}",
         head,
-        COMMAND_WHITELIST.join(", ")
+        command_whitelist().join(", ")
     )
 }
 
@@ -211,9 +213,24 @@ fn classify_intent(text: &str) -> TaskIntent {
     }
     // Benchmark
     if t.contains("bench") || t.contains("benchmark") {
-        // Try to extract a provider name — e.g. "bench qwen3-4b" or "benchmark bazzite-qwen3-4b"
-        let provider = text.split_whitespace()
-            .find(|w| w.starts_with("bazzite-") || w.contains("qwen") || w.contains("coder"))
+        // Match the word against the models this project actually configures,
+        // rather than guessing from substrings of vendor names.
+        //
+        // This used to test `w.contains("qwen") || w.contains("coder")`, which
+        // both broke G1 and worked only for the two vendors someone happened to
+        // think of: "bench gemma4-12b" matched nothing and silently benchmarked
+        // the default instead of saying it did not understand.
+        let configured: Vec<String> = hex_infer::configured_tiers()
+            .into_iter()
+            .map(|(_, _, m)| m)
+            .chain(hex_infer::react_models())
+            .collect();
+        let provider = text
+            .split_whitespace()
+            .find(|w| {
+                w.starts_with("bazzite-")
+                    || configured.iter().any(|m| m.starts_with(*w) || w.starts_with(m.as_str()))
+            })
             .unwrap_or("");
         if !provider.is_empty() {
             return TaskIntent::HexCommand {

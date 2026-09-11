@@ -1526,7 +1526,7 @@ async fn list_plans() -> anyhow::Result<()> {
                         } else if total == 0 {
                             "(no tasks)".dimmed().to_string()
                         } else {
-                            progress(done as u32, total as u32)
+                            progress(u32::try_from(done).unwrap_or(u32::MAX), u32::try_from(total).unwrap_or(u32::MAX))
                         };
 
                         let adr_display = if plan.adr.is_empty() {

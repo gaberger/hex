@@ -1146,8 +1146,8 @@ fn extract_import_paths(source: &str, source_rel: &str) -> Vec<String> {
             cfg_test_armed = true;
         }
 
-        let opens = line.matches('{').count() as i32;
-        let closes = line.matches('}').count() as i32;
+        let opens = i32::try_from(line.matches('{').count()).unwrap_or(i32::MAX);
+        let closes = i32::try_from(line.matches('}').count()).unwrap_or(i32::MAX);
 
         if cfg_test_armed && opens > 0 {
             test_block_depth = Some(depth);

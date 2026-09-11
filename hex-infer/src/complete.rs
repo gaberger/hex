@@ -208,7 +208,8 @@ pub async fn complete_raw(req: &serde_json::Value) -> Result<serde_json::Value, 
         system_prompt: req.get("system").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         messages,
         tools,
-        max_tokens: req.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(4096) as u32,
+        max_tokens: u32::try_from(req.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(4096))
+            .unwrap_or(u32::MAX),
         temperature: req.get("temperature").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
         thinking_budget: None,
         cache_control: false,
@@ -223,7 +224,7 @@ pub async fn complete_raw(req: &serde_json::Value) -> Result<serde_json::Value, 
     // reported "ended with no edit" as though the model were incapable.
     let response = if !request.tools.is_empty() && !model.to_lowercase().starts_with("claude") {
         crate::adapters::ollama_chat::chat(
-            &std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string()),
+            &crate::local_provider().base_url(),
             std::time::Duration::from_secs(600),
             request,
         )
