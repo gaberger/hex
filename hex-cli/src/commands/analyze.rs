@@ -1,14 +1,15 @@
 //! Architecture health check command.
 //!
 //! `hex analyze [path]` — checks hex layer structure using `hex_core::rules::boundary`
-//! types, and when nexus is running, delegates to the full tree-sitter boundary analysis.
+//! types, then runs the full tree-sitter boundary analysis in-process via
+//! `hex-analysis` (ADR-2608241500 P6.2 — it used to ask the daemon, and only
+//! when the daemon happened to be running with this directory registered).
 
 use std::path::{Path, PathBuf};
 
 use colored::Colorize;
 use hex_core::rules::boundary::{self, Layer};
 
-use crate::nexus_client::NexusClient;
 
 /// Layers shown in the "Hex layers" checklist, in display order. Detection itself is
 /// language-agnostic (`hex_core::rules::boundary::detect_layer`, a path-substring
@@ -132,7 +133,7 @@ pub async fn run(
             Vec::new()
         };
 
-        // Offline boundary check: scan for obvious violations without nexus
+        // Fast heuristic pass: obvious violations, before the tree-sitter run
         local_violations = if has_src {
             scan_local_violations(&root)
         } else {
@@ -229,52 +230,37 @@ pub async fn run(
             }
         }
 
-        // Try nexus for full boundary analysis + nexus-computed score
-        let nexus = NexusClient::from_env();
-        let mut nexus_score: Option<u64> = None;
-        if nexus.ensure_running().await.is_ok() {
-            if let Ok(resp) = nexus.get("/api/projects").await {
-                if let Some(projects) = resp.get("projects").and_then(|p| p.as_array()) {
-                    let matching = projects.iter().find(|p| {
-                        p["rootPath"]
-                            .as_str()
-                            .map(|rp| root.to_string_lossy().contains(rp) || rp.contains(&*root.to_string_lossy()))
-                            .unwrap_or(false)
-                    });
-
-                    if let Some(project) = matching {
-                        let pid = project["id"].as_str().unwrap_or("-");
-                        println!(
-                            "    {} Nexus: project registered ({})",
-                            "\u{2713}".green(),
-                            pid
-                        );
-                        let health_path = format!("/api/{}/health", pid);
-                        if let Ok(health) = nexus.get(&health_path).await {
-                            nexus_score = health["score"].as_u64();
-                            if let Some(boundary_count) = health["violations"].as_u64() {
-                                if boundary_count > 0 {
-                                    println!(
-                                        "    {} Nexus boundary violations: {}",
-                                        "\u{26a0}".yellow(),
-                                        boundary_count.to_string().red()
-                                    );
-                                }
-                            }
-                        }
-                    }
+        // Full tree-sitter boundary analysis, in-process (ADR-2608241500 P6.2).
+        // This used to ask the daemon, and only if it happened to be running and
+        // to have this directory registered as a project — so the authoritative
+        // score depended on a background process and a registration step. It is
+        // the same `hex-analysis` engine either way; hex-cli calls it directly.
+        let deep_score: Option<u64> = match deep_analysis(&root).await {
+            Ok(result) => {
+                if !result.violations.is_empty() {
+                    println!(
+                        "    {} Boundary violations: {}",
+                        "\u{26a0}".yellow(),
+                        result.violations.len().to_string().red()
+                    );
                 }
+                println!(
+                    "    {} Analysed {} files, {} import edges",
+                    "\u{2713}".green(),
+                    result.file_count,
+                    result.edge_count
+                );
+                Some(result.health_score as u64)
             }
-        } else {
-            println!(
-                "    {} Nexus offline — run {} for deep analysis",
-                "\u{25cb}".dimmed(),
-                "hex nexus start".dimmed()
-            );
-        }
+            Err(e) => {
+                println!("    {} Deep analysis failed: {}", "\u{26a0}".yellow(), e);
+                None
+            }
+        };
 
-        // Compute final score and grade (nexus score takes precedence if available)
-        let score = nexus_score.unwrap_or_else(|| {
+        // Compute final score and grade. The tree-sitter score wins when the
+        // deep pass ran; the offline heuristic is the fallback.
+        let score = deep_score.unwrap_or_else(|| {
             let v = all_violation_count as u64;
             if v == 0 { 100 } else { 100u64.saturating_sub(v * 10) }
         });
@@ -296,7 +282,7 @@ pub async fn run(
         );
     }
 
-    // ADR compliance check (ADR-045) — runs locally, no nexus needed
+    // ADR compliance check (ADR-045)
     if !violations_only {
         println!();
         println!("  {}", "ADR compliance:".bold());
@@ -352,7 +338,6 @@ pub async fn run(
     }
 
     // Store compliance results in HexFlo memory (best-effort)
-    store_compliance_in_hexflo(&adr_violations, error_count, warning_count).await;
 
     let total_violations = all_violation_count + adr_violations.len();
 
@@ -381,6 +366,19 @@ pub async fn run(
 
 /// Analyze a single file for hex boundary violations.
 /// Used by PostToolUse hooks to check one file at a time.
+/// Run the full tree-sitter boundary analysis over `root`.
+///
+/// `hex-analysis` is the crate that enforces the hexagonal rules this tool
+/// sells. Until now only `hex-nexus` depended on it, so deleting the daemon
+/// would have orphaned it — see docs/analysis/2608241500-consumer-trace.md §5.
+async fn deep_analysis(
+    root: &Path,
+) -> Result<hex_analysis::domain::ArchAnalysisResult, hex_analysis::ports::AnalysisError> {
+    use hex_analysis::ports::ArchAnalysisPort;
+    let ast = std::sync::Arc::new(hex_analysis::treesitter_adapter::TreeSitterAdapter::new());
+    hex_analysis::analyzer::ArchAnalyzer::new(ast).analyze(root).await
+}
+
 fn run_single_file(
     file_path: &str,
     root: &Path,
@@ -915,7 +913,7 @@ fn collect_rust_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
 /// Scan source files for boundary violations using `hex_core::rules::boundary`.
 ///
 /// This performs a lightweight offline check by inspecting Rust `use` and
-/// TypeScript `import` statements without needing tree-sitter or nexus.
+/// TypeScript `import` statements without needing tree-sitter.
 fn scan_local_violations(root: &Path) -> Vec<boundary::Violation> {
     let src = root.join("src");
     let mut all_violations = Vec::new();
@@ -1167,46 +1165,6 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
     violations
 }
 
-/// Store ADR compliance results in HexFlo memory via nexus REST API.
-/// Best-effort: silently skips if nexus is not running.
-async fn store_compliance_in_hexflo(
-    violations: &[AdrViolationLocal],
-    error_count: usize,
-    warning_count: usize,
-) {
-    let nexus = NexusClient::from_env();
-    if nexus.ensure_running().await.is_err() {
-        return; // nexus not running — skip silently
-    }
-
-    let violation_details: Vec<serde_json::Value> = violations
-        .iter()
-        .map(|v| {
-            serde_json::json!({
-                "adr": v.adr,
-                "file": v.file,
-                "line": v.line,
-                "message": v.message,
-                "severity": v.severity,
-            })
-        })
-        .collect();
-
-    let payload = serde_json::json!({
-        "key": "ADR-compliance:default",
-        "value": serde_json::json!({
-            "violationCount": violations.len(),
-            "errorCount": error_count,
-            "warningCount": warning_count,
-            "violations": violation_details,
-            "checkedAt": chrono::Utc::now().to_rfc3339(),
-        }).to_string(),
-    });
-
-    // Best-effort POST — ignore errors
-    let _ = nexus.post("/api/hexflo/memory", &payload).await;
-}
-
 /// JSON output mode for `hex analyze --json`.
 async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyhow::Result<()> {
     let mut result = serde_json::json!({});
@@ -1248,30 +1206,13 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
             Vec::new()
         };
 
-        // Try nexus for score
-        let nexus = NexusClient::from_env();
+        // Full tree-sitter analysis, in-process (ADR-2608241500 P6.2).
         let mut score: Option<u64> = None;
         let mut boundary_errors: Vec<serde_json::Value> = Vec::new();
-        if nexus.ensure_running().await.is_ok() {
-            if let Ok(resp) = nexus.get("/api/projects").await {
-                if let Some(projects) = resp.get("projects").and_then(|p| p.as_array()) {
-                    let matching = projects.iter().find(|p| {
-                        p["rootPath"]
-                            .as_str()
-                            .map(|rp| root.to_string_lossy().contains(rp) || rp.contains(&*root.to_string_lossy()))
-                            .unwrap_or(false)
-                    });
-                    if let Some(project) = matching {
-                        let pid = project["id"].as_str().unwrap_or("-");
-                        let health_path = format!("/api/{}/health", pid);
-                        if let Ok(health) = nexus.get(&health_path).await {
-                            score = health["score"].as_u64();
-                            if let Some(v) = health["violations"].as_u64() {
-                                boundary_errors.push(serde_json::json!({"count": v}));
-                            }
-                        }
-                    }
-                }
+        if let Ok(deep) = deep_analysis(root).await {
+            score = Some(deep.health_score as u64);
+            if !deep.violations.is_empty() {
+                boundary_errors.push(serde_json::json!({"count": deep.violations.len()}));
             }
         }
 
@@ -1314,7 +1255,6 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
     });
 
     // Best-effort store in HexFlo
-    store_compliance_in_hexflo(&adr_violations, error_count, warning_count).await;
 
     println!("{}", serde_json::to_string_pretty(&result)?);
 

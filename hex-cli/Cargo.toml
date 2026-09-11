@@ -16,6 +16,9 @@ path = "src/lib.rs"
 [dependencies]
 hex-core = { path = "../hex-core" }
 hex-exec = { path = "../hex-exec" }
+hex-analysis = { path = "../hex-analysis" }
+hex-git = { path = "../hex-git" }
+hex-infer = { path = "../hex-infer" }
 hex-graph = { path = "../hex-graph" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
