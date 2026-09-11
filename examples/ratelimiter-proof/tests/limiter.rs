@@ -115,6 +115,32 @@ fn a6_try_acquire_zero_takes_nothing() {
     assert_eq!(granted, 10, "a full bucket still grants exactly capacity");
 }
 
+/// A7. A burst that overflows a u128 is an error, not a broken limiter.
+///
+/// The burst check multiplies `capacity` by `nanos_per_token`. The cost of a
+/// token comes from `Duration::as_nanos`, which is a u128 and reaches about
+/// 2^94, so the product can leave a u128 behind. A5 never sees this, because
+/// its largest product is about 1.8e28, far under the ceiling.
+///
+/// The period below is exactly 2^65 nanoseconds, so one token costs 2^65. At a
+/// capacity of 2^63 the product is exactly 2^128. Before the fix this panicked
+/// with "attempt to multiply with overflow" in a debug build. In a release
+/// build it was worse: the product wrapped to 0, `BurstTooLarge` never came
+/// back, and the truncating casts stored a cost of 0 per token. That bucket
+/// granted every full-capacity burst for ever, and `approx_available` divided
+/// by zero.
+#[test]
+fn a7_a_burst_that_overflows_u128_is_rejected() {
+    // 36_893_488_147 s + 419_103_232 ns == 2^65 ns.
+    let period = Duration::new(36_893_488_147, 419_103_232);
+
+    assert_eq!(
+        TokenBucket::new(1u64 << 63, 1, period).unwrap_err(),
+        ConfigError::BurstTooLarge,
+        "a product of 2^128 must be rejected, not wrapped"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Group B — refill
 // ---------------------------------------------------------------------------
@@ -373,4 +399,57 @@ fn c3_the_type_is_sync() {
     });
 
     assert_eq!(granted.load(Ordering::Relaxed), 64, "a frozen clock is exact");
+}
+
+// ---------------------------------------------------------------------------
+// Group D — the far end of the clock
+// ---------------------------------------------------------------------------
+
+/// D1. A very old clock still refills.
+///
+/// The old code stopped the virtual clock at `1 << 62` nanoseconds, which is
+/// about 146 years. Past that point the bucket drained once and then said
+/// "no" for ever, to every caller. The doc comment claimed the opposite.
+///
+/// The limiter must keep working for as long as the clock underneath it moves.
+#[test]
+fn d1_a_clock_past_the_old_ceiling_still_refills() {
+    let clock = Arc::new(ManualClock::new());
+    let bucket = TokenBucket::with_clock(10, 5, SECOND, Arc::clone(&clock)).expect("valid config");
+
+    // Walk past the old 146-year ceiling. `advance` takes a `Duration`, so we
+    // take two steps to get there.
+    let half = Duration::from_nanos(1u64 << 61);
+    clock.advance(half);
+    clock.advance(half);
+    clock.advance(SECOND);
+
+    assert_eq!(drain(&bucket), 10, "an old bucket is still full");
+
+    clock.advance(SECOND);
+    assert_eq!(drain(&bucket), 5, "one second still buys five tokens");
+
+    clock.advance(Duration::from_secs(3600));
+    assert_eq!(drain(&bucket), 10, "an hour still cannot fill past capacity");
+}
+
+/// D2. When the clock underneath finally stops, the limiter fails closed.
+///
+/// `ManualClock` stops at the top of a `u64`, after about 584 years. The
+/// virtual clock stops with it. From then on there is no refill: the bucket
+/// gives out what it holds and then denies everything. That is the safe
+/// direction, and it is what the doc comment must say.
+#[test]
+fn d2_a_stopped_clock_denies_and_never_over_grants() {
+    let clock = Arc::new(ManualClock::new());
+    let bucket = TokenBucket::with_clock(10, 5, SECOND, Arc::clone(&clock)).expect("valid config");
+
+    clock.advance(Duration::from_nanos(u64::MAX));
+    assert_eq!(clock.elapsed_nanos(), u64::MAX, "the clock is at the top");
+
+    assert_eq!(drain(&bucket), 10, "the last tokens still come out");
+
+    clock.advance(Duration::from_secs(3600));
+    assert!(!bucket.try_acquire(1), "a stopped clock grants nothing more");
+    assert_eq!(bucket.approx_available(), 0, "and it reports nothing left");
 }

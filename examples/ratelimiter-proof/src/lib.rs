@@ -64,12 +64,6 @@ use std::time::{Duration, Instant};
 /// well under `u64::MAX`.
 const MAX_BURST_NS: u64 = 1 << 62;
 
-/// The largest elapsed time we look at.
-///
-/// After about 146 years the virtual clock stops moving. The bucket then stays
-/// full for ever, which is safe, and no sum can overflow.
-const MAX_ELAPSED_NS: u64 = 1 << 62;
-
 /// A source of time that never moves backwards.
 ///
 /// The bound `Send + Sync` lives on the trait on purpose. Without it the user
@@ -283,17 +277,26 @@ impl<C: Clock> TokenBucket<C> {
         // checks. There is no division at run time.
         let nanos_per_token = period_nanos.div_ceil(tokens);
 
-        // u128 cannot overflow on a product of two u64 values, so this does
-        // the job of `checked_mul` and needs no unwrap.
-        let burst = u128::from(capacity) * nanos_per_token;
+        // `nanos_per_token` is NOT a u64. `Duration::as_nanos` returns a u128
+        // that reaches about 2^94, so a u128 product can and does overflow:
+        // 2^63 tokens at 2^65 nanoseconds each is exactly 2^128. So the
+        // multiply is checked. An overflow is a burst far above the ceiling,
+        // and takes the same exit as a burst that merely passes it.
+        let burst = match u128::from(capacity).checked_mul(nanos_per_token) {
+            Some(burst) => burst,
+            None => return Err(ConfigError::BurstTooLarge),
+        };
         if burst > u128::from(MAX_BURST_NS) {
             return Err(ConfigError::BurstTooLarge);
         }
 
-        // Both casts are safe: the burst check above bounds each value by
-        // `MAX_BURST_NS`, because `capacity >= 1` and `nanos_per_token >= 1`.
-        let burst_ns = burst as u64;
-        let nanos_per_token = nanos_per_token as u64;
+        // The check above bounds both values by `MAX_BURST_NS`, because
+        // `capacity >= 1` and `nanos_per_token >= 1`. We still convert rather
+        // than cast. A silent `as` truncation here builds a limiter that never
+        // limits, so the narrowing must be one the compiler can see.
+        let burst_ns = u64::try_from(burst).map_err(|_| ConfigError::BurstTooLarge)?;
+        let nanos_per_token =
+            u64::try_from(nanos_per_token).map_err(|_| ConfigError::BurstTooLarge)?;
 
         let origin = clock.elapsed_nanos();
         Ok(Self {
@@ -318,7 +321,28 @@ impl<C: Clock> TokenBucket<C> {
     #[inline]
     fn now(&self) -> u64 {
         let raw = self.clock.elapsed_nanos().saturating_sub(self.origin);
-        raw.min(MAX_ELAPSED_NS) + self.burst_ns
+        raw.min(self.max_elapsed_ns()) + self.burst_ns
+    }
+
+    /// The largest elapsed time we look at.
+    ///
+    /// Two bursts of room sit above this number. One of them goes on the
+    /// virtual clock in [`Self::now`]. The other is the most that
+    /// `try_acquire` can ever add to `empty_at`. So no sum here can overflow.
+    ///
+    /// The clock underneath stops at the top of a `u64` too, after about 584
+    /// years. This ceiling sits `2 * burst_ns` below that top, so an ordinary
+    /// bucket reaches the two within seconds of each other. Only the largest
+    /// burst we allow pulls the ceiling down far, to about 292 years.
+    ///
+    /// When the virtual clock stops, the bucket stops refilling: callers take
+    /// the last tokens, and every later call gets `false`. That is the safe
+    /// direction, because the limiter never hands out a token that time did
+    /// not buy. But it is a full stop, not a bucket that stays full.
+    #[inline]
+    fn max_elapsed_ns(&self) -> u64 {
+        // `burst_ns` is at most `MAX_BURST_NS`, so the doubling cannot wrap.
+        u64::MAX - 2 * self.burst_ns
     }
 
     /// Asks for `n` tokens. Returns `true` if you got them.
