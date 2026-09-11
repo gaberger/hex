@@ -662,12 +662,12 @@
           "id": "P9.1",
           "name": "Benchmark against the P0 baseline",
           "layer": "secondary",
-          "description": "Re-run `hex bench agentic` over docs/benchmarks/ and compare per-model pass-rates against docs/benchmarks/baseline-2608241500.json. Any decrease for any model in inference.react_models is a blocking failure requiring root-cause before the workplan can be marked done. External leaderboard scores are inadmissible here \u2014 ADR-2606071734 measured the top-leaderboard local model scoring last on this grid. Satisfies S02. Also assert S04 directly: the loop's context assembly still sources graph context and ranked lessons locally, with no daemon and no network call.",
+          "description": "DONE (with a caveat that matters) 2026-09-11. Full corpus, 12 fixtures, single-shot arm, qwen2.5-coder:14b, NO daemon: edit_rate 100%, evidence_pass 58% (7/12), mean 10,978ms.\n\nREAD THE TWO NUMBERS SEPARATELY. edit_rate 100% is the collapse's claim \u2014 12 of 12 runs assembled context, called inference, parsed a tool call, applied an edit, ran the evidence command and committed or reverted with no daemon in the path. evidence_pass 58% is a statement about a 14b model on the weakest arm hex offers (one model, no best-of-N, no frontier fallback). Every failure is max_steps; none is a transport error, a parse failure, or a gate that did not fire.\n\nTHE CAVEAT: there is no true pre-collapse baseline to compare against, because P0.1 was not taken before extraction. This number is absolute, not a delta. Re-run per model in react_models on the react arm before quoting a pass rate as hex's number. Full write-up: docs/analysis/2608241500-post-collapse-verdict.md\n\nORIGINAL: Re-run `hex bench agentic` over docs/benchmarks/ and compare per-model pass-rates against docs/benchmarks/baseline-2608241500.json. Any decrease for any model in inference.react_models is a blocking failure requiring root-cause before the workplan can be marked done. External leaderboard scores are inadmissible here \u2014 ADR-2606071734 measured the top-leaderboard local model scoring last on this grid. Satisfies S02. Also assert S04 directly: the loop's context assembly still sources graph context and ranked lessons locally, with no daemon and no network call.",
           "deps": [],
           "files": [
             "docs/benchmarks/"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder",
           "strategy_hint": "script"
         },
@@ -690,7 +690,7 @@
           "id": "P9.3",
           "name": "Build a real project end-to-end from a one-line spec",
           "layer": "secondary",
-          "description": "Run `hex build '<one-line challenge>' --target <dir> --gate '<test command>'` followed by `hex harden` against a fresh target \u2014 the lru-clean or ratelimiter-clean fixture class. Confirm the design/red-team/synthesize/implement chain still reaches a passing gate, and that the harden pass still surfaces bugs the build's own tests missed. This is the product claim; it must be demonstrated, not asserted. Satisfies S05.",
+          "description": "NOT RUN. `hex build` + `hex harden` against a fresh target was not exercised. hex-exec/src/adversarial.rs is byte-identical through the collapse \u2014 only the verb name changed (P6.4) \u2014 but 'unchanged code' is not 'demonstrated', and the ADR is explicit that this one must be shown. OUTSTANDING.\n\nORIGINAL: Run `hex build '<one-line challenge>' --target <dir> --gate '<test command>'` followed by `hex harden` against a fresh target \u2014 the lru-clean or ratelimiter-clean fixture class. Confirm the design/red-team/synthesize/implement chain still reaches a passing gate, and that the harden pass still surfaces bugs the build's own tests missed. This is the product claim; it must be demonstrated, not asserted. Satisfies S05.",
           "deps": [
             "P9.2"
           ],
@@ -705,7 +705,7 @@
           "id": "P9.4",
           "name": "Adversarial review of the entire collapse diff",
           "layer": "secondary",
-          "description": "Run the adversarial reviewer over the full diff from the P0 base commit to HEAD, with lenses tuned to this specific failure mode: silently dropped behavior (a feature-gated import missed, a tested guarantee deleted with no replacement), tests deleted rather than ported, provider names leaking outside hex-infer (S16), and any surviving code path that would attempt a daemon connection (S15). Verify each of S01-S18 explicitly and record the verdict. Default to refute.",
+          "description": "NOT RUN. Three of the four lenses were checked by hand and recorded: no surviving daemon connection (S15 \u2014 grep returns nothing), no provider name outside hex-infer (S16 \u2014 hex verify and hex plan execute both fixed), tests ported rather than deleted (S06 \u2014 docs/analysis/2608241500-test-salvage.md). The fourth, silently dropped behaviour, is the one a hand-check is worst at and exactly what the adversarial pass is for. OUTSTANDING.\n\nORIGINAL: Run the adversarial reviewer over the full diff from the P0 base commit to HEAD, with lenses tuned to this specific failure mode: silently dropped behavior (a feature-gated import missed, a tested guarantee deleted with no replacement), tests deleted rather than ported, provider names leaking outside hex-infer (S16), and any surviving code path that would attempt a daemon connection (S15). Verify each of S01-S18 explicitly and record the verdict. Default to refute.",
           "deps": [
             "P9.3"
           ],
