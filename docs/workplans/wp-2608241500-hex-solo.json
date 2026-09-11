@@ -86,12 +86,12 @@
           "id": "P0.5",
           "name": "Drop hex-desktop from workspace members",
           "layer": "secondary",
-          "description": "hex-desktop is the only crate failing the workspace build, and it fails on missing SYSTEM libraries (gdk-3.0, dbus-1) rather than code \u2014 taking `cargo check --workspace` down with it and creating the impression that the workspace is broken. Remove it from [workspace] members in Cargo.toml. One line; it is deleted outright in P5.3.",
+          "description": "DONE 2026-09-11. hex-desktop removed from [workspace] members. `cargo check --workspace` now returns 0 errors with no --exclude needed.\n\nORIGINAL: hex-desktop is the only crate failing the workspace build, and it fails on missing SYSTEM libraries (gdk-3.0, dbus-1) rather than code \u2014 taking `cargo check --workspace` down with it and creating the impression that the workspace is broken. Remove it from [workspace] members in Cargo.toml. One line; it is deleted outright in P5.3.",
           "deps": [],
           "files": [
             "Cargo.toml"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder",
           "strategy_hint": "transform"
         }
@@ -207,7 +207,7 @@
           "id": "P2.5",
           "name": "Repoint hex-exec off the HTTP loopback",
           "layer": "secondary",
-          "description": "Replace the two loopback call sites (hex-exec/src/direct_exec.rs:771 and direct_react.rs:131) with in-process calls through IInferencePort backed by hex-infer. Add hex-infer to hex-exec's dependencies. hex-cli already depends on hex-exec directly and does NOT depend on hex-nexus, so `hex do` becomes a fully in-process call with no daemon hop. Satisfies S01.",
+          "description": "DONE 2026-09-11. New module hex-exec/src/infer.rs wraps hex_infer::complete behind complete_json(Value) -> Result<Value,String>, keeping the exact JSON request/response shapes the daemon endpoint used \u2014 which is why no tool-call parser changed. Three loopback sites repointed, not two: direct_exec.rs::request_edit, direct_react.rs (the ReAct turn AND summarize_overflow, which the task text missed), and simple_agent.rs::run, whose `inference_url: String` parameter is gone from the signature. Its only caller, hex-nexus/src/routes/agent_run.rs, was updated and HEX_AGENT_INFERENCE_URL is dead. hex-infer added to hex-exec deps. 3 contract tests added; 92 hex-exec lib tests pass; `cargo check --workspace` clean. `hex do` is now fully in-process: no daemon, no localhost hop.\n\nORIGINAL: Replace the two loopback call sites (hex-exec/src/direct_exec.rs:771 and direct_react.rs:131) with in-process calls through IInferencePort backed by hex-infer. Add hex-infer to hex-exec's dependencies. hex-cli already depends on hex-exec directly and does NOT depend on hex-nexus, so `hex do` becomes a fully in-process call with no daemon hop. Satisfies S01.",
           "deps": [
             "P2.4"
           ],
@@ -217,7 +217,7 @@
             "hex-exec/src/simple_agent.rs",
             "hex-exec/Cargo.toml"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder",
           "strategy_hint": "codegen"
         }

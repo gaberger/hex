@@ -17,7 +17,7 @@
 use crate::tools::ToolRegistry;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 const DEFAULT_MAX_ITERATIONS: u32 = 10;
 const DEFAULT_MAX_TOKENS: u32 = 4096;
@@ -63,16 +63,11 @@ pub struct RunSummary {
 /// with no tool_use blocks (it's done explaining), when the iteration
 /// budget is exhausted, or on transport error.
 ///
-/// The inference path here is the same /api/anthropic-messages-compatible
-/// endpoint the single-agent do-loop (`direct_react`/`agent_loop`) uses,
-/// but with NO persona system prompt, NO SOP phase scaffolding, and NO
-/// single-action emit constraint. The LLM is just told what it can do and
-/// is left to drive.
-pub async fn run(
-    cfg: RunConfig,
-    registry: Arc<ToolRegistry>,
-    inference_url: String,
-) -> Result<RunSummary, String> {
+/// The inference path here is the same in-process `hex-infer` call the
+/// single-agent do-loop (`direct_react`) uses (ADR-2608241500 P2.5), but with
+/// NO persona system prompt, NO SOP phase scaffolding, and NO single-action
+/// emit constraint. The LLM is just told what it can do and is left to drive.
+pub async fn run(cfg: RunConfig, registry: Arc<ToolRegistry>) -> Result<RunSummary, String> {
     let started = Instant::now();
     let max_iterations = if cfg.max_iterations == 0 {
         DEFAULT_MAX_ITERATIONS
@@ -89,11 +84,6 @@ pub async fn run(
         .clone()
         .or_else(|| std::env::var("HEX_AGENT_MODEL").ok())
         .unwrap_or_else(|| "qwen2.5-coder:14b".to_string());
-
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(180))
-        .build()
-        .map_err(|e| format!("http build: {}", e))?;
 
     let system_prompt = build_system_prompt(&registry);
     let mut messages: Vec<Value> = vec![json!({
@@ -121,26 +111,18 @@ pub async fn run(
             "messages": messages,
         });
 
-        let resp = http
-            .post(&inference_url)
-            .json(&req_body)
-            .send()
-            .await
-            .map_err(|e| format!("inference http (iter {}): {}", iteration, e))?;
-        let status = resp.status();
-        let body: Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("inference json (iter {}): {}", iteration, e))?;
-        if !status.is_success() {
-            return Ok(RunSummary {
-                iterations: iteration,
-                steps,
-                final_text,
-                stop_reason: format!("error: inference HTTP {}", status),
-                elapsed_ms: started.elapsed().as_millis() as u64,
-            });
-        }
+        let body: Value = match crate::infer::complete_json(req_body).await {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(RunSummary {
+                    iterations: iteration,
+                    steps,
+                    final_text,
+                    stop_reason: format!("error: inference {}", e),
+                    elapsed_ms: started.elapsed().as_millis() as u64,
+                });
+            }
+        };
 
         // The inference adapter normalises whatever the upstream provider
         // emits (Anthropic content[] blocks, OpenAI choices[].message.tool_calls,

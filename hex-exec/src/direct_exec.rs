@@ -767,9 +767,6 @@ async fn request_edit(
     context: &str,
     prior_error: Option<&str>,
 ) -> Result<Edit, String> {
-    let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
-    let url = format!("http://127.0.0.1:{}/api/inference/complete", port);
-
     let system = "You are a precise Rust code editor. Reply in EXACTLY this format and nothing \
         else (no prose before or after):\n\
         First line: `MODE: append` to add code to the END of the file, or `MODE: replace` to \
@@ -816,16 +813,9 @@ async fn request_edit(
         "max_tokens": std::env::var("HEX_DIRECT_MAX_TOKENS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(4096),
     });
 
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(600))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = http.post(&url).json(&body).send().await.map_err(|e| e.to_string())?;
-    let status = resp.status();
-    let rb: Value = resp.json().await.map_err(|e| e.to_string())?;
-    if !status.is_success() {
-        return Err(format!("HTTP {}: {}", status, rb));
-    }
+    // In-process (ADR-2608241500 P2.5): same request body the daemon endpoint
+    // took, same response object it returned — no localhost hop.
+    let rb = crate::infer::complete_json(body).await?;
     let content = rb.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
     parse_edit(&content)
 }

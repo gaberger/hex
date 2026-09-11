@@ -12,9 +12,8 @@
 //!
 //! This is the deliberately-flat alternative to `/api/org/send-message`
 //! (which goes through persona rephrasing + atomic-claim + Confirm:
-//! contract + drafter + twin). The agent loop here just calls the
-//! local inference endpoint with the full typed-tool catalogue and
-//! lets the LLM drive. Same safety gates downstream (twin auto-approve
+//! contract + drafter + twin). The agent loop here calls `hex-infer`
+//! in-process with the full typed-tool catalogue and lets the LLM drive. Same safety gates downstream (twin auto-approve
 //! for tool:* + operator-passthrough, executor cargo_check, autonomous
 //! commit step).
 
@@ -50,11 +49,6 @@ pub async fn run(Json(body): Json<Value>) -> (StatusCode, Json<Value>) {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    // Same /api/inference/complete the SOP path uses. Co-located with nexus
-    // (the daemon hosting this very route), so 127.0.0.1:5555 by default.
-    let inference_url = std::env::var("HEX_AGENT_INFERENCE_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:5555/api/inference/complete".to_string());
-
     let cfg = RunConfig {
         intent,
         max_iterations,
@@ -63,7 +57,7 @@ pub async fn run(Json(body): Json<Value>) -> (StatusCode, Json<Value>) {
     };
     let registry = Arc::new(ToolRegistry::default());
 
-    match simple_run(cfg, registry, inference_url).await {
+    match simple_run(cfg, registry).await {
         Ok(summary) => (
             StatusCode::OK,
             Json(serde_json::to_value(&summary).unwrap_or(Value::Null)),
