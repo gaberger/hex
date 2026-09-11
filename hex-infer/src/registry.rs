@@ -140,6 +140,77 @@ pub fn models_of(v: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
+// ── writing ──────────────────────────────────────────────────────────────────
+
+/// Add or replace an endpoint by id, and write the file.
+///
+/// `hex config inference add` used to PATCH the daemon, which wrote a
+/// SpacetimeDB row, which `config_sync` then preloaded back out of this same
+/// file on the next startup (ADR-2026-04-08-0813). The file was always the
+/// source; the database was a copy of it.
+pub fn upsert(endpoint: Endpoint) -> Result<(), String> {
+    let mut all = load();
+    match all.iter_mut().find(|e| e.id == endpoint.id) {
+        Some(existing) => *existing = endpoint,
+        None => all.push(endpoint),
+    }
+    save(&all)
+}
+
+/// Remove an endpoint by id. Returns whether it was there.
+pub fn remove(id: &str) -> Result<bool, String> {
+    let mut all = load();
+    let before = all.len();
+    all.retain(|e| e.id != id);
+    if all.len() == before {
+        return Ok(false);
+    }
+    save(&all).map(|_| true)
+}
+
+/// Write the registry, preserving the on-disk shape.
+///
+/// `models` goes back out as a string-encoded array and the keys stay
+/// camelCase, because an older hex, and the operator's own editor, both read
+/// this file. Changing its shape to suit the in-memory type would be the
+/// convenience of one process paid for by everything else that opens it.
+pub fn save(endpoints: &[Endpoint]) -> Result<(), String> {
+    let path = registry_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let rows: Vec<serde_json::Value> = endpoints.iter().map(endpoint_to_json).collect();
+    let doc = serde_json::json!({
+        "endpoints": rows,
+        "updated_at": chrono::Utc::now().to_rfc3339(),
+        "version": 1,
+    });
+    let text = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
+    // Write-then-rename: a killed process must not leave a half-written
+    // registry, because an unparseable one reads as "no backends at all".
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn endpoint_to_json(e: &Endpoint) -> serde_json::Value {
+    let models = if e.models.is_empty() { vec![e.model.clone()] } else { e.models.clone() };
+    serde_json::json!({
+        "id": e.id,
+        "url": e.url,
+        "provider": e.provider,
+        "model": e.model,
+        "models": serde_json::to_string(&models).unwrap_or_else(|_| "[]".into()),
+        "status": e.status,
+        "requiresAuth": e.requires_auth,
+        "apiKeyRef": if e.secret_key.is_empty() { serde_json::Value::Null }
+                     else { serde_json::Value::String(e.secret_key.clone()) },
+        "healthCheckedAt": e.health_checked_at,
+        "qualityScore": e.quality_score,
+        "quantizationLevel": e.quantization_level,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,4 +296,58 @@ mod tests {
         assert_eq!(ep.secret_key, "TENSTORRENT_API_KEY");
         assert!(ep.requires_auth, "a key reference implies auth is required");
     }
+
+    /// Round-tripping must survive the file's quirks, not just our own types.
+    #[test]
+    fn a_saved_endpoint_reads_back_identically() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("HOME", dir.path());
+        let ep = Endpoint {
+            id: "tt".into(),
+            url: "https://x/v1".into(),
+            provider: "openai_compat".into(),
+            model: "Qwen/Qwen3-32B".into(),
+            models: vec!["Qwen/Qwen3-32B".into(), "other".into()],
+            status: "healthy".into(),
+            requires_auth: true,
+            secret_key: "TT_KEY".into(),
+            health_checked_at: "2026-09-11T00:00:00Z".into(),
+            quality_score: 0.5,
+            quantization_level: "cloud".into(),
+        };
+        save(std::slice::from_ref(&ep)).expect("save");
+        let back = load();
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0], ep);
+    }
+
+    #[test]
+    fn upsert_replaces_by_id_and_remove_reports_absence() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("HOME", dir.path());
+        let mk = |id: &str, model: &str| Endpoint {
+            id: id.into(),
+            url: "http://x".into(),
+            provider: "ollama".into(),
+            model: model.into(),
+            models: vec![model.into()],
+            status: "unknown".into(),
+            requires_auth: false,
+            secret_key: String::new(),
+            health_checked_at: String::new(),
+            quality_score: 0.0,
+            quantization_level: String::new(),
+        };
+        upsert(mk("a", "one")).expect("insert");
+        upsert(mk("b", "two")).expect("insert");
+        upsert(mk("a", "rewritten")).expect("replace");
+        let all = load();
+        assert_eq!(all.len(), 2, "an id is replaced, not duplicated");
+        assert_eq!(all.iter().find(|e| e.id == "a").unwrap().model, "rewritten");
+
+        assert!(remove("a").expect("remove"));
+        assert!(!remove("a").expect("remove again"), "already gone");
+        assert_eq!(load().len(), 1);
+    }
+
 }

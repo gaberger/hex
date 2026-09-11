@@ -42,9 +42,6 @@ impl PrereqChecker {
     pub async fn check_all(&self) -> anyhow::Result<PrereqReport> {
         let mut statuses = vec![];
 
-        // Check SpacetimeDB
-        statuses.push(self.check_spacetimedb());
-
         // Check Ollama
         statuses.push(self.check_ollama());
 
@@ -59,42 +56,6 @@ impl PrereqChecker {
 
         Ok(PrereqReport { statuses })
     }
-
-    fn check_spacetimedb(&self) -> PrereqStatus {
-        if self.command_exists("spacetime") {
-            if let Ok(output) = Command::new("spacetime").arg("--version").output() {
-                let version = String::from_utf8_lossy(&output.stdout)
-                    .trim()
-                    .to_string();
-                PrereqStatus {
-                    name: "SpacetimeDB".to_string(),
-                    installed: true,
-                    version: Some(version),
-                    install_cmd: None,
-                }
-            } else {
-                PrereqStatus {
-                    name: "SpacetimeDB".to_string(),
-                    installed: true,
-                    version: None,
-                    install_cmd: None,
-                }
-            }
-        } else {
-            let cmd = if cfg!(target_os = "macos") {
-                "brew install spacetimedb"
-            } else {
-                "curl --proto '=https' --tlsv1.2 -sSf https://install.spacetimedb.com | sh"
-            };
-            PrereqStatus {
-                name: "SpacetimeDB".to_string(),
-                installed: false,
-                version: None,
-                install_cmd: Some(cmd.to_string()),
-            }
-        }
-    }
-
     fn check_ollama(&self) -> PrereqStatus {
         if self.command_exists("ollama") {
             if let Ok(output) = Command::new("ollama").arg("--version").output() {

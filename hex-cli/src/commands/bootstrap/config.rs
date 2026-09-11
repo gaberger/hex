@@ -38,7 +38,7 @@ impl ConfigSetup {
             "bootstrap": {
                 "profile": self.profile,
                 "timestamp": chrono::Utc::now().to_rfc3339(),
-                "services_started": ["spacetimedb", "hex-nexus", "ollama"]
+                "services_started": ["ollama"]
             }
         });
 

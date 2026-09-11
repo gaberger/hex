@@ -6,5 +6,4 @@ pub mod assets;
 pub mod fmt;
 pub mod prompts;
 pub mod session;
-pub mod nexus_client;
 pub mod commands;

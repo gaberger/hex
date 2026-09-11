@@ -22,110 +22,11 @@ impl ServiceStarter {
     pub async fn start_all(&self) -> anyhow::Result<Vec<ServiceStatus>> {
         let mut statuses = vec![];
 
-        // Start SpacetimeDB
-        statuses.push(self.start_spacetimedb().await);
-
-        // Start hex-nexus
-        statuses.push(self.start_hex_nexus().await);
-
         // Start Ollama
         statuses.push(self.start_ollama().await);
 
         Ok(statuses)
     }
-
-    async fn start_spacetimedb(&self) -> ServiceStatus {
-        if !self.is_port_open(3033).await && !self.force {
-            if self.is_process_running("spacetime") {
-                return ServiceStatus {
-                    name: "SpacetimeDB".to_string(),
-                    running: true,
-                    pid: self.get_pid("spacetime"),
-                };
-            }
-        }
-
-        if self.dry_run {
-            return ServiceStatus {
-                name: "SpacetimeDB".to_string(),
-                running: false,
-                pid: None,
-            };
-        }
-
-        if self.force {
-            let _ = Command::new("pkill").arg("-f").arg("spacetime-cli").output();
-            sleep(Duration::from_millis(500)).await;
-        }
-
-        let output = Command::new("spacetime")
-            .arg("start")
-            .arg("--background")
-            .output();
-
-        match output {
-            Ok(_) => {
-                sleep(Duration::from_secs(2)).await;
-                ServiceStatus {
-                    name: "SpacetimeDB".to_string(),
-                    running: true,
-                    pid: self.get_pid("spacetime"),
-                }
-            }
-            Err(_) => ServiceStatus {
-                name: "SpacetimeDB".to_string(),
-                running: false,
-                pid: None,
-            },
-        }
-    }
-
-    async fn start_hex_nexus(&self) -> ServiceStatus {
-        if !self.is_port_open(5555).await && !self.force {
-            if self.is_process_running("hex-nexus") {
-                return ServiceStatus {
-                    name: "hex-nexus".to_string(),
-                    running: true,
-                    pid: self.get_pid("hex-nexus"),
-                };
-            }
-        }
-
-        if self.dry_run {
-            return ServiceStatus {
-                name: "hex-nexus".to_string(),
-                running: false,
-                pid: None,
-            };
-        }
-
-        if self.force {
-            let _ = Command::new("pkill").arg("-f").arg("hex-nexus").output();
-            sleep(Duration::from_millis(500)).await;
-        }
-
-        let output = Command::new("hex")
-            .arg("nexus")
-            .arg("start")
-            .output();
-
-        match output {
-            Ok(_) => {
-                sleep(Duration::from_secs(1)).await;
-                ServiceStatus {
-                    name: "hex-nexus".to_string(),
-                    running: true,
-                    pid: self.get_pid("hex-nexus"),
-                }
-            }
-            Err(_) => ServiceStatus {
-                name: "hex-nexus".to_string(),
-                running: false,
-                pid: None,
-            },
-        }
-    }
-
     async fn start_ollama(&self) -> ServiceStatus {
         if !self.is_port_open(11434).await && !self.force {
             if self.is_process_running("ollama") {

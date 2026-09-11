@@ -309,9 +309,6 @@ fn check_adr_status(_claim: &str, lower: &str) -> Option<CheckResult> {
 // ── LLM-driven adversarial verification ─────────────────────────────────────
 
 async fn verify_via_llm(claim: &str) -> Result<CheckResult> {
-    let port: u16 = std::env::var("HEX_PORT").ok().and_then(|s| s.parse().ok()).unwrap_or(5555);
-    let inference_url = format!("http://127.0.0.1:{}/api/inference/complete", port);
-
     let system = "You are an adversarial verifier evaluating a claim about a software repository. \
                   Output EXACTLY THREE LINES in this format and nothing else:\n\n\
                   VERDICT: <CONFIRMED or REFUTED or INCONCLUSIVE>\n\
@@ -332,24 +329,28 @@ async fn verify_via_llm(claim: &str) -> Result<CheckResult> {
                   EVIDENCE: unknown\n\n\
                   Begin your reply with the literal word VERDICT. No preamble.";
 
-    // Pin nemotron-mini: it follows the 3-line format reliably (0.99 on
-    // commit-mode in the persona bench), faster than qwen3.5:9b for this
-    // kind of structured-output ask. Override with HEX_VERIFY_MODEL.
-    let model = std::env::var("HEX_VERIFY_MODEL")
-        .unwrap_or_else(|_| "nemotron-mini".to_string());
-    let body = serde_json::json!({
-        "model": model,
-        "system": system,
-        "messages": [{"role": "user", "content": format!("Claim: {}", claim)}],
-        "max_tokens": 200,
-    });
+    // Structured three-line output is T1 work. The model id comes from
+    // `.hex/project.json` — it was pinned to a specific one here, which is the
+    // G1 failure: a caller that names a model cannot be re-pointed by editing
+    // configuration. HEX_VERIFY_MODEL still overrides for a one-off.
+    let model = match std::env::var("HEX_VERIFY_MODEL") {
+        Ok(m) if !m.is_empty() => m,
+        _ => hex_infer::tier_model("t1").ok_or_else(|| {
+            anyhow::anyhow!(
+                "no T1 model configured — set inference.tier_models in .hex/project.json, \
+                 or pass one with HEX_VERIFY_MODEL"
+            )
+        })?,
+    };
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()?;
-    let resp = client.post(&inference_url).json(&body).send().await?;
-    let v: serde_json::Value = resp.json().await?;
-    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+    let content = hex_infer::complete_text(
+        &model,
+        system,
+        &format!("Claim: {}", claim),
+        200,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("verification inference: {e}"))?;
     let content = Regex::new(r"(?s)<think>.*?</think>")
         .unwrap()
         .replace_all(&content, "")

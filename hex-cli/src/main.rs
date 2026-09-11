@@ -11,7 +11,6 @@ use tracing_subscriber::EnvFilter;
 pub mod assets;
 mod commands;
 pub mod fmt;
-pub(crate) mod nexus_client;
 pub mod prompts;
 pub mod session;
 
@@ -389,7 +388,6 @@ async fn main() -> anyhow::Result<()> {
                     doctor::composition::run_composition_check().await;
                     Ok(())
                 }
-                Some("liveness") => doctor::liveness::run().await,
                 _ => doctor::run_doctor(verbose, fix).await,
             }
         }

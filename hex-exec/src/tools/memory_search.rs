@@ -13,12 +13,13 @@
 //! before the LLM enters REASON, so the model can ground against
 //! "what we already know" instead of relearning every session.
 //!
-//! Backing endpoint: GET /api/hexflo/memory/search?q=<query>
-//! Backing store:    hexflo_memory STDB table (key, value, scope, updated_at)
+//! Backing store: `~/.hex/memory.jsonl` through `hex_exec::local_store`.
+//! It was the `hexflo_memory` SpacetimeDB table reached over HTTP, until
+//! ADR-2608241500 — which made reading a lesson depend on a database.
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::{Tool, ToolResult};
 
@@ -27,7 +28,6 @@ use super::{Tool, ToolResult};
 /// budget modest while covering the typical SOP context window.
 const MAX_RESULTS_DEFAULT: usize = 12;
 const MAX_RESULTS_HARD_CAP: usize = 50;
-const SEARCH_TIMEOUT_SECS: u64 = 5;
 
 pub struct MemorySearch;
 
@@ -81,59 +81,13 @@ impl Tool for MemorySearch {
             .map(|n| (n as usize).min(MAX_RESULTS_HARD_CAP))
             .unwrap_or(MAX_RESULTS_DEFAULT);
 
-        let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
-        let url = format!(
-            "http://127.0.0.1:{}/api/hexflo/memory/search?q={}",
-            port,
-            urlencoding::encode(query)
-        );
-
-        let client = match reqwest::Client::builder()
-            .timeout(Duration::from_secs(SEARCH_TIMEOUT_SECS))
-            .build()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                return ToolResult::err(
-                    format!("http client build: {}", e),
-                    start.elapsed().as_millis() as u64,
-                )
-            }
-        };
-
-        let resp = match client.get(&url).send().await {
-            Ok(r) => r,
-            Err(e) => {
-                return ToolResult::err(
-                    format!("memory search transport: {}", e),
-                    start.elapsed().as_millis() as u64,
-                )
-            }
-        };
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return ToolResult::err(
-                format!("memory search HTTP {}: {}", status, body.chars().take(200).collect::<String>()),
-                start.elapsed().as_millis() as u64,
-            );
-        }
-
-        let body: Value = match resp.json().await {
-            Ok(v) => v,
-            Err(e) => {
-                return ToolResult::err(
-                    format!("memory search json: {}", e),
-                    start.elapsed().as_millis() as u64,
-                )
-            }
-        };
-
-        let all_results: Vec<Value> = body
-            .get("results")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
+        // Local memory (ADR-2608241500). This was a GET to the daemon's
+        // /api/hexflo/memory/search, which read a SpacetimeDB table — so
+        // grounding the loop in past lessons needed a database to be up.
+        let all_results: Vec<Value> = crate::local_store::memory_search(query)
+            .into_iter()
+            .map(|(key, value)| json!({ "key": key, "value": value }))
+            .collect();
 
         let total = all_results.len();
         let truncated = total > max_results;

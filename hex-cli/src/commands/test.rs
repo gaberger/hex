@@ -40,6 +40,22 @@ pub enum TestAction {
     Trends,
 }
 
+/// The agent id for this session, from `~/.hex/sessions/agent-<id>.json`.
+///
+/// Lifted out of `nexus_client` (deleted with the daemon it spoke to). It never
+/// touched the network: the session file is written by the hook.
+fn read_session_agent_id() -> Option<String> {
+    let sessions = dirs::home_dir()?.join(".hex/sessions");
+    let session_id = std::env::var("CLAUDE_SESSION_ID").ok().filter(|s| !s.is_empty())?;
+    let text = std::fs::read_to_string(sessions.join(format!("agent-{session_id}.json"))).ok()?;
+    serde_json::from_str::<serde_json::Value>(&text)
+        .ok()?
+        .get("agentId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
 /// A single test result entry with structured metadata.
 #[derive(Debug, Clone, Serialize)]
 struct TestResultEntry {
@@ -146,8 +162,9 @@ impl TestResults {
         let total = self.pass + self.fail + self.skip;
         let overall_status = if self.fail == 0 { "pass" } else { "fail" };
 
-        let agent_id = crate::nexus_client::read_session_agent_id()
-            .unwrap_or_else(|| "unknown".to_string());
+        // Reads ~/.hex/sessions/agent-<id>.json — a local file, not the
+        // daemon's roster.
+        let agent_id = read_session_agent_id().unwrap_or_else(|| "unknown".to_string());
 
         // Git metadata
         let commit_hash = Command::new("git")

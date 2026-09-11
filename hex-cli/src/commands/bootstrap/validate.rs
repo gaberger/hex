@@ -70,8 +70,9 @@ impl BootstrapValidator {
         let mut model_checks = vec![];
 
         // Check services
-        service_checks.push(("SpacetimeDB".to_string(), self.check_service_health(3033).await));
-        service_checks.push(("hex-nexus".to_string(), self.check_service_health(5555).await));
+        // SpacetimeDB (3033) and hex-nexus (5555) were checked here too. Both
+        // are deleted (ADR-2608241500); an inference backend is the only
+        // service hex needs.
         service_checks.push(("Ollama".to_string(), self.check_service_health(11434).await));
 
         // Check models (quick existence check, don't wait for loading)

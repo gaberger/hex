@@ -109,7 +109,7 @@ pub struct QualityReport {
 pub struct ToolCall {
     pub timestamp: String,
     pub phase: String,
-    pub tool: String,           // e.g. "POST /api/inference/complete", "GET /api/adrs"
+    pub tool: String,           // e.g. "code_patch", "repo_grep"
     pub model: Option<String>,         // inference model used (if applicable)
     pub tokens: Option<u64>,           // total tokens (input + output)
     pub input_tokens: Option<u64>,     // prompt tokens (context window usage)
