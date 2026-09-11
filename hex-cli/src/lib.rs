@@ -4,6 +4,4 @@
 
 pub mod assets;
 pub mod fmt;
-pub mod prompts;
-pub mod session;
 pub mod commands;

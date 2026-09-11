@@ -690,14 +690,14 @@
           "id": "P9.3",
           "name": "Build a real project end-to-end from a one-line spec",
           "layer": "secondary",
-          "description": "NOT RUN. `hex build` + `hex harden` against a fresh target was not exercised. hex-exec/src/adversarial.rs is byte-identical through the collapse \u2014 only the verb name changed (P6.4) \u2014 but 'unchanged code' is not 'demonstrated', and the ADR is explicit that this one must be shown. OUTSTANDING.\n\nORIGINAL: Run `hex build '<one-line challenge>' --target <dir> --gate '<test command>'` followed by `hex harden` against a fresh target \u2014 the lru-clean or ratelimiter-clean fixture class. Confirm the design/red-team/synthesize/implement chain still reaches a passing gate, and that the harden pass still surfaces bugs the build's own tests missed. This is the product claim; it must be demonstrated, not asserted. Satisfies S05.",
+          "description": "DONE 2026-09-11. `hex build` + `hex harden` demonstrated four times against fresh targets.\n  - examples/ratelimiter-proof \u2014 777 lines from a one-line challenge, gate GREEN, 14 tests; `hex harden` then\n    found 3 real bugs those 14 passing tests missed, including a u128 overflow accepted on a confidently\n    stated false premise in a comment. All fixed, 17 tests. Commits 95df2797, 3ecea459.\n  - examples/game-life-rs \u2014 Conway's Game of Life in Rust, 13 tests. Commit 3982da1c.\n  - examples/game-ttt-go \u2014 tic-tac-toe with perfect minimax in Go, 7 tests. Commit 0efc64e6.\n  - examples/game-2048-ts \u2014 2048 core in TypeScript, 88 tests, A 93/100. Commit f65e6c15.\n    The red-team phase caught that the hand-written committed gate could not run at all on this machine\n    (`node --experimental-strip-types` needs Node 22; this box is v20). It fixed the gate, then proved it\n    red four ways before trusting it green, including the empty-src vacuous-gate case.\n  Each gate was re-run independently from a clean build; the 2048 gate was falsified five ways.\n\nORIGINAL: Run `hex build '<one-line challenge>' --target <dir> --gate '<test command>'` followed by `hex harden` against a fresh target \u2014 the lru-clean or ratelimiter-clean fixture class. Confirm the design/red-team/synthesize/implement chain still reaches a passing gate, and that the harden pass still surfaces bugs the build's own tests missed. This is the product claim; it must be demonstrated, not asserted. Satisfies S05.",
           "deps": [
             "P9.2"
           ],
           "files": [
             "examples/"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "integrator",
           "strategy_hint": "inference"
         },
@@ -705,14 +705,14 @@
           "id": "P9.4",
           "name": "Adversarial review of the entire collapse diff",
           "layer": "secondary",
-          "description": "NOT RUN. Three of the four lenses were checked by hand and recorded: no surviving daemon connection (S15 \u2014 grep returns nothing), no provider name outside hex-infer (S16 \u2014 hex verify and hex plan execute both fixed), tests ported rather than deleted (S06 \u2014 docs/analysis/2608241500-test-salvage.md). The fourth, silently dropped behaviour, is the one a hand-check is worst at and exactly what the adversarial pass is for. OUTSTANDING.\n\nORIGINAL: Run the adversarial reviewer over the full diff from the P0 base commit to HEAD, with lenses tuned to this specific failure mode: silently dropped behavior (a feature-gated import missed, a tested guarantee deleted with no replacement), tests deleted rather than ported, provider names leaking outside hex-infer (S16), and any surviving code path that would attempt a daemon connection (S15). Verify each of S01-S18 explicitly and record the verdict. Default to refute.",
+          "description": "DONE 2026-09-11. docs/analysis/2608241500-adversarial-verdict.md.\n  Method was executable, not a diff reading: the full Subcommand surface at c61c8520 vs HEAD\n  (404 -> 137 subcommands, 271 removed, 4 added), each removed module scored for daemon coupling\n  at the base commit; then a reachability sweep confirmed by putting invalid Rust in each candidate\n  and building the workspace.\n  VERDICT: no behaviour was dropped silently. Every one of the 271 removed subcommands either had\n  daemon coupling at the base or is accounted for. What was found is the mirror image \u2014 things\n  silently KEPT: 2,096 lines and 90 KB of embedded assets that nothing could reach (prompts.rs +\n  its 13 embedded templates, session.rs, readme.rs, autonomous_demo.rs, test_validation.rs with\n  2 tests that had never run, mcp-tools.json whose only reader is a test that it is embedded).\n  All deleted after a consumer trace across both recorded blind spots. 43 test functions went with\n  them, every one belonging to an unreachable module; the exact list was taken with\n  `cargo test --workspace -- --list` before and after rather than estimated.\n  ONE KNOWN GAP: P6.1 authorised deleting adr_review on condition its linting merge into adr/.\n  4 of its 5 checks are in `hex adr doctor`; scope_conflict has no equivalent. It was an advisory\n  keyword-overlap heuristic already tuned down twice in its own source. Recorded, not restored.\n  NOT COVERED: behaviour dropped inside a surviving verb \u2014 the surface diff cannot see a flag or\n  an error path that quietly stopped existing. No pre-collapse behavioural record exists for that.\n\nORIGINAL: Run the adversarial reviewer over the full diff from the P0 base commit to HEAD, with lenses tuned to this specific failure mode: silently dropped behavior (a feature-gated import missed, a tested guarantee deleted with no replacement), tests deleted rather than ported, provider names leaking outside hex-infer (S16), and any surviving code path that would attempt a daemon connection (S15). Verify each of S01-S18 explicitly and record the verdict. Default to refute.",
           "deps": [
             "P9.3"
           ],
           "files": [
             "docs/analysis/2608241500-adversarial-verdict.md"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "reviewer",
           "strategy_hint": "inference"
         }

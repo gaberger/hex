@@ -11,8 +11,6 @@ use tracing_subscriber::EnvFilter;
 pub mod assets;
 mod commands;
 pub mod fmt;
-pub mod prompts;
-pub mod session;
 
 use commands::{
     adr::AdrAction,
