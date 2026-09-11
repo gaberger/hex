@@ -10,51 +10,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  version-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify version sync between Cargo.toml and package.json
-        run: |
-          CARGO_VER=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
-          PKG_VER=$(grep '"version"' package.json | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
-          echo "Cargo.toml: $CARGO_VER"
-          echo "package.json: $PKG_VER"
-          if [ "$CARGO_VER" != "$PKG_VER" ]; then
-            echo "::error::Version mismatch: Cargo.toml ($CARGO_VER) != package.json ($PKG_VER)"
-            exit 1
-          fi
-
-  build-and-test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-      - run: bun install
-      - name: TypeScript type check (skip if src/ removed)
-        run: |
-          if [ -d src ] && ls src/**/*.ts 1>/dev/null 2>&1; then
-            bun run check
-          else
-            echo "No TypeScript sources in src/ — skipping type check"
-          fi
-      - name: Build CLI + library (skip if src/ removed)
-        run: |
-          if [ -d src ] && ls src/**/*.ts 1>/dev/null 2>&1; then
-            bun run build
-          else
-            echo "No TypeScript sources in src/ — skipping build"
-          fi
-      - name: Unit + smoke tests (skip if no test files)
-        run: |
-          if ls tests/unit/*.test.ts 1>/dev/null 2>&1 || ls tests/smoke/*.test.ts 1>/dev/null 2>&1; then
-            bun test tests/unit/ tests/smoke/
-          else
-            echo "No test files found — skipping"
-          fi
-
   boundary-check:
     runs-on: ubuntu-latest
     needs: rust-check

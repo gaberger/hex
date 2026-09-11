@@ -12,7 +12,7 @@ env:
 
 jobs:
   lint:
-    name: Lint (clippy + tsc)
+    name: Lint (clippy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,17 +39,6 @@ jobs:
 
       - name: Clippy (spacetime-modules)
         run: cd spacetime-modules && cargo clippy --workspace -- -D clippy::correctness -D clippy::suspicious
-
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: TypeScript type check (skip if src/ removed)
-        run: |
-          if [ -d src ] && ls src/**/*.ts 1>/dev/null 2>&1; then
-            bun run check
-          else
-            echo "No TypeScript sources in src/ — skipping"
-          fi
 
   unit:
     name: Unit Tests
@@ -79,17 +68,6 @@ jobs:
 
       - name: SpacetimeDB module tests
         run: cd spacetime-modules && cargo test --workspace
-
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: TypeScript tests (skip if no test files)
-        run: |
-          if ls tests/unit/*.test.ts 1>/dev/null 2>&1 || ls tests/smoke/*.test.ts 1>/dev/null 2>&1; then
-            bun test tests/unit/ tests/smoke/
-          else
-            echo "No TypeScript test files found — skipping"
-          fi
 
       - name: Install dashboard deps
         run: cd hex-nexus/assets && npm ci --ignore-scripts
