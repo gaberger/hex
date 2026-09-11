@@ -1,0 +1,82 @@
+{
+  "_what": "Pre-deletion baseline for wp-2608241500-hex-solo P0.1. P9.1 compares against this.",
+  "_honest_caveat": "P0.1 asked for this BEFORE any extraction. It was not taken then. These numbers are from 2026-09-11, after P2 (hex-infer extraction), P3 (SpacetimeDB severed from hex-exec) and the P6.2 repoints of graph/analyze/bench/do — but BEFORE any deletion phase. So it is a baseline for the deletion, not for the whole collapse. The risky change for loop quality was inference going in-process, and that is already inside these numbers rather than measured against them.",
+  "recorded_at": "2026-09-11",
+  "commit": "be9a57bc",
+  "binary": {
+    "path": "target/release/hex",
+    "bytes": 17970800,
+    "_note": "The survey recorded 14,159,856 bytes at the workplan's HEAD. It has grown since. S09 expects at least 3.4 MB of that to come back when the 8 embedded WASM blobs go (see the consumer trace, which corrects S09's 1.5 MB figure)."
+  },
+  "loc_by_crate": {
+    "hex-nexus": 95764,
+    "hex-cli": 92645,
+    "hex-agent": 23395,
+    "spacetime-modules": 13165,
+    "hex-exec": 9613,
+    "hex-core": 8763,
+    "hex-infer": 5422,
+    "hex-analysis": 4683,
+    "hex-analyzer": 4500,
+    "hex-state": 3252,
+    "hex-graph": 2397,
+    "hex-git": 1202,
+    "hex-parser": 1115,
+    "hex-desktop": 782,
+    "_submodules": { "hex-cli/src/pipeline": 16850, "hex-cli/src/tui": 6589 }
+  },
+  "transitive_deps": {
+    "workspace": 488,
+    "hex-core": 42,
+    "hex-exec": 151,
+    "hex-infer": 180,
+    "hex-cli": 254,
+    "hex-nexus": 423,
+    "_note": "Counted with `cargo tree --prefix none | sort -u`. The survey's figures (34/139/244/363/584) used a different method; compare P9 numbers against THESE, measured the same way."
+  },
+  "test_attributes": {
+    "hex-nexus": 944,
+    "hex-cli": 690,
+    "hex-agent": 238,
+    "hex-infer": 131,
+    "hex-core": 122,
+    "hex-exec": 121,
+    "hex-analysis": 89,
+    "hex-graph": 15,
+    "hex-state": 13,
+    "hex-git": 6
+  },
+  "self_analysis": {
+    "command": "hex analyze .",
+    "grade": "B",
+    "score": 80,
+    "files_scanned": 725,
+    "files_analysed": 361,
+    "import_edges": 1586,
+    "boundary_violations": 0,
+    "_note": "P9.2 requires A or better over the surviving workspace."
+  },
+  "agentic": {
+    "_status": "partial — one fixture, verified by hand",
+    "_why": "The full corpus is 12 fixtures x 2 arms x N models and is P9.1's job. This single run exists to demonstrate spec S01: the canonical loop completes an evidence-gated task with NO daemon running and no connection to 127.0.0.1:5555.",
+    "runs": [
+      {
+        "fixture": "t1-fix-add",
+        "tier": "T1",
+        "arm": "fast",
+        "model": "qwen2.5-coder:14b",
+        "edit": true,
+        "evidence_pass": true,
+        "wall_ms": 8373,
+        "daemon_running": false
+      }
+    ],
+    "corpus_size": 12,
+    "configured_react_models": ["devstral-small-2:24b", "claude-code"]
+  },
+  "observed_gaps": {
+    "registry_model_list_is_stale": "~/.hex/inference-servers.json lists only [gemma4-12b] for the local ollama endpoint, while the server actually serves 20 models. Nothing refreshes it now that config_sync is gone. Routing still works — a bare model id with no vendor slug falls through to first_local — but `serves_model` matching is effectively dead for local endpoints.",
+    "text_shaped_tool_calls": "qwen2.5-coder:14b sometimes emits tool calls as bare JSON objects in `content` rather than structured tool_calls. extract_text_mode_tool_uses only recognises FENCED ```json envelopes, so the loop reads zero tool uses and ends with no edit. Pre-existing; not caused by the in-process move (the JSON shape is identical by construction).",
+    "no_progress_guard": "Observed the ReAct loop repeat an identical failing propose_edit 76 times in one run. The no-progress counter did not stop it."
+  }
+}
