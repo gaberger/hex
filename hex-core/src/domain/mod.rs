@@ -1,25 +1,6 @@
-pub mod agents;
+//! Value objects shared across the workspace. Pure data, no I/O.
+
 pub mod api_optimization;
-pub mod brain;
-pub mod capability;
-pub mod consolidation;
-pub mod dead_letter;
-pub mod enforcement;
-pub mod experiment;
-pub mod heartbeat;
-pub mod hooks;
 pub mod messages;
-pub mod sandbox;
-pub mod secret_grant;
-pub mod skills;
-pub mod swarm_task;
-pub mod tokens;
 pub mod tools;
 pub mod validation;
-pub mod worker_pool;
-pub mod web;
-pub mod workplan;
-
-pub use web::{
-    FetchFormat, FetchOptions, FetchedPage, SearchOptions, SearchResult, Url, WebProvider,
-};
