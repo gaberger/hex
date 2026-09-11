@@ -261,6 +261,25 @@
           "status": "todo",
           "agent": "hex-coder",
           "strategy_hint": "transform"
+        },
+        {
+          "id": "P3.3",
+          "name": "File-backed memory store \u2014 replace the hexflo_memory STDB table",
+          "layer": "secondary",
+          "status": "todo",
+          "description": "RESOLVES A CONFLICT IN THIS WORKPLAN (raised by the operator 2026-09-11): P6.2 and spec S04 require the loop to keep returning graph-proximity-ranked lessons from a 'local lesson store', but P6.1 lists the `memory` verb among the CLI verbs to delete and names no replacement. P6.1 is amended to KEEP `hex memory`, re-backed by files.\n\nMemory today is the hexflo_memory STDB table (key, value, scope, updated_at) under four key prefixes: lesson:, gap:, project:, decision: \u2014 ~500 bytes per entry. That is not database-shaped.\n\nStore: one Markdown file per entry with YAML frontmatter (key, scope, updated_at) under .hex/memory/ (project-scoped, git-tracked) and ~/.hex/memory/ (cross-project). Committing lessons to the repo is a net gain over STDB: lessons become reviewable in git diff, they travel with a clone, two machines share memory through git, and they survive an STDB wipe. No index \u2014 a few hundred small files scan in microseconds and rank_lessons does the real selection.\n\nTHE SEAM IS ALREADY CUT: hex_graph::context::rank_lessons(&ContextBundle, &[(String,String)], limit) takes plain pairs and has no store coupling. Only the feed changes, at three call sites: hex-exec/src/tools/memory_search.rs:86 (GET /api/hexflo/memory/search), hex-exec/src/direct_exec.rs:675, and hex-nexus/src/routes/graph.rs:247 (dies with the daemon). hex-cli/src/commands/memory/mod.rs:72/91/117 repoint from NexusClient to the same store.\n\nThe memory_search tool keeps its name, description and input schema exactly \u2014 the prompt contract must not change, or every persona's GROUND phase behaviour shifts underneath the P9.1 benchmark comparison.\n\nFold the read/write surface into P3.1's ILocalStorePort rather than adding a second port; it is the same 'small durable facts' concern.",
+          "deps": [
+            "P3.1"
+          ],
+          "files": [
+            "hex-core/src/ports/local_store.rs",
+            "hex-exec/src/store/mod.rs",
+            "hex-exec/src/tools/memory_search.rs",
+            "hex-exec/src/direct_exec.rs",
+            "hex-cli/src/commands/memory/mod.rs"
+          ],
+          "agent": "hex-coder",
+          "strategy_hint": "codegen"
         }
       ]
     },
@@ -426,7 +445,7 @@
           "id": "P6.1",
           "name": "Delete daemon-mediated verbs (~34,500 LOC)",
           "layer": "primary",
-          "description": "Remove: sched + sched/ (10,122), mcp (1,794), persona_prompt (1,276 \u2014 org-sim residue), report (1,237), nexus (1,216), stdb (1,090), adr_review (992 \u2014 merge its linting into adr/), project (705), substrate (664 \u2014 Layer-6 composition-swap governance), enforce (584 \u2014 or make file-local), opencode (549), chat (546), neural_lab (518), and ops, secrets, monitor, trust, task, taste, inbox, pool, insight, memory, sandbox, pulse, fingerprint, context, steer, pause, decide, override, deploy, interview, agent_audit, refresh, plan_health (~7,700 combined). Also remove opencode.json (118 KB), .opencode/, and hex-cli/assets/plugins/hex-sidebar.tsx. Satisfies S15.",
+          "description": "Remove: sched + sched/ (10,122), mcp (1,794), persona_prompt (1,276 \u2014 org-sim residue), report (1,237), nexus (1,216), stdb (1,090), adr_review (992 \u2014 merge its linting into adr/), project (705), substrate (664 \u2014 Layer-6 composition-swap governance), enforce (584 \u2014 or make file-local), opencode (549), chat (546), neural_lab (518), and ops, secrets, monitor, trust, task, taste, inbox, pool, insight, sandbox, pulse, fingerprint, context, steer, pause, decide, override, deploy, interview, agent_audit, refresh, plan_health (~7,700 combined). Also remove opencode.json (118 KB), .opencode/, and hex-cli/assets/plugins/hex-sidebar.tsx. Satisfies S15.\n\nAMENDED 2026-09-11: `memory` is REMOVED from this delete list. P6.2 and spec S04 require a local lesson store; deleting the only verb that writes to it would make S04 unsatisfiable. `hex memory` survives, re-backed by files per P3.3.",
           "deps": [],
           "files": [
             "hex-cli/src/commands/",
