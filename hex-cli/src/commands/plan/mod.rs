@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use tabled::Tabled;
 
 use crate::fmt::{HexTable, status_badge, truncate, progress};
-use crate::nexus_client::NexusClient;
 
 #[derive(Subcommand)]
 pub enum PlanAction {
@@ -51,15 +50,6 @@ pub enum PlanAction {
     Status {
         /// Workplan filename (e.g. feat-secrets-plan-b.json)
         file: String,
-    },
-    /// Show currently active (running/paused) workplan executions
-    Active,
-    /// Show all past workplan executions
-    History,
-    /// Show aggregate report for a workplan execution (ADR-046)
-    Report {
-        /// Workplan execution ID
-        id: String,
     },
     /// Reconcile workplan step statuses against actual code (check done conditions)
     Reconcile {
@@ -467,9 +457,6 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::Execute { file } => execute_plan(&file).await,
         PlanAction::List => list_plans().await,
         PlanAction::Status { file } => show_plan_status(&file).await,
-        PlanAction::Active => show_active_executions().await,
-        PlanAction::History => show_execution_history().await,
-        PlanAction::Report { id } => show_execution_report(&id).await,
         PlanAction::Schema => show_schema().await,
         PlanAction::Reconcile { file, all, update, audit, strict, dry_run, why, force, json } => {
             if all || json {
@@ -1049,338 +1036,7 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
     println!("  File:   {}", path.display());
     println!();
 
-    // Resolve absolute path for nexus
-    let _abs_path = std::fs::canonicalize(&path)?;
-
-    // Dispatch strategy:
-    // 1. Nexus reachable + Claude Code → Path B (nexus executor, Claude handles inference)
-    // 2. Nexus reachable + standalone → distributed (HexFlo tasks for remote workers)
-    // 3. No nexus → local fallback with Ollama + ADR-005 gates
-
-    // Build authenticated nexus client
-    let client = NexusClient::from_env();
-
-    // Check if nexus is reachable
-    match client.get("/api/health").await {
-        Ok(_) => {
-            let in_claude = std::env::var("CLAUDE_SESSION_ID").is_ok()
-                || std::env::var("CLAUDE_CODE_ENTRYPOINT").is_ok();
-
-            if in_claude {
-                // Path B: nexus executor dispatches tasks, Claude Code handles inference
-                println!("  {} Nexus + Claude Code — dispatching via Path B", "\u{2713}".green());
-                println!("  Workplan sent to nexus for execution. Claude handles inference.");
-                println!("  Monitor: hex plan active / hex task list");
-                println!();
-
-                // Send workplan to nexus executor (it creates swarm + uses Path B internally)
-                let body = serde_json::json!({
-                    "workplanPath": _abs_path.to_string_lossy(),
-                });
-                let dispatch_resp = match client.post_long("/api/workplan/execute", &body).await {
-                    Ok(resp) => resp,
-                    Err(e) => {
-                        let raw = format!("{}", e);
-                        let detail = raw
-                            .rsplit_once(": ")
-                            .and_then(|(_, body)| serde_json::from_str::<serde_json::Value>(body.trim()).ok())
-                            .and_then(|v| v.get("error").and_then(|s| s.as_str()).map(|s| s.to_string()))
-                            .unwrap_or(raw);
-                        println!("  {} Nexus executor unavailable ({}), falling back to distributed", "!".yellow(), detail);
-                        return execute_plan_distributed(&wp).await;
-                    }
-                };
-
-                let execution_id = match dispatch_resp.get("execution_id").and_then(|v| v.as_str()) {
-                    Some(id) => {
-                        println!("{} Execution started: {}", "\u{2b21}".green(), id);
-                        id.to_string()
-                    }
-                    None => {
-                        println!("{} Execution dispatched (no execution_id): {:?}", "\u{2b21}".green(), dispatch_resp);
-                        return Ok(());
-                    }
-                };
-
-                // Poll for completion: 2s interval, 600s timeout, heartbeat every 30s
-                let poll_interval = std::time::Duration::from_secs(2);
-                let timeout = std::time::Duration::from_secs(600);
-                let heartbeat_interval = std::time::Duration::from_secs(30);
-                let start = std::time::Instant::now();
-                let mut last_heartbeat = start;
-
-                loop {
-                    tokio::time::sleep(poll_interval).await;
-                    let elapsed = start.elapsed();
-
-                    if elapsed > timeout {
-                        eprintln!("Workplan execution timed out after {}s", timeout.as_secs());
-                        std::process::exit(1);
-                    }
-
-                    let status_path = format!("/api/workplan/execute/{}/status", execution_id);
-                    match client.get(&status_path).await {
-                        Ok(resp) => {
-                            let status = resp
-                                .get("status")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("unknown");
-
-                            if last_heartbeat.elapsed() >= heartbeat_interval {
-                                println!("  {} [{}s] status: {}", "\u{2661}".dimmed(), elapsed.as_secs(), status);
-                                last_heartbeat = std::time::Instant::now();
-                            }
-
-                            match status {
-                                "completed" => {
-                                    println!("{} Workplan completed ({}s)", "\u{2713}".green(), elapsed.as_secs());
-                                    return Ok(());
-                                }
-                                "failed" => {
-                                    let result = resp
-                                        .get("result")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("(no error details)");
-                                    eprintln!("Workplan failed ({}s): {}", elapsed.as_secs(), result);
-                                    std::process::exit(1);
-                                }
-                                _ => {} // running, paused — keep polling
-                            }
-                        }
-                        Err(e) => {
-                            // Log all polling errors immediately, not just on heartbeat.
-                            eprintln!("  {} [{}s] poll error: {} (endpoint: {})", "!".yellow(), elapsed.as_secs(), e, status_path);
-                        }
-                    }
-                }
-            } else {
-                // Standalone: create HexFlo tasks for remote workers
-                println!("  {} Nexus connected — dispatching to remote workers", "\u{2713}".green());
-                println!();
-                return execute_plan_distributed(&wp).await;
-            }
-        }
-        Err(_) => {
-            // No nexus: local execution with Ollama
-            let host = std::env::var("OLLAMA_HOST").unwrap_or_default();
-            if host.is_empty() || host == "0.0.0.0" || host.starts_with("0.0.0.0:") {
-                // Read Ollama host from inference config
-                let cfg_host = dirs::home_dir()
-                    .map(|h| h.join(".hex/inference-servers.json"))
-                    .and_then(|p| std::fs::read_to_string(p).ok())
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                    .and_then(|v| v["endpoints"].as_array().cloned())
-                    .and_then(|eps| eps.iter()
-                        .find(|e| e["provider"].as_str() == Some("ollama"))
-                        .and_then(|e| e["url"].as_str().map(String::from)));
-                std::env::set_var("OLLAMA_HOST",
-                    cfg_host.as_deref().unwrap_or("http://localhost:11434"));
-            }
-            println!("  {} No nexus — executing locally with Ollama", "\u{2192}".dimmed());
-            println!();
-            return execute_plan_local(&path, &wp).await;
-        }
-    }
-
-    Ok(())
-}
-
-/// Distributed workplan execution — creates HexFlo swarm tasks and waits
-/// for remote workers to complete them (ADR-2026-04-12-1630).
-///
-/// Flow: create swarm → create tasks per phase → poll until complete → run gates → next phase
-/// Falls back to local execution if no workers are available.
-async fn execute_plan_distributed(wp: &serde_json::Value) -> anyhow::Result<()> {
-    let feature = wp.get("feature").and_then(|v| v.as_str()).unwrap_or("workplan");
-    let phases = match wp.get("phases").and_then(|v| v.as_array()) {
-        Some(p) => p,
-        None => { anyhow::bail!("Workplan has no phases"); }
-    };
-
-    // NexusClient::from_env auto-resolves agent identity from session files + env
-    let client = NexusClient::from_env();
-
-    // Check if any workers are available before creating swarm
-    let available_workers = match client.get("/api/hex-agents").await {
-        Ok(resp) => {
-            resp.as_array()
-                .map(|agents| agents.iter()
-                    .filter(|a| a["status"].as_str() == Some("active"))
-                    .count())
-                .unwrap_or(0)
-        }
-        Err(_) => 0,
-    };
-
-    if available_workers == 0 {
-        println!("  {} No active workers available — falling back to local execution", "\u{2192}".dimmed());
-        println!();
-        return execute_plan_local(&std::path::Path::new(""), wp).await;
-    }
-
-    // Step 1: Create swarm for this execution
-    let swarm_resp = client.post("/api/swarms", &serde_json::json!({
-        "name": feature,
-        "topology": "hierarchical",
-        "projectId": feature,
-    })).await?;
-
-    let swarm_id = swarm_resp["id"].as_str().unwrap_or("").to_string();
-    if swarm_id.is_empty() {
-        anyhow::bail!("Failed to create swarm: {:?}", swarm_resp);
-    }
-    println!("{} Swarm created: {} ({})", "\u{2b21}".green(), feature, &swarm_id[..8]);
-
-    let mut total_passed = 0usize;
-    let mut total_failed = 0usize;
-
-    // Step 2: Execute phases sequentially
-    for phase in phases {
-        let phase_name = phase.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-        let tasks = phase.get("tasks").and_then(|v| v.as_array());
-        let gate_cmd = phase.get("gate")
-            .and_then(|g| g.get("command"))
-            .and_then(|v| v.as_str());
-
-        println!("{} Phase: {}", "\u{2501}".dimmed(), phase_name);
-
-        let Some(tasks) = tasks else { continue };
-
-        // Step 3: Create HexFlo tasks for this phase
-        let mut task_ids: Vec<(String, String)> = Vec::new(); // (task_id, title)
-
-        for task in tasks {
-            let task_name = task.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-            let description = task.get("description").and_then(|v| v.as_str()).unwrap_or("");
-            let agent = task.get("agent").and_then(|v| v.as_str()).unwrap_or("hex-coder");
-            let tier = task.get("tier").and_then(|v| v.as_str()).unwrap_or("T2");
-
-            // Format title so worker can parse role + description
-            let title = format!("{}: {}", agent, description);
-
-            let resp = client.post(
-                &format!("/api/swarms/{}/tasks", swarm_id),
-                &serde_json::json!({ "title": title }),
-            ).await;
-
-            match resp {
-                Ok(r) => {
-                    let tid = r["id"].as_str().unwrap_or("").to_string();
-                    if !tid.is_empty() {
-                        println!("  {} [{}] {} → task {}", task_name, tier, agent, &tid[..8.min(tid.len())]);
-                        task_ids.push((tid, task_name.to_string()));
-                    } else {
-                        println!("  {} [{}] {} → failed to create task", task_name, tier, agent);
-                    }
-                }
-                Err(e) => {
-                    println!("  {} Failed: {}", "!".red(), e);
-                }
-            }
-        }
-
-        if task_ids.is_empty() {
-            println!("  {} No tasks created for phase", "!".yellow());
-            continue;
-        }
-
-        // Step 4: Poll until all tasks complete (60s timeout per task)
-        let timeout = std::time::Duration::from_secs(300); // 5 min per phase
-        let start = std::time::Instant::now();
-        let poll_interval = std::time::Duration::from_secs(3);
-
-        println!("  {} Waiting for {} worker(s)...", "\u{231b}".dimmed(), task_ids.len());
-
-        loop {
-            if start.elapsed() > timeout {
-                println!("  {} Phase timed out after {}s", "!".red(), timeout.as_secs());
-                total_failed += task_ids.len();
-                break;
-            }
-
-            tokio::time::sleep(poll_interval).await;
-
-            // Check task statuses
-            let mut all_done = true;
-            let mut phase_passed = 0;
-            let mut phase_failed = 0;
-
-            if let Ok(swarms_resp) = client.get("/api/swarms/active").await {
-                if let Some(swarms) = swarms_resp.as_array() {
-                    for swarm in swarms {
-                        if swarm["id"].as_str() != Some(&swarm_id) { continue; }
-                        if let Some(stasks) = swarm["tasks"].as_array() {
-                            for (tid, _tname) in &task_ids {
-                                if let Some(st) = stasks.iter().find(|t| t["id"].as_str() == Some(tid)) {
-                                    match st["status"].as_str().unwrap_or("") {
-                                        "completed" => { phase_passed += 1; }
-                                        "failed" => { phase_failed += 1; }
-                                        _ => { all_done = false; }
-                                    }
-                                } else {
-                                    all_done = false;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if all_done || (phase_passed + phase_failed == task_ids.len()) {
-                for (tid, tname) in &task_ids {
-                    // Find final status
-                    let status = if let Ok(resp) = client.get("/api/swarms/active").await {
-                        resp.as_array()
-                            .and_then(|s| s.iter().find(|sw| sw["id"].as_str() == Some(&swarm_id)))
-                            .and_then(|sw| sw["tasks"].as_array())
-                            .and_then(|ts| ts.iter().find(|t| t["id"].as_str() == Some(tid.as_str())))
-                            .and_then(|t| t["status"].as_str())
-                            .unwrap_or("?")
-                            .to_string()
-                    } else { "?".to_string() };
-
-                    if status == "completed" {
-                        println!("  {} {}", "\u{2713}".green(), tname);
-                        total_passed += 1;
-                    } else {
-                        println!("  {} {} ({})", "\u{2717}".red(), tname, status);
-                        total_failed += 1;
-                    }
-                }
-                break;
-            }
-        }
-
-        // Step 5: Run phase gate
-        if let Some(cmd) = gate_cmd {
-            print!("  Phase gate: {} ... ", cmd);
-            match run_gate(cmd).await {
-                GateResult::Pass => println!("{}", "PASS".green()),
-                GateResult::Fail(err) => {
-                    println!("{}", "FAIL".red());
-                    for line in err.lines().take(3) {
-                        println!("    {}", line);
-                    }
-                }
-            }
-        }
-        println!();
-    }
-
-    // Complete the swarm
-    let _ = client.patch(
-        &format!("/api/swarms/{}", swarm_id),
-        &serde_json::json!({"status": "completed"}),
-    ).await;
-
-    println!("{} Results: {} passed, {} failed", "\u{2b21}".cyan(), total_passed, total_failed);
-    println!("  Swarm: {} ({})", feature, &swarm_id[..8]);
-    println!("  Workers assigned tasks automatically — use `hex task list` to review");
-
-    if total_failed > 0 {
-        std::process::exit(1);
-    }
-    Ok(())
+    execute_plan_local(&path, &wp).await
 }
 
 /// Local workplan execution fallback — runs when nexus is unavailable or no workers available.
@@ -1388,12 +1044,11 @@ async fn execute_plan_distributed(wp: &serde_json::Value) -> anyhow::Result<()> 
 /// runs compile gates, and records results.
 /// ADR-005 6-gate pipeline: generate → compile → test → retry → escalate.
 /// Max 5 iterations per task. Quality score must improve or escalate.
-async fn execute_plan_local(_path: &std::path::Path, wp: &serde_json::Value) -> anyhow::Result<()> {
-    let ollama_host = std::env::var("OLLAMA_HOST")
-        .unwrap_or_else(|_| "http://localhost:11434".to_string());
+/// Generation cap per task. A workplan task produces one file, not a book.
+const MAX_TASK_TOKENS: u32 = 8192;
 
-    println!("{} Local execution with ADR-005 gate pipeline", "\u{2b21}".cyan());
-    println!("  Ollama: {}", ollama_host);
+async fn execute_plan_local(_path: &std::path::Path, wp: &serde_json::Value) -> anyhow::Result<()> {
+    println!("{} In-process execution with the ADR-005 gate pipeline", "\u{2b21}".cyan());
     println!("  Gates:  compile → test → retry (max 5 iterations)");
     println!();
 
@@ -1431,11 +1086,17 @@ async fn execute_plan_local(_path: &std::path::Path, wp: &serde_json::Value) -> 
                     .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
                     .unwrap_or_default();
 
-                let model = match tier {
-                    "T1" => "qwen3:4b",
-                    "T2" => "qwen2.5-coder:32b",
-                    "T2.5" => "qwen3.5:27b",
-                    _ => "qwen2.5-coder:32b",
+                // From .hex/project.json → inference.tier_models. These were
+                // three model ids written into the source, which is the
+                // founding-goal G1 failure: a caller that names a model cannot
+                // be re-pointed by editing configuration.
+                let tier_key = tier.to_ascii_lowercase();
+                let Some(model) = hex_infer::tier_model(&tier_key)
+                    .or_else(|| hex_infer::tier_model("t2"))
+                else {
+                    anyhow::bail!(
+                        "no model configured for tier {tier} — set inference.tier_models in .hex/project.json"
+                    );
                 };
 
                 println!("  {} [{}] {} ({}, {})", task_id, tier, task_name, model, agent);
@@ -1460,35 +1121,29 @@ async fn execute_plan_local(_path: &std::path::Path, wp: &serde_json::Value) -> 
                         )
                     };
 
-                    // Generate code via Ollama
-                    let body = serde_json::json!({
-                        "model": model,
-                        "prompt": prompt,
-                        "temperature": if iteration == 1 { 0.2 } else { 0.3 },
-                        "stream": false,
-                    });
-
+                    // Through hex-infer: the registry decides which backend
+                    // serves this model, so a task is not pinned to whatever
+                    // happens to be listening on the local Ollama port.
                     let start = std::time::Instant::now();
-                    let resp = client.post(format!("{}/api/generate", ollama_host))
-                        .json(&body)
-                        .send()
-                        .await;
-
-                    let (code, tokens) = match resp {
-                        Ok(r) if r.status().is_success() => {
-                            let json: serde_json::Value = r.json().await?;
-                            let text = json.get("response").and_then(|v| v.as_str()).unwrap_or("");
-                            let tokens = json.get("eval_count").and_then(|v| v.as_u64()).unwrap_or(0);
-                            (extract_code_from_text(text), tokens)
-                        }
-                        Ok(r) => {
-                            println!("    {} HTTP {} from Ollama", "!".red(), r.status());
-                            last_error = format!("HTTP {}", r.status());
-                            continue;
+                    let (code, tokens) = match hex_infer::complete_text(
+                        &model,
+                        "You are a precise code generator. Return the complete file.",
+                        &prompt,
+                        MAX_TASK_TOKENS,
+                    )
+                    .await
+                    {
+                        Ok(text) => {
+                            let code = extract_code_from_text(&text);
+                            // The provider does not report an eval count through
+                            // this path; characters/4 is the same estimate the
+                            // transcript compressor uses.
+                            let tokens = (text.len() / 4) as u64;
+                            (code, tokens)
                         }
                         Err(e) => {
-                            println!("    {} Ollama error: {}", "!".red(), e);
-                            last_error = e.to_string();
+                            println!("    {} inference: {}", "!".red(), e);
+                            last_error = e;
                             continue;
                         }
                     };
@@ -1687,24 +1342,6 @@ async fn create_plan(requirements: &[String], lang: &str, adr: Option<&str>, no_
     );
     println!();
 
-    // Try nexus first for richer planning
-    let nexus = NexusClient::from_env();
-    if nexus.ensure_running().await.is_ok() {
-        let body = serde_json::json!({
-            "requirements": requirements,
-            "language": lang,
-        });
-        match nexus.post("/api/workplan/execute", &body).await {
-            Ok(data) => {
-                println!("{}", serde_json::to_string_pretty(&data)?);
-                return Ok(());
-            }
-            Err(_) => {
-                // Fall through to structural decomposition
-            }
-        }
-    }
-
     // Structural decomposition — no LLM needed
     let mut steps: Vec<Step> = Vec::new();
 
@@ -1859,9 +1496,6 @@ async fn list_plans() -> anyhow::Result<()> {
     );
     println!();
 
-    let nexus = NexusClient::from_env();
-    let nexus_available = nexus.ensure_running().await.is_ok();
-
     let mut rows: Vec<PlanRow> = Vec::new();
 
     for path in &paths {
@@ -1878,18 +1512,9 @@ async fn list_plans() -> anyhow::Result<()> {
                             if dt.is_empty() { name.to_string() } else { truncate(dt, 40) }
                         };
 
-                        // Try to fetch live execution overlay from nexus.
-                        let live_badge = if nexus_available {
-                            let api_path = format!("/api/workplan/by-path?path={}", name);
-                            nexus.get(&api_path).await.ok().and_then(|v| {
-                                let exec_status = v.get("status")?.as_str()?.to_string();
-                                let exec_done = v.get("completed_tasks")?.as_u64()? as u32;
-                                let exec_total = v.get("total_tasks")?.as_u64()? as u32;
-                                Some((exec_status, exec_done, exec_total))
-                            })
-                        } else {
-                            None
-                        };
+                        // The live overlay came from the daemon's own
+                        // execution state; the file is the state now.
+                        let live_badge: Option<(String, u32, u32)> = None;
 
                         let progress_str = if let Some((ref exec_status, exec_done, exec_total)) = live_badge {
                             let base = if exec_total == 0 {
@@ -2048,248 +1673,6 @@ async fn show_plan_file(path: &Path) -> anyhow::Result<()> {
         println!("{}", HexTable::render(&rows));
     } else {
         println!("  (no tasks defined)");
-    }
-
-    Ok(())
-}
-
-// ═══════════════════════════════════════════════════════════
-// WORKPLAN EXECUTION COMMANDS (ADR-046)
-// ═══════════════════════════════════════════════════════════
-
-/// Show currently active (running/paused) workplan executions via nexus.
-async fn show_active_executions() -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    let data = nexus.get("/api/workplan/list").await?;
-    let executions = data["data"]["executions"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-
-    let active: Vec<_> = executions
-        .iter()
-        .filter(|e| {
-            let status = e["status"].as_str().unwrap_or("");
-            status == "running" || status == "paused"
-        })
-        .collect();
-
-    if active.is_empty() {
-        println!("No active workplan executions.");
-        return Ok(());
-    }
-
-    println!(
-        "{} {} active workplan execution(s)",
-        "\u{2b21}".cyan(),
-        active.len()
-    );
-    println!();
-
-    let rows: Vec<ExecutionRow> = active.iter().map(|exec| {
-        let id = exec["id"].as_str().unwrap_or("?");
-        let status = exec["status"].as_str().unwrap_or("?");
-        let feature_val = exec["feature"].as_str().unwrap_or("");
-        let phase = exec["currentPhase"].as_str().unwrap_or("?");
-        let completed = exec["completedPhases"].as_u64().unwrap_or(0);
-        let total = exec["totalPhases"].as_u64().unwrap_or(0);
-
-        let label = if feature_val.is_empty() {
-            id.to_string()
-        } else {
-            format!("{} ({})", feature_val, &id[..8.min(id.len())])
-        };
-
-        ExecutionRow {
-            status: status_badge(status),
-            feature: label,
-            phase: phase.to_string(),
-            progress_col: progress(completed as u32, total as u32),
-        }
-    }).collect();
-
-    println!("{}", HexTable::render(&rows));
-
-    Ok(())
-}
-
-/// Show all past workplan executions (history) via nexus.
-async fn show_execution_history() -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    let data = nexus.get("/api/workplan/list").await?;
-    let executions = data["data"]["executions"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-
-    if executions.is_empty() {
-        println!("No workplan executions found.");
-        return Ok(());
-    }
-
-    let total = data["data"]["total"].as_u64().unwrap_or(0);
-    let active = data["data"]["activeCount"].as_u64().unwrap_or(0);
-
-    println!(
-        "{} {} workplan execution(s) ({} active, {} completed)",
-        "\u{2b21}".cyan(),
-        total,
-        active,
-        total.saturating_sub(active),
-    );
-    println!();
-
-    let rows: Vec<HistoryRow> = executions.iter().map(|exec| {
-        let id = exec["id"].as_str().unwrap_or("?");
-        let status = exec["status"].as_str().unwrap_or("?");
-        let feature_val = exec["feature"].as_str().unwrap_or("");
-        let started = exec["startedAt"].as_str().unwrap_or("?");
-        let tasks_done = exec["completedTasks"].as_u64().unwrap_or(0);
-        let tasks_total = exec["totalTasks"].as_u64().unwrap_or(0);
-
-        let label = if feature_val.is_empty() {
-            id[..8.min(id.len())].to_string()
-        } else {
-            feature_val.to_string()
-        };
-
-        HistoryRow {
-            status: status_badge(status),
-            feature: label,
-            tasks: progress(tasks_done as u32, tasks_total as u32),
-            started: started.to_string(),
-            id: id.dimmed().to_string(),
-        }
-    }).collect();
-
-    println!("{}", HexTable::render(&rows));
-
-    Ok(())
-}
-
-/// Show aggregate report for a workplan execution, including git correlation.
-async fn show_execution_report(id: &str) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    let data = nexus.get(&format!("/api/workplan/{}/report", id)).await?;
-
-    if let Some(error) = data["error"].as_str() {
-        anyhow::bail!("{}", error);
-    }
-
-    let report = &data["data"];
-    let workplan = &report["workplan"];
-    let summary = &report["summary"];
-
-    // Header
-    let feature = workplan["feature"].as_str().unwrap_or("(unnamed)");
-    let status = workplan["status"].as_str().unwrap_or("?");
-    println!(
-        "{} Workplan Report: {} [{}]",
-        "\u{2b21}".cyan(),
-        feature.bold(),
-        status
-    );
-    println!("  ID: {}", workplan["id"].as_str().unwrap_or("?"));
-    println!("  Path: {}", workplan["workplanPath"].as_str().unwrap_or("?"));
-    println!(
-        "  Started: {} | Updated: {}",
-        workplan["startedAt"].as_str().unwrap_or("?"),
-        workplan["updatedAt"].as_str().unwrap_or("?"),
-    );
-    println!();
-
-    // Summary
-    println!("  {}", "SUMMARY".bold());
-    if let Some(dur) = summary["durationMinutes"].as_i64() {
-        println!("    Duration: {} min", dur);
-    }
-    println!(
-        "    Phases:  {}/{}",
-        summary["phasesCompleted"].as_u64().unwrap_or(0),
-        summary["phasesTotal"].as_u64().unwrap_or(0),
-    );
-    println!(
-        "    Tasks:   {}/{} ({} failed)",
-        summary["tasksCompleted"].as_u64().unwrap_or(0),
-        summary["tasksTotal"].as_u64().unwrap_or(0),
-        summary["tasksFailed"].as_u64().unwrap_or(0),
-    );
-    println!(
-        "    Gates:   {} passed, {} failed",
-        summary["gatesPassed"].as_u64().unwrap_or(0),
-        summary["gatesFailed"].as_u64().unwrap_or(0),
-    );
-    if let Some(agents) = summary["agentsUsed"].as_array() {
-        if !agents.is_empty() {
-            let names: Vec<_> = agents.iter().filter_map(|a| a.as_str()).collect();
-            println!("    Agents:  {}", names.join(", "));
-        }
-    }
-    println!();
-
-    // Phase results
-    if let Some(phases) = report["phases"].as_array() {
-        if !phases.is_empty() {
-            println!("  {}", "PHASES".bold());
-            for p in phases {
-                let name = p["phase"].as_str().unwrap_or("?");
-                let pstatus = p["status"].as_str().unwrap_or("?");
-                let icon = match pstatus {
-                    "completed" => "\u{2713}".green(),
-                    "failed" => "\u{2717}".red(),
-                    _ => "\u{25cb}".dimmed(),
-                };
-                println!("    {} {} [{}]", icon, name, pstatus);
-                if let Some(errs) = p["errors"].as_array() {
-                    for err in errs {
-                        if let Some(e) = err.as_str() {
-                            println!("      {} {}", "\u{2717}".red(), e);
-                        }
-                    }
-                }
-            }
-            println!();
-        }
-    }
-
-    // Gate results
-    if let Some(gates) = report["gates"].as_array() {
-        if !gates.is_empty() {
-            println!("  {}", "GATES".bold());
-            for g in gates {
-                let phase = g["phase"].as_str().unwrap_or("?");
-                let cmd = g["gateCommand"].as_str().unwrap_or("?");
-                let passed = g["passed"].as_bool().unwrap_or(false);
-                let icon = if passed {
-                    "\u{2713}".green()
-                } else {
-                    "\u{2717}".red()
-                };
-                println!("    {} {} ({})", icon, phase, cmd.dimmed());
-            }
-            println!();
-        }
-    }
-
-    // Git correlation (ADR-046)
-    if let Some(commits) = report["commits"].as_array() {
-        if !commits.is_empty() {
-            println!("  {}", "GIT COMMITS".bold());
-            for c in commits {
-                let sha = c["commitShort"].as_str().unwrap_or("?");
-                let msg = c["commitMessage"].as_str().unwrap_or("?");
-                let author = c["author"].as_str().unwrap_or("?");
-                println!("    {} {} — {} ({})", sha.yellow(), msg, author.dimmed(),
-                    c["agentName"].as_str().unwrap_or("manual").dimmed());
-            }
-            println!();
-        }
     }
 
     Ok(())
