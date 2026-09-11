@@ -117,19 +117,7 @@ enum DevGroupAction {
         name: Option<String>,
         #[arg(long)]
         description: Option<String>,
-        #[arg(long)]
-        taste_from: Option<String>,
     },
-}
-
-#[derive(Subcommand, Clone, Debug)]
-enum AutoRepairAction {
-    /// Show the loop's current state (iterations, error count, paused?)
-    Status,
-    /// Reset the loop state so the next tick fires fresh — useful after
-    /// the loop has self-paused on a plateau and you've shipped a fix
-    /// you want it to retry against.
-    Restart,
 }
 
 #[derive(Subcommand)]
@@ -163,12 +151,6 @@ enum Commands {
     Graph {
         #[command(subcommand)]
         action: commands::graph::GraphAction,
-    },
-    /// Inspect / restart the autonomous code-repair loop
-    #[command(name = "auto-repair")]
-    AutoRepair {
-        #[command(subcommand)]
-        action: AutoRepairAction,
     },
     /// Hey Hex — natural language task classifier (ADR-2026-04-14-0000)
     Hey(HeyArgs),
@@ -331,30 +313,7 @@ enum Commands {
         name: Option<String>,
         #[arg(long)]
         description: Option<String>,
-        #[arg(long)]
-        taste_from: Option<String>,
     },
-}
-
-async fn auto_repair_run(action: AutoRepairAction) -> anyhow::Result<()> {
-    let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".into());
-    let base = format!("http://127.0.0.1:{}", port);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()?;
-    match action {
-        AutoRepairAction::Status => {
-            let resp = client.get(format!("{}/api/auto-repair/status", base)).send().await?;
-            let j: serde_json::Value = resp.json().await?;
-            println!("{}", serde_json::to_string_pretty(&j)?);
-        }
-        AutoRepairAction::Restart => {
-            let resp = client.post(format!("{}/api/auto-repair/restart", base)).send().await?;
-            let j: serde_json::Value = resp.json().await?;
-            println!("{}", serde_json::to_string_pretty(&j)?);
-        }
-    }
-    Ok(())
 }
 
 #[tokio::main]
@@ -402,15 +361,14 @@ async fn main() -> anyhow::Result<()> {
             DevGroupAction::Worktree { action } => commands::worktree::run(action).await,
             DevGroupAction::Init(args) => commands::init::run(args).await,
             DevGroupAction::Refresh(args) => commands::refresh::run(args).await,
-            DevGroupAction::New { path, name, description, taste_from } => {
-                commands::new::run(&path, name, description, taste_from).await
+            DevGroupAction::New { path, name, description } => {
+                commands::new::run(&path, name, description).await
             }
         },
         // ── Standalone commands ──────────────────────────────────────
         Commands::Bootstrap(args) => commands::bootstrap::run(args).await,
         Commands::Go => commands::go::run().await,
         Commands::Graph { action } => commands::graph::run(action).await,
-        Commands::AutoRepair { action } => auto_repair_run(action).await,
         Commands::Hey(args) => commands::hey::run(args).await,
         Commands::Verify(args) => commands::verify::run(args).await,
         Commands::Do { action } => commands::direct::run(action).await,
@@ -455,8 +413,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Worktree { action } => commands::worktree::run(action).await,
         Commands::Init(args) => commands::init::run(args).await,
         Commands::Refresh(args) => commands::refresh::run(args).await,
-        Commands::New { path, name, description, taste_from } => {
-            commands::new::run(&path, name, description, taste_from).await
+        Commands::New { path, name, description } => {
+            commands::new::run(&path, name, description).await
         }
     }
 }

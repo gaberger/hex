@@ -80,7 +80,7 @@ fn s6_new_help() {
     assert_help_succeeds(&["new"], "§6 new");
 }
 
-/// Verify `hex new` accepts --name, --description, --taste-from flags.
+/// Verify `hex new` accepts --name and --description.
 #[test]
 fn s6_new_flags_recognized() {
     let mut cmd = hex_bin();
@@ -93,10 +93,6 @@ fn s6_new_flags_recognized() {
     assert!(
         stdout.contains("--name") || stdout.contains("-n"),
         "[§6 new] --name flag missing from hex new --help output"
-    );
-    assert!(
-        stdout.contains("--taste-from"),
-        "[§6 new] --taste-from flag missing from hex new --help output"
     );
 }
 

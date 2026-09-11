@@ -141,49 +141,38 @@ async fn run_test_suite(label: &str, args: &[&str]) -> bool {
 
 async fn gate_analyze() -> bool {
     print!("  {} Architecture boundaries ... ", "\u{25cb}".dimmed());
-    let nexus = crate::nexus_client::NexusClient::from_env();
-    match nexus.get("/api/analyze?path=.").await {
-        Ok(resp) => {
-            let violations = resp["violations"]
-                .as_array()
-                .map(|v| v.len())
-                .unwrap_or(0);
-            if violations == 0 {
+    // In-process (ADR-2608241500 P6.2). This asked the daemon for
+    // /api/analyze and fell back to `cargo check` when it was down — so the
+    // gate silently degraded from "no boundary violations" to "it compiles",
+    // which are not the same claim.
+    let root = std::path::Path::new(".");
+    let ast = std::sync::Arc::new(hex_analysis::treesitter_adapter::TreeSitterAdapter::new());
+    let analyzer = hex_analysis::analyzer::ArchAnalyzer::new(ast);
+    use hex_analysis::ports::ArchAnalysisPort;
+    match analyzer.analyze(root).await {
+        Ok(result) => {
+            let violations = &result.violations;
+            if violations.is_empty() {
                 println!("{}", "pass".green());
-                true
-            } else {
-                println!("{} ({} violation{})", "fail".red(), violations, if violations == 1 { "" } else { "s" });
-                if let Some(arr) = resp["violations"].as_array() {
-                    for v in arr.iter().take(5) {
-                        let msg = v["message"].as_str().unwrap_or("");
-                        println!("      {}", msg.dimmed());
-                    }
-                    if arr.len() > 5 {
-                        println!("      ... and {} more", arr.len() - 5);
-                    }
-                }
-                false
+                return true;
             }
+            println!(
+                "{} ({} violation{})",
+                "fail".red(),
+                violations.len(),
+                if violations.len() == 1 { "" } else { "s" }
+            );
+            for v in violations.iter().take(5) {
+                println!("      {} {}", v.edge.from_file.dimmed(), v.rule.dimmed());
+            }
+            if violations.len() > 5 {
+                println!("      ... and {} more", violations.len() - 5);
+            }
+            false
         }
-        Err(_) => {
-            // Nexus not running — fall back to local cargo check as a proxy
-            println!("{} (nexus unavailable, running cargo check)", "?".yellow());
-            let out = tokio::process::Command::new("cargo")
-                .args(["check", "--workspace", "--quiet"])
-                .output()
-                .await;
-            match out {
-                Ok(o) if o.status.success() => { println!("      {} cargo check", "pass".green()); true }
-                Ok(o) => {
-                    let stderr = String::from_utf8_lossy(&o.stderr);
-                    println!("      {} cargo check failed:", "fail".red());
-                    for line in stderr.lines().take(10) {
-                        println!("        {}", line.dimmed());
-                    }
-                    false
-                }
-                Err(e) => { println!("      {} could not run cargo check: {}", "fail".red(), e); false }
-            }
+        Err(e) => {
+            println!("{} ({})", "fail".red(), e);
+            false
         }
     }
 }
