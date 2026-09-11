@@ -18,19 +18,15 @@ pub mod session;
 use commands::{
     adr::AdrAction,
     bootstrap::BootstrapArgs,
-    brief::BriefArgs,
     spec::SpecAction,
     analyze,
     doctor,
-    git_cmd::GitAction,
     hook::HookEvent,
     insight::InsightAction,
     init::InitArgs,
     refresh::RefreshArgs,
     memory::MemoryAction,
-    service::ServiceAction,
     plan::PlanAction,
-    fs::FsAction,
     skill::SkillAction,
     status,
     swarm::SwarmAction,
@@ -142,12 +138,12 @@ enum Commands {
     // Grouped parent commands (P2/P3/P4)
     // ════════════════════════════════════════════════════════════════════
 
-    /// Project configuration (trust, taste, inference, enforce, secrets)
+    /// Project configuration (inference providers and model tiers)
     Config {
         #[command(subcommand)]
         action: ConfigAction,
     },
-    /// Development tools (analyze, validate, test, ci, worktree, init, new, report, session)
+    /// Development tools (analyze, validate, test, ci, worktree, init, new, refresh)
     Dev {
         #[command(subcommand)]
         action: DevGroupAction,
@@ -159,21 +155,8 @@ enum Commands {
 
     /// Bootstrap hex environment (prerequisites, services, models, config)
     Bootstrap(BootstrapArgs),
-    /// Manage hex as systemd user services (boot-persistent stdb + nexus)
-    Service {
-        #[command(subcommand)]
-        action: ServiceAction,
-    },
     /// Refresh hex-managed sections of CLAUDE.md in place (no interview, no reset)
     Refresh(RefreshArgs),
-    /// Developer briefing — recent events, decisions, health
-    #[command(subcommand_required = false, args_conflicts_with_subcommands = true)]
-    Brief {
-        #[command(subcommand)]
-        action: Option<commands::brief::BriefAction>,
-        #[command(flatten)]
-        args: BriefArgs,
-    },
     /// Do the next right thing — check project health and suggest/execute actions
     Go,
     /// Knowledge graph — build/query/path/explain a project's code+docs graph
@@ -246,16 +229,6 @@ enum Commands {
     Assets {
         #[command(subcommand)]
         action: commands::assets_cmd::AssetsAction,
-    },
-    /// Git integration (status, log, diff, branches)
-    Git {
-        #[command(subcommand)]
-        action: GitAction,
-    },
-    /// Native filesystem primitives (ADR-2026-04-14-2100) — replaces Bash/Read/Grep/Glob
-    Fs {
-        #[command(subcommand)]
-        action: FsAction,
     },
     /// Project status
     Status,
@@ -435,14 +408,6 @@ async fn main() -> anyhow::Result<()> {
         },
         // ── Standalone commands ──────────────────────────────────────
         Commands::Bootstrap(args) => commands::bootstrap::run(args).await,
-        Commands::Service { action } => commands::service::run(action).await,
-        Commands::Brief { action, args } => {
-            let effective_args = match action {
-                Some(commands::brief::BriefAction::Show(a)) => a,
-                None => args,
-            };
-            commands::brief::run(effective_args).await
-        }
         Commands::Go => commands::go::run().await,
         Commands::Graph { action } => commands::graph::run(action).await,
         Commands::AutoRepair { action } => auto_repair_run(action).await,
@@ -459,8 +424,6 @@ async fn main() -> anyhow::Result<()> {
         Commands::Hook { event } => commands::hook::run(event).await,
         Commands::Skill { action } => commands::skill::run(action).await,
         Commands::Assets { action } => commands::assets_cmd::run(action).await,
-        Commands::Git { action } => commands::git_cmd::run(action).await,
-        Commands::Fs { action } => commands::fs::run(action).await,
         Commands::Status => status::run().await,
         Commands::Docs { action } => commands::docs::run(action).await,
         Commands::Doctor { verbose, fix, check } => {

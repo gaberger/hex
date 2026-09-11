@@ -1,14 +1,14 @@
 //! ADR-2026-04-13-1500 AIOS Developer Experience — Compliance Smoke Test (P5.2)
 //!
-//! Verifies that the surviving ADR sections are wired into the hex CLI:
+//! Verifies that the surviving ADR section is wired into the hex CLI:
 //!
-//!   §1 — `hex brief show`           narrative briefing
 //!   §6 — `hex new`                  project intake
 //!
-//! §2 `decide`, §3 `steer`, §4 `trust`, §5 `taste` and §7 `pause`/`resume`/
-//! `override` were removed with the daemon (ADR-2608241500 P6.1): each was a
-//! thin client over a control plane that no longer exists. Their 22 smoke
-//! tests went with them — see docs/analysis/2608241500-test-salvage.md.
+//! §1 `brief`, §2 `decide`, §3 `steer`, §4 `trust`, §5 `taste` and §7
+//! `pause`/`resume`/`override` were removed with the daemon (ADR-2608241500
+//! P6.1/P6.2): each was a thin client over a control plane that no longer
+//! exists. `brief` rendered `/api/briefing`, whose sessions, decisions and
+//! health all came from SpacetimeDB.
 //!
 //! Strategy: invoke the compiled binary with `--help` for each subcommand.
 //! Clap exits 0 for `--help`, so these tests are hermetic.
@@ -59,18 +59,6 @@ fn assert_help_succeeds(args: &[&str], section_label: &str) {
         section_label,
         args.join(" "),
     );
-}
-
-// ── §1: hex brief — narrative briefing ──────────────────────────────────────
-
-#[test]
-fn s1_brief_show_help() {
-    assert_help_succeeds(&["brief", "show"], "§1 brief");
-}
-
-#[test]
-fn s1_brief_top_level_help() {
-    assert_help_succeeds(&["brief"], "§1 brief");
 }
 
 // ── §2: hex decide — decision resolution ────────────────────────────────────
