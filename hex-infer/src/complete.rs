@@ -10,19 +10,82 @@
 use hex_core::domain::messages::{ContentBlock, Message, Role};
 use hex_core::ports::inference::{IInferencePort, InferenceRequest, Priority};
 
-use crate::adapters::{ClaudeCodeInferenceAdapter, OllamaInferenceAdapter};
+use crate::adapters::{
+    AnthropicAdapter, ClaudeCodeInferenceAdapter, OllamaInferenceAdapter, OpenAiCompatAdapter,
+};
+use crate::endpoint::Endpoint;
+use crate::registry;
 
-/// Which runtime serves a model id.
+/// Which backend serves a model id.
 ///
-/// Deliberately an exact prefix test, not a heuristic on shape. The same reasoning weave's tier
-/// router settled on: ollama tags have no common form, so a rule like "contains a colon" misroutes
-/// anything vendor-prefixed. A `claude*` id is Anthropic's, everything else is the local runtime —
-/// and an id that is not recognised goes to ollama, which can at least say it has never heard of it.
+/// **The registry decides.** `~/.hex/inference-servers.json` is asked first,
+/// and the matched entry's provider family picks the adapter. Only when no
+/// registered endpoint advertises the model does the prefix test below apply.
+///
+/// It used to be the prefix test alone: `claude*` to `claude -p`, everything
+/// else to the local runtime. That made the set of reachable providers a
+/// property of the source code — an operator could register an
+/// OpenAI-compatible host or an OpenRouter key with `hex inference add`, see
+/// it in `hex inference list`, and still have every request to it sent to
+/// local ollama, which 404s on an id it has never heard of. Founding goal G1
+/// requires that adding or retiring a provider is a configuration change, not
+/// a refactor.
+///
+/// The prefix fallback is kept for the no-registry case, and it is the same
+/// reasoning weave's tier router settled on: ollama tags have no common form,
+/// so a rule like "contains a colon" misroutes anything vendor-prefixed.
 fn adapter_for(model: &str) -> Box<dyn IInferencePort> {
+    if let Some(endpoint) = registry::serving(&registry::load(), model) {
+        return adapter_for_endpoint(&endpoint);
+    }
     if model.to_lowercase().starts_with("claude") {
         Box::new(ClaudeCodeInferenceAdapter::new(None))
     } else {
         Box::new(OllamaInferenceAdapter::new(None))
+    }
+}
+
+/// The adapter for one registered endpoint.
+///
+/// The API key is the *name* of an environment variable, resolved here. The
+/// daemon kept keys in a SpacetimeDB vault and resolved references at dispatch
+/// time under a 3-second timeout — a distributed system standing in for
+/// `std::env::var`, for a single-user tool on one machine.
+fn adapter_for_endpoint(endpoint: &Endpoint) -> Box<dyn IInferencePort> {
+    let key = resolve_key(endpoint);
+    match endpoint.provider.to_ascii_lowercase().as_str() {
+        // The local runtime streams NDJSON of its own; its adapter speaks that.
+        "ollama" => Box::new(OllamaInferenceAdapter::new(Some(endpoint.url.clone()))),
+        "anthropic" => Box::new(AnthropicAdapter::new(key, endpoint.model.clone())),
+        "claude-code" | "claude_code" => Box::new(ClaudeCodeInferenceAdapter::new(None)),
+        // openrouter, openai, openai_compat, vllm, llama-cpp and anything else
+        // registered: all of them speak the OpenAI chat-completions shape.
+        _ => Box::new(OpenAiCompatAdapter::new(
+            key,
+            endpoint.url.clone(),
+            endpoint.model.clone(),
+        )),
+    }
+}
+
+/// Read an endpoint's key out of the environment variable it names.
+fn resolve_key(endpoint: &Endpoint) -> String {
+    if endpoint.secret_key.is_empty() {
+        return String::new();
+    }
+    match std::env::var(&endpoint.secret_key) {
+        Ok(v) if !v.is_empty() => v,
+        // A literal key in the field rather than a variable name: tolerated,
+        // because a hand-edited registry is a real thing operators produce.
+        _ if endpoint.secret_key.starts_with("sk-") => endpoint.secret_key.clone(),
+        _ => {
+            tracing::warn!(
+                endpoint = %endpoint.id,
+                variable = %endpoint.secret_key,
+                "no environment value for this endpoint's key reference"
+            );
+            String::new()
+        }
     }
 }
 

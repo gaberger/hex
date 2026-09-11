@@ -10,7 +10,12 @@
 
 pub mod adapters;
 pub mod complete;
+pub mod endpoint;
+pub mod registry;
 pub mod spend;
 
-pub use adapters::{ClaudeCodeInferenceAdapter, OllamaInferenceAdapter};
+pub use adapters::{
+    AnthropicAdapter, ClaudeCodeInferenceAdapter, OllamaInferenceAdapter, OpenAiCompatAdapter,
+};
+pub use endpoint::Endpoint;
 pub use complete::{complete_raw, complete_text};
