@@ -5,7 +5,7 @@
 //! that makes a project hex-aware.
 //!
 //! Two modes:
-//! - **Config-only** (default): `.hex/`, `.claude/`, `.mcp.json`, `CLAUDE.md`
+//! - **Config-only** (default): `.hex/`, `.claude/`, `CLAUDE.md`
 //! - **Scaffold** (`--scaffold`): Also creates `src/` hex layer directories
 //!
 //! ## Template sourcing
@@ -41,9 +41,13 @@ pub struct InitArgs {
     #[arg(short, long)]
     pub name: Option<String>,
 
-    /// Also create src/ hexagonal layer directories
+    /// Also write a runnable hexagonal skeleton (see --lang)
     #[arg(long)]
     pub scaffold: bool,
+
+    /// Scaffold language: rust | go | ts
+    #[arg(long, default_value = "rust")]
+    pub lang: String,
 
     /// Skip creating CLAUDE.md (if you already have one)
     #[arg(long)]
@@ -110,12 +114,8 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // ── 1c. .hex/ADR-rules.toml (enforcement rules) ───────────────
     create_adr_rules_toml(&target)?;
 
-    // ── 2. .mcp.json ─────────────────────────────────────────────
-    create_mcp_json(&target)?;
-
     // ── 3. .claude/settings.json (hooks → hex hook <event>) ──────
     create_claude_settings(&target)?;
-    install_statusline_script(&target)?;
 
     // ── 4. CLAUDE.md ──────────────────────────────────────────────
     if !args.no_claude_md {
@@ -127,7 +127,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
 
     // ── 6. Scaffold (optional) ────────────────────────────────────
     if args.scaffold {
-        create_scaffold(&target)?;
+        create_scaffold(&target, &args.lang, &project_name)?;
     }
 
     // ── 6a. git init + initial commit ─────────────────────────────
@@ -149,7 +149,6 @@ pub async fn run(args: InitArgs) -> Result<()> {
     println!("  {} .hex/project.json", "\u{2713}".green());
     println!("  {} .hex/project.yaml (auto-register manifest)", "\u{2713}".green());
     println!("  {} .hex/ADR-rules.toml (enforcement rules)", "\u{2713}".green());
-    println!("  {} .mcp.json", "\u{2713}".green());
     println!("  {} .claude/settings.json", "\u{2713}".green());
     if !args.no_claude_md {
         println!("  {} CLAUDE.md", "\u{2713}".green());
@@ -285,35 +284,6 @@ agent:
     Ok(())
 }
 
-pub fn create_mcp_json(target: &Path) -> Result<()> {
-    let mcp_path = target.join(".mcp.json");
-
-    // If .mcp.json exists, merge our server in rather than overwriting
-    let mut mcp: serde_json::Value = if mcp_path.exists() {
-        let existing = fs::read_to_string(&mcp_path)?;
-        serde_json::from_str(&existing).unwrap_or_else(|_| serde_json::json!({"mcpServers": {}}))
-    } else {
-        serde_json::json!({"mcpServers": {}})
-    };
-
-    // Add hex server entry — delegates to the hex binary on PATH.
-    // toolSearch enables BM25 on-demand tool discovery so only needed
-    // tool schemas enter context (not all 50+ hex tools upfront).
-    mcp["mcpServers"]["hex"] = serde_json::json!({
-        "command": "hex",
-        "args": ["mcp"],
-        "toolSearch": {
-            "type": "tool_search_tool_bm25_20251119",
-            "enabled": true
-        }
-    });
-
-    fs::write(&mcp_path, serde_json::to_string_pretty(&mcp)?)
-        .context("Failed to write .mcp.json")?;
-
-    Ok(())
-}
-
 /// Load the embedded settings template (ADR-2026-03-22-1522).
 fn settings_template() -> String {
     crate::assets::Assets::get_str("templates/hex-claude-settings.json")
@@ -410,58 +380,174 @@ fn hex_claude_md_section() -> String {
         .expect("claude-md-hex-section.md must be embedded in assets/templates/")
 }
 
-/// Copy the embedded `hex-statusline.cjs` helper into `<target>/scripts/`
-/// so the `.claude/settings.json` statusLine config (`node scripts/hex-statusline.cjs`)
-/// finds a real file. Without this, Claude Code's statusline silently no-ops.
-pub fn install_statusline_script(target: &Path) -> Result<()> {
-    let scripts_dir = target.join("scripts");
-    create_dir_if_missing(&scripts_dir)?;
-    let dest = scripts_dir.join("hex-statusline.cjs");
-    let content = crate::assets::Assets::get_str("helpers/hex-statusline.cjs")
-        .expect("helpers/hex-statusline.cjs must be embedded in assets/");
-    fs::write(&dest, content)
-        .with_context(|| format!("writing {}", dest.display()))?;
+/// The languages `--scaffold` can emit, and the command that gates each one.
+///
+/// The gate is part of the scaffold's identity, not an afterthought: a
+/// skeleton you cannot run is a skeleton you cannot check, and gate-first
+/// development (ADR-2026-09-11-1900) has nothing to start from.
+pub const SCAFFOLD_LANGS: &[(&str, &str)] = &[
+    ("rust", "cargo test"),
+    ("go", "go test ./..."),
+    ("ts", "npm install && npm test"),
+];
+
+/// The gate command for a language, or `None` if it is not one we emit.
+pub fn scaffold_gate(lang: &str) -> Option<&'static str> {
+    SCAFFOLD_LANGS.iter().find(|(l, _)| *l == lang).map(|(_, g)| *g)
+}
+
+/// Write a runnable hexagonal skeleton for `lang` into `target`.
+///
+/// **Deterministic by construction.** Every byte comes from a template
+/// embedded in this binary plus two substitutions derived from the project
+/// name. No inference, no network, no clock, no filesystem scan — the same
+/// name produces the same bytes on every machine, which is what makes the
+/// output something you can gate.
+///
+/// It used to create eleven empty directories and one TypeScript file of
+/// TODO comments: no manifest, no test runner, nothing to execute. That is
+/// the gap this closes.
+///
+/// Existing files are never overwritten, so re-running `hex init --scaffold`
+/// on a live project is safe.
+fn create_scaffold(target: &Path, lang: &str, project_name: &str) -> Result<()> {
+    let Some(gate) = scaffold_gate(lang) else {
+        anyhow::bail!(
+            "unknown --lang '{}'; expected one of: {}",
+            lang,
+            SCAFFOLD_LANGS.iter().map(|(l, _)| *l).collect::<Vec<_>>().join(", ")
+        );
+    };
+
+    let prefix = format!("scaffold/{lang}/");
+    let vars = ScaffoldVars::from_name(project_name);
+    let mut written = 0usize;
+
+    for path in crate::assets::Assets::iter() {
+        let Some(rel) = path.strip_prefix(&prefix) else {
+            continue;
+        };
+        // `.tmpl` marks a file whose *name* would otherwise be picked up by a
+        // build tool sitting in the assets tree. The suffix is dropped here.
+        let rel = rel.strip_suffix(".tmpl").unwrap_or(rel);
+        let dest = target.join(rel);
+        if dest.exists() {
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            create_dir_if_missing(parent)?;
+        }
+        let body = crate::assets::Assets::get_str(&path)
+            .ok_or_else(|| anyhow::anyhow!("scaffold asset {path} is not embedded"))?;
+        fs::write(&dest, vars.render(&body))
+            .with_context(|| format!("writing {}", dest.display()))?;
+        written += 1;
+    }
+
+    if written == 0 {
+        anyhow::bail!("no scaffold assets embedded for --lang {lang}");
+    }
+    println!("  {} {} files ({}) — gate: {}", "\u{2713}".green(), written, lang, gate);
     Ok(())
 }
 
-fn create_scaffold(target: &Path) -> Result<()> {
-    let dirs = [
-        "src/core/domain",
-        "src/core/ports",
-        "src/core/usecases",
-        "src/adapters/primary",
-        "src/adapters/secondary",
-        "tests/unit",
-        "tests/integration",
-    ];
+/// The substitutions a scaffold template may use.
+///
+/// Two, deliberately. `{{name}}` is the project as written; `{{name_snake}}`
+/// is it as an identifier, because Rust crate paths and Go package names
+/// cannot contain a hyphen while directory names routinely do.
+struct ScaffoldVars {
+    name: String,
+    name_snake: String,
+}
 
-    for dir in &dirs {
-        create_dir_if_missing(&target.join(dir))?;
+impl ScaffoldVars {
+    fn from_name(name: &str) -> Self {
+        let snake: String = name
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+            .collect();
+        // An identifier may not start with a digit, and an empty one is not an
+        // identifier at all.
+        let snake = match snake.chars().next() {
+            Some(c) if c.is_ascii_digit() => format!("p_{snake}"),
+            None => "app".to_string(),
+            _ => snake,
+        };
+        Self { name: name.to_string(), name_snake: snake }
     }
 
-    // Create composition-root.ts if it doesn't exist
-    let comp_root = target.join("src/composition-root.ts");
-    if !comp_root.exists() {
-        fs::write(
-            &comp_root,
-            r#"/**
- * Composition Root — the ONLY file that crosses adapter boundaries.
- *
- * This file wires concrete adapters to port interfaces.
- * No other file should import from adapters/ directly.
- */
+    fn render(&self, body: &str) -> String {
+        body.replace("{{name_snake}}", &self.name_snake).replace("{{name}}", &self.name)
+    }
+}
 
-// TODO: Wire your adapters to ports here
-// import { MyPort } from './core/ports/my-port.js';
-// import { MyAdapter } from './adapters/secondary/my-adapter.js';
-//
-// export const myPort: MyPort = new MyAdapter();
-"#,
-        )
-        .context("Failed to write composition-root.ts")?;
+#[cfg(test)]
+mod scaffold_tests {
+    use super::*;
+
+    #[test]
+    fn every_language_declares_a_gate() {
+        for (lang, gate) in SCAFFOLD_LANGS {
+            assert!(!gate.is_empty(), "{lang} has no gate command");
+            assert_eq!(scaffold_gate(lang), Some(*gate));
+        }
+        assert_eq!(scaffold_gate("cobol"), None);
     }
 
-    Ok(())
+    #[test]
+    fn a_hyphenated_name_becomes_a_legal_identifier() {
+        let v = ScaffoldVars::from_name("my-cool-app");
+        assert_eq!(v.name, "my-cool-app", "the name is kept as written");
+        assert_eq!(v.name_snake, "my_cool_app", "the identifier cannot hold a hyphen");
+    }
+
+    #[test]
+    fn an_identifier_never_starts_with_a_digit() {
+        assert_eq!(ScaffoldVars::from_name("2048-game").name_snake, "p_2048_game");
+    }
+
+    #[test]
+    fn an_empty_name_still_yields_an_identifier() {
+        assert_eq!(ScaffoldVars::from_name("").name_snake, "app");
+    }
+
+    #[test]
+    fn the_longer_placeholder_is_substituted_first() {
+        // Replacing `{{name}}` first would leave `_snake` dangling inside
+        // `{{name_snake}}`. Order matters and this pins it.
+        let v = ScaffoldVars::from_name("my-app");
+        assert_eq!(v.render("{{name_snake}}"), "my_app");
+        assert_eq!(v.render("mod {{name_snake}}; // {{name}}"), "mod my_app; // my-app");
+    }
+
+    #[test]
+    fn rendering_is_deterministic() {
+        let a = ScaffoldVars::from_name("demo").render("{{name}}/{{name_snake}}");
+        let b = ScaffoldVars::from_name("demo").render("{{name}}/{{name_snake}}");
+        assert_eq!(a, b);
+    }
+
+    /// Every template must be embedded, and every one must render without
+    /// leaving a placeholder behind — an unsubstituted `{{…}}` in emitted
+    /// source is a syntax error in all three languages.
+    #[test]
+    fn no_template_leaves_a_placeholder() {
+        let vars = ScaffoldVars::from_name("demo-app");
+        let mut seen = 0;
+        for path in crate::assets::Assets::iter() {
+            // Only the language trees. Anything else under `scaffold/` is not
+            // a scaffold template and does not go through this substitution.
+            if !SCAFFOLD_LANGS.iter().any(|(l, _)| path.starts_with(&format!("scaffold/{l}/"))) {
+                continue;
+            }
+            let body = crate::assets::Assets::get_str(&path).expect("embedded");
+            let out = vars.render(&body);
+            assert!(!out.contains("{{"), "{path} still contains a placeholder");
+            seen += 1;
+        }
+        assert!(seen >= 20, "expected the three scaffold trees to be embedded, saw {seen}");
+    }
 }
 
 fn create_adr_rules_toml(target: &Path) -> Result<()> {

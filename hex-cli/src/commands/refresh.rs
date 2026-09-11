@@ -48,22 +48,16 @@ pub async fn run(args: RefreshArgs) -> Result<()> {
 
     // Refresh the hex-managed config files. This is the install-integrity
     // sweep — every asset hex init writes, refresh re-syncs (idempotent
-    // merges, never destructive). Solves the "MCP tools not loaded in this
-    // session" failure mode where a project had a partial install and the
-    // hex MCP server entry was never added to .mcp.json.
+    // merges, never destructive).
+    //
+    // The .mcp.json and hex-statusline.cjs entries went with the MCP server
+    // and the daemon statusline they configured (ADR-2608241500). Re-syncing a
+    // config that points at a deleted verb is worse than not syncing at all.
     if !args.dry_run {
         let installs: &[(&str, Box<dyn Fn() -> Result<()>>)] = &[
             (
-                ".mcp.json (hex MCP server entry)",
-                Box::new(|| super::init::create_mcp_json(&target)),
-            ),
-            (
-                ".claude/settings.json (hooks + statusLine + permissions)",
+                ".claude/settings.json (hooks + permissions)",
                 Box::new(|| super::init::create_claude_settings(&target)),
-            ),
-            (
-                "scripts/hex-statusline.cjs",
-                Box::new(|| super::init::install_statusline_script(&target)),
             ),
         ];
         for (label, run) in installs {

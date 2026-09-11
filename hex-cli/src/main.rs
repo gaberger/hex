@@ -115,6 +115,9 @@ enum DevGroupAction {
         name: Option<String>,
         #[arg(long)]
         description: Option<String>,
+        /// Scaffold language: rust | go | ts
+        #[arg(long, default_value = "rust")]
+        lang: String,
     },
 }
 
@@ -310,6 +313,9 @@ enum Commands {
         name: Option<String>,
         #[arg(long)]
         description: Option<String>,
+        /// Scaffold language: rust | go | ts
+        #[arg(long, default_value = "rust")]
+        lang: String,
     },
 }
 
@@ -358,8 +364,8 @@ async fn main() -> anyhow::Result<()> {
             DevGroupAction::Worktree { action } => commands::worktree::run(action).await,
             DevGroupAction::Init(args) => commands::init::run(args).await,
             DevGroupAction::Refresh(args) => commands::refresh::run(args).await,
-            DevGroupAction::New { path, name, description } => {
-                commands::new::run(&path, name, description).await
+            DevGroupAction::New { path, name, description, lang } => {
+                commands::new::run(&path, name, description, &lang).await
             }
         },
         // ── Standalone commands ──────────────────────────────────────
@@ -410,8 +416,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Worktree { action } => commands::worktree::run(action).await,
         Commands::Init(args) => commands::init::run(args).await,
         Commands::Refresh(args) => commands::refresh::run(args).await,
-        Commands::New { path, name, description } => {
-            commands::new::run(&path, name, description).await
+        Commands::New { path, name, description, lang } => {
+            commands::new::run(&path, name, description, &lang).await
         }
     }
 }

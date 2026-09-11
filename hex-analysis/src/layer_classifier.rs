@@ -98,9 +98,18 @@ pub fn classify_layer(file_path: &str) -> HexLayer {
         return HexLayer::Unknown;
     }
 
-    // Check directory-based patterns first
+    // Every pattern ends in `/`, because it names a directory. A path that *is*
+    // a directory — which is what a Go package import or a Rust module path
+    // resolves to — has no trailing slash of its own, so `/internal/ports`
+    // could never match `/internal/ports/`. It fell through to the `/internal/`
+    // catch-all and was graded a use case, which reported
+    // "adapters must not import from usecases" against a correctly layered Go
+    // project. Trying both spellings costs one allocation and closes that.
+    let as_dir = format!("{normalized}/");
+
+    // Check directory-based patterns first, most specific first.
     for &(pattern, layer) in LAYER_PATTERNS {
-        if normalized.contains(pattern) {
+        if normalized.contains(pattern) || as_dir.contains(pattern) {
             return layer;
         }
     }
@@ -339,4 +348,36 @@ mod tests {
         assert!(get_violation_rule(HexLayer::CompositionRoot, HexLayer::Domain).is_none());
         assert!(get_violation_rule(HexLayer::EntryPoint, HexLayer::AdaptersPrimary).is_none());
     }
+
+    /// A Go package import resolves to `internal/ports`, with no trailing
+    /// slash and no file. Before this was handled it matched the `/internal/`
+    /// catch-all and was graded a use case — so a secondary adapter importing
+    /// its own port was reported as importing a use case. Found by requiring
+    /// hex's own Go scaffold to grade clean.
+    #[test]
+    fn a_package_directory_classifies_as_its_layer() {
+        assert_eq!(classify_layer("internal/ports"), HexLayer::Ports);
+        assert_eq!(classify_layer("internal/domain"), HexLayer::Domain);
+        assert_eq!(classify_layer("internal/usecases"), HexLayer::Usecases);
+        assert_eq!(classify_layer("adapters/secondary"), HexLayer::AdaptersSecondary);
+        assert_eq!(classify_layer("src/core/ports"), HexLayer::Ports);
+    }
+
+    /// The catch-all still catches what it should.
+    #[test]
+    fn an_unrecognised_internal_package_is_still_a_use_case() {
+        assert_eq!(classify_layer("internal/scheduler"), HexLayer::Usecases);
+    }
+
+    /// Files are unaffected — they matched before and must still match.
+    #[test]
+    fn a_file_in_a_layer_directory_is_unchanged() {
+        assert_eq!(classify_layer("internal/ports/store.go"), HexLayer::Ports);
+        assert_eq!(classify_layer("src/core/domain/count.ts"), HexLayer::Domain);
+        assert_eq!(
+            classify_layer("adapters/secondary/memory.go"),
+            HexLayer::AdaptersSecondary
+        );
+    }
+
 }

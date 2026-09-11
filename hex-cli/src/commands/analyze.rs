@@ -241,6 +241,20 @@ pub async fn run(
                         "\u{26a0}".yellow(),
                         result.violations.len().to_string().red()
                     );
+                    // Name them. A count tells you something is wrong; only the
+                    // file and the rule tell you what to change.
+                    for v in result.violations.iter().take(10) {
+                        println!(
+                            "        {} {} {} {}",
+                            v.edge.from_file.dimmed(),
+                            "\u{2192}".dimmed(),
+                            v.edge.to_file,
+                            format!("({})", v.rule).red()
+                        );
+                    }
+                    if result.violations.len() > 10 {
+                        println!("        … and {} more", result.violations.len() - 10);
+                    }
                 }
                 println!(
                     "    {} Analysed {} files, {} import edges",

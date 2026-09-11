@@ -14,6 +14,7 @@ pub async fn run(
     path: &str,
     name: Option<String>,
     description: Option<String>,
+    lang: &str,
 ) -> anyhow::Result<()> {
     // ── 1. Ensure target directory exists ─────────────────────────────
     let target = std::path::Path::new(path);
@@ -42,7 +43,11 @@ pub async fn run(
     let init_args = InitArgs {
         path: abs_path.display().to_string(),
         name: Some(proj_name.clone()),
-        scaffold: false,
+        // `hex new` means "give me a project I can run". A skeleton with no
+        // manifest and no test is not one, so the scaffold is not optional
+        // here — see ADR-2026-09-11-1900.
+        scaffold: true,
+        lang: lang.to_string(),
         no_claude_md: false,
         skip_interview: true, // non-interactive for `hex new`
         force: false,
