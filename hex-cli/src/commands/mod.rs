@@ -17,7 +17,7 @@ pub mod plan;
 pub mod refresh;
 pub mod skill;
 pub mod status;
-pub mod swarm;
+pub mod build;
 pub mod test;
 pub mod update;
 pub mod worktree;

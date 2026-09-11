@@ -29,7 +29,6 @@ use commands::{
     plan::PlanAction,
     skill::SkillAction,
     status,
-    swarm::SwarmAction,
     worktree::WorktreeAction,
     hey::HeyArgs,
 };
@@ -90,7 +89,7 @@ enum DevGroupAction {
         #[arg(long)]
         parallel: bool,
     },
-    /// Run integration tests (unit, arch, services, swarm)
+    /// Run integration tests (unit, lint, arch, inference)
     Test {
         #[command(subcommand)]
         action: commands::test::TestAction,
@@ -167,11 +166,10 @@ enum Commands {
         #[command(subcommand)]
         action: commands::bench::BenchAction,
     },
-    /// Swarm coordination
-    Swarm {
-        #[command(subcommand)]
-        action: SwarmAction,
-    },
+    /// Cooperative build — diverge, red-team, synthesize, then build to a gate
+    Build(commands::build::BuildArgs),
+    /// Adversarial pass — hunt a target for bugs, verify each, fix under a gate
+    Harden(commands::build::HardenArgs),
     /// Insight extraction surfaces (punch-list, gap detection)
     Insight {
         #[command(subcommand)]
@@ -373,7 +371,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Verify(args) => commands::verify::run(args).await,
         Commands::Do { action } => commands::direct::run(action).await,
         Commands::Bench { action } => commands::bench::run(action).await,
-        Commands::Swarm { action } => commands::swarm::run(action).await,
+        Commands::Build(args) => commands::build::run_build(args).await,
+        Commands::Harden(args) => commands::build::run_harden(args).await,
         Commands::Insight { action } => commands::insight::run(action).await,
         Commands::Memory { action } => commands::memory::run(action).await,
         Commands::Adr { action } => commands::adr::run(action).await,
