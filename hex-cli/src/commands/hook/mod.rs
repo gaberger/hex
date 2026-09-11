@@ -20,9 +20,10 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use super::sched::{
-    autofix_workplan, check_binary_freshness, check_mcp_cli_parity, check_stale_worktrees,
-    check_workplan_status, FreshnessStatus,
+pub mod checks;
+use checks::{
+    autofix_workplan, check_binary_freshness, check_stale_worktrees, check_workplan_status,
+    FreshnessStatus,
 };
 
 /// Extended session state file (ADR-050).
@@ -3027,18 +3028,6 @@ async fn observe(event_type: &str) -> Result<()> {
                     );
                 }
                 _ => {}
-            }
-
-            // MCP ↔ CLI parity — warn if tools are orphaned
-            if let Ok(orphans) = check_mcp_cli_parity() {
-                if !orphans.is_empty() {
-                    eprintln!(
-                        "{} {} MCP tools without CLI commands: {}",
-                        "⬡ brain:".yellow(),
-                        orphans.len(),
-                        orphans.join(", ")
-                    );
-                }
             }
         }
     }

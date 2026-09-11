@@ -3,10 +3,8 @@
 // needed by tests in hex-cli/tests/.
 
 pub mod assets;
-pub mod pipeline;
 pub mod fmt;
 pub mod prompts;
 pub mod session;
 pub mod nexus_client;
-pub mod tui;
 pub mod commands;

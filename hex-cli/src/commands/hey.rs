@@ -575,21 +575,15 @@ pub async fn run(args: HeyArgs) -> anyhow::Result<()> {
         }
     }
 
-    // Queue vs execute
-    if args.queue {
-        let id = super::sched::enqueue_brain_task_pub(kind, &payload).await?;
-        println!("  ⬡ enqueued brain task {}", id.bright_black());
-        println!("    daemon will pick up on next tick");
-    } else {
-        let (ok, result) = super::sched::execute_brain_task(kind, &payload).await;
-        if ok {
-            println!("  {} completed", "✓".green());
-            if !result.trim().is_empty() {
-                println!("{}", result);
-            }
-        } else {
-            println!("  {} failed: {}", "✗".red(), result);
+    // There is no queue and no daemon tick to defer to: `hex hey` acts now.
+    let (ok, result) = execute_intent(kind, &payload).await;
+    if ok {
+        println!("  {} completed", "✓".green());
+        if !result.trim().is_empty() {
+            println!("{}", result);
         }
+    } else {
+        println!("  {} failed: {}", "✗".red(), result);
     }
 
     Ok(())
@@ -905,4 +899,36 @@ fn read_host_context(host: &str) -> Option<String> {
         .map(|l| format!("- {}", l.trim()))
         .collect();
     if lines.is_empty() { None } else { Some(lines.join("\n")) }
+}
+
+/// Run one classified intent, now.
+///
+/// `hex hey` used to hand this to the scheduler daemon's task queue via
+/// `sched::execute_brain_task`. That function carried a liveness-ping special
+/// case that wrote a SpacetimeDB row, a pre/post git-HEAD comparison recorded
+/// to the same database, and a branch that spawned the `hex-agent` binary when
+/// no Claude session was present. None of those exist (ADR-2608241500).
+///
+/// Three kinds survive the classifier, and each is one subprocess. `hex` is
+/// resolved as the running executable rather than by PATH lookup — this
+/// process *is* hex, and a PATH lookup can find a different build.
+async fn execute_intent(kind: &str, payload: &str) -> (bool, String) {
+    let me = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("hex"));
+    let output = match kind {
+        "hex-command" => {
+            tokio::process::Command::new(&me).args(payload.split_whitespace()).output().await
+        }
+        "workplan" => {
+            tokio::process::Command::new(&me).args(["plan", "execute", payload]).output().await
+        }
+        "shell" => tokio::process::Command::new("sh").arg("-c").arg(payload).output().await,
+        other => return (false, format!("unknown intent kind '{other}'")),
+    };
+    match output {
+        Ok(o) => {
+            let text = if o.stdout.is_empty() { &o.stderr } else { &o.stdout };
+            (o.status.success(), String::from_utf8_lossy(text).trim().to_string())
+        }
+        Err(e) => (false, format!("{kind}: {e}")),
+    }
 }

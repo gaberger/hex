@@ -4,8 +4,6 @@
 
 use colored::Colorize;
 
-use crate::commands::sched;
-use crate::nexus_client::NexusClient;
 
 pub async fn run() -> anyhow::Result<()> {
     println!("{} hex project status", "\u{2b21}".cyan());
@@ -51,57 +49,6 @@ pub async fn run() -> anyhow::Result<()> {
         if output.status.success() {
             let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
             println!("  Branch:  {}", branch);
-        }
-    }
-
-    // wp-idle-research-swarm P5.1: surface the most recent idle-research
-    // sweep on the no-arg status panel. Silent when `docs/analysis/` has no
-    // `idle-sweep-*.yaml` (a fresh repo, or sweeps disabled).
-    if let Some(line) = sched::last_sweep_summary_line(&cwd) {
-        println!("  last_sweep: {}", line);
-    }
-
-    // Service health
-    println!();
-    println!("  {}", "Services:".bold());
-
-    // hex-nexus — use NexusClient with auto port discovery
-    let nexus = NexusClient::from_env();
-    match nexus.ensure_running().await {
-        Ok(()) => {
-            println!("    hex-nexus:   {} ({})", "running".green(), nexus.url());
-
-            // Get version
-            if let Ok(ver) = nexus.get("/api/version").await {
-                if let Some(v) = ver["version"].as_str() {
-                    println!("    version:     {}", v);
-                }
-            }
-
-            // SpacetimeDB status
-            let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
-                .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(2))
-                .build()
-                .ok();
-            if let Some(client) = client {
-                let stdb_ok = client
-                    .get(format!("{}{}", stdb_host, hex_core::SPACETIMEDB_PING_PATH))
-                    .send()
-                    .await
-                    .map(|r| r.status().is_success())
-                    .unwrap_or(false);
-                if stdb_ok {
-                    println!("    spacetimedb: {} ({})", "running".green(), stdb_host);
-                } else {
-                    println!("    spacetimedb: {}", "not running".dimmed());
-                }
-            }
-        }
-        Err(_) => {
-            println!("    hex-nexus:   {}", "not running".dimmed());
-            println!("    spacetimedb: {}", "unknown".dimmed());
         }
     }
 

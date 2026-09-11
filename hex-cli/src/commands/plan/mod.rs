@@ -184,11 +184,6 @@ pub enum PlanAction {
         #[arg(long)]
         json: bool,
     },
-    /// COO observability baseline — runs 6 deterministic audit queries:
-    /// persona SOP failure rate, workplan drift, cost burn vs MA, STDB
-    /// reducer ticks, twin rejection rate, tool health. Exits 1 if any
-    /// metric exceeds amber threshold (docs/specs/coo-observability-baseline.md).
-    Health,
     /// Run the in-nexus workplan-steward agent: validate workplan format +
     /// reconcile status (all steps done → completed). Runs in nexus, records to
     /// the agent feed, shows in the dashboard.
@@ -499,7 +494,6 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::Layers { json } => layers_check(json).await,
         PlanAction::Ready { json, no_tests } => ready_check(json, no_tests).await,
         PlanAction::Tests { json } => tests_check(json).await,
-        PlanAction::Health => crate::commands::plan_health::run().await,
         PlanAction::Steward { dry_run } => steward_sweep(dry_run).await,
     }
 }

@@ -12,49 +12,29 @@ pub mod assets;
 mod commands;
 pub mod fmt;
 pub(crate) mod nexus_client;
-pub mod pipeline;
 pub mod prompts;
 pub mod session;
-pub mod tui;
 
 use commands::{
     adr::AdrAction,
-    agent::AgentAction,
-    sched::BrainAction,
     bootstrap::BootstrapArgs,
     brief::BriefArgs,
-    chat::ChatArgs,
-    context::ContextAction,
     spec::SpecAction,
     analyze,
-    dev::DevAction,
     doctor,
     git_cmd::GitAction,
     hook::HookEvent,
-    inbox::InboxAction,
     insight::InsightAction,
     init::InitArgs,
     refresh::RefreshArgs,
     memory::MemoryAction,
-    neural_lab::NeuralLabAction,
-    nexus::NexusAction,
-    sandbox::SandboxAction,
     service::ServiceAction,
     plan::PlanAction,
-    fingerprint::FingerprintAction,
     fs::FsAction,
-    project::ProjectAction,
-    secrets::SecretsAction,
     skill::SkillAction,
     status,
     swarm::SwarmAction,
-    task::TaskAction,
     worktree::WorktreeAction,
-    decide::DecideAction,
-    pause::PauseAction,
-    taste::TasteAction,
-    trust::TrustAction,
-    steer::SteerAction,
     hey::HeyArgs,
 };
 
@@ -75,42 +55,16 @@ struct Cli {
 
 // ── P2: hex config — groups trust, taste, inference, enforce, secrets ──
 #[derive(Subcommand)]
-enum ConfigAction {
-    /// Manage delegation trust levels per scope
-    Trust {
-        #[command(subcommand)]
-        action: TrustAction,
-    },
-    /// Manage developer taste preferences
-    Taste {
-        #[command(subcommand)]
-        action: TasteAction,
-    },
-    /// Manage inference providers (Ollama, vLLM, self-hosted)
+enum ConfigAction {    /// Manage inference providers (Ollama, vLLM, self-hosted)
     Inference {
         #[command(subcommand)]
         action: commands::inference::InferenceAction,
-    },
-    /// Manage enforcement rules
-    Enforce {
-        #[command(subcommand)]
-        action: commands::enforce::EnforceAction,
-    },
-    /// Manage secrets and secret grants
-    Secrets {
-        #[command(subcommand)]
-        action: SecretsAction,
     },
 }
 
 // ── P3: hex dev — groups analyze, validate, test, ci, worktree, init, new, report + session ──
 #[derive(Subcommand)]
 enum DevGroupAction {
-    /// Start/resume/list dev sessions (TUI pipeline)
-    Session {
-        #[command(subcommand)]
-        action: DevAction,
-    },
     /// Architecture health check
     Analyze {
         /// Project root path
@@ -139,15 +93,6 @@ enum DevGroupAction {
         strict: bool,
         #[arg(long)]
         parallel: bool,
-    },
-    /// Build release binaries, install hex to BIN_DIR, restart the daemon — one-command deploy (ADR-2606071702)
-    Deploy {
-        /// Install without restarting the daemon
-        #[arg(long)]
-        no_restart: bool,
-        /// Report install-vs-build drift without building
-        #[arg(long)]
-        check: bool,
     },
     /// Run integration tests (unit, arch, services, swarm)
     Test {
@@ -179,34 +124,6 @@ enum DevGroupAction {
         #[arg(long)]
         taste_from: Option<String>,
     },
-    /// Developer audit report for hex dev sessions
-    Report {
-        #[command(subcommand)]
-        action: commands::report::ReportAction,
-    },
-}
-
-// ── P4: hex override — groups steer, pause, decide ──
-#[derive(Subcommand)]
-enum OverrideAction {
-    /// Send natural-language directives to a project
-    Steer {
-        #[command(subcommand)]
-        action: SteerAction,
-    },
-    /// Emergency pause/resume the active workplan
-    #[command(subcommand_required = false)]
-    Pause {
-        #[command(subcommand)]
-        action: Option<PauseAction>,
-    },
-    /// Resolve, approve, or explain pending project decisions
-    Decide {
-        #[command(subcommand)]
-        action: DecideAction,
-    },
-    #[command(external_subcommand)]
-    Direct(Vec<String>),
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -235,12 +152,6 @@ enum Commands {
         #[command(subcommand)]
         action: DevGroupAction,
     },
-    /// Emergency overrides (steer, pause, decide)
-    #[command(name = "override")]
-    OverrideCmd {
-        #[command(subcommand)]
-        action: OverrideAction,
-    },
 
     // ════════════════════════════════════════════════════════════════════
     // Standalone commands (not grouped)
@@ -248,21 +159,10 @@ enum Commands {
 
     /// Bootstrap hex environment (prerequisites, services, models, config)
     Bootstrap(BootstrapArgs),
-    /// Start/stop/manage the hex-nexus daemon
-    #[command(alias = "daemon")]
-    Nexus {
-        #[command(subcommand)]
-        action: NexusAction,
-    },
     /// Manage hex as systemd user services (boot-persistent stdb + nexus)
     Service {
         #[command(subcommand)]
         action: ServiceAction,
-    },
-    /// Manage remote agents (list, connect, spawn, disconnect)
-    Agent {
-        #[command(subcommand)]
-        action: AgentAction,
     },
     /// Refresh hex-managed sections of CLAUDE.md in place (no interview, no reset)
     Refresh(RefreshArgs),
@@ -302,47 +202,10 @@ enum Commands {
         #[command(subcommand)]
         action: commands::bench::BenchAction,
     },
-    /// Scheduler daemon — queue drain, validation, auto-fix (ADR-2026-04-15-0000)
-    Sched {
-        #[command(subcommand)]
-        action: BrainAction,
-    },
-    /// Worker pools — STDB-backed supervisor (wp-stdb-supervisor)
-    Pool {
-        #[command(subcommand)]
-        action: commands::pool::PoolAction,
-    },
-    /// Deprecated alias for `sched` (ADR-2026-04-15-0000) — forwards with warning
-    #[command(hide = true)]
-    Brain {
-        #[command(subcommand)]
-        action: BrainAction,
-    },
-    /// Substrate (ADR-2026-04-26-1500): propose / list / inspect inference swaps
-    Substrate {
-        #[command(subcommand)]
-        action: commands::substrate::SubstrateAction,
-    },
     /// Swarm coordination
     Swarm {
         #[command(subcommand)]
         action: SwarmAction,
-    },
-    /// Task management
-    Task {
-        #[command(subcommand)]
-        action: TaskAction,
-    },
-    /// Agent notification inbox (ADR-060)
-    Inbox {
-        #[command(subcommand)]
-        action: InboxAction,
-    },
-    /// Operator-grade SOP primitives (write / send / abandon) — wraps
-    /// the autonomous-loop endpoints so the operator never types curl.
-    Ops {
-        #[command(subcommand)]
-        action: commands::ops::OpsAction,
     },
     /// Insight extraction surfaces (punch-list, gap detection)
     Insight {
@@ -354,14 +217,6 @@ enum Commands {
         #[command(subcommand)]
         action: MemoryAction,
     },
-    /// Real-time system monitor (daemon, queue, activity, commits)
-    Monitor(commands::monitor::MonitorArgs),
-    /// Neural architecture lab (experiment, mutate, evaluate model configs)
-    #[command(name = "neural-lab")]
-    NeuralLab {
-        #[command(subcommand)]
-        action: NeuralLabAction,
-    },
     /// Architecture Decision Records
     Adr {
         #[command(subcommand)]
@@ -372,31 +227,16 @@ enum Commands {
         #[command(subcommand)]
         action: SpecAction,
     },
-    /// Project registration and management
-    Project {
-        #[command(subcommand)]
-        action: ProjectAction,
-    },
     /// Workplan management (create, list, status)
     Plan {
         #[command(subcommand)]
         action: PlanAction,
-    },
-    /// Interactive AI chat session (TUI by default, --no-tui for plain stdout)
-    Chat(ChatArgs),
-    /// Inspect + apply persona system prompts (STDB-backed, ADR-2026-05-23-0900)
-    #[command(name = "persona-prompt")]
-    PersonaPrompt {
-        #[command(subcommand)]
-        action: commands::persona_prompt::PersonaPromptAction,
     },
     /// Claude Code hook handler (called by .claude/settings.json hooks)
     Hook {
         #[command(subcommand)]
         event: HookEvent,
     },
-    /// Start the hex MCP server (stdio transport)
-    Mcp,
     /// Manage skills (list, sync, show)
     Skill {
         #[command(subcommand)]
@@ -419,27 +259,10 @@ enum Commands {
     },
     /// Project status
     Status,
-    /// One-glance multi-project pulse (ADR-2026-04-13-1500 P6.1)
-    Pulse,
-    /// Inject hex context into opencode (ADR-2026-03-23-1800)
-    Opencode {
-        #[command(subcommand)]
-        action: commands::opencode::Commands,
-    },
     /// Internal documentation health (ADR-047) — terminology, freshness, module READMEs
     Docs {
         #[command(subcommand)]
         action: commands::docs::DocsAction,
-    },
-    /// Docker AI Sandbox management — build image, check readiness (ADR-2026-03-28-2000)
-    Sandbox {
-        #[command(subcommand)]
-        action: SandboxAction,
-    },
-    /// Architecture fingerprint management (ADR-2026-03-30-1200)
-    Fingerprint {
-        #[command(subcommand)]
-        action: FingerprintAction,
     },
     /// Installation verification and pipeline validation (ADR-067)
     Doctor {
@@ -452,11 +275,6 @@ enum Commands {
         /// Run a specific check only (e.g. "composition")
         #[arg(value_name = "CHECK")]
         check: Option<String>,
-    },
-    /// Inspect and manage context engineering prompts
-    Context {
-        #[command(subcommand)]
-        action: ContextAction,
     },
     /// Update hex to the latest release (ADR-2026-04-08-0929)
     #[command(name = "self-update")]
@@ -471,48 +289,15 @@ enum Commands {
         #[arg(long, short)]
         yes: bool,
     },
-    /// Emergency override — send priority-2 directive to all agents (ADR-2026-04-13-1500)
-    #[command(name = "send-override")]
-    OverrideDirect {
-        /// Project name
-        project: String,
-        /// Override instruction (natural language)
-        instruction: String,
-    },
 
     // ════════════════════════════════════════════════════════════════════
     // Hidden aliases — old top-level commands still work but don't show in --help
     // ════════════════════════════════════════════════════════════════════
-
-    /// (hidden) Manage secrets — use `hex config secrets` instead
-    #[command(hide = true)]
-    Secrets {
-        #[command(subcommand)]
-        action: SecretsAction,
-    },
     /// (hidden) Manage inference — use `hex config inference` instead
     #[command(hide = true)]
     Inference {
         #[command(subcommand)]
         action: commands::inference::InferenceAction,
-    },
-    /// (hidden) Manage enforcement — use `hex config enforce` instead
-    #[command(hide = true)]
-    Enforce {
-        #[command(subcommand)]
-        action: commands::enforce::EnforceAction,
-    },
-    /// (hidden) Manage trust — use `hex config trust` instead
-    #[command(hide = true)]
-    Trust {
-        #[command(subcommand)]
-        action: TrustAction,
-    },
-    /// (hidden) Manage taste — use `hex config taste` instead
-    #[command(hide = true)]
-    Taste {
-        #[command(subcommand)]
-        action: TasteAction,
     },
     /// (hidden) Architecture health check — use `hex dev analyze` instead
     #[command(hide = true)]
@@ -576,32 +361,6 @@ enum Commands {
         #[arg(long)]
         taste_from: Option<String>,
     },
-    /// (hidden) Report — use `hex dev report` instead
-    #[command(hide = true)]
-    Report {
-        #[command(subcommand)]
-        action: commands::report::ReportAction,
-    },
-    /// (hidden) Steer — use `hex override steer` instead
-    #[command(hide = true)]
-    Steer {
-        #[command(subcommand)]
-        action: SteerAction,
-    },
-    /// (hidden) Pause — use `hex override pause` instead
-    #[command(hide = true, subcommand_required = false)]
-    Pause {
-        #[command(subcommand)]
-        action: Option<PauseAction>,
-    },
-    /// Resume a paused workplan (ADR-2026-04-13-1500 §1 Layer 4)
-    Resume,
-    /// (hidden) Decide — use `hex override decide` instead
-    #[command(hide = true)]
-    Decide {
-        #[command(subcommand)]
-        action: DecideAction,
-    },
 }
 
 async fn auto_repair_run(action: AutoRepairAction) -> anyhow::Result<()> {
@@ -653,21 +412,15 @@ async fn main() -> anyhow::Result<()> {
     match command {
         // ── Grouped parent commands (P2/P3/P4) ──────────────────────
         Commands::Config { action } => match action {
-            ConfigAction::Trust { action } => commands::trust::run(action).await,
-            ConfigAction::Taste { action } => commands::taste::run(action).await,
             ConfigAction::Inference { action } => commands::inference::run(action).await,
-            ConfigAction::Enforce { action } => commands::enforce::run(action).await,
-            ConfigAction::Secrets { action } => commands::secrets::run(action).await,
         },
         Commands::Dev { action } => match action {
-            DevGroupAction::Session { action } => commands::dev::run(action).await,
             DevGroupAction::Analyze { path, strict, adr_compliance, json, file, quiet, violations_only, exit_code } => {
                 analyze::run(&path, strict, adr_compliance, json, file.as_deref(), quiet, violations_only, exit_code).await
             }
             DevGroupAction::Validate { skip_test, strict, parallel } => {
                 doctor::run_validate_pipeline(skip_test, strict, parallel).await
             }
-            DevGroupAction::Deploy { no_restart, check } => commands::deploy::run(no_restart, check).await,
             DevGroupAction::Test { action } => commands::test::run(action).await,
             DevGroupAction::Ci { standalone_gate } => {
                 if standalone_gate { commands::ci::run_standalone_gate().await }
@@ -679,33 +432,10 @@ async fn main() -> anyhow::Result<()> {
             DevGroupAction::New { path, name, description, taste_from } => {
                 commands::new::run(&path, name, description, taste_from).await
             }
-            DevGroupAction::Report { action } => commands::report::run(action).await,
         },
-        Commands::OverrideCmd { action } => match action {
-            OverrideAction::Steer { action } => commands::steer::run(action).await,
-            OverrideAction::Pause { action } => {
-                match action {
-                    Some(PauseAction::Pause) | None => commands::pause::run_pause().await,
-                    Some(PauseAction::Resume) => commands::pause::run_resume().await,
-                }
-            }
-            OverrideAction::Decide { action } => commands::decide::run(action).await,
-            OverrideAction::Direct(args) => {
-                if args.len() >= 2 {
-                    commands::override_cmd::run(&args[0], &args[1..].join(" ")).await
-                } else if args.len() == 1 {
-                    commands::override_cmd::run(&args[0], "").await
-                } else {
-                    anyhow::bail!("Usage: hex override <project> <instruction>")
-                }
-            }
-        },
-
         // ── Standalone commands ──────────────────────────────────────
         Commands::Bootstrap(args) => commands::bootstrap::run(args).await,
-        Commands::Nexus { action } => commands::nexus::run(action).await,
         Commands::Service { action } => commands::service::run(action).await,
-        Commands::Agent { action } => commands::agent::run(action).await,
         Commands::Brief { action, args } => {
             let effective_args = match action {
                 Some(commands::brief::BriefAction::Show(a)) => a,
@@ -720,36 +450,19 @@ async fn main() -> anyhow::Result<()> {
         Commands::Verify(args) => commands::verify::run(args).await,
         Commands::Do { action } => commands::direct::run(action).await,
         Commands::Bench { action } => commands::bench::run(action).await,
-        Commands::Sched { action } => commands::sched::run(action).await,
-        Commands::Pool { action } => commands::pool::run(action).await,
-        Commands::Brain { action } => commands::brain_alias::run(action).await,
-        Commands::Substrate { action } => commands::substrate::run(action).await,
         Commands::Swarm { action } => commands::swarm::run(action).await,
-        Commands::Task { action } => commands::task::run(action).await,
-        Commands::Inbox { action } => commands::inbox::run(action).await,
-        Commands::Ops { action } => commands::ops::run(action).await,
         Commands::Insight { action } => commands::insight::run(action).await,
         Commands::Memory { action } => commands::memory::run(action).await,
-        Commands::Monitor(args) => commands::monitor::run(args).await,
-        Commands::NeuralLab { action } => commands::neural_lab::run(action).await,
         Commands::Adr { action } => commands::adr::run(action).await,
         Commands::Spec { action } => commands::spec::run(action).await,
-        Commands::Project { action } => commands::project::run(action).await,
         Commands::Plan { action } => commands::plan::run(action).await,
-        Commands::Chat(args) => commands::chat::run(args).await,
-        Commands::PersonaPrompt { action } => commands::persona_prompt::run(action).await,
         Commands::Hook { event } => commands::hook::run(event).await,
-        Commands::Mcp => commands::mcp::run_mcp_server().await,
         Commands::Skill { action } => commands::skill::run(action).await,
         Commands::Assets { action } => commands::assets_cmd::run(action).await,
         Commands::Git { action } => commands::git_cmd::run(action).await,
         Commands::Fs { action } => commands::fs::run(action).await,
         Commands::Status => status::run().await,
-        Commands::Pulse => commands::pulse::run().await,
-        Commands::Opencode { action } => commands::opencode::run(action),
         Commands::Docs { action } => commands::docs::run(action).await,
-        Commands::Sandbox { action } => commands::sandbox::run(action).await,
-        Commands::Fingerprint { action } => commands::fingerprint::run(action).await,
         Commands::Doctor { verbose, fix, check } => {
             match check.as_deref() {
                 Some("composition") => {
@@ -760,20 +473,11 @@ async fn main() -> anyhow::Result<()> {
                 _ => doctor::run_doctor(verbose, fix).await,
             }
         }
-        Commands::Context { action } => commands::context::run(action).await,
         Commands::SelfUpdate { check, version, yes } => {
             commands::update::run(check, version, yes).await
         }
-        Commands::OverrideDirect { project, instruction } => {
-            commands::override_cmd::run(&project, &instruction).await
-        }
-
         // ── Hidden aliases (old top-level commands) ──────────────────
-        Commands::Secrets { action } => commands::secrets::run(action).await,
         Commands::Inference { action } => commands::inference::run(action).await,
-        Commands::Enforce { action } => commands::enforce::run(action).await,
-        Commands::Trust { action } => commands::trust::run(action).await,
-        Commands::Taste { action } => commands::taste::run(action).await,
         Commands::Analyze { path, strict, adr_compliance, json, file, quiet, violations_only, exit_code } => {
             analyze::run(&path, strict, adr_compliance, json, file.as_deref(), quiet, violations_only, exit_code).await
         }
@@ -791,16 +495,6 @@ async fn main() -> anyhow::Result<()> {
         Commands::New { path, name, description, taste_from } => {
             commands::new::run(&path, name, description, taste_from).await
         }
-        Commands::Report { action } => commands::report::run(action).await,
-        Commands::Steer { action } => commands::steer::run(action).await,
-        Commands::Pause { action } => {
-            match action {
-                Some(PauseAction::Pause) | None => commands::pause::run_pause().await,
-                Some(PauseAction::Resume) => commands::pause::run_resume().await,
-            }
-        }
-        Commands::Resume => commands::pause::run_resume().await,
-        Commands::Decide { action } => commands::decide::run(action).await,
     }
 }
 
