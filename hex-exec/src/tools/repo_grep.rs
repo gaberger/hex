@@ -64,7 +64,41 @@ impl Tool for RepoGrep {
         let repo_root = std::env::var("HEX_REPO_ROOT")
             .unwrap_or_else(|_| crate::repo_root());
 
-        let mut cmd = Command::new("rg");
+        // ripgrep, or POSIX grep. `rg` is not on every machine hex installs into — on this one it
+        // existed ONLY as a shell function, so `Command::new("rg")` failed on every call while
+        // `command -v rg` in a terminal said it was there. The loop then watched the model grep
+        // correctly five times, get nothing, and give up: a missing binary that reads as a stupid
+        // model. grep is POSIX and is always present.
+        let use_rg = which_exists("rg");
+        let mut cmd = Command::new(if use_rg { "rg" } else { "grep" });
+        if !use_rg {
+            // grep equivalents: -r recursive, -n line numbers, -I skip binaries. --include takes a
+            // basename glob, so `**/*.rs` becomes `*.rs` — grep has no recursive-glob syntax.
+            cmd.arg("-rnI");
+            if let Some(g) = &glob {
+                let base = g.rsplit('/').next().unwrap_or(g);
+                cmd.arg(format!("--include={}", base));
+            }
+            cmd.arg("-e").arg(&pattern).arg(".").current_dir(&repo_root);
+            let out = match timeout(Duration::from_secs(5), cmd.output()).await {
+                Ok(Ok(out)) => out,
+                Ok(Err(e)) => {
+                    return ToolResult::err(
+                        format!("neither rg nor grep could be run: {}", e),
+                        start.elapsed().as_millis() as u64,
+                    );
+                }
+                Err(_) => {
+                    return ToolResult::err(
+                        "repo_grep timed out after 5s — narrow `pattern` or add `glob`",
+                        start.elapsed().as_millis() as u64,
+                    );
+                }
+            };
+            return grep_output_to_result(&out.stdout, max_matches, &pattern, glob, start);
+        }
+
+        let mut cmd = cmd;
         cmd.arg("--max-count").arg(format!("{}", max_matches))
             .arg("--line-number")
             .arg("--no-heading")
@@ -139,6 +173,66 @@ impl Tool for RepoGrep {
             ToolResult::ok(result, elapsed)
         }
     }
+}
+
+
+/// Is this an executable on PATH? `Command::new` cannot see shell functions or aliases, so
+/// `command -v` in a terminal is not evidence that a spawned process will find it.
+fn which_exists(bin: &str) -> bool {
+    std::env::var("PATH")
+        .map(|p| {
+            std::env::split_paths(&p).any(|dir| {
+                let c = dir.join(bin);
+                c.is_file() && {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        std::fs::metadata(&c).map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+                    }
+                    #[cfg(not(unix))]
+                    { true }
+                }
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Both tools emit `<path>:<line>:<content>`, so one parser serves both.
+fn grep_output_to_result(
+    stdout: &[u8],
+    max_matches: usize,
+    pattern: &str,
+    glob: Option<String>,
+    start: std::time::Instant,
+) -> ToolResult {
+    let text = String::from_utf8_lossy(stdout);
+    let mut matches: Vec<Value> = Vec::new();
+    let mut truncated = false;
+    for line in text.lines() {
+        if matches.len() >= max_matches {
+            truncated = true;
+            break;
+        }
+        let mut parts = line.splitn(3, ':');
+        let (Some(path), Some(linenum), Some(content)) = (parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
+        matches.push(json!({
+            "path": path,
+            "line": linenum.parse::<u64>().unwrap_or(0),
+            "content": content.chars().take(200).collect::<String>(),
+        }));
+    }
+    let elapsed = start.elapsed().as_millis() as u64;
+    let result = json!({
+        "matches": matches,
+        "total_matches": matches.len(),
+        "truncated": truncated,
+        "pattern": pattern,
+        "glob": glob.unwrap_or_default(),
+    });
+    if truncated { ToolResult::ok_truncated(result, elapsed) } else { ToolResult::ok(result, elapsed) }
 }
 
 #[cfg(test)]

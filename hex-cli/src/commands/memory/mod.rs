@@ -1,18 +1,31 @@
-//! Persistent memory commands.
+//! `hex memory` — the lessons the agent loop reads before it starts work.
 //!
-//! `hex memory store|get|search|sync-check|validate` — delegates to hex-nexus HexFlo memory API.
+//! Backed by `~/.hex/memory.jsonl` through `hex_exec::local_store`
+//! (ADR-2608241500). It was the `hexflo_memory` SpacetimeDB table, reached
+//! through the daemon over HTTP — so writing down a lesson needed a database
+//! and a control plane to be up.
+//!
+//! Key prefixes are conventional, not enforced: `lesson:` (don't repeat
+//! this), `gap:` (known issue), `project:` (in-flight context), `decision:`
+//! (a recorded choice). `hex-exec`'s context assembly reads the same feed, so
+//! a lesson stored here reaches the next `hex do`.
+//!
+//! # What was removed
+//!
+//! `sync-check` and `validate` both existed to prove that two agents on two
+//! hosts saw the same row through SpacetimeDB. There is one agent and one
+//! machine now, so the property they asserted is not a property any more.
 
 use clap::Subcommand;
 use colored::Colorize;
-use serde_json::json;
 
-use crate::nexus_client::NexusClient;
+use hex_exec::local_store;
 
 #[derive(Subcommand)]
 pub enum MemoryAction {
     /// Store a key-value pair
     Store {
-        /// Key name
+        /// Key name, e.g. `lesson:trace-consumers`
         key: String,
         /// Value to store
         value: String,
@@ -22,279 +35,119 @@ pub enum MemoryAction {
         /// Key name
         key: String,
     },
-    /// Search stored memory
+    /// Search stored memory by substring, over keys and values
     Search {
         /// Search query
         query: String,
     },
-    /// Verify cross-agent memory sync (WP P4-3)
-    SyncCheck {
-        /// Key name (default: unique `sync-check-<uuid>`)
-        #[arg(long)]
-        key: Option<String>,
-        /// Value to round-trip (default: unique timestamped value)
-        #[arg(long)]
-        value: Option<String>,
-        /// Keep the test key after verification (default: delete it)
-        #[arg(long)]
-        keep: bool,
-    },
-    /// Validate memory sync across agents by performing a store→get roundtrip
-    Validate {
-        /// Optional key to use for the roundtrip (default: auto-generated)
-        #[arg(long)]
-        key: Option<String>,
-        /// Optional value to store (default: auto-generated UUID-like token)
-        #[arg(long)]
-        value: Option<String>,
+    /// List every stored entry
+    List {
         /// Output as JSON
         #[arg(long)]
         json: bool,
     },
+    /// Delete an entry by key
+    Delete {
+        /// Key name
+        key: String,
+    },
 }
+
+/// Entries listed by `hex memory list`.
+const LIST_LIMIT: usize = 500;
 
 pub async fn run(action: MemoryAction) -> anyhow::Result<()> {
     match action {
-        MemoryAction::Store { key, value } => store(&key, &value).await,
-        MemoryAction::Get { key } => get(&key).await,
-        MemoryAction::Search { query } => search(&query).await,
-        MemoryAction::SyncCheck { key, value, keep } => sync_check(key, value, keep).await,
-        MemoryAction::Validate { key, value, json } => validate(key, value, json).await,
-    }
-}
-
-async fn store(key: &str, value: &str) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    nexus
-        .post(
-            "/api/hexflo/memory",
-            &json!({
-                "key": key,
-                "value": value,
-            }),
-        )
-        .await?;
-
-    println!("{} Memory stored", "\u{2b21}".green());
-    println!("  Key:   {}", key.bold());
-    println!("  Value: {} bytes", value.len());
-
-    Ok(())
-}
-
-async fn get(key: &str) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    let path = format!("/api/hexflo/memory/{}", key);
-    match nexus.get(&path).await {
-        Ok(resp) => {
-            let value = resp["value"].as_str().unwrap_or("");
-            println!("{} Memory lookup", "\u{2b21}".cyan());
+        MemoryAction::Store { key, value } => {
+            local_store::memory_put(&key, &value).map_err(|e| anyhow::anyhow!(e))?;
+            println!("{} Memory stored", "\u{2b21}".green());
             println!("  Key:   {}", key.bold());
-            println!("  Value: {}", value);
+            println!("  Value: {} bytes", value.len());
         }
-        Err(e) => {
-            let err_str = e.to_string();
-            if err_str.contains("404") {
-                println!("{} Key '{}' not found", "\u{2b21}".yellow(), key);
+        MemoryAction::Get { key } => match local_store::memory_get(&key) {
+            Some(value) => {
+                println!("{} Memory lookup", "\u{2b21}".cyan());
+                println!("  Key:   {}", key.bold());
+                println!("  Value: {}", value);
+            }
+            None => println!("{} Key '{}' not found", "\u{2b21}".yellow(), key),
+        },
+        MemoryAction::Search { query } => {
+            let results = local_store::memory_search(&query);
+            if results.is_empty() {
+                println!("{} No results for '{}'", "\u{2b21}".dimmed(), query);
+                return Ok(());
+            }
+            println!(
+                "{} Memory search: '{}' ({} results)",
+                "\u{2b21}".cyan(),
+                query.bold(),
+                results.len()
+            );
+            println!();
+            for (key, value) in &results {
+                println!("  {} {}", key.bold(), preview(value).dimmed());
+            }
+        }
+        MemoryAction::List { json } => {
+            let all = local_store::memory_entries(LIST_LIMIT);
+            if json {
+                let rows: Vec<_> = all
+                    .iter()
+                    .map(|(k, v)| serde_json::json!({ "key": k, "value": v }))
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&rows)?);
+                return Ok(());
+            }
+            if all.is_empty() {
+                println!("{} No memory entries yet", "\u{2b21}".dimmed());
+                return Ok(());
+            }
+            println!("{} Memory ({} entries)", "\u{2b21}".cyan(), all.len());
+            println!();
+            for (key, value) in &all {
+                println!("  {} {}", key.bold(), preview(value).dimmed());
+            }
+        }
+        MemoryAction::Delete { key } => {
+            if local_store::memory_delete(&key).map_err(|e| anyhow::anyhow!(e))? {
+                println!("{} Deleted '{}'", "\u{2b21}".green(), key.bold());
             } else {
-                return Err(e);
+                println!("{} Key '{}' not found", "\u{2b21}".yellow(), key);
             }
         }
     }
-
     Ok(())
 }
 
-async fn search(query: &str) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    let path = format!(
-        "/api/hexflo/memory/search?q={}",
-        urlencoded(query)
-    );
-    let resp = nexus.get(&path).await?;
-
-    let results = resp
-        .get("results")
-        .and_then(|r| r.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    if results.is_empty() {
-        println!(
-            "{} No results for '{}'",
-            "\u{2b21}".dimmed(),
-            query
-        );
-        return Ok(());
-    }
-
-    println!(
-        "{} Memory search: '{}' ({} results)",
-        "\u{2b21}".cyan(),
-        query.bold(),
-        results.len()
-    );
-    println!();
-
-    for entry in &results {
-        let key = entry["key"].as_str().unwrap_or("-");
-        let value = entry["value"].as_str().unwrap_or("");
-        let preview = if value.len() > 60 {
-            format!("{}...", &value[..57])
-        } else {
-            value.to_string()
-        };
-        println!("  {} {}", key.bold(), preview.dimmed());
-    }
-
-    Ok(())
-}
-
-/// Simulates two agents: "agent A" stores, "agent B" reads back.
-async fn sync_check(
-    key: Option<String>,
-    value: Option<String>,
-    keep: bool,
-) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    let ts = chrono::Utc::now().timestamp_millis();
-    let agent_hint = std::env::var("HEX_AGENT_ID")
-        .or_else(|_| std::env::var("CLAUDE_SESSION_ID"))
-        .unwrap_or_else(|_| "local".to_string());
-
-    let key = key.unwrap_or_else(|| format!("sync-check-{}-{}", agent_hint, ts));
-    let value = value.unwrap_or_else(|| format!("value-{}", ts));
-
-    nexus
-        .post(
-            "/api/hexflo/memory",
-            &json!({ "key": &key, "value": &value }),
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("store failed: {}", e))?;
-
-    let path = format!("/api/hexflo/memory/{}", key);
-    let resp = nexus
-        .get(&path)
-        .await
-        .map_err(|e| anyhow::anyhow!("readback failed: {}", e))?;
-
-    let observed = resp["value"].as_str().unwrap_or("");
-    let backend = resp["backend"].as_str().unwrap_or("unknown");
-    let matches = observed == value;
-
-    if matches {
-        println!("{} Memory sync OK", "\u{2b21}".green());
-        println!("  Key:     {}", key.bold());
-        println!("  Value:   {}", value);
-        println!("  Backend: {}", backend);
+/// First line of a value, clipped, for list and search output.
+fn preview(value: &str) -> String {
+    let first = value.lines().next().unwrap_or("");
+    if first.chars().count() > 60 {
+        // Clip on a character boundary; values are arbitrary UTF-8.
+        let clipped: String = first.chars().take(57).collect();
+        format!("{clipped}...")
     } else {
-        println!("{} Memory sync MISMATCH", "\u{2b21}".red());
-        println!("  Key:      {}", key.bold());
-        println!("  Expected: {}", value);
-        println!("  Observed: {}", observed);
-        println!("  Backend:  {}", backend);
+        first.to_string()
     }
-
-    if !keep {
-        let _ = nexus.delete(&path).await;
-    }
-
-    if !matches {
-        anyhow::bail!("memory sync mismatch");
-    }
-    Ok(())
 }
 
-/// Perform a store→get roundtrip against the nexus memory API to validate
-/// that multi-agent memory sync is intact. The value flows through
-/// SpacetimeDB; if STDB is unreachable the roundtrip fails. Satisfies
-/// P4-3: a second agent calling `hex memory get` on the same key would
-/// observe the stored value.
-async fn validate(
-    key: Option<String>,
-    value: Option<String>,
-    json_output: bool,
-) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let ts = chrono::Utc::now().timestamp_millis();
-    let agent_hint = std::env::var("HEX_AGENT_ID")
-        .or_else(|_| std::env::var("CLAUDE_SESSION_ID"))
-        .unwrap_or_else(|_| "local".to_string());
-
-    let key = key.unwrap_or_else(|| format!("p4-3-sync-{}-{}", agent_hint, ts));
-    let value = value.unwrap_or_else(|| format!("value-{}", ts));
-
-    // Store
-    nexus
-        .post(
-            "/api/hexflo/memory",
-            &json!({ "key": &key, "value": &value }),
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("store failed for key '{}': {}", key, e))?;
-
-    // Readback — this is what a second agent would do.
-    let path = format!("/api/hexflo/memory/{}", key);
-    let resp = nexus
-        .get(&path)
-        .await
-        .map_err(|e| anyhow::anyhow!("readback failed for key '{}': {}", key, e))?;
-
-    let observed = resp["value"].as_str().unwrap_or("");
-    let backend = resp["backend"].as_str().unwrap_or("unknown");
-    let matches = observed == value;
-
-    if json_output {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "ok": matches,
-                "key": key,
-                "expected": value,
-                "observed": observed,
-                "backend": backend,
-            }))?
-        );
-        if !matches {
-            anyhow::bail!("memory sync mismatch");
-        }
-        return Ok(());
+    #[test]
+    fn preview_takes_the_first_line_only() {
+        assert_eq!(preview("one\ntwo\nthree"), "one");
+        assert_eq!(preview(""), "");
     }
 
-    if matches {
-        println!("{} Memory sync OK", "\u{2b21}".green());
-        println!("  Key:     {}", key.bold());
-        println!("  Value:   {}", value);
-        println!("  Backend: {}", backend);
-    } else {
-        println!("{} Memory sync MISMATCH", "\u{2b21}".red());
-        println!("  Key:      {}", key.bold());
-        println!("  Expected: {}", value);
-        println!("  Observed: {}", observed);
-        println!("  Backend:  {}", backend);
-        anyhow::bail!("memory sync mismatch");
+    #[test]
+    fn preview_clips_on_a_character_boundary() {
+        // Slicing by byte index here would panic.
+        let wide = "\u{e9}".repeat(100);
+        let got = preview(&wide);
+        assert!(got.ends_with("..."));
+        assert_eq!(got.chars().count(), 60);
     }
-
-    Ok(())
-}
-
-/// Minimal percent-encoding for query parameters.
-fn urlencoded(s: &str) -> String {
-    s.replace('%', "%25")
-        .replace(' ', "%20")
-        .replace('&', "%26")
-        .replace('=', "%3D")
-        .replace('+', "%2B")
-        .replace('#', "%23")
 }

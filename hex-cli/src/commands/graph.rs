@@ -1,13 +1,36 @@
 //! `hex graph` — build and query a knowledge graph of the project.
 //!
-//! Thin client over the nexus `/api/graph/*` endpoints (which run the `hex-graph`
-//! engine). Core verbs: build / query / path / explain.
+//! In-process over the `hex-graph` engine (ADR-2608241500 P6.2). Every verb
+//! here used to POST to the daemon's `/api/graph/*` routes, which then called
+//! the same library functions this file now calls directly. `consumers` was
+//! already standalone — and that asymmetry was the tell: the excision oracle
+//! read `graph-out/graph.json` off disk, while `build` could not run at all
+//! without a daemon, so the file the oracle depends on could go stale with no
+//! way to refresh it.
+//!
+//! Core verbs: build / query / path / explain / context / consumers.
+//!
+//! # What was dropped
+//!
+//! `--persist`, which mirrored the graph into the `knowledge-graph`
+//! SpacetimeDB module. `graph-out/graph.json` was always the query source of
+//! truth; the mirror served the dashboard, which is going with the daemon.
+
+use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand};
 use colored::Colorize;
-use serde_json::{json, Value};
+use serde_json::json;
 
-use crate::nexus_client::NexusClient;
+use hex_graph::model::KnowledgeGraph;
+use hex_graph::query as gquery;
+use hex_graph::semantic::{
+    NoopSemanticExtractor, SemanticContext, SemanticExtractor, SemanticTriple,
+};
+use hex_graph::{BuildOpts, Mode};
+
+const OUT_DIR: &str = "graph-out";
+const OUT_FILE: &str = "graph.json";
 
 #[derive(Debug, Subcommand)]
 pub enum GraphAction {
@@ -24,10 +47,10 @@ pub enum GraphAction {
     Context(ContextArgs),
     /// Who depends on a module/file — the excision-safety oracle (ADR-2606071340).
     ///
-    /// Loads the graph FILE directly (no nexus needed) and reports inbound
-    /// importers + entity consumers, with a SAFE-TO-REMOVE / BLOCKED verdict.
-    /// This is the graph-driven dead-code check that drives safe excision —
-    /// `hex` doing "trace ALL consumers before deleting" itself, deterministically.
+    /// Reports inbound importers + entity consumers, with a SAFE-TO-REMOVE /
+    /// BLOCKED verdict. This is the graph-driven dead-code check that drives
+    /// safe excision — `hex` doing "trace ALL consumers before deleting"
+    /// itself, deterministically.
     Consumers(ConsumersArgs),
 }
 
@@ -42,9 +65,6 @@ pub struct BuildArgs {
     /// Skip documentation (Markdown) nodes.
     #[arg(long)]
     pub no_docs: bool,
-    /// Mirror the graph into the knowledge-graph SpacetimeDB module.
-    #[arg(long)]
-    pub persist: bool,
     /// Model for deep-mode semantic inference.
     #[arg(long)]
     pub model: Option<String>,
@@ -95,7 +115,7 @@ pub struct ContextArgs {
 #[derive(Debug, Args)]
 pub struct ConsumersArgs {
     /// Module or file to check (a repo-relative path like
-    /// `hex-nexus/src/orchestration/foo.rs`, or a node id/label).
+    /// `hex-exec/src/tools/delegate.rs`, or a node id/label).
     pub target: String,
     /// Project directory holding `graph-out/graph.json` (default: detected root).
     #[arg(long, default_value = ".")]
@@ -109,40 +129,296 @@ pub struct ConsumersArgs {
 }
 
 pub async fn run(action: GraphAction) -> anyhow::Result<()> {
-    // `consumers` is STANDALONE — it reads the graph file directly so the
-    // dead-code/excision check works even when nexus is down (ADR-2606071340).
-    if let GraphAction::Consumers(a) = action {
-        return consumers(a);
-    }
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
     match action {
-        GraphAction::Build(a) => build(&nexus, a).await,
-        GraphAction::Query(a) => query(&nexus, a).await,
-        GraphAction::Path(a) => path(&nexus, a).await,
-        GraphAction::Explain(a) => explain(&nexus, a).await,
-        GraphAction::Context(a) => context(&nexus, a).await,
-        GraphAction::Consumers(_) => unreachable!("handled above"),
+        GraphAction::Build(a) => build(a).await,
+        GraphAction::Query(a) => query(a),
+        GraphAction::Path(a) => path(a),
+        GraphAction::Explain(a) => explain(a),
+        GraphAction::Context(a) => context(a).await,
+        GraphAction::Consumers(a) => consumers(a),
     }
+}
+
+// ── root and graph io ────────────────────────────────────────────────────────
+
+/// Resolve an argument `path` (absolute or cwd-relative), or detect the root.
+fn resolve_root(path: &str) -> anyhow::Result<PathBuf> {
+    if !path.is_empty() && path != "." {
+        let pb = PathBuf::from(path);
+        if pb.is_dir() {
+            return Ok(pb);
+        }
+        let joined = std::env::current_dir()?.join(path);
+        if joined.is_dir() {
+            return Ok(joined);
+        }
+        anyhow::bail!("not a directory: {path}");
+    }
+    if let Ok(root) = std::env::var("HEX_PROJECT_ROOT") {
+        let p = PathBuf::from(&root);
+        if p.is_dir() {
+            return Ok(p);
+        }
+    }
+    let cwd = std::env::current_dir()?;
+    let mut dir = cwd.as_path();
+    loop {
+        if dir.join("CLAUDE.md").exists() || dir.join(".git").exists() {
+            return Ok(dir.to_path_buf());
+        }
+        match dir.parent() {
+            Some(p) => dir = p,
+            None => return Ok(cwd),
+        }
+    }
+}
+
+fn graph_path(root: &Path) -> PathBuf {
+    root.join(OUT_DIR).join(OUT_FILE)
+}
+
+fn load_graph(path: &str) -> anyhow::Result<KnowledgeGraph> {
+    let root = resolve_root(path)?;
+    let out_path = graph_path(&root);
+    let raw = std::fs::read_to_string(&out_path).map_err(|e| {
+        anyhow::anyhow!(
+            "no graph at {} ({e}). Build it first: `hex graph build`",
+            out_path.display()
+        )
+    })?;
+    KnowledgeGraph::from_json(&raw)
+        .map_err(|e| anyhow::anyhow!("corrupt {}: {e}", out_path.display()))
+}
+
+fn write_graph(out_path: &Path, graph: &KnowledgeGraph) -> anyhow::Result<()> {
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = graph.to_json().map_err(|e| anyhow::anyhow!("serialize graph: {e}"))?;
+    std::fs::write(out_path, json)?;
+    Ok(())
+}
+
+// ── deep-mode semantic inference ─────────────────────────────────────────────
+
+/// Mines relationship triples out of prose with one inference call per chunk.
+///
+/// Lifted from the daemon's `NexusSemanticExtractor`, which held an
+/// `Arc<dyn IInferencePort>` off `AppState`. It now goes through
+/// `hex_infer`, which resolves the backend from the registry — so no provider
+/// name appears here (founding goal G1).
+struct LocalSemanticExtractor {
+    model: Option<String>,
+}
+
+#[async_trait::async_trait]
+impl SemanticExtractor for LocalSemanticExtractor {
+    async fn infer_edges(&self, ctx: &SemanticContext) -> Vec<SemanticTriple> {
+        // Trim very large prose to keep the prompt bounded.
+        let prose: String = ctx.text.chars().take(6000).collect();
+        let known = ctx.known_labels.join(", ");
+        let prompt = format!(
+            "Extract concept relationships from the documentation below. \
+             Return ONLY a JSON array of objects with keys: source, target, relation, \
+             confident (boolean). Prefer linking to these known entities when \
+             relevant: {known}.\n\nDOC ({}):\n{prose}",
+            ctx.file
+        );
+        // Degrade gracefully — the AST graph still stands without these edges.
+        let model = self.model.as_deref().unwrap_or_default();
+        let Ok(reply) = hex_infer::complete_text(
+            model,
+            "You are a precise knowledge-graph relationship extractor. Output JSON only.",
+            &prompt,
+            1024,
+        )
+        .await
+        else {
+            return Vec::new();
+        };
+        parse_triples(&reply)
+    }
+}
+
+/// Leniently parse a JSON array of triples from a model response.
+fn parse_triples(text: &str) -> Vec<SemanticTriple> {
+    let (start, end) = match (text.find('['), text.rfind(']')) {
+        (Some(s), Some(e)) if e > s => (s, e),
+        _ => return Vec::new(),
+    };
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text[start..=end]) else {
+        return Vec::new();
+    };
+    let Some(arr) = parsed.as_array() else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|o| {
+            let source = o.get("source")?.as_str()?.trim().to_string();
+            let target = o.get("target")?.as_str()?.trim().to_string();
+            if source.is_empty() || target.is_empty() {
+                return None;
+            }
+            Some(SemanticTriple {
+                source,
+                target,
+                relation: o
+                    .get("relation")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("related")
+                    .to_string(),
+                confident: o.get("confident").and_then(|v| v.as_bool()).unwrap_or(false),
+            })
+        })
+        .collect()
+}
+
+// ── verbs ────────────────────────────────────────────────────────────────────
+
+async fn build(a: BuildArgs) -> anyhow::Result<()> {
+    let root = resolve_root(&a.path)?;
+    let project_id = root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "project".to_string());
+    let mode = Mode::from_str(&a.mode);
+
+    let semantic: Box<dyn SemanticExtractor> = if mode == Mode::Deep {
+        Box::new(LocalSemanticExtractor { model: a.model.clone() })
+    } else {
+        Box::new(NoopSemanticExtractor)
+    };
+
+    let opts = BuildOpts {
+        project_id,
+        mode,
+        include_docs: !a.no_docs,
+        ..Default::default()
+    };
+
+    println!("{} building knowledge graph ({})…", "\u{2b21}".cyan(), a.mode);
+    let graph = hex_graph::build(&root, opts, semantic.as_ref()).await?;
+
+    let out_path = graph_path(&root);
+    write_graph(&out_path, &graph)?;
+
+    println!(
+        "{} {} nodes, {} edges, {} communities  [{}]",
+        "\u{2713}".green(),
+        graph.meta.node_count,
+        graph.meta.edge_count,
+        graph.meta.community_count,
+        graph.meta.mode,
+    );
+    println!("  {} {}", "graph:".dimmed(), out_path.display());
+    let hubs: Vec<&str> = graph.meta.god_nodes.iter().map(String::as_str).take(5).collect();
+    if !hubs.is_empty() {
+        println!("  {} {}", "hubs:".dimmed(), hubs.join(", "));
+    }
+    Ok(())
+}
+
+fn query(a: QueryArgs) -> anyhow::Result<()> {
+    let graph = load_graph(&a.path)?;
+    let results = gquery::query(&graph, &a.question, a.limit);
+    if results.is_empty() {
+        println!("{} no matches for {:?}", "\u{2014}".dimmed(), a.question);
+        return Ok(());
+    }
+    println!("{} results for {:?}:", "\u{2b21}".cyan(), a.question);
+    for r in &results {
+        println!(
+            "  {:<28} {:<10} {}  {}",
+            r.label.bold(),
+            r.kind.dimmed(),
+            r.file.dimmed(),
+            format!("{:.1}", r.score).dimmed()
+        );
+    }
+    Ok(())
+}
+
+fn path(a: PathArgs) -> anyhow::Result<()> {
+    let graph = load_graph(&a.path)?;
+    match gquery::shortest_path(&graph, &a.from, &a.to) {
+        Some(ids) => {
+            let labels: Vec<String> = ids
+                .iter()
+                .map(|id| graph.node(id).map(|n| n.label.clone()).unwrap_or_else(|| id.clone()))
+                .collect();
+            println!(
+                "{} {}",
+                "\u{2b21}".cyan(),
+                labels.join(&format!(" {} ", "\u{2192}".dimmed()))
+            );
+        }
+        None => println!("{} no path between {:?} and {:?}", "\u{2014}".dimmed(), a.from, a.to),
+    }
+    Ok(())
+}
+
+fn explain(a: ExplainArgs) -> anyhow::Result<()> {
+    let graph = load_graph(&a.path)?;
+    let Some(ex) = gquery::explain(&graph, &a.node) else {
+        anyhow::bail!("node not found: {}", a.node);
+    };
+    println!("{} {} {}", "\u{2b21}".cyan(), ex.label.bold(), format!("({})", ex.kind).dimmed());
+    if !ex.file.is_empty() {
+        println!("  {} {}:{}", "at:".dimmed(), ex.file, ex.line);
+    }
+    println!("  {} {}  ({})", "community:".dimmed(), ex.community_label, ex.degree);
+    for n in ex.neighbors.iter().take(20) {
+        let arrow = if n.direction == "out" { "\u{2192}" } else { "\u{2190}" };
+        println!(
+            "    {} {:<14} {}  {}",
+            arrow.dimmed(),
+            n.relation.dimmed(),
+            n.label,
+            format!("[{}]", n.confidence).dimmed()
+        );
+    }
+    Ok(())
+}
+
+async fn context(a: ContextArgs) -> anyhow::Result<()> {
+    let graph = load_graph(&a.path)?;
+    let opts = hex_graph::context::ContextOpts { max_each: a.max_each.clamp(1, 200) };
+    let Some(bundle) = hex_graph::context::context_for(&graph, &a.target, opts) else {
+        anyhow::bail!("no file node for target: {}", a.target);
+    };
+
+    let mut markdown = hex_graph::context::render_markdown(&bundle);
+    // Graph-relevant memory: lessons whose text mentions this file's
+    // neighbourhood (path/symbols), ranked — not arbitrary recency.
+    let lessons = hex_exec::direct_exec::fetch_lessons().await;
+    let ranked = hex_graph::context::rank_lessons(&bundle, &lessons, 6);
+    if !ranked.is_empty() {
+        markdown.push_str("\n## Lessons (most relevant to this file)\n");
+        for l in &ranked {
+            markdown.push_str(&format!("- [{}] {}\n", l.key, l.value));
+        }
+    }
+
+    if a.json {
+        let mut value = serde_json::to_value(&bundle)?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("markdown".to_string(), json!(markdown));
+            obj.insert("lessons".to_string(), serde_json::to_value(&ranked)?);
+        }
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        return Ok(());
+    }
+    print!("{markdown}");
+    Ok(())
 }
 
 /// Standalone graph-driven consumer trace + delete-safety verdict. Reuses the
 /// same `hex_graph::context` engine the executor uses, so "trace ALL consumers
-/// before deleting" (ADR-2026-04-05-0900) becomes a deterministic hex verb
-/// instead of a manual grep — runnable with no daemon.
+/// before deleting" (ADR-2026-04-05-0900) is a deterministic hex verb instead
+/// of a manual grep.
 fn consumers(a: ConsumersArgs) -> anyhow::Result<()> {
-    let graph_path = std::path::Path::new(&a.path)
-        .join("graph-out")
-        .join("graph.json");
-    let raw = std::fs::read_to_string(&graph_path).map_err(|e| {
-        anyhow::anyhow!(
-            "no graph at {} ({e}). Build it first: `hex graph build`",
-            graph_path.display()
-        )
-    })?;
-    let graph = hex_graph::model::KnowledgeGraph::from_json(&raw)
-        .map_err(|e| anyhow::anyhow!("parse {}: {e}", graph_path.display()))?;
-
+    let graph = load_graph(&a.path)?;
     let bundle = hex_graph::context::context_for(
         &graph,
         &a.target,
@@ -156,11 +432,8 @@ fn consumers(a: ConsumersArgs) -> anyhow::Result<()> {
     };
 
     let importers: Vec<String> = b.imported_by.clone();
-    let users: Vec<String> = b
-        .used_by
-        .iter()
-        .map(|u| format!("{} (uses {})", u.file, u.entity))
-        .collect();
+    let users: Vec<String> =
+        b.used_by.iter().map(|u| format!("{} (uses {})", u.file, u.entity)).collect();
     let safe = importers.is_empty() && users.is_empty();
 
     if a.json {
@@ -209,125 +482,49 @@ fn consumers(a: ConsumersArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn build(nexus: &NexusClient, a: BuildArgs) -> anyhow::Result<()> {
-    let body = json!({
-        "path": a.path,
-        "mode": a.mode,
-        "include_docs": !a.no_docs,
-        "persist": a.persist,
-        "model": a.model,
-    });
-    println!("{} building knowledge graph ({})…", "\u{2b21}".cyan(), a.mode);
-    let resp = nexus.post_long("/api/graph/build", &body).await?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    println!(
-        "{} {} nodes, {} edges, {} communities  [{}]",
-        "\u{2713}".green(),
-        num(&resp, "node_count"),
-        num(&resp, "edge_count"),
-        num(&resp, "community_count"),
-        resp.get("mode").and_then(|v| v.as_str()).unwrap_or("ast"),
-    );
-    if let Some(out) = resp.get("out_file").and_then(|v| v.as_str()) {
-        println!("  {} {}", "graph:".dimmed(), out);
+    #[test]
+    fn triples_parse_out_of_a_fenced_reply() {
+        let reply = "Sure!\n```json\n[{\"source\":\"A\",\"target\":\"B\",\
+                     \"relation\":\"depends on\",\"confident\":true}]\n```";
+        let got = parse_triples(reply);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].source, "A");
+        assert_eq!(got[0].relation, "depends on");
+        assert!(got[0].confident);
     }
-    if let Some(gods) = resp.get("god_nodes").and_then(|v| v.as_array()) {
-        let labels: Vec<&str> = gods.iter().filter_map(|v| v.as_str()).take(5).collect();
-        if !labels.is_empty() {
-            println!("  {} {}", "hubs:".dimmed(), labels.join(", "));
-        }
-    }
-    match (resp.get("persisted").and_then(|v| v.as_bool()), resp.get("persist_error").and_then(|v| v.as_str())) {
-        (Some(true), _) => println!("  {} knowledge-graph STDB module", "persisted:".dimmed()),
-        (_, Some(e)) => println!("  {} {}", "persist skipped:".yellow(), e),
-        _ => {}
-    }
-    Ok(())
-}
 
-async fn query(nexus: &NexusClient, a: QueryArgs) -> anyhow::Result<()> {
-    let body = json!({ "path": a.path, "question": a.question, "limit": a.limit });
-    let resp = nexus.post("/api/graph/query", &body).await?;
-    let results = resp.get("results").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    if results.is_empty() {
-        println!("{} no matches for {:?}", "\u{2014}".dimmed(), a.question);
-        return Ok(());
+    #[test]
+    fn a_reply_with_no_array_yields_nothing() {
+        assert!(parse_triples("I could not find any relationships.").is_empty());
+        assert!(parse_triples("").is_empty());
+        assert!(parse_triples("[not json]").is_empty());
     }
-    println!("{} results for {:?}:", "\u{2b21}".cyan(), a.question);
-    for r in results {
-        let label = r.get("label").and_then(|v| v.as_str()).unwrap_or("?");
-        let kind = r.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-        let file = r.get("file").and_then(|v| v.as_str()).unwrap_or("");
-        let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        println!(
-            "  {:<28} {:<10} {}  {}",
-            label.bold(),
-            kind.dimmed(),
-            file.dimmed(),
-            format!("{score:.1}").dimmed()
-        );
-    }
-    Ok(())
-}
 
-async fn path(nexus: &NexusClient, a: PathArgs) -> anyhow::Result<()> {
-    let body = json!({ "path": a.path, "from": a.from, "to": a.to });
-    let resp = nexus.post("/api/graph/path", &body).await?;
-    if resp.get("found").and_then(|v| v.as_bool()) != Some(true) {
-        println!("{} no path between {:?} and {:?}", "\u{2014}".dimmed(), a.from, a.to);
-        return Ok(());
+    #[test]
+    fn triples_missing_a_side_are_dropped() {
+        let got = parse_triples(r#"[{"source":"A"},{"source":"A","target":"  "},
+                                    {"source":"A","target":"B"}]"#);
+        assert_eq!(got.len(), 1, "only the complete triple survives");
+        assert_eq!(got[0].relation, "related", "relation defaults");
+        assert!(!got[0].confident, "confidence defaults to uncertain");
     }
-    let labels = resp.get("labels").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let chain: Vec<&str> = labels.iter().filter_map(|v| v.as_str()).collect();
-    println!("{} {}", "\u{2b21}".cyan(), chain.join(&format!(" {} ", "\u{2192}".dimmed())));
-    Ok(())
-}
 
-async fn explain(nexus: &NexusClient, a: ExplainArgs) -> anyhow::Result<()> {
-    let body = json!({ "path": a.path, "node": a.node });
-    let resp = nexus.post("/api/graph/explain", &body).await?;
-    let label = resp.get("label").and_then(|v| v.as_str()).unwrap_or(&a.node);
-    let kind = resp.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-    let file = resp.get("file").and_then(|v| v.as_str()).unwrap_or("");
-    println!("{} {} {}", "\u{2b21}".cyan(), label.bold(), format!("({kind})").dimmed());
-    if !file.is_empty() {
-        let line = resp.get("line").and_then(|v| v.as_u64()).unwrap_or(0);
-        println!("  {} {}:{}", "at:".dimmed(), file, line);
+    #[test]
+    fn an_explicit_directory_argument_wins_over_detection() {
+        let dir = tempfile::tempdir().unwrap();
+        let got = resolve_root(&dir.path().to_string_lossy()).unwrap();
+        assert_eq!(got, dir.path());
     }
-    println!(
-        "  {} {}  ({})",
-        "community:".dimmed(),
-        resp.get("community_label").and_then(|v| v.as_str()).unwrap_or(""),
-        num(&resp, "degree"),
-    );
-    if let Some(neighbors) = resp.get("neighbors").and_then(|v| v.as_array()) {
-        for n in neighbors.iter().take(20) {
-            let nl = n.get("label").and_then(|v| v.as_str()).unwrap_or("?");
-            let rel = n.get("relation").and_then(|v| v.as_str()).unwrap_or("");
-            let dir = n.get("direction").and_then(|v| v.as_str()).unwrap_or("");
-            let conf = n.get("confidence").and_then(|v| v.as_str()).unwrap_or("");
-            let arrow = if dir == "out" { "\u{2192}" } else { "\u{2190}" };
-            println!("    {} {:<14} {}  {}", arrow.dimmed(), rel.dimmed(), nl, format!("[{conf}]").dimmed());
-        }
-    }
-    Ok(())
-}
 
-async fn context(nexus: &NexusClient, a: ContextArgs) -> anyhow::Result<()> {
-    let body = json!({ "path": a.path, "target": a.target, "max_each": a.max_each });
-    let resp = nexus.post("/api/graph/context", &body).await?;
-    if a.json {
-        println!("{}", serde_json::to_string_pretty(&resp)?);
-        return Ok(());
+    #[test]
+    fn a_missing_graph_names_the_file_and_the_fix() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = load_graph(&dir.path().to_string_lossy()).unwrap_err().to_string();
+        assert!(err.contains("graph.json"), "{err}");
+        assert!(err.contains("hex graph build"), "{err}");
     }
-    // Print the engine-rendered Markdown block (agent-ready).
-    match resp.get("markdown").and_then(|v| v.as_str()) {
-        Some(md) => print!("{md}"),
-        None => println!("{}", serde_json::to_string_pretty(&resp)?),
-    }
-    Ok(())
-}
-
-fn num(v: &Value, key: &str) -> u64 {
-    v.get(key).and_then(|x| x.as_u64()).unwrap_or(0)
 }

@@ -1,7 +1,9 @@
 //! `hex bench` — agentic inference benchmark runner (ADR-2606071734).
 //!
 //! Runs the benchmark corpus (`docs/benchmarks/fixtures/*.json`) through the REAL
-//! evidence-gated direct executor (`POST /api/direct/execute`) and scores a capability
+//! evidence-gated direct executor, in-process (ADR-2608241500 P6.2 — it used
+//! to POST /api/direct/execute, a route whose whole body was a pass-through to
+//! the same function), and scores a capability
 //! **vector** — did it edit, did it pass an independent oracle, how many steps, how long.
 //! This tests whether a model can *drive the loop*, not just write a function: the gap the
 //! single-turn `hex config inference bench` misses (a model can ace codegen and still wander
@@ -20,13 +22,12 @@
 use clap::Subcommand;
 use colored::Colorize;
 use serde::Deserialize;
-use serde_json::json;
+
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
 
-use crate::nexus_client::NexusClient;
 
 #[derive(Subcommand)]
 pub enum BenchAction {
@@ -95,9 +96,6 @@ async fn agentic(
     filter: Option<String>,
     include_draft: bool,
 ) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-
     let arms: Vec<String> = arms.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
     let fixtures = load_fixtures(&corpus, filter.as_deref(), include_draft)?;
     if fixtures.is_empty() {
@@ -124,7 +122,7 @@ async fn agentic(
     let mut results: Vec<ArmResult> = Vec::new();
     for fx in &fixtures {
         for arm in &arms {
-            results.push(run_one(&nexus, fx, arm, model.as_deref()).await);
+            results.push(run_one(fx, arm, model.as_deref()).await);
         }
     }
 
@@ -137,7 +135,7 @@ async fn agentic(
     Ok(())
 }
 
-async fn run_one(nexus: &NexusClient, fx: &Fixture, arm: &str, model: Option<&str>) -> ArmResult {
+async fn run_one(fx: &Fixture, arm: &str, model: Option<&str>) -> ArmResult {
     let fast = arm == "fast";
 
     // 1. Materialize + COMMIT the oracle so the executor's worktree (forked from HEAD)
@@ -155,33 +153,29 @@ async fn run_one(nexus: &NexusClient, fx: &Fixture, arm: &str, model: Option<&st
     let auto_before = auto_branches();
 
     // 2. Run the real loop in an ISOLATED worktree (isolate:true → hex/auto/<slug>).
-    let mut body = json!({
-        "instruction": fx.instruction,
-        "file": fx.target_file,
-        "evidence": fx.oracle.command,
-        "fast": fast,
-        "isolate": true,
-    });
-    if let Some(m) = model {
-        body["model"] = json!(m);
-    }
+    let task = hex_exec::direct_exec::DirectTask {
+        instruction: fx.instruction.clone(),
+        file: fx.target_file.clone(),
+        evidence: fx.oracle.command.clone(),
+        model: model.map(str::to_string),
+        max_attempts: None,
+        fast,
+        max_steps: None,
+        isolate: Some(true),
+    };
 
     print!("  {:<22} {:<5} … ", fx.id.dimmed(), arm);
     use std::io::Write;
     let _ = std::io::stdout().flush();
 
     let t0 = Instant::now();
-    let resp = nexus.post_long("/api/direct/execute", &body).await;
+    let r = hex_exec::direct_exec::execute_direct(task).await;
     let wall_ms = t0.elapsed().as_millis();
 
-    let r = match resp {
-        Ok(v) => v,
-        Err(e) => json!({ "ok": false, "error": format!("transport: {e}") }),
-    };
-    let ok = r.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-    let ev = r.get("evidence_passed").and_then(|v| v.as_bool()).unwrap_or(false);
-    let attempts = r.get("attempts").and_then(|v| v.as_u64()).unwrap_or(0);
-    let err = r.get("error").and_then(|v| v.as_str()).unwrap_or("");
+    let ok = r.ok;
+    let ev = r.evidence_passed;
+    let attempts = r.attempts as u64;
+    let err = r.error.as_deref().unwrap_or("");
     let (did_edit, reason) = classify(ok, ev, err);
 
     let badge = if ev { "PASS".green().bold() } else { "FAIL".red().bold() };

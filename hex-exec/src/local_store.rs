@@ -222,19 +222,98 @@ mod tests {
 
 const MEMORY: &str = "memory.jsonl";
 
+/// How far back a memory read scans before it gives up on finding a key.
+///
+/// The feed is append-only, so a rewrite is a newer line rather than an edit.
+/// A few hundred short entries is the whole realistic corpus.
+const MEMORY_SCAN: usize = 5_000;
+
 /// `(key, value)` pairs from the local memory feed, newest first, bounded.
 ///
 /// Was `SELECT key, value FROM hexflo_memory` over SpacetimeDB's HTTP SQL endpoint. Rows missing
 /// either field are skipped rather than defaulted — a lesson with no text is not a lesson.
+///
+/// **Newest wins.** A rewritten key appends rather than replacing, so the same
+/// key can appear many times; only its most recent line is returned. Without
+/// that, `hex memory store` on an existing key would leave the loop reading
+/// both the old lesson and the new one.
 pub fn memory_entries(limit: usize) -> Vec<(String, String)> {
-    read_tail(MEMORY, limit)
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for v in read_tail(MEMORY, MEMORY_SCAN) {
+        let (Some(k), Some(val)) = (
+            v.get("key").and_then(|x| x.as_str()),
+            v.get("value").and_then(|x| x.as_str()),
+        ) else {
+            continue;
+        };
+        if v.get("deleted").and_then(|x| x.as_bool()).unwrap_or(false) {
+            seen.insert(k.to_string()); // a tombstone hides older lines too
+            continue;
+        }
+        if seen.insert(k.to_string()) {
+            out.push((k.to_string(), val.to_string()));
+            if out.len() >= limit {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Write a memory entry, superseding any earlier line with the same key.
+pub fn memory_put(key: &str, value: &str) -> Result<(), String> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Err("memory key is empty".to_string());
+    }
+    append(
+        MEMORY,
+        &serde_json::json!({
+            "key": key,
+            "value": value,
+            "ts": chrono::Utc::now().to_rfc3339(),
+        }),
+    )
+}
+
+/// The current value for one key, or `None`.
+pub fn memory_get(key: &str) -> Option<String> {
+    memory_entries(MEMORY_SCAN).into_iter().find(|(k, _)| k == key).map(|(_, v)| v)
+}
+
+/// Entries whose key or value contains `query`, case-insensitively.
+/// An empty query matches everything.
+pub fn memory_search(query: &str) -> Vec<(String, String)> {
+    let needle = query.trim().to_lowercase();
+    memory_entries(MEMORY_SCAN)
         .into_iter()
-        .filter_map(|v| {
-            let k = v.get("key")?.as_str()?.to_string();
-            let val = v.get("value")?.as_str()?.to_string();
-            Some((k, val))
+        .filter(|(k, v)| {
+            needle.is_empty()
+                || k.to_lowercase().contains(&needle)
+                || v.to_lowercase().contains(&needle)
         })
         .collect()
+}
+
+/// Hide a key from future reads. Returns whether it was present.
+///
+/// A tombstone line rather than a rewrite of the file: the feed stays
+/// append-only, which is what makes a torn write survivable.
+pub fn memory_delete(key: &str) -> Result<bool, String> {
+    if memory_get(key).is_none() {
+        return Ok(false);
+    }
+    append(
+        MEMORY,
+        &serde_json::json!({
+            "key": key,
+            "value": "",
+            "deleted": true,
+            "ts": chrono::Utc::now().to_rfc3339(),
+        }),
+    )?;
+    Ok(true)
 }
 
 /// Spend rows in the shape `cost_meter` already aggregates:
