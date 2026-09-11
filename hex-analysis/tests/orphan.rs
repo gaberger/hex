@@ -8,7 +8,7 @@
 use std::fs;
 use std::path::Path;
 
-use hex_analyzer::analyzers::orphan::{self, OrphanOptions};
+use hex_analysis::analyzers::orphan::{self, OrphanOptions};
 
 fn write(root: &Path, rel: &str, contents: &str) {
     let p = root.join(rel);

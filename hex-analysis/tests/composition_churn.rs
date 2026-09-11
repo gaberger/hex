@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use hex_analyzer::analyzers::composition_churn;
+use hex_analysis::analyzers::composition_churn;
 
 // ── Test fixture helpers ─────────────────────────────────────────────
 

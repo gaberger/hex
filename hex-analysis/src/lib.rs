@@ -16,4 +16,8 @@ pub mod dead_export_finder;
 pub mod analyzer;
 pub mod frontend_checker;
 pub mod adr_compliance;
+// Architectural-health detectors, folded in from the hex-analyzer crate
+// (ADR-2608241500 P6.5). One analysis crate, one entry point — the separate
+// binary existed for the improver daemon, which is deleted.
+pub mod analyzers;
 pub mod fingerprint_extractor;

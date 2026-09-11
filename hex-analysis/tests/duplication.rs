@@ -8,7 +8,7 @@
 use std::fs;
 use std::path::Path;
 
-use hex_analyzer::analyzers::duplication::{self, DEFAULT_SIMILARITY_THRESHOLD};
+use hex_analysis::analyzers::duplication::{self, DEFAULT_SIMILARITY_THRESHOLD};
 
 fn write(root: &Path, rel: &str, contents: &str) {
     let p = root.join(rel);

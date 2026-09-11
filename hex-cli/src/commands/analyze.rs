@@ -280,7 +280,19 @@ pub async fn run(
         );
     }
 
-    // ADR compliance check (ADR-045) — runs locally, no nexus needed
+    // Architectural-health detectors (ADR-2608241500 P6.5). Folded in from the
+    // hex-analyzer binary, which fed the improver daemon — and which nothing
+    // has run since the daemon went. They report; they do not gate.
+    if !violations_only && !quiet {
+        println!();
+        println!("  {}", "Architectural health:".bold());
+        for (label, count) in health_findings(&root) {
+            let icon = if count == 0 { "\u{2713}".green() } else { "\u{2022}".yellow() };
+            println!("    {} {:<18} {}", icon, label, count);
+        }
+    }
+
+    // ADR compliance check (ADR-045)
     if !violations_only {
         println!();
         println!("  {}", "ADR compliance:".bold());
@@ -364,6 +376,36 @@ pub async fn run(
 
 /// Analyze a single file for hex boundary violations.
 /// Used by PostToolUse hooks to check one file at a time.
+/// Run the six architectural-health detectors, returning `(label, count)`.
+///
+/// Counts only: the detail is large and belongs in `--json` or a dedicated
+/// report, and a wall of findings on every `hex analyze` trains people to
+/// ignore the whole section. A detector that errors reports 0 rather than
+/// failing the analysis — these are advisory.
+fn health_findings(root: &Path) -> Vec<(&'static str, usize)> {
+    use hex_analysis::analyzers::*;
+    vec![
+        ("cohesion", cohesion::analyze(root).map(|r| r.findings.len()).unwrap_or(0)),
+        ("duplication", duplication::analyze(root).map(|r| r.findings.len()).unwrap_or(0)),
+        (
+            "god types",
+            god_types::analyze(root, god_types::GodTypeThresholds::from_project_root(root))
+                .map(|r| r.findings.len())
+                .unwrap_or(0),
+        ),
+        ("dead layers", dead_layer::analyze(root).map(|r| r.findings.len()).unwrap_or(0)),
+        (
+            "orphans",
+            orphan::analyze(
+                root,
+                orphan::OrphanOptions { orphan_adapters: true, orphan_ports: true },
+            )
+            .map(|r| r.findings.len())
+            .unwrap_or(0),
+        ),
+    ]
+}
+
 /// Run the full tree-sitter boundary analysis over `root`.
 ///
 /// `hex-analysis` is the crate that enforces the hexagonal rules this tool

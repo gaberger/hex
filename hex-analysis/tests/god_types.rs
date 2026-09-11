@@ -8,7 +8,7 @@
 use std::fs;
 use std::path::Path;
 
-use hex_analyzer::analyzers::god_types::{self, GodTypeThresholds};
+use hex_analysis::analyzers::god_types::{self, GodTypeThresholds};
 
 fn write(root: &Path, rel: &str, contents: &str) {
     let p = root.join(rel);
