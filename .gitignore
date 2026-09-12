@@ -67,8 +67,6 @@ docs/algebra/states/
 !docs/BOOTSTRAP.md
 !docs/hex-primer.md
 !docs/remote-agent-walkthrough.md
-!docs/ARCHITECTURE-VALIDATION.md
-!docs/AUTONOMOUS-HEXAGONAL-BUILD.md
 
 # Filesystem artifacts
 Volumes/

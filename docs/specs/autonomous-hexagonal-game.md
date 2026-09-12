@@ -215,7 +215,7 @@ The agent learns the rules by trying to violate them and hitting the gate.
 - Workplan: `docs/workplans/wp-hex-builds-hexagonal-game.json` (7 phases, 10 tasks)
 - Binary: `/tmp/hex-game-strict/target/release/hex-game` (420KB)
 - Source: `/tmp/hex-game-strict/src/` (7 files, 5 layers)
-- Analysis: Commit fbf40fe8 + AUTONOMOUS-HEXAGONAL-BUILD.md
+- Analysis: commit fbf40fe8
 
 ## Success Criteria
 
