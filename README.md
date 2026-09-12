@@ -12,8 +12,9 @@
 </p>
 
 <p align="center">
-  <strong>A solo software-engineering agent, in one binary.</strong><br>
-  It writes code, runs your test command, and commits only if that command exits 0.<br>
+  <strong>A scaffolding system for hexagonal projects, in one binary.</strong><br>
+  It creates them, grows them, and stops them drifting — every step gated on a<br>
+  command that must exit 0 and an architecture grade that must hold.<br>
   No daemon. No database. Nothing to start.
 </p>
 
@@ -28,26 +29,21 @@
 
 ## The whole idea
 
-A test command is the only thing that decides whether work is finished.
+Most scaffolding tools hand you a folder and wish you luck. The template is right on
+day one and wrong by week three, because nothing checks it again.
+
+hex scaffolds a project and then keeps checking. Three things, in order:
+
+**1. A floor that runs.** Deterministic, byte-identical every time, from templates
+embedded in the binary. A manifest, a correct ports-and-adapters layout, four passing
+tests, and a gate command. No inference involved.
 
 ```bash
-hex do run "make add() return a + b, not a - b" \
-  --file src/lib.rs --evidence "cargo test --test add"
+hex init . --scaffold --lang rust        # skeleton + .hex/ADR-rules.toml
 ```
 
-hex reads the code, edits it, runs `cargo test --test add`, and **commits only if it
-exits 0**. If it fails, the edit is reverted. A model that wanders commits nothing.
-
-That is the product. Everything else is a bigger version of it.
-
-## Four verbs
-
-| Verb | For |
-|---|---|
-| **`hex do`** | One bounded change, one file, one gate |
-| **`hex build`** | A whole system from a one-line description, built to a gate |
-| **`hex scaffold`** | A described project on a deterministic hexagonal floor, gated on the build **and** the architecture grade |
-| **`hex harden`** | Point it at working code; it hunts for bugs the tests missed |
+**2. Your project, built onto that floor.** A frontier model writes it; two gates
+decide whether it counts.
 
 ```bash
 hex scaffold "A bookmark service: SQLite store, axum HTTP API, tag search" \
@@ -56,11 +52,36 @@ hex scaffold "A bookmark service: SQLite store, axum HTTP API, tag search" \
 
 ```
 ✓ 8 files (rust) — gate: cargo test
-✓ floor gate green: cargo test
+✓ floor gate green: cargo test                      ← before spending a model call
 ✓ 2 designs → 2 critiques → spec 33505ch → build GREEN
-✓ gate re-run: PASS — 27 test(s) ran
-✓ architecture grade: A+ — score 100/100 (floor A)
+✓ gate re-run: PASS — 27 test(s) ran                ← does it run?
+✓ architecture grade: A+ — score 100/100 (floor A)  ← is it what you asked for?
 ```
+
+**3. Rules that travel with it.** Every scaffolded project gets a
+`.hex/ADR-rules.toml`, and `hex analyze` runs it. Each rule cites the incident that
+produced it. The scaffold is not a starting point you leave behind — it is the
+contract the project is measured against from then on.
+
+### Then you grow it
+
+| Verb | For |
+|---|---|
+| **`hex scaffold`** | Create or extend a project on the hexagonal floor |
+| **`hex build`** | Add a whole subsystem from one description, built to a gate |
+| **`hex do`** | One bounded change, one file, one gate |
+| **`hex harden`** | Point it at working code; it hunts bugs the tests missed |
+
+Each is the same bargain at a different size: **a command that must exit 0 decides
+whether the work counts, and the architecture grade decides whether it belongs.**
+
+```bash
+hex do run "make add() return a + b, not a - b" \
+  --file src/lib.rs --evidence "cargo test --test add"
+```
+
+hex edits, runs your command, and **commits only if it exits 0**. Otherwise the edit
+is reverted. A model that wanders commits nothing.
 
 ## Why a gate instead of a spec
 
@@ -90,8 +111,8 @@ Three rules:
 
 ## The receipts
 
-Six projects, three languages, each from one description, each gate re-run independently
-from a clean build:
+Six projects scaffolded from one description each, three languages, every gate re-run
+independently from a clean build:
 
 | Project | Language | Tests | What it proves |
 |---|---|---:|---|
@@ -141,18 +162,21 @@ told which file and which test will find a `>` that should be `>=`. The second i
 what "point it at a codebase" actually means, and **`hex do run` requires
 `--file`** — no verb accepts "this test fails, find why."
 
-## Hexagonal architecture, enforced
+## Why the grade is a gate and not a report
 
-hex writes ports-and-adapters code and grades it. `hex analyze` is the grader, and **hex
-scores A+ / 100 / 0 violations against its own analyzer.** The daemon it replaced scored
-**F (30/100)**.
+This is the part that makes it a scaffolding *system* rather than a generator.
 
-The grade is a gate, not a report. `hex scaffold --grade A` fails the build if the result
-doesn't earn it — because a frontier model will happily hand you a working program whose
-use case imports a database driver, and the test suite will pass it.
+A test suite tells you the code works. It tells you nothing about whether the shape
+survived. A frontier model will happily hand you a working program whose use case
+imports a database driver — and every test will pass.
+
+So `hex scaffold --grade A` **fails the build** if the result does not earn the grade.
+`hex analyze` is the grader, and hex scores **A+ / 100 / 0 violations** against its own
+analyzer. The daemon it replaced scored **F (30/100)**.
 
 That gate earned its keep on `linkstore-svc`. With a live SQLite file and a live HTTP
-listener, the shortcut is a use case reaching for `rusqlite` or an axum type. It didn't:
+listener, the shortcut is a use case reaching for `rusqlite` or an axum type — and no
+pure-function project ever puts that under pressure. It didn't:
 
 ```
 src/usecases/  →  crate::domain, crate::ports, std::sync::Arc
@@ -160,13 +184,18 @@ src/usecases/  →  crate::domain, crate::ports, std::sync::Arc
 
 No database, no HTTP, no runtime, in the layer that must not have them.
 
-## Lessons ship as rules, not as advice
+## What the scaffold carries: rules, not advice
 
-Every project `hex init` creates gets a `.hex/ADR-rules.toml` of rules that `hex analyze`
-runs. Each one cites the incident that produced it. An unenforced rule is prose with extra
-steps, so each has a test that plants a violation and proves it fires.
+A scaffolded `CLAUDE.md` full of good intentions rots. This repository proved it — the
+template shipped into every project told the agent to run five verbs that had been
+deleted months earlier, and nothing failed, because prose cannot fail.
 
-Then hex was handed its own rule file, and they found four live defects in hex:
+So the scaffold ships `.hex/ADR-rules.toml` instead, and `hex analyze` runs it. Each rule
+cites the incident that produced it. An unenforced rule is prose with extra steps, so each
+has a test that plants a violation and proves it fires. The advice that genuinely cannot be
+pattern-matched stays prose — and is labelled as unenforceable, with its reason.
+
+hex was then handed its own rule file, and the rules found four live defects in hex:
 
 - **The health score wrapped.** A `usize` penalty narrowed with `as u8`: 26 boundary
   violations is a penalty of 260, which is `4` in a `u8`. The worst code in the repository
@@ -277,18 +306,33 @@ made the loop good — context assembly and evidence gates — was never in any 
 
 ```bash
 cargo build -p hex-cli --release
+hex bootstrap                       # prerequisites, inference server, config
+```
 
-hex bootstrap                              # prerequisites, inference server, config
-hex init . --scaffold --lang rust          # deterministic hexagonal skeleton + rules
+**Scaffold a project**
 
-hex do run "<task>" --file <f> --evidence "<cmd>"     # one gated change
-hex scaffold "<what to build>" --target <dir> --lang rust --grade A
-hex build "<challenge>" --target <dir> --gate "<cmd>" --harden
+```bash
+# just the floor — deterministic, runnable, carries its own rules
+hex init ./myapp --scaffold --lang rust
+
+# the floor plus what you described, gated on the build AND the grade
+hex scaffold "<what to build>" --target ./myapp --lang rust --grade A
+```
+
+**Grow it**
+
+```bash
+hex build "<subsystem>" --target <dir> --gate "<cmd>" --harden
+hex do run "<task>" --file <f> --evidence "<cmd>"
 hex harden <path> --gate "<cmd>"
+```
 
-hex analyze .                              # architecture grade + violations
-hex graph consumers <path>                 # trace before you delete
-hex bench agentic                          # measure a model through the real loop
+**Keep it honest**
+
+```bash
+hex analyze .                       # architecture grade + rule violations
+hex graph consumers <path>          # trace before you delete
+hex bench agentic                   # measure a model through the real loop
 ```
 
 `hex --help` lists all 26 verbs. `hex go` suggests the next action.
