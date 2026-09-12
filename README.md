@@ -230,9 +230,19 @@ it, and the result is a rate limiter that silently limits nothing. All 14 tests
 passed. A spec would not have caught it either, because the intent was correct.
 Only an adversary reading the code finds it.
 
-**Changing code it did not write.** Against a 1,685-file project, ten
+**Repairing code it did not write.** Against a 1,685-file project, ten
 single-token bugs injected into ten files: **10 of 10 repaired**, each restoring
 the original line exactly, zero test files edited.
+
+**Refactoring code it did not write.** A second project had 17 boundary
+violations in a web client with no ports layer. hex was given the rule and the
+count, not the files. It found **17 of 17**, plus five more outside the target,
+added a typed ports layer with the domain types re-exported through it, changed
+no logic, edited no test, and kept all 177 tests green. It also wrote a
+boundary test of its own, unprompted. The grade reached C rather than A,
+because a health detector counted the new ports directory against it. That
+detector is a defect, and it is recorded in
+[`docs/analysis/2609120500-refactoring-trial.md`](docs/analysis/2609120500-refactoring-trial.md).
 
 Every number above has a command that checks it in
 [`docs/EVIDENCE.md`](docs/EVIDENCE.md).
@@ -241,10 +251,15 @@ Every number above has a command that checks it in
 
 ## Limits
 
-**Localisation.** hex repairs unfamiliar code only when you tell it which file.
-Given just a failing test name it found the right file **once in ten**. Finding
-the bug is the half that matters when you point a tool at a codebase, and it is
-the half that does not work yet.
+**Localisation from a failing test.** Given a rule, hex finds every file that
+breaks it. Given only a failing test name, it found the right file **once in
+ten**. The first is what the analyzer is for. The second is what a bug report
+looks like, and it does not work yet.
+
+**No verb for "refactor to a grade".** The refactoring trial was driven by
+`hex build` with the analyzer as its gate. That worked, and it is not a verb.
+`hex do` takes one file. A change that needs a new directory and edits across
+six files has nothing shaped for it.
 
 **Third-party imports in `domain/`.** Rule 1 says domain imports only domain.
 The analyzer checks layer-to-layer edges and does not check that, so a project
