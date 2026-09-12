@@ -30,9 +30,9 @@
 Generating code stopped being the bottleneck. Checking it didn't.
 
 An AI agent will produce a working feature in minutes. What it will *also* do,
-reliably, is produce a feature whose tests pass and whose shape is wrong — a use
-case that imports a database driver, a domain type that depends on an HTTP client.
-Nothing fails. The suite is green. The next change is a little harder, and the one
+reliably, is produce a feature whose tests pass and whose shape is wrong. A use
+case imports a database driver. A domain type depends on an HTTP client. Nothing
+fails. The suite is green. The next change is a little harder, and the one
 after that is harder still.
 
 ```mermaid
@@ -60,8 +60,8 @@ moves the problem rather than solving it, for one structural reason:
 > **A spec is prose. Prose cannot fail.**
 
 Code drifts from a spec in silence, because nothing ever runs the spec. In a
-110-spec corpus we audited, **44 described features that had already been deleted** —
-and not one raised an error, ever. A document that cannot fail is indistinguishable
+110-spec corpus we audited, **44 described features that had already been deleted**.
+Not one raised an error, ever. A document that cannot fail is indistinguishable
 from a document that is wrong, and you cannot tell which one you are holding.
 
 ```mermaid
@@ -100,7 +100,7 @@ Two gates, because they answer different questions.
 flowchart TB
     A["hex scaffold '&lt;what to build&gt;'"] --> B["<b>1. floor</b><br/>deterministic skeleton from<br/>templates in the binary"]
     B --> C{"<b>floor gate</b><br/>does the skeleton run<br/>on this machine?"}
-    C -->|no| X["stop — before spending<br/>a model call"]
+    C -->|no| X["stop, before spending<br/>a model call"]
     C -->|yes| D["<b>2. build</b><br/>N designs, each red-teamed,<br/>then built to the gate"]
     D --> E{"<b>gate</b><br/>does it run?"}
     E -->|no| Y["fail"]
@@ -116,8 +116,8 @@ flowchart TB
     style Y fill:#2d333b,stroke:#e5534b,color:#adbac7
 ```
 
-**The floor is not generated.** It comes from templates compiled into the binary —
-byte-identical on every machine, every run. A scaffold you cannot reproduce is not a
+**The floor is not generated.** It comes from templates compiled into the binary.
+The output is byte-identical on every machine, every run. A scaffold you cannot reproduce is not a
 foundation, it is a draft. Its gate runs *before* any model call, because a skeleton
 that will not build on your machine makes everything measured after it meaningless.
 
@@ -169,18 +169,18 @@ short enough to state and strict enough to fail:
 | 1 | `domain/` imports only `domain/` |
 | 2 | `ports/` imports `domain/` only |
 | 3 | `usecases/` imports `domain/` + `ports/` only |
-| 4 | adapters import `ports/` **only** — never the domain directly |
+| 4 | adapters import `ports/` **only**, never the domain directly |
 | 5 | adapters never import other adapters |
 | 6 | the composition root is the only file that imports an adapter |
 
 Rule 4 is the one implementations break. An adapter that needs a domain type gets it
-because the **port re-exports it** — so every adapter has exactly one edge into the
-core, and swapping a database means touching one file.
+because the **port re-exports it**. Every adapter then has exactly one edge into
+the core, and swapping a database means touching one file.
 
 **Why this beats a linter.** A style rule tells you a line is ugly. These tell you a
 *dependency* is wrong, which is the thing that makes a codebase expensive to change.
 And because it is a graph property rather than a matter of taste, a number falls out
-of it — which is what lets it be a gate instead of a suggestion.
+of it. That number is what lets it be a gate instead of a suggestion.
 
 ---
 
@@ -194,7 +194,7 @@ hex bootstrap                       # prerequisites, inference server, config
 **Scaffold**
 
 ```bash
-# the floor alone — deterministic, runnable, carries its own rules
+# the floor alone: deterministic, runnable, carries its own rules
 hex init ./myapp --scaffold --lang rust
 
 # the floor plus what you described, gated on the build AND the grade
@@ -219,7 +219,7 @@ hex harden <path> --gate "<cmd>"
 ```
 
 `hex do` edits, runs your command, and commits **only if it exits 0**. Otherwise the
-edit is reverted — a model that wanders commits nothing.
+edit is reverted. A model that wanders commits nothing.
 
 **Keep it honest**
 
@@ -259,8 +259,8 @@ src/usecases/  →  crate::domain, crate::ports, std::sync::Arc
 
 **Adversarial review finds what tests miss.** `hex harden` read a comment on the rate
 limiter claiming `u128` cannot overflow on a product of two `u64`s. `Duration::as_nanos`
-returns a `u128`, the product overflows, a cast truncates it — a rate limiter that
-silently limits nothing. All 14 tests passed. A spec would not have caught it either,
+returns a `u128`. The product overflows, a cast truncates it, and the result is a
+rate limiter that silently limits nothing. All 14 tests passed. A spec would not have caught it either,
 because the intent was correct; only an adversary reading the code finds it.
 
 **Changing code it did not write.** Against a 1,685-file project, ten single-token
@@ -282,8 +282,8 @@ runtime into its domain and still score A+. The headline rule is stricter than w
 enforced.
 
 **The code generation is a frontier model.** hex contributes the deterministic floor,
-the gates, the grade and the adversary — not the writing. It turns a capable model
-into a disciplined one; it does not replace it.
+the gates, the grade and the adversary. It does not do the writing. It turns a
+capable model into a disciplined one. It does not replace it.
 
 **Local models have a ceiling, and it depends on your language.** The same task, per
 model, pass rate:
@@ -296,8 +296,8 @@ model, pass rate:
 | gpt-oss:20b | 0/5 | **1/3** | 0/3 |
 
 TypeScript is forgiving; Rust and Go are strict, and weaker models fall off a cliff in
-both. The top-of-the-leaderboard local model scored **last** on this grid — leaderboard
-rank does not predict agentic-loop performance. So hex runs best-of-N across a
+both. The top-of-the-leaderboard local model scored **last** on this grid.
+Leaderboard rank does not predict agentic-loop performance. So hex runs best-of-N across a
 complementary pair and falls back to a frontier model, with the gate picking the
 winner. Measure your own with `hex bench agentic`.
 
@@ -312,14 +312,14 @@ Eight crates, one binary, ~53k lines. No daemon, no database, nothing to start.
 | **hex-core** | Contract surface. Zero runtime dependencies |
 | **hex-infer** | Inference adapters, endpoint registry, tier resolution. The only place a provider or model may be named |
 | **hex-exec** | The agent loop, best-of-N, the frontier delegate, the adversarial harness, guarded tools |
-| **hex-analysis** | Tree-sitter boundary checking and health detectors — the grader |
+| **hex-analysis** | Tree-sitter boundary checking and health detectors. The grader |
 | **hex-graph** | Code knowledge graph |
 | **hex-git** &middot; **hex-parser** | git plumbing &middot; parsing |
 | **hex-cli** | The binary, and the only composition root |
 
 hex obeys its own rules: **A+ / 100 / 0 boundary violations**, 977 tests.
 
-All state is files — `~/.hex/*.jsonl`, `.hex/project.json`, `graph-out/graph.json`.
+All state is files: `~/.hex/*.jsonl`, `.hex/project.json`, `graph-out/graph.json`.
 Full map in [ARCHITECTURE.md](ARCHITECTURE.md); decisions in the append-only
 [ADR ledger](docs/adrs/INDEX.md).
 
