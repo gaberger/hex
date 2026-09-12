@@ -97,7 +97,7 @@ hex inference add ollama http://localhost:11434 --model qwen3:32b
 - Use **Interactive mode** instead of Swarm mode (human reviews each phase)
 - Run `hex analyze .` after each coding step (catches boundary violations)
 - Review behavioral specs manually before workplan creation
-- Use `hex plan validate` to catch workplan structural issues
+- Use `hex plan lint` to catch workplan structural issues
 
 #### Hybrid: Ollama + Frontier API
 

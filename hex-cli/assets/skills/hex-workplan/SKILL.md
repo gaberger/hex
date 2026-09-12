@@ -358,7 +358,3 @@ hex plan execute docs/workplans/feat-<feature>.json
 | `hex plan list` | List all workplans with progress |
 | `hex plan status <file>` | Show detailed workplan status |
 | `hex plan execute <file>` | Start workplan execution via HexFlo |
-| `hex plan pause` | Pause active execution |
-| `hex plan resume` | Resume paused execution |
-| `hex plan report <id>` | Execution report with agent performance |
-| `hex plan history` | All past executions |

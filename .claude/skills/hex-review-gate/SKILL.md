@@ -125,7 +125,7 @@ Rules that hold:
 
 In a hex project the handlers are already wired: `hex hook` implements the
 session, pre-edit, pre-bash and pre-agent hooks installed by `hex init`, and
-`hex enforce` is the blocking architecture check. Add project gates alongside
+`hex analyze . --exit-code` is the blocking architecture check. Add project gates alongside
 them rather than replacing them.
 
 ## Part 3 — agent steps in the pipeline

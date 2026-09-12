@@ -492,3 +492,57 @@ fn every_doc_link_resolves() {
     assert!(checked >= 5, "found only {checked} links; the extractor is broken");
     assert!(dead.is_empty(), "dead link(s):\n  {}", dead.join("\n  "));
 }
+
+/// Every shipped skill names only real verbs.
+///
+/// Skills are prose, and prose cannot fail. That is the same defect the specs
+/// had and the CLAUDE.md template had, and this is the largest instance: 24
+/// skills, about 3,500 lines, installed by `hex init` into every project. When
+/// this test was written, six of them named verbs that had been deleted for
+/// months, and three described systems that no longer exist at all.
+///
+/// A skill may say *when* to run a verb. It may not name a verb that is not
+/// there.
+#[test]
+fn every_shipped_skill_names_only_real_verbs() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .to_path_buf();
+    let dir = root.join("hex-cli/assets/skills");
+
+    let mut skills: Vec<(std::path::PathBuf, String)> = Vec::new();
+    for e in std::fs::read_dir(&dir).expect("skills dir").flatten() {
+        let p = e.path();
+        let file = if p.is_dir() { p.join("SKILL.md") } else { p.clone() };
+        if file.extension().is_some_and(|x| x == "md") {
+            if let Ok(body) = std::fs::read_to_string(&file) {
+                skills.push((file, body));
+            }
+        }
+    }
+    skills.sort();
+    assert!(skills.len() >= 10, "found only {} skills; the walker is broken", skills.len());
+
+    let mut total = 0usize;
+    let mut dead: Vec<String> = Vec::new();
+    for (path, body) in &skills {
+        for chain in hex_invocations(body) {
+            total += 1;
+            if !resolves(&chain) {
+                let name = path
+                    .strip_prefix(&dir)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| path.display().to_string());
+                dead.push(format!("{name}: hex {}", chain.join(" ")));
+            }
+        }
+    }
+    assert!(total >= 20, "found only {total} hex commands across the skills; the extractor is broken");
+    assert!(
+        dead.is_empty(),
+        "{} dead command(s) in shipped skills:\n  {}",
+        dead.len(),
+        dead.join("\n  ")
+    );
+}

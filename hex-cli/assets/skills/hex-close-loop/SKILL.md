@@ -95,7 +95,7 @@ the incident was handled.
 
 In a hex project, that lessons file has a queryable equivalent:
 `hex memory store lesson:<topic> "<text>"`, which any later session can search.
-Notifications arrive through `hex inbox`, and a priority-2 notification preempts
+Notifications from a gate that went red re-enter the pipeline as a task.
 current work.
 
 ## Confidence gates between stages
