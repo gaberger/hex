@@ -1,334 +1,94 @@
-# hex Development Workflow Guide
+# Development workflow
 
-This guide walks through the full hex development pipeline: from writing an ADR to shipping code. hex can drive the entire pipeline autonomously using `hex dev` with OpenRouter inference — no external AI tools needed.
+The pipeline has six steps. A gate is written before the code and is not derived
+from it. That order is the whole method.
 
-## Two Ways to Work
+```
+Decide → Gate → Diverge → Build → Harden → Ship
+```
 
-### 1. `hex dev` — Automated (Recommended)
+## 1. Decide
 
-One command drives the full pipeline:
+A change that adds a port, an adapter, or a dependency gets an ADR in
+`docs/adrs/`. The ADR records the decision and the reasoning. It is history and
+is allowed to be prose, because it never claims to describe the present.
 
 ```bash
-# Interactive TUI with approval gates
-hex dev start "add response caching to inference endpoints"
-
-# Fully autonomous (CI/batch)
-hex dev start "add response caching" --auto --budget 2.00
-
-# Quick fix (skip ADR + workplan)
-hex dev start "fix typo in header" --quick
+hex adr schema            # the template and the next number
+hex adr list              # every ADR and its status
+hex adr search <term>
+hex adr accept <id>       # Proposed → Accepted
 ```
 
-hex-agent generates the ADR, decomposes into a workplan, creates a swarm, writes code per step, and validates — all using OpenRouter models. See [OpenRouter Setup Guide](./openrouter-setup.md) for configuration.
+ADRs are append-only. A changed decision gets a new ADR that supersedes the old
+one.
 
-### 2. Manual — Step by Step
+## 2. Gate
 
-Use individual CLI commands for full control over each phase.
-
-## The Pipeline
-
-hex enforces a strict development pipeline:
-
-```
-ADR → Workplan → Swarm → Tasks → Code → Validate
-```
-
-Each step must complete before the next can begin. In mandatory enforcement mode, hooks will block agents that skip steps.
-
-## Phase 1: Architecture Decision Record (ADR)
-
-Every non-trivial change starts with an ADR documenting the decision and rationale.
-
-### Create an ADR
-
-Use the `/hex-ADR-create` skill in Claude Code, or create the file manually:
+Write the command that must exit 0. It is the only authority on whether the work
+is finished, so it comes before the code, and it is not generated from the code.
 
 ```bash
-# Check next available ADR number
-hex adr schema
-
-# Create the file (timestamp-based ID: YYMMDDHHMM)
-# Example: docs/adrs/ADR-2026-03-24-1430-my-feature.md
+cargo test --test bookmarks       # a test that does not exist yet
 ```
 
-ADR template:
+A gate that passes having run nothing is rejected. `hex do` and `hex scaffold`
+both check for a vacuous pass.
 
-```markdown
-# ADR-YYMMDDHHMM: Feature Title
+## 3. Diverge
 
-**Status:** Proposed
-**Date:** YYYY-MM-DD
-**Drivers:** Why this change is needed
-
-## Context
-What's the current situation and what forces are at play?
-
-## Decision
-What are we going to do?
-
-## Consequences
-### Positive
-### Negative
-### Mitigations
-```
-
-### Manage ADRs
+`hex scaffold` and `hex build` propose several designs and red-team each one
+before building. The spec they synthesize is a disposable intermediate. It is
+not kept and not maintained.
 
 ```bash
-hex adr list                    # List all ADRs with status
-hex adr status ADR-2026-03-24-1430   # Show detail for one ADR
-hex adr search "openrouter"     # Search by keyword
-hex adr abandoned               # Find stale/abandoned ADRs
-hex adr review                  # Check consistency issues
+hex scaffold "<what to build>" --target <dir> --lang rust --designs 2
+hex build "<subsystem>" --target <dir> --gate "<cmd>" --designs 3
 ```
 
-## Phase 2: Workplan
+## 4. Build
 
-A workplan decomposes the ADR into adapter-bounded steps organized by dependency tier.
-
-### Create a Workplan
+The frontier path writes the code. The gate decides whether it counts. For a
+bounded change to one file:
 
 ```bash
-# Reference the ADR (required unless --no-adr)
-hex plan create "implement OpenRouter inference integration" --adr ADR-2026-03-23-1600
-
-# Specify target language
-hex plan create "add caching layer" --adr ADR-050 --lang rust
-
-# Without ADR (escape hatch for quick fixes)
-hex plan create "fix typo in dashboard" --no-adr
+hex do run "<task>" --file <path> --evidence "<cmd>"
 ```
 
-This generates a JSON file in `docs/workplans/` with steps organized by tier:
+hex edits, runs the command, and commits only on exit 0. A failed edit is
+reverted, so each attempt starts from the original file.
 
-| Tier | Layer | Depends On |
-|------|-------|------------|
-| 0 | Domain + Ports | Nothing |
-| 1 | Secondary adapters | Tier 0 |
-| 2 | Primary adapters | Tier 0 |
-| 3 | Use cases | Tiers 0-2 |
-| 4 | Composition root | Tiers 0-3 |
-| 5 | Integration tests | Everything |
+For a scaffolded project there is a second gate. `--grade A` fails the build if
+the architecture grade falls below it.
 
-### Manage Workplans
+## 5. Harden
+
+The adversarial pass hunts the result for bugs its own tests missed. Each
+finding is verified skeptically before any edit, and each fix is gated.
 
 ```bash
-hex plan list                          # List all workplans
-hex plan status feat-my-feature.json   # Show steps and progress
-hex plan active                        # Show running/paused plans
-hex plan history                       # Show past executions
-hex plan report <execution-id>         # Aggregate report
-hex plan schema                        # Show the JSON schema
+hex harden <path> --gate "<cmd>"
+hex build "<subsystem>" --target <dir> --gate "<cmd>" --harden   # both in one
 ```
 
-## Phase 3: Swarm
+On this project's rate limiter it found three real bugs behind fourteen passing
+tests. One was a `u128` overflow accepted on a confidently wrong comment.
 
-A swarm is a named coordination container that tracks tasks, agents, and progress.
-
-### Initialize a Swarm
+## 6. Ship
 
 ```bash
-# Basic (hierarchical topology — one coordinator, many workers)
-hex swarm init my-feature
-
-# Pipeline (sequential steps)
-hex swarm init my-feature -t pipeline
-
-# Mesh (peer-to-peer, for independent parallel work)
-hex swarm init my-feature -t mesh
+hex analyze . --exit-code     # grade and violations, nonzero on any
+hex graph consumers <path>    # before deleting anything
+cargo test --workspace
 ```
 
-### Monitor Swarms
+Then commit. The gate has already decided the work is done. The commit records
+it.
 
-```bash
-hex swarm status    # Show active swarms with task counts
-hex swarm list      # List all swarms (active + completed)
-```
+## What is not in the pipeline
 
-## Phase 4: Tasks
+There is no spec step. A spec that cannot be run does not exist. It becomes a
+gate, or it becomes ADR prose.
 
-Tasks map 1:1 to workplan steps. Each task is tracked in HexFlo (SpacetimeDB-backed).
-
-### Create Tasks from Workplan Steps
-
-```bash
-# Get the swarm ID from swarm init output
-hex task create <swarm-id> "step-1: Add OpenRouter provider to WASM module"
-hex task create <swarm-id> "step-2: Extend OpenAiCompatAdapter"
-hex task create <swarm-id> "step-3: Add model discovery CLI command"
-```
-
-### Manage Tasks
-
-```bash
-hex task list                              # List all tasks across swarms
-hex task assign <task-id> <agent-id>       # Assign to an agent
-hex task complete <task-id> "result summary"  # Mark done
-```
-
-## Phase 5: Agent Execution
-
-This is where inference happens. Agents (Claude Code, opencode, or hex-agent) execute the workplan steps, using registered inference providers (including OpenRouter) to generate code.
-
-### From Claude Code (MCP tools)
-
-Claude Code agents use hex MCP tools. The typical flow:
-
-```
-1. /hex-feature-dev          — Interactive feature development skill
-2. Agent spawns subagents    — Each gets a HEXFLO_TASK:{id} in their prompt
-3. Hooks auto-track          — pre-agent/post-agent hooks sync task status
-4. hex analyze .             — Validate architecture after code changes
-```
-
-### From opencode
-
-opencode agents get hex context injected automatically (ADR-2026-03-23-1800):
-
-```bash
-hex opencode inject    # Inject hex context into opencode config
-```
-
-### From hex-agent (standalone)
-
-hex-agent is the standalone runtime that can call inference directly:
-
-```bash
-# hex-agent uses registered providers from hex inference list
-# OpenRouter models are available after: hex inference discover --provider openrouter
-```
-
-### How OpenRouter Models Get Used
-
-When an agent makes an inference call, the routing works like this:
-
-```
-Agent request → hex-nexus /api/chat/completions
-             → Checks provider for the requested model
-             → If openrouter-*: adds X-Title, HTTP-Referer headers
-             → Forwards to https://openrouter.ai/api/v1/chat/completions
-             → Extracts actual cost from response
-             → Reports cost to SpacetimeDB for budget tracking
-```
-
-The RL model selection engine (ADR-031) can automatically choose between providers based on task type, balancing cost and quality.
-
-## Phase 6: Validate
-
-After code is written, validate architecture compliance:
-
-```bash
-hex analyze .    # Full architecture health check
-hex test         # Run integration tests
-```
-
-The validation judge (`/hex-validate` skill) performs semantic validation against the behavioral specs.
-
-## Phase 7: Ship
-
-```bash
-hex status       # Project overview
-hex git status   # Git state
-hex git diff     # Review changes
-```
-
-Then commit via your preferred method or `/commit` skill.
-
-## Complete Example
-
-Here's a full workflow for adding a caching layer:
-
-```bash
-# 1. ADR — document the decision
-#    Create docs/adrs/ADR-2026-03-24-1430-response-caching.md
-
-# 2. Workplan — decompose into steps
-hex plan create "add response caching to inference endpoints" \
-  --adr ADR-2026-03-24-1430 --lang rust
-
-# 3. Swarm — coordinate agents
-hex swarm init response-caching
-# → Returns swarm ID: abc123...
-
-# 4. Tasks — register work items
-hex task create abc123 "step-1: Add CachePort trait to ports/"
-hex task create abc123 "step-2: Implement Redis adapter"
-hex task create abc123 "step-3: Wire into inference route"
-hex task create abc123 "step-4: Integration tests"
-
-# 5. Execute — agents do the work
-#    In Claude Code: /hex-feature-dev
-#    Or spawn background agents with HEXFLO_TASK:{task-id}
-
-# 6. Validate
-hex analyze .
-hex test
-
-# 7. Ship
-hex status
-```
-
-## Enforcement Modes
-
-hex hooks enforce the pipeline. Check current mode:
-
-```bash
-hex enforce mode    # Show current enforcement level
-hex enforce list    # Show all enforcement rules
-```
-
-| Mode | Behavior |
-|------|----------|
-| `advisory` | Warns when steps are skipped (default) |
-| `mandatory` | Blocks agents that skip ADR/workplan/swarm steps |
-
-In mandatory mode, a background agent spawned without an active swarm gets blocked:
-
-```
-⛔ Background agent blocked — no active workplan (ADR-2026-03-22-1939)
-  Pipeline: ADR → Workplan → Swarm → Agent
-  Create a workplan first: hex plan create <requirements> --adr <ADR-ID>
-```
-
-## Inference Provider Selection
-
-OpenRouter models participate alongside other providers. The system selects based on task type:
-
-```bash
-# See all available providers
-hex inference list
-
-# Test a specific model
-hex inference test openrouter-meta-llama-llama-4-maverick
-
-# See what the RL engine is selecting
-# (visible in dashboard → Inference panel)
-```
-
-For setup, see [OpenRouter Setup Guide](./openrouter-setup.md).
-
-## Quick Reference
-
-```bash
-# Pipeline commands
-hex adr list                           # List ADRs
-hex plan create "desc" --adr ADR-XXX   # Create workplan
-hex swarm init my-feature              # Start swarm
-hex task create <swarm> "step"         # Add task
-hex task complete <task> "result"      # Mark done
-
-# Monitoring
-hex swarm status                       # Active swarms
-hex task list                          # All tasks
-hex plan active                        # Running plans
-hex status                             # Project overview
-
-# Validation
-hex analyze .                          # Architecture check
-hex enforce mode                       # Enforcement level
-
-# Inference
-hex inference list                     # Registered providers
-hex inference discover --provider openrouter  # Sync models
-hex inference test <provider-id>       # Test connectivity
-```
+There is no swarm, no task board, and no daemon. Every verb runs in-process and
+exits.

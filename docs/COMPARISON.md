@@ -1,51 +1,44 @@
 # Comparison
 
-> Back to [README](../README.md) | See also: [Architecture](../ARCHITECTURE.md) | [Getting Started](GETTING-STARTED.md) | [Inference](INFERENCE.md) | [Developer Experience](DEVELOPER-EXPERIENCE.md)
+Most tools for AI-assisted development sit at one of three points. hex sits at a
+fourth.
 
----
+## Where the tools sit
 
-## The Problem
+| Approach | What it checks | What it cannot see |
+|---|---|---|
+| **Prompting** (an agent, a chat) | Nothing. The reviewer is you. | Everything |
+| **Spec-driven** (write the spec, the agent implements) | Whether the code matches a document | Whether the document is still true |
+| **Test-driven** (write the tests, the agent implements) | Whether the code runs | Whether the shape survived |
+| **Gate-driven with an architecture grade** (hex) | Whether it runs, and whether it is the shape you asked for | Whether the *intent* was right |
 
-AI coding agents are powerful — but they're expensive, uncontrolled, and cloud-dependent. Every agent call hits a frontier API. Every task pays the same price regardless of complexity. A typo fix costs as much as a feature implementation. And when you scale to multiple agents, you get conflicting edits, architecture violations, and no coordination.
+Each row down closes the gap the row above leaves open. The last gap stays
+open. hex does not decide what to build. It decides whether what was built
+counts.
 
-**What if 70% of your agent tasks could run on a $0/month local model — with the same quality as frontier?** That's what hex does. It classifies tasks by complexity, routes simple work to fast local models, and only escalates to cloud when the task genuinely needs it. The system learns from every dispatch and gets better over time.
+## The spec problem
 
-**Existing tools solve parts of this.** None solve the whole thing.
+A spec is prose. Prose cannot fail. Code drifts from a spec in silence because
+nothing runs the spec. In a 110-spec corpus audited during this project's own
+development, 44 described features that had already been deleted, and not one
+raised an error.
 
-<p align="center">
-  <img src="../.github/assets/comparison.svg" alt="hex vs BAML, SpecKit, HUD" width="800">
-</p>
+A gate is a command. It exits nonzero the moment it stops being true. That is
+the whole difference between the second row and the fourth.
 
-| Tool | What It Does | What It Doesn't |
-|:-----|:-------------|:----------------|
-| **BAML** | Typed LLM functions, schema validation | No agent lifecycle, no orchestration, no architecture rules |
-| **SpecKit** | Spec-driven workflow gates | No runtime enforcement, no code execution, can't stop agents that ignore specs |
-| **HUD** | Agent benchmarks, RL evaluation, A/B testing | No code generation, no architecture enforcement, doesn't ship with your code |
-| **hex** | **Full AIOS** — process lifecycle, enforced boundaries, swarm coordination, RL inference, capability auth | -- |
+## The test problem
 
-hex is the **runtime that sits underneath all of them**. It manages agent processes like an OS manages user processes — with lifecycle tracking, capability-based permissions, enforced boundaries, and coordinated resource access.
+A test suite answers one question: does it run. An agent will produce a feature
+whose tests pass and whose use case imports a database driver. Nothing fails.
+The next change is harder, and the one after that is harder still.
 
----
+An architecture grade answers the second question. It is a graph property, so a
+number falls out of it, and a number can be a gate. `hex scaffold --grade A`
+fails the build below the floor.
 
-## Agent Framework Comparison (2026)
+## What hex is not
 
-All major frameworks are Python-first, polling-based, cloud-dependent, and architecturally ad-hoc. hex is different — it runs on local models out of the box and self-improves over time.
-
-| Framework | Language | Architecture | Local Models | Self-Improving |
-|:----------|:---------|:--------------|:-------------|:---------------|
-| **LangChain/LangGraph** | Python | Graph-based | Manual setup | No |
-| **CrewAI** | Python | Role-based | Ollama only | No |
-| **AutoGen/AG2** | Python/.NET | Conversation | Limited | No |
-| **Claude Agent SDK** | TypeScript | Tool-first | No | No |
-| **OpenHands** | Python | Agent loop | Ollama only | No |
-| **hex** | **Rust** | **AIOS** | **Tiered routing + scaffolding** | **RL Q-learning** |
-
-**Why hex is the best local AI agent system:**
-- **Runs anywhere without cloud API keys** — Ollama + any GGUF model. T1/T2 tasks (70% of workplan steps) execute entirely on local hardware. Frontier models are optional, not required.
-- **Tiered inference routing** — automatically classifies tasks by complexity and routes to the right model: 4B for typo fixes (68 tok/s), 32B for code generation (11 tok/s), frontier only for multi-file features. Not one-size-fits-all.
-- **GBNF grammar constraints** — hard token-level masks force models to emit only valid output. A typo fix that takes 89 seconds without grammar takes 31 seconds with it. Same quality, 2.8x faster. No other framework does this.
-- **Best-of-N + compile gate** — generates N completions, returns the first that passes `rustc`/`tsc`/`go build`. Observed 100% first-attempt compile rate across Rust, TypeScript, and Go on local 32B models.
-- **RL self-improvement** — Q-learning engine in SpacetimeDB records every dispatch outcome and learns optimal model selection per task type. The system gets better the more you use it.
-- **Native Rust** — not Python-dependent. Sub-100ms coordination, single binary, no runtime dependencies.
-- **SpacetimeDB microkernel** — real-time WebSocket push, not polling. 7 WASM modules with atomic reducers.
-- **Hexagonal enforcement** — tree-sitter boundary check runs in the pre-commit hook and in CI; cross-layer imports fail the analyzer and block the commit.
+It is not a framework, a runtime, or an orchestration layer. It is one binary
+with no daemon and no database. The code generation is a frontier model. hex
+supplies the deterministic floor, the two gates, and the adversarial pass. It
+turns a capable model into a disciplined one and does not replace it.

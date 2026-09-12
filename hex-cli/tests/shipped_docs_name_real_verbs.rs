@@ -376,3 +376,98 @@ fn every_diagram_image_exists() {
     assert!(seen >= 10, "found only {seen} diagram images; the extractor is broken");
     assert!(missing.is_empty(), "missing diagram image(s):\n  {}", missing.join("\n  "));
 }
+
+/// Every reader-facing document under `docs/`, read at runtime.
+///
+/// `include_str!` needs a compile-time path, which is fine for two files at the
+/// repository root and useless for a tree. The history directories are skipped:
+/// an ADR, a spec, a workplan or an analysis report describes what was true
+/// when it was written, and is allowed to name a verb that has since gone.
+fn reader_facing_docs() -> Vec<(std::path::PathBuf, String)> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .to_path_buf();
+    let skip = ["adrs", "specs", "workplans", "analysis", "benchmarks"];
+    let mut out = Vec::new();
+    let mut stack = vec![root.join("docs")];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if !p.file_name().is_some_and(|n| skip.iter().any(|s| n == *s)) {
+                    stack.push(p);
+                }
+            } else if p.extension().is_some_and(|x| x == "md") {
+                if let Ok(body) = std::fs::read_to_string(&p) {
+                    out.push((p, body));
+                }
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Every `hex …` command in every reader-facing document resolves.
+///
+/// The README and ARCHITECTURE are covered by the tests above. This one covers
+/// the tree, because the tree is where rot hides: a getting-started page told
+/// new readers to build a crate that had been deleted for months, and nothing
+/// noticed, because nothing read it but people.
+#[test]
+fn every_doc_names_only_real_verbs() {
+    let docs = reader_facing_docs();
+    assert!(docs.len() >= 5, "found only {} docs; the walker is broken", docs.len());
+
+    // The vacuity guard is on the total, not per document. A document with no
+    // commands in it is allowed; a tree with none would mean the extractor
+    // broke.
+    let mut total = 0usize;
+    let mut dead: Vec<String> = Vec::new();
+    for (path, body) in &docs {
+        for chain in hex_invocations(body) {
+            total += 1;
+            if !resolves(&chain) {
+                dead.push(format!("{}: hex {}", path.display(), chain.join(" ")));
+            }
+        }
+    }
+    assert!(total >= 10, "found only {total} hex commands across docs/; the extractor is broken");
+    assert!(dead.is_empty(), "{} dead command(s) in docs/:\n  {}", dead.len(), dead.join("\n  "));
+}
+
+/// Every relative link in every reader-facing document resolves, relative to
+/// the document that contains it.
+#[test]
+fn every_doc_link_resolves() {
+    let docs = reader_facing_docs();
+    let mut checked = 0usize;
+    let mut dead: Vec<String> = Vec::new();
+
+    for (path, body) in &docs {
+        let base = path.parent().expect("doc has a parent dir");
+        let mut rest = body.as_str();
+        while let Some(open) = rest.find("](") {
+            let after = &rest[open + 2..];
+            let Some(close) = after.find(')') else { break };
+            let target = &after[..close];
+            rest = &after[close + 1..];
+            if target.starts_with("http") || target.starts_with('#') || target.is_empty() {
+                continue;
+            }
+            let file = target.split('#').next().unwrap_or(target);
+            if file.is_empty() {
+                continue;
+            }
+            checked += 1;
+            if !base.join(file).exists() {
+                dead.push(format!("{}: {file}", path.display()));
+            }
+        }
+    }
+
+    assert!(checked >= 5, "found only {checked} links; the extractor is broken");
+    assert!(dead.is_empty(), "dead link(s):\n  {}", dead.join("\n  "));
+}
