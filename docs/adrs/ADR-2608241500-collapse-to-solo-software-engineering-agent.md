@@ -1,6 +1,6 @@
 # ADR-2608241500: Collapse hex to a solo software-engineering agent — retire the daemon, the coordination core, and founding goal G2
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-08-24
 **Epoch:** solo (opens a new epoch; matures and closes `hybrid-inference`)
 **Drivers:** Operator directive to make hex "a purely software-engineering agent, no clustering, no coordination, just leverage an inference server to write quality hex-based architectural code." Backed by a workspace survey (`docs/analysis/2026-08-24-hex-solo-refactor-plan.md`) showing the canonical execution path already requires none of the daemon tier, and that ~200k of ~261k LOC exists to serve a fleet model that ADR-2606061359 already retired.
