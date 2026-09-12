@@ -428,3 +428,45 @@ fn mermaid_labels_are_quoted_ascii_and_subgraph_free() {
     assert!(blocks_seen >= 5, "only found {blocks_seen} mermaid blocks; the extractor is broken");
     assert!(problems.is_empty(), "{}", problems.join("\n  "));
 }
+
+/// Every diagram image referenced by a document must exist in the repository.
+///
+/// GitHub renders mermaid in a browser with JavaScript. The mobile app does not
+/// run that step, so it shows the source as highlighted code instead of a
+/// picture. The documents therefore carry a rendered SVG, with the mermaid kept
+/// underneath so the source stays text and stays checked.
+///
+/// That only helps if the file is actually there. A broken image on a front page
+/// is worse than no image.
+#[test]
+fn every_diagram_image_exists() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .to_path_buf();
+
+    let docs: &[(&str, &str)] = &[
+        ("README.md", include_str!("../../README.md")),
+        ("ARCHITECTURE.md", include_str!("../../ARCHITECTURE.md")),
+    ];
+
+    let mut seen = 0usize;
+    let mut missing: Vec<String> = Vec::new();
+
+    for (name, body) in docs {
+        let mut rest = *body;
+        while let Some(i) = rest.find("src=\".github/assets/diagrams/") {
+            let after = &rest[i + 5..];
+            let Some(j) = after.find('"') else { break };
+            let path = &after[..j];
+            seen += 1;
+            if !root.join(path).is_file() {
+                missing.push(format!("{name}: {path}"));
+            }
+            rest = &after[j..];
+        }
+    }
+
+    assert!(seen >= 5, "found only {seen} diagram images; the extractor is broken");
+    assert!(missing.is_empty(), "missing diagram image(s):\n  {}", missing.join("\n  "));
+}

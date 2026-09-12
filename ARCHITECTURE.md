@@ -11,6 +11,13 @@ daemon, no database, and no background process. Every verb runs in-process and e
 
 Two gates decide whether generated work counts:
 
+<p align="center">
+  <img src=".github/assets/diagrams/two-gates.svg" alt="Work passes a command gate, then an architecture grade, then commits." width="780">
+</p>
+
+<details>
+<summary>diagram source</summary>
+
 ```mermaid
 flowchart LR
     W["work<br/>scaffold, build, edit"] --> G1{"gate<br/>a command that<br/>must exit 0"}
@@ -25,6 +32,8 @@ flowchart LR
     style R fill:#2d333b,stroke:#c69026,color:#adbac7
 ```
 
+</details>
+
 The first answers *does it run*. The second answers *is it the shape you asked
 for*. A test suite cannot reach that second question. A program whose use case
 imports a database driver passes its tests.
@@ -33,6 +42,13 @@ imports a database driver passes its tests.
 
 A single ReAct loop, in process. The differentiator is the quality of context
 assembled for one loop, not the number of loops.
+
+<p align="center">
+  <img src=".github/assets/diagrams/loop.svg" alt="The ReAct loop, ending in an edit the evidence command must accept." width="780">
+</p>
+
+<details>
+<summary>diagram source</summary>
 
 ```mermaid
 flowchart TB
@@ -52,6 +68,8 @@ flowchart TB
     style H fill:#2d333b,stroke:#57ab5a,color:#adbac7
     style I fill:#2d333b,stroke:#c69026,color:#adbac7
 ```
+
+</details>
 
 - **Loop and tool protocol.** `hex-exec/src/direct_react.rs` holds the ReAct loop.
   `simple_agent.rs` holds native function-calling with a text-mode JSON fallback.
@@ -99,6 +117,13 @@ to *refuting*, so plausible-but-wrong findings die before any edit is made.
 
 Eight crates, one binary. The dependency direction is the architecture:
 
+<p align="center">
+  <img src=".github/assets/diagrams/crates.svg" alt="Crate dependency graph. Everything points at hex-core." width="780">
+</p>
+
+<details>
+<summary>diagram source</summary>
+
 ```mermaid
 flowchart TB
     CLI["hex-cli<br/>the binary, and the<br/>only composition root"]
@@ -125,6 +150,8 @@ flowchart TB
     style INFER fill:#2d333b,stroke:#986ee2,color:#adbac7
     style CLI fill:#2d333b,stroke:#c69026,color:#adbac7
 ```
+
+</details>
 
 | Crate | Role |
 |---|---|
